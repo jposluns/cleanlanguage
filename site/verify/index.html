@@ -30,7 +30,7 @@
       <a href="/" class="nav-collapse">Home</a>
       <a href="/standard/">The Standard</a>
       <a href="/demo/">Try It</a>
-      <a href="/install/">Install</a>
+      <a href="/install/" class="is-active" aria-current="true">Install</a>
       <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a>
     </nav>
   </header>
@@ -62,7 +62,11 @@
               <a class="button secondary" href="https://github.com/jposluns/cleanlanguage/releases/latest/download/clean-language.zip.sha256" target="_blank" rel="noopener noreferrer">Published checksum</a>
             </div>
           </li>
-          <li>Calculate the checksum of the file you downloaded. Open a terminal in the folder that holds <code>clean-language.zip</code> and run the command for your system.
+          <li>
+            <p>Calculate the checksum of the file you downloaded.</p>
+            <p>On Windows: open your Downloads folder in File Explorer, click the address bar, type <code>powershell</code>, and press Enter.</p>
+            <p>On macOS: press Command+Space, type <code>Terminal</code>, press Return, then type <code>cd Downloads</code> and press Return.</p>
+            <p>Copy the command for your system, paste it into the window, and press Enter.</p>
             <p class="label">Windows (PowerShell)</p>
             <pre><code>Get-FileHash clean-language.zip -Algorithm SHA256</code></pre>
             <p class="label">macOS</p>
@@ -70,13 +74,17 @@
             <p class="label">Linux</p>
             <pre><code>sha256sum clean-language.zip</code></pre>
           </li>
-          <li>Compare the value your computer prints with the value in <code>clean-language.zip.sha256</code>. A match means the download is authentic. If the two differ, delete the file, download it again, and check once more.</li>
+          <li>Compare the value your computer prints with the value in <code>clean-language.zip.sha256</code>. Open <code>clean-language.zip.sha256</code> with a text editor (Notepad on Windows, TextEdit on macOS) to see the published value. A match means your copy is identical to the published release. If the two differ, delete the file, download it again, and check once more.</li>
         </ol>
       </section>
 
       <section>
         <h2>Why this is safe to skip</h2>
-        <p>The skill is prose instructions and reference material only. It contains no executable code and makes no network calls, and every file is publicly reviewable in the <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub repository</a>. The checksum confirms the file arrived intact. The skill is safe to use whether or not you check it.</p>
+        <p>The skill contains only written instructions for the AI. It is not a program, it runs nothing on your computer, and it does not connect to the internet, and every file is publicly reviewable in the <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub repository</a>. The checksum confirms the file arrived intact. The skill is safe to use whether or not you check it.</p>
+        <div class="step-actions">
+          <a class="button primary" href="/install/">Continue installing</a>
+          <a class="button secondary" href="/download">Download clean-language.zip</a>
+        </div>
       </section>
     </article>
   </main>
