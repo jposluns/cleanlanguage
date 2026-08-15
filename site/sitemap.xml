@@ -41,6 +41,11 @@
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://cleanlanguage.ai/instructions/</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
     <loc>https://cleanlanguage.ai/verify/</loc>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>

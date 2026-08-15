@@ -44,7 +44,7 @@
     </section>
 
     <article class="content">
-      <div class="notice"><p>Setup is easiest on a computer. On a phone right now? <a href="/downloads/clean-language-instructions.txt" download>Download the instructions file</a>, attach it to a chat with your AI, and say: <code>Follow these writing rules for this conversation.</code> Then do the full setup later on a computer.</p></div>
+      <div class="notice"><p>Setup is easiest on a computer. On a phone right now? <a href="/downloads/clean-language-instructions.txt" download>Download the instructions file</a>, attach it to a chat with your AI, and say: <code>Follow these writing rules for this conversation.</code> Or copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat. Then do the full setup later on a computer.</p></div>
 
       <div class="platform-actions" aria-label="Installation options">
         <a class="platform-button claude" href="#claude"><span class="platform-icon" aria-hidden="true">C</span><span><strong>Claude setup</strong><small>Download, upload, and enable the Skill</small></span></a>
@@ -70,6 +70,7 @@
           <a class="button primary" href="/claude/download">Download clean-language.zip</a>
           <a class="button secondary" href="/verify/">How to verify this download (optional)</a>
         </div>
+        <p>The file downloads from GitHub, where releases are published. If the download does not start, your network may block GitHub; use the <a href="/instructions/">instructions page</a> instead.</p>
         <p>Your browser saves <code>clean-language.zip</code>, usually in your Downloads folder. Do not unzip it. If your computer unzipped it automatically and you see a <code>clean-language</code> folder, that is fine: the original zip is still in your Downloads folder. Upload the zip file, not the folder.</p>
         <p>The file contains only written instructions for the AI. It is not a program, it runs nothing on your computer, and it does not connect to the internet.</p>
 
@@ -88,7 +89,7 @@
         <p>Test it in a new chat. Copy this prompt, paste it, then add your text:</p>
         <div class="step-actions">
           <code id="claude-test-prompt">Apply Clean Language to this draft:</code>
-          <button type="button" class="button secondary" data-copy-target="claude-test-prompt">Copy prompt</button>
+          <button type="button" class="button secondary" data-copy-target="claude-test-prompt" hidden>Copy prompt</button>
           <span class="visually-hidden" role="status" aria-live="polite" id="copy-status"></span>
         </div>
         <p>If the reply is a tighter, more direct version of your text, it is working. If Claude says it does not know what Clean Language is, repeat the steps or use the fallback below.</p>
@@ -109,7 +110,7 @@
             <li>In Claude, click <strong>Projects</strong>, then <strong>New Project</strong>.</li>
             <li>Name it <strong>Clean Language</strong>.</li>
             <li>Under <strong>Project knowledge</strong>, click <strong>+</strong> and upload the saved file.</li>
-            <li>Set the project instructions to: <code>Use the Clean Language instructions in project knowledge for every response unless I explicitly tell you not to.</code></li>
+            <li>Set the project instructions to: <code id="claude-project-instruction">Use the Clean Language instructions in project knowledge for every response unless I explicitly tell you not to.</code> <button type="button" class="button secondary" data-copy-target="claude-project-instruction" hidden>Copy</button></li>
           </ol>
         </details>
       </section>
@@ -124,6 +125,7 @@
           <a class="button primary" href="/download">Download clean-language.zip</a>
           <a class="button secondary" href="/verify/">How to verify this download (optional)</a>
         </div>
+        <p>The file downloads from GitHub, where releases are published. If the download does not start, your network may block GitHub; use the <a href="/instructions/">instructions page</a> instead.</p>
         <p>Your browser saves <code>clean-language.zip</code>, usually in your Downloads folder. Do not unzip it. If your computer unzipped it automatically and you see a <code>clean-language</code> folder, that is fine: the original zip is still in your Downloads folder. Upload the zip file, not the folder.</p>
         <p>The file contains only written instructions for the AI. It is not a program, it runs nothing on your computer, and it does not connect to the internet.</p>
 
@@ -134,11 +136,11 @@
           <li>Select the downloaded <code>clean-language.zip</code> file.</li>
           <li>Review the skill, then install it.</li>
         </ol>
-        <p>Test it in a new chat: <code>Apply Clean Language to this message: [paste your text]</code></p>
+        <p>Test it in a new chat: <code id="chatgpt-test-prompt">Apply Clean Language to this message: [paste your text]</code> <button type="button" class="button secondary" data-copy-target="chatgpt-test-prompt" hidden>Copy</button></p>
         <p>If the reply is a tighter, more direct version of your text, it is working. If ChatGPT says it does not know what Clean Language is, repeat the steps or use the fallback below.</p>
         <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
         <div class="notice"><strong>Workspace accounts:</strong> your administrator may need to allow members to use and upload Skills.</div>
-        <div class="notice"><strong>Do not see Plugins or Skills?</strong> Your plan or app may not include them. Attach <code>clean-language-instructions.txt</code> to a normal chat and say: <code>Follow these writing rules for this conversation.</code></div>
+        <div class="notice"><strong>Do not see Plugins or Skills?</strong> Your plan or app may not include them. Attach <code>clean-language-instructions.txt</code> to a normal chat and say: <code>Follow these writing rules for this conversation.</code> You can also copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat.</div>
 
         <details>
           <summary><strong>Cannot upload a skill? Build it from the instructions file</strong></summary>
@@ -153,7 +155,7 @@
             </li>
             <li>Open ChatGPT, open <strong>Plugins</strong>, then <strong>Skills</strong>.</li>
             <li>Click <strong>Create</strong>, then <strong>Create with chat</strong>.</li>
-            <li>Type: <code>Create a skill named Clean Language using the instructions in the file I am about to upload.</code></li>
+            <li>Type: <code id="chatgpt-build-prompt">Create a skill named Clean Language using the instructions in the file I am about to upload.</code> <button type="button" class="button secondary" data-copy-target="chatgpt-build-prompt" hidden>Copy</button></li>
             <li>Attach <code>clean-language-instructions.txt</code> and send the message.</li>
             <li>When ChatGPT shows the completed skill, install it.</li>
           </ol>
@@ -177,7 +179,7 @@
           <li>Click <strong>Gems</strong>. If you do not see it, click <strong>Settings and help</strong>, then <strong>Gems</strong>.</li>
           <li>Click <strong>New Gem</strong>.</li>
           <li>Name it <strong>Clean Language</strong>.</li>
-          <li>In the instructions box, type: <code>Follow the Clean Language instructions in the attached knowledge file for every response.</code></li>
+          <li>In the instructions box, type: <code id="gemini-gem-instruction">Follow the Clean Language instructions in the attached knowledge file for every response.</code> <button type="button" class="button secondary" data-copy-target="gemini-gem-instruction" hidden>Copy</button></li>
           <li>Scroll to <strong>Knowledge</strong>.</li>
           <li>Click <strong>Add files</strong>, then <strong>Upload files</strong>.</li>
           <li>Select <code>clean-language-instructions.txt</code>.</li>
@@ -204,13 +206,13 @@
           <li>Open Microsoft 365 Copilot on a computer.</li>
           <li>Open the agents panel and click <strong>New agent</strong>, then open the <strong>Configure</strong> tab.</li>
           <li>Name it <strong>Clean Language</strong>.</li>
-          <li>In the instructions box, enter: <code>Follow the Clean Language instructions in the uploaded knowledge file for every response.</code></li>
+          <li>In the instructions box, enter: <code id="copilot-agent-instruction">Follow the Clean Language instructions in the uploaded knowledge file for every response.</code> <button type="button" class="button secondary" data-copy-target="copilot-agent-instruction" hidden>Copy</button></li>
           <li>Under <strong>Knowledge</strong>, upload <code>clean-language-instructions.txt</code> from your device.</li>
           <li>Click <strong>Create</strong> or <strong>Save</strong>, then select <strong>Clean Language</strong> whenever you need it.</li>
         </ol>
         <p>Test it: select Clean Language and send <code>Apply Clean Language to this draft:</code> followed by a few sentences of your own text. If the reply is a tighter, more direct version of your text, it is working. If Copilot says it does not know what Clean Language is, repeat the steps or use the fallback below.</p>
         <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
-        <div class="notice"><strong>No agent access?</strong> Open the downloaded <code>clean-language-instructions.txt</code> (double-click it; it opens in Notepad or TextEdit), select all the text, copy it, paste it into a Copilot chat, and say: <code>Follow these writing rules for this conversation.</code></div>
+        <div class="notice"><strong>No agent access?</strong> Open the downloaded <code>clean-language-instructions.txt</code> (double-click it; it opens in Notepad or TextEdit), select all the text, copy it, paste it into a Copilot chat, and say: <code>Follow these writing rules for this conversation.</code> Or open the <a href="/instructions/">instructions page</a> and click <strong>Copy everything</strong>.</div>
       </section>
 
       <section id="other-ai">
@@ -223,9 +225,9 @@
               <a class="button secondary" href="https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/clean-language-instructions.txt" target="_blank" rel="noopener noreferrer">View original on GitHub</a>
             </div>
           </li>
-          <li>Save the file or copy its contents.</li>
+          <li>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</li>
           <li>Add it to your AI tool as custom instructions, project knowledge, a system prompt, or an attached reference file.</li>
-          <li>Tell the AI: <code>Use the Clean Language instructions for every response unless I explicitly tell you not to.</code></li>
+          <li>Tell the AI: <code id="other-ai-prompt">Use the Clean Language instructions for every response unless I explicitly tell you not to.</code> <button type="button" class="button secondary" data-copy-target="other-ai-prompt" hidden>Copy</button></li>
         </ol>
       </section>
 
@@ -240,17 +242,21 @@
           <li><strong>In Gemini and Copilot:</strong> choose by selecting the Clean Language Gem or agent before you write.</li>
         </ul>
         <p>For on-demand use, paste rough notes or finished text with one of these requests:</p>
-        <pre><code>Rewrite this using Clean Language:
+        <pre><code id="usage-rewrite-prompt">Rewrite this using Clean Language:
 [paste text]</code></pre>
-        <pre><code>Proofread this using Clean Language.
+        <div class="step-actions"><button type="button" class="button secondary" data-copy-target="usage-rewrite-prompt" hidden>Copy prompt</button></div>
+        <pre><code id="usage-proofread-prompt">Proofread this using Clean Language.
 Fix mistakes but do not change my tone:
 [paste text]</code></pre>
-        <pre><code>Audit this for robotic AI language,
+        <div class="step-actions"><button type="button" class="button secondary" data-copy-target="usage-proofread-prompt" hidden>Copy prompt</button></div>
+        <pre><code id="usage-audit-prompt">Audit this for robotic AI language,
 filler, contrast framing, and dash overuse.
 Do not rewrite it:
 [paste text]</code></pre>
-        <pre><code>Write this with no em dashes or en dashes:
+        <div class="step-actions"><button type="button" class="button secondary" data-copy-target="usage-audit-prompt" hidden>Copy prompt</button></div>
+        <pre><code id="usage-nodash-prompt">Write this with no em dashes or en dashes:
 [paste notes]</code></pre>
+        <div class="step-actions"><button type="button" class="button secondary" data-copy-target="usage-nodash-prompt" hidden>Copy prompt</button></div>
       </section>
 
       <section>
