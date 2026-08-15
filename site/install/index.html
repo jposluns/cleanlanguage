@@ -40,9 +40,12 @@
       <p class="eyebrow">Simple installation</p>
       <h1>Pick the AI you use and follow the buttons.</h1>
       <p>You do not need a command line, a developer account, or knowledge of GitHub. These instructions cover Claude, ChatGPT, Gemini, Copilot, and other AI systems.</p>
+      <p>Clean Language comes as one small file, called a Skill: written rules your AI reads and follows. You download the file, then upload it to your AI.</p>
     </section>
 
     <article class="content">
+      <div class="notice"><p>Setup is easiest on a computer. On a phone right now? <a href="/downloads/clean-language-instructions.txt" download>Download the instructions file</a>, attach it to a chat with your AI, and say: <code>Follow these writing rules for this conversation.</code> Then do the full setup later on a computer.</p></div>
+
       <div class="platform-actions" aria-label="Installation options">
         <a class="platform-button claude" href="#claude"><span class="platform-icon" aria-hidden="true">C</span><span><strong>Claude setup</strong><small>Download, upload, and enable the Skill</small></span></a>
         <a class="platform-button chatgpt" href="#chatgpt"><span class="platform-icon" aria-hidden="true">G</span><span><strong>ChatGPT instructions</strong><small>Set up through ChatGPT Skills</small></span></a>
@@ -55,22 +58,22 @@
       <section id="claude">
         <h2>Claude website or Claude Desktop</h2>
         <p class="verified">Last verified 27 July 2026.</p>
-        <p><strong>This is the recommended Claude method.</strong> It installs the complete Skill, so Claude uses the canonical instructions and reference files in every chat rather than a single project.</p>
+        <p><strong>This is the recommended Claude method.</strong> It installs the complete Skill, so Claude follows the full official rules in every chat.</p>
 
-        <div class="notice">
-          <p><strong>First, turn on code execution. The Skills section does not appear without it.</strong></p>
-          <p>On Free, Pro, and Max, open <a href="https://claude.ai/settings/capabilities" target="_blank" rel="noopener noreferrer">Settings, then Capabilities</a> and enable <strong>Code execution and file creation</strong>. If the Skills section is missing later, this setting is the reason.</p>
-          <p>Install from a <strong>desktop browser</strong>. The mobile apps are not documented to support skill upload.</p>
-        </div>
+        <h3>Step 1: turn on code execution</h3>
+        <p>The Skills section does not appear without it. On Free, Pro, and Max, open <a href="https://claude.ai/settings/capabilities" target="_blank" rel="noopener noreferrer">Settings, then Capabilities</a> and enable <strong>Code execution and file creation</strong>. If the Skills section is missing later, this setting is the reason.</p>
+        <p>This is a built-in Claude setting that makes the Skills menu appear. Clean Language itself is only written instructions and contains no code.</p>
+        <p>Install from a <strong>desktop browser</strong>. The mobile apps are not documented to support skill upload.</p>
 
-        <h3>Step 1: download the Skill</h3>
+        <h3>Step 2: download the Skill</h3>
         <div class="step-actions">
           <a class="button primary" href="/claude/download">Download clean-language.zip</a>
           <a class="button secondary" href="/verify/">How to verify this download (optional)</a>
         </div>
-        <p>Your browser saves a file named <code>clean-language.zip</code>. Do not unzip it. The Skill is prose instructions and reference material only. It contains no executable code and makes no network calls.</p>
+        <p>Your browser saves <code>clean-language.zip</code>, usually in your Downloads folder. Do not unzip it. If your computer unzipped it automatically and you see a <code>clean-language</code> folder, that is fine: the original zip is still in your Downloads folder. Upload the zip file, not the folder.</p>
+        <p>The file contains only written instructions for the AI. It is not a program, it runs nothing on your computer, and it does not connect to the internet.</p>
 
-        <h3>Step 2: upload it to Claude</h3>
+        <h3>Step 3: upload it to Claude</h3>
         <div class="step-actions">
           <a class="button primary" href="https://claude.ai/customize/skills" target="_blank" rel="noopener noreferrer">Open Claude Skills</a>
         </div>
@@ -88,12 +91,14 @@
           <button type="button" class="button secondary" data-copy-target="claude-test-prompt">Copy prompt</button>
           <span class="visually-hidden" role="status" aria-live="polite" id="copy-status"></span>
         </div>
+        <p>If the reply is a tighter, more direct version of your text, it is working. If Claude says it does not know what Clean Language is, repeat the steps or use the fallback below.</p>
+        <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
 
         <div class="notice"><strong>Team or Enterprise:</strong> an organization owner must enable both <strong>Code execution and file creation</strong> and <strong>Skills</strong> in <a href="https://claude.ai/admin-settings/skills" target="_blank" rel="noopener noreferrer">Organization settings, then Skills</a>. An owner can upload Clean Language once to provision it for the whole organization, after which it appears for every member automatically and members do not upload it individually.</div>
 
         <details>
-          <summary><strong>Fallback: use a Claude Project instead</strong></summary>
-          <p>Use this only if your organization has disabled Skills or code execution. It applies to one project rather than every chat.</p>
+          <summary><strong>Cannot upload the Skill? Use a Claude Project instead</strong></summary>
+          <p>Use this if the Skills section never appears for you, or your organization has disabled Skills or code execution. It applies to one project rather than every chat.</p>
           <ol>
             <li>
               <div class="step-actions">
@@ -112,14 +117,15 @@
       <section id="chatgpt">
         <h2>ChatGPT</h2>
         <p class="verified">Last verified 27 July 2026.</p>
-        <p>ChatGPT can use the same packaged Skill as Claude. Upload it once, and ChatGPT applies Clean Language when your request matches.</p>
+        <p>ChatGPT can use the same packaged Skill as Claude. Upload it once, and ChatGPT applies Clean Language when your request calls for it, for example when you ask it to write or edit text.</p>
 
         <h3>Step 1: download the Skill</h3>
         <div class="step-actions">
           <a class="button primary" href="/download">Download clean-language.zip</a>
           <a class="button secondary" href="/verify/">How to verify this download (optional)</a>
         </div>
-        <p>Your browser saves a file named <code>clean-language.zip</code>. Do not unzip it. The Skill is prose instructions and reference material only. It contains no executable code and makes no network calls.</p>
+        <p>Your browser saves <code>clean-language.zip</code>, usually in your Downloads folder. Do not unzip it. If your computer unzipped it automatically and you see a <code>clean-language</code> folder, that is fine: the original zip is still in your Downloads folder. Upload the zip file, not the folder.</p>
+        <p>The file contains only written instructions for the AI. It is not a program, it runs nothing on your computer, and it does not connect to the internet.</p>
 
         <h3>Step 2: upload it to ChatGPT</h3>
         <ol>
@@ -129,10 +135,13 @@
           <li>Review the skill, then install it.</li>
         </ol>
         <p>Test it in a new chat: <code>Apply Clean Language to this message: [paste your text]</code></p>
+        <p>If the reply is a tighter, more direct version of your text, it is working. If ChatGPT says it does not know what Clean Language is, repeat the steps or use the fallback below.</p>
+        <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
         <div class="notice"><strong>Workspace accounts:</strong> your administrator may need to allow members to use and upload Skills.</div>
+        <div class="notice"><strong>Do not see Plugins or Skills?</strong> Your plan or app may not include them. Attach <code>clean-language-instructions.txt</code> to a normal chat and say: <code>Follow these writing rules for this conversation.</code></div>
 
         <details>
-          <summary><strong>Fallback: build the skill from the instructions file</strong></summary>
+          <summary><strong>Cannot upload a skill? Build it from the instructions file</strong></summary>
           <p>Use this if your account cannot upload a skill.</p>
           <ol>
             <li>
@@ -148,7 +157,6 @@
             <li>Attach <code>clean-language-instructions.txt</code> and send the message.</li>
             <li>When ChatGPT shows the completed skill, install it.</li>
           </ol>
-          <p>If you do not see Skills, attach the instructions file to a normal chat and say: <code>Follow these writing rules for this conversation.</code></p>
         </details>
       </section>
 
@@ -176,6 +184,8 @@
           <li>Click <strong>Save</strong>.</li>
         </ol>
         <p>To use it later, open Gemini, click <strong>Gems</strong>, then click <strong>Clean Language</strong>.</p>
+        <p>Test it: open the Clean Language Gem and send <code>Apply Clean Language to this draft:</code> followed by a few sentences of your own text. If the reply is a tighter, more direct version of your text, it is working. If Gemini says it does not know what Clean Language is, repeat the steps.</p>
+        <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
         <div class="notice"><strong>Mobile note:</strong> create and edit the Gem on the Gemini website. After saving it, the Gem appears in the Gemini mobile app.</div>
       </section>
 
@@ -198,7 +208,9 @@
           <li>Under <strong>Knowledge</strong>, upload <code>clean-language-instructions.txt</code> from your device.</li>
           <li>Click <strong>Create</strong> or <strong>Save</strong>, then select <strong>Clean Language</strong> whenever you need it.</li>
         </ol>
-        <div class="notice"><strong>No agent access?</strong> Paste the contents of <code>clean-language-instructions.txt</code> into a Copilot chat and say: <code>Follow these writing rules for this conversation.</code></div>
+        <p>Test it: select Clean Language and send <code>Apply Clean Language to this draft:</code> followed by a few sentences of your own text. If the reply is a tighter, more direct version of your text, it is working. If Copilot says it does not know what Clean Language is, repeat the steps or use the fallback below.</p>
+        <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
+        <div class="notice"><strong>No agent access?</strong> Open the downloaded <code>clean-language-instructions.txt</code> (double-click it; it opens in Notepad or TextEdit), select all the text, copy it, paste it into a Copilot chat, and say: <code>Follow these writing rules for this conversation.</code></div>
       </section>
 
       <section id="other-ai">
@@ -219,12 +231,13 @@
 
       <section>
         <h2>How to use Clean Language</h2>
-        <p>Once the skill is installed, you choose when it applies:</p>
+        <p>Once it is set up, you choose when it applies:</p>
         <ul>
           <li><strong>Everywhere, automatically:</strong> add <code>Always apply Clean Language to your responses</code> to your assistant's personal or custom instructions.</li>
           <li><strong>In one project or space:</strong> add the same line to that project's instructions, so it applies there and not elsewhere.</li>
           <li><strong>For a single chat:</strong> tell the assistant to use Clean Language at the start of the conversation.</li>
           <li><strong>On demand:</strong> ask for it only when you want it.</li>
+          <li><strong>In Gemini and Copilot:</strong> choose by selecting the Clean Language Gem or agent before you write.</li>
         </ul>
         <p>For on-demand use, paste rough notes or finished text with one of these requests:</p>
         <pre><code>Rewrite this using Clean Language:
@@ -248,9 +261,9 @@ Do not rewrite it:
       <section id="assurance">
         <h2>Trust and assurance</h2>
         <ul>
-          <li>The skill contains no executable code and makes no network calls.</li>
+          <li>The skill contains only written instructions. It is not a program, it runs nothing on your computer, and it does not connect to the internet.</li>
           <li>Every rule and reference file is publicly reviewable in the <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub repository</a>.</li>
-          <li>Each tagged release provides a SHA-256 checksum, so you can verify the download.</li>
+          <li>Every release publishes a fingerprint (a checksum) so you can confirm your copy matches the original; see <a href="/verify/">how to verify</a>.</li>
           <li>Clean Language is licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>.</li>
           <li>Clean Language is the same set of instructions on every platform, but each provider controls how its model applies them, so results vary from one platform to another.</li>
           <li>A model can still change meaning even with these rules in place, so read the result before you rely on it.</li>
