@@ -21,3 +21,12 @@ governance rules that may be adopted later if the need arises.
 
 Vendored copies do not update automatically. To refresh them, re-copy from the
 source repository and record the change here.
+
+## Refresh record
+
+- 2026-08-15: The AIQT Principle statement in `.claude/CLAUDE.md` was updated to
+  the latest form supplied by the maintainer. The update adds Progress to the
+  priority ordering between the top tier and Speed, revises the four facet
+  definitions, and extends the halt clause to name progress. The five rules of
+  AIQT were not adopted; the section points to https://aiqt.ai for the full
+  standard.
