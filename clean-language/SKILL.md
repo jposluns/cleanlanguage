@@ -5,7 +5,7 @@ description: Draft, rewrite, edit, review, or quality-assure prose using the Cle
 
 # Clean Language
 
-Version: 1.0.8  
+Version: 1.0.9  
 Author: Jeff Posluns  
 Web site: https://cleanlanguage.ai/  
 Github: https://github.com/jposluns/cleanlanguage  
