@@ -50,6 +50,7 @@ Do not write these, and remove or rewrite them where found; in an audit, flag th
 - vague declarations of importance;
 - formulaic negative-to-positive contrasts such as "not X, but Y";
 - manufactured punch lines and dramatic fragments;
+- sentences opened with a conjunction (And, But, So, Yet, Because) as a rhythm device;
 - repetitive three-part rhetorical structures without substantive need;
 - meta-commentary about what the document will do;
 - empty intensifiers, softeners, and business jargon;
@@ -106,6 +107,7 @@ Judgement review. Confirm that:
 - the first sentence contains the answer, decision, finding, request, or purpose;
 - ownership, consequence, risk, cost, dependency, and required action are explicit where relevant;
 - the cadence sounds natural rather than theatrical or mechanical;
+- fragments, one-line conclusions, conjunction-opened sentences, and rhetorical contrasts are used sparingly;
 - no filler, repetition, vague importance, or generic AI phrasing remains;
 - no formulaic executive phrasing or catalogue-style topic list stands in for a direct statement, and each topic list connects to a decision, question, or request;
 - after any verb that can take either a direct object or a clause, a clause that follows is marked with "that" where its opening words could be read as a direct object;

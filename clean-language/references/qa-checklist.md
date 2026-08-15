@@ -25,7 +25,7 @@ Review finished prose against these questions.
 ## Natural language
 
 - Does the cadence vary without becoming theatrical?
-- Are fragments, one-line conclusions, and rhetorical contrasts used sparingly?
+- Are fragments, one-line conclusions, conjunction-opened sentences, and rhetorical contrasts used sparingly?
 - Does the text sound like a competent person wrote it for this audience?
 - Could a polished phrase here appear unchanged in thousands of executive messages? Make it specific or remove it.
 - Does the message sound like the writer, not a generic executive voice?

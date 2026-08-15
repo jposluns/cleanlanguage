@@ -54,13 +54,14 @@ Watch for:
 
 - repeated one-sentence paragraphs;
 - stacked fragments;
+- sentences opened with a conjunction (And, But, So, Yet, Because) as a rhythm device;
 - multiple paragraphs ending with a punch line;
 - repetitive three-item rhetorical lists;
 - question-and-answer setups that imitate a speech;
 - identical sentence lengths;
 - concluding slogans that restate the preceding paragraph.
 
-Vary cadence naturally. Use complete sentences unless a fragment serves a clear channel-specific purpose.
+Vary cadence naturally. Use complete sentences unless a fragment serves a clear channel-specific purpose. Open a sentence with a conjunction only when the connection it names is real; rewrite a reflexive And, But, So, or Because opener into the sentence it belongs to.
 
 ## Meta-commentary
 
