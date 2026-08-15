@@ -36,6 +36,20 @@ a:focus-visible, button:focus-visible, summary:focus-visible {
   white-space: nowrap;
   border: 0;
 }
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 10;
+  background: var(--accent);
+  color: #fff;
+  padding: 12px 18px;
+  border-radius: 0 0 12px 0;
+  font-weight: 800;
+  text-decoration: none;
+}
+.skip-link:focus { left: 0; }
+.cta a:focus-visible { outline-color: #fff; }
 .site-header {
   width: min(1160px, calc(100% - 32px));
   margin: 0 auto;
@@ -67,7 +81,7 @@ nav { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; }
 nav a, footer a { text-decoration: none; color: var(--muted); font-weight: 650; }
 nav a:hover, footer a:hover { color: var(--accent); }
 .site-header nav { gap: 10px; }
-.site-header nav a { padding: 7px 15px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: 0.9rem; }
+.site-header nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 7px 15px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: 0.9rem; }
 .site-header nav a:hover { border-color: var(--accent); color: var(--accent); }
 .site-header nav a.is-active, .site-header nav a.is-active:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
 main { overflow: hidden; }
@@ -213,13 +227,14 @@ code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
 .page-hero h1 { font-size: clamp(2.8rem, 6vw, 5.5rem); text-align: left; }
 .page-hero p { color: var(--muted); font-size: 1.2rem; max-width: 760px; }
 .standard-tabs { width: min(1160px, calc(100% - 32px)); margin: 2px auto 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.standard-tabs a { display: inline-flex; align-items: center; padding: 8px 15px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-weight: 650; font-size: 0.92rem; text-decoration: none; }
+.standard-tabs a { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 15px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-weight: 650; font-size: 0.92rem; text-decoration: none; }
 .standard-tabs a:hover { border-color: var(--accent); color: var(--accent); }
 .standard-tabs a.is-active, .standard-tabs a.is-active:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
 .content { width: min(920px, calc(100% - 32px)); margin: 0 auto 120px; }
 .content section { margin: 72px 0; scroll-margin-top: 24px; }
 .content h2 { font-size: clamp(1.8rem, 3.5vw, 3rem); }
 .content h3 { margin-top: 32px; }
+h2.label, h3.label, .content h2.label, .content h3.label { margin: 0 0 14px; font-size: 0.76rem; line-height: 1.6; }
 .content p, .content li { color: var(--muted); }
 .content ul, .content ol { padding-left: 22px; }
 .content pre { background: var(--code); color: #e8eee9; border-radius: 14px; padding: 22px; overflow-x: auto; }
@@ -243,6 +258,7 @@ footer {
   gap: 24px;
 }
 footer p { margin: 0; color: var(--muted); }
+footer p a { text-decoration: underline; }
 footer div { display: flex; flex-wrap: wrap; gap: 18px; }
 @media (max-width: 900px) {
   .platform-actions { grid-template-columns: 1fr 1fr; }
@@ -256,7 +272,7 @@ footer div { display: flex; flex-wrap: wrap; gap: 18px; }
 @media (max-width: 640px) {
   .site-header { align-items: flex-start; }
   nav { justify-content: flex-end; gap: 12px; font-size: 0.9rem; }
-  nav a.nav-collapse { display: none; }
+  nav a.nav-collapse[href^="#"] { display: none; }
   .hero { margin-top: 48px; }
   .platform-actions { grid-template-columns: 1fr; }
   .platform-button, .platform-button.guide, .platform-button.source { grid-column: span 1; }
@@ -266,4 +282,9 @@ footer div { display: flex; flex-wrap: wrap; gap: 18px; }
   .section { margin: 88px auto; }
   .cta { padding: 44px 24px; margin: 88px auto; }
   footer { align-items: flex-start; flex-direction: column; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .platform-button { transition: none; }
+  .platform-button:hover { transform: none; }
 }

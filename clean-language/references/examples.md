@@ -132,4 +132,6 @@ The vendor have confirmed they will provide there response by Friday and we shou
 
 The vendor has confirmed that it will respond by Friday. We should be able to review the response early next week.
 
+Without `that`, `it` reads as the object of `confirmed`; the inserted `that` marks it as the subject of a clause.
+
 Do not restructure a proofreading request into an executive rewrite unless clarity requires it.

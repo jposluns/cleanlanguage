@@ -24,11 +24,12 @@
   <meta name="twitter:image" content="https://cleanlanguage.ai/og-image.png">
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
-    <a class="brand" href="/"><span class="brand-mark">CL</span><span>Clean Language</span></a>
+    <a class="brand" href="/" aria-label="Clean Language home"><span class="brand-mark">CL</span><span>Clean Language</span></a>
     <nav aria-label="Primary navigation">
       <a href="/" class="nav-collapse">Home</a>
-      <a href="/standard/" class="is-active" aria-current="page">The Standard</a>
+      <a href="/standard/" class="is-active" aria-current="true">The Standard</a>
       <a href="/demo/">Try It</a>
       <a href="/install/">Install</a>
       <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a>
@@ -43,7 +44,7 @@
     <a href="/checklist/">Checklist</a>
   </nav>
 
-  <main>
+  <main id="main">
     <section class="page-hero">
       <p class="eyebrow">Before and after</p>
       <h1>The same facts, in fewer words.</h1>
@@ -54,57 +55,58 @@
       <div class="notice"><p><strong>This is the actual guidance the skill uses.</strong> This page presents the skill's example set. Read the exact source, <code>examples.md</code>, on <a href="https://github.com/jposluns/cleanlanguage/blob/main/clean-language/references/examples.md" target="_blank" rel="noopener noreferrer">GitHub</a>.</p></div>
 
       <section>
-        <p class="label">Lead with the conclusion</p>
+        <h2 class="label">Lead with the conclusion</h2>
         <div class="comparison">
           <div><span class="label">Before</span><p>It is worth noting that there are several areas where the current implementation could create challenges: unclear ownership, no rollback procedure, and an untested recovery path.</p></div>
           <div><span class="label">After</span><p>The current implementation has three unresolved points: unclear ownership, no rollback procedure, and an untested recovery path.</p></div>
         </div>
 
-        <p class="label">Remove artificial balance</p>
+        <h2 class="label">Remove artificial balance</h2>
         <div class="comparison">
           <div><span class="label">Before</span><p>The team has made meaningful progress, but the process still lacks an accountable owner, an approval gate, and tested recovery.</p></div>
           <div><span class="label">After</span><p>The process lacks an accountable owner, an approval gate, and tested recovery.</p></div>
         </div>
         <p>Add progress or mitigating evidence only when it changes the assessment.</p>
 
-        <p class="label">Preserve technical agency</p>
-        <p>From the source "After the change review, the infrastructure team configured the firewall to block inbound connections from untrusted networks," either fact can lead, depending on which one matters.</p>
+        <h2 class="label">Preserve technical agency</p>
+        <p>From the source "After the change review, the infrastructure team configured the firewall to block inbound connections from untrusted networks," either fact can lead, depending on which one matters.</h2>
         <div class="comparison">
           <div><span class="label">When the configuration is the point</span><p>The firewall blocks inbound connections from untrusted networks.</p></div>
           <div><span class="label">When accountability is the point</span><p>The infrastructure team configured that firewall rule.</p></div>
         </div>
 
-        <p class="label">Preserve useful adverbs</p>
+        <h2 class="label">Preserve useful adverbs</h2>
         <div class="comparison">
           <div><span class="label">Weak modifier</span><p>The system is extremely unreliable.</p></div>
           <div><span class="label">When data supports it</span><p>The service dropped 14 percent of requests during the test window.</p></div>
         </div>
         <p>Use the specific figure only when the source or a measurement provides it. Do not invent a number to replace a vague modifier; if none is available, keep the statement qualitative and flag the missing measurement. A legitimate modifier stays: "The encryption keys are cryptographically isolated from the application workload."</p>
 
-        <p class="label">Executive request</p>
+        <h2 class="label">Executive request</h2>
         <div class="comparison">
           <div><span class="label">Before</span><p>I wanted to reach out to see if we could align on the warehouse project: the owner, the critical path, the unresolved dependencies, and the recovery plan, before Thursday at 3 p.m.</p></div>
           <div><span class="label">After</span><p>Please confirm the warehouse project's owner, critical path, unresolved dependencies, and recovery plan by 3:00 p.m. Thursday.</p></div>
         </div>
 
-        <p class="label">Replace executive template phrasing</p>
+        <h2 class="label">Replace executive template phrasing</h2>
         <div class="comparison">
           <div><span class="label">Before</span><p>The agenda looks highly relevant to my work, particularly the sessions on regulatory interoperability, cyber resilience, and audit readiness.</p></div>
           <div><span class="label">After</span><p>The agenda covers three areas I work on: regulatory interoperability, cyber resilience, and audit readiness.</p></div>
         </div>
         <p>Keep the same topics and state the writer's connection to them, rather than asserting relevance with an intensifier. An abstract-noun frame becomes a direct statement: "My main areas of interest are AI governance and cybersecurity" becomes "I am interested in AI governance and cybersecurity."</p>
 
-        <p class="label">Incident status</p>
+        <h2 class="label">Incident status</h2>
         <div class="comparison">
           <div><span class="label">Before</span><p>The situation appears to be under control, and the team is continuing to work diligently: the affected server is isolated, file transfers resumed at 06:40, the root cause is not yet confirmed, and the legacy environment still requires rebuild approval.</p></div>
           <div><span class="label">After</span><p>The affected server is isolated. File transfers resumed at 06:40. The root cause is not confirmed, and the legacy environment still requires rebuild approval.</p></div>
         </div>
 
-        <p class="label">Proofreading with minimal intervention</p>
+        <h2 class="label">Proofreading with minimal intervention</h2>
         <div class="comparison">
           <div><span class="label">Before</span><p>The vendor have confirmed they will provide there response by Friday and we should be able to review it early next week.</p></div>
           <div><span class="label">After</span><p>The vendor has confirmed that it will respond by Friday. We should be able to review the response early next week.</p></div>
         </div>
+        <p>Without "that", "it" reads as the object of "confirmed"; the inserted "that" marks it as the subject of a clause.</p>
         <p>Do not restructure a proofreading request into an executive rewrite unless clarity requires it.</p>
       </section>
 
@@ -121,7 +123,7 @@
 
   <footer>
     <p>Clean Language is freely available under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>, created by <a href="https://linkedin.com/in/jposluns" target="_blank" rel="noopener noreferrer">Jeff Posluns</a>.</p>
-    <div><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/install/">Install</a></div>
+    <div><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/demo/">Try It</a><a href="/install/">Install</a><a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a></div>
   </footer>
 </body>
 </html>

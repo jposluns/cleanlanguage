@@ -24,8 +24,9 @@
   <meta name="twitter:image" content="https://cleanlanguage.ai/og-image.png">
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
-    <a class="brand" href="/"><span class="brand-mark">CL</span><span>Clean Language</span></a>
+    <a class="brand" href="/" aria-label="Clean Language home"><span class="brand-mark">CL</span><span>Clean Language</span></a>
     <nav aria-label="Primary navigation">
       <a href="/" class="nav-collapse">Home</a>
       <a href="/standard/">The Standard</a>
@@ -35,7 +36,7 @@
     </nav>
   </header>
 
-  <main>
+  <main id="main">
     <section class="page-hero">
       <p class="eyebrow">Try It</p>
       <h1>The same facts, in fewer words.</h1>
@@ -47,13 +48,13 @@
         <h2>Watch it work</h2>
         <p>Each pair keeps every fact identical. Only the style changes.</p>
 
-        <p class="label">Generic AI prose</p>
+        <h3 class="label">Generic AI prose</h3>
         <div class="comparison">
           <div><span class="label">Before</span><p>It is important to note that the implementation requires additional testing before it can be considered fully ready for production. This is not merely a technical exercise, but a critical step that will help ensure a robust and seamless deployment.</p></div>
           <div><span class="label">After</span><p>The implementation requires additional testing before production deployment.</p></div>
         </div>
 
-        <p class="label">Repeated conclusion</p>
+        <h3 class="label">Repeated conclusion</h3>
         <div class="comparison">
           <div><span class="label">Before</span><p>The migration is scheduled for Friday. The team will migrate the service on Friday. In summary, Friday is the planned migration date.</p></div>
           <div><span class="label">After</span><p>The service migration is scheduled for Friday.</p></div>
@@ -62,7 +63,7 @@
 
       <section>
         <h2>Try it on your own writing</h2>
-        <p>Copy the prompt, paste it into ChatGPT, Claude, Gemini, Copilot, or any other assistant that can browse the web, then add your own text where the prompt says to. The prompt has the assistant read the standard straight from this project, so it applies the real rules rather than a summary.</p>
+        <p>Copy the prompt and paste it into ChatGPT, Claude, Gemini, Copilot, or any other assistant that can browse the web. Add your own text where the prompt says to. The prompt has the assistant read the standard straight from this project, so it applies the real rules rather than a summary.</p>
 
         <div class="notice">
           <p><strong>Read any prompt before you paste it.</strong> This is good practice with a prompt from any source, not only this one. The prompt below asks the assistant to read the Clean Language standard from this project's public GitHub repository and then rewrite the text you provide. It points only at this project's own public files and asks for nothing from your device or accounts.</p>
@@ -76,9 +77,10 @@ Then apply the standard to the text below. Preserve every fact, figure, quotatio
 
 [paste your text here]</code></pre>
         <div class="step-actions">
-          <button type="button" class="button secondary" data-copy-target="demo-prompt">Copy prompt</button>
+          <button type="button" class="button secondary" data-copy-target="demo-prompt" hidden>Copy prompt</button>
           <span class="visually-hidden" role="status" aria-live="polite" id="copy-status"></span>
         </div>
+        <p>If your AI says it cannot browse the web: copy everything from the <a href="/instructions/">instructions page</a>, paste it into the chat, and say: <code>Follow these writing rules, then rewrite the text below.</code></p>
 
         <p>Once you install the skill, you can tell your assistant to always use Clean Language in your personal, project, or chat instructions, or ask for it on demand. Installing is also the way to use Clean Language when your assistant cannot reach the web. See the <a href="/install/">install guide</a>.</p>
       </section>
@@ -87,13 +89,13 @@ Then apply the standard to the text below. Preserve every fact, figure, quotatio
     <section class="cta">
       <h2>Make it your default.</h2>
       <p>Install the skill once, then apply it to every draft without pasting a prompt.</p>
-      <a class="button primary" href="/install/">Detailed installation instructions</a>
+      <a class="button primary" href="/install/">Pick your AI and set it up</a>
     </section>
   </main>
 
   <footer>
     <p>Clean Language is freely available under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>, created by <a href="https://linkedin.com/in/jposluns" target="_blank" rel="noopener noreferrer">Jeff Posluns</a>.</p>
-    <div><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/install/">Install</a></div>
+    <div><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/demo/">Try It</a><a href="/install/">Install</a><a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a></div>
   </footer>
   <script src="/js/copy.js" defer></script>
 </body>

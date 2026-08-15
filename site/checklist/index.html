@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>The Clean Language Quality Checklist</title>
+  <title>Clean Language, AI Writing Quality Assurance</title>
   <meta name="description" content="The quality checklist Clean Language uses to review finished prose: accuracy, directness, ownership, natural language, density, tone, and mechanics.">
   <link rel="canonical" href="https://cleanlanguage.ai/checklist/">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -24,11 +24,12 @@
   <meta name="twitter:image" content="https://cleanlanguage.ai/og-image.png">
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <header class="site-header">
-    <a class="brand" href="/"><span class="brand-mark">CL</span><span>Clean Language</span></a>
+    <a class="brand" href="/" aria-label="Clean Language home"><span class="brand-mark">CL</span><span>Clean Language</span></a>
     <nav aria-label="Primary navigation">
       <a href="/" class="nav-collapse">Home</a>
-      <a href="/standard/" class="is-active" aria-current="page">The Standard</a>
+      <a href="/standard/" class="is-active" aria-current="true">The Standard</a>
       <a href="/demo/">Try It</a>
       <a href="/install/">Install</a>
       <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a>
@@ -43,7 +44,7 @@
     <a href="/checklist/" class="is-active" aria-current="page">Checklist</a>
   </nav>
 
-  <main>
+  <main id="main">
     <section class="page-hero">
       <p class="eyebrow">Checklist</p>
       <h1>How Clean Language checks the result.</h1>
@@ -56,8 +57,8 @@
       <section>
         <h2>Accuracy</h2>
         <ul>
-          <li>Did the rewrite preserve every material fact, name, date, figure, qualification, and commitment?</li>
-          <li>Did the revision introduce any owner, figure, date, risk, cause, or action that the source does not contain? If so, remove it or flag it as missing.</li>
+          <li>Did the output preserve every material fact, name, date, figure, qualification, and commitment?</li>
+          <li>Did the output introduce any owner, figure, date, risk, cause, or action that the source does not contain? If so, remove it or flag it as missing.</li>
           <li>Did any stylistic change alter technical, legal, contractual, policy, or standards meaning?</li>
           <li>Are assumptions and uncertainty labelled accurately?</li>
         </ul>
@@ -77,7 +78,7 @@
         <h2>Ownership and consequence</h2>
         <ul>
           <li>Does the text identify who owns the action or decision when relevant?</li>
-          <li>Does it name the actual impact, risk, cost, dependency, or failure mode that the source supports, and flag any the source leaves unstated rather than inventing one?</li>
+          <li>Does it name the actual impact, risk, cost, dependency, or failure mode that the source supports, and flag any that the source leaves unstated rather than inventing one?</li>
           <li>Does it avoid vague statements of importance?</li>
         </ul>
       </section>
@@ -86,7 +87,7 @@
         <h2>Natural language</h2>
         <ul>
           <li>Does the cadence vary without becoming theatrical?</li>
-          <li>Are fragments, one-line conclusions, and rhetorical contrasts used sparingly?</li>
+          <li>Are fragments, one-line conclusions, conjunction-opened sentences, and rhetorical contrasts used sparingly?</li>
           <li>Does the text sound like a competent person wrote it for this audience?</li>
           <li>Could a polished phrase here appear unchanged in thousands of executive messages? Make it specific or remove it.</li>
           <li>Does the message sound like the writer, not a generic executive voice?</li>
@@ -96,7 +97,7 @@
       <section>
         <h2>Density</h2>
         <ul>
-          <li>Can any word, sentence, paragraph, heading, or repetition be removed?</li>
+          <li>Can any word, sentence, paragraph, heading, or repetition be removed without changing meaning or creating a misreading?</li>
           <li>Are bullets or tables being used because they improve comprehension rather than because they are conventional?</li>
           <li>Does each paragraph do one identifiable job?</li>
           <li>Does each topic list connect to a decision, question, or request, rather than only cataloguing subjects?</li>
@@ -107,7 +108,7 @@
         <h2>Tone</h2>
         <ul>
           <li>Is the language calm, exact, and appropriately blunt?</li>
-          <li>Did the draft avoid unrequested praise, reassurance, apology, or enthusiasm?</li>
+          <li>Did the output avoid unrequested praise, reassurance, apology, or enthusiasm?</li>
           <li>Did it avoid negative-to-positive framing that weakens the finding?</li>
         </ul>
       </section>
@@ -116,7 +117,8 @@
         <h2>Mechanics</h2>
         <ul>
           <li>Use Oxford English and <code>-ize</code> spellings.</li>
-          <li>Avoid em dashes unless the user or source requires them.</li>
+          <li>After any verb that can take either a direct object or a clause, such as "confirm", "verify", "ensure", "note", or "report", check whether the following words could be read as a direct object when a clause is intended; if so, mark the clause with "that", adding it where it is missing. The density review does not remove this "that".</li>
+          <li>Avoid em and en dashes unless the user or source requires them; write numeric and date ranges with a hyphen or "to".</li>
           <li>Use punctuation and capitalization consistently.</li>
           <li>Preserve channel-specific formatting requirements.</li>
           <li>Do not end with an optional offer or generic engagement prompt.</li>
@@ -128,7 +130,7 @@
 
   <footer>
     <p>Clean Language is freely available under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>, created by <a href="https://linkedin.com/in/jposluns" target="_blank" rel="noopener noreferrer">Jeff Posluns</a>.</p>
-    <div><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/install/">Install</a></div>
+    <div><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/demo/">Try It</a><a href="/install/">Install</a><a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a></div>
   </footer>
 </body>
 </html>

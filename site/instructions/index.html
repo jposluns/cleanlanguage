@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en-CA">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clean Language Instructions</title>
+  <meta name="description" content="The complete Clean Language instructions as plain text, ready to copy into Claude, ChatGPT, Gemini, Copilot, or any other AI.">
+  <link rel="canonical" href="https://cleanlanguage.ai/instructions/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="theme-color" content="#145c3b">
+  <link rel="stylesheet" href="/styles.css?v=20260728-6">
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Clean Language Instructions">
+  <meta property="og:description" content="The complete Clean Language instructions as plain text, ready to copy into any AI.">
+  <meta property="og:url" content="https://cleanlanguage.ai/instructions/">
+  <meta property="og:image" content="https://cleanlanguage.ai/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Clean Language, a free cross-platform editorial standard for AI writing.">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Clean Language Instructions">
+  <meta name="twitter:description" content="The complete Clean Language instructions as plain text, ready to copy into any AI.">
+  <meta name="twitter:image" content="https://cleanlanguage.ai/og-image.png">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Clean Language home"><span class="brand-mark">CL</span><span>Clean Language</span></a>
+    <nav aria-label="Primary navigation">
+      <a href="/" class="nav-collapse">Home</a>
+      <a href="/standard/">The Standard</a>
+      <a href="/demo/">Try It</a>
+      <a href="/install/" class="is-active" aria-current="true">Install</a>
+      <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <p class="eyebrow">Copy and paste</p>
+      <h1>The full instructions, ready to copy.</h1>
+      <p>This is the complete Clean Language rule set as plain text, the same content the download buttons save as a file. Copy everything, paste it into a chat with your AI, and say: <code>Follow these writing rules for this conversation.</code></p>
+    </section>
+
+    <article class="content">
+      <section>
+        <div class="step-actions">
+          <button type="button" class="button primary" data-copy-target="instructions-text" hidden>Copy everything</button>
+          <a class="button secondary" href="/downloads/clean-language-instructions.txt" download>Download the file</a>
+          <a class="button secondary" href="https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/clean-language-instructions.txt" target="_blank" rel="noopener noreferrer">View original on GitHub</a>
+          <span class="visually-hidden" role="status" aria-live="polite" id="copy-status"></span>
+        </div>
+        <noscript><div class="notice"><p>Your browser has JavaScript switched off, so the text cannot be shown or copied here. Use the download link above to save the file instead.</p></div></noscript>
+        <pre id="instructions-text" style="max-height: 60vh; overflow: auto; white-space: pre-wrap;">Loading the instructions&hellip;</pre>
+        <p><a href="/install/">Back to the install guide</a></p>
+      </section>
+    </article>
+  </main>
+
+  <footer>
+    <p>Clean Language is freely available under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>, created by <a href="https://linkedin.com/in/jposluns" target="_blank" rel="noopener noreferrer">Jeff Posluns</a>.</p>
+    <div><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/demo/">Try It</a><a href="/install/">Install</a><a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a></div>
+  </footer>
+
+  <script>
+    (function () {
+      var target = document.getElementById('instructions-text');
+      fetch('/downloads/clean-language-instructions.txt')
+        .then(function (response) {
+          if (!response.ok) { throw new Error('HTTP ' + response.status); }
+          return response.text();
+        })
+        .then(function (text) { target.textContent = text; })
+        .catch(function () {
+          target.textContent = 'The text could not be loaded. Use the download link above to save the file instead.';
+        });
+    })();
+  </script>
+  <script src="/js/copy.js"></script>
+</body>
+</html>

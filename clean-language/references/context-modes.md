@@ -43,14 +43,14 @@ Do not speculate without labelling the statement as an inference or hypothesis. 
 - Open with the purpose or ask.
 - Keep paragraphs short.
 - Make ownership and deadlines explicit.
-- Remove greetings and closings when the channel or relationship does not require them.
+- Omit greetings and closings when the channel or relationship does not require them.
 - Do not add an invitation to continue the discussion unless it serves a purpose.
 
 ## Teams, Slack, SMS, and LinkedIn
 
 - Use plain text unless the platform supports and benefits from richer formatting.
 - Keep the message immediately pasteable.
-- Avoid markdown syntax in LinkedIn copy.
+- Avoid Markdown syntax in LinkedIn copy.
 - Use compact paragraphs and minimal line breaks.
 - Do not add a detached signature block when the user requests a single continuous message.
 
