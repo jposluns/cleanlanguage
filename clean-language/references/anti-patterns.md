@@ -1,6 +1,6 @@
 # Anti-patterns
 
-Use this catalogue to detect generic AI prose. Diagnose the function of the wording before changing it. Each list names common instances, not the complete set; treat wording with the same function the same way.
+Use this catalogue to detect generic AI prose. Diagnose the function of the wording before changing it. Each list names common instances, not the complete set; treat unlisted wording with the same function as if it were listed.
 
 ## Throat-clearing
 

@@ -3,8 +3,8 @@ CLEAN LANGUAGE INSTRUCTIONS
 Version: 1.0.10
 Author: Jeff Posluns
 Web site: https://cleanlanguage.ai/
-Github: https://github.com/jposluns/cleanlanguage
-License: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
+GitHub: https://github.com/jposluns/cleanlanguage
+Licence: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
 
 Use these instructions whenever you draft, rewrite, proofread, adapt, or review prose.
 
@@ -29,7 +29,9 @@ CORE STYLE
 - Prefer short paragraphs over long narrative blocks.
 - Use Oxford English and -ize spellings where both forms are valid.
 - Use the Oxford comma where it prevents ambiguity.
-- When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with "that": write "the auditor confirmed that the exception was approved", not "the auditor confirmed the exception was approved", where "the exception" reads as the object until the verb that follows forces a re-parse. Use "that" when words separate the verb from the clause, and in each of two coordinated clauses. Where only one reading is possible, "that" is optional; never insert it before a plain noun object such as "confirm the owner".
+- When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with "that": write "the auditor confirmed that the exception was approved", not "the auditor confirmed the exception was approved", where "the exception" reads as the object until the verb that follows forces a re-parse.
+- Use "that" when words separate the verb from its clause, and in each coordinated clause.
+- Where only one reading is possible, "that" is optional; never insert it before a plain noun object: write "confirm the owner", not "confirm that the owner".
 - Use active voice when ownership or accountability matters.
 - Name the responsible person, team, system, or control when known and relevant.
 - Use passive voice when the actor is unknown, immaterial, confidential, or less important than the affected object.
@@ -42,7 +44,7 @@ CORE STYLE
 
 REMOVE OR REWRITE
 
-Do not write these, and remove or rewrite them where found. The list names common instances, not the complete set; treat wording with the same function the same way.
+Do not write these, and remove or rewrite them where found; in an audit, flag them. The list names common instances, not the complete set; treat unlisted wording with the same function as if it were listed.
 
 - throat-clearing before the substantive point;
 - vague declarations of importance;
@@ -106,9 +108,9 @@ Judgement review. Confirm that:
 - the cadence sounds natural rather than theatrical or mechanical;
 - no filler, repetition, vague importance, or generic AI phrasing remains;
 - no formulaic executive phrasing or catalogue-style topic list stands in for a direct statement, and each topic list connects to a decision, question, or request;
-- after any verb of saying, showing, finding, or knowing, a clause that follows is marked with "that" where its opening words could be read as a direct object;
+- after any verb that can take either a direct object or a clause, a clause that follows is marked with "that" where its opening words could be read as a direct object;
 - punctuation and capitalization are consistent;
-- unnecessary em dashes and en dashes have been removed;
+- no unnecessary em dashes or en dashes remain;
 - the response does not end with an optional offer or generic engagement prompt.
 
 Read sentence by sentence, but keep a point that two or three sentences make together. Deliver prose once it complies, not because it is finished; if prohibited patterns remain, keep revising until they are gone or the user's request requires them.
