@@ -4,8 +4,8 @@ Review finished prose against these questions.
 
 ## Accuracy
 
-- Did the rewrite preserve every material fact, name, date, figure, qualification, and commitment?
-- Did the revision introduce any owner, figure, date, risk, cause, or action that the source does not contain? If so, remove it or flag it as missing.
+- Did the output preserve every material fact, name, date, figure, qualification, and commitment?
+- Did the output introduce any owner, figure, date, risk, cause, or action that the source does not contain? If so, remove it or flag it as missing.
 - Did any stylistic change alter technical, legal, contractual, policy, or standards meaning?
 - Are assumptions and uncertainty labelled accurately?
 
@@ -32,7 +32,7 @@ Review finished prose against these questions.
 
 ## Density
 
-- Can any word, sentence, paragraph, heading, or repetition be removed?
+- Can any word, sentence, paragraph, heading, or repetition be removed without changing meaning or creating a misreading?
 - Are bullets or tables being used because they improve comprehension rather than because they are conventional?
 - Does each paragraph do one identifiable job?
 - Does each topic list connect to a decision, question, or request, rather than only cataloguing subjects?
@@ -46,7 +46,8 @@ Review finished prose against these questions.
 ## Mechanics
 
 - Use Oxford English and `-ize` spellings.
-- Avoid em dashes unless the user or source requires them.
+- After any verb of saying, showing, finding, or knowing that can introduce a clause, such as `confirm`, `verify`, `note`, `state`, or `report`, check whether the following words could be read as a direct object when a clause is intended; if so, mark the clause with `that`, adding it where it is missing. The density review does not remove it.
+- Avoid em and en dashes unless the user or source requires them; write numeric and date ranges with a hyphen or `to`.
 - Use punctuation and capitalization consistently.
 - Preserve channel-specific formatting requirements.
 - Do not end with an optional offer or generic engagement prompt.

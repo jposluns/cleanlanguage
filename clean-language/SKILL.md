@@ -5,7 +5,7 @@ description: Draft, rewrite, edit, review, or quality-assure prose using the Cle
 
 # Clean Language
 
-Version: 1.0.9  
+Version: 1.0.10  
 Author: Jeff Posluns  
 Web site: https://cleanlanguage.ai/  
 Github: https://github.com/jposluns/cleanlanguage  
@@ -44,14 +44,14 @@ Infer the mode from the request. When the user asks for a finished message, retu
 - Prefer short executive paragraphs over long narrative blocks.
 - Use Oxford English and `-ize` spellings where both forms are valid.
 - Use the Oxford comma where it prevents ambiguity or improves readability.
-- Prefer `ensure that` when expressing an obligation to make an outcome happen.
+- When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with `that`: write `the auditor confirmed that the exception was approved`, not `the auditor confirmed the exception was approved`, where `the exception` reads as the object until the verb that follows forces a re-parse. Use `that` when words separate the verb from the clause, and in each of two coordinated clauses. Where only one reading is possible, `that` is optional; never insert it before a plain noun object such as `confirm the owner`.
 - Use active voice when ownership or accountability matters.
 - Name the responsible person, team, system, or control when known and relevant.
 - Use passive voice when the actor is unknown, immaterial, confidential, or less important than the affected object.
 - Use technical and governance terminology when it is the clearest language for the audience.
 - Distinguish verified facts, reasonable inferences, estimates, and speculation.
 - State uncertainty directly. Do not manufacture confidence.
-- Preserve the user's natural bluntness when it remains professionally appropriate.
+- Match the user's natural bluntness when it remains professionally appropriate.
 - When the user supplies a draft or a correction, keep their vocabulary and directness rather than a generic executive voice; when they reject a phrase as generated, rewrite the sentence rather than swap in a synonym with the same cadence.
 - Do not add praise, reassurance, validation, or conversational filler unless the situation calls for it.
 - Do not end with optional offers, generic invitations, or engagement prompts.
@@ -60,7 +60,7 @@ Infer the mode from the request. When the user asks for a finished message, retu
 
 Consult [references/anti-patterns.md](references/anti-patterns.md) when drafting, rewriting, or auditing prose. Treat the patterns as diagnostic signals, not unconditional bans.
 
-Remove or rewrite:
+Do not write these, and remove or rewrite them where found:
 
 - throat-clearing before the substantive point;
 - vague declarations of importance;
@@ -125,7 +125,7 @@ Review at two levels.
 
 Judge value in context, not in isolation. Before removing a low-value sentence, check whether it signals a relationship between other sentences: cause, contrast, sequence, condition, or reference. If it does, preserve that relationship's meaning by rewriting or merging the sentences it actually connects, then remove the weak sentence. Keep the intent, not the original word, and confirm which sentences the relationship joins rather than assuming the nearest one.
 
-**Judgment review.** Verify the criteria in [references/qa-checklist.md](references/qa-checklist.md), reading sentence by sentence: ask whether a sentence communicates something new, whether it only announces what follows, whether it could appear unchanged in unrelated responses, and whether it can be cut without changing meaning. A point is often carried by two or three sentences together; keep those, and rewrite or remove the rest. This level is judgement, not a mechanical gate.
+**Judgement review.** Verify the criteria in [references/qa-checklist.md](references/qa-checklist.md), reading sentence by sentence: ask whether a sentence communicates something new, whether it only announces what follows, whether it could appear unchanged in unrelated responses, and whether it can be cut without changing meaning. A point is often carried by two or three sentences together; keep those, and rewrite or remove the rest. This level is judgement, not a mechanical gate.
 
 Deliver prose once it complies, not because it is finished. If prohibited patterns remain, keep revising until they are gone or the user's request requires them.
 

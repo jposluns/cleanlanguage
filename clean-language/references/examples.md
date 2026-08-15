@@ -132,4 +132,6 @@ The vendor have confirmed they will provide there response by Friday and we shou
 
 The vendor has confirmed that it will respond by Friday. We should be able to review the response early next week.
 
+The inserted `that` marks `it will respond` as a clause rather than an object.
+
 Do not restructure a proofreading request into an executive rewrite unless clarity requires it.
