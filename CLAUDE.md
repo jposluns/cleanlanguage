@@ -11,7 +11,7 @@ unresolved review threads requesting changes.
 ## Writing conventions
 
 All repository and website prose follows the Clean Language standard defined in
-[`clean-language/SKILL.md`](clean-language/SKILL.md) and its references. That
+[`cleanlanguage/SKILL.md`](cleanlanguage/SKILL.md) and its references. That
 skill is the authority. It requires Oxford English with -ize endings and no em
 dashes or en dashes, and it governs tone, structure, and semantic preservation.
 

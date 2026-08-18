@@ -1,6 +1,6 @@
 CLEAN LANGUAGE INSTRUCTIONS
 
-Version: 1.0.10
+Version: 1.0.11
 Author: Jeff Posluns
 Web site: https://cleanlanguage.ai/
 GitHub: https://github.com/jposluns/cleanlanguage

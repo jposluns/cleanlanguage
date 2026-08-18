@@ -1,2 +1,4 @@
-/claude/download https://github.com/jposluns/cleanlanguage/releases/latest/download/clean-language.zip 302
-/download https://github.com/jposluns/cleanlanguage/releases/latest/download/clean-language.zip 302
+/claude/download https://github.com/jposluns/cleanlanguage/releases/download/v1.0.10/clean-language-1.0.10.zip 302
+/download https://github.com/jposluns/cleanlanguage/releases/download/v1.0.10/clean-language-1.0.10.zip 302
+/download/checksum https://github.com/jposluns/cleanlanguage/releases/download/v1.0.10/clean-language-1.0.10.zip.sha256 302
+/downloads/clean-language-instructions.txt /downloads/cleanlanguage-instructions.txt 301

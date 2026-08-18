@@ -33,14 +33,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' clean-language/SKILL.md | head -1)"
+          version="$(sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' cleanlanguage/SKILL.md | head -1)"
           if [ -z "${version}" ]; then
-            echo "No 'Version:' line found in the clean-language/SKILL.md body." >&2
+            echo "No 'Version:' line found in the cleanlanguage/SKILL.md body." >&2
             exit 1
           fi
           if [ "v${version}" != "${RELEASE_TAG}" ]; then
             echo "SKILL.md version (${version}) does not match the release tag (${RELEASE_TAG})." >&2
-            echo "Set the Version line in clean-language/SKILL.md to match the tag, or cut the matching tag." >&2
+            echo "Set the Version line in cleanlanguage/SKILL.md to match the tag, or cut the matching tag." >&2
             exit 1
           fi
           echo "VERSION=${version}" >> "${GITHUB_ENV}"
@@ -50,24 +50,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -f clean-language/SKILL.md
-          test -d clean-language/references
-          grep -Eq '^name:[[:space:]]*clean-language[[:space:]]*$' clean-language/SKILL.md
-          if find clean-language -type f \( -name '*.py' -o -name '*.js' -o -name '*.sh' -o -name '*.exe' -o -name '*.dll' \) | grep -q .; then
+          test -f cleanlanguage/SKILL.md
+          test -d cleanlanguage/references
+          grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' cleanlanguage/SKILL.md
+          if find cleanlanguage -type f \( -name '*.py' -o -name '*.js' -o -name '*.sh' -o -name '*.exe' -o -name '*.dll' \) | grep -q .; then
             echo "Unexpected executable or script content found in the skill package."
             exit 1
           fi
           # Any icon the ChatGPT interface config references must exist in the package,
           # so a shipped skill never points at a missing asset.
-          if [ -f clean-language/agents/openai.yaml ]; then
+          if [ -f cleanlanguage/agents/openai.yaml ]; then
             missing_icon=0
             while IFS= read -r icon; do
               [ -n "${icon}" ] || continue
-              if [ ! -f "clean-language/${icon#./}" ]; then
+              if [ ! -f "cleanlanguage/${icon#./}" ]; then
                 echo "Icon referenced in agents/openai.yaml is missing: ${icon}"
                 missing_icon=1
               fi
-            done < <(sed -n 's/.*icon_[a-z]*:[[:space:]]*"\(\.\/[^"]*\)".*/\1/p' clean-language/agents/openai.yaml)
+            done < <(sed -n 's/.*icon_[a-z]*:[[:space:]]*"\(\.\/[^"]*\)".*/\1/p' cleanlanguage/agents/openai.yaml)
             test "${missing_icon}" -eq 0
           fi
 
@@ -77,30 +77,30 @@ jobs:
           set -euo pipefail
           rm -rf dist
           mkdir -p dist
-          zip -r -X dist/clean-language.zip \
-            clean-language/SKILL.md \
-            clean-language/references \
-            clean-language/agents \
-            clean-language/assets \
+          zip -r -X dist/cleanlanguage.zip \
+            cleanlanguage/SKILL.md \
+            cleanlanguage/references \
+            cleanlanguage/agents \
+            cleanlanguage/assets \
             -x '*/.DS_Store' '*/__MACOSX/*' '*/.git*'
           # A byte-identical, version-named copy for the releases archive. The
-          # stable clean-language.zip stays the always-latest download; every
-          # release also keeps its own clean-language-<version>.zip.
-          cp dist/clean-language.zip "dist/clean-language-${VERSION}.zip"
+          # stable cleanlanguage.zip stays the always-latest download; every
+          # release also keeps its own cleanlanguage-<version>.zip.
+          cp dist/cleanlanguage.zip "dist/cleanlanguage-${VERSION}.zip"
           cd dist
-          sha256sum clean-language.zip > clean-language.zip.sha256
-          sha256sum "clean-language-${VERSION}.zip" > "clean-language-${VERSION}.zip.sha256"
+          sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256
+          sha256sum "cleanlanguage-${VERSION}.zip" > "cleanlanguage-${VERSION}.zip.sha256"
 
       - name: Verify archive layout
         shell: bash
         run: |
           set -euo pipefail
-          entries=$(unzip -Z1 dist/clean-language.zip)
+          entries=$(unzip -Z1 dist/cleanlanguage.zip)
           echo "${entries}"
           top=$(printf '%s\n' "${entries}" | cut -d/ -f1 | sort -u)
-          test "${top}" = "clean-language"
-          printf '%s\n' "${entries}" | grep -qx 'clean-language/SKILL.md'
-          printf '%s\n' "${entries}" | grep -q '^clean-language/references/'
+          test "${top}" = "cleanlanguage"
+          printf '%s\n' "${entries}" | grep -qx 'cleanlanguage/SKILL.md'
+          printf '%s\n' "${entries}" | grep -q '^cleanlanguage/references/'
           if printf '%s\n' "${entries}" | grep -qiE 'DS_Store|__MACOSX|/\.git'; then
             echo "Unexpected artefact found in archive."
             exit 1
@@ -136,17 +136,42 @@ jobs:
           fi
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release upload "${RELEASE_TAG}" \
-              dist/clean-language.zip \
-              dist/clean-language.zip.sha256 \
-              "dist/clean-language-${VERSION}.zip" \
-              "dist/clean-language-${VERSION}.zip.sha256" \
+              dist/cleanlanguage.zip \
+              dist/cleanlanguage.zip.sha256 \
+              "dist/cleanlanguage-${VERSION}.zip" \
+              "dist/cleanlanguage-${VERSION}.zip.sha256" \
               --clobber
           else
             gh release create "${RELEASE_TAG}" \
-              dist/clean-language.zip \
-              dist/clean-language.zip.sha256 \
-              "dist/clean-language-${VERSION}.zip" \
-              "dist/clean-language-${VERSION}.zip.sha256" \
+              dist/cleanlanguage.zip \
+              dist/cleanlanguage.zip.sha256 \
+              "dist/cleanlanguage-${VERSION}.zip" \
+              "dist/cleanlanguage-${VERSION}.zip.sha256" \
               --title "Clean Language ${RELEASE_TAG}" \
               --generate-notes
           fi
+
+      - name: Point the site downloads at this release
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The site's download buttons serve the version-named zip so repeat
+          # downloads stay distinguishable in the user's Downloads folder. Each
+          # release rewrites the redirect targets and pushes the one-file commit
+          # to main, which redeploys the site.
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
+          {
+            printf '%s\n' "/claude/download ${base}/cleanlanguage-${VERSION}.zip 302"
+            printf '%s\n' "/download ${base}/cleanlanguage-${VERSION}.zip 302"
+            printf '%s\n' "/download/checksum ${base}/cleanlanguage-${VERSION}.zip.sha256 302"
+            printf '%s\n' "/downloads/clean-language-instructions.txt /downloads/cleanlanguage-instructions.txt 301"
+          } > site/_redirects
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/_redirects
+          if git diff --cached --quiet; then
+            echo "Redirects already point at ${RELEASE_TAG}."
+            exit 0
+          fi
+          git commit -m "Point the site downloads at ${RELEASE_TAG}"
+          git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)

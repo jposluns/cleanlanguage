@@ -40,7 +40,7 @@ MARKDOWN_DOCS = [
     "CLAUDE.md",
     "site/README.md",
     ".claude/CLAUDE.md",
-    "clean-language/SKILL.md",
+    "cleanlanguage/SKILL.md",
 ]
 
 

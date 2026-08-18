@@ -7,8 +7,8 @@ pull request descriptions.
 
 The authority for the standard is the skill in this repository:
 
-- [`clean-language/SKILL.md`](../../clean-language/SKILL.md)
-- [`clean-language/references/`](../../clean-language/references/)
+- [`cleanlanguage/SKILL.md`](../../cleanlanguage/SKILL.md)
+- [`cleanlanguage/references/`](../../cleanlanguage/references/)
 
 Apply that skill directly. Do not restate its rules here, so that this
 instruction follows the skill whenever the skill changes. When the skill and any
