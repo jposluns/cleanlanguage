@@ -22,3 +22,25 @@ conclusion that the source text did not contain.
 
 The repository writing conventions remain in force as part of this standard:
 Oxford English with -ize endings, and no em dashes or en dashes.
+
+## Standing exceptions
+
+These are settled decisions about this repository and this website. Each exists
+to stop a later editor correcting something deliberate. Treat a change to any of
+them as a change to the standard, not as a defect fix.
+
+**Dash specimens on the landing page are mention, not use.** `site/index.html`
+quotes the em dash and the en dash as the characters the standard removes. The
+house ban forbids writing with those marks; it does not forbid naming them. Do
+not strip the specimens.
+
+**The name collision with the coaching technique is accepted.** "Clean Language"
+is also the name of an established questioning technique. Page titles and meta
+descriptions carry no "AI writing" disambiguation, with one exception already in
+place: the checklist page title, "Clean Language, AI Writing Quality Assurance".
+Do not add disambiguation elsewhere.
+
+**Condensed site renderings of the skill are intentional.** The website presents
+the standard more briefly than `cleanlanguage/SKILL.md` does. Brevity against the
+skill is not a defect; only semantic drift is. Compare meaning, not length.
+
