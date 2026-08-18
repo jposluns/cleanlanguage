@@ -47,8 +47,8 @@
       <section>
         <div class="step-actions">
           <button type="button" class="button primary" data-copy-target="instructions-text" hidden>Copy everything</button>
-          <a class="button secondary" href="/downloads/clean-language-instructions.txt" download>Download the file</a>
-          <a class="button secondary" href="https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/clean-language-instructions.txt" target="_blank" rel="noopener noreferrer">View original on GitHub</a>
+          <a class="button secondary" href="/downloads/cleanlanguage-instructions.txt" download>Download the file</a>
+          <a class="button secondary" href="https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/cleanlanguage-instructions.txt" target="_blank" rel="noopener noreferrer">View original on GitHub</a>
           <span class="visually-hidden" role="status" aria-live="polite" id="copy-status"></span>
         </div>
         <noscript><div class="notice"><p>Your browser has JavaScript switched off, so the text cannot be shown or copied here. Use the download link above to save the file instead.</p></div></noscript>
@@ -66,7 +66,7 @@
   <script>
     (function () {
       var target = document.getElementById('instructions-text');
-      fetch('/downloads/clean-language-instructions.txt')
+      fetch('/downloads/cleanlanguage-instructions.txt')
         .then(function (response) {
           if (!response.ok) { throw new Error('HTTP ' + response.status); }
           return response.text();

@@ -1,15 +1,15 @@
 name: Portable text sync
 
 # Flags when the packaged skill changes without the portable instructions file
-# at site/downloads/clean-language-instructions.txt being reconciled. See
+# at site/downloads/cleanlanguage-instructions.txt being reconciled. See
 # tools/check-portable-text-sync.sh for what the check does and does not prove.
 
 on:
   pull_request:
     paths:
-      - "clean-language/SKILL.md"
-      - "clean-language/references/**"
-      - "site/downloads/clean-language-instructions.txt"
+      - "cleanlanguage/SKILL.md"
+      - "cleanlanguage/references/**"
+      - "site/downloads/cleanlanguage-instructions.txt"
       - "tools/portable-text-skill-source.sha256"
       - "tools/check-portable-text-sync.sh"
       - ".github/workflows/portable-text-sync.yml"
@@ -17,9 +17,9 @@ on:
     branches:
       - main
     paths:
-      - "clean-language/SKILL.md"
-      - "clean-language/references/**"
-      - "site/downloads/clean-language-instructions.txt"
+      - "cleanlanguage/SKILL.md"
+      - "cleanlanguage/references/**"
+      - "site/downloads/cleanlanguage-instructions.txt"
       - "tools/portable-text-skill-source.sha256"
       - "tools/check-portable-text-sync.sh"
       - ".github/workflows/portable-text-sync.yml"

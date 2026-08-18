@@ -3,7 +3,7 @@
 # Flags when the packaged skill changes without the portable instructions file
 # being reconciled.
 #
-# The portable text at site/downloads/clean-language-instructions.txt is a
+# The portable text at site/downloads/cleanlanguage-instructions.txt is a
 # hand-maintained flat rendering of the skill, so this check cannot compare the
 # two byte for byte. Instead it records a hash of the skill source (SKILL.md and
 # every reference file). When the skill changes, the recorded hash no longer
@@ -29,8 +29,8 @@ recorded_file="tools/portable-text-skill-source.sha256"
 # Hash SKILL.md followed by every reference file, in a stable sorted order, so
 # the result depends only on content and not on filesystem ordering.
 mapfile -t skill_files < <(
-  printf '%s\n' "clean-language/SKILL.md"
-  find clean-language/references -type f -name '*.md' | sort
+  printf '%s\n' "cleanlanguage/SKILL.md"
+  find cleanlanguage/references -type f -name '*.md' | sort
 )
 
 for f in "${skill_files[@]}"; do
@@ -45,7 +45,7 @@ computed="$(cat "${skill_files[@]}" | sha256sum | cut -d' ' -f1)"
 if [ "${1:-}" = "--update" ]; then
   printf '%s\n' "${computed}" > "${recorded_file}"
   echo "Recorded skill-source hash ${computed} in ${recorded_file}."
-  echo "Confirm site/downloads/clean-language-instructions.txt matches the skill before committing."
+  echo "Confirm site/downloads/cleanlanguage-instructions.txt matches the skill before committing."
   exit 0
 fi
 
@@ -60,11 +60,11 @@ if [ "${computed}" != "${recorded}" ]; then
   cat >&2 <<EOF
 The skill source changed but the portable instructions file was not reconciled.
 
-The packaged skill (clean-language/SKILL.md and clean-language/references/*.md)
+The packaged skill (cleanlanguage/SKILL.md and cleanlanguage/references/*.md)
 no longer matches the hash recorded in ${recorded_file}.
 
 Review the portable rendering at
-site/downloads/clean-language-instructions.txt, bring it back into line with the
+site/downloads/cleanlanguage-instructions.txt, bring it back into line with the
 skill, then record the new hash:
 
   tools/check-portable-text-sync.sh --update

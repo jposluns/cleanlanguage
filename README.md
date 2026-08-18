@@ -30,7 +30,7 @@ It removes common AI-writing patterns such as robotic tone, filler, contrast fra
 
 ## Supported platforms
 
-Clean Language uses one canonical skill definition for Claude, ChatGPT, Gemini, Copilot, and other compatible AI systems. The core skill lives in [`clean-language/`](clean-language/).
+Clean Language uses one canonical skill definition for Claude, ChatGPT, Gemini, Copilot, and other compatible AI systems. The core skill lives in [`cleanlanguage/`](cleanlanguage/).
 
 - **Claude:** download the packaged Skill, upload it through Claude's Skills interface, and enable it.
 - **ChatGPT:** create or upload a Skill using the Clean Language instructions.
@@ -54,8 +54,11 @@ Latest release: [![Latest release](https://img.shields.io/github/v/release/jposl
 
 Tagged releases provide:
 
-- `clean-language.zip`, containing the upload-ready Skill;
-- `clean-language.zip.sha256`, containing its SHA-256 checksum.
+- `cleanlanguage.zip`, containing the upload-ready Skill under a stable name;
+- `cleanlanguage-<version>.zip`, the same bytes under a version-named copy, which the site's download buttons serve;
+- a `.sha256` checksum for each.
+
+Upgrading from a version before 1.0.11? The skill's internal name changed from `clean-language` to `cleanlanguage`, so uploading the new file adds a second skill beside the old one. Remove the old Clean Language skill first, then install the new file.
 
 The package contains prose instructions, metadata, and reference material. It contains no executable scripts, software dependencies, or instructions that require external network access.
 

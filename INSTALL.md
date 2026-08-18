@@ -2,11 +2,15 @@
 
 These instructions cover ChatGPT, Claude, Gemini, and other AI systems. The public click-by-click version is also available at [cleanlanguage.ai/install](https://cleanlanguage.ai/install/).
 
+Upgrading from a version before 1.0.11? The skill's internal name changed from `clean-language` to `cleanlanguage`, so uploading the new file adds a second skill beside the old one. Remove the old Clean Language skill first, then install the new file.
+
+The site's [download link](https://cleanlanguage.ai/download) saves a version-named file such as `cleanlanguage-1.0.11.zip`, so repeat downloads stay distinguishable. The links below fetch the same current release under the stable name `cleanlanguage.zip`; either file installs identically.
+
 ## Claude
 
 The preferred Claude method installs the complete Skill package.
 
-1. Download [`clean-language.zip`](https://github.com/jposluns/cleanlanguage/releases/latest/download/clean-language.zip).
+1. Download [`cleanlanguage.zip`](https://github.com/jposluns/cleanlanguage/releases/latest/download/cleanlanguage.zip).
 2. Do not unzip the file.
 3. Open Claude in a desktop browser and sign in.
 4. Open **Settings**, then **Capabilities**.
@@ -14,7 +18,7 @@ The preferred Claude method installs the complete Skill package.
 6. Open **Customize**, then **Skills**.
 7. Click **+**.
 8. Click **Create skill**, then **Upload a skill**.
-9. Select `clean-language.zip`.
+9. Select `cleanlanguage.zip`.
 10. Turn **Clean Language** on.
 
 Test it in a new chat:
@@ -25,13 +29,13 @@ Apply Clean Language to this draft: [paste your text]
 
 Team and Enterprise administrators may need to enable Skills and code execution. An organization owner can upload the Skill once for everyone.
 
-The matching checksum is available as [`clean-language.zip.sha256`](https://github.com/jposluns/cleanlanguage/releases/latest/download/clean-language.zip.sha256).
+The matching checksum is available as [`cleanlanguage.zip.sha256`](https://github.com/jposluns/cleanlanguage/releases/latest/download/cleanlanguage.zip.sha256).
 
 ### Claude Project fallback
 
 Use this when Skills or code execution are unavailable.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/clean-language-instructions.txt).
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.txt).
 2. In Claude, click **Projects**, then **New Project**.
 3. Name the project **Clean Language**.
 4. Under **Project knowledge**, click **+** and upload the saved file.
@@ -45,11 +49,11 @@ Use the Clean Language instructions in project knowledge for every response unle
 
 ChatGPT can use the same packaged Skill as Claude. Upload it once, and ChatGPT applies Clean Language when your request matches.
 
-1. Download [`clean-language.zip`](https://github.com/jposluns/cleanlanguage/releases/latest/download/clean-language.zip). Do not unzip it.
+1. Download [`cleanlanguage.zip`](https://github.com/jposluns/cleanlanguage/releases/latest/download/cleanlanguage.zip). Do not unzip it.
 2. Open ChatGPT.
 3. In the left menu, click **Plugins**, then open **Skills**.
 4. Click **Create**, then **Upload from your computer**.
-5. Select `clean-language.zip`.
+5. Select `cleanlanguage.zip`.
 6. Review the Skill, then install it.
 
 Test it in a new chat:
@@ -64,7 +68,7 @@ Workspace administrators may need to allow members to use and upload Skills.
 
 Use this when your account cannot upload a skill.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/clean-language-instructions.txt). It saves as `clean-language-instructions.txt`.
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.txt). It saves as `cleanlanguage-instructions.txt`.
 2. Open ChatGPT, click **Plugins**, then open **Skills**.
 3. Click **Create**, then **Create with chat**.
 4. Enter:
@@ -73,7 +77,7 @@ Use this when your account cannot upload a skill.
 Create a skill named Clean Language using the instructions in the file I am about to upload.
 ```
 
-5. Attach `clean-language-instructions.txt` and send the message.
+5. Attach `cleanlanguage-instructions.txt` and send the message.
 6. When ChatGPT shows the completed Skill, click **Install**.
 
 When Plugins or Skills are unavailable, attach the instructions file to a normal chat and enter:
@@ -86,7 +90,7 @@ Follow these writing rules for this conversation.
 
 The easiest reusable Gemini method is a custom Gem.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/clean-language-instructions.txt). It saves as `clean-language-instructions.txt`.
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.txt). It saves as `cleanlanguage-instructions.txt`.
 2. On a computer, open Gemini.
 3. Open the menu on the left.
 4. Click **Gems**. When necessary, click **Settings and help**, then **Gems**.
@@ -99,7 +103,7 @@ Follow the Clean Language instructions in the attached knowledge file for every 
 ```
 
 8. Under **Knowledge**, click **Add files**, then **Upload files**.
-9. Select `clean-language-instructions.txt`.
+9. Select `cleanlanguage-instructions.txt`.
 10. Click **Save**.
 
 After saving it, open **Gems** and select **Clean Language** whenever you need it. Gems created on the website can also appear in the Gemini mobile app.
@@ -108,7 +112,7 @@ After saving it, open **Gems** and select **Clean Language** whenever you need i
 
 Clean Language works with Microsoft Copilot, local models, API-based assistants, and other systems that accept custom instructions, project knowledge, system prompts, or uploaded reference files.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/clean-language-instructions.txt).
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.txt).
 2. Save the file or copy its contents.
 3. Add it to the AI tool as custom instructions, project knowledge, a system prompt, or an attached reference file.
 4. Enter:
@@ -123,14 +127,14 @@ Use the Clean Language instructions for every response unless I explicitly tell 
 
 ```bash
 mkdir -p .claude/skills
-cp -R /path/to/cleanlanguage/clean-language .claude/skills/clean-language
+cp -R /path/to/cleanlanguage/cleanlanguage .claude/skills/cleanlanguage
 ```
 
 ### Gemini CLI
 
 ```bash
 gemini skills install https://github.com/jposluns/cleanlanguage.git \
-  --path clean-language
+  --path cleanlanguage
 ```
 
 Add `--scope workspace` for a project-specific installation. Verify discovery with:
@@ -142,11 +146,11 @@ gemini skills list
 ### ChatGPT package creation
 
 ```bash
-python /path/to/skill-creator/scripts/package_skill.py ./clean-language ./dist
+python /path/to/skill-creator/scripts/package_skill.py ./cleanlanguage ./dist
 ```
 
 The resulting archive must contain one `SKILL.md` entry point and retain its relative `references/` paths.
 
 ## Package contents and assurance
 
-`clean-language.zip` contains the `clean-language/` directory with `SKILL.md` and reference material. It contains no executable code and makes no network calls.
+`cleanlanguage.zip` contains the `cleanlanguage/` directory with `SKILL.md` and reference material. It contains no executable code and makes no network calls.

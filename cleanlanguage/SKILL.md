@@ -1,11 +1,11 @@
 ---
-name: clean-language
+name: cleanlanguage
 description: Draft, rewrite, proofread, adapt, edit, review, or quality-assure prose using the Clean Language standard. Use for emails, Teams or LinkedIn messages, executive communications, reports, policies, governance artefacts, technical documentation, incident communications, strategy material, and other finished prose where directness, precision, natural cadence, Oxford English, and removal of generic AI-writing patterns matter. Preserve legal, technical, contractual, quoted, and standards language when alteration could change meaning.
 ---
 
 # Clean Language
 
-Version: 1.0.10  
+Version: 1.0.11  
 Author: Jeff Posluns  
 Web site: https://cleanlanguage.ai/  
 GitHub: https://github.com/jposluns/cleanlanguage  

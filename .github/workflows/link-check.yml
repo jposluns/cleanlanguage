@@ -10,7 +10,7 @@ on:
       - "site/**"
       - "*.md"
       - ".claude/CLAUDE.md"
-      - "clean-language/SKILL.md"
+      - "cleanlanguage/SKILL.md"
       - "tools/check-links.py"
       - ".github/workflows/link-check.yml"
   push:
@@ -20,7 +20,7 @@ on:
       - "site/**"
       - "*.md"
       - ".claude/CLAUDE.md"
-      - "clean-language/SKILL.md"
+      - "cleanlanguage/SKILL.md"
       - "tools/check-links.py"
       - ".github/workflows/link-check.yml"
 

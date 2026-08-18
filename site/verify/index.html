@@ -51,7 +51,7 @@
 
       <section>
         <h2>What a checksum is</h2>
-        <p>A SHA-256 checksum is a short fingerprint of a file. The same file always produces the same fingerprint, and changing even one byte produces a different one. Each Clean Language release publishes the checksum of <code>clean-language.zip</code>. If the checksum you calculate for your copy matches the published value, your download is identical to the release and reached you intact.</p>
+        <p>A SHA-256 checksum is a short fingerprint of a file. The same file always produces the same fingerprint, and changing even one byte produces a different one. Each Clean Language release publishes the checksum of its zip file. If the checksum you calculate for your copy matches the published value, your download is identical to the release and reached you intact.</p>
       </section>
 
       <section>
@@ -59,8 +59,8 @@
         <ol>
           <li>Download the skill and its published checksum.
             <div class="step-actions">
-              <a class="button primary" href="/download">Download clean-language.zip</a>
-              <a class="button secondary" href="https://github.com/jposluns/cleanlanguage/releases/latest/download/clean-language.zip.sha256" target="_blank" rel="noopener noreferrer">Published checksum</a>
+              <a class="button primary" href="/download">Download the Clean Language skill (zip)</a>
+              <a class="button secondary" href="/download/checksum" target="_blank" rel="noopener noreferrer">Published checksum</a>
             </div>
           </li>
           <li>
@@ -69,13 +69,13 @@
             <p>On macOS: press Command+Space, type <code>Terminal</code>, press Return, then type <code>cd Downloads</code> and press Return.</p>
             <p>Copy the command for your system, paste it into the window, and press Enter.</p>
             <p class="label">Windows (PowerShell)</p>
-            <pre><code>Get-FileHash clean-language.zip -Algorithm SHA256</code></pre>
+            <pre><code>Get-FileHash cleanlanguage-*.zip -Algorithm SHA256</code></pre>
             <p class="label">macOS</p>
-            <pre><code>shasum -a 256 clean-language.zip</code></pre>
+            <pre><code>shasum -a 256 cleanlanguage-*.zip</code></pre>
             <p class="label">Linux</p>
-            <pre><code>sha256sum clean-language.zip</code></pre>
+            <pre><code>sha256sum cleanlanguage-*.zip</code></pre>
           </li>
-          <li>Compare the value your computer prints with the value in <code>clean-language.zip.sha256</code>. Open <code>clean-language.zip.sha256</code> with a text editor (Notepad on Windows, TextEdit on macOS) to see the published value. A match means your copy is identical to the published release. If the two differ, delete the file, download it again, and check once more.</li>
+          <li>Compare the value your computer prints with the value in the downloaded <code>.sha256</code> file. Open that file with a text editor (Notepad on Windows, TextEdit on macOS) to see the published value. A match means your copy is identical to the published release. If the two differ, delete the file, download it again, and check once more.</li>
         </ol>
       </section>
 
@@ -84,7 +84,7 @@
         <p>The skill contains only written instructions for the AI. It is not a program, it runs nothing on your computer, and it does not connect to the internet, and every file is publicly reviewable in the <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub repository</a>. The checksum confirms the file arrived intact. The skill is safe to use whether or not you check it.</p>
         <div class="step-actions">
           <a class="button primary" href="/install/">Continue installing</a>
-          <a class="button secondary" href="/download">Download clean-language.zip</a>
+          <a class="button secondary" href="/download">Download the Clean Language skill (zip)</a>
         </div>
       </section>
     </article>
