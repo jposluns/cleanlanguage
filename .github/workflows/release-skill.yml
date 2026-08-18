@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   package-and-release:
@@ -152,13 +153,19 @@ jobs:
           fi
 
       - name: Point the site downloads at this release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
         shell: bash
         run: |
           set -euo pipefail
           # The site's download buttons serve the version-named zip so repeat
-          # downloads stay distinguishable in the user's Downloads folder. Each
-          # release rewrites the redirect targets and pushes the one-file commit
-          # to main, which redeploys the site.
+          # downloads stay distinguishable in the user's Downloads folder. Main
+          # only accepts changes through a pull request, so the redirect flip
+          # ships as a PR this step opens and merges once the checks pass.
+          # Store a token with contents and pull-requests write access as the
+          # RELEASE_PR_TOKEN secret; without it the step falls back to the
+          # built-in token, whose PRs do not trigger pull_request workflows
+          # (the required Cloudflare Pages check still runs either way).
           base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
           {
             printf '%s\n' "/claude/download ${base}/cleanlanguage-${VERSION}.zip 302"
@@ -166,12 +173,22 @@ jobs:
             printf '%s\n' "/download/checksum ${base}/cleanlanguage-${VERSION}.zip.sha256 302"
             printf '%s\n' "/downloads/clean-language-instructions.txt /downloads/cleanlanguage-instructions.txt 301"
           } > site/_redirects
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add site/_redirects
-          if git diff --cached --quiet; then
+          if git diff --quiet -- site/_redirects; then
             echo "Redirects already point at ${RELEASE_TAG}."
             exit 0
           fi
+          branch="release-redirects-${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${branch}"
+          git add site/_redirects
           git commit -m "Point the site downloads at ${RELEASE_TAG}"
-          git push origin HEAD:main || (git pull --rebase origin main && git push origin HEAD:main)
+          git push --force origin "HEAD:${branch}"
+          pr_url="$(gh pr create --base main --head "${branch}" \
+            --title "Point the site downloads at ${RELEASE_TAG}" \
+            --body "Automated redirect flip for the ${RELEASE_TAG} release: /download, /claude/download, and /download/checksum now target the version-named assets.")"
+          echo "Opened ${pr_url}"
+          sleep 20
+          gh pr checks "${pr_url}" --watch --fail-fast
+          gh pr merge "${pr_url}" --squash --delete-branch
+          echo "Merged ${pr_url}"
