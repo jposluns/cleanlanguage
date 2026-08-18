@@ -68,8 +68,11 @@ fi
 # Resolve a short sha or a ref to the full sha the checks are recorded against.
 full_sha="$(git rev-parse "${sha}" 2>/dev/null)" || full_sha="${sha}"
 
-# One read. Prints "<status>\t<conclusion>\t<name>" per check run, or fails
-# loudly with the API's own message so a caller never has to guess why.
+# One read. Prints "<status><US><conclusion><US><name>" per check run, or fails
+# loudly with the API's own message so a caller never has to guess why. The
+# field separator is the unit separator rather than a tab, because bash collapses
+# runs of IFS whitespace and a still-running check has an empty conclusion, which
+# would otherwise shift its name into the wrong field.
 read_checks() {
   local body
   if ! body="$(gh api "repos/${repo}/commits/${full_sha}/check-runs" --paginate 2>&1)"; then
@@ -77,7 +80,7 @@ read_checks() {
     printf '%s\n' "${body}" >&2
     return 1
   fi
-  printf '%s' "${body}" | jq -r '.check_runs[] | "\(.status)\t\(.conclusion // "")\t\(.name)"'
+  printf '%s' "${body}" | jq -r '.check_runs[] | "\(.status)\u001f\(.conclusion // "")\u001f\(.name)"'
 }
 
 # Sets the verdict from a batch of check lines: pass, fail, pending, or none.
@@ -87,7 +90,7 @@ verdict_of() {
 
   [ -n "${lines}" ] || { printf 'none'; return; }
 
-  while IFS=$'\t' read -r status conclusion _; do
+  while IFS=$'\x1f' read -r status conclusion _; do
     [ -n "${status}" ] || continue
     total=$((total + 1))
     if [ "${status}" != "completed" ]; then
@@ -109,7 +112,7 @@ verdict_of() {
 report() {
   local lines="$1"
   local status conclusion name
-  while IFS=$'\t' read -r status conclusion name; do
+  while IFS=$'\x1f' read -r status conclusion name; do
     [ -n "${status}" ] || continue
     if [ "${status}" = "completed" ]; then
       printf '  %-28s %s\n' "${name}" "${conclusion}"
