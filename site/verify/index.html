@@ -82,11 +82,13 @@
       <section>
         <h2>How to verify</h2>
         <ol>
-          <li>Download the skill and its published checksum.
+          <li>Download the skill.
             <div class="step-actions">
-              <a class="button primary" href="/download">Download the Clean Language skill (zip)</a>
-              <a class="button secondary" href="/download/checksum" target="_blank" rel="noopener noreferrer">Published checksum</a>
+              <a class="button primary" href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.11/cleanlanguage-1.0.11.zip">Download the Clean Language skill (zip)</a>
             </div>
+            <p>The published checksum for version 1.0.11 is:</p>
+            <pre><code id="published-checksum">1a9fd3fc24d709ac8b87ed25a0e83913d872e4af9122229c976387a226f4a83e</code></pre>
+            <p>The same value is in the <a href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.11/cleanlanguage-1.0.11.zip.sha256">published checksum file</a>, if you would rather compare files than read.</p>
           </li>
           <li>
             <p>Calculate the checksum of the file you downloaded.</p>
@@ -100,7 +102,7 @@
             <p class="label">Linux</p>
             <pre><code>sha256sum cleanlanguage-*.zip</code></pre>
           </li>
-          <li>Compare the value your computer prints with the value in the downloaded <code>.sha256</code> file. Open that file with a text editor (Notepad on Windows, TextEdit on macOS) to see the published value. A match means your copy is identical to the published release. If the two differ, delete the file, download it again, and check once more.</li>
+          <li>Compare the value your computer prints with the published checksum shown in step one. A match means your copy is identical to the published release. If the two differ, delete the file, download it again, and check once more.</li>
         </ol>
       </section>
 

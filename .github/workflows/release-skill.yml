@@ -166,27 +166,27 @@ jobs:
           # RELEASE_PR_TOKEN secret; without it the step falls back to the
           # built-in token, whose PRs do not trigger pull_request workflows
           # (the required Cloudflare Pages check still runs either way).
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
-          {
-            printf '%s\n' "/claude/download ${base}/cleanlanguage-${VERSION}.zip 302"
-            printf '%s\n' "/download ${base}/cleanlanguage-${VERSION}.zip 302"
-            printf '%s\n' "/download/checksum ${base}/cleanlanguage-${VERSION}.zip.sha256 302"
-            printf '%s\n' "/downloads/clean-language-instructions.txt /downloads/cleanlanguage-instructions.txt 301"
-          } > site/_redirects
-          if git diff --quiet -- site/_redirects; then
-            echo "Redirects already point at ${RELEASE_TAG}."
+          # The site links straight at the version-named assets, so the version
+          # lives in the pages as well as in the redirects. set-release-links.py
+          # writes every place at once and check-release-links.py verifies the
+          # result, so this step cannot quietly disagree with the gate.
+          checksum="$(cut -d' ' -f1 < "dist/cleanlanguage-${VERSION}.zip.sha256")"
+          tools/set-release-links.py --version "${VERSION}" --tag "${RELEASE_TAG}" --checksum "${checksum}"
+          tools/check-release-links.py
+          if git diff --quiet -- site; then
+            echo "The site already points at ${RELEASE_TAG}."
             exit 0
           fi
           branch="release-redirects-${VERSION}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "${branch}"
-          git add site/_redirects
+          git add site
           git commit -m "Point the site downloads at ${RELEASE_TAG}"
           git push --force origin "HEAD:${branch}"
           pr_url="$(gh pr create --base main --head "${branch}" \
             --title "Point the site downloads at ${RELEASE_TAG}" \
-            --body "Automated redirect flip for the ${RELEASE_TAG} release: /download, /claude/download, and /download/checksum now target the version-named assets.")"
+            --body "Automated for the ${RELEASE_TAG} release: the download buttons, the redirects, and the published checksum on the verify page now name the ${RELEASE_TAG} assets.")"
           echo "Opened ${pr_url}"
           sleep 20
           gh pr checks "${pr_url}" --watch --fail-fast
