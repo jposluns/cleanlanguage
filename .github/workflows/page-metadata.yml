@@ -1,0 +1,43 @@
+name: Page metadata
+
+# Verifies that every content page names an author and carries publish and
+# modified dates that agree with git history and with the page's own JSON-LD.
+# The point is to catch a stamped date that has gone stale: a page edited
+# without its modified date being updated asserts something false, and nothing
+# else in the build would notice. See tools/check-page-metadata.py for the full
+# scope, including what it deliberately does not prove.
+
+on:
+  pull_request:
+    paths:
+      - "site/**/*.html"
+      - "site/*.html"
+      - "tools/check-page-metadata.py"
+      - ".github/workflows/page-metadata.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "site/**/*.html"
+      - "site/*.html"
+      - "tools/check-page-metadata.py"
+      - ".github/workflows/page-metadata.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Full history is required: the check reads when each page was added
+          # and when it last changed. A shallow clone cannot answer either, and
+          # the check exits non-zero rather than passing on what it cannot read.
+          fetch-depth: 0
+
+      - name: Check page author and date metadata
+        shell: bash
+        run: python3 tools/check-page-metadata.py
