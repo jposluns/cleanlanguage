@@ -31,6 +31,10 @@ What it verifies
 2. The page contains no inline ``<script>`` element.
 3. The page contains no inline ``style`` attribute.
 
+A ``<script type="application/ld+json">`` block is not an inline script for this
+purpose. The browser never executes it and CSP ``script-src`` does not apply, which
+is why structured data elsewhere on the site works under the same policy.
+
 What it does not verify
 -----------------------
 
@@ -59,7 +63,14 @@ PAGE = REPO_ROOT / "site" / "instructions" / "index.html"
 # The embedded block. Matched on its id so a class or attribute change does not
 # quietly stop this check from finding anything to compare.
 EMBEDDED = re.compile(r'<pre id="instructions-text"[^>]*>(.*?)</pre>', re.S)
-INLINE_SCRIPT = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>", re.I)
+# An inline <script> that the browser would execute. A script element carrying a
+# non-JavaScript type, notably application/ld+json, is a data block: the browser
+# never executes it, and CSP script-src does not apply to it. Those are allowed,
+# which is why the structured-data blocks elsewhere on the site work under the
+# same policy.
+SCRIPT_TAG = re.compile(r"<script([^>]*)>", re.I)
+SCRIPT_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
+EXECUTABLE_TYPES = {"", "module", "text/javascript", "application/javascript", "text/ecmascript"}
 INLINE_STYLE = re.compile(r"<[^>]+\sstyle=", re.I)
 
 
@@ -107,7 +118,16 @@ def main() -> int:
             "Re-embed the file's contents in the page."
         )
 
-    if INLINE_SCRIPT.search(page_text):
+    def executes_inline(text: str) -> bool:
+        for tag in SCRIPT_TAG.finditer(text):
+            attributes = {k.lower(): v for k, v in SCRIPT_ATTR.findall(tag.group(1))}
+            if "src" in attributes:
+                continue
+            if attributes.get("type", "").strip().lower() in EXECUTABLE_TYPES:
+                return True
+        return False
+
+    if executes_inline(page_text):
         problems.append(
             "the page contains an inline <script>. The site's CSP is "
             "script-src 'self', which blocks it, and the page silently fails to "
