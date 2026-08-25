@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Install Clean Language in Claude, ChatGPT, Gemini, and Other AI Tools</title>
-  <meta name="description" content="Simple click-by-click instructions for installing Clean Language in Claude, ChatGPT, Gemini, Copilot, and other AI tools. No command line, coding, or GitHub experience required.">
+  <meta name="description" content="Simple click-by-click instructions for installing Clean Language in Claude, ChatGPT, Gemini, Copilot, and other AI systems. No command line, coding, or GitHub experience required.">
   <meta name="author" content="Jeff Posluns">
   <link rel="canonical" href="https://cleanlanguage.ai/install/">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -45,14 +45,14 @@
       <p class="eyebrow">Simple installation</p>
       <h1>Pick the AI you use and follow the buttons.</h1>
       <p>You do not need a command line, a developer account, or knowledge of GitHub. These instructions cover Claude, ChatGPT, Gemini, Copilot, and other AI systems.</p>
-      <p>Clean Language comes as one small file, called a Skill: written rules your AI reads and follows. You download the file, then upload it to your AI.</p>
+      <p>Clean Language comes as one small file, called a skill: written rules your AI reads and follows. You download the file, then upload it to your AI.</p>
     </section>
 
     <article class="content">
       <div class="notice"><p>Setup is easiest on a computer. On a phone right now? <a href="/downloads/cleanlanguage-instructions.txt" download>Download the instructions file</a>, attach it to a chat with your AI, and say: <code class="prompt">Follow these writing rules for this conversation.</code> Or copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat. Then do the full setup later on a computer.</p></div>
 
       <div class="platform-actions with-verify" role="group" aria-label="Installation and verification options">
-        <a class="platform-button claude" href="#claude"><span class="platform-icon" aria-hidden="true">C</span><span><strong>Claude setup</strong><small>Download, upload, and enable the Skill</small></span></a>
+        <a class="platform-button claude" href="#claude"><span class="platform-icon" aria-hidden="true">C</span><span><strong>Claude setup</strong><small>Download, upload, and enable the skill</small></span></a>
         <a class="platform-button chatgpt" href="#chatgpt"><span class="platform-icon" aria-hidden="true">G</span><span><strong>ChatGPT instructions</strong><small>Set up through ChatGPT Skills</small></span></a>
         <a class="platform-button gemini" href="#gemini"><span class="platform-icon" aria-hidden="true">✦</span><span><strong>Gemini instructions</strong><small>Create a reusable Clean Language Gem</small></span></a>
         <a class="platform-button copilot" href="#copilot"><span class="platform-icon" aria-hidden="true">Co</span><span><strong>Copilot instructions</strong><small>Create a Clean Language agent</small></span></a>
@@ -67,7 +67,7 @@
         <p><strong>This is the recommended Claude method.</strong> It installs the complete Skill, so the full standard is available in any chat rather than pasted into one. Claude applies it when you ask for it, and you can set it to apply by default: see <em>How to use Clean Language</em> below.</p>
         <p>Install from a <strong>desktop browser</strong>. The mobile apps are not documented to support skill upload.</p>
 
-        <h3>Step 1: download the Skill</h3>
+        <h3>Step 1: download the skill</h3>
         <div class="step-actions">
           <a class="button primary" href="/claude/download">Download the Clean Language skill (zip)</a>
         </div>
@@ -97,7 +97,7 @@
         <div class="notice"><strong>Team or Enterprise:</strong> an organization owner must enable <strong>Skills</strong> in <a href="https://claude.ai/admin-settings/skills" target="_blank" rel="noopener noreferrer">Organization settings, then Skills</a>. An owner can upload Clean Language once to provision it for the whole organization, after which it appears for every member automatically and members do not upload it individually.</div>
 
         <details>
-          <summary><strong>Cannot upload the Skill? Use a Claude Project instead</strong></summary>
+          <summary><strong>Cannot upload the skill? Use a Claude Project instead</strong></summary>
           <p>Use this if Skills never appear for you, or your organization has disabled Skills. It applies to one project rather than every chat.</p>
           <ol>
             <li>
@@ -119,7 +119,7 @@
         <p class="verified">Last verified 27 July 2026.</p>
         <p>ChatGPT can use the same packaged Skill as Claude. Upload it once, and ChatGPT applies Clean Language when your request calls for it, for example when you ask it to write or edit text.</p>
 
-        <h3>Step 1: download the Skill</h3>
+        <h3>Step 1: download the skill</h3>
         <div class="step-actions">
           <a class="button primary" href="/download">Download the Clean Language skill (zip)</a>
         </div>
@@ -177,7 +177,7 @@
           <li>Click <strong>Gems</strong>. If you do not see it, click <strong>Settings and help</strong>, then <strong>Gems</strong>.</li>
           <li>Click <strong>New Gem</strong>.</li>
           <li>Name it <strong>Clean Language</strong>.</li>
-          <li>In the instructions box, type: <code class="prompt">Follow the Clean Language instructions in the attached knowledge file for every response.</code></li>
+          <li>In the instructions box, type: <code class="prompt">Follow the Clean Language instructions in the uploaded knowledge file for every response unless I explicitly tell you not to.</code></li>
           <li>Scroll to <strong>Knowledge</strong>.</li>
           <li>Click <strong>Add files</strong>, then <strong>Upload files</strong>.</li>
           <li>Select <code>cleanlanguage-instructions.txt</code>.</li>
@@ -204,7 +204,7 @@
           <li>Open Microsoft 365 Copilot on a computer.</li>
           <li>Open the agents panel and click <strong>New agent</strong>, then open the <strong>Configure</strong> tab.</li>
           <li>Name it <strong>Clean Language</strong>.</li>
-          <li>In the instructions box, enter: <code class="prompt">Follow the Clean Language instructions in the uploaded knowledge file for every response.</code></li>
+          <li>In the instructions box, enter: <code class="prompt">Follow the Clean Language instructions in the uploaded knowledge file for every response unless I explicitly tell you not to.</code></li>
           <li>Under <strong>Knowledge</strong>, upload <code>cleanlanguage-instructions.txt</code> from your device.</li>
           <li>Click <strong>Create</strong> or <strong>Save</strong>, then select <strong>Clean Language</strong> whenever you need it.</li>
         </ol>
@@ -224,7 +224,7 @@
             </div>
           </li>
           <li>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</li>
-          <li>Add it to your AI tool as custom instructions, project knowledge, a system prompt, or an attached reference file.</li>
+          <li>Add it to your AI system as custom instructions, project knowledge, a system prompt, or an attached reference file.</li>
           <li>Tell the AI: <code class="prompt">Use the Clean Language instructions for every response unless I explicitly tell you not to.</code></li>
         </ol>
       </section>
