@@ -15,6 +15,19 @@
 # that cannot be read, exits non-zero, so a caller waiting for green never
 # mistakes silence for a pass.
 #
+# Neither is a PARTIAL set of checks. Checks do not all register at once: an
+# external app can report before GitHub Actions has created its runs, and a read
+# taken in that window sees only the checks that exist and calls them "every
+# check". That is a false green, observed reporting exit 0 on a pull request
+# whose two Actions gates had not started.
+#
+# So a pass is never declared on one reading. The script re-reads after one
+# interval and passes only when the set of checks and their conclusions are
+# identical across two consecutive readings. A check registering late changes the
+# set and forces another round. This costs one interval on every green result,
+# and applies whether or not --wait was given: one read is not trustworthy
+# either way.
+#
 # Usage:
 #   tools/ci-status.sh <sha>                     Report once and exit.
 #   tools/ci-status.sh <sha> --wait              Poll until the checks settle.
@@ -22,7 +35,7 @@
 #   tools/ci-status.sh <sha> --repo owner/name   Override the inferred repository.
 #
 # Exit codes:
-#   0  every check passed
+#   0  every check passed, confirmed across two consecutive readings
 #   1  at least one check failed, was cancelled, or timed out
 #   2  checks are still running, or --wait hit its timeout
 #   3  the result could not be read, no checks exist, or usage was wrong
@@ -122,17 +135,43 @@ report() {
   done <<< "${lines}"
 }
 
+confirming=0
+confirmed_snapshot=""
+confirm_rounds=0
+
 deadline=$(( $(date +%s) + timeout_seconds ))
 
 while true; do
   checks="$(read_checks)" || exit 3
   verdict="$(verdict_of "${checks}")"
 
+  if [ "${verdict}" != "pass" ]; then
+    confirming=0
+    confirmed_snapshot=""
+  fi
+
   case "${verdict}" in
     pass)
-      printf 'ci-status: every check passed for %s\n' "${full_sha}"
+      # Confirm against a second reading before calling it green, so a check
+      # that has not registered yet is not mistaken for one that does not
+      # exist. Identical means same names, statuses, and conclusions.
+      if [ "${confirming}" -eq 1 ] && [ "${checks}" = "${confirmed_snapshot}" ]; then
+        printf 'ci-status: every check passed for %s, confirmed on two readings\n' "${full_sha}"
+        report "${checks}"
+        exit 0
+      fi
+      confirm_rounds=$(( confirm_rounds + 1 ))
+      if [ "${confirm_rounds}" -gt 5 ]; then
+        printf 'ci-status: the set of checks kept changing across %s readings; not calling this green\n' "${confirm_rounds}" >&2
+        report "${checks}" >&2
+        exit 2
+      fi
+      confirmed_snapshot="${checks}"
+      confirming=1
+      printf 'ci-status: all checks pass; re-reading in %ss to confirm none is still registering\n' "${interval_seconds}"
       report "${checks}"
-      exit 0
+      sleep "${interval_seconds}"
+      continue
       ;;
     fail)
       printf 'ci-status: a check did not pass for %s\n' "${full_sha}"
