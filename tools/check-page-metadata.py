@@ -27,6 +27,10 @@ What it verifies, per page
    to a file that exists. These URLs are absolute, because a crawler needs them
    to be, which puts them outside the relative-link scope of check-links.py, so
    a card pointing at a missing file would otherwise ship unnoticed.
+9. ``site/sitemap.xml`` lists every content page exactly once, and each entry's
+   ``lastmod`` matches that page's ``article:modified_time``. The sitemap is a
+   second copy of the same fact, so it can drift; a crawler trusting a stale
+   ``lastmod`` skips a page that did change.
 
 What it does not verify
 -----------------------
@@ -55,6 +59,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+import xml.etree.ElementTree as ElementTree
 import subprocess
 import sys
 from pathlib import Path
@@ -89,6 +94,9 @@ REQUIRED_PROPERTIES = ("article:published_time", "article:modified_time", "artic
 # unnoticed, so the image references are resolved back to files here.
 SITE_ORIGIN = "https://cleanlanguage.ai"
 IMAGE_REFERENCES = ("og:image", "twitter:image")
+
+SITEMAP = REPO_ROOT / "site" / "sitemap.xml"
+SITEMAP_NS = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
 
 
 def die(message: str) -> None:
@@ -228,6 +236,52 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
     return problems, author
 
 
+def check_sitemap(pages: list[Path]) -> list[str]:
+    """Compare the sitemap's lastmod values against each page's own date."""
+    problems: list[str] = []
+    if not SITEMAP.is_file():
+        return [f"{SITEMAP.relative_to(REPO_ROOT)} does not exist"]
+    try:
+        root = ElementTree.parse(SITEMAP).getroot()
+    except ElementTree.ParseError as error:
+        return [f"sitemap.xml does not parse: {error}"]
+
+    listed: dict[str, str | None] = {}
+    for entry in root.findall(f"{SITEMAP_NS}url"):
+        loc = entry.findtext(f"{SITEMAP_NS}loc")
+        if loc is None:
+            problems.append("a sitemap entry has no <loc>")
+            continue
+        if loc in listed:
+            problems.append(f"{loc} is listed more than once in the sitemap")
+        listed[loc] = entry.findtext(f"{SITEMAP_NS}lastmod")
+
+    for path in pages:
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        url = SITE_ORIGIN + "/" if path.parent == SITE_ROOT else f"{SITE_ORIGIN}/{path.parent.name}/"
+        if url not in listed:
+            problems.append(f"{relative} is not listed in the sitemap ({url})")
+            continue
+        text = path.read_text(encoding="utf-8")
+        expected = None
+        for tag in META_TAG.finditer(text):
+            attributes = dict(META_ATTR.findall(tag.group(1)))
+            if attributes.get("property") == "article:modified_time":
+                expected = attributes.get("content")
+        lastmod = listed.pop(url)
+        if lastmod is None:
+            problems.append(f"the sitemap entry for {url} has no <lastmod>")
+        elif expected and lastmod != expected:
+            problems.append(
+                f"the sitemap says {url} changed {lastmod}, but the page's "
+                f"article:modified_time is {expected}"
+            )
+
+    for url in listed:
+        problems.append(f"the sitemap lists {url}, which is not a content page")
+    return problems
+
+
 def main() -> int:
     require_full_history()
     pages = content_pages()
@@ -249,6 +303,10 @@ def main() -> int:
         if author:
             authors.setdefault(author, []).append(relative)
 
+    sitemap_problems = check_sitemap(pages)
+    if sitemap_problems:
+        findings["site/sitemap.xml"] = sitemap_problems
+
     if len(authors) > 1:
         listed = "; ".join(f"{name!r} on {len(files)} page(s)" for name, files in authors.items())
         findings.setdefault("(across pages)", []).append(
@@ -268,7 +326,7 @@ def main() -> int:
     author = next(iter(authors), "(none)")
     print(
         f"All {len(pages)} content pages carry author and date metadata "
-        f"consistent with git history. Author: {author}."
+        f"consistent with git history, and the sitemap agrees. Author: {author}."
     )
     return 0
 
