@@ -1,8 +1,15 @@
 name: Portable text sync
 
-# Flags when the packaged skill changes without the portable instructions file
-# at site/downloads/cleanlanguage-instructions.txt being reconciled. See
-# tools/check-portable-text-sync.sh for what the check does and does not prove.
+# Two related checks on the portable instructions text.
+#
+# The first flags when the packaged skill changes without the portable text at
+# site/downloads/cleanlanguage-instructions.txt being reconciled. See
+# tools/check-portable-text-sync.sh for what it does and does not prove.
+#
+# The second checks that site/instructions/index.html still embeds that text
+# exactly, and that it carries no inline script or style. The page renders the
+# text statically because the site's CSP blocks inline code, and a reintroduced
+# inline script would break the page in a way no other gate can see.
 
 on:
   pull_request:
@@ -10,8 +17,10 @@ on:
       - "cleanlanguage/SKILL.md"
       - "cleanlanguage/references/**"
       - "site/downloads/cleanlanguage-instructions.txt"
+      - "site/instructions/index.html"
       - "tools/portable-text-skill-source.sha256"
       - "tools/check-portable-text-sync.sh"
+      - "tools/check-instructions-page.py"
       - ".github/workflows/portable-text-sync.yml"
   push:
     branches:
@@ -20,8 +29,10 @@ on:
       - "cleanlanguage/SKILL.md"
       - "cleanlanguage/references/**"
       - "site/downloads/cleanlanguage-instructions.txt"
+      - "site/instructions/index.html"
       - "tools/portable-text-skill-source.sha256"
       - "tools/check-portable-text-sync.sh"
+      - "tools/check-instructions-page.py"
       - ".github/workflows/portable-text-sync.yml"
 
 permissions:
@@ -37,3 +48,7 @@ jobs:
       - name: Check the portable text is reconciled with the skill
         shell: bash
         run: tools/check-portable-text-sync.sh
+
+      - name: Check the instructions page embeds that text, statically
+        shell: bash
+        run: python3 tools/check-instructions-page.py
