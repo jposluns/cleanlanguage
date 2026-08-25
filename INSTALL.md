@@ -57,7 +57,7 @@ ChatGPT can use the same packaged Skill as Claude. Upload it once, and ChatGPT a
 Test it in a new chat:
 
 ```text
-Apply Clean Language to this message: [paste your text]
+Apply Clean Language to this draft: [paste your text]
 ```
 
 Workspace administrators may need to allow members to use and upload Skills.
