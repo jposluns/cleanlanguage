@@ -64,8 +64,14 @@ EXCLUDED = {"404.html"}
 # than being handled by weakening the check.
 PUBLISHED_OVERRIDES: dict[str, str] = {}
 
-META_NAME = re.compile(r'<meta\s+name="([^"]+)"\s+content="([^"]*)"\s*/?>')
-META_PROPERTY = re.compile(r'<meta\s+property="([^"]+)"\s+content="([^"]*)"\s*/?>')
+# Meta tags are parsed attribute by attribute rather than with a fixed-order
+# pattern, because the site carries tags that set both name and property on one
+# element (LinkedIn's documented form for og:title and og:image) and a
+# fixed-order pattern would silently stop seeing them if the attributes were
+# ever reordered. A tag carrying both appears under both its name and its
+# property, which is intended.
+META_TAG = re.compile(r"<meta\s+([^>]*?)/?>", re.I)
+META_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
 JSON_LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -120,8 +126,17 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
     problems: list[str] = []
     text = path.read_text(encoding="utf-8")
 
-    names = dict(META_NAME.findall(text))
-    properties = dict(META_PROPERTY.findall(text))
+    names: dict[str, str] = {}
+    properties: dict[str, str] = {}
+    for tag in META_TAG.finditer(text):
+        attributes = dict(META_ATTR.findall(tag.group(1)))
+        content = attributes.get("content")
+        if content is None:
+            continue
+        if "name" in attributes:
+            names[attributes["name"]] = content
+        if "property" in attributes:
+            properties[attributes["property"]] = content
 
     author = names.get("author")
     if not author:
