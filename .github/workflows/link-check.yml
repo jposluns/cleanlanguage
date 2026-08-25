@@ -1,8 +1,16 @@
 name: Link check
 
-# Verifies that internal links resolve: root-relative and document-relative
-# href/src in the site HTML, and relative Markdown link targets in the tracked
-# docs. See tools/check-links.py for scope. External URLs are out of scope.
+# Two link checks.
+#
+# The first verifies that internal links resolve: root-relative and
+# document-relative href/src in the site HTML, and relative Markdown link targets
+# in the tracked docs. See tools/check-links.py for scope.
+#
+# The second verifies that every release-asset link on the site names the version
+# in SKILL.md, and that the checksum shown on the verify page is well formed and
+# labelled with that version. The site links straight at release assets, so the
+# version lives in the pages and goes stale on every release. A stale link still
+# returns a file, just the wrong one, which no other check would notice.
 
 on:
   pull_request:
@@ -12,6 +20,7 @@ on:
       - ".claude/CLAUDE.md"
       - "cleanlanguage/SKILL.md"
       - "tools/check-links.py"
+      - "tools/check-release-links.py"
       - ".github/workflows/link-check.yml"
   push:
     branches:
@@ -22,6 +31,7 @@ on:
       - ".claude/CLAUDE.md"
       - "cleanlanguage/SKILL.md"
       - "tools/check-links.py"
+      - "tools/check-release-links.py"
       - ".github/workflows/link-check.yml"
 
 permissions:
@@ -37,3 +47,7 @@ jobs:
       - name: Check internal links resolve
         shell: bash
         run: python3 tools/check-links.py
+
+      - name: Check release links name the current version
+        shell: bash
+        run: python3 tools/check-release-links.py
