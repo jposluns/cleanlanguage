@@ -208,6 +208,16 @@ p { margin: 0 0 18px; }
 .code-title { color: #9db6a6; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 800; }
 pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+/* A prompt the reader types or pastes. Bold and chip-styled so it stands out
+   from surrounding prose. Vertical padding on an inline element does not affect
+   line box height, so this does not change line size. */
+code.prompt {
+  font-weight: 700;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  padding: 0.12em 0.4em;
+  border-radius: 6px;
+}
 .comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .comparison > div { padding: 30px; border-radius: 16px; border: 1px solid var(--line); background: var(--surface); }
 .comparison > div:last-child { background: var(--accent-soft); border-color: #b9d0c1; }

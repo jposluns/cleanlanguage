@@ -10,7 +10,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <meta name="theme-color" content="#145c3b">
-  <link rel="stylesheet" href="/styles.css?v=20260825-1">
+  <link rel="stylesheet" href="/styles.css?v=20260825-2">
   <meta property="og:type" content="article">
   <meta name="title" property="og:title" content="Install Clean Language without technical knowledge">
   <meta property="og:description" content="Click-by-click setup for Claude Skills, ChatGPT Skills, Gemini Gems, Copilot agents, and other AI systems.">
@@ -41,7 +41,6 @@
   </header>
 
   <main id="main">
-    <span class="visually-hidden" role="status" aria-live="polite" id="copy-status"></span>
     <section class="page-hero">
       <p class="eyebrow">Simple installation</p>
       <h1>Pick the AI you use and follow the buttons.</h1>
@@ -50,7 +49,7 @@
     </section>
 
     <article class="content">
-      <div class="notice"><p>Setup is easiest on a computer. On a phone right now? <a href="/downloads/cleanlanguage-instructions.txt" download>Download the instructions file</a>, attach it to a chat with your AI, and say: <code>Follow these writing rules for this conversation.</code> Or copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat. Then do the full setup later on a computer.</p></div>
+      <div class="notice"><p>Setup is easiest on a computer. On a phone right now? <a href="/downloads/cleanlanguage-instructions.txt" download>Download the instructions file</a>, attach it to a chat with your AI, and say: <code class="prompt">Follow these writing rules for this conversation.</code> Or copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat. Then do the full setup later on a computer.</p></div>
 
       <div class="platform-actions with-verify" role="group" aria-label="Installation and verification options">
         <a class="platform-button claude" href="#claude"><span class="platform-icon" aria-hidden="true">C</span><span><strong>Claude setup</strong><small>Download, upload, and enable the Skill</small></span></a>
@@ -90,7 +89,7 @@
 
         <p>Test it in a new chat:</p>
         <div class="step-actions">
-          <code>Apply Clean Language to this draft: [paste your text]</code>
+          <code class="prompt">Apply Clean Language to this draft: [paste your text]</code>
         </div>
         <p>If the reply is a tighter, more direct version of your text, it is working. If Claude says it does not know what Clean Language is, repeat the steps or use the fallback below.</p>
         <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
@@ -110,7 +109,7 @@
             <li>In Claude, click <strong>Projects</strong>, then <strong>New Project</strong>.</li>
             <li>Name it <strong>Clean Language</strong>.</li>
             <li>Under <strong>Project knowledge</strong>, click <strong>+</strong> and upload the saved file.</li>
-            <li>Set the project instructions to: <code id="claude-project-instruction">Use the Clean Language instructions in project knowledge for every response unless I explicitly tell you not to.</code> <button type="button" class="button secondary" data-copy-target="claude-project-instruction" hidden>Copy</button></li>
+            <li>Set the project instructions to: <code class="prompt">Use the Clean Language instructions in project knowledge for every response unless I explicitly tell you not to.</code></li>
           </ol>
         </details>
       </section>
@@ -135,11 +134,11 @@
           <li>Select the downloaded Clean Language zip file.</li>
           <li>Review the skill, then install it.</li>
         </ol>
-        <p>Test it in a new chat: <code>Apply Clean Language to this draft: [paste your text]</code></p>
+        <p>Test it in a new chat: <code class="prompt">Apply Clean Language to this draft: [paste your text]</code></p>
         <p>If the reply is a tighter, more direct version of your text, it is working. If ChatGPT says it does not know what Clean Language is, repeat the steps or use the fallback below.</p>
         <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
         <div class="notice"><strong>Workspace accounts:</strong> your administrator may need to allow members to use and upload Skills.</div>
-        <div class="notice"><strong>Do not see Plugins or Skills?</strong> Your plan or app may not include them. Attach <code>cleanlanguage-instructions.txt</code> to a normal chat and say: <code>Follow these writing rules for this conversation.</code> You can also copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat.</div>
+        <div class="notice"><strong>Do not see Plugins or Skills?</strong> Your plan or app may not include them. Attach <code>cleanlanguage-instructions.txt</code> to a normal chat and say: <code class="prompt">Follow these writing rules for this conversation.</code> You can also copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat.</div>
 
         <details>
           <summary><strong>Cannot upload a skill? Build it from the instructions file</strong></summary>
@@ -154,7 +153,7 @@
             </li>
             <li>Open ChatGPT, open <strong>Plugins</strong>, then <strong>Skills</strong>.</li>
             <li>Click <strong>Create</strong>, then <strong>Create with chat</strong>.</li>
-            <li>Type: <code id="chatgpt-build-prompt">Create a skill named Clean Language using the instructions in the file I am about to upload.</code> <button type="button" class="button secondary" data-copy-target="chatgpt-build-prompt" hidden>Copy</button></li>
+            <li>Type: <code class="prompt">Create a skill named Clean Language using the instructions in the file I am about to upload.</code></li>
             <li>Attach <code>cleanlanguage-instructions.txt</code> and send the message.</li>
             <li>When ChatGPT shows the completed skill, install it.</li>
           </ol>
@@ -178,14 +177,14 @@
           <li>Click <strong>Gems</strong>. If you do not see it, click <strong>Settings and help</strong>, then <strong>Gems</strong>.</li>
           <li>Click <strong>New Gem</strong>.</li>
           <li>Name it <strong>Clean Language</strong>.</li>
-          <li>In the instructions box, type: <code id="gemini-gem-instruction">Follow the Clean Language instructions in the attached knowledge file for every response.</code> <button type="button" class="button secondary" data-copy-target="gemini-gem-instruction" hidden>Copy</button></li>
+          <li>In the instructions box, type: <code class="prompt">Follow the Clean Language instructions in the attached knowledge file for every response.</code></li>
           <li>Scroll to <strong>Knowledge</strong>.</li>
           <li>Click <strong>Add files</strong>, then <strong>Upload files</strong>.</li>
           <li>Select <code>cleanlanguage-instructions.txt</code>.</li>
           <li>Click <strong>Save</strong>.</li>
         </ol>
         <p>To use it later, open Gemini, click <strong>Gems</strong>, then click <strong>Clean Language</strong>.</p>
-        <p>Test it: open the Clean Language Gem and send <code>Apply Clean Language to this draft: [paste your text]</code>. If the reply is a tighter, more direct version of your text, it is working. If Gemini says it does not know what Clean Language is, repeat the steps.</p>
+        <p>Test it: open the Clean Language Gem and send <code class="prompt">Apply Clean Language to this draft: [paste your text]</code>. If the reply is a tighter, more direct version of your text, it is working. If Gemini says it does not know what Clean Language is, repeat the steps.</p>
         <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
         <div class="notice"><strong>Mobile note:</strong> create and edit the Gem on the Gemini website. After saving it, the Gem appears in the Gemini mobile app.</div>
       </section>
@@ -205,13 +204,13 @@
           <li>Open Microsoft 365 Copilot on a computer.</li>
           <li>Open the agents panel and click <strong>New agent</strong>, then open the <strong>Configure</strong> tab.</li>
           <li>Name it <strong>Clean Language</strong>.</li>
-          <li>In the instructions box, enter: <code id="copilot-agent-instruction">Follow the Clean Language instructions in the uploaded knowledge file for every response.</code> <button type="button" class="button secondary" data-copy-target="copilot-agent-instruction" hidden>Copy</button></li>
+          <li>In the instructions box, enter: <code class="prompt">Follow the Clean Language instructions in the uploaded knowledge file for every response.</code></li>
           <li>Under <strong>Knowledge</strong>, upload <code>cleanlanguage-instructions.txt</code> from your device.</li>
           <li>Click <strong>Create</strong> or <strong>Save</strong>, then select <strong>Clean Language</strong> whenever you need it.</li>
         </ol>
-        <p>Test it: select Clean Language and send <code>Apply Clean Language to this draft: [paste your text]</code>. If the reply is a tighter, more direct version of your text, it is working. If Copilot says it does not know what Clean Language is, repeat the steps or use the fallback below.</p>
+        <p>Test it: select Clean Language and send <code class="prompt">Apply Clean Language to this draft: [paste your text]</code>. If the reply is a tighter, more direct version of your text, it is working. If Copilot says it does not know what Clean Language is, repeat the steps or use the fallback below.</p>
         <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
-        <div class="notice"><strong>No agent access?</strong> Open the downloaded <code>cleanlanguage-instructions.txt</code> (double-click it; it opens in Notepad or TextEdit), select all the text, copy it, paste it into a Copilot chat, and say: <code>Follow these writing rules for this conversation.</code> Or open the <a href="/instructions/">instructions page</a> and click <strong>Copy everything</strong>.</div>
+        <div class="notice"><strong>No agent access?</strong> Open the downloaded <code>cleanlanguage-instructions.txt</code> (double-click it; it opens in Notepad or TextEdit), select all the text, copy it, paste it into a Copilot chat, and say: <code class="prompt">Follow these writing rules for this conversation.</code> Or open the <a href="/instructions/">instructions page</a> and click <strong>Copy everything</strong>.</div>
       </section>
 
       <section id="other-ai">
@@ -226,7 +225,7 @@
           </li>
           <li>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</li>
           <li>Add it to your AI tool as custom instructions, project knowledge, a system prompt, or an attached reference file.</li>
-          <li>Tell the AI: <code id="other-ai-prompt">Use the Clean Language instructions for every response unless I explicitly tell you not to.</code> <button type="button" class="button secondary" data-copy-target="other-ai-prompt" hidden>Copy</button></li>
+          <li>Tell the AI: <code class="prompt">Use the Clean Language instructions for every response unless I explicitly tell you not to.</code></li>
         </ol>
       </section>
 
@@ -234,7 +233,7 @@
         <h2>How to use Clean Language</h2>
         <p>Once it is set up, you choose when it applies:</p>
         <ul>
-          <li><strong>Everywhere, automatically:</strong> add <code>Always apply Clean Language to your responses</code> to your assistant's personal or custom instructions.</li>
+          <li><strong>Everywhere, automatically:</strong> add <code class="prompt">Always apply Clean Language to your responses</code> to your assistant's personal or custom instructions.</li>
           <li><strong>In one project or space:</strong> add the same line to that project's instructions, so it applies there and not elsewhere.</li>
           <li><strong>For a single chat:</strong> tell the assistant to use Clean Language at the start of the conversation.</li>
           <li><strong>On demand:</strong> ask for it only when you want it.</li>
@@ -242,9 +241,9 @@
         </ul>
         <p>For on-demand use, paste rough notes or finished text with one of these requests:</p>
         <ul>
-          <li><code>Apply Clean Language to this draft: [paste your text]</code></li>
-          <li><code>Rewrite this using Clean Language: [paste your text]</code></li>
-          <li><code>Proofread this using Clean Language. Fix mistakes but do not change my tone: [paste your text]</code></li>
+          <li><code class="prompt">Apply Clean Language to this draft: [paste your text]</code></li>
+          <li><code class="prompt">Rewrite this using Clean Language: [paste your text]</code></li>
+          <li><code class="prompt">Proofread this using Clean Language. Fix mistakes but do not change my tone: [paste your text]</code></li>
         </ul>
       </section>
 
@@ -273,6 +272,5 @@
     <p>Clean Language is freely available under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>, created by <a href="https://linkedin.com/in/jposluns" target="_blank" rel="noopener noreferrer">Jeff Posluns</a>.</p>
     <div><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/demo/">Try It</a><a href="/install/">Install</a><a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a></div>
   </footer>
-  <script src="/js/copy.js" defer></script>
 </body>
 </html>
