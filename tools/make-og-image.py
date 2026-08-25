@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Redraw the headline and URL lines of the Open Graph card.
 
-``site/og-image.png`` is the social sharing card that every page references as
+``site/cleanlanguage-card.png`` is the social sharing card that every page references as
 ``og:image``. It entered the repository as a bare PNG with no source file and no
 generator, so changing a single word of it once meant recovering its typography
 from the raster. This script holds that recovered typography, so the next change
@@ -76,7 +76,7 @@ except ImportError:  # pragma: no cover - environment problem, not a code path
     raise SystemExit(3)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CARD = REPO_ROOT / "site" / "og-image.png"
+CARD = REPO_ROOT / "site" / "cleanlanguage-card.png"
 
 CANVAS = (1200, 630)
 BACKGROUND = (20, 92, 59)
@@ -224,7 +224,7 @@ def sha256_of(path: Path) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Redraw the headline and URL lines of site/og-image.png.",
+        description="Redraw the headline and URL lines of site/cleanlanguage-card.png.",
     )
     parser.add_argument("--line1", default=DEFAULT_LINE_1, help="first headline line")
     parser.add_argument("--line2", default=DEFAULT_LINE_2, help="second headline line")
@@ -242,7 +242,7 @@ def main() -> int:
         import tempfile
 
         with tempfile.TemporaryDirectory() as workdir:
-            candidate = Path(workdir) / "og-image.png"
+            candidate = Path(workdir) / "cleanlanguage-card.png"
             build(args.base, candidate, DEFAULT_LINE_1, DEFAULT_LINE_2, DEFAULT_URL)
             expected, actual = sha256_of(args.base), sha256_of(candidate)
             if expected == actual:

@@ -10,16 +10,18 @@ name: Page metadata
 on:
   pull_request:
     paths:
-      - "site/**/*.html"
-      - "site/*.html"
+      # site/** rather than just the HTML: the check also resolves each card
+      # image reference to a file, so removing an image must trigger it too.
+      - "site/**"
       - "tools/check-page-metadata.py"
       - ".github/workflows/page-metadata.yml"
   push:
     branches:
       - main
     paths:
-      - "site/**/*.html"
-      - "site/*.html"
+      # site/** rather than just the HTML: the check also resolves each card
+      # image reference to a file, so removing an image must trigger it too.
+      - "site/**"
       - "tools/check-page-metadata.py"
       - ".github/workflows/page-metadata.yml"
 
