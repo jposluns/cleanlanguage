@@ -23,13 +23,19 @@ What it verifies, per page
 6. Where a page carries JSON-LD, its ``datePublished``, ``dateModified``, and
    author name agree with the meta tags, so a page cannot contradict itself.
 7. Every page names the same author, so one page cannot drift from the rest.
+8. Each ``og:image`` and ``twitter:image`` URL on the site's own origin resolves
+   to a file that exists. These URLs are absolute, because a crawler needs them
+   to be, which puts them outside the relative-link scope of check-links.py, so
+   a card pointing at a missing file would otherwise ship unnoticed.
 
 What it does not verify
 -----------------------
 
-It proves the dates are internally consistent and consistent with git history.
-It does not prove any particular crawler reads or displays them. It says nothing
-about whether the prose on a page is current, only about when the file changed.
+It proves the dates are internally consistent and consistent with git history,
+and that the referenced card files exist. It does not prove any particular
+crawler reads or displays any of it. It says nothing about whether the prose on
+a page is current, only about when the file changed, and nothing about whether an
+image's contents are correct, only that the file is there.
 
 ``site/404.html`` is out of scope: it is ``noindex`` and carries no social or
 authorship metadata by design.
@@ -76,6 +82,13 @@ JSON_LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 REQUIRED_PROPERTIES = ("article:published_time", "article:modified_time", "article:author")
+
+# The site's own origin. Image URLs are written absolute, because a crawler needs
+# an absolute URL, which puts them outside check-links.py's relative-link scope.
+# A card URL pointing at a file that does not exist would otherwise ship
+# unnoticed, so the image references are resolved back to files here.
+SITE_ORIGIN = "https://cleanlanguage.ai"
+IMAGE_REFERENCES = ("og:image", "twitter:image")
 
 
 def die(message: str) -> None:
@@ -174,6 +187,16 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
                 f"article:published_time is {published} but git shows the file was added "
                 f"{added}; correct the stamp, or record the exception in PUBLISHED_OVERRIDES"
             )
+
+    for reference in IMAGE_REFERENCES:
+        url = properties.get(reference) or names.get(reference)
+        if url and url.startswith(SITE_ORIGIN):
+            target = SITE_ROOT / url[len(SITE_ORIGIN) :].lstrip("/")
+            if not target.is_file():
+                problems.append(
+                    f"{reference} points at {url}, but {target.relative_to(REPO_ROOT)} "
+                    f"does not exist"
+                )
 
     for match in JSON_LD.finditer(text):
         try:

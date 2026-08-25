@@ -30,8 +30,8 @@ Add `cleanlanguage.ai` as the custom domain after the first deployment.
 - `js/copy.js`: copy-to-clipboard behaviour for the install and demo pages
 - `favicon.svg`: site icon
 - `apple-touch-icon.png`: home-screen icon for Apple devices
-- `og-image.png`: social sharing preview image, whose headline and URL lines are
-  redrawn by [`tools/make-og-image.py`](../tools/make-og-image.py)
+- `cleanlanguage-card.png`: social sharing preview image, whose headline and URL
+  lines are redrawn by [`tools/make-og-image.py`](../tools/make-og-image.py)
 - `downloads/`: portable Clean Language instructions file
 - `robots.txt`: crawler directives
 - `sitemap.xml`: search-engine sitemap
