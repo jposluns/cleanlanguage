@@ -13,13 +13,11 @@ The preferred Claude method installs the complete Skill package.
 1. Download [`cleanlanguage.zip`](https://github.com/jposluns/cleanlanguage/releases/latest/download/cleanlanguage.zip).
 2. Do not unzip the file.
 3. Open Claude in a desktop browser and sign in.
-4. Open **Settings**, then **Capabilities**.
-5. Turn on **Code execution and file creation** if Claude shows that option and it is off.
-6. Open **Customize**, then **Skills**.
-7. Click **+**.
-8. Click **Create skill**, then **Upload a skill**.
-9. Select `cleanlanguage.zip`.
-10. Turn **Clean Language** on.
+4. Open **Customize**, then **Skills**.
+5. Click **+**.
+6. Click **Create skill**, then **Upload a skill**.
+7. Select `cleanlanguage.zip`.
+8. Turn **Clean Language** on.
 
 Test it in a new chat:
 
@@ -27,13 +25,13 @@ Test it in a new chat:
 Apply Clean Language to this draft: [paste your text]
 ```
 
-Team and Enterprise administrators may need to enable Skills and code execution. An organization owner can upload the Skill once for everyone.
+Team and Enterprise administrators may need to enable Skills. An organization owner can upload the Skill once for everyone.
 
 The matching checksum is available as [`cleanlanguage.zip.sha256`](https://github.com/jposluns/cleanlanguage/releases/latest/download/cleanlanguage.zip.sha256).
 
 ### Claude Project fallback
 
-Use this when Skills or code execution are unavailable.
+Use this when Skills are unavailable.
 
 1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.txt).
 2. In Claude, click **Projects**, then **New Project**.
