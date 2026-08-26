@@ -10,18 +10,22 @@ With JavaScript blocked by the site's Content-Security-Policy, failed, or switch
 off, the attribute is never set, the guarded rule is inert, and all five sections
 show.
 
-This is a TRIPWIRE for the common regressions, not a browser and not a CSS engine.
-A regex cannot faithfully model CSS selector matching or the HTML tree, so this
-check verifies what it can verify reliably and names the rest as the reviewer's
-and the cross-family QA's job.
+This is a TRIPWIRE for the common regressions in the STATIC MARKUP, plus a check
+that the collapse rule still exists. It is deliberately NOT a CSS engine. An
+earlier version tried to prove that no unguarded stylesheet rule could hide a
+family section; three independent adversarial reviews each found different real
+bypasses and false positives in that regex heuristic, because a regex cannot model
+CSS selector matching. So that heuristic was removed: whether a NEW stylesheet rule
+hides a section without the guard is left to review and the cross-family QA, and
+this gate instead verifies the markup reliably and confirms the guarded collapse
+rule is present.
 
-What it verifies
-----------------
+What it verifies (reliably)
+---------------------------
 
 1. Each family id exists exactly once on a ``<section id=X data-family-section=X>``
-   with an ``<h2>`` that has visible (non-whitespace, non-zero-width) text, no id
-   in the document is duplicated, and the general sections ``spelling``,
-   ``how-to-use``, and ``assurance`` exist.
+   with an ``<h2>`` that has visible text, no id in the document is duplicated, and
+   the general sections ``spelling``, ``how-to-use``, and ``assurance`` exist.
 2. No family section carries, on itself, ``hidden``, ``inert``,
    ``aria-hidden="true"`` (any case), or the ``visually-hidden`` class.
 3. No pre-set filter state: the root has no ``data-family``, no picker link has
@@ -29,36 +33,30 @@ What it verifies
 4. Each family has exactly one picker ``<a data-family-link=X href="#X">`` inside
    the ``.platform-actions`` group.
 5. No inline executable ``<script>``, ``style`` attribute, or ``on*`` handler.
-6. A guarded collapse rule is present: some rule whose root condition is a positive
-   ``html[data-family]`` or ``html[data-family=...]`` (not a longer attribute name
-   such as ``data-family-mode``, and not inside a negation) hides a
-   ``data-family-section``.
-7. Heuristic: a ``display:none`` / ``visibility:hidden`` rule whose subject names a
-   family marker or is a ``section`` type selector, that does not exclude the family
-   marker and is not guarded, is flagged. Selector matching is case-insensitive.
-8. ``site/_headers`` keeps ``script-src 'self'`` and ``style-src 'self'`` with no
+6. The guarded collapse rule is present: some hiding rule whose selector carries a
+   positive, boundary-anchored ``html[data-family]`` / ``html[data-family=...]``
+   (not ``.html``/``xhtml``/``data-family-mode``) and names ``data-family-section``.
+   This catches the feature being deleted or its guard being renamed.
+7. ``site/_headers`` keeps ``script-src 'self'`` and ``style-src 'self'`` with no
    ``unsafe-inline``, and an immutable ``Cache-Control`` for ``/js/install.js``.
 
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
 
-It is not a CSS engine or a browser. It does NOT catch: a hiding ANCESTOR (a
-wrapping ``hidden`` div, a closed ``<details>``, a ``<template>``); a custom CLASS
-that hides, clips, zeroes opacity, or positions a section off-screen; a DESCENDANT
-wipe such as ``section[data-family-section] > * { display: none }`` that empties a
-section; hiding a family by a form the heuristic does not name (``#claude``,
-``[id="claude"]``, or an attribute value that only a browser resolves); a guard
-written other than as the plain ``html[data-family]`` (an ``:is()``/``:where()``
-guard, or a negation-of-negation, is not analyzed and should be written plainly);
-an uppercase attribute VALUE (selector names are folded, values are not); or a
-path-scoped header override in ``_headers`` (only the global CSP line is read). The
-inline-code and CSS scans are regex over a flat, unnested stylesheet whose rule
-bodies hold no literal braces; adversarial selector or attribute-string shapes may
-still slip through, and a cross-family review remains the backstop.
+It is not a CSS engine or a browser. It does NOT detect a NEW stylesheet rule that
+hides a family section without the guard (for example ``section[data-family-section]
+{ display: none }``), nor a hiding ANCESTOR (a wrapping ``hidden`` div, a closed
+``<details>``, a ``<template>``), a custom CLASS that hides/clips/zeroes
+opacity/positions off-screen, a DESCENDANT wipe, or hiding by id. Those are visible
+regressions a browser check, a reviewer, or the tri-family QA catches; a regex
+cannot decide them without false positives that would block valid edits. The
+inline-code checks and the collapse-rule scan are regex over a flat, unnested
+stylesheet; an exotic heading character or attribute-string shape may still slip
+through.
 
 Exit codes:
-  0  the page and its rules are static, complete, and correctly guarded
-  1  a family section, picker link, guard, or header discipline regressed
+  0  the markup is static, complete, and the guarded collapse rule is present
+  1  a family section, picker link, id, reset, guard, or header discipline regressed
   3  a file could not be read, or the expected markup was not found
 """
 
@@ -78,7 +76,9 @@ HEADERS = REPO_ROOT / "site" / "_headers"
 FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
 GENERAL_IDS = ["spelling", "how-to-use", "assurance"]
 VOID = {"meta", "link", "img", "br", "hr", "input", "source", "wbr", "col"}
-ZERO_WIDTH = "​‌‍﻿ "
+# Invisible characters a heading might be reduced to: zero-width spaces/joiner/BOM,
+# no-break and soft-hyphen, word joiner, and the bidi marks.
+ZERO_WIDTH = "​‌‍﻿ ⁠‍‌­"
 
 SCRIPT_TAG = re.compile(r"<script([^>]*)>", re.I)
 SCRIPT_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
@@ -87,8 +87,10 @@ INLINE_STYLE = re.compile(r"<[^>]+\sstyle\s*=", re.I)
 INLINE_HANDLER = re.compile(r"<[^>]+\son[a-z]+\s*=", re.I)
 CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}", re.S)
-PSEUDO_ARG = re.compile(r":(?:not|is|where|matches)\([^()]*\)", re.I)
-GUARD = re.compile(r"html\[data-family\s*(?:[~^$*|]?=|\])")
+# A positive root guard: html[data-family] or html[data-family=...], anchored so a
+# class (.html), a different element (xhtml), or a longer name (data-family-mode)
+# does not count.
+GUARD = re.compile(r"(?:^|[\s,>+~(])html\[data-family(?:[~^$*|]?=|\])", re.I)
 
 
 def die(message: str) -> None:
@@ -108,6 +110,19 @@ def is_hiding_element(attrs: dict[str, str]) -> bool:
 
 def has_visible_text(data: str) -> bool:
     return bool(data.translate({ord(c): None for c in ZERO_WIDTH}).strip())
+
+
+def hides(body: str) -> bool:
+    b = re.sub(r"\s+", "", body).lower()
+    return "display:none" in b or "visibility:hidden" in b or "visibility:collapse" in b
+
+
+def collapse_rule_present(text: str) -> bool:
+    stripped = CSS_COMMENT.sub("", text)
+    for selector, body in CSS_RULE.findall(stripped):
+        if hides(body) and "data-family-section" in selector.lower() and GUARD.search(selector):
+            return True
+    return False
 
 
 class InstallParser(HTMLParser):
@@ -198,96 +213,6 @@ def executes_inline(text: str) -> bool:
         if attributes.get("type", "").strip().lower() in EXECUTABLE_TYPES:
             return True
     return False
-
-
-def hides(body: str) -> bool:
-    b = re.sub(r"\s+", "", body).lower()
-    return "display:none" in b or "visibility:hidden" in b or "visibility:collapse" in b
-
-
-def _mask(s: str):
-    stash: list[str] = []
-
-    def m(mt: "re.Match[str]") -> str:
-        stash.append(mt.group(0))
-        return f"\x00{len(stash) - 1}\x00"
-
-    s = re.sub(r"\[[^\]]*\]", m, s)
-    prev = None
-    while prev != s:
-        prev = s
-        s = re.sub(r":[a-zA-Z-]+\([^()]*\)", m, s)
-    return s, stash
-
-
-def _unmask(s: str, stash: list[str]) -> str:
-    prev = None
-    while prev != s:
-        prev = s
-        s = re.sub(r"\x00(\d+)\x00", lambda x: stash[int(x.group(1))], s)
-    return s
-
-
-def subject(branch: str) -> str:
-    masked, stash = _mask(branch.strip())
-    parts = re.split(r"\s*[>+~]\s*|\s+", masked)
-    last = parts[-1] if parts and parts[-1] else masked
-    return _unmask(last, stash)
-
-
-def positive_guard(branch: str) -> bool:
-    stripped = branch
-    prev = None
-    while prev != stripped:
-        prev = stripped
-        stripped = PSEUDO_ARG.sub("", stripped)
-    return bool(GUARD.search(stripped))
-
-
-def excludes_family(branch: str) -> bool:
-    for m in re.finditer(r":not\(([^()]*)\)", branch):
-        arg = m.group(1)
-        if "data-family-section" in arg or any(f"#{f}" in arg for f in FAMILIES):
-            return True
-    return False
-
-
-def targets_family(subj: str) -> bool:
-    if "data-family-section" in subj:
-        return True
-    return subj == "section" or subj.startswith("section:")
-
-
-def scan_css(text: str, problems: list[str]) -> None:
-    stripped = CSS_COMMENT.sub("", text)
-    collapse_found = False
-    for selector, body in CSS_RULE.findall(stripped):
-        if not hides(body):
-            continue
-        masked_sel, stash = _mask(selector)
-        for masked_branch in [b for b in masked_sel.split(",") if b.strip()]:
-            branch = _unmask(masked_branch, stash).strip().lower()
-            if not branch:
-                continue
-            if excludes_family(branch):
-                continue
-            if not targets_family(subject(branch)):
-                continue
-            if positive_guard(branch):
-                collapse_found = True
-            else:
-                problems.append(
-                    "a stylesheet rule hides a family section without the "
-                    f"html[data-family] guard, so it would vanish with no JavaScript: "
-                    f"selector {branch!r}. Guard it with html[data-family] ... "
-                    "[data-family-section]."
-                )
-    if not collapse_found:
-        problems.append(
-            "no guarded collapse rule found in site/styles.css: a rule keyed on a "
-            "positive html[data-family] must hide the non-selected data-family-section, "
-            "or the selector feature has silently rotted out of the stylesheet."
-        )
 
 
 def main() -> int:
@@ -396,10 +321,16 @@ def main() -> int:
     if not re.search(r'href="/styles\.css\?v=\d{8}-\d+"', page_text):
         problems.append("the page does not reference /styles.css with a ?v=YYYYMMDD-N token.")
 
-    # 6/7. CSS guard scan
-    scan_css(STYLES.read_text(encoding="utf-8"), problems)
+    # 6. the guarded collapse rule still exists
+    if not collapse_rule_present(STYLES.read_text(encoding="utf-8")):
+        problems.append(
+            "no guarded collapse rule found in site/styles.css: a rule keyed on a "
+            "positive html[data-family] must hide the non-selected data-family-section. "
+            "The selector feature has rotted out, or its guard is no longer the plain "
+            "html[data-family] form this gate recognizes."
+        )
 
-    # 8. header discipline
+    # 7. header discipline
     headers = HEADERS.read_text(encoding="utf-8")
     csp_line = next((ln for ln in headers.splitlines() if "Content-Security-Policy:" in ln), "")
     if not csp_line:
@@ -422,9 +353,9 @@ def main() -> int:
         return 1
 
     print(
-        "The install page carries all five family sections statically and visibly, the "
-        "picker and reset control are present with no pre-set filter state, no inline code, "
-        "and the collapse rule is guarded so the page degrades without JavaScript."
+        "The install page carries all five family sections statically and visibly, ids are "
+        "unique, the picker and single hidden reset are present with no pre-set filter state, "
+        "no inline code, and the guarded collapse rule is present."
     )
     return 0
 
