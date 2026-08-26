@@ -110,10 +110,11 @@
   // A hash-driven change (a legacy deep link, Back or Forward, or a typed URL)
   // selects that family and lands at Get Clean Language.
   window.addEventListener('hashchange', function () {
-    var before = current;
     var family = familyFromHash();
     apply(true);
-    if (family && family !== before) { scrollToGet(); }
+    // Any #family hash triggers a native scroll to that section; correct it to Get
+    // whether or not the filter changed. A non-family hash is left to scroll natively.
+    if (family) { scrollToGet(); }
   });
 
   var queryFamily = familyFromQuery();
