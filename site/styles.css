@@ -274,6 +274,7 @@ h2.label, h3.label, .content h2.label, .content h3.label { margin: 0 0 14px; fon
 .spelling-details { margin-top: 18px; }
 .spelling-details > summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 .spelling-scroll { overflow-x: auto; }
+.spelling-scroll:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .spelling-table { width: 100%; border-collapse: collapse; margin: 14px 0 4px; font-size: 0.95rem; }
 .spelling-table caption { text-align: left; color: var(--muted); font-size: 0.9rem; margin-bottom: 10px; }
 .spelling-table th, .spelling-table td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; white-space: nowrap; }
