@@ -61,13 +61,16 @@
     current = family;
   }
 
-  function scrollToTop() {
-    // A family selection lands the reader at the top of the page with the picker
-    // filtered, not jumped to the section, so they still work down in order.
+  function scrollToGet() {
+    // A family selection lands the reader at Get Clean Language, filtered, so they
+    // get the file first and then work down to their assistant's steps, rather
+    // than jumping straight to that section.
+    var target = document.getElementById('get');
+    if (!target) { return; }
     try {
-      window.scrollTo({ top: 0, behavior: 'auto' });
+      target.scrollIntoView({ block: 'start', behavior: 'auto' });
     } catch (e) {
-      window.scrollTo(0, 0);
+      target.scrollIntoView();
     }
   }
 
@@ -104,28 +107,28 @@
     });
   }
 
-  // A hash-driven change (a deep link from another page, Back or Forward, or a
-  // typed URL) selects that family and lands at the top, like an in-page tap.
+  // A hash-driven change (a legacy deep link, Back or Forward, or a typed URL)
+  // selects that family and lands at Get Clean Language.
   window.addEventListener('hashchange', function () {
     var before = current;
     var family = familyFromHash();
     apply(true);
-    if (family && family !== before) { scrollToTop(); }
+    if (family && family !== before) { scrollToGet(); }
   });
 
   var queryFamily = familyFromQuery();
   if (queryFamily) {
-    // A ?ai= deep link: no fragment, so the browser does not scroll. Just filter.
     render(queryFamily, false);
   } else {
     apply(false);
-    if (familyFromHash()) {
-      // A legacy #family deep link also scrolls to the section; correct it next frame.
-      if (window.requestAnimationFrame) {
-        window.requestAnimationFrame(scrollToTop);
-      } else {
-        scrollToTop();
-      }
+  }
+  if (queryFamily || familyFromHash()) {
+    // Land at Get Clean Language on the next frame: this also corrects the native
+    // scroll a legacy #family deep link triggers.
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(scrollToGet);
+    } else {
+      scrollToGet();
     }
   }
 })();
