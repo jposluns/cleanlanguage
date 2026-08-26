@@ -263,7 +263,6 @@ h2.label, h3.label, .content h2.label, .content h3.label { margin: 0 0 14px; fon
 .notice { padding: 20px 22px; border-radius: 14px; background: var(--accent-soft); border: 1px solid #b9d0c1; }
 .verified { margin: -8px 0 20px; font-size: 0.85rem; color: var(--muted); }
 .instructions-block { white-space: pre-wrap; }
-.instructions-block:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .notice p { margin: 0 0 10px; }
 .notice p:last-child { margin-bottom: 0; }
 .step-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 0 0 18px; }

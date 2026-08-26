@@ -43,14 +43,13 @@
     current = family;
   }
 
-  function scrollToFamily(family) {
-    if (!family) { return; }
-    var target = document.getElementById(family);
-    if (!target) { return; }
+  function scrollToTop() {
+    // A family selection lands the reader at the top of the page with the picker
+    // filtered, not jumped to the section, so they still work down in order.
     try {
-      target.scrollIntoView({ block: 'start', behavior: 'auto' });
+      window.scrollTo({ top: 0, behavior: 'auto' });
     } catch (e) {
-      target.scrollIntoView();
+      window.scrollTo(0, 0);
     }
   }
 
@@ -90,14 +89,14 @@
   }
 
   // A hash-driven change (a deep link from another page, Back or Forward, or a
-  // typed URL) does scroll to the named family; an in-page tap above does not.
+  // typed URL) selects that family and lands at the top, like an in-page tap.
   window.addEventListener('hashchange', function () {
     var before = current;
     var family = familyFromHash();
     apply(true);
-    if (family && family !== before) { scrollToFamily(family); }
+    if (family && family !== before) { scrollToTop(); }
   });
 
   apply(false);
-  scrollToFamily(familyFromHash());
+  if (familyFromHash()) { scrollToTop(); }
 })();
