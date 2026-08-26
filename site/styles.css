@@ -335,6 +335,7 @@ html[data-family="gemini"] section[data-family-section="gemini"],
 html[data-family="copilot"] section[data-family-section="copilot"],
 html[data-family="other-ai"] section[data-family-section="other-ai"] { display: block; }
 .platform-button[aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.platform-button[aria-current="true"] strong { text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 2px; }
 .family-reset { margin: 14px 0 0; }
 /* .button sets display:inline-flex, which outranks the UA [hidden] rule, so a
    hidden .button needs this to actually hide when JavaScript has not shown it. */

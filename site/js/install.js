@@ -13,6 +13,7 @@
   var status = document.getElementById('family-status');
   var links = document.querySelectorAll('.platform-actions a[data-family-link]');
   if (!links.length) { return; }
+  var current = null;
 
   function familyFromHash() {
     var name = location.hash.slice(1);
@@ -20,6 +21,7 @@
   }
 
   function render(family, announce) {
+    var changed = family !== current;
     if (family) {
       root.setAttribute('data-family', family);
     } else {
@@ -33,11 +35,18 @@
       }
     });
     if (reset) { reset.hidden = !family; }
-    if (status && announce) {
+    if (status && announce && changed) {
       status.textContent = family
-        ? 'Showing the ' + NAMES[family] + ' setup. The other sections stay below.'
+        ? 'Showing the ' + NAMES[family] + ' setup. Choose Show all AI systems to see the other setups.'
         : 'Showing every setup section.';
     }
+    current = family;
+  }
+
+  function scrollToFamily(family) {
+    if (!family) { return; }
+    var target = document.getElementById(family);
+    if (target) { target.scrollIntoView(); }
   }
 
   function apply(announce) {
@@ -57,12 +66,15 @@
       if (picker) { picker.focus(); }
     });
   }
-  window.addEventListener('hashchange', function () { apply(true); });
+
+  window.addEventListener('hashchange', function () {
+    var family = familyFromHash();
+    apply(true);
+    // The browser scrolled to the target against the pre-collapse page; after
+    // collapsing the sections above it, the target has moved, so restore it.
+    scrollToFamily(family);
+  });
 
   apply(false);
-  var initial = familyFromHash();
-  if (initial) {
-    var target = document.getElementById(initial);
-    if (target) { target.scrollIntoView(); }
-  }
+  scrollToFamily(familyFromHash());
 })();
