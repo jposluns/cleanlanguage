@@ -70,8 +70,25 @@
       <p class="eyebrow">Simple installation</p>
       <h1>Pick the AI you use and follow the buttons.</h1>
       <p>You do not need a command line, a developer account, or knowledge of GitHub. These instructions cover Claude, ChatGPT, Gemini, Copilot, and other AI systems.</p>
-      <p>Clean Language comes as written rules your AI reads and follows. Get the file once below, then pick your AI for the few steps that add it.</p>
+      <p>Clean Language comes as written rules your AI reads and follows. Pick your AI below, get the file once, and follow the few steps that add it.</p>
     </section>
+
+      <section id="pick">
+        <h2>Pick your AI</h2>
+        <p>Choosing one hides the other assistants&#8217; steps, so you see only yours. Or scroll to read them all.</p>
+        <div class="platform-actions" id="install-picker" tabindex="-1" role="group" aria-label="Pick your AI assistant">
+          <a class="platform-button claude" href="#claude" data-family-link="claude"><span class="platform-icon" aria-hidden="true">C</span><span><strong>Claude</strong><small>Upload and enable the skill</small></span></a>
+          <a class="platform-button chatgpt" href="#chatgpt" data-family-link="chatgpt"><span class="platform-icon" aria-hidden="true">GPT</span><span><strong>ChatGPT</strong><small>Upload through ChatGPT Skills</small></span></a>
+          <a class="platform-button gemini" href="#gemini" data-family-link="gemini"><span class="platform-icon" aria-hidden="true">&#10022;</span><span><strong>Gemini</strong><small>Create a reusable Gem</small></span></a>
+          <a class="platform-button copilot" href="#copilot" data-family-link="copilot"><span class="platform-icon" aria-hidden="true">Co</span><span><strong>Copilot</strong><small>Create a Clean Language agent</small></span></a>
+          <a class="platform-button guide" href="#other-ai" data-family-link="other-ai"><span class="platform-icon" aria-hidden="true">+</span><span><strong>Other AI systems</strong><small>Add the instructions file</small></span></a>
+        </div>
+        <p class="family-reset">
+          <button type="button" id="family-reset" class="button secondary" hidden>Show all AI systems</button>
+          <span class="visually-hidden" role="status" id="family-status"></span>
+        </p>
+      </section>
+
       <div class="notice"><p>Setup is easiest on a computer. On a phone right now? <a href="/downloads/cleanlanguage-instructions.txt" download>Download the instructions file</a>, attach it to a chat with your AI, and say: <code class="prompt">Follow these writing rules for this conversation.</code> Or copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat. Then do the full setup later on a computer.</p></div>
 
       <section id="get">
@@ -97,22 +114,6 @@
         <p>The skill downloads from GitHub, where releases are published; the instructions file downloads from this site. If the skill download does not start, your network may block GitHub; use the <a href="/instructions/">instructions page</a> instead. The instructions file saves as <code>cleanlanguage-instructions.txt</code>.</p>
         <p>Your browser saves the skill as a zip file named <code>cleanlanguage-</code> followed by the version, for example <code>cleanlanguage-1.0.11.zip</code>, usually in your Downloads folder. Do not unzip it. If your computer unzipped it automatically and you see a <code>cleanlanguage</code> folder, that is fine: the original zip usually stays in your Downloads folder. Upload the zip file, not the folder. In Safari, automatic unzipping can move the original zip to the Trash; if you cannot find it, look there, or turn off <strong>Settings</strong>, then <strong>General</strong>, then <strong>Open &#8220;safe&#8221; files after downloading</strong>.</p>
         <p>The instructions file is plain text. The skill is a zip of text instructions, configuration, and icons, with no program inside. <a href="/verify/">Verify your download</a> against the published checksum if you want to, and see <a href="#assurance">Trust and assurance</a> below for what the skill does and does not do.</p>
-      </section>
-
-      <section id="pick">
-        <h2>Pick your AI</h2>
-        <p>Choosing one hides the other assistants&#8217; steps, so you see only yours. Or scroll to read them all.</p>
-        <div class="platform-actions" id="install-picker" tabindex="-1" role="group" aria-label="Pick your AI assistant">
-          <a class="platform-button claude" href="#claude" data-family-link="claude"><span class="platform-icon" aria-hidden="true">C</span><span><strong>Claude</strong><small>Upload and enable the skill</small></span></a>
-          <a class="platform-button chatgpt" href="#chatgpt" data-family-link="chatgpt"><span class="platform-icon" aria-hidden="true">GPT</span><span><strong>ChatGPT</strong><small>Upload through ChatGPT Skills</small></span></a>
-          <a class="platform-button gemini" href="#gemini" data-family-link="gemini"><span class="platform-icon" aria-hidden="true">&#10022;</span><span><strong>Gemini</strong><small>Create a reusable Gem</small></span></a>
-          <a class="platform-button copilot" href="#copilot" data-family-link="copilot"><span class="platform-icon" aria-hidden="true">Co</span><span><strong>Copilot</strong><small>Create a Clean Language agent</small></span></a>
-          <a class="platform-button guide" href="#other-ai" data-family-link="other-ai"><span class="platform-icon" aria-hidden="true">+</span><span><strong>Other AI systems</strong><small>Add the instructions file</small></span></a>
-        </div>
-        <p class="family-reset">
-          <button type="button" id="family-reset" class="button secondary" hidden>Show all AI systems</button>
-          <span class="visually-hidden" role="status" id="family-status"></span>
-        </p>
       </section>
 
       <section id="claude" data-family-section="claude">
