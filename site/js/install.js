@@ -46,7 +46,15 @@
   function scrollToFamily(family) {
     if (!family) { return; }
     var target = document.getElementById(family);
-    if (target) { target.scrollIntoView(); }
+    if (!target) { return; }
+    // Instant, not smooth: the browser has already started a native smooth scroll
+    // to the pre-collapse position, and a second smooth scroll would fight it. An
+    // instant correction lands cleanly on the post-collapse position.
+    try {
+      target.scrollIntoView({ block: 'start', behavior: 'auto' });
+    } catch (e) {
+      target.scrollIntoView();
+    }
   }
 
   function apply(announce) {
@@ -68,11 +76,12 @@
   }
 
   window.addEventListener('hashchange', function () {
+    var before = current;
     var family = familyFromHash();
     apply(true);
-    // The browser scrolled to the target against the pre-collapse page; after
-    // collapsing the sections above it, the target has moved, so restore it.
-    scrollToFamily(family);
+    // Re-scroll only when the family actually changed, so Back or Forward across a
+    // general anchor does not yank a settled view.
+    if (family && family !== before) { scrollToFamily(family); }
   });
 
   apply(false);
