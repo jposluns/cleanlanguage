@@ -20,6 +20,24 @@
     return FAMILIES.indexOf(name) === -1 ? null : name;
   }
 
+  function familyFromQuery() {
+    var query = location.search.charAt(0) === '?' ? location.search.slice(1) : location.search;
+    var pairs = query.split('&');
+    for (var i = 0; i < pairs.length; i++) {
+      var pair = pairs[i].split('=');
+      if (pair[0] === 'ai') {
+        var name = pair[1] || '';
+        try {
+          name = decodeURIComponent(name);
+        } catch (e) {
+          return null;
+        }
+        return FAMILIES.indexOf(name) === -1 ? null : name;
+      }
+    }
+    return null;
+  }
+
   function render(family, announce) {
     var changed = family !== current;
     if (family) {
@@ -74,16 +92,14 @@
       }
       e.preventDefault();
       render(link.getAttribute('data-family-link'), true);
-      if (location.hash) {
-        history.replaceState(null, '', location.pathname + location.search);
-      }
+      history.replaceState(null, '', location.pathname);
     });
   });
 
   if (reset) {
     reset.addEventListener('click', function () {
       render(null, true);
-      history.replaceState(null, '', location.pathname + location.search);
+      history.replaceState(null, '', location.pathname);
       if (picker) { picker.focus(); }
     });
   }
@@ -97,14 +113,19 @@
     if (family && family !== before) { scrollToTop(); }
   });
 
-  apply(false);
-  if (familyFromHash()) {
-    // On a cold deep-link load the browser also scrolls to the named section;
-    // run ours on the next frame so it wins and the reader lands at the top.
-    if (window.requestAnimationFrame) {
-      window.requestAnimationFrame(scrollToTop);
-    } else {
-      scrollToTop();
+  var queryFamily = familyFromQuery();
+  if (queryFamily) {
+    // A ?ai= deep link: no fragment, so the browser does not scroll. Just filter.
+    render(queryFamily, false);
+  } else {
+    apply(false);
+    if (familyFromHash()) {
+      // A legacy #family deep link also scrolls to the section; correct it next frame.
+      if (window.requestAnimationFrame) {
+        window.requestAnimationFrame(scrollToTop);
+      } else {
+        scrollToTop();
+      }
     }
   }
 })();
