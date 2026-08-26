@@ -28,7 +28,11 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Full history: the site pull request step runs check-page-metadata.py
+          # before opening the PR, and that check reads each page's history.
+          fetch-depth: 0
 
       - name: Read and validate the version
         shell: bash
@@ -47,65 +51,9 @@ jobs:
           echo "VERSION=${version}" >> "${GITHUB_ENV}"
           echo "Releasing version ${version} as ${RELEASE_TAG}."
 
-      - name: Validate skill structure
+      - name: Validate, package, and verify the skill zip
         shell: bash
-        run: |
-          set -euo pipefail
-          test -f cleanlanguage/SKILL.md
-          test -d cleanlanguage/references
-          grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' cleanlanguage/SKILL.md
-          if find cleanlanguage -type f \( -name '*.py' -o -name '*.js' -o -name '*.sh' -o -name '*.exe' -o -name '*.dll' \) | grep -q .; then
-            echo "Unexpected executable or script content found in the skill package."
-            exit 1
-          fi
-          # Any icon the ChatGPT interface config references must exist in the package,
-          # so a shipped skill never points at a missing asset.
-          if [ -f cleanlanguage/agents/openai.yaml ]; then
-            missing_icon=0
-            while IFS= read -r icon; do
-              [ -n "${icon}" ] || continue
-              if [ ! -f "cleanlanguage/${icon#./}" ]; then
-                echo "Icon referenced in agents/openai.yaml is missing: ${icon}"
-                missing_icon=1
-              fi
-            done < <(sed -n 's/.*icon_[a-z]*:[[:space:]]*"\(\.\/[^"]*\)".*/\1/p' cleanlanguage/agents/openai.yaml)
-            test "${missing_icon}" -eq 0
-          fi
-
-      - name: Package the skill as a ZIP and checksum it
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf dist
-          mkdir -p dist
-          zip -r -X dist/cleanlanguage.zip \
-            cleanlanguage/SKILL.md \
-            cleanlanguage/references \
-            cleanlanguage/agents \
-            cleanlanguage/assets \
-            -x '*/.DS_Store' '*/__MACOSX/*' '*/.git*'
-          # A byte-identical, version-named copy for the releases archive. The
-          # stable cleanlanguage.zip stays the always-latest download; every
-          # release also keeps its own cleanlanguage-<version>.zip.
-          cp dist/cleanlanguage.zip "dist/cleanlanguage-${VERSION}.zip"
-          cd dist
-          sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256
-          sha256sum "cleanlanguage-${VERSION}.zip" > "cleanlanguage-${VERSION}.zip.sha256"
-
-      - name: Verify archive layout
-        shell: bash
-        run: |
-          set -euo pipefail
-          entries=$(unzip -Z1 dist/cleanlanguage.zip)
-          echo "${entries}"
-          top=$(printf '%s\n' "${entries}" | cut -d/ -f1 | sort -u)
-          test "${top}" = "cleanlanguage"
-          printf '%s\n' "${entries}" | grep -qx 'cleanlanguage/SKILL.md'
-          printf '%s\n' "${entries}" | grep -q '^cleanlanguage/references/'
-          if printf '%s\n' "${entries}" | grep -qiE 'DS_Store|__MACOSX|/\.git'; then
-            echo "Unexpected artefact found in archive."
-            exit 1
-          fi
+        run: tools/release-package.sh --tag "${RELEASE_TAG}"
 
       - name: Create or update GitHub Release
         env:
@@ -114,28 +62,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # A manual dispatch releases the checked-out commit under RELEASE_TAG.
-          # It refuses to move a tag that already has a published release, so a
-          # published, checksummed version is never quietly replaced with
-          # different bytes. Cut a new version instead, or set the force input to
-          # overwrite deliberately. A tag push leaves the tag where it was pushed.
+          # Neither release path may quietly replace a published release:
+          # republishing different bytes under a published version would break
+          # its checksum as a trust signal. A tag push refuses outright. A
+          # manual dispatch refuses unless the force input is set, which is
+          # the one deliberate override. Cut a new version instead.
+          release_exists=0
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            release_exists=1
+          fi
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-              if [ "${FORCE}" != "true" ]; then
-                echo "Release ${RELEASE_TAG} already exists." >&2
-                echo "Republishing different bytes under a published version would break its checksum as a trust signal." >&2
-                echo "Cut a new version, or re-run with the force input enabled to overwrite ${RELEASE_TAG} deliberately." >&2
-                exit 1
-              fi
+            if [ "${release_exists}" -eq 1 ] && [ "${FORCE}" != "true" ]; then
+              echo "Release ${RELEASE_TAG} already exists." >&2
+              echo "Republishing different bytes under a published version would break its checksum as a trust signal." >&2
+              echo "Cut a new version, or re-run with the force input enabled to overwrite ${RELEASE_TAG} deliberately." >&2
+              exit 1
+            fi
+            if [ "${release_exists}" -eq 1 ]; then
               echo "force is enabled; moving published tag ${RELEASE_TAG} to ${GITHUB_SHA}."
             fi
             git tag -f "${RELEASE_TAG}" "${GITHUB_SHA}"
             git push --force origin "refs/tags/${RELEASE_TAG}"
-          elif ! git rev-parse "${RELEASE_TAG}" >/dev/null 2>&1; then
-            git tag "${RELEASE_TAG}"
-            git push origin "${RELEASE_TAG}"
+          else
+            if [ "${release_exists}" -eq 1 ]; then
+              echo "Release ${RELEASE_TAG} is already published, and a tag push never republishes it." >&2
+              echo "Cut a new version, or run the workflow manually with the force input to overwrite ${RELEASE_TAG} deliberately." >&2
+              exit 1
+            fi
           fi
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+          if [ "${release_exists}" -eq 1 ]; then
             gh release upload "${RELEASE_TAG}" \
               dist/cleanlanguage.zip \
               dist/cleanlanguage.zip.sha256 \
@@ -171,8 +126,9 @@ jobs:
           # writes every place at once and check-release-links.py verifies the
           # result, so this step cannot quietly disagree with the gate.
           checksum="$(cut -d' ' -f1 < "dist/cleanlanguage-${VERSION}.zip.sha256")"
-          tools/set-release-links.py --version "${VERSION}" --tag "${RELEASE_TAG}" --checksum "${checksum}"
+          tools/set-release-links.py --version "${VERSION}" --tag "${RELEASE_TAG}" --checksum "${checksum}" --date "$(date -u +%F)"
           tools/check-release-links.py
+          python3 tools/check-page-metadata.py
           if git diff --quiet -- site; then
             echo "The site already points at ${RELEASE_TAG}."
             exit 0
@@ -189,6 +145,6 @@ jobs:
             --body "Automated for the ${RELEASE_TAG} release: the download buttons, the redirects, and the published checksum on the verify page now name the ${RELEASE_TAG} assets.")"
           echo "Opened ${pr_url}"
           sleep 20
-          gh pr checks "${pr_url}" --watch --fail-fast
+          tools/ci-status.sh "$(git rev-parse HEAD)" --wait --repo "${GITHUB_REPOSITORY}"
           gh pr merge "${pr_url}" --squash --delete-branch
           echo "Merged ${pr_url}"

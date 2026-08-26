@@ -1,0 +1,69 @@
+name: Release dry run
+
+# Proves the release path end to end without publishing: packaging, the site
+# rewrite, the date stamps, and the gates the auto-opened site pull request
+# must pass. Everything runs inside a throwaway git worktree via
+# tools/release-dry-run.sh. This workflow holds read-only permissions, keeps
+# no credentials after checkout, uses no secrets, and pushes, tags, releases,
+# and merges nothing.
+
+on:
+  pull_request:
+    paths:
+      - "cleanlanguage/**"
+      - "LICENSE"
+      - "NOTICE.md"
+      - "site/_redirects"
+      - "site/install/index.html"
+      - "site/verify/index.html"
+      - "site/sitemap.xml"
+      - "tools/release-package.sh"
+      - "tools/release-dry-run.sh"
+      - "tools/set-release-links.py"
+      - "tools/check-release-links.py"
+      - "tools/check-page-metadata.py"
+      - "tools/check-links.py"
+      - "tools/check-install-page.py"
+      - ".github/workflows/release-skill.yml"
+      - ".github/workflows/release-dry-run.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "cleanlanguage/**"
+      - "LICENSE"
+      - "NOTICE.md"
+      - "site/_redirects"
+      - "site/install/index.html"
+      - "site/verify/index.html"
+      - "site/sitemap.xml"
+      - "tools/release-package.sh"
+      - "tools/release-dry-run.sh"
+      - "tools/set-release-links.py"
+      - "tools/check-release-links.py"
+      - "tools/check-page-metadata.py"
+      - "tools/check-links.py"
+      - "tools/check-install-page.py"
+      - ".github/workflows/release-skill.yml"
+      - ".github/workflows/release-dry-run.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Full history: the dry run runs check-page-metadata.py, which reads
+          # when each page was added and last changed.
+          fetch-depth: 0
+          # The dry run needs no credentials after checkout, so none are kept.
+          persist-credentials: false
+
+      - name: Run the release dry run
+        shell: bash
+        run: tools/release-dry-run.sh

@@ -18,6 +18,9 @@ What it updates
 * ``site/install/index.html``: both download buttons.
 * ``site/verify/index.html``: the download button, the link to the checksum file,
   the displayed checksum value, and the version named beside it.
+* On any page this run changes, its ``article:modified_time`` and JSON-LD
+  ``dateModified`` stamps, and the matching ``site/sitemap.xml`` ``lastmod``, so
+  the page-metadata gate still passes on the pull request this rewrite feeds.
 
 The stable ``cleanlanguage.zip`` is deliberately not linked from the site. It
 exists as an always-latest URL to share by hand; the site serves version-named
@@ -26,7 +29,7 @@ files so repeat downloads stay distinguishable in a Downloads folder.
 Usage
 -----
 
-    tools/set-release-links.py --version 1.0.12 --checksum <sha256>
+    tools/set-release-links.py --version 1.0.12 --checksum <sha256> --date 2026-09-01
 
 ``--tag`` defaults to ``v<version>``. ``--check`` reports what would change and
 exits non-zero if anything would, without writing.
@@ -64,18 +67,37 @@ def redirects_body(zip_url: str, sum_url: str) -> str:
     )
 
 
-def rewrite(version: str, tag: str, checksum: str) -> dict[Path, str]:
+def stamp_dates(text: str, date: str, name: str) -> str:
+    """Stamp the modified date on a page this release changes.
+
+    The page-metadata gate requires article:modified_time, JSON-LD
+    dateModified, and the sitemap lastmod to be no older than the file's last
+    change, so a release that rewrites a page must also restamp it.
+    """
+    for pattern in (
+        r'(<meta property="article:modified_time" content=")[0-9]{4}-[0-9]{2}-[0-9]{2}(")',
+        r'("dateModified":\s*")[0-9]{4}-[0-9]{2}-[0-9]{2}(")',
+    ):
+        text, n = re.subn(pattern, lambda m: m.group(1) + date + m.group(2), text)
+        if n != 1:
+            die(f"expected one match for {pattern!r} in {name}, found {n}")
+    return text
+
+
+def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str]:
     base = f"https://github.com/{REPO_SLUG}/releases/download/{tag}"
     zip_url = f"{base}/cleanlanguage-{version}.zip"
     sum_url = f"{zip_url}.sha256"
 
     planned: dict[Path, str] = {SITE / "_redirects": redirects_body(zip_url, sum_url)}
+    dated: list[str] = []
 
     for name in ("install/index.html", "verify/index.html"):
         path = SITE / name
         if not path.is_file():
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
         text = path.read_text(encoding="utf-8")
+        original = text
 
         # Any existing release URL becomes this release's, keeping the .sha256
         # suffix where the original had one.
@@ -100,7 +122,25 @@ def rewrite(version: str, tag: str, checksum: str) -> dict[Path, str]:
             if n != 1:
                 die(f"expected one checksum version sentence in {name}, found {n}")
 
+        if text != original:
+            text = stamp_dates(text, date, name)
+            dated.append(name.split("/", 1)[0])
         planned[path] = text
+
+    if dated:
+        sitemap = SITE / "sitemap.xml"
+        if not sitemap.is_file():
+            die("site/sitemap.xml does not exist")
+        text = sitemap.read_text(encoding="utf-8")
+        for page in dated:
+            pattern = (
+                rf"(<loc>https://cleanlanguage\.ai/{page}/</loc>\s*<lastmod>)"
+                r"[0-9]{4}-[0-9]{2}-[0-9]{2}(</lastmod>)"
+            )
+            text, n = re.subn(pattern, lambda m: m.group(1) + date + m.group(2), text)
+            if n != 1:
+                die(f"expected one sitemap lastmod entry for /{page}/, found {n}")
+        planned[sitemap] = text
     return planned
 
 
@@ -109,6 +149,11 @@ def main() -> int:
     parser.add_argument("--version", required=True, help="release version, for example 1.0.12")
     parser.add_argument("--tag", default=None, help="release tag; defaults to v<version>")
     parser.add_argument("--checksum", required=True, help="SHA-256 of the version-named zip")
+    parser.add_argument(
+        "--date",
+        required=True,
+        help="date to stamp as modified on the pages this run changes, YYYY-MM-DD",
+    )
     parser.add_argument("--check", action="store_true", help="report changes without writing")
     args = parser.parse_args()
 
@@ -117,9 +162,11 @@ def main() -> int:
     checksum = args.checksum.strip().split()[0] if args.checksum.strip() else ""
     if not SHA256.match(checksum):
         die(f"{args.checksum!r} is not a 64 character lower-case SHA-256")
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", args.date):
+        die(f"{args.date!r} is not a YYYY-MM-DD date")
     tag = args.tag or f"v{args.version}"
 
-    planned = rewrite(args.version, tag, checksum)
+    planned = rewrite(args.version, tag, checksum, args.date)
 
     changed = []
     for path, new_text in planned.items():
