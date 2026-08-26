@@ -20,6 +20,13 @@
     return FAMILIES.indexOf(name) === -1 ? null : name;
   }
 
+  function familyFromQuery() {
+    var m = location.search.match(/[?&]ai=([^&]+)/);
+    if (!m) { return null; }
+    var name = decodeURIComponent(m[1]);
+    return FAMILIES.indexOf(name) === -1 ? null : name;
+  }
+
   function render(family, announce) {
     var changed = family !== current;
     if (family) {
@@ -74,16 +81,14 @@
       }
       e.preventDefault();
       render(link.getAttribute('data-family-link'), true);
-      if (location.hash) {
-        history.replaceState(null, '', location.pathname + location.search);
-      }
+      history.replaceState(null, '', location.pathname);
     });
   });
 
   if (reset) {
     reset.addEventListener('click', function () {
       render(null, true);
-      history.replaceState(null, '', location.pathname + location.search);
+      history.replaceState(null, '', location.pathname);
       if (picker) { picker.focus(); }
     });
   }
@@ -97,14 +102,19 @@
     if (family && family !== before) { scrollToTop(); }
   });
 
-  apply(false);
-  if (familyFromHash()) {
-    // On a cold deep-link load the browser also scrolls to the named section;
-    // run ours on the next frame so it wins and the reader lands at the top.
-    if (window.requestAnimationFrame) {
-      window.requestAnimationFrame(scrollToTop);
-    } else {
-      scrollToTop();
+  var queryFamily = familyFromQuery();
+  if (queryFamily) {
+    // A ?ai= deep link: no fragment, so the browser does not scroll. Just filter.
+    render(queryFamily, false);
+  } else {
+    apply(false);
+    if (familyFromHash()) {
+      // A legacy #family deep link also scrolls to the section; correct it next frame.
+      if (window.requestAnimationFrame) {
+        window.requestAnimationFrame(scrollToTop);
+      } else {
+        scrollToTop();
+      }
     }
   }
 })();
