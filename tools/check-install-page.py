@@ -12,44 +12,49 @@ show.
 
 This is a TRIPWIRE for the common regressions, not a browser and not a CSS engine.
 A regex cannot faithfully model CSS selector matching or the HTML tree, so this
-check verifies only what it can verify reliably, and names the rest as the
-reviewer's and the cross-family QA's job.
+check verifies what it can verify reliably and names the rest as the reviewer's
+and the cross-family QA's job.
 
-What it verifies (reliably)
----------------------------
+What it verifies
+----------------
 
-1. Each of the five family ids exists exactly once, on a ``<section id=X
-   data-family-section=X>``, and each contains an ``<h2>`` with text. The general
-   sections ``spelling``, ``how-to-use``, and ``assurance`` exist.
+1. Each family id exists exactly once on a ``<section id=X data-family-section=X>``
+   with an ``<h2>`` that has visible (non-whitespace, non-zero-width) text, no id
+   in the document is duplicated, and the general sections ``spelling``,
+   ``how-to-use``, and ``assurance`` exist.
 2. No family section carries, on itself, ``hidden``, ``inert``,
    ``aria-hidden="true"`` (any case), or the ``visually-hidden`` class.
 3. No pre-set filter state: the root has no ``data-family``, no picker link has
-   ``aria-current``, and the ``family-reset`` button is present and ``hidden``.
+   ``aria-current``, and exactly one ``family-reset`` button exists and is hidden.
 4. Each family has exactly one picker ``<a data-family-link=X href="#X">`` inside
-   the ``.platform-actions`` group (which is what ``install.js`` queries).
+   the ``.platform-actions`` group.
 5. No inline executable ``<script>``, ``style`` attribute, or ``on*`` handler.
-6. The guarded collapse rule is present in ``site/styles.css``: some rule with a
-   positive ``html[data-family]`` hides a ``data-family-section``, so the feature
-   cannot silently rot out of the stylesheet.
-7. As a heuristic, a ``display:none`` / ``visibility:hidden`` rule whose subject
-   names a family marker (``data-family-section``) or is a ``section`` type
-   selector, without a positive ``html[data-family]`` guard, is flagged.
+6. A guarded collapse rule is present: some rule whose root condition is a positive
+   ``html[data-family]`` or ``html[data-family=...]`` (not a longer attribute name
+   such as ``data-family-mode``, and not inside a negation) hides a
+   ``data-family-section``.
+7. Heuristic: a ``display:none`` / ``visibility:hidden`` rule whose subject names a
+   family marker or is a ``section`` type selector, that does not exclude the family
+   marker and is not guarded, is flagged. Selector matching is case-insensitive.
 8. ``site/_headers`` keeps ``script-src 'self'`` and ``style-src 'self'`` with no
    ``unsafe-inline``, and an immutable ``Cache-Control`` for ``/js/install.js``.
 
-What it does NOT verify (the reviewer's job)
---------------------------------------------
+What it does NOT verify (the reviewer's and cross-family QA's job)
+-----------------------------------------------------------------
 
-It is not a CSS engine or a browser, so it does NOT prove the no-JS guarantee
-against: a hiding ANCESTOR (a wrapping ``hidden`` div, a closed ``<details>``, a
-``<template>``); a custom class that clips, zeroes opacity, or positions a section
-off-screen; hiding a family by a form the heuristic does not name (``#claude``,
-``[id="claude"]``); or a guard written other than as the plain ``html[data-family]``
-(an ``:is()``/``:where()`` guard is not recognized and should be rewritten in the
-plain form). The inline-code and CSS scans are regex over a flat, unnested
-stylesheet whose rule bodies hold no literal braces; unusual selector or
-attribute-string shapes may over- or under-fire, and a cross-family review remains
-the backstop.
+It is not a CSS engine or a browser. It does NOT catch: a hiding ANCESTOR (a
+wrapping ``hidden`` div, a closed ``<details>``, a ``<template>``); a custom CLASS
+that hides, clips, zeroes opacity, or positions a section off-screen; a DESCENDANT
+wipe such as ``section[data-family-section] > * { display: none }`` that empties a
+section; hiding a family by a form the heuristic does not name (``#claude``,
+``[id="claude"]``, or an attribute value that only a browser resolves); a guard
+written other than as the plain ``html[data-family]`` (an ``:is()``/``:where()``
+guard, or a negation-of-negation, is not analyzed and should be written plainly);
+an uppercase attribute VALUE (selector names are folded, values are not); or a
+path-scoped header override in ``_headers`` (only the global CSP line is read). The
+inline-code and CSS scans are regex over a flat, unnested stylesheet whose rule
+bodies hold no literal braces; adversarial selector or attribute-string shapes may
+still slip through, and a cross-family review remains the backstop.
 
 Exit codes:
   0  the page and its rules are static, complete, and correctly guarded
@@ -61,6 +66,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -72,6 +78,7 @@ HEADERS = REPO_ROOT / "site" / "_headers"
 FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
 GENERAL_IDS = ["spelling", "how-to-use", "assurance"]
 VOID = {"meta", "link", "img", "br", "hr", "input", "source", "wbr", "col"}
+ZERO_WIDTH = "​‌‍﻿ "
 
 SCRIPT_TAG = re.compile(r"<script([^>]*)>", re.I)
 SCRIPT_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
@@ -81,6 +88,7 @@ INLINE_HANDLER = re.compile(r"<[^>]+\son[a-z]+\s*=", re.I)
 CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}", re.S)
 PSEUDO_ARG = re.compile(r":(?:not|is|where|matches)\([^()]*\)", re.I)
+GUARD = re.compile(r"html\[data-family\s*(?:[~^$*|]?=|\])")
 
 
 def die(message: str) -> None:
@@ -98,6 +106,10 @@ def is_hiding_element(attrs: dict[str, str]) -> bool:
     )
 
 
+def has_visible_text(data: str) -> bool:
+    return bool(data.translate({ord(c): None for c in ZERO_WIDTH}).strip())
+
+
 class InstallParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -107,13 +119,14 @@ class InstallParser(HTMLParser):
         self.family_has_h2 = {f: False for f in FAMILIES}
         self.family_hidden_self: list[str] = []
         self.other_family_carriers: list[str] = []
+        self.id_counts: Counter = Counter()
         self.ids: set[str] = set()
         self.family_links: dict[str, int] = {}
         self.family_link_href: dict[str, str] = {}
         self.family_links_outside_pa: set[str] = set()
         self.family_links_current: set[str] = set()
-        self.reset_present = False
-        self.reset_hidden = False
+        self.reset_count = 0
+        self.reset_hidden_count = 0
         self._h2_family: str | None = None
 
     def _nearest_family(self) -> str | None:
@@ -127,6 +140,7 @@ class InstallParser(HTMLParser):
         if tag == "html":
             self.html_attrs = attrs
         if "id" in attrs:
+            self.id_counts[attrs["id"]] += 1
             self.ids.add(attrs["id"])
         in_pa = any("platform-actions" in frame["cls"].split() for frame in self.stack)
         fam_here = None
@@ -153,8 +167,9 @@ class InstallParser(HTMLParser):
                 self.family_links_current.add(fam)
 
         if tag == "button" and attrs.get("id") == "family-reset":
-            self.reset_present = True
-            self.reset_hidden = "hidden" in attrs
+            self.reset_count += 1
+            if "hidden" in attrs:
+                self.reset_hidden_count += 1
 
         if tag == "h2":
             self._h2_family = self._nearest_family()
@@ -171,7 +186,7 @@ class InstallParser(HTMLParser):
                 break
 
     def handle_data(self, data: str) -> None:
-        if self._h2_family and data.strip():
+        if self._h2_family and has_visible_text(data):
             self.family_has_h2[self._h2_family] = True
 
 
@@ -190,53 +205,72 @@ def hides(body: str) -> bool:
     return "display:none" in b or "visibility:hidden" in b or "visibility:collapse" in b
 
 
-def subject(branch: str) -> str:
-    """The rightmost compound selector, with brackets and functional pseudos masked
-    so a combinator inside them does not split the selector."""
+def _mask(s: str):
     stash: list[str] = []
 
-    def mask(m: "re.Match[str]") -> str:
-        stash.append(m.group(0))
+    def m(mt: "re.Match[str]") -> str:
+        stash.append(mt.group(0))
         return f"\x00{len(stash) - 1}\x00"
 
-    masked = re.sub(r"\[[^\]]*\]", mask, branch.strip())
-    masked = re.sub(r":[a-zA-Z-]+\([^()]*\)", mask, masked)
+    s = re.sub(r"\[[^\]]*\]", m, s)
+    prev = None
+    while prev != s:
+        prev = s
+        s = re.sub(r":[a-zA-Z-]+\([^()]*\)", m, s)
+    return s, stash
+
+
+def _unmask(s: str, stash: list[str]) -> str:
+    prev = None
+    while prev != s:
+        prev = s
+        s = re.sub(r"\x00(\d+)\x00", lambda x: stash[int(x.group(1))], s)
+    return s
+
+
+def subject(branch: str) -> str:
+    masked, stash = _mask(branch.strip())
     parts = re.split(r"\s*[>+~]\s*|\s+", masked)
     last = parts[-1] if parts and parts[-1] else masked
-    return re.sub(r"\x00(\d+)\x00", lambda m: stash[int(m.group(1))], last)
+    return _unmask(last, stash)
 
 
 def positive_guard(branch: str) -> bool:
-    """True when the branch positively requires the root data-family attribute.
-    Negation/match pseudo arguments are stripped first, so a guard living inside a
-    :not()/:is() (which does not positively require the attribute) does not count."""
     stripped = branch
     prev = None
     while prev != stripped:
         prev = stripped
         stripped = PSEUDO_ARG.sub("", stripped)
-    return "html[data-family" in stripped
+    return bool(GUARD.search(stripped))
+
+
+def excludes_family(branch: str) -> bool:
+    for m in re.finditer(r":not\(([^()]*)\)", branch):
+        arg = m.group(1)
+        if "data-family-section" in arg or any(f"#{f}" in arg for f in FAMILIES):
+            return True
+    return False
 
 
 def targets_family(subj: str) -> bool:
     if "data-family-section" in subj:
         return True
-    if subj == "section" or subj.startswith("section:"):
-        return True
-    m = re.match(r"section\[([a-zA-Z-]+)", subj)
-    if m and m.group(1).lower() in ("id", "data-family-section"):
-        return True
-    return False
+    return subj == "section" or subj.startswith("section:")
 
 
 def scan_css(text: str, problems: list[str]) -> None:
     stripped = CSS_COMMENT.sub("", text)
     collapse_found = False
     for selector, body in CSS_RULE.findall(stripped):
-        selector = selector.strip()
-        if not selector or not hides(body):
+        if not hides(body):
             continue
-        for branch in [b.strip() for b in selector.split(",") if b.strip()]:
+        masked_sel, stash = _mask(selector)
+        for masked_branch in [b for b in masked_sel.split(",") if b.strip()]:
+            branch = _unmask(masked_branch, stash).strip().lower()
+            if not branch:
+                continue
+            if excludes_family(branch):
+                continue
             if not targets_family(subject(branch)):
                 continue
             if positive_guard(branch):
@@ -266,7 +300,7 @@ def main() -> int:
     parser.feed(page_text)
     problems: list[str] = []
 
-    # 1. family sections static, complete, unique
+    # 1. family sections static, complete, unique; ids unique
     for fam in FAMILIES:
         n = parser.family_count[fam]
         if n == 0:
@@ -277,7 +311,7 @@ def main() -> int:
         elif n > 1:
             problems.append(f"the {fam} family section appears {n} times; it must appear exactly once.")
         elif not parser.family_has_h2[fam]:
-            problems.append(f"the {fam} family section has no <h2> with text; it may be an empty stub.")
+            problems.append(f"the {fam} family section has no <h2> with visible text; it may be an empty stub.")
     for fam in parser.family_hidden_self:
         problems.append(
             f"the {fam} family section carries hidden, inert, aria-hidden, or the "
@@ -288,6 +322,12 @@ def main() -> int:
             f"data-family-section appears on an unexpected element {extra}; only the "
             "five family <section> elements may carry it."
         )
+    for dup_id, count in sorted(parser.id_counts.items()):
+        if count > 1:
+            problems.append(
+                f"the id \"{dup_id}\" appears {count} times; ids must be unique or "
+                "getElementById and the fragment anchors resolve to the wrong element."
+            )
     for gid in GENERAL_IDS:
         if gid not in parser.ids:
             problems.append(f"the general section id \"{gid}\" is missing from the page.")
@@ -312,7 +352,7 @@ def main() -> int:
             "install.js (which queries '.platform-actions a[data-family-link]') would not find it."
         )
 
-    # 3. no pre-set filter state
+    # 3. no pre-set filter state; exactly one hidden reset
     if "data-family" in parser.html_attrs:
         problems.append(
             "the root <html> element carries data-family in the static markup; the "
@@ -323,9 +363,11 @@ def main() -> int:
             "a picker link carries aria-current in the static markup "
             f"({', '.join(sorted(parser.family_links_current))}); only install.js may set it."
         )
-    if not parser.reset_present:
+    if parser.reset_count == 0:
         problems.append('the "Show all AI systems" button (id="family-reset") is missing.')
-    elif not parser.reset_hidden:
+    elif parser.reset_count > 1:
+        problems.append(f'the "Show all AI systems" button (id="family-reset") appears {parser.reset_count} times.')
+    elif parser.reset_hidden_count != parser.reset_count:
         problems.append(
             'the "Show all AI systems" button is not hidden in the static markup; it '
             "does nothing without JavaScript and must carry the hidden attribute."
