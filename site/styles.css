@@ -324,3 +324,18 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
   .platform-button { transition: none; }
   .platform-button:hover { transform: none; }
 }
+
+/* Install-page family filter. Only site/js/install.js sets data-family on the
+   root, so every hiding rule below is inert when scripts are blocked, fail, or
+   are disabled, and the whole page stays visible. */
+html[data-family] section[data-family-section] { display: none; }
+html[data-family="claude"] section[data-family-section="claude"],
+html[data-family="chatgpt"] section[data-family-section="chatgpt"],
+html[data-family="gemini"] section[data-family-section="gemini"],
+html[data-family="copilot"] section[data-family-section="copilot"],
+html[data-family="other-ai"] section[data-family-section="other-ai"] { display: block; }
+.platform-button[aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.family-reset { margin: 14px 0 0; }
+/* .button sets display:inline-flex, which outranks the UA [hidden] rule, so a
+   hidden .button needs this to actually hide when JavaScript has not shown it. */
+.button[hidden] { display: none; }
