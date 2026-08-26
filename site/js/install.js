@@ -21,10 +21,21 @@
   }
 
   function familyFromQuery() {
-    var m = location.search.match(/[?&]ai=([^&]+)/);
-    if (!m) { return null; }
-    var name = decodeURIComponent(m[1]);
-    return FAMILIES.indexOf(name) === -1 ? null : name;
+    var query = location.search.charAt(0) === '?' ? location.search.slice(1) : location.search;
+    var pairs = query.split('&');
+    for (var i = 0; i < pairs.length; i++) {
+      var pair = pairs[i].split('=');
+      if (pair[0] === 'ai') {
+        var name = pair[1] || '';
+        try {
+          name = decodeURIComponent(name);
+        } catch (e) {
+          return null;
+        }
+        return FAMILIES.indexOf(name) === -1 ? null : name;
+      }
+    }
+    return null;
   }
 
   function render(family, announce) {
