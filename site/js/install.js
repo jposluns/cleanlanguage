@@ -43,17 +43,13 @@
     current = family;
   }
 
-  function scrollToFamily(family) {
-    if (!family) { return; }
-    var target = document.getElementById(family);
-    if (!target) { return; }
-    // Instant, not smooth: the browser has already started a native smooth scroll
-    // to the pre-collapse position, and a second smooth scroll would fight it. An
-    // instant correction lands cleanly on the post-collapse position.
+  function scrollToTop() {
+    // A family selection lands the reader at the top of the page with the picker
+    // filtered, not jumped to the section, so they still work down in order.
     try {
-      target.scrollIntoView({ block: 'start', behavior: 'auto' });
+      window.scrollTo({ top: 0, behavior: 'auto' });
     } catch (e) {
-      target.scrollIntoView();
+      window.scrollTo(0, 0);
     }
   }
 
@@ -67,6 +63,23 @@
     // A non-family hash such as #spelling leaves the current view alone.
   }
 
+  // Tapping a picker button filters in place: it hides the other assistants but
+  // does NOT jump to the section, so the reader still works down the page in
+  // order (pick, get the file, follow the steps, test).
+  Array.prototype.forEach.call(links, function (link) {
+    link.addEventListener('click', function (e) {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey ||
+          (typeof e.button === 'number' && e.button !== 0)) {
+        return;
+      }
+      e.preventDefault();
+      render(link.getAttribute('data-family-link'), true);
+      if (location.hash) {
+        history.replaceState(null, '', location.pathname + location.search);
+      }
+    });
+  });
+
   if (reset) {
     reset.addEventListener('click', function () {
       render(null, true);
@@ -75,15 +88,23 @@
     });
   }
 
+  // A hash-driven change (a deep link from another page, Back or Forward, or a
+  // typed URL) selects that family and lands at the top, like an in-page tap.
   window.addEventListener('hashchange', function () {
     var before = current;
     var family = familyFromHash();
     apply(true);
-    // Re-scroll only when the family actually changed, so Back or Forward across a
-    // general anchor does not yank a settled view.
-    if (family && family !== before) { scrollToFamily(family); }
+    if (family && family !== before) { scrollToTop(); }
   });
 
   apply(false);
-  scrollToFamily(familyFromHash());
+  if (familyFromHash()) {
+    // On a cold deep-link load the browser also scrolls to the named section;
+    // run ours on the next frame so it wins and the reader lands at the top.
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(scrollToTop);
+    } else {
+      scrollToTop();
+    }
+  }
 })();
