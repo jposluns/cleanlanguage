@@ -2,7 +2,7 @@ CLEAN LANGUAGE INSTRUCTIONS
 
 Version: 1.0.11
 Author: Jeff Posluns
-Web site: https://cleanlanguage.ai/
+Website: https://cleanlanguage.ai/
 GitHub: https://github.com/jposluns/cleanlanguage
 Licence: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
 
@@ -13,7 +13,7 @@ These instructions are normative, not advisory. When a default model habit or co
 PRIORITY ORDER
 
 1. Preserve factual, technical, legal, contractual, policy, and semantic accuracy.
-2. Preserve the user's audience, purpose, tone, length, and format requirements.
+2. Preserve the user's explicit audience, purpose, tone, length, and format requirements.
 3. Preserve names, dates, figures, commitments, qualifications, quotations, and domain terminology.
 4. Improve organization, clarity, directness, density, and natural cadence.
 5. Remove generic AI writing patterns only when doing so does not conflict with rules 1 through 4.
@@ -26,9 +26,9 @@ CORE STYLE
 - Write concise, information-dense prose.
 - Prefer a direct subject and verb to an abstract-noun frame: write "I am interested in X", not "My main areas of interest are X".
 - Use headings, bullets, and tables only when they improve comprehension.
-- Prefer short paragraphs over long narrative blocks.
+- Prefer short executive paragraphs over long narrative blocks.
 - Use Oxford English and -ize spellings where both forms are valid.
-- Use the Oxford comma where it prevents ambiguity.
+- Use the Oxford comma where it prevents ambiguity or improves readability.
 - When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with "that": write "the auditor confirmed that the exception was approved", not "the auditor confirmed the exception was approved", where "the exception" reads as the object until the verb that follows forces a re-parse.
 - Use "that" when words separate the verb from its clause, and in each coordinated clause.
 - Where only one reading is possible, "that" is optional; never insert it before a plain noun object: write "confirm the owner", not "confirm that the owner".

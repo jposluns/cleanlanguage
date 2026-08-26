@@ -10,22 +10,24 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <meta name="theme-color" content="#145c3b">
-  <link rel="stylesheet" href="/styles.css?v=20260825-3">
+  <link rel="stylesheet" href="/styles.css?v=20260826-1">
   <meta property="og:type" content="article">
-  <meta name="title" property="og:title" content="The Clean Language instructions">
+  <meta property="og:title" content="The Clean Language instructions">
   <meta property="og:description" content="The complete Clean Language instructions as plain text, ready to copy into any AI.">
   <meta property="og:url" content="https://cleanlanguage.ai/instructions/">
-  <meta name="image" property="og:image" content="https://cleanlanguage.ai/cleanlanguage-card.png">
+  <meta property="og:site_name" content="Clean Language">
+  <meta property="og:image" content="https://cleanlanguage.ai/cleanlanguage-card.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Clean Language, a free cross-platform editorial standard for AI writing.">
   <meta property="article:published_time" content="2026-08-15">
-  <meta property="article:modified_time" content="2026-08-25">
+  <meta property="article:modified_time" content="2026-08-26">
   <meta property="article:author" content="https://linkedin.com/in/jposluns">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Clean Language Instructions">
+  <meta name="twitter:title" content="The Clean Language instructions">
   <meta name="twitter:description" content="The complete Clean Language instructions as plain text, ready to copy into any AI.">
   <meta name="twitter:image" content="https://cleanlanguage.ai/cleanlanguage-card.png">
+  <meta name="twitter:image:alt" content="Clean Language, a free cross-platform editorial standard for AI writing.">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -34,7 +36,7 @@
     "description": "The complete Clean Language instructions as plain text, ready to copy into any AI.",
     "image": "https://cleanlanguage.ai/cleanlanguage-card.png",
     "datePublished": "2026-08-15",
-    "dateModified": "2026-08-25",
+    "dateModified": "2026-08-26",
     "mainEntityOfPage": "https://cleanlanguage.ai/instructions/",
     "author": {
       "@type": "Person",
@@ -43,7 +45,8 @@
     },
     "publisher": {
       "@type": "Organization",
-      "name": "Clean Language"
+      "name": "Jeff Posluns",
+      "url": "https://posluns.ca"
     }
   }
   </script>
@@ -56,32 +59,31 @@
       <a href="/" class="nav-collapse">Home</a>
       <a href="/standard/">The Standard</a>
       <a href="/demo/">Try It</a>
-      <a href="/install/" class="is-active">Install</a>
-      <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="/install/" class="is-active" aria-current="true">Install</a>
+      <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub<span class="visually-hidden"> (opens in a new tab)</span></a>
     </nav>
   </header>
 
-  <main id="main">
+  <main id="main" tabindex="-1">
+    <article class="content">
     <section class="page-hero">
       <p class="eyebrow">Copy and paste</p>
       <h1>The full instructions, ready to copy.</h1>
       <p>This is the complete Clean Language rule set as plain text, the same content the download buttons save as a file. Copy everything, paste it into a chat with your AI, and say: <code class="prompt">Follow these writing rules for this conversation.</code></p>
     </section>
-
-    <article class="content">
       <section>
         <div class="step-actions">
           <button type="button" class="button primary" data-copy-target="instructions-text" hidden>Copy everything</button>
           <a class="button secondary" href="/downloads/cleanlanguage-instructions.txt" download>Download the file</a>
-          <a class="button secondary" href="https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/cleanlanguage-instructions.txt" target="_blank" rel="noopener noreferrer">View original on GitHub</a>
+          <a class="button secondary" href="https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/cleanlanguage-instructions.txt" target="_blank" rel="noopener noreferrer">View original on GitHub<span class="visually-hidden"> (opens in a new tab)</span></a>
           <span class="visually-hidden" role="status" aria-live="polite" id="copy-status"></span>
         </div>
         <noscript><div class="notice"><p>Your browser has JavaScript switched off, so the Copy button is unavailable. The full text is below: select it to copy, or use the download link above.</p></div></noscript>
-        <pre id="instructions-text" class="instructions-block">CLEAN LANGUAGE INSTRUCTIONS
+        <pre id="instructions-text" class="instructions-block" tabindex="0" role="region" aria-label="The full Clean Language instructions">CLEAN LANGUAGE INSTRUCTIONS
 
 Version: 1.0.11
 Author: Jeff Posluns
-Web site: https://cleanlanguage.ai/
+Website: https://cleanlanguage.ai/
 GitHub: https://github.com/jposluns/cleanlanguage
 Licence: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
 
@@ -92,7 +94,7 @@ These instructions are normative, not advisory. When a default model habit or co
 PRIORITY ORDER
 
 1. Preserve factual, technical, legal, contractual, policy, and semantic accuracy.
-2. Preserve the user's audience, purpose, tone, length, and format requirements.
+2. Preserve the user's explicit audience, purpose, tone, length, and format requirements.
 3. Preserve names, dates, figures, commitments, qualifications, quotations, and domain terminology.
 4. Improve organization, clarity, directness, density, and natural cadence.
 5. Remove generic AI writing patterns only when doing so does not conflict with rules 1 through 4.
@@ -105,9 +107,9 @@ CORE STYLE
 - Write concise, information-dense prose.
 - Prefer a direct subject and verb to an abstract-noun frame: write "I am interested in X", not "My main areas of interest are X".
 - Use headings, bullets, and tables only when they improve comprehension.
-- Prefer short paragraphs over long narrative blocks.
+- Prefer short executive paragraphs over long narrative blocks.
 - Use Oxford English and -ize spellings where both forms are valid.
-- Use the Oxford comma where it prevents ambiguity.
+- Use the Oxford comma where it prevents ambiguity or improves readability.
 - When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with "that": write "the auditor confirmed that the exception was approved", not "the auditor confirmed the exception was approved", where "the exception" reads as the object until the verb that follows forces a re-parse.
 - Use "that" when words separate the verb from its clause, and in each coordinated clause.
 - Where only one reading is possible, "that" is optional; never insert it before a plain noun object: write "confirm the owner", not "confirm that the owner".
@@ -201,10 +203,10 @@ Read sentence by sentence, but keep a point that two or three sentences make tog
   </main>
 
   <footer>
-    <p>Clean Language is freely available under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>, created by <a href="https://linkedin.com/in/jposluns" target="_blank" rel="noopener noreferrer">Jeff Posluns</a>.</p>
-    <div><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/patterns/">AI Patterns</a><a href="/examples/">Before and After</a><a href="/channels/">By Channel</a><a href="/checklist/">Checklist</a><a href="/demo/">Try It</a><a href="/install/">Install</a><a href="/instructions/">Instructions</a><a href="/verify/">Verify</a><a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a></div>
+    <p>Clean Language is freely available under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0<span class="visually-hidden"> (opens in a new tab)</span></a>, created by <a href="https://linkedin.com/in/jposluns" target="_blank" rel="noopener noreferrer">Jeff Posluns<span class="visually-hidden"> (opens in a new tab)</span></a>. The site's own code sets no cookies and includes no client-side analytics. Cloudflare, which serves it, processes request data such as IP addresses for delivery, security, and aggregate traffic analytics, and may set a security cookie.</p>
+    <nav class="footer-links" aria-label="Footer"><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/patterns/">AI Patterns</a><a href="/examples/">Before and After</a><a href="/channels/">By Channel</a><a href="/checklist/">Checklist</a><a href="/demo/">Try It</a><a href="/install/">Install</a><a href="/instructions/">Instructions text</a><a href="/verify/">Verify</a><a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub<span class="visually-hidden"> (opens in a new tab)</span></a></nav>
   </footer>
 
-  <script src="/js/copy.js" defer></script>
+  <script src="/js/copy.js?v=20260826-1" defer></script>
 </body>
 </html>

@@ -68,6 +68,8 @@ Except where otherwise noted, all material in this repository, including the Cle
 
 Suggested attribution:
 
-> Clean Language by Jeff Posluns, https://cleanlanguage.ai, licensed under CC BY-SA 4.0. Changes were made.
+> Clean Language by Jeff Posluns, https://cleanlanguage.ai, licensed under CC BY-SA 4.0.
+
+(Add "Changes were made." if you modified it.)
 
 Third-party material retains its original licence. See [NOTICE.md](NOTICE.md).
