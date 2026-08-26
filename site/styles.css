@@ -145,10 +145,12 @@ p { margin: 0 0 18px; }
   transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
 }
 .platform-button.guide, .platform-button.source { grid-column: span 6; }
-/* The install picker carries a third wide item, so its bottom row splits three ways. */
-.platform-actions.with-verify .platform-button.guide,
-.platform-actions.with-verify .platform-button.source,
-.platform-actions.with-verify .platform-button.verify { grid-column: span 4; }
+/* The /install/ picker has five buttons: three across, then two. */
+@media (min-width: 901px) {
+  #install-picker .platform-button:nth-child(-n+3) { grid-column: span 4; }
+  #install-picker .platform-button:nth-child(n+4) { grid-column: span 6; }
+}
+.section-links { margin: 22px 0 0; font-weight: 650; }
 .platform-button:hover {
   transform: translateY(-3px);
   border-color: #aab4ac;
@@ -177,7 +179,6 @@ p { margin: 0 0 18px; }
 .platform-button.guide .platform-icon { background: var(--accent); }
 .platform-button.source .platform-icon { background: #333a35; font-size: 0.72rem; }
 .platform-button.chatgpt .platform-icon { font-size: 0.72rem; }
-.platform-button.verify .platform-icon { background: var(--accent-dark); }
 .proof-strip {
   width: min(1160px, calc(100% - 32px));
   margin: 0 auto;
@@ -296,7 +297,7 @@ footer p a { text-decoration: underline; }
 footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
 @media (max-width: 900px) {
   .platform-actions { grid-template-columns: 1fr 1fr; }
-  .platform-button, .platform-button.guide, .platform-button.source, .platform-button.verify { grid-column: span 1; }
+  .platform-button, .platform-button.guide, .platform-button.source { grid-column: span 1; }
   .proof-strip { grid-template-columns: 1fr 1fr; }
   .proof-strip div:nth-child(2) { border-right: 0; }
   .proof-strip div:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
@@ -311,7 +312,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
   nav { gap: 12px; font-size: 0.9rem; }
   .hero { margin-top: 48px; }
   .platform-actions { grid-template-columns: 1fr; }
-  .platform-button, .platform-button.guide, .platform-button.source, .platform-button.verify { grid-column: span 1; }
+  .platform-button, .platform-button.guide, .platform-button.source { grid-column: span 1; }
   .proof-strip, .card-grid { grid-template-columns: 1fr; }
   .proof-strip div { border-right: 0; border-bottom: 1px solid var(--line); }
   .proof-strip div:last-child { border-bottom: 0; }
