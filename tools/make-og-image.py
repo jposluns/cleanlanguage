@@ -52,7 +52,7 @@ Usage
     tools/make-og-image.py --line1 "..." --line2 "..." --url "..."
         Rewrite the card in place.
 
-    tools/make-og-image.py --out /tmp/candidate.png
+    tools/make-og-image.py --out "$TMPDIR/candidate.png"
         Write a candidate elsewhere, leaving the committed card alone.
 """
 
