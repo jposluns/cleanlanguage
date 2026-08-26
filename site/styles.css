@@ -269,9 +269,9 @@ h2.label, h3.label, .content h2.label, .content h3.label { margin: 0 0 14px; fon
 .step-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 0 0 18px; }
 .step-actions code { color: var(--text); }
 .pattern-list { display: grid; gap: 14px; }
+.pattern-list.two-up { grid-template-columns: 1fr 1fr; }
 .pattern-item { padding: 22px; border: 1px solid var(--line); background: var(--surface); border-radius: 14px; }
 .pattern-item strong { display: block; margin-bottom: 8px; }
-.pattern-item.is-featured { border-color: var(--accent); background: var(--accent-soft); }
 .spelling-details { margin-top: 18px; }
 .spelling-details > summary { cursor: pointer; font-weight: 700; padding: 6px 0; }
 .spelling-scroll { overflow-x: auto; }
@@ -313,6 +313,7 @@ footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
   .hero { margin-top: 48px; }
   .platform-actions { grid-template-columns: 1fr; }
   .platform-button, .platform-button.guide, .platform-button.source { grid-column: span 1; }
+  .pattern-list.two-up { grid-template-columns: 1fr; }
   .proof-strip, .card-grid { grid-template-columns: 1fr; }
   .proof-strip div { border-right: 0; border-bottom: 1px solid var(--line); }
   .proof-strip div:last-child { border-bottom: 0; }
