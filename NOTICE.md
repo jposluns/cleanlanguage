@@ -13,7 +13,9 @@ https://creativecommons.org/licenses/by-sa/4.0/
 
 Suggested attribution:
 
-> Clean Language by Jeff Posluns, https://cleanlanguage.ai, licensed under CC BY-SA 4.0. Changes were made.
+> Clean Language by Jeff Posluns, https://cleanlanguage.ai, licensed under CC BY-SA 4.0.
+
+(Add "Changes were made." if you modified it.)
 
 ## Related work
 

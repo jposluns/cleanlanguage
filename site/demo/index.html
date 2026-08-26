@@ -3,29 +3,31 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Clean Language - See it at work</title>
-  <meta name="description" content="See Clean Language applied to real AI prose, before and after, and copy a prompt to try it on your own writing in ChatGPT, Claude, Gemini, Copilot, or any other assistant that can browse the web.">
+  <title>Clean Language - Try it in your AI</title>
+  <meta name="description" content="Try Clean Language on your own writing: copy one prompt into ChatGPT, Claude, Gemini, or Copilot and compare the before and after.">
   <meta name="author" content="Jeff Posluns">
   <link rel="canonical" href="https://cleanlanguage.ai/demo/">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <meta name="theme-color" content="#145c3b">
-  <link rel="stylesheet" href="/styles.css?v=20260825-3">
+  <link rel="stylesheet" href="/styles.css?v=20260826-1">
   <meta property="og:type" content="article">
-  <meta name="title" property="og:title" content="See Clean Language at work">
+  <meta property="og:title" content="See Clean Language at work">
   <meta property="og:description" content="Before and after on real AI prose, plus a prompt to try it on your own writing.">
   <meta property="og:url" content="https://cleanlanguage.ai/demo/">
-  <meta name="image" property="og:image" content="https://cleanlanguage.ai/cleanlanguage-card.png">
+  <meta property="og:site_name" content="Clean Language">
+  <meta property="og:image" content="https://cleanlanguage.ai/cleanlanguage-card.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Clean Language, a free cross-platform editorial standard for AI writing.">
   <meta property="article:published_time" content="2026-07-28">
-  <meta property="article:modified_time" content="2026-08-25">
+  <meta property="article:modified_time" content="2026-08-26">
   <meta property="article:author" content="https://linkedin.com/in/jposluns">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="See Clean Language at work">
   <meta name="twitter:description" content="Before and after on real AI prose, plus a prompt to try it on your own writing.">
   <meta name="twitter:image" content="https://cleanlanguage.ai/cleanlanguage-card.png">
+  <meta name="twitter:image:alt" content="Clean Language, a free cross-platform editorial standard for AI writing.">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -34,7 +36,7 @@
     "description": "Before and after on real AI prose, plus a prompt to try it on your own writing.",
     "image": "https://cleanlanguage.ai/cleanlanguage-card.png",
     "datePublished": "2026-07-28",
-    "dateModified": "2026-08-25",
+    "dateModified": "2026-08-26",
     "mainEntityOfPage": "https://cleanlanguage.ai/demo/",
     "author": {
       "@type": "Person",
@@ -57,33 +59,27 @@
       <a href="/standard/">The Standard</a>
       <a href="/demo/" class="is-active" aria-current="page">Try It</a>
       <a href="/install/">Install</a>
-      <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub<span class="visually-hidden"> (opens in a new tab)</span></a>
     </nav>
   </header>
 
-  <main id="main">
+  <main id="main" tabindex="-1">
+    <article class="content">
     <section class="page-hero">
       <p class="eyebrow">Try It</p>
       <h1>The same facts, in fewer words.</h1>
       <p>Two before-and-after examples show what Clean Language does to generated prose. Then copy the prompt and try it on your own writing.</p>
     </section>
-
-    <article class="content">
       <section>
         <h2>Watch it work</h2>
-        <p>Each pair keeps every fact identical. Only the style changes.</p>
+        <p>This pair keeps every fact consistent; only the style changes.</p>
 
         <h3 class="label">Throat-clearing opener</h3>
         <div class="comparison">
           <div><span class="label">Before</span><p>It is worth noting that there are several areas where the current implementation could create challenges: unclear ownership, no rollback procedure, and an untested recovery path.</p></div>
           <div><span class="label">After</span><p>The current implementation has three unresolved points: unclear ownership, no rollback procedure, and an untested recovery path.</p></div>
         </div>
-
-        <h3 class="label">Buried incident status</h3>
-        <div class="comparison">
-          <div><span class="label">Before</span><p>The situation appears to be under control, and the team is continuing to work diligently: the affected server is isolated, file transfers resumed at 06:40, the root cause is not yet confirmed, and the legacy environment still requires rebuild approval.</p></div>
-          <div><span class="label">After</span><p>The affected server is isolated. File transfers resumed at 06:40. The root cause is not confirmed, and the legacy environment still requires rebuild approval.</p></div>
-        </div>
+        <p><a href="/examples/">See the full set of before-and-after examples</a>.</p>
       </section>
 
       <section>
@@ -91,7 +87,8 @@
         <p>Copy the prompt and paste it into ChatGPT, Claude, Gemini, Copilot, or any other assistant that can browse the web. Add your own text where the prompt says to. The prompt has the assistant read the standard straight from this project, so it applies the real rules rather than a summary.</p>
 
         <div class="notice">
-          <p><strong>Read any prompt before you paste it.</strong> This is good practice with a prompt from any source, not only this one. The prompt below asks the assistant to read the Clean Language standard from this project's public GitHub repository and then rewrite the text you provide. It points only at this project's own public files and asks for nothing from your device or accounts.</p>
+          <p><strong>Read any prompt before you paste it.</strong> The prompt below asks the assistant to read the Clean Language standard from this project's public GitHub repository and rewrite the text you provide. It points only at this project's own public files.</p>
+          <p><strong>If your AI cannot browse the web:</strong> copy everything from the <a href="/instructions/">instructions page</a>, paste it into the chat, and say: <code class="prompt">Follow these writing rules, then rewrite the text below.</code></p>
         </div>
 
         <pre><code id="demo-prompt">First, read the Clean Language standard from its public GitHub repository at https://github.com/jposluns/cleanlanguage.
@@ -105,7 +102,7 @@ Then apply the standard to the text below. Preserve every fact, figure, quotatio
           <button type="button" class="button secondary" data-copy-target="demo-prompt" hidden>Copy prompt</button>
           <span class="visually-hidden" role="status" aria-live="polite" id="copy-status"></span>
         </div>
-        <p>If your AI says it cannot browse the web: copy everything from the <a href="/instructions/">instructions page</a>, paste it into the chat, and say: <code class="prompt">Follow these writing rules, then rewrite the text below.</code></p>
+        <noscript><div class="notice"><p>Your browser has JavaScript switched off, so the Copy button is unavailable. Select the prompt text above to copy it, then paste it into your AI.</p></div></noscript>
 
         <p>Once you install the skill, you can tell your assistant to always use Clean Language in your personal, project, or chat instructions, or ask for it on demand. Installing is also the way to use Clean Language when your assistant cannot reach the web. See the <a href="/install/">install guide</a>.</p>
       </section>
@@ -119,9 +116,9 @@ Then apply the standard to the text below. Preserve every fact, figure, quotatio
   </main>
 
   <footer>
-    <p>Clean Language is freely available under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0</a>, created by <a href="https://linkedin.com/in/jposluns" target="_blank" rel="noopener noreferrer">Jeff Posluns</a>.</p>
-    <div><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/patterns/">AI Patterns</a><a href="/examples/">Before and After</a><a href="/channels/">By Channel</a><a href="/checklist/">Checklist</a><a href="/demo/">Try It</a><a href="/install/">Install</a><a href="/instructions/">Instructions</a><a href="/verify/">Verify</a><a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub</a></div>
+    <p>Clean Language is freely available under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0<span class="visually-hidden"> (opens in a new tab)</span></a>, created by <a href="https://linkedin.com/in/jposluns" target="_blank" rel="noopener noreferrer">Jeff Posluns<span class="visually-hidden"> (opens in a new tab)</span></a>. This site sets no cookies and runs no analytics; Cloudflare, which serves it, processes request data such as IP addresses to deliver and protect the site.</p>
+    <nav class="footer-links" aria-label="Footer"><a href="/">Home</a><a href="/standard/">The Standard</a><a href="/patterns/">AI Patterns</a><a href="/examples/">Before and After</a><a href="/channels/">By Channel</a><a href="/checklist/">Checklist</a><a href="/demo/">Try It</a><a href="/install/">Install</a><a href="/instructions/">Instructions text</a><a href="/verify/">Verify</a><a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub<span class="visually-hidden"> (opens in a new tab)</span></a></nav>
   </footer>
-  <script src="/js/copy.js" defer></script>
+  <script src="/js/copy.js?v=20260826-1" defer></script>
 </body>
 </html>

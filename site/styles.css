@@ -80,10 +80,11 @@ a:focus-visible, button:focus-visible, summary:focus-visible {
 nav { display: flex; flex-wrap: wrap; gap: 20px; align-items: center; }
 nav a, footer a { text-decoration: none; color: var(--muted); font-weight: 650; }
 nav a:hover, footer a:hover { color: var(--accent); }
+footer nav a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .site-header nav { gap: 10px; }
 .site-header nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 7px 15px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: 0.9rem; }
 .site-header nav a:hover { border-color: var(--accent); color: var(--accent); }
-.site-header nav a.is-active, .site-header nav a.is-active:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.site-header nav a.is-active, .site-header nav a.is-active:hover { background: var(--accent); border-color: var(--accent); color: #fff; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 2px; }
 main { overflow: hidden; }
 .hero {
   width: min(1080px, calc(100% - 32px));
@@ -167,6 +168,7 @@ p { margin: 0 0 18px; }
   font-size: 0.92rem;
   font-weight: 900;
   letter-spacing: -0.04em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 .platform-button.claude .platform-icon { background: #c15f3c; }
 .platform-button.chatgpt .platform-icon { background: #111; }
@@ -207,6 +209,8 @@ p { margin: 0 0 18px; }
 .split > div:first-child p:not(.eyebrow) { color: var(--muted); font-size: 1.08rem; }
 .code-panel { background: var(--code); color: #e8eee9; border-radius: 18px; padding: 28px; box-shadow: var(--shadow); }
 .code-title { color: #9db6a6; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 800; }
+.code-panel .code-note { margin: 16px 0 0; color: #9db6a6; font-size: 0.85rem; }
+.code-panel .code-note a { color: #e8eee9; text-decoration: underline; }
 pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
 /* A prompt the reader types or pastes. Bold and chip-styled so it stands out
@@ -242,10 +246,11 @@ code.prompt {
 }
 .page-hero h1 { font-size: clamp(2.8rem, 6vw, 5.5rem); text-align: left; }
 .page-hero p { color: var(--muted); font-size: 1.2rem; max-width: 760px; }
+.content > .page-hero { width: auto; margin-top: 0; }
 .standard-tabs { width: min(1160px, calc(100% - 32px)); margin: 2px auto 0; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .standard-tabs a { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 15px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-weight: 650; font-size: 0.92rem; text-decoration: none; }
 .standard-tabs a:hover { border-color: var(--accent); color: var(--accent); }
-.standard-tabs a.is-active, .standard-tabs a.is-active:hover { background: var(--accent); border-color: var(--accent); color: #fff; }
+.standard-tabs a.is-active, .standard-tabs a.is-active:hover { background: var(--accent); border-color: var(--accent); color: #fff; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 2px; }
 .content { width: min(920px, calc(100% - 32px)); margin: 0 auto 120px; }
 .content section { margin: 72px 0; scroll-margin-top: 24px; }
 .content h2 { font-size: clamp(1.8rem, 3.5vw, 3rem); }
@@ -257,6 +262,7 @@ h2.label, h3.label, .content h2.label, .content h3.label { margin: 0 0 14px; fon
 .notice { padding: 20px 22px; border-radius: 14px; background: var(--accent-soft); border: 1px solid #b9d0c1; }
 .verified { margin: -8px 0 20px; font-size: 0.85rem; color: var(--muted); }
 .instructions-block { max-height: 60vh; overflow: auto; white-space: pre-wrap; }
+.instructions-block:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .notice p { margin: 0 0 10px; }
 .notice p:last-child { margin-bottom: 0; }
 .step-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 0 0 18px; }
@@ -276,7 +282,7 @@ footer {
 }
 footer p { margin: 0; color: var(--muted); }
 footer p a { text-decoration: underline; }
-footer div { display: flex; flex-wrap: wrap; gap: 18px; }
+footer nav { display: flex; flex-wrap: wrap; gap: 18px; }
 @media (max-width: 900px) {
   .platform-actions { grid-template-columns: 1fr 1fr; }
   .platform-button, .platform-button.guide, .platform-button.source, .platform-button.verify { grid-column: span 1; }
@@ -287,9 +293,11 @@ footer div { display: flex; flex-wrap: wrap; gap: 18px; }
   .split, .comparison { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
-  .site-header { align-items: flex-start; }
-  nav { justify-content: flex-end; gap: 12px; font-size: 0.9rem; }
-  nav a.nav-collapse[href^="#"] { display: none; }
+  .site-header { flex-direction: column; align-items: stretch; gap: 12px; padding: 16px 0; }
+  .site-header nav { justify-content: flex-start; gap: 8px; }
+  .site-header nav a { padding: 6px 12px; min-height: 40px; font-size: 0.85rem; }
+  .site-header nav a.nav-collapse { display: none; }
+  nav { gap: 12px; font-size: 0.9rem; }
   .hero { margin-top: 48px; }
   .platform-actions { grid-template-columns: 1fr; }
   .platform-button, .platform-button.guide, .platform-button.source, .platform-button.verify { grid-column: span 1; }

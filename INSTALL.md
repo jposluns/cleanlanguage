@@ -27,7 +27,7 @@ Apply Clean Language to this draft: [paste your text]
 
 Team and Enterprise administrators may need to enable Skills. An organization owner can upload the Skill once for everyone.
 
-The matching checksum is available as [`cleanlanguage.zip.sha256`](https://github.com/jposluns/cleanlanguage/releases/latest/download/cleanlanguage.zip.sha256).
+The matching checksum is available as [`cleanlanguage.zip.sha256`](https://github.com/jposluns/cleanlanguage/releases/latest/download/cleanlanguage.zip.sha256). For a plain-language walkthrough of checking it, see [cleanlanguage.ai/verify](https://cleanlanguage.ai/verify/).
 
 ### Claude Project fallback
 

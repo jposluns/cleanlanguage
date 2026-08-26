@@ -1,16 +1,21 @@
 document.querySelectorAll('[data-copy-target]').forEach(function (button) {
   button.hidden = false;
+  var original = button.textContent;
+  var resetTimer = null;
+  var isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+  var copyKey = isMac ? 'Cmd+C' : 'Ctrl+C';
   button.addEventListener('click', function () {
     var source = document.getElementById(button.getAttribute('data-copy-target'));
     if (!source) return;
     var status = document.getElementById('copy-status');
-    var original = button.textContent;
     function report(buttonText, message) {
       button.textContent = buttonText;
       if (status) { status.textContent = message; }
-      setTimeout(function () {
+      if (resetTimer) { clearTimeout(resetTimer); }
+      resetTimer = setTimeout(function () {
         button.textContent = original;
         if (status) { status.textContent = ''; }
+        resetTimer = null;
       }, 4000);
     }
     function fallback() {
@@ -19,7 +24,7 @@ document.querySelectorAll('[data-copy-target]').forEach(function (button) {
       var selection = window.getSelection();
       selection.removeAllRanges();
       selection.addRange(range);
-      report('Press Ctrl+C to copy', 'Copy failed. The text is selected; copy it with Ctrl+C or long press.');
+      report('Press ' + copyKey + ' to copy', 'Copy failed. The text is selected; copy it with ' + copyKey + ', or long press on a touch screen.');
     }
     if (!navigator.clipboard) { fallback(); return; }
     navigator.clipboard.writeText(source.textContent).then(function () {

@@ -37,7 +37,7 @@ not strip the specimens.
 **The name collision with the coaching technique is accepted.** "Clean Language"
 is also the name of an established questioning technique. Page titles and meta
 descriptions carry no "AI writing" disambiguation, with one exception already in
-place: the checklist page title, "Clean Language, AI Writing Quality Assurance".
+place: the checklist page title, "Clean Language - AI writing quality assurance".
 Do not add disambiguation elsewhere.
 
 **Condensed site renderings of the skill are intentional.** The website presents
