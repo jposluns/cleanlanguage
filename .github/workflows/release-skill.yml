@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       force:
-        description: "Overwrite the tag even if it already has a published release. Leave unchecked; a published version should not be republished with different bytes."
+        description: "Overwrite an already published release and move its tag to this commit. This changes published bytes and checksums; leave it unchecked. To finish a partly failed release, re-run this workflow with the tag itself selected as the run ref, not main."
         required: false
         default: false
         type: boolean
@@ -19,6 +19,8 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # tools/ci-status.sh reads the Check Runs API on the site pull request.
+  checks: read
 
 jobs:
   package-and-release:
@@ -62,31 +64,63 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Neither release path may quietly replace a published release:
-          # republishing different bytes under a published version would break
-          # its checksum as a trust signal. A tag push refuses outright. A
-          # manual dispatch refuses unless the force input is set, which is
-          # the one deliberate override. Cut a new version instead.
-          release_exists=0
-          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
-            release_exists=1
-          fi
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-            if [ "${release_exists}" -eq 1 ] && [ "${FORCE}" != "true" ]; then
-              echo "Release ${RELEASE_TAG} already exists." >&2
+          # A published release is immutable: its checksum is a trust signal,
+          # so its bytes never change except by a deliberate manual dispatch
+          # with the force input. Probe the release through the API so a
+          # transient error fails closed rather than reading as "no release".
+          response="$(mktemp)"
+          set +e
+          gh api --include "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" >"${response}" 2>&1
+          set -e
+          status="$(awk 'toupper($1) ~ /^HTTP/ { code=$2 } END { print code }' "${response}")"
+          rm -f "${response}"
+          case "${status}" in
+            200) release_exists=1 ;;
+            404) release_exists=0 ;;
+            *)
+              echo "Could not determine whether ${RELEASE_TAG} is already published (HTTP ${status:-none})." >&2
+              echo "Refusing to proceed rather than risk overwriting a published release." >&2
+              exit 1
+              ;;
+          esac
+          # Resolve the remote tag on its own, peeling an annotated tag to its
+          # commit, so tag moves are governed independently of the release.
+          remote_tag_sha="$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" "refs/tags/${RELEASE_TAG}" | awk 'END { print $1 }')"
+          if [ "${release_exists}" -eq 1 ]; then
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${FORCE}" = "true" ]; then
+              echo "force is enabled; overwriting the published release ${RELEASE_TAG}."
+            elif [ "${remote_tag_sha}" = "${GITHUB_SHA}" ]; then
+              # A re-run at the same commit: the assets are already published,
+              # and rebuilding would change their checksum, so leave them and
+              # continue to the site step.
+              echo "Release ${RELEASE_TAG} is already published at ${GITHUB_SHA}; leaving its assets untouched and continuing."
+              exit 0
+            else
+              echo "Release ${RELEASE_TAG} is already published at a different commit." >&2
               echo "Republishing different bytes under a published version would break its checksum as a trust signal." >&2
-              echo "Cut a new version, or re-run with the force input enabled to overwrite ${RELEASE_TAG} deliberately." >&2
+              echo "Cut a new version, or run this workflow manually with the force input to overwrite ${RELEASE_TAG} deliberately (select the tag as the run ref)." >&2
               exit 1
             fi
-            if [ "${release_exists}" -eq 1 ]; then
-              echo "force is enabled; moving published tag ${RELEASE_TAG} to ${GITHUB_SHA}."
+          fi
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            if [ -z "${remote_tag_sha}" ]; then
+              git tag "${RELEASE_TAG}" "${GITHUB_SHA}"
+              git push origin "refs/tags/${RELEASE_TAG}"
+            elif [ "${remote_tag_sha}" = "${GITHUB_SHA}" ]; then
+              echo "Tag ${RELEASE_TAG} already points at ${GITHUB_SHA}; leaving it in place."
+            elif [ "${FORCE}" = "true" ]; then
+              echo "force is enabled; moving ${RELEASE_TAG} to ${GITHUB_SHA}."
+              git tag -f "${RELEASE_TAG}" "${GITHUB_SHA}"
+              git push --force origin "refs/tags/${RELEASE_TAG}"
+            else
+              echo "Tag ${RELEASE_TAG} already points at ${remote_tag_sha}, not ${GITHUB_SHA}; refusing to move it without the force input." >&2
+              exit 1
             fi
-            git tag -f "${RELEASE_TAG}" "${GITHUB_SHA}"
-            git push --force origin "refs/tags/${RELEASE_TAG}"
           else
-            if [ "${release_exists}" -eq 1 ]; then
-              echo "Release ${RELEASE_TAG} is already published, and a tag push never republishes it." >&2
-              echo "Cut a new version, or run the workflow manually with the force input to overwrite ${RELEASE_TAG} deliberately." >&2
+            # Tag push: the tag must still resolve to the built commit, or a
+            # concurrent move would publish one commit's bytes under another.
+            if [ "${remote_tag_sha}" != "${GITHUB_SHA}" ]; then
+              echo "Tag ${RELEASE_TAG} resolves to ${remote_tag_sha:-nothing} on origin, not the built commit ${GITHUB_SHA}; refusing to publish mismatched bytes." >&2
               exit 1
             fi
           fi
@@ -98,7 +132,7 @@ jobs:
               "dist/cleanlanguage-${VERSION}.zip.sha256" \
               --clobber
           else
-            gh release create "${RELEASE_TAG}" \
+            gh release create "${RELEASE_TAG}" --verify-tag \
               dist/cleanlanguage.zip \
               dist/cleanlanguage.zip.sha256 \
               "dist/cleanlanguage-${VERSION}.zip" \
@@ -126,7 +160,11 @@ jobs:
           # writes every place at once and check-release-links.py verifies the
           # result, so this step cannot quietly disagree with the gate.
           checksum="$(cut -d' ' -f1 < "dist/cleanlanguage-${VERSION}.zip.sha256")"
-          tools/set-release-links.py --version "${VERSION}" --tag "${RELEASE_TAG}" --checksum "${checksum}" --date "$(date -u +%F)"
+          # One UTC date drives both the page stamps and the site commit, so a
+          # release crossing midnight cannot stamp one date and commit the next,
+          # which would fail the page-metadata gate on the pull request.
+          site_date="$(date -u +%F)"
+          tools/set-release-links.py --version "${VERSION}" --tag "${RELEASE_TAG}" --checksum "${checksum}" --date "${site_date}"
           tools/check-release-links.py
           python3 tools/check-page-metadata.py
           if git diff --quiet -- site; then
@@ -138,7 +176,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "${branch}"
           git add site
-          git commit -m "Point the site downloads at ${RELEASE_TAG}"
+          GIT_AUTHOR_DATE="${site_date}T12:00:00Z" GIT_COMMITTER_DATE="${site_date}T12:00:00Z" \
+            git commit -m "Point the site downloads at ${RELEASE_TAG}"
           git push --force origin "HEAD:${branch}"
           pr_url="$(gh pr create --base main --head "${branch}" \
             --title "Point the site downloads at ${RELEASE_TAG}" \

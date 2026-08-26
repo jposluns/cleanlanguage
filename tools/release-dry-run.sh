@@ -12,6 +12,11 @@
 # contains no gh call and no git push, and it proves at exit that no
 # repository ref moved.
 #
+# To keep the date-stamp proof honest, the worktree's modified-date fields are
+# first seeded with an old sentinel, so the gates and the assertions can only
+# pass if the writer actually restamps them. Without the seed the proof would
+# be vacuous on any day the pages were last stamped that same day.
+#
 # The dry run proves HEAD, never the working tree: commit first, then run it.
 #
 # Usage:
@@ -41,13 +46,21 @@ case "${dry_date}" in
   [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
   *) fail "DRY_DATE must be YYYY-MM-DD, got ${dry_date}" ;;
 esac
+# A date the current page stamps predate, so a broken stamping step cannot pass
+# by leaving the existing dates in place.
+seed_date="2020-01-01"
 
 refs_before="$(git for-each-ref | sha256sum)"
 
 version="$(git show HEAD:cleanlanguage/SKILL.md \
   | sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -1)"
 [ -n "${version}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
-dry_version="${version%.*}.$(( ${version##*.} + 1 ))"
+case "${version}" in
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *) fail "expected a three-part version like 1.0.11, got ${version}" ;;
+esac
+patch="${version##*.}"
+dry_version="${version%.*}.$(( 10#${patch} + 1 ))"
 dry_tag="v${dry_version}"
 echo "release-dry-run: version ${version} at HEAD; dry-run version ${dry_version}; date ${dry_date}."
 
@@ -72,6 +85,28 @@ GIT_AUTHOR_DATE="${dry_date}T12:00:00 +0000" GIT_COMMITTER_DATE="${dry_date}T12:
   git -c user.name="release-dry-run" -c user.email="release-dry-run@invalid" \
   commit -q -am "Dry run: version ${dry_version}"
 
+# Seed the modified-date fields with an old sentinel so the writer must restamp
+# them for the gates and assertions to pass. Publish dates are left untouched.
+python3 - "${seed_date}" <<'PYSEED'
+import sys, re, pathlib
+d = sys.argv[1]
+for f in ("site/install/index.html", "site/verify/index.html"):
+    p = pathlib.Path(f); t = p.read_text(encoding="utf-8")
+    t, a = re.subn(r'(<meta property="article:modified_time" content=")\d{4}-\d{2}-\d{2}(")', rf'\g<1>{d}\g<2>', t, count=1)
+    t, b = re.subn(r'("dateModified":\s*")\d{4}-\d{2}-\d{2}(")', rf'\g<1>{d}\g<2>', t, count=1)
+    if a != 1 or b != 1:
+        sys.exit(f"seed: expected one modified stamp and one dateModified in {f}, got {a} and {b}")
+    p.write_text(t, encoding="utf-8")
+sm = pathlib.Path("site/sitemap.xml"); t = sm.read_text(encoding="utf-8")
+for slug in ("install", "verify"):
+    t, n = re.subn(r'(<loc>https://cleanlanguage\.ai/' + slug + r'/</loc>\s*<lastmod>)\d{4}-\d{2}-\d{2}(</lastmod>)', rf'\g<1>{d}\g<2>', t, count=1)
+    if n != 1:
+        sys.exit(f"seed: expected one sitemap lastmod for /{slug}/, got {n}")
+sm.write_text(t, encoding="utf-8")
+PYSEED
+grep -q "article:modified_time\" content=\"${seed_date}\"" site/install/index.html \
+  || fail "the sentinel seed did not take on the install page"
+
 # 1. Validate, package, and verify the zip, exactly as the release does.
 tools/release-package.sh --tag "${dry_tag}"
 
@@ -85,13 +120,15 @@ tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
 #    triggers (link check, page metadata, and the install page; the portable
 #    text gate does not run on a site-only pull request, and the synthetic
 #    version bump above stands in for a human commit that gate already
-#    covers in real pull requests).
+#    covers in real pull requests). check-page-metadata can only pass if the
+#    writer restamped the sentinel dates seeded above.
 tools/check-release-links.py
 python3 tools/check-page-metadata.py
 python3 tools/check-links.py
 python3 tools/check-install-page.py
 
-# 4. Assertions on the rewritten site.
+# 4. Assertions on the rewritten site. Because the dates were seeded old, a
+#    passing stamp assertion here proves the writer changed them.
 assert_contains() {
   grep -q "$2" "$1" || fail "expected $1 to contain: $2"
 }
@@ -103,6 +140,7 @@ assert_contains site/verify/index.html "published checksum for version ${dry_ver
 for page in site/install/index.html site/verify/index.html; do
   assert_contains "${page}" "article:modified_time\" content=\"${dry_date}\""
   assert_contains "${page}" "\"dateModified\": \"${dry_date}\""
+  grep -q "${seed_date}" "${page}" && fail "the sentinel date survived in ${page}; stamping did not run"
 done
 for name in install verify; do
   grep -A1 "<loc>https://cleanlanguage.ai/${name}/</loc>" site/sitemap.xml \

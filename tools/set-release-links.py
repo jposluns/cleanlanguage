@@ -38,6 +38,7 @@ exits non-zero if anything would, without writing.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import re
 import sys
 from pathlib import Path
@@ -164,6 +165,10 @@ def main() -> int:
         die(f"{args.checksum!r} is not a 64 character lower-case SHA-256")
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", args.date):
         die(f"{args.date!r} is not a YYYY-MM-DD date")
+    try:
+        dt.date.fromisoformat(args.date)
+    except ValueError:
+        die(f"{args.date!r} is not a real calendar date")
     tag = args.tag or f"v{args.version}"
 
     planned = rewrite(args.version, tag, checksum, args.date)
