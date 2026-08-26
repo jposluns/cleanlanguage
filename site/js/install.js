@@ -98,5 +98,13 @@
   });
 
   apply(false);
-  if (familyFromHash()) { scrollToTop(); }
+  if (familyFromHash()) {
+    // On a cold deep-link load the browser also scrolls to the named section;
+    // run ours on the next frame so it wins and the reader lands at the top.
+    if (window.requestAnimationFrame) {
+      window.requestAnimationFrame(scrollToTop);
+    } else {
+      scrollToTop();
+    }
+  }
 })();
