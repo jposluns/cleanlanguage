@@ -26,7 +26,7 @@ document.querySelectorAll('[data-copy-target]').forEach(function (button) {
       selection.addRange(range);
       report('Press ' + copyKey + ' to copy', 'Copy failed. The text is selected; copy it with ' + copyKey + ', or long press on a touch screen.');
     }
-    if (!navigator.clipboard) { fallback(); return; }
+    if (!navigator.clipboard || !navigator.clipboard.writeText) { fallback(); return; }
     navigator.clipboard.writeText(source.textContent).then(function () {
       report('Copied', 'Copied to clipboard');
     }, fallback);

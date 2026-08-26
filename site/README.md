@@ -22,7 +22,7 @@ Add `cleanlanguage.ai` as the custom domain after the first deployment.
 - `examples/index.html`: before-and-after examples
 - `channels/index.html`: context rules by channel and document type
 - `checklist/index.html`: the quality checklist
-- `demo/index.html`: worked examples and a prompt to try
+- `demo/index.html`: a before-and-after example and a prompt to try
 - `install/index.html`: click-by-click installation instructions
 - `verify/index.html`: plain-language download verification guide
 - `instructions/index.html`: the full instructions as copyable plain text
