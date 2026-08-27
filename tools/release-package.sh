@@ -97,14 +97,13 @@ fi
 # so a shipped skill never points at a missing asset. The path may be quoted
 # with double quotes, single quotes, or left bare.
 if git cat-file -e HEAD:cleanlanguage/agents/openai.yaml 2>/dev/null; then
-  # Every icon_* key in the ChatGPT config must reference a file present in the
-  # package. Parse the YAML and walk it at ANY depth (the keys nest under an
-  # interface: mapping), so a doubled quote, a quoted key, a stray token, or a
-  # nesting change cannot slip a broken reference through. Fail on any icon_*
-  # value that is missing, empty, or unparseable, and fail if the file has NO
-  # icon_* key at all, so the check can never silently become vacuous.
-  icons="$(git show HEAD:cleanlanguage/agents/openai.yaml | python3 -c '
-import sys
+  # Validate the ChatGPT icon references entirely in Python, so nothing is
+  # serialized through newline-delimited shell: parse the YAML, walk it at any
+  # depth, reject a value that is missing, empty, or carries a control
+  # character, resolve an optional ./, confirm the git blob exists at HEAD, and
+  # require at least one icon_ key so the check can never become vacuous.
+  git show HEAD:cleanlanguage/agents/openai.yaml | python3 -c '
+import sys, subprocess
 try:
     import yaml
 except ImportError:
@@ -113,23 +112,25 @@ except ImportError:
 data = yaml.safe_load(sys.stdin)
 bad = False
 found = 0
+def check(key, value):
+    global bad
+    if not isinstance(value, str) or not value.strip():
+        sys.stderr.write("release-package: icon key %s has no usable path.\n" % key); bad = True; return
+    p = value.strip()
+    if any(ord(c) < 32 for c in p):
+        sys.stderr.write("release-package: icon key %s has a control character.\n" % key); bad = True; return
+    rel = p[2:] if p.startswith("./") else p
+    if not rel:
+        sys.stderr.write("release-package: icon key %s resolves to an empty path.\n" % key); bad = True; return
+    if subprocess.call(["git", "cat-file", "-e", "HEAD:cleanlanguage/" + rel],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) != 0:
+        sys.stderr.write("release-package: icon referenced in agents/openai.yaml is missing: %s\n" % rel); bad = True
 def walk(node):
-    global bad, found
+    global found
     if isinstance(node, dict):
         for k, v in node.items():
             if isinstance(k, str) and k.startswith("icon_"):
-                found += 1
-                if not isinstance(v, str) or not v.strip():
-                    sys.stderr.write("release-package: icon key %s has no usable path.\n" % k)
-                    bad = True
-                    continue
-                p = v.strip()
-                rel = p[2:] if p.startswith("./") else p
-                if not rel:
-                    sys.stderr.write("release-package: icon key %s resolves to an empty path.\n" % k)
-                    bad = True
-                    continue
-                print(rel)
+                found += 1; check(k, v)
             else:
                 walk(v)
     elif isinstance(node, list):
@@ -140,18 +141,7 @@ if found == 0:
     sys.stderr.write("release-package: no icon_ keys found in agents/openai.yaml; the icon check would be vacuous.\n")
     sys.exit(1)
 sys.exit(1 if bad else 0)
-')" || { echo "release-package: could not validate agents/openai.yaml icons" >&2; exit 1; }
-  missing_icon=0
-  while IFS= read -r rel; do
-    [ -n "${rel}" ] || continue
-    git cat-file -e "HEAD:cleanlanguage/${rel}" 2>/dev/null || {
-      echo "release-package: icon referenced in agents/openai.yaml is missing: ${rel}" >&2
-      missing_icon=1
-    }
-  done <<EOF_ICONS
-${icons}
-EOF_ICONS
-  [ "${missing_icon}" -eq 0 ] || exit 1
+' || exit 1
 fi
 
 staging="$(mktemp -d)"

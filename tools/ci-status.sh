@@ -142,14 +142,6 @@ confirm_rounds=0
 deadline=$(( $(date +%s) + timeout_seconds ))
 
 while true; do
-  # In wait mode, honour the deadline at the top of every iteration, before any
-  # read or confirmation, so a snapshot that only settles after the timeout is
-  # never accepted as a pass.
-  if [ "${wait_for_settle}" -eq 1 ] && [ "$(date +%s)" -ge "${deadline}" ]; then
-    printf 'ci-status: deadline reached after %s seconds; giving up\n' "${timeout_seconds}" >&2
-    [ -n "${checks:-}" ] && report "${checks}" >&2
-    exit 2
-  fi
   if ! checks="$(read_checks)"; then
     # A transient read error is not a verdict. In wait mode keep waiting until
     # the deadline rather than aborting (a release step calls this AFTER
@@ -179,6 +171,14 @@ while true; do
       # that has not registered yet is not mistaken for one that does not
       # exist. Identical means same names, statuses, and conclusions.
       if [ "${confirming}" -eq 1 ] && [ "${checks}" = "${confirmed_snapshot}" ]; then
+        # The confirming read can start before the deadline yet block past it,
+        # so re-check right before the success exit: a pass is not confirmed
+        # once the wait window has closed.
+        if [ "${wait_for_settle}" -eq 1 ] && [ "$(date +%s)" -ge "${deadline}" ]; then
+          printf 'ci-status: checks passed but only after the %s second wait window closed\n' "${timeout_seconds}" >&2
+          report "${checks}" >&2
+          exit 2
+        fi
         printf 'ci-status: every check passed for %s, confirmed on two readings\n' "${full_sha}"
         report "${checks}"
         exit 0
@@ -191,20 +191,21 @@ while true; do
       fi
       confirmed_snapshot="${checks}"
       confirming=1
-      # Honour the deadline before the confirmation pause, and never sleep past
-      # it, so a check that only goes green after the timeout is not confirmed
-      # and merged. The release uses a timeout far larger than one interval, so
-      # this bites only a degenerate tiny timeout, never a real run.
-      now="$(date +%s)"
-      if [ "${now}" -ge "${deadline}" ]; then
-        printf 'ci-status: checks passed but the confirmation window closed after %s seconds\n' "${timeout_seconds}" >&2
-        report "${checks}" >&2
-        exit 2
-      fi
       printf 'ci-status: all checks pass; re-reading to confirm none is still registering\n'
       report "${checks}"
-      left=$(( deadline - now ))
-      if [ "${left}" -lt "${interval_seconds}" ]; then sleep "${left}"; else sleep "${interval_seconds}"; fi
+      # In wait mode never sleep past the deadline; in non-wait mode the single
+      # confirmation pause is independent of the wait timeout.
+      if [ "${wait_for_settle}" -eq 1 ]; then
+        now="$(date +%s)"; left=$(( deadline - now ))
+        if [ "${left}" -le 0 ]; then
+          printf 'ci-status: the %s second wait window closed before the confirmation reading\n' "${timeout_seconds}" >&2
+          report "${checks}" >&2
+          exit 2
+        fi
+        if [ "${left}" -lt "${interval_seconds}" ]; then sleep "${left}"; else sleep "${interval_seconds}"; fi
+      else
+        sleep "${interval_seconds}"
+      fi
       continue
       ;;
     fail)
