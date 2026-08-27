@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en-CA">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -21,7 +21,7 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Clean Language, a free cross-platform editorial standard for AI writing.">
   <meta property="article:published_time" content="2026-07-27">
-  <meta property="article:modified_time" content="2026-08-26">
+  <meta property="article:modified_time" content="2026-08-27">
   <meta property="article:author" content="https://linkedin.com/in/jposluns">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Install Clean Language without technical knowledge">
@@ -36,7 +36,7 @@
     "description": "Click-by-click setup for Claude Skills, ChatGPT Skills, Gemini Gems, Copilot agents, and other AI systems.",
     "image": "https://cleanlanguage.ai/cleanlanguage-card.png",
     "datePublished": "2026-07-27",
-    "dateModified": "2026-08-26",
+    "dateModified": "2026-08-27",
     "mainEntityOfPage": "https://cleanlanguage.ai/install/",
     "author": {
       "@type": "Person",
@@ -44,7 +44,7 @@
       "url": "https://linkedin.com/in/jposluns"
     },
     "publisher": {
-      "@type": "Organization",
+      "@type": "Person",
       "name": "Jeff Posluns",
       "url": "https://posluns.ca"
     }
@@ -89,51 +89,48 @@
         </p>
       </section>
 
-      <div class="notice"><p>Setup is easiest on a computer. On a phone right now? <a href="/downloads/cleanlanguage-instructions.txt" download>Download the instructions file</a>, attach it to a chat with your AI, and say: <code class="prompt">Follow these writing rules for this conversation.</code> Or copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat. Then do the full setup later on a computer.</p></div>
+      <div class="notice"><p>Setup is easiest on a computer. On a phone right now? <a href="/downloads/cleanlanguage.md" download>Download the instructions file</a>, attach it to a chat with your AI, and say: <code class="prompt">Follow these writing rules for this conversation.</code> Or copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat. Then do the full setup later on a computer.</p></div>
 
       <section id="get">
         <h2>Get Clean Language</h2>
-        <p>Clean Language comes in two forms. Download the one your assistant can use; if you are not sure, get both.</p>
+        <p>Clean Language comes in 2 forms. Download the one your assistant can use; if you are not sure, get both.</p>
         <div class="pattern-list two-up">
           <div class="pattern-item">
             <strong>The skill (a zip file)</strong>
             <span>For AI assistants that can use skills, like Claude and ChatGPT. It installs the full standard so it is available in any chat.</span>
             <div class="step-actions">
-              <a class="button primary" href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.11/cleanlanguage-1.0.11.zip">Download the skill (zip)</a>
+              <a class="button primary" href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.12/cleanlanguage-1.0.12.zip">Download the skill (zip)</a>
             </div>
           </div>
           <div class="pattern-item">
-            <strong>The instructions file (a .txt file)</strong>
-            <span>For the assistants that cannot use skills, such as Gemini, Copilot, and most others. It is the same standard as plain text.</span>
+            <strong>The instructions file (Markdown)</strong>
+            <span>For the assistants that cannot use skills, such as Gemini, Copilot, and most others. It is the same standard in Markdown.</span>
             <div class="step-actions">
-              <a class="button primary" href="/downloads/cleanlanguage-instructions.txt" download>Download the instructions file</a>
-              <a class="button secondary" href="https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/cleanlanguage-instructions.txt" target="_blank" rel="noopener noreferrer">View original on GitHub<span class="visually-hidden"> (opens in a new tab)</span></a>
+              <a class="button primary" href="/downloads/cleanlanguage.md" download>Download the instructions file</a>
+              <a class="button secondary" href="/downloads/cleanlanguage-short.md" download>Download the condensed version</a>
+              <a class="button secondary" href="https://github.com/jposluns/cleanlanguage/blob/main/site/downloads/cleanlanguage.md" target="_blank" rel="noopener noreferrer">View original on GitHub<span class="visually-hidden"> (opens in a new tab)</span></a>
             </div>
           </div>
         </div>
-        <p>The skill downloads from GitHub, where releases are published; the instructions file downloads from this site. If the skill download does not start, your network may block GitHub; use the <a href="/instructions/">instructions page</a> instead. The instructions file saves as <code>cleanlanguage-instructions.txt</code>.</p>
-        <p>Your browser saves the skill as a zip file named <code>cleanlanguage-</code> followed by the version, for example <code>cleanlanguage-1.0.11.zip</code>, usually in your Downloads folder. Do not unzip it. If your computer unzipped it automatically and you see a <code>cleanlanguage</code> folder, that is fine: the original zip usually stays in your Downloads folder. Upload the zip file, not the folder. In Safari, automatic unzipping can move the original zip to the Trash; if you cannot find it, look there, or turn off <strong>Settings</strong>, then <strong>General</strong>, then <strong>Open &#8220;safe&#8221; files after downloading</strong>.</p>
-        <p>The instructions file is plain text. The skill is a zip of text instructions, configuration, and icons, with no program inside. <a href="/verify/">Verify your download</a> against the published checksum if you want to, and see <a href="#assurance">Trust and assurance</a> below for what the skill does and does not do.</p>
+        <p>The skill downloads from GitHub, where releases are published; the instructions file downloads from this site. If the skill download does not start, your network may block GitHub; use the <a href="/instructions/">instructions page</a> instead. The instructions file saves as <code>cleanlanguage.md</code>. The condensed version saves as <code>cleanlanguage-short.md</code>.</p>
+        <p>Your browser saves the skill as a zip file named <code>cleanlanguage-</code> followed by the version, for example <code>cleanlanguage-1.0.12.zip</code>, usually in your Downloads folder. Do not unzip it. If your computer unzipped it automatically and you see a <code>cleanlanguage</code> folder, that is fine: the original zip usually stays in your Downloads folder. Upload the zip file, not the folder. In Safari, automatic unzipping can move the original zip to the Trash; if you cannot find it, look there, or turn off <strong>Settings</strong>, then <strong>General</strong>, then <strong>Open &#8220;safe&#8221; files after downloading</strong>.</p>
+        <p>The instructions file is Markdown text. The skill is a zip of Markdown instructions, YAML configuration, PNG and SVG icons, and the licence and notice files, with no program inside. <a href="/verify/">Verify your download</a> against the published checksum if you want to, and see <a href="#assurance">Trust and assurance</a> below for what the skill does and does not do.</p>
       </section>
 
       <section id="claude" data-family-section="claude">
         <h2>Claude website or Claude Desktop</h2>
-        <p class="verified">Last verified 26 August 2026.</p>
+        <p class="verified">Last verified 27 August 2026.</p>
         <p><strong>This is the recommended Claude method.</strong> It installs the complete Skill, so the full standard is available in any chat rather than pasted into one. Claude applies it when you ask for it, and you can set it to apply by default: see <a href="#how-to-use">How to use Clean Language</a> below.</p>
         <p>Install from a <strong>desktop browser</strong>. The mobile apps are not documented to support skill upload. Use <strong>the skill (zip)</strong> you downloaded in <a href="#get">Get Clean Language</a>.</p>
-        <div class="step-actions">
-          <a class="button primary" href="https://claude.ai/customize/skills" target="_blank" rel="noopener noreferrer">Open Claude Skills<span class="visually-hidden"> (opens in a new tab)</span></a>
-        </div>
-        <p>On the Skills page:</p>
         <ol>
-          <li>Click the <strong>+</strong> button, then <strong>+ Create skill</strong>.</li>
-          <li>Click <strong>Upload a skill</strong>.</li>
-          <li>Select the downloaded Clean Language zip file.</li>
-          <li>Make sure <strong>Clean Language</strong> is switched on in your Skills list.</li>
+          <li>Click your <strong>name</strong> in the bottom-left corner, then <strong>Settings</strong>.</li>
+          <li>Open your skills: on a personal account, click <strong>Customize</strong>; on a Team account, the <strong>Skills</strong> area sits under the Customize section.</li>
+          <li>Click <strong>Add</strong>, then <strong>Upload skill</strong>.</li>
+          <li>Select the downloaded Clean Language zip file, then click <strong>Save</strong>.</li>
         </ol>
         <p class="section-links"><a href="#test">Test it</a> &#183; <a href="#spelling">Choose your spelling</a></p>
 
-        <div class="notice"><strong>Team or Enterprise:</strong> an organization owner must enable <strong>Skills</strong> in <a href="https://claude.ai/admin-settings/skills" target="_blank" rel="noopener noreferrer">Organization settings, then Skills<span class="visually-hidden"> (opens in a new tab)</span></a>. An owner can upload Clean Language once to provision it for the whole organization, after which it appears for every member automatically and members do not upload it individually.</div>
+        <div class="notice"><strong>Whole organization:</strong> an owner can install Clean Language once for everyone. Click your <strong>name</strong>, then <strong>Organization settings</strong>, then <strong>Skills</strong> (in the <strong>Library and access</strong> section), then <strong>Add</strong>, then <strong>Upload skill</strong>, select the zip, and <strong>Save</strong>. It then appears for every member automatically, and members do not upload it individually.</div>
 
         <details>
           <summary><strong>Cannot upload the skill? Use a Claude Project instead</strong></summary>
@@ -149,26 +146,26 @@
 
       <section id="chatgpt" data-family-section="chatgpt">
         <h2>ChatGPT</h2>
-        <p class="verified">Last verified 26 August 2026.</p>
+        <p class="verified">Last verified 27 August 2026.</p>
         <p>ChatGPT can use the same packaged Skill as Claude. Upload it once, and ChatGPT applies Clean Language when your request calls for it, for example when you ask it to write or edit text. Use <strong>the skill (zip)</strong> you downloaded in <a href="#get">Get Clean Language</a>.</p>
         <ol>
-          <li>Open <strong>Plugins</strong> in the ChatGPT sidebar, then open <strong>Skills</strong>.</li>
-          <li>Click <strong>Create</strong>, then <strong>Upload from your computer</strong>.</li>
+          <li>Click <strong>Plugins</strong> in the left menu bar, then <strong>Skills</strong> at the top, beside Plugins.</li>
+          <li>Click the <strong>plus</strong>, then <strong>Upload from your computer</strong>.</li>
           <li>Select the downloaded Clean Language zip file.</li>
-          <li>Review the skill, then install it.</li>
+          <li>When the green check mark appears, click the <strong>X</strong> to close the window.</li>
         </ol>
         <p class="section-links"><a href="#test">Test it</a> &#183; <a href="#spelling">Choose your spelling</a></p>
-        <div class="notice"><strong>Workspace accounts:</strong> your administrator may need to allow members to use and upload Skills.</div>
-        <div class="notice"><strong>Do not see Plugins or Skills?</strong> Your plan or app may not include them. Attach <code>cleanlanguage-instructions.txt</code> to a normal chat and say: <code class="prompt">Follow these writing rules for this conversation.</code> You can also copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat.</div>
+        <div class="notice"><strong>Team workspace, as an administrator:</strong> click your <strong>team name</strong>, then <strong>Workspace settings</strong>, then <strong>Skills</strong>, then the <strong>plus</strong>, select the zip, and click the <strong>X</strong> when the green check mark appears. To let members use it, click the skill&#8217;s name, then the <strong>...</strong> menu, and change who has access.</div>
+        <div class="notice"><strong>Do not see Plugins or Skills?</strong> Your plan or app may not include them. Attach <code>cleanlanguage.md</code> to a normal chat and say: <code class="prompt">Follow these writing rules for this conversation.</code> You can also copy everything from the <a href="/instructions/">instructions page</a> and paste it into the chat.</div>
 
         <details>
           <summary><strong>Cannot upload a skill? Build it from the instructions file</strong></summary>
           <p>Use this if your account cannot upload a skill. Use <strong>the instructions file</strong> from <a href="#get">Get Clean Language</a>.</p>
           <ol>
             <li>Open ChatGPT, open <strong>Plugins</strong>, then <strong>Skills</strong>.</li>
-            <li>Click <strong>Create</strong>, then <strong>Create with chat</strong>.</li>
+            <li>Click the <strong>plus</strong>, then <strong>Create with chat</strong>.</li>
             <li>Type: <code class="prompt">Create a skill named Clean Language using the instructions in the file I am about to upload.</code></li>
-            <li>Attach <code>cleanlanguage-instructions.txt</code> and send the message.</li>
+            <li>Attach <code>cleanlanguage.md</code> and send the message.</li>
             <li>When ChatGPT shows the completed skill, install it.</li>
           </ol>
         </details>
@@ -176,20 +173,18 @@
 
       <section id="gemini" data-family-section="gemini">
         <h2>Gemini website or Gemini app</h2>
-        <p class="verified">Last verified 26 August 2026.</p>
-        <p>The easiest reusable method is a custom Gem. Create it once on the Gemini website, then use it from the website, mobile app, or supported Google Workspace side panel. Use <strong>the instructions file</strong> you downloaded in <a href="#get">Get Clean Language</a>.</p>
+        <p class="verified">Last verified 27 August 2026.</p>
+        <p>The easiest reusable method is a custom Gem. Create it once on the Gemini website, then use it from the website, mobile app, or supported Google Workspace side panel. Paste in <strong>the instructions file</strong> you downloaded in <a href="#get">Get Clean Language</a>.</p>
         <ol>
           <li>On a computer, open <strong>gemini.google.com</strong>.</li>
-          <li>Open the menu on the left.</li>
-          <li>Click <strong>Gems</strong>. If you do not see it, click <strong>Settings and help</strong>, then <strong>Gems</strong>.</li>
+          <li>Open the menu on the left, then click <strong>Gems</strong>. If you do not see it, click <strong>Settings and help</strong>, then <strong>Gems</strong>.</li>
           <li>Click <strong>New Gem</strong>.</li>
-          <li>Name it <strong>Clean Language</strong>.</li>
-          <li>In the instructions box, type: <code class="prompt">Follow the Clean Language instructions in the uploaded knowledge file for every response unless I explicitly tell you not to.</code></li>
-          <li>Scroll to <strong>Knowledge</strong>.</li>
-          <li>Click <strong>Add files</strong>, then <strong>Upload files</strong>.</li>
-          <li>Select <code>cleanlanguage-instructions.txt</code>.</li>
+          <li>Name it <strong>Clean Language</strong>. For the description, you can use: <code class="prompt">Applies the Clean Language writing standard so responses are precise, direct, and natural.</code></li>
+          <li>Open <code>cleanlanguage.md</code>, copy all of it, and paste it into the <strong>Instructions</strong> box.</li>
+          <li>Set <strong>no default tool</strong>.</li>
           <li>Click <strong>Save</strong>.</li>
         </ol>
+        <p>You can also add <code>cleanlanguage.md</code> as Gem knowledge: under <strong>Knowledge</strong>, click <strong>Add files</strong>, then <strong>Upload files</strong>, and select it. Pasting the instructions has given better responses than uploading alone, which Gemini sometimes ignores, so paste is the primary method. Using both together is an option.</p>
         <p>To use it later, open Gemini, click <strong>Gems</strong>, then click <strong>Clean Language</strong>.</p>
         <p class="section-links"><a href="#test">Test it</a> &#183; <a href="#spelling">Choose your spelling</a></p>
         <div class="notice"><strong>Mobile note:</strong> create and edit the Gem on the Gemini website. After saving it, the Gem appears in the Gemini mobile app.</div>
@@ -204,11 +199,11 @@
           <li>Open the agents panel and click <strong>New agent</strong>, then open the <strong>Configure</strong> tab.</li>
           <li>Name it <strong>Clean Language</strong>.</li>
           <li>In the instructions box, enter: <code class="prompt">Follow the Clean Language instructions in the uploaded knowledge file for every response unless I explicitly tell you not to.</code></li>
-          <li>Under <strong>Knowledge</strong>, upload <code>cleanlanguage-instructions.txt</code> from your device.</li>
+          <li>Under <strong>Knowledge</strong>, upload <code>cleanlanguage.md</code> from your device.</li>
           <li>Click <strong>Create</strong> or <strong>Save</strong>, then select <strong>Clean Language</strong> whenever you need it.</li>
         </ol>
         <p class="section-links"><a href="#test">Test it</a> &#183; <a href="#spelling">Choose your spelling</a></p>
-        <div class="notice"><strong>No agent access?</strong> Open the downloaded <code>cleanlanguage-instructions.txt</code> (double-click it; it opens in Notepad or TextEdit), select all the text, copy it, paste it into a Copilot chat, and say: <code class="prompt">Follow these writing rules for this conversation.</code> Or open the <a href="/instructions/">instructions page</a> and click <strong>Copy everything</strong>.</div>
+        <div class="notice"><strong>No agent access?</strong> Open the downloaded <code>cleanlanguage.md</code> (double-click it; it opens in Notepad or TextEdit), select all the text, copy it, paste it into a Copilot chat, and say: <code class="prompt">Follow these writing rules for this conversation.</code> Or open the <a href="/instructions/">instructions page</a> and click <strong>Copy everything</strong>.</div>
       </section>
 
       <section id="other-ai" data-family-section="other-ai">
@@ -230,14 +225,14 @@
           <code class="prompt">In today&#8217;s fast-paced landscape, we are laser-focused on leveraging synergies to deliver truly best-in-class outcomes; the launch is scheduled for 14 October.</code>
         </div>
         <p>Compare the result with the original. If the filler and buzzwords are gone and it keeps &#8220;14 October&#8221;, it is working. If your AI says it does not know what Clean Language is, repeat the setup steps for your AI above, or use the fallback in that section if one is offered.</p>
-        <p>Want to see more before-and-after examples? <a href="/demo/">Try the interactive demo</a>.</p>
+        <p>Want to see more before-and-after examples? <a href="/demo/">Try the prompt demo</a>.</p>
       </section>
 
       <section id="how-to-use">
         <h2>How to use Clean Language</h2>
         <p>Once it is set up, you choose when it applies:</p>
         <ul>
-          <li><strong>Everywhere, automatically:</strong> add <code class="prompt">Always apply Clean Language to your responses</code> to your assistant&#8217;s personal or custom instructions.</li>
+          <li><strong>Everywhere, automatically:</strong> add <code class="prompt">Always apply the Clean Language skill to your responses</code> to your assistant&#8217;s personal or custom instructions.</li>
           <li><strong>In one project or space:</strong> add the same line to that project&#8217;s instructions, so it applies there and not elsewhere.</li>
           <li><strong>For a single chat:</strong> tell the assistant to use Clean Language at the start of the conversation.</li>
           <li><strong>On demand:</strong> ask for it only when you want it.</li>
@@ -245,9 +240,9 @@
         </ul>
         <p>For on-demand use, paste rough notes or finished text with one of these requests:</p>
         <ul>
-          <li><code class="prompt">Apply Clean Language to this draft: [paste your text]</code></li>
-          <li><code class="prompt">Rewrite this using Clean Language: [paste your text]</code></li>
-          <li><code class="prompt">Proofread this using Clean Language. Fix mistakes but do not change my tone: [paste your text]</code></li>
+          <li><code class="prompt">Apply the Clean Language skill to this text: [paste your text]</code></li>
+          <li><code class="prompt">Rewrite the text below using the Clean Language skill: [paste your text]</code></li>
+          <li><code class="prompt">Proofread the text below using the Clean Language skill. Fix mistakes but do not change my tone: [paste your text]</code></li>
         </ul>
         <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
       </section>
@@ -265,7 +260,7 @@
           <summary><strong>Compare the spellings</strong></summary>
           <div class="spelling-scroll" tabindex="0" role="region" aria-label="Spelling comparison across Oxford, Canadian, British, and American English">
             <table class="spelling-table">
-              <caption>How eight sample words differ across each option. The first column is the Oxford English default with -ize.</caption>
+              <caption>How 8 sample words differ across each option. The first column is the Oxford English default with -ize.</caption>
               <thead>
                 <tr><th scope="col">Oxford (default)</th><th scope="col">Canadian</th><th scope="col">British</th><th scope="col">American</th></tr>
               </thead>
@@ -293,7 +288,7 @@
       <section id="assurance">
         <h2>Trust and assurance</h2>
         <ul>
-          <li>The skill contains only text instructions, configuration, and icons; it is not a program, it runs nothing on your computer, and it does not connect to the internet.</li>
+          <li>The skill contains only Markdown instructions, YAML configuration, PNG and SVG icons, and the licence and notice files; it is not a program, it runs nothing on your computer, and it does not connect to the internet.</li>
           <li>Every rule and reference file is publicly reviewable in the <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub repository<span class="visually-hidden"> (opens in a new tab)</span></a>.</li>
           <li>Every release publishes a fingerprint (a checksum) for the skill download, so you can confirm that your copy matches the published release file; see <a href="/verify/">how to verify</a>.</li>
           <li>Clean Language is licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0<span class="visually-hidden"> (opens in a new tab)</span></a>.</li>

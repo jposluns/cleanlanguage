@@ -64,7 +64,8 @@ def redirects_body(zip_url: str, sum_url: str) -> str:
         f"/claude/download {zip_url} 302\n"
         f"/download {zip_url} 302\n"
         f"/download/checksum {sum_url} 302\n"
-        f"/downloads/clean-language-instructions.txt /downloads/cleanlanguage-instructions.txt 301\n"
+        f"/downloads/cleanlanguage-instructions.txt /downloads/cleanlanguage-short.md 301\n"
+        f"/downloads/clean-language-instructions.txt /downloads/cleanlanguage-short.md 301\n"
     )
 
 
@@ -122,6 +123,10 @@ def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str]
             )
             if n != 1:
                 die(f"expected one checksum version sentence in {name}, found {n}")
+            # Bare version-named filenames in the hash commands must also name
+            # this release, not only the URLs.
+            text = re.sub(r"cleanlanguage-[0-9][0-9.]*\.zip",
+                          f"cleanlanguage-{version}.zip", text)
 
         if text != original:
             text = stamp_dates(text, date, name)

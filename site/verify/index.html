@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en-CA">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -21,7 +21,7 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Clean Language, a free cross-platform editorial standard for AI writing.">
   <meta property="article:published_time" content="2026-07-27">
-  <meta property="article:modified_time" content="2026-08-26">
+  <meta property="article:modified_time" content="2026-08-27">
   <meta property="article:author" content="https://linkedin.com/in/jposluns">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Verify your Clean Language download">
@@ -36,7 +36,7 @@
     "description": "Optional steps to confirm that the download matches its published SHA-256 checksum.",
     "image": "https://cleanlanguage.ai/cleanlanguage-card.png",
     "datePublished": "2026-07-27",
-    "dateModified": "2026-08-26",
+    "dateModified": "2026-08-27",
     "mainEntityOfPage": "https://cleanlanguage.ai/verify/",
     "author": {
       "@type": "Person",
@@ -44,7 +44,7 @@
       "url": "https://linkedin.com/in/jposluns"
     },
     "publisher": {
-      "@type": "Organization",
+      "@type": "Person",
       "name": "Jeff Posluns",
       "url": "https://posluns.ca"
     }
@@ -86,11 +86,11 @@
         <ol>
           <li>Download the skill.
             <div class="step-actions">
-              <a class="button primary" href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.11/cleanlanguage-1.0.11.zip">Download the Clean Language skill (zip)</a>
+              <a class="button primary" href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.12/cleanlanguage-1.0.12.zip">Download the Clean Language skill (zip)</a>
             </div>
-            <p>The published checksum for version 1.0.11 is:</p>
-            <pre><code id="published-checksum">1a9fd3fc24d709ac8b87ed25a0e83913d872e4af9122229c976387a226f4a83e</code></pre>
-            <p>The same value is in the <a href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.11/cleanlanguage-1.0.11.zip.sha256">published checksum file</a>, if you would rather compare files than read.</p>
+            <p>The published checksum for version 1.0.12 is:</p>
+            <pre><code id="published-checksum">de569fff7c11ebfe414b1e8dc2f2eb0577920a1f0378ce9ce6e9691304255a01</code></pre>
+            <p>The same value is in the <a href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.12/cleanlanguage-1.0.12.zip.sha256">published checksum file</a>, if you would rather compare files than read.</p>
           </li>
           <li>
             <p>Calculate the checksum of the file you downloaded.</p>
@@ -98,13 +98,13 @@
             <p>On macOS: press Command+Space, type <code>Terminal</code>, press Return, then type <code>cd Downloads</code> and press Return.</p>
             <p>Copy the command for your system, paste it into the window, and press Enter.</p>
             <p class="label">Windows (PowerShell)</p>
-            <pre><code>Get-FileHash cleanlanguage-*.zip -Algorithm SHA256</code></pre>
+            <pre><code>Get-FileHash cleanlanguage-1.0.12.zip -Algorithm SHA256</code></pre>
             <p class="label">macOS</p>
-            <pre><code>shasum -a 256 cleanlanguage-*.zip</code></pre>
+            <pre><code>shasum -a 256 cleanlanguage-1.0.12.zip</code></pre>
             <p class="label">Linux</p>
-            <pre><code>sha256sum cleanlanguage-*.zip</code></pre>
+            <pre><code>sha256sum cleanlanguage-1.0.12.zip</code></pre>
           </li>
-          <li>Compare the value your computer prints with the published checksum shown in step one. Letter case does not matter: PowerShell prints the hash in upper case, while the published value is lower case, so compare the letters and digits, not the case. A match means your copy matches the published release. If the two differ, delete the file, download it again, and check once more. If the values still differ after a fresh download, do not install the file and <a href="https://github.com/jposluns/cleanlanguage/issues" target="_blank" rel="noopener noreferrer">report it on GitHub<span class="visually-hidden"> (opens in a new tab)</span></a>.</li>
+          <li>Compare the value your computer prints with the published checksum shown in step 1. Letter case does not matter: PowerShell prints the hash in upper case, while the published value is lower case, so compare the letters and digits, not the case. A match means your copy matches the published release. If the two differ, delete the file, download it again, and check once more. If the values still differ after a fresh download, do not install the file and <a href="https://github.com/jposluns/cleanlanguage/issues" target="_blank" rel="noopener noreferrer">report it on GitHub<span class="visually-hidden"> (opens in a new tab)</span></a>.</li>
         </ol>
       </section>
 

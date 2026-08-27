@@ -2,7 +2,7 @@
 
 Clean Language is a cross-platform editorial standard for AI writing. It supports drafting, rewriting, proofreading, adapting, and reviewing precise, direct, natural prose.
 
-It removes common AI-writing patterns such as robotic tone, filler, contrast framing, unnecessary em dashes and en dashes, fake enthusiasm, repeated conclusions, business jargon, and vague claims while preserving factual, technical, legal, policy, contractual, and standards meaning.
+It removes common AI-writing patterns such as robotic tone, filler, contrast framing, em dashes and en dashes, fake enthusiasm, repeated conclusions, business jargon, and vague claims while preserving factual, technical, legal, policy, contractual, and standards meaning.
 
 <p align="center">
   <a href="https://cleanlanguage.ai/install/?ai=claude"><img alt="Set up in Claude" src="https://img.shields.io/badge/Set_up_in_Claude-C15F3C?style=for-the-badge&logo=anthropic&logoColor=white"></a>
@@ -60,7 +60,7 @@ Tagged releases provide:
 
 Upgrading from a version before 1.0.11? The skill's internal name changed from `clean-language` to `cleanlanguage`, so uploading the new file adds a second skill beside the old one. Remove the old Clean Language skill first, then install the new file.
 
-The package contains prose instructions, metadata, and reference material. It contains no executable scripts, software dependencies, or instructions that require external network access.
+The package contains prose instructions, metadata, reference material, PNG and SVG icons, and the licence and notice files. It contains no executable scripts, software dependencies, or instructions that require external network access.
 
 ## Licence
 

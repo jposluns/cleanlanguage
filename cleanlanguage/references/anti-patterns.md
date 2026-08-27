@@ -52,11 +52,11 @@ Use contrast only when the distinction is materially useful. Otherwise state the
 
 Watch for:
 
-- repeated one-sentence paragraphs;
+- repeated 1-sentence paragraphs;
 - stacked fragments;
 - sentences opened with a conjunction (And, But, So, Yet, Because) as a rhythm device;
 - multiple paragraphs ending with a punch line;
-- repetitive three-item rhetorical lists;
+- repetitive 3-item rhetorical lists;
 - question-and-answer setups that imitate a speech;
 - identical sentence lengths;
 - concluding slogans that restate the preceding paragraph.
@@ -93,6 +93,18 @@ Replace vague corporate language with the actual action:
 | transformation journey | programme, migration, operating change |
 
 Retain established technical terms such as latency, resilience, threat surface, control plane, data plane, zero trust, or least privilege when used precisely.
+
+## AI vocabulary fingerprints
+
+No single word proves that a model wrote a passage; clusters of predictable vocabulary can still make prose sound generic. Treat each word below as a diagnostic signal, not a ban. Clean Language challenges words such as:
+
+- delve, tapestry, realm, landscape, journey, testament;
+- leverage, unlock, elevate, empower, foster, navigate;
+- robust, holistic, seamless, pivotal, crucial, transformative;
+- meticulous, nuanced, multifaceted, dynamic, comprehensive;
+- underscore, illuminate, resonate, reimagine, revolutionize.
+
+Each stays valid when it carries specific meaning: keep `robust` in "a robust statistical method"; cut scene-setting such as "today's threat landscape". The problem is automatic selection, repetition, and use as a substitute for evidence.
 
 ## Empty modifiers
 
@@ -147,7 +159,7 @@ Flag polished professional phrasing that is grammatically sound but overrepresen
 | Avoid as default | Prefer |
 |---|---|
 | highly relevant | relevant to my work; directly related to what I am doing |
-| particularly | specifically; especially; or name the item without a qualifier |
+| particularly, specifically, especially | cut the qualifier where the sentence reads as well without it; otherwise name the item plainly (`the API`, not `particularly the API`) |
 | aligns closely with | relates directly to; matches; covers |
 | my main areas of interest are | I am interested in; I would like to discuss |
 | I would value discussions with | I would like to meet with |

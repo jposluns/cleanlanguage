@@ -8,6 +8,7 @@ Review finished prose against these questions.
 - Did the output introduce any owner, figure, date, risk, cause, or action that the source does not contain? If so, remove it or flag it as missing.
 - Did any stylistic change alter technical, legal, contractual, policy, or standards meaning?
 - Are assumptions and uncertainty labelled accurately?
+- Did the output preserve every citation, source attribution, quotation, hyperlink target, footnote, and cross-reference, and the tie between each claim and its source? Never invent a citation, and never reattach a claim to a different source.
 
 ## Directness
 
@@ -25,7 +26,7 @@ Review finished prose against these questions.
 ## Natural language
 
 - Does the cadence vary without becoming theatrical?
-- Are fragments, one-line conclusions, conjunction-opened sentences, and rhetorical contrasts used sparingly?
+- Are fragments, 1-line conclusions, conjunction-opened sentences, and rhetorical contrasts used sparingly?
 - Does the text sound like a competent person wrote it for this audience?
 - Could a polished phrase here appear unchanged in thousands of executive messages? Make it specific or remove it.
 - Does the message sound like the writer, not a generic executive voice?
@@ -34,7 +35,7 @@ Review finished prose against these questions.
 
 - Can any word, sentence, paragraph, heading, or repetition be removed without changing meaning or creating a misreading?
 - Are bullets or tables being used because they improve comprehension rather than because they are conventional?
-- Does each paragraph do one identifiable job?
+- Does each paragraph do 1 identifiable job?
 - Does each topic list connect to a decision, question, or request, rather than only cataloguing subjects?
 
 ## Tone
@@ -47,7 +48,9 @@ Review finished prose against these questions.
 
 - Use Oxford English and `-ize` spellings.
 - After any verb that can take either a direct object or a clause, such as `confirm`, `verify`, `ensure`, `note`, or `report`, check whether the following words could be read as a direct object when a clause is intended; if so, mark the clause with `that`, adding it where it is missing. The density review does not remove this `that`.
-- Avoid em and en dashes unless the user or source requires them; write numeric and date ranges with a hyphen or `to`.
+- Follow `ensure` with `that` and a clause, never a bare noun; recast a bare-noun `ensure` as a clause.
+- Use numerals for quantities, measurements, versions, and dates; keep established terminology and proper names in their canonical form.
+- Remove every em and en dash, converting each to the punctuation the sentence needs; write numeric and date ranges with a hyphen or `to`. Keep a dash only inside quoted or verbatim material.
 - Use punctuation and capitalization consistently.
 - Preserve channel-specific formatting requirements.
 - Do not end with an optional offer or generic engagement prompt.

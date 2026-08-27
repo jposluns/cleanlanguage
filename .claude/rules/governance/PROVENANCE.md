@@ -30,3 +30,9 @@ source repository and record the change here.
   definitions, and extends the halt clause to name progress. The five rules of
   AIQT were not adopted; the section points to https://aiqt.ai for the full
   standard.
+- 2026-08-27: `express-authorization-before-execution.md` links three rules that
+  this repository did not adopt (`session-lifecycle.md`,
+  `surface-counterproductive-instructions.md`, and
+  `decision-classification-before-enacting.md`). The rule is vendored verbatim,
+  so the links are left unresolved deliberately; `tools/check-links.py` carries a
+  matching exception that fails if it ever goes unused.

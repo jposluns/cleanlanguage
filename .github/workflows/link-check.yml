@@ -17,9 +17,11 @@ on:
     paths:
       - "site/**"
       - "*.md"
-      - ".claude/CLAUDE.md"
-      - "cleanlanguage/SKILL.md"
+      - ".claude/**/*.md"
+      - "cleanlanguage/**/*.md"
       - "tools/check-links.py"
+      - "tools/check-release-links.py"
+      - "tools/set-release-links.py"
       - "tools/check-release-links.py"
       - ".github/workflows/link-check.yml"
   push:
@@ -28,9 +30,11 @@ on:
     paths:
       - "site/**"
       - "*.md"
-      - ".claude/CLAUDE.md"
-      - "cleanlanguage/SKILL.md"
+      - ".claude/**/*.md"
+      - "cleanlanguage/**/*.md"
       - "tools/check-links.py"
+      - "tools/check-release-links.py"
+      - "tools/set-release-links.py"
       - "tools/check-release-links.py"
       - ".github/workflows/link-check.yml"
 

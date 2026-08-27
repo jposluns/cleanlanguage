@@ -4,7 +4,7 @@
 ``site/instructions/index.html`` shows the full Clean Language rule set so a
 reader can copy it without downloading anything. The text is embedded in the
 page rather than fetched at runtime, which means the page now holds a second copy
-of ``site/downloads/cleanlanguage-instructions.txt`` and the two can drift. This
+of ``site/downloads/cleanlanguage.md`` and the two can drift. This
 check makes that drift fail.
 
 Why the page is static
@@ -57,7 +57,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SOURCE = REPO_ROOT / "site" / "downloads" / "cleanlanguage-instructions.txt"
+SOURCE = REPO_ROOT / "site" / "downloads" / "cleanlanguage.md"
 PAGE = REPO_ROOT / "site" / "instructions" / "index.html"
 
 # The embedded block. Matched on its id so a class or attribute change does not
@@ -99,14 +99,14 @@ def main() -> int:
     expected = SOURCE.read_text(encoding="utf-8").rstrip("\n")
     page_text = PAGE.read_text(encoding="utf-8")
 
-    match = EMBEDDED.search(page_text)
-    if match is None:
+    matches = list(EMBEDDED.finditer(page_text))
+    if len(matches) != 1:
         die(
-            'no <pre id="instructions-text"> block found in '
-            f"{PAGE.relative_to(REPO_ROOT)}; the page is expected to embed the text"
+            'expected exactly one <pre id="instructions-text"> block in '
+            f"{PAGE.relative_to(REPO_ROOT)}, found {len(matches)}"
         )
 
-    embedded = html.unescape(match.group(1)).rstrip("\n")
+    embedded = html.unescape(matches[0].group(1)).rstrip("\n")
 
     problems: list[str] = []
 

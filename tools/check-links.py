@@ -19,6 +19,7 @@ live. It exits non-zero and lists every broken link when it finds one.
 from __future__ import annotations
 
 import os
+import subprocess
 import re
 import sys
 from pathlib import Path
@@ -33,15 +34,28 @@ MD_LINK = re.compile(r'\]\(([^)]+)\)')
 
 SKIP_PREFIXES = ("http://", "https://", "mailto:", "tel:", "data:", "#", "//")
 
-MARKDOWN_DOCS = [
-    "README.md",
-    "INSTALL.md",
-    "NOTICE.md",
-    "CLAUDE.md",
-    "site/README.md",
-    ".claude/CLAUDE.md",
-    "cleanlanguage/SKILL.md",
-]
+def markdown_docs() -> list[str]:
+    try:
+        out = subprocess.run(
+            ["git", "ls-files", "*.md"], cwd=REPO_ROOT,
+            capture_output=True, text=True, check=True).stdout
+        docs = [d for d in out.splitlines() if d]
+        if docs:
+            return docs
+    except Exception:
+        pass
+    return sorted(str(x.relative_to(REPO_ROOT)) for x in REPO_ROOT.rglob("*.md")
+                  if ".git" not in x.parts)
+
+
+# Links left unresolved on purpose: the governance rules are vendored verbatim
+# and reference rules this repository did not adopt (see PROVENANCE.md). Each is
+# checked as USED so a stale exception fails the gate.
+ALLOWED_MISSING = {
+    (".claude/rules/governance/express-authorization-before-execution.md", "session-lifecycle.md"),
+    (".claude/rules/governance/express-authorization-before-execution.md", "surface-counterproductive-instructions.md"),
+    (".claude/rules/governance/express-authorization-before-execution.md", "decision-classification-before-enacting.md"),
+}
 
 
 def redirect_sources() -> set[str]:
@@ -102,7 +116,8 @@ def check_site(redirects: set[str]) -> list[str]:
 
 def check_markdown() -> list[str]:
     errors: list[str] = []
-    for doc in MARKDOWN_DOCS:
+    used_exceptions: set[tuple[str, str]] = set()
+    for doc in markdown_docs():
         md_file = REPO_ROOT / doc
         if not md_file.is_file():
             continue
@@ -116,7 +131,12 @@ def check_markdown() -> list[str]:
                 continue
             resolved = Path(os.path.normpath(md_file.parent / target))
             if not resolved.exists():
+                if (doc, target) in ALLOWED_MISSING:
+                    used_exceptions.add((doc, target))
+                    continue
                 errors.append(f"{doc}: '{value}' -> missing {resolved.relative_to(REPO_ROOT)}")
+    for exc in sorted(ALLOWED_MISSING - used_exceptions):
+        errors.append(f"unused link exception {exc}; remove it from ALLOWED_MISSING in check-links.py")
     return errors
 
 
