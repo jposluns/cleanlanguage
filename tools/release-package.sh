@@ -98,32 +98,32 @@ fi
 # with double quotes, single quotes, or left bare.
 if git cat-file -e HEAD:cleanlanguage/agents/openai.yaml 2>/dev/null; then
   # Every icon_* key in the ChatGPT config must reference a file present in the
-  # package. Parse each icon_* value in full, handling quotes and a trailing
-  # YAML comment, so a stray token after the path or a comment cannot make a
-  # broken reference look valid, and fail on any unparseable key rather than
-  # skipping it silently.
+  # package. Parse the YAML properly so a doubled quote, a quoted key, or a
+  # stray token after the path cannot slip a broken reference through; fail on
+  # any icon_* value that is missing, empty, or unparseable.
   icons="$(git show HEAD:cleanlanguage/agents/openai.yaml | python3 -c '
-import sys, re
+import sys
+try:
+    import yaml
+except ImportError:
+    sys.stderr.write("release-package: PyYAML is required to validate agents/openai.yaml icons.\n")
+    sys.exit(1)
+data = yaml.safe_load(sys.stdin) or {}
+if not isinstance(data, dict):
+    sys.stderr.write("release-package: agents/openai.yaml is not a mapping.\n")
+    sys.exit(1)
 bad = False
-for raw in sys.stdin:
-    m = re.match(r"\s*icon_[A-Za-z0-9]+\s*:(.*)", raw)
-    if not m:
+for key, value in data.items():
+    if not (isinstance(key, str) and key.startswith("icon_")):
         continue
-    v = m.group(1).strip()
-    if v[:1] in ("\"", "\x27"):
-        end = v.find(v[0], 1)
-        if end == -1:
-            sys.stderr.write("release-package: unterminated quote in icon value: %s" % raw)
-            bad = True; continue
-        val = v[1:end]
-    else:
-        val = re.sub(r"\s+#.*$", "", v).rstrip()
-    if not val:
-        sys.stderr.write("release-package: empty icon value: %s" % raw)
-        bad = True; continue
-    print(val[2:] if val.startswith("./") else val)
+    if not isinstance(value, str) or not value.strip():
+        sys.stderr.write("release-package: icon key %s has no usable path.\n" % key)
+        bad = True
+        continue
+    path = value.strip()
+    print(path[2:] if path.startswith("./") else path)
 sys.exit(1 if bad else 0)
-')" || { echo "release-package: could not parse an icon path in agents/openai.yaml" >&2; exit 1; }
+')" || { echo "release-package: could not validate agents/openai.yaml icons" >&2; exit 1; }
   missing_icon=0
   while IFS= read -r rel; do
     [ -n "${rel}" ] || continue
