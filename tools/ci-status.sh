@@ -142,6 +142,14 @@ confirm_rounds=0
 deadline=$(( $(date +%s) + timeout_seconds ))
 
 while true; do
+  # In wait mode, honour the deadline at the top of every iteration, before any
+  # read or confirmation, so a snapshot that only settles after the timeout is
+  # never accepted as a pass.
+  if [ "${wait_for_settle}" -eq 1 ] && [ "$(date +%s)" -ge "${deadline}" ]; then
+    printf 'ci-status: deadline reached after %s seconds; giving up\n' "${timeout_seconds}" >&2
+    [ -n "${checks:-}" ] && report "${checks}" >&2
+    exit 2
+  fi
   if ! checks="$(read_checks)"; then
     # A transient read error is not a verdict. In wait mode keep waiting until
     # the deadline rather than aborting (a release step calls this AFTER

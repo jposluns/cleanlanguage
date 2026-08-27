@@ -147,14 +147,19 @@ jobs:
                 --pattern "cleanlanguage-${VERSION}.zip.sha256"
               verify_published_asset() {
                 zip="$1"; manifest="$2"
-                [ "$(grep -c . "${verify_dir}/${manifest}")" = "1" ] \
-                  || { echo "Manifest ${manifest} is not a single line." >&2; return 1; }
-                claimed="$(awk 'NF{print $1; exit}' "${verify_dir}/${manifest}")"
-                named="$(awk 'NF{print $2; exit}' "${verify_dir}/${manifest}")"
+                # The manifest must be EXACTLY one line: a 64-hex digest, the two
+                # spaces sha256sum writes, and the expected basename, nothing
+                # more. mapfile counts every line, so a trailing blank line or a
+                # second line is rejected, and the exact-string test rejects any
+                # trailing data after the name.
+                mapfile -t mlines < "${verify_dir}/${manifest}"
+                [ "${#mlines[@]}" -eq 1 ] \
+                  || { echo "Manifest ${manifest} is not exactly one line." >&2; return 1; }
+                claimed="${mlines[0]%%  *}"
                 printf '%s' "${claimed}" | grep -Eqx '[0-9a-f]{64}' \
                   || { echo "Manifest ${manifest} carries no valid sha256 digest." >&2; return 1; }
-                [ "${named}" = "${zip}" ] \
-                  || { echo "Manifest ${manifest} names ${named}, not ${zip}." >&2; return 1; }
+                [ "${mlines[0]}" = "${claimed}  ${zip}" ] \
+                  || { echo "Manifest ${manifest} is not exactly '<digest>  ${zip}'." >&2; return 1; }
                 computed="$(sha256sum "${verify_dir}/${zip}" | cut -d' ' -f1)"
                 [ "${computed}" = "${claimed}" ] \
                   || { echo "Published ${zip} (${computed}) does not match its published checksum (${claimed})." >&2; return 1; }
