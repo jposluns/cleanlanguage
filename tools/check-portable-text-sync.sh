@@ -75,7 +75,7 @@ computed="$(for f in "${skill_files[@]}"; do printf '%s  %s\n' "$(sha256sum "${f
 if [ "${1:-}" = "--update" ]; then
   # Refuse to bless stale condensed files: if the source hash changed but a
   # hand-maintained rendering was not touched, the reconciliation did not happen.
-  if [ -f "${recorded_file}" ] && [ "${computed}" != "$(tr -d '"'"'[:space:]'"'"' < "${recorded_file}")" ]; then
+  if [ -f "${recorded_file}" ] && [ "${computed}" != "$(tr -d '[:space:]' < "${recorded_file}")" ]; then
     for f in "${hand_maintained[@]}"; do
       if git -C "${repo_root}" diff --quiet HEAD -- "${f}" 2>/dev/null && [ "${2:-}" != "--force" ]; then
         echo "The skill source changed but ${f} was not modified; reconcile it, or pass --force if no change is needed." >&2
