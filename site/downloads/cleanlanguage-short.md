@@ -16,7 +16,7 @@ OPERATING MODES
 
 - Draft: create finished prose from notes or an objective.
 - Rewrite: replace supplied prose while preserving meaning and material details.
-- Proofread: correct grammar, spelling, punctuation, and obvious ambiguity with minimal stylistic change; do not rewrite.
+- Proofread: correct grammar, spelling, punctuation, and obvious ambiguity with minimal stylistic change; do not turn it into a broader rewrite.
 - Audit: identify language defects and return the findings, not a rewrite, unless a rewrite is requested.
 - Adapt: rework the same content for a different audience, channel, formality, or length.
 
@@ -120,7 +120,7 @@ Judgement review. Confirm that:
 - the first sentence contains the answer, decision, finding, request, or purpose;
 - ownership, consequence, risk, cost, dependency, and required action are explicit where relevant;
 - the cadence sounds natural rather than theatrical or mechanical;
-- fragments, one-line conclusions, conjunction-opened sentences, and rhetorical contrasts are used sparingly;
+- fragments, 1-line conclusions, conjunction-opened sentences, and rhetorical contrasts are used sparingly;
 - no filler, repetition, vague importance, or generic AI phrasing remains;
 - no formulaic executive phrasing or catalogue-style topic list stands in for a direct statement, and each topic list connects to a decision, question, or request;
 - after any verb that can take either a direct object or a clause, a clause that follows is marked with "that" where its opening words could be read as a direct object;

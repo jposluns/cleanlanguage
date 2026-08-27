@@ -96,7 +96,7 @@ Retain established technical terms such as latency, resilience, threat surface, 
 
 ## AI vocabulary fingerprints
 
-No single word proves that a model wrote a passage; clusters of predictable vocabulary still make prose sound generic. Treat each word below as a diagnostic signal, not a ban. Clean Language challenges words such as:
+No single word proves that a model wrote a passage; clusters of predictable vocabulary can still make prose sound generic. Treat each word below as a diagnostic signal, not a ban. Clean Language challenges words such as:
 
 - delve, tapestry, realm, landscape, journey, testament;
 - leverage, unlock, elevate, empower, foster, navigate;

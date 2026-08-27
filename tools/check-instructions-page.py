@@ -99,14 +99,14 @@ def main() -> int:
     expected = SOURCE.read_text(encoding="utf-8").rstrip("\n")
     page_text = PAGE.read_text(encoding="utf-8")
 
-    match = EMBEDDED.search(page_text)
-    if match is None:
+    matches = list(EMBEDDED.finditer(page_text))
+    if len(matches) != 1:
         die(
-            'no <pre id="instructions-text"> block found in '
-            f"{PAGE.relative_to(REPO_ROOT)}; the page is expected to embed the text"
+            'expected exactly one <pre id="instructions-text"> block in '
+            f"{PAGE.relative_to(REPO_ROOT)}, found {len(matches)}"
         )
 
-    embedded = html.unescape(match.group(1)).rstrip("\n")
+    embedded = html.unescape(matches[0].group(1)).rstrip("\n")
 
     problems: list[str] = []
 

@@ -10,7 +10,7 @@ It is worth noting that there are several areas where the current implementation
 
 ### Preferred
 
-The current implementation has three unresolved points: unclear ownership, no rollback procedure, and an untested recovery path.
+The current implementation has 3 unresolved points: unclear ownership, no rollback procedure, and an untested recovery path.
 
 ## Delete the framing
 
@@ -34,11 +34,11 @@ The firewall rules have not been reviewed since January.
 
 ### Weak
 
-This section outlines the three issues we found: missing backups, an expired certificate, and an open admin port.
+This section outlines the 3 issues we found: missing backups, an expired certificate, and an open admin port.
 
 ### Preferred
 
-We found three issues: missing backups, an expired certificate, and an open admin port.
+We found 3 issues: missing backups, an expired certificate, and an open admin port.
 
 ## Remove artificial balance
 
@@ -100,7 +100,7 @@ The agenda looks highly relevant to my work, particularly the sessions on regula
 
 ### Preferred
 
-The agenda covers three areas I work on: regulatory interoperability, cyber resilience, and audit readiness.
+The agenda covers 3 areas I work on: regulatory interoperability, cyber resilience, and audit readiness.
 
 Keep the same topics and state the writer's connection to them, rather than asserting relevance with an intensifier.
 

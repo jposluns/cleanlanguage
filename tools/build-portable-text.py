@@ -14,6 +14,7 @@ Modes:
               print the first difference, and exit 1 on any drift
 """
 import html
+import itertools
 import os
 import re
 import sys
@@ -59,16 +60,30 @@ def fail(msg):
 
 def demote_headings(text):
     # Each reference keeps one document; demote so the whole file has one H1.
+    # Skip fenced code blocks so a "# comment" inside one is not demoted, and
+    # refuse an H6 that cannot be demoted within CommonMark's six levels.
     out = []
+    in_fence = False
     for line in text.split("\n"):
-        m = re.match(r"^(#{1,6}) ", line)
-        if m:
-            line = "#" + line
+        if re.match(r"^```", line):
+            in_fence = not in_fence
+            out.append(line)
+            continue
+        if not in_fence:
+            m = re.match(r"^(#{1,6}) ", line)
+            if m:
+                if len(m.group(1)) >= 6:
+                    fail("a reference heading is already H6 and cannot be demoted: %r" % line)
+                line = "#" + line
         out.append(line)
     return "\n".join(out)
 
 
 def generate():
+    disk_refs = sorted(n for n in os.listdir(REFDIR) if n.endswith(".md"))
+    known_refs = sorted(fname for fname, _title, _pointer in REFS)
+    if disk_refs != known_refs:
+        fail("the reference set changed; update REFS: on disk %s, REFS %s" % (disk_refs, known_refs))
     skill = read(SKILL)
     body = strip_frontmatter(skill)
     lines = body.split("\n")
@@ -130,20 +145,22 @@ PRE_RE = re.compile(
     r'(<pre id="instructions-text"[^>]*>)(.*?)(</pre>)', re.DOTALL)
 
 
+def sole_pre_match(page):
+    matches = list(PRE_RE.finditer(page))
+    if len(matches) != 1:
+        fail('expected exactly one <pre id="instructions-text"> block, found %d' % len(matches))
+    return matches[0]
+
+
 def embed(content):
     page = read(PAGE)
-    if not PRE_RE.search(page):
-        fail("could not find the <pre id=\"instructions-text\"> block")
-    new = PRE_RE.sub(lambda m: m.group(1) + embed_html(content) + m.group(3), page, count=1)
+    m = sole_pre_match(page)
+    new = page[:m.start()] + m.group(1) + embed_html(content) + m.group(3) + page[m.end():]
     write_atomic(PAGE, new)
 
 
 def current_embed():
-    page = read(PAGE)
-    m = PRE_RE.search(page)
-    if not m:
-        fail("could not find the <pre id=\"instructions-text\"> block")
-    return m.group(2)
+    return sole_pre_match(read(PAGE)).group(2)
 
 
 def main():
@@ -159,7 +176,7 @@ def main():
             ok = False
             sys.stderr.write("build-portable-text: %s is out of date; regenerate it.\n" % OUT)
             if on_disk is not None:
-                for a, b in zip(on_disk.split("\n"), content.split("\n")):
+                for a, b in itertools.zip_longest(on_disk.split("\n"), content.split("\n")):
                     if a != b:
                         sys.stderr.write("  first diff:\n  - %r\n  + %r\n" % (a, b))
                         break

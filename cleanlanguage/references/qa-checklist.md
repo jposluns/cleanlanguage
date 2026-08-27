@@ -26,7 +26,7 @@ Review finished prose against these questions.
 ## Natural language
 
 - Does the cadence vary without becoming theatrical?
-- Are fragments, one-line conclusions, conjunction-opened sentences, and rhetorical contrasts used sparingly?
+- Are fragments, 1-line conclusions, conjunction-opened sentences, and rhetorical contrasts used sparingly?
 - Does the text sound like a competent person wrote it for this audience?
 - Could a polished phrase here appear unchanged in thousands of executive messages? Make it specific or remove it.
 - Does the message sound like the writer, not a generic executive voice?
@@ -35,7 +35,7 @@ Review finished prose against these questions.
 
 - Can any word, sentence, paragraph, heading, or repetition be removed without changing meaning or creating a misreading?
 - Are bullets or tables being used because they improve comprehension rather than because they are conventional?
-- Does each paragraph do one identifiable job?
+- Does each paragraph do 1 identifiable job?
 - Does each topic list connect to a decision, question, or request, rather than only cataloguing subjects?
 
 ## Tone

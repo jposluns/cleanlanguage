@@ -65,7 +65,7 @@ Infer the mode from the request. When the user asks for a finished message, retu
 
 ## Remove generic AI language
 
-Consult [references/anti-patterns.md](references/anti-patterns.md) when drafting, rewriting, or auditing prose. Treat the patterns as diagnostic signals, not unconditional bans, and read the removal list below through that lens.
+Consult [references/anti-patterns.md](references/anti-patterns.md) when drafting, rewriting, or auditing prose. Treat the patterns as diagnostic signals, not unconditional bans, and read the removal list below through that lens; the dash rule is the exception, absolute apart from the carve-outs in Preserve legitimate language.
 
 Do not write these, and remove or rewrite them where found; in Audit mode, flag them:
 

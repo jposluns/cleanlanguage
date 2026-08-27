@@ -3,7 +3,8 @@ name: Portable text sync
 # Two related checks on the portable instructions text.
 #
 # The first flags when the packaged skill changes without the portable text at
-# site/downloads/cleanlanguage-instructions.txt being reconciled. See
+# the two portable renderings (generated cleanlanguage.md and condensed
+# cleanlanguage-short.md) being reconciled with the skill. See
 # tools/check-portable-text-sync.sh for what it does and does not prove.
 #
 # The second checks that site/instructions/index.html still embeds that text

@@ -47,7 +47,7 @@ check_common() {
 
 mapfile -t skill_files < <(printf '%s\n' "cleanlanguage/SKILL.md"; find cleanlanguage/references -type f -name '*.md' | sort)
 for f in "${skill_files[@]}"; do [ -f "${f}" ] || { echo "Missing skill file: ${f}" >&2; exit 1; }; done
-computed="$(cat "${skill_files[@]}" | sha256sum | cut -d' ' -f1)"
+computed="$(for f in "${skill_files[@]}"; do printf '%s  %s\n' "$(sha256sum "${f}" | cut -d' ' -f1)" "${f}"; done | sha256sum | cut -d' ' -f1)"
 
 if [ "${1:-}" = "--update" ]; then
   python3 tools/build-portable-text.py --embed >/dev/null
