@@ -68,7 +68,7 @@ Do not write these, and remove or rewrite them where found; in an audit, flag th
 - repetitive 3-part rhetorical structures without substantive need;
 - meta-commentary about what the document will do;
 - empty intensifiers, softeners, and business jargon;
-- formulaic executive phrasing used as default connection or emphasis, such as "highly relevant", "aligns closely with", or "I would value discussions with", and catalogue-style topic lists that reproduce a source list without intent;
+- formulaic executive phrasing used as default connection or emphasis, such as "highly relevant", "aligns closely with", or "I would value discussions with", and catalogue-style topic lists that reproduce a source list or do not tie to a decision, question, or request;
 - every em dash and en dash, converted to the punctuation the sentence needs (a semicolon, colon, comma, or parentheses, or a restructure);
 - abstract claims that conceal the actor, evidence, consequence, or required action;
 - fake enthusiasm, excessive reassurance, inspirational framing, and ceremonial praise;
@@ -122,7 +122,6 @@ Judgement review. Confirm that:
 - ownership, consequence, risk, cost, dependency, and required action are explicit where relevant;
 - the cadence sounds natural rather than theatrical or mechanical;
 - fragments, 1-line conclusions, conjunction-opened sentences, and rhetorical contrasts are used sparingly;
-- no filler, repetition, vague importance, or generic AI phrasing remains;
 - after any verb that can take either a direct object or a clause, a clause that follows is marked with "that" where its opening words could be read as a direct object;
 - punctuation and capitalization are consistent;
 - no em or en dashes remain outside quoted or verbatim material;
