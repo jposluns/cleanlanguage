@@ -93,7 +93,7 @@ The easiest reusable Gemini method is a custom Gem.
 3. Open the menu on the left.
 4. Click **Gems**. When necessary, click **Settings and help**, then **Gems**.
 5. Click **New Gem**.
-6. Name it **Clean Language**, and add a short description.
+6. Name it **Clean Language**. For the description, you can use: `Applies the Clean Language writing standard so responses are precise, direct, and natural.`
 7. Paste the copied `cleanlanguage.md` text into the **Instructions** box.
 8. Set **no default tool**.
 9. Click **Save**.
