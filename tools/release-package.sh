@@ -97,15 +97,28 @@ fi
 # so a shipped skill never points at a missing asset. The path may be quoted
 # with double quotes, single quotes, or left bare.
 if git cat-file -e HEAD:cleanlanguage/agents/openai.yaml 2>/dev/null; then
+  yaml="$(git show HEAD:cleanlanguage/agents/openai.yaml)"
+  # Every icon_* key must yield a checkable path that exists in the package. A
+  # key whose value cannot be parsed is a failure, not a silent skip: count the
+  # icon_ keys and require the same number of extracted paths. The extractor
+  # accepts an optional ./ prefix, single/double/no quotes, and spaces around
+  # the colon.
+  icon_lines="$(printf '%s\n' "${yaml}" | grep -Ec '^[[:space:]]*icon_[a-z]*[[:space:]]*:' || true)"
   missing_icon=0
+  extracted=0
   while IFS= read -r icon; do
     [ -n "${icon}" ] || continue
+    extracted=$((extracted + 1))
     if ! git cat-file -e "HEAD:cleanlanguage/${icon#./}" 2>/dev/null; then
       echo "release-package: icon referenced in agents/openai.yaml is missing: ${icon}" >&2
       missing_icon=1
     fi
-  done < <(git show HEAD:cleanlanguage/agents/openai.yaml \
-    | sed -n 's/.*icon_[a-z]*:[[:space:]]*["'"'"']\{0,1\}\(\.\/[^"'"'"'[:space:]]*\).*/\1/p')
+  done < <(printf '%s\n' "${yaml}" \
+    | sed -n 's/.*icon_[a-z]*[[:space:]]*:[[:space:]]*["'"'"']\{0,1\}\(\.\{0,1\}\/\{0,1\}[^"'"'"'[:space:]]*\).*/\1/p')
+  if [ "${extracted}" -ne "${icon_lines}" ]; then
+    echo "release-package: agents/openai.yaml has ${icon_lines} icon_ keys but ${extracted} parseable icon paths." >&2
+    missing_icon=1
+  fi
   [ "${missing_icon}" -eq 0 ] || exit 1
 fi
 
@@ -122,13 +135,25 @@ chmod 644 "${staging}/cleanlanguage/LICENSE" "${staging}/cleanlanguage/NOTICE.md
 # machine and at any clock time. Without this the staged licence files would
 # carry the build clock, so a later rebuild of the same commit would not match.
 commit_epoch="$(git show -s --format=%ct HEAD)"
+# Canonical, umask-independent modes for a distributed artefact: the packaged
+# files carry only regular content (the mode gate above rejects anything but
+# 100644), so normalise every directory to 0755 and every file to 0644. Zip
+# records the Unix mode in each entry, so without this an ambient umask would
+# change the central-directory bytes and the checksum for the same commit.
+find "${staging}" -type d -exec chmod 755 {} +
+find "${staging}" -type f -exec chmod 644 {} +
 find "${staging}" -exec touch -h -d "@${commit_epoch}" {} +
 
 rm -rf dist
 mkdir -p dist
 dist_dir="$(pwd)/dist"
+# Clear ZIP and ZIPOPT so an ambient option (for example ZIPOPT=-0) cannot
+# change the archive bytes; -D omits directory records (whose modes and order
+# would otherwise vary); -X drops uid/gid and the extra timestamp fields; the
+# sorted list and TZ=UTC fix entry order and the DOS times. Same commit, same
+# bytes, on any machine and at any clock time and umask.
 (cd "${staging}" && find cleanlanguage -print | LC_ALL=C sort \
-  | TZ=UTC zip -q -X -@ "${dist_dir}/cleanlanguage.zip")
+  | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ "${dist_dir}/cleanlanguage.zip")
 cp dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip"
 (cd dist && sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256)
 (cd dist && sha256sum "cleanlanguage-${version}.zip" > "cleanlanguage-${version}.zip.sha256")

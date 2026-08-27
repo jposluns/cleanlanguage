@@ -142,7 +142,22 @@ confirm_rounds=0
 deadline=$(( $(date +%s) + timeout_seconds ))
 
 while true; do
-  checks="$(read_checks)" || exit 3
+  if ! checks="$(read_checks)"; then
+    # A transient read error is not a verdict. In wait mode keep waiting until
+    # the deadline rather than aborting (a release step calls this AFTER
+    # publishing, so a false abort strands the release); a single-shot report
+    # still fails fast.
+    if [ "${wait_for_settle}" -eq 1 ]; then
+      now="$(date +%s)"
+      if [ "${now}" -lt "${deadline}" ]; then
+        printf 'ci-status: check read failed; retrying, %s seconds left\n' "$(( deadline - now ))" >&2
+        sleep "${interval_seconds}"
+        continue
+      fi
+      printf 'ci-status: check read still failing after %s seconds; giving up\n' "${timeout_seconds}" >&2
+    fi
+    exit 3
+  fi
   verdict="$(verdict_of "${checks}")"
 
   if [ "${verdict}" != "pass" ]; then
@@ -179,8 +194,21 @@ while true; do
       exit 1
       ;;
     none)
-      printf 'ci-status: no checks are recorded for %s in %s\n' "${full_sha}" "${repo}" >&2
-      printf 'ci-status: treating absent checks as unreadable, not as a pass\n' >&2
+      # Absence is never a pass. In wait mode the checks may simply not have
+      # registered yet, so wait until the deadline; a single-shot report treats
+      # absence as unreadable and exits now.
+      if [ "${wait_for_settle}" -eq 1 ]; then
+        now="$(date +%s)"
+        if [ "${now}" -lt "${deadline}" ]; then
+          printf 'ci-status: no checks recorded yet for %s; waiting, %s seconds left\n' "${full_sha}" "$(( deadline - now ))" >&2
+          sleep "${interval_seconds}"
+          continue
+        fi
+        printf 'ci-status: no checks ever registered for %s within %s seconds\n' "${full_sha}" "${timeout_seconds}" >&2
+      else
+        printf 'ci-status: no checks are recorded for %s in %s\n' "${full_sha}" "${repo}" >&2
+        printf 'ci-status: treating absent checks as unreadable, not as a pass\n' >&2
+      fi
       exit 3
       ;;
   esac

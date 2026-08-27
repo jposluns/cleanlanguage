@@ -33,6 +33,11 @@
 
 set -euo pipefail
 
+# Read every date in UTC, exactly as the release runner does, so a dry run
+# west of UTC in the evening does not stamp tomorrow's local date and fail its
+# own metadata gate.
+export TZ=UTC
+
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 repo_root="$(pwd)"
 
@@ -107,6 +112,15 @@ grep -q "article:modified_time\" content=\"${seed_date}\"" site/install/index.ht
 
 # 1. Validate, package, and verify the zip, exactly as the release does.
 tools/release-package.sh --tag "${dry_tag}"
+
+# 1a. Prove the build is REPRODUCIBLE: a second build under a different umask
+#     and a hostile ZIPOPT must yield the identical archive and checksum, so a
+#     third party who rebuilds the commit to verify the release gets our bytes.
+first_sum="$(cut -d' ' -f1 < dist/cleanlanguage.zip.sha256)"
+( umask 077; ZIPOPT="-0" ZIP="-1" tools/release-package.sh --tag "${dry_tag}" >/dev/null )
+second_sum="$(cut -d' ' -f1 < dist/cleanlanguage.zip.sha256)"
+[ "${first_sum}" = "${second_sum}" ] \
+  || fail "the build is not reproducible: ${first_sum} vs ${second_sum} under a different umask/ZIPOPT"
 
 # 2. Point the site at the dry-run release, exactly as the release does,
 #    including the real checksum of the zip just built.

@@ -70,6 +70,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The commit we built and will publish. Normalise GITHUB_SHA to a
+          # commit id: a pushed annotated tag can set GITHUB_SHA to the tag
+          # object rather than the commit, and every tag comparison below then
+          # uses this peeled commit, so a legitimate annotated-tag release is
+          # not refused as a mismatch.
+          built_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
           # A published release is immutable: its checksum is a trust signal,
           # so its bytes never change except by a deliberate manual dispatch
           # with the force input. Probe the release through the API so a
@@ -98,12 +104,18 @@ jobs:
           if [ "${release_exists}" -eq 1 ]; then
             if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${FORCE}" = "true" ]; then
               echo "force is enabled; overwriting the published release ${RELEASE_TAG}."
-            elif [ "${remote_tag_sha}" = "${GITHUB_SHA}" ]; then
-              # A re-run at the same commit: keep the published assets rather
-              # than re-uploading (which would change their checksum). Require
-              # the four expected assets to be present, then take the published
-              # checksum files so the site step displays the checksum of the
-              # published bytes, not a fresh local build.
+            elif [ "${remote_tag_sha}" = "${built_commit}" ]; then
+              # A re-run at the same commit. The published assets are immutable,
+              # so keep them; but prove the published release is COMPLETE and
+              # matches the reproducible build before the site republishes its
+              # checksum. Names alone are not enough: a partly failed upload can
+              # leave a new zip beside an old checksum, all four names present.
+              # Require the four names, then download every published asset,
+              # verify each zip against its own published checksum, that the
+              # stable and version-named zips are identical, and that they equal
+              # the freshly rebuilt (reproducible) bytes. Any mismatch is a
+              # corrupt or tampered release: fail closed.
+              fresh_sum="$(cut -d' ' -f1 < dist/cleanlanguage.zip.sha256)"
               published_assets="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name')"
               for asset in cleanlanguage.zip cleanlanguage.zip.sha256 "cleanlanguage-${VERSION}.zip" "cleanlanguage-${VERSION}.zip.sha256"; do
                 printf '%s\n' "${published_assets}" | grep -qx "${asset}" || {
@@ -112,13 +124,32 @@ jobs:
                   exit 1
                 }
               done
-              gh release download "${RELEASE_TAG}" --dir dist --clobber \
+              verify_dir="$(mktemp -d)"
+              gh release download "${RELEASE_TAG}" --dir "${verify_dir}" --clobber \
+                --pattern "cleanlanguage.zip" \
                 --pattern "cleanlanguage.zip.sha256" \
+                --pattern "cleanlanguage-${VERSION}.zip" \
                 --pattern "cleanlanguage-${VERSION}.zip.sha256"
-              echo "Release ${RELEASE_TAG} is already published at ${GITHUB_SHA}; kept its assets and took its published checksum. Continuing to the site step."
+              if ! (cd "${verify_dir}" && sha256sum -c cleanlanguage.zip.sha256 "cleanlanguage-${VERSION}.zip.sha256"); then
+                echo "A published asset of ${RELEASE_TAG} does not match its published checksum; the release is corrupt or was partly overwritten." >&2
+                echo "Republish deliberately with a manual dispatch and the force input." >&2
+                exit 1
+              fi
+              if ! cmp -s "${verify_dir}/cleanlanguage.zip" "${verify_dir}/cleanlanguage-${VERSION}.zip"; then
+                echo "The published stable and version-named zips of ${RELEASE_TAG} differ." >&2
+                exit 1
+              fi
+              published_sum="$(cut -d' ' -f1 < "${verify_dir}/cleanlanguage.zip.sha256")"
+              rm -rf "${verify_dir}"
+              if [ "${published_sum}" != "${fresh_sum}" ]; then
+                echo "Published ${RELEASE_TAG} (${published_sum}) does not match the reproducible build of this commit (${fresh_sum})." >&2
+                echo "Republish deliberately with a manual dispatch and the force input if this is intended." >&2
+                exit 1
+              fi
+              echo "Release ${RELEASE_TAG} is already published at ${built_commit}, complete, and matches the reproducible build; keeping its assets. Continuing to the site step."
               exit 0
             else
-              echo "Release ${RELEASE_TAG} is already published, but its tag now resolves to ${remote_tag_sha:-nothing}, not ${GITHUB_SHA}." >&2
+              echo "Release ${RELEASE_TAG} is already published, but its tag now resolves to ${remote_tag_sha:-nothing}, not ${built_commit}." >&2
               echo "Republishing different bytes under a published version would break its checksum as a trust signal." >&2
               echo "Cut a new version, or run this workflow manually with the force input to overwrite ${RELEASE_TAG} deliberately (select the tag as the run ref)." >&2
               exit 1
@@ -126,23 +157,23 @@ jobs:
           fi
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             if [ -z "${remote_tag_sha}" ]; then
-              git tag "${RELEASE_TAG}" "${GITHUB_SHA}"
+              git tag "${RELEASE_TAG}" "${built_commit}"
               git push origin "refs/tags/${RELEASE_TAG}"
-            elif [ "${remote_tag_sha}" = "${GITHUB_SHA}" ]; then
-              echo "Tag ${RELEASE_TAG} already points at ${GITHUB_SHA}; leaving it in place."
+            elif [ "${remote_tag_sha}" = "${built_commit}" ]; then
+              echo "Tag ${RELEASE_TAG} already points at ${built_commit}; leaving it in place."
             elif [ "${FORCE}" = "true" ]; then
-              echo "force is enabled; moving ${RELEASE_TAG} to ${GITHUB_SHA}."
-              git tag -f "${RELEASE_TAG}" "${GITHUB_SHA}"
+              echo "force is enabled; moving ${RELEASE_TAG} to ${built_commit}."
+              git tag -f "${RELEASE_TAG}" "${built_commit}"
               git push --force origin "refs/tags/${RELEASE_TAG}"
             else
-              echo "Tag ${RELEASE_TAG} already points at ${remote_tag_sha}, not ${GITHUB_SHA}; refusing to move it without the force input." >&2
+              echo "Tag ${RELEASE_TAG} already points at ${remote_tag_sha}, not ${built_commit}; refusing to move it without the force input." >&2
               exit 1
             fi
           else
             # Tag push: the tag must still resolve to the built commit, or a
             # concurrent move would publish one commit's bytes under another.
-            if [ "${remote_tag_sha}" != "${GITHUB_SHA}" ]; then
-              echo "Tag ${RELEASE_TAG} resolves to ${remote_tag_sha:-nothing} on origin, not the built commit ${GITHUB_SHA}; refusing to publish mismatched bytes." >&2
+            if [ "${remote_tag_sha}" != "${built_commit}" ]; then
+              echo "Tag ${RELEASE_TAG} resolves to ${remote_tag_sha:-nothing} on origin, not the built commit ${built_commit}; refusing to publish mismatched bytes." >&2
               exit 1
             fi
           fi
@@ -175,35 +206,59 @@ jobs:
           # ships as a PR this step opens and merges once the checks pass.
           # Store a token with contents and pull-requests write access as the
           # RELEASE_PR_TOKEN secret; without it the step falls back to the
-          # built-in token, whose PRs do not trigger pull_request workflows
-          # (the required Cloudflare Pages check still runs either way).
-          # The site links straight at the version-named assets, so the version
-          # lives in the pages as well as in the redirects. set-release-links.py
-          # writes every place at once and check-release-links.py verifies the
-          # result, so this step cannot quietly disagree with the gate.
+          # built-in token, whose PRs do not trigger pull_request workflows, so
+          # the site gates are run inline below before the PR opens; the
+          # required Cloudflare Pages check still runs on the PR either way.
+          # The branch is based on the CURRENT origin/main, not the tag commit,
+          # so the PR carries only the redirect flip and never reverts changes
+          # that landed on main after the tag was cut.
+          git fetch origin main
+          main_ref="$(git rev-parse FETCH_HEAD)"
+          main_version="$(git show "${main_ref}:cleanlanguage/SKILL.md" \
+            | sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -1)"
+          # If main already names a newer release, this older run must not roll
+          # the site back to its version; leave the newer links in place.
+          if [ -n "${main_version}" ] && [ "${main_version}" != "${VERSION}" ]; then
+            higher="$(printf '%s\n%s\n' "${main_version}" "${VERSION}" | sort -V | tail -1)"
+            if [ "${higher}" = "${main_version}" ]; then
+              echo "main already names ${main_version}, newer than ${VERSION}; leaving the site unchanged."
+              exit 0
+            fi
+          fi
+          branch="release-redirects-${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${branch}" "${main_ref}"
           checksum="$(cut -d' ' -f1 < "dist/cleanlanguage-${VERSION}.zip.sha256")"
           # One UTC date drives both the page stamps and the site commit, so a
           # release crossing midnight cannot stamp one date and commit the next,
           # which would fail the page-metadata gate on the pull request.
           site_date="$(date -u +%F)"
           tools/set-release-links.py --version "${VERSION}" --tag "${RELEASE_TAG}" --checksum "${checksum}" --date "${site_date}"
+          # Every gate the site pull request would trigger, run inline: a
+          # built-in-token PR does not fire pull_request workflows, so this is
+          # the only run that sees the flipped content before it merges.
           tools/check-release-links.py
           python3 tools/check-page-metadata.py
+          python3 tools/check-links.py
+          python3 tools/check-install-page.py
           if git diff --quiet -- site; then
-            echo "The site already points at ${RELEASE_TAG}."
+            echo "main already points at ${RELEASE_TAG}; nothing to change."
             exit 0
           fi
-          branch="release-redirects-${VERSION}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "${branch}"
           git add site
           GIT_AUTHOR_DATE="${site_date}T12:00:00Z" GIT_COMMITTER_DATE="${site_date}T12:00:00Z" \
             git commit -m "Point the site downloads at ${RELEASE_TAG}"
           git push --force origin "HEAD:${branch}"
-          # Reuse an open pull request for this branch if a previous run opened
-          # one, so a re-run finishes rather than failing on a duplicate.
-          pr_url="$(gh pr list --head "${branch}" --base main --state open --json url --jq '.[0].url // empty')"
+          head_sha="$(git rev-parse HEAD)"
+          repo_owner="${GITHUB_REPOSITORY%%/*}"
+          # Reuse an open pull request only if it is OURS: same repository owner
+          # and the exact commit we just pushed. This stops a fork PR that
+          # happens to share the head branch name from being reused and merged
+          # in place of the release's own flip.
+          pr_url="$(gh pr list --head "${branch}" --base main --state open \
+            --json url,headRefOid,headRepositoryOwner \
+            --jq "[.[] | select(.headRepositoryOwner.login == \"${repo_owner}\" and .headRefOid == \"${head_sha}\")][0].url // empty")"
           if [ -z "${pr_url}" ]; then
             pr_url="$(gh pr create --base main --head "${branch}" \
               --title "Point the site downloads at ${RELEASE_TAG}" \
@@ -213,6 +268,8 @@ jobs:
             echo "Reusing the open pull request ${pr_url}."
           fi
           sleep 20
-          tools/ci-status.sh "$(git rev-parse HEAD)" --wait --repo "${GITHUB_REPOSITORY}"
-          gh pr merge "${pr_url}" --squash --delete-branch
+          tools/ci-status.sh "${head_sha}" --wait --repo "${GITHUB_REPOSITORY}"
+          # --match-head-commit refuses the merge if the branch head moved since
+          # the checks were validated, so only the exact reviewed commit lands.
+          gh pr merge "${pr_url}" --squash --delete-branch --match-head-commit "${head_sha}"
           echo "Merged ${pr_url}"
