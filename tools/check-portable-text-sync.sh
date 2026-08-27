@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 #
-# Keeps the two portable renderings of the skill in step with the source.
+# Keeps the portable renderings of the skill in step with the source and within
+# their size labels.
 #
-# site/downloads/cleanlanguage.md is GENERATED from the skill by
-# tools/build-portable-text.py, so this gate regenerates it and the
-# /instructions/ embed and fails on any byte drift.
+# The size-labelled family in site/downloads/:
+#   cleanlanguage.md      the canonical file; always byte-equal to the largest
+#                         size-labelled rendering (29k for now).
+#   cleanlanguage-29k.md  the largest rendering; GENERATED from the skill by
+#                         tools/build-portable-text.py, byte-equal to cleanlanguage.md.
+#   cleanlanguage-11k.md  a hand-maintained condensed rendering (<= 11000 chars).
+#   cleanlanguage-8k.md   a hand-maintained further-condensed rendering (<= 8000
+#                         chars) for assistants that cap instruction length.
 #
-# site/downloads/cleanlanguage-short.md is a hand-maintained condensed rendering
-# that cannot be compared byte for byte, so this gate records a hash of the skill
-# source (SKILL.md and every reference). When the skill changes the hash no
-# longer matches and the gate fails until a maintainer reconciles the condensed
-# file and re-records with --update. It is a reconciliation gate, not a proof of
-# equivalence.
-#
-# It also checks that both portable files open with the canonical first line and
-# that the Version agrees across the skill and both files.
+# The generated files are checked byte-for-byte by build-portable-text.py --check.
+# The hand-maintained files cannot be compared byte for byte, so this gate records
+# a hash of the skill source (SKILL.md and every reference); when the skill changes
+# the hash no longer matches and the gate fails until a maintainer reconciles both
+# hand-maintained files and re-records with --update. It also checks that every
+# file opens with the canonical first line, that the Version agrees across the
+# skill and all files, that cleanlanguage.md and cleanlanguage-29k.md are byte-
+# equal, and that the condensed files are within their size labels.
 #
 # Usage:
 #   tools/check-portable-text-sync.sh            Check; exit non-zero on drift.
@@ -25,24 +30,42 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
 recorded_file="tools/portable-text-skill-source.sha256"
-extended="site/downloads/cleanlanguage.md"
-short="site/downloads/cleanlanguage-short.md"
+canonical="site/downloads/cleanlanguage.md"
+twin29="site/downloads/cleanlanguage-29k.md"
+eleven="site/downloads/cleanlanguage-11k.md"
+eight="site/downloads/cleanlanguage-8k.md"
+hand_maintained=("${eleven}" "${eight}")
+all_files=("${canonical}" "${twin29}" "${eleven}" "${eight}")
 opening="This is the Clean Language skill, written out as rules. Apply it to the writing in this conversation unless I tell you not to."
 
 version_of() { sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$1" | head -1; }
 
 check_common() {
-  for f in "${extended}" "${short}"; do
+  local f
+  for f in "${all_files[@]}"; do
     [ -f "${f}" ] || { echo "Missing ${f}." >&2; return 1; }
     if [ "$(head -1 "${f}")" != "${opening}" ]; then
       echo "${f} does not open with the canonical first line." >&2; return 1
     fi
   done
-  local sv ev shv
-  sv="$(version_of cleanlanguage/SKILL.md)"; ev="$(version_of "${extended}")"; shv="$(version_of "${short}")"
-  if [ -z "${sv}" ] || [ "${sv}" != "${ev}" ] || [ "${sv}" != "${shv}" ]; then
-    echo "Version disagreement: SKILL.md=${sv} ${extended}=${ev} ${short}=${shv}." >&2; return 1
+  local sv
+  sv="$(version_of cleanlanguage/SKILL.md)"
+  [ -n "${sv}" ] || { echo "No Version in cleanlanguage/SKILL.md." >&2; return 1; }
+  for f in "${all_files[@]}"; do
+    if [ "$(version_of "${f}")" != "${sv}" ]; then
+      echo "Version disagreement: SKILL.md=${sv}, ${f}=$(version_of "${f}")." >&2; return 1
+    fi
+  done
+  # The canonical file mirrors the largest rendering byte-for-byte.
+  if ! cmp -s "${canonical}" "${twin29}"; then
+    echo "${canonical} is not byte-equal to ${twin29}." >&2; return 1
   fi
+  # The condensed files must stay within their size labels.
+  local n
+  n="$(wc -m < "${eight}")"
+  [ "${n}" -le 8000 ] || { echo "${eight} is ${n} chars, over its 8000 label." >&2; return 1; }
+  n="$(wc -m < "${eleven}")"
+  [ "${n}" -le 11000 ] || { echo "${eleven} is ${n} chars, over its 11000 label." >&2; return 1; }
 }
 
 mapfile -t skill_files < <(printf '%s\n' "cleanlanguage/SKILL.md"; find cleanlanguage/references -type f -name '*.md' | sort)
@@ -50,19 +73,21 @@ for f in "${skill_files[@]}"; do [ -f "${f}" ] || { echo "Missing skill file: ${
 computed="$(for f in "${skill_files[@]}"; do printf '%s  %s\n' "$(sha256sum "${f}" | cut -d' ' -f1)" "${f}"; done | sha256sum | cut -d' ' -f1)"
 
 if [ "${1:-}" = "--update" ]; then
-  # Refuse to bless a stale condensed file: if the source hash changed but
-  # cleanlanguage-short.md was not touched, the reconciliation did not happen.
+  # Refuse to bless stale condensed files: if the source hash changed but a
+  # hand-maintained rendering was not touched, the reconciliation did not happen.
   if [ -f "${recorded_file}" ] && [ "${computed}" != "$(tr -d '"'"'[:space:]'"'"' < "${recorded_file}")" ]; then
-    if git -C "${repo_root}" diff --quiet HEAD -- "${short}" 2>/dev/null && [ "${2:-}" != "--force" ]; then
-      echo "The skill source changed but ${short} was not modified; reconcile it, or pass --force if no change is needed." >&2
-      exit 1
-    fi
+    for f in "${hand_maintained[@]}"; do
+      if git -C "${repo_root}" diff --quiet HEAD -- "${f}" 2>/dev/null && [ "${2:-}" != "--force" ]; then
+        echo "The skill source changed but ${f} was not modified; reconcile it, or pass --force if no change is needed." >&2
+        exit 1
+      fi
+    done
   fi
   python3 tools/build-portable-text.py --embed >/dev/null
-  check_common || { echo "Refusing to record: the portable files failed the opening or version check." >&2; exit 1; }
-  python3 tools/build-portable-text.py --check || { echo "Refusing to record: the generated file or embed is out of date." >&2; exit 1; }
+  check_common || { echo "Refusing to record: the portable files failed a common check." >&2; exit 1; }
+  python3 tools/build-portable-text.py --check || { echo "Refusing to record: a generated file or the embed is out of date." >&2; exit 1; }
   printf '%s\n' "${computed}" > "${recorded_file}"
-  echo "Recorded skill-source hash ${computed}. Reconcile ${short} with the skill before committing."
+  echo "Recorded skill-source hash ${computed}. Reconcile the condensed files with the skill before committing."
   exit 0
 fi
 
@@ -73,12 +98,12 @@ check_common
 recorded="$(tr -d '[:space:]' < "${recorded_file}")"
 if [ "${computed}" != "${recorded}" ]; then
   cat >&2 <<EOF
-The skill source changed but the condensed portable file was not reconciled.
-Review ${short}, bring it into line with the skill, then re-record:
+The skill source changed but the condensed portable files were not reconciled.
+Review ${eleven} and ${eight}, bring them into line with the skill, then re-record:
   tools/check-portable-text-sync.sh --update
 Recorded: ${recorded}
 Computed: ${computed}
 EOF
   exit 1
 fi
-echo "Portable files reconciled with the skill source (${computed}); generated file and embed are current."
+echo "Portable files reconciled with the skill source (${computed}); generated files and embed are current."

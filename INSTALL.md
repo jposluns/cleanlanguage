@@ -104,14 +104,15 @@ After saving it, open **Gems** and select **Clean Language** whenever you need i
 
 ## Copilot
 
-Last verified 27 July 2026. The reusable method is a Copilot agent: create it once with Agent Builder, then select it whenever you write. How you use Clean Language may depend on your licence; if you have trouble, ask your Microsoft 365 administrator, or use the portable instructions below.
+Last verified 27 August 2026. The reusable method is a Copilot agent. Copilot caps an agent's instructions at 8000 characters, so paste the 8k file and point the agent at the full standard as a website.
 
-1. Open Microsoft 365 Copilot on a computer.
-2. Open the agents panel and click **New agent**.
-3. Name it Clean Language.
-4. In the instructions box, enter: `Follow the Clean Language instructions in the uploaded knowledge file for every response unless I explicitly tell you not to.`
-5. Under **Knowledge**, upload `cleanlanguage.md` from your device.
-6. Click **Create**, then select the Clean Language agent whenever you write.
+1. Download the [8k instructions](https://cleanlanguage.ai/downloads/cleanlanguage-8k.md). It saves as `cleanlanguage-8k.md`.
+2. Open Microsoft 365 Copilot on a computer.
+3. Open the agents panel, click **New agent**, then click **Skip** to open the detailed setup.
+4. Name it Clean Language, and add a short description.
+5. Open `cleanlanguage-8k.md`, copy all of it, and paste it into the **Instructions** box.
+6. Find the option to add specific websites, and add `https://cleanlanguage.ai/downloads/cleanlanguage.md` so the agent can draw on the full standard.
+7. Save, then select the Clean Language agent whenever you write.
 
 No agent access? Attach `cleanlanguage.md` to a normal Copilot chat and say: `Follow these writing rules for this conversation.`
 
