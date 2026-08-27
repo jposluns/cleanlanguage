@@ -48,7 +48,7 @@ Review finished prose against these questions.
 
 - Use Oxford English and `-ize` spellings.
 - After any verb that can take either a direct object or a clause, such as `confirm`, `verify`, `ensure`, `note`, or `report`, check whether the following words could be read as a direct object when a clause is intended; if so, mark the clause with `that`, adding it where it is missing. The density review does not remove this `that`.
-- Follow `ensure` with `that` and a clause; use `assure` before a noun.
+- Follow `ensure` with `that` and a clause, never a bare noun; recast a bare-noun `ensure` as a clause.
 - Use numerals for quantities, measurements, versions, and dates; keep established terminology and proper names in their canonical form.
 - Remove every em and en dash, converting each to the punctuation the sentence needs; write numeric and date ranges with a hyphen or `to`. Keep a dash only inside quoted or verbatim material.
 - Use punctuation and capitalization consistently.

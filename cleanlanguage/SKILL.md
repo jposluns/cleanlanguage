@@ -51,7 +51,7 @@ Infer the mode from the request. When the user asks for a finished message, retu
 - When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with `that`: write `the auditor confirmed that the exception was approved`, not `the auditor confirmed the exception was approved`, where `the exception` reads as the object until the verb that follows forces a re-parse.
 - Use `that` when words separate the verb from its clause, and in each coordinated clause.
 - Include `that` where it improves clarity or resolves ambiguity, and whenever you are in doubt; omit it only where the sentence reads equally clearly without it. Never insert it before a plain noun object: write `confirm the owner`, not `confirm that the owner`.
-- Always follow `ensure` with `that` and a clause, never a bare noun: write `ensure that you are compliant`, not `ensure compliance`. For the noun form, use `assure`: `assure compliance`.
+- Always follow `ensure` with `that` and a clause, never a bare noun: write `ensure that you are compliant`, not `ensure compliance`.
 - Use active voice when ownership or accountability matters.
 - Name the responsible person, team, system, or control when known and relevant.
 - Use passive voice when the actor is unknown, immaterial, confidential, or less important than the affected object.

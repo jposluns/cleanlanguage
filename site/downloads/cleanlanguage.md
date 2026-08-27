@@ -50,7 +50,7 @@ Infer the mode from the request. When the user asks for a finished message, retu
 - When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with `that`: write `the auditor confirmed that the exception was approved`, not `the auditor confirmed the exception was approved`, where `the exception` reads as the object until the verb that follows forces a re-parse.
 - Use `that` when words separate the verb from its clause, and in each coordinated clause.
 - Include `that` where it improves clarity or resolves ambiguity, and whenever you are in doubt; omit it only where the sentence reads equally clearly without it. Never insert it before a plain noun object: write `confirm the owner`, not `confirm that the owner`.
-- Always follow `ensure` with `that` and a clause, never a bare noun: write `ensure that you are compliant`, not `ensure compliance`. For the noun form, use `assure`: `assure compliance`.
+- Always follow `ensure` with `that` and a clause, never a bare noun: write `ensure that you are compliant`, not `ensure compliance`.
 - Use active voice when ownership or accountability matters.
 - Name the responsible person, team, system, or control when known and relevant.
 - Use passive voice when the actor is unknown, immaterial, confidential, or less important than the affected object.
@@ -432,7 +432,7 @@ Review finished prose against these questions.
 
 - Use Oxford English and `-ize` spellings.
 - After any verb that can take either a direct object or a clause, such as `confirm`, `verify`, `ensure`, `note`, or `report`, check whether the following words could be read as a direct object when a clause is intended; if so, mark the clause with `that`, adding it where it is missing. The density review does not remove this `that`.
-- Follow `ensure` with `that` and a clause; use `assure` before a noun.
+- Follow `ensure` with `that` and a clause, never a bare noun; recast a bare-noun `ensure` as a clause.
 - Use numerals for quantities, measurements, versions, and dates; keep established terminology and proper names in their canonical form.
 - Remove every em and en dash, converting each to the punctuation the sentence needs; write numeric and date ranges with a hyphen or `to`. Keep a dash only inside quoted or verbatim material.
 - Use punctuation and capitalization consistently.
