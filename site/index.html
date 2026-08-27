@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en-CA">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -21,7 +21,7 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Clean Language, a free cross-platform editorial standard for AI writing.">
   <meta property="article:published_time" content="2026-07-27">
-  <meta property="article:modified_time" content="2026-08-26">
+  <meta property="article:modified_time" content="2026-08-27">
   <meta property="article:author" content="https://linkedin.com/in/jposluns">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Clean Language - Remove AI writing patterns">
@@ -37,11 +37,11 @@
     "description": "A free cross-platform editorial standard for AI writing: drafting, rewriting, reviewing, and cleaning AI-generated prose while preserving factual, technical, legal, and semantic meaning.",
     "license": "https://creativecommons.org/licenses/by-sa/4.0/",
     "datePublished": "2026-07-27",
-    "dateModified": "2026-08-26",
+    "dateModified": "2026-08-27",
     "keywords": "AI writing, editorial standard, remove AI writing patterns, clean AI writing, Claude, ChatGPT, Gemini, Copilot",
     "sameAs": "https://github.com/jposluns/cleanlanguage",
     "publisher": {
-      "@type": "Organization",
+      "@type": "Person",
       "name": "Jeff Posluns",
       "url": "https://posluns.ca"
     },
@@ -64,11 +64,11 @@
         "publisher": { "@id": "https://cleanlanguage.ai/#jeffposluns" }
       },
       {
-        "@type": "Organization",
+        "@type": "Person",
         "@id": "https://cleanlanguage.ai/#jeffposluns",
         "name": "Jeff Posluns",
         "url": "https://posluns.ca",
-        "logo": {
+        "image": {
           "@type": "ImageObject",
           "url": "https://posluns.ca/images/posluns-p.svg"
         },
@@ -93,7 +93,7 @@
       {
         "@type": "Question",
         "name": "Does it ban every em dash, en dash, adverb, or passive sentence?",
-        "acceptedAnswer": { "@type": "Answer", "text": "No. Clean Language keeps punctuation and constructions that carry precise meaning, including dashes, and removes only the decorative ones. You can instruct it to prohibit dashes entirely when that is your preference." }
+        "acceptedAnswer": { "@type": "Answer", "text": "For adverbs and passive sentences, no: constructions that carry precise meaning stay. Em and en dashes are converted to the punctuation the sentence needs, except inside quoted or verbatim material; numeric and date ranges keep a hyphen or “to”. You can still instruct it to prohibit dashes absolutely." }
       },
       {
         "@type": "Question",
@@ -149,7 +149,7 @@
     <section class="hero">
       <p class="eyebrow">A free set of writing rules for Claude, ChatGPT, Gemini, Copilot, and more</p>
       <h1>Make AI writing sound precise, direct, and natural.</h1>
-      <p class="hero-copy">Clean Language removes the habits that make AI writing irritating: robotic tone, filler, fake enthusiasm, and repeated conclusions. It also cuts contrast framing, business jargon, excessive bullets, unnecessary em and en dashes, and predictable vocabulary such as delve, unlock, and transformative.</p>
+      <p class="hero-copy">Clean Language removes the habits that make AI writing irritating: robotic tone, filler, fake enthusiasm, and repeated conclusions. It also cuts contrast framing, business jargon, excessive bullets, em and en dashes, and predictable vocabulary such as delve, unlock, and transformative.</p>
       <p class="hero-copy">Clean Language is a small file of written rules you add to your AI once. It tells your AI to keep your facts, figures, names, quotations, and technical terms exactly as you wrote them; when a style rule and the meaning conflict, the meaning wins.</p>
       <p class="hero-copy">Free. No account beyond the AI you already use. Pick your AI:</p>
 
@@ -236,7 +236,7 @@ unnecessary dashes, and generic AI tone.</code></pre>
     <section class="section faq">
       <div class="section-heading"><p class="eyebrow">Questions</p><h2>What Clean Language is for.</h2></div>
       <details><summary>Is Clean Language an AI humanizer?</summary><p>Clean Language makes generated text more natural by improving the writing itself. It instructs the AI to preserve correctness and does not target AI-detector scores.</p></details>
-      <details><summary>Does it ban every em dash, en dash, adverb, or passive sentence?</summary><p>No. Clean Language keeps punctuation and constructions that carry precise meaning, including dashes, and removes only the decorative ones. You can instruct it to prohibit dashes entirely when that is your preference.</p></details>
+      <details><summary>Does it ban every em dash, en dash, adverb, or passive sentence?</summary><p>For adverbs and passive sentences, no: constructions that carry precise meaning stay. Em and en dashes are converted to the punctuation the sentence needs, except inside quoted or verbatim material; numeric and date ranges keep a hyphen or “to”. You can still instruct it to prohibit dashes absolutely.</p></details>
       <details><summary>Can it clean writing produced by Claude, ChatGPT, Gemini, Copilot, or another model?</summary><p>Yes. The rules work with any text-generating AI that accepts persistent instructions or supplied reference text. Use them as an installed skill, paste them as instructions, or follow them yourself as a checklist.</p></details>
       <details><summary>Is it suitable for technical and policy writing?</summary><p>Yes. The precedence rules protect commands, identifiers, legal language, obligations, standards terminology, factual qualifications, and domain-specific vocabulary.</p></details>
       <details><summary>Is it free?</summary><p>Yes. It is free for personal and commercial use, under the Creative Commons Attribution-ShareAlike 4.0 International licence.</p></details>

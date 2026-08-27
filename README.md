@@ -2,7 +2,7 @@
 
 Clean Language is a cross-platform editorial standard for AI writing. It supports drafting, rewriting, proofreading, adapting, and reviewing precise, direct, natural prose.
 
-It removes common AI-writing patterns such as robotic tone, filler, contrast framing, unnecessary em dashes and en dashes, fake enthusiasm, repeated conclusions, business jargon, and vague claims while preserving factual, technical, legal, policy, contractual, and standards meaning.
+It removes common AI-writing patterns such as robotic tone, filler, contrast framing, em dashes and en dashes, fake enthusiasm, repeated conclusions, business jargon, and vague claims while preserving factual, technical, legal, policy, contractual, and standards meaning.
 
 <p align="center">
   <a href="https://cleanlanguage.ai/install/?ai=claude"><img alt="Set up in Claude" src="https://img.shields.io/badge/Set_up_in_Claude-C15F3C?style=for-the-badge&logo=anthropic&logoColor=white"></a>
