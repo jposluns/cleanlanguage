@@ -108,7 +108,7 @@ Last verified 27 August 2026. The reusable method is a Copilot agent. Copilot ca
 
 1. Download the [8k instructions](https://cleanlanguage.ai/downloads/cleanlanguage-8k.md). It saves as `cleanlanguage-8k.md`.
 2. Open Microsoft 365 Copilot on a computer.
-3. Open the agents panel, click **New agent**, then click **Skip to configure** to open the detailed setup.
+3. Open the agents panel and click **New agent**. Copilot offers to build the agent for you or to let you set it up yourself; click **Skip** to customize it yourself.
 4. Name it Clean Language, and add a short description.
 5. Open `cleanlanguage-8k.md`, copy all of it, and paste it into the **Instructions** box.
 6. Find the option to add specific websites, and add `https://cleanlanguage.ai/downloads/cleanlanguage.md` as reference the agent can consult; the pasted instructions are what it follows.
