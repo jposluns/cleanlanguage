@@ -17,10 +17,11 @@ on:
         type: boolean
 
 permissions:
+  # The workflow builds, checksums, and publishes the release only. It never
+  # opens a pull request: matching the rest of the fleet, the orchestrator
+  # performs the post-release site checksum flip out of band under a user
+  # token, so no pull-requests or checks permission is needed here.
   contents: write
-  pull-requests: write
-  # tools/ci-status.sh reads the Check Runs API on the site pull request.
-  checks: read
 
 concurrency:
   # Serialize releases for a tag so two runs cannot interleave the tag, the
@@ -38,8 +39,9 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # Full history: the site pull request step runs check-page-metadata.py
-          # before opening the PR, and that check reads each page's history.
+          # Full history so release-package.sh can read the commit timestamp it
+          # stamps into the zip, and the version precondition below can compare
+          # against main.
           fetch-depth: 0
 
       - name: Read and validate the version
@@ -122,8 +124,7 @@ jobs:
             elif [ "${remote_tag_sha}" = "${built_commit}" ]; then
               # A re-run at the same commit. The published assets are immutable,
               # so keep them; but prove the published release is COMPLETE and
-              # SELF-CONSISTENT, then take its PUBLISHED checksum so the site
-              # shows exactly what a downloader gets. Each zip is bound to its
+              # SELF-CONSISTENT before the run ends. Each zip is bound to its
               # checksum by hashing the download DIRECTLY, and each manifest must
               # be exactly one 64-hex digest and the matching basename, so a
               # crafted path inside a downloaded manifest cannot redirect the
@@ -171,12 +172,8 @@ jobs:
                 || { echo "The published release ${RELEASE_TAG} is corrupt or was partly overwritten; republish deliberately with a manual dispatch and the force input." >&2; exit 1; }
               cmp -s "${verify_dir}/cleanlanguage.zip" "${verify_dir}/cleanlanguage-${VERSION}.zip" \
                 || { echo "The published stable and version-named zips of ${RELEASE_TAG} differ." >&2; exit 1; }
-              # Show the PUBLISHED checksum on the site: replace the fresh local
-              # manifests with the validated published ones.
-              cp "${verify_dir}/cleanlanguage.zip.sha256" dist/cleanlanguage.zip.sha256
-              cp "${verify_dir}/cleanlanguage-${VERSION}.zip.sha256" "dist/cleanlanguage-${VERSION}.zip.sha256"
               rm -rf "${verify_dir}"; trap - EXIT
-              echo "Release ${RELEASE_TAG} is already published at ${built_commit}, complete and self-consistent; kept its assets and took its published checksum. Continuing to the site step."
+              echo "Release ${RELEASE_TAG} is already published at ${built_commit}, complete and self-consistent; kept its assets. The orchestrator flips the site checksum post-release."
               exit 0
             else
               echo "Release ${RELEASE_TAG} is already published, but its tag now resolves to ${remote_tag_sha:-nothing}, not ${built_commit}." >&2
@@ -224,85 +221,12 @@ jobs:
               --generate-notes
           fi
 
-      - name: Point the site downloads at this release
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # The site's download buttons serve the version-named zip so repeat
-          # downloads stay distinguishable in the user's Downloads folder. Main
-          # only accepts changes through a pull request, so the redirect flip
-          # ships as a PR this step opens and merges once the checks pass.
-          # Store a token with contents and pull-requests write access as the
-          # RELEASE_PR_TOKEN secret; without it the step falls back to the
-          # built-in token, whose PRs do not trigger pull_request workflows, so
-          # the site gates are run inline below before the PR opens; the
-          # required Cloudflare Pages check still runs on the PR either way.
-          # The branch is based on the CURRENT origin/main, not the tag commit,
-          # so the PR carries only the redirect flip and never reverts changes
-          # that landed on main after the tag was cut.
-          git fetch origin main
-          main_ref="$(git rev-parse FETCH_HEAD)"
-          main_version="$(git show "${main_ref}:cleanlanguage/SKILL.md" \
-            | sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -1)"
-          # If main already names a newer release, this older run must not roll
-          # the site back to its version; leave the newer links in place.
-          if [ -n "${main_version}" ] && [ "${main_version}" != "${VERSION}" ]; then
-            higher="$(printf '%s\n%s\n' "${main_version}" "${VERSION}" | sort -V | tail -1)"
-            if [ "${higher}" = "${main_version}" ]; then
-              echo "main already names ${main_version}, newer than ${VERSION}; leaving the site unchanged."
-              exit 0
-            fi
-          fi
-          branch="release-redirects-${VERSION}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "${branch}" "${main_ref}"
-          checksum="$(cut -d' ' -f1 < "dist/cleanlanguage-${VERSION}.zip.sha256")"
-          # One UTC date drives both the page stamps and the site commit, so a
-          # release crossing midnight cannot stamp one date and commit the next,
-          # which would fail the page-metadata gate on the pull request.
-          site_date="$(date -u +%F)"
-          tools/set-release-links.py --version "${VERSION}" --tag "${RELEASE_TAG}" --checksum "${checksum}" --date "${site_date}"
-          # Every gate the site pull request would trigger, run inline: a
-          # built-in-token PR does not fire pull_request workflows, so this is
-          # the only run that sees the flipped content before it merges.
-          tools/check-release-links.py
-          python3 tools/check-page-metadata.py
-          python3 tools/check-links.py
-          python3 tools/check-install-page.py
-          if git diff --quiet -- site; then
-            echo "main already points at ${RELEASE_TAG}; nothing to change."
-            exit 0
-          fi
-          git add site
-          GIT_AUTHOR_DATE="${site_date}T12:00:00Z" GIT_COMMITTER_DATE="${site_date}T12:00:00Z" \
-            git commit -m "Point the site downloads at ${RELEASE_TAG}"
-          git push --force origin "HEAD:${branch}"
-          head_sha="$(git rev-parse HEAD)"
-          repo_owner="${GITHUB_REPOSITORY%%/*}"
-          # Reuse an open pull request only if it is OURS: same repository owner.
-          # A fork PR sharing the head branch name has a different head-repository
-          # owner, so it is never selected. The exact head commit is enforced at
-          # merge time by --match-head-commit rather than by filtering on
-          # headRefOid here, because the API can still report the pre-push head
-          # for a moment right after the force-push, which would make a genuine
-          # re-run miss its own open PR and then fail to create a duplicate.
-          pr_url="$(gh pr list --head "${branch}" --base main --state open \
-            --json url,headRepositoryOwner \
-            --jq "[.[] | select(.headRepositoryOwner.login == \"${repo_owner}\")][0].url // empty")"
-          if [ -z "${pr_url}" ]; then
-            pr_url="$(gh pr create --base main --head "${branch}" \
-              --title "Point the site downloads at ${RELEASE_TAG}" \
-              --body "Automated for the ${RELEASE_TAG} release: the download buttons, the redirects, and the published checksum on the verify page now name the ${RELEASE_TAG} assets.")"
-            echo "Opened ${pr_url}"
-          else
-            echo "Reusing the open pull request ${pr_url}."
-          fi
-          sleep 20
-          tools/ci-status.sh "${head_sha}" --wait --repo "${GITHUB_REPOSITORY}"
-          # --match-head-commit refuses the merge if the branch head moved since
-          # the checks were validated, so only the exact reviewed commit lands.
-          gh pr merge "${pr_url}" --squash --delete-branch --match-head-commit "${head_sha}"
-          echo "Merged ${pr_url}"
+      # No site step follows. Publishing the release is this workflow's last act.
+      # The site's published-checksum flip is performed by the orchestrator out
+      # of band, under a user token, after this run completes: matching the rest
+      # of the fleet, no workflow in this repository opens or merges a pull
+      # request from the GitHub Actions identity. A future editor must not re-add
+      # an Actions step that runs `gh pr create` or `gh pr merge`; the built-in
+      # token is blocked from it by policy, and the fleet keeps PR authorship in
+      # the orchestrator. See the orchestrator's release runbook for the exact
+      # post-release site steps.

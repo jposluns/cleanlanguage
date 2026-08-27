@@ -1,7 +1,7 @@
 name: Release dry run
 
 # Proves the release path end to end without publishing: packaging, the site
-# rewrite, the date stamps, and the gates the auto-opened site pull request
+# rewrite, the date stamps, and the gates the post-release site pull request
 # must pass. Everything runs inside a throwaway git worktree via
 # tools/release-dry-run.sh. This workflow holds read-only permissions, keeps
 # no credentials after checkout, uses no secrets, and pushes, tags, releases,
