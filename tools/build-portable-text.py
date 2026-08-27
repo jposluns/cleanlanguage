@@ -3,14 +3,17 @@
 
 Reads cleanlanguage/SKILL.md and its references and writes a single
 self-contained rendering, site/downloads/cleanlanguage.md, for pasting or
-attaching to an assistant that cannot install a skill. The file is generated,
-never hand-edited; the sync gate checks it byte-for-byte.
+attaching to an assistant that cannot install a skill. The same bytes are also
+written to site/downloads/cleanlanguage-29k.md: cleanlanguage.md is the canonical
+name and always mirrors the largest size-labelled rendering, 29k for now. The
+files are generated, never hand-edited; the sync gate checks them byte-for-byte.
 
 Modes:
-  (default)   write site/downloads/cleanlanguage.md atomically
+  (default)   write site/downloads/cleanlanguage.md and its byte-equal
+              size-labelled twin cleanlanguage-29k.md atomically
   --embed     also rewrite the <pre id="instructions-text"> block in
               site/instructions/index.html with the HTML-escaped content
-  --check     regenerate in memory, byte-compare the file and the embed,
+  --check     regenerate in memory, byte-compare both files and the embed,
               print the first difference, and exit 1 on any drift
 """
 import html
@@ -23,6 +26,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL = os.path.join(ROOT, "cleanlanguage", "SKILL.md")
 REFDIR = os.path.join(ROOT, "cleanlanguage", "references")
 OUT = os.path.join(ROOT, "site", "downloads", "cleanlanguage.md")
+# cleanlanguage.md is the canonical name; it always mirrors the largest
+# size-labelled rendering byte-for-byte. That is 29k for now.
+OUT29 = os.path.join(ROOT, "site", "downloads", "cleanlanguage-29k.md")
 PAGE = os.path.join(ROOT, "site", "instructions", "index.html")
 
 OPENING = ("This is the Clean Language skill, written out as rules. Apply it "
@@ -168,27 +174,29 @@ def main():
     content = generate()
     if "--check" in args:
         ok = True
-        try:
-            on_disk = read(OUT)
-        except FileNotFoundError:
-            on_disk = None
-        if on_disk != content:
-            ok = False
-            sys.stderr.write("build-portable-text: %s is out of date; regenerate it.\n" % OUT)
-            if on_disk is not None:
-                for a, b in itertools.zip_longest(on_disk.split("\n"), content.split("\n")):
-                    if a != b:
-                        sys.stderr.write("  first diff:\n  - %r\n  + %r\n" % (a, b))
-                        break
+        for target in (OUT, OUT29):
+            try:
+                on_disk = read(target)
+            except FileNotFoundError:
+                on_disk = None
+            if on_disk != content:
+                ok = False
+                sys.stderr.write("build-portable-text: %s is out of date; regenerate it.\n" % target)
+                if on_disk is not None:
+                    for a, b in itertools.zip_longest(on_disk.split("\n"), content.split("\n")):
+                        if a != b:
+                            sys.stderr.write("  first diff:\n  - %r\n  + %r\n" % (a, b))
+                            break
         want_embed = embed_html(content)
         if current_embed() != want_embed:
             ok = False
             sys.stderr.write("build-portable-text: the /instructions/ embed is out of date; run --embed.\n")
         sys.exit(0 if ok else 1)
     write_atomic(OUT, content)
+    write_atomic(OUT29, content)
     if "--embed" in args:
         embed(content)
-    print("build-portable-text: wrote %s%s" % (OUT, " and embedded it in /instructions/" if "--embed" in args else ""))
+    print("build-portable-text: wrote %s and %s%s" % (OUT, OUT29, " and embedded it in /instructions/" if "--embed" in args else ""))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 This is the Clean Language skill, written out as rules. Apply it to the writing in this conversation unless I tell you not to.
 
-# Clean Language (condensed)
+# Clean Language (11k)
 
 Version: 1.0.12
 Author: Jeff Posluns
@@ -57,7 +57,7 @@ CORE STYLE
 
 REMOVE OR REWRITE
 
-Do not write these, and remove or rewrite them where found; in an audit, flag them. The list names common instances, not the complete set; treat unlisted wording with the same function as if it were listed.
+Do not write these, and remove or rewrite them where found; in an audit, flag them. The list names common instances, not the complete set; treat unlisted wording with the same function as if listed.
 
 - throat-clearing before the substantive point;
 - vague declarations of importance;

@@ -64,8 +64,9 @@ def redirects_body(zip_url: str, sum_url: str) -> str:
         f"/claude/download {zip_url} 302\n"
         f"/download {zip_url} 302\n"
         f"/download/checksum {sum_url} 302\n"
-        f"/downloads/cleanlanguage-instructions.txt /downloads/cleanlanguage-short.md 301\n"
-        f"/downloads/clean-language-instructions.txt /downloads/cleanlanguage-short.md 301\n"
+        f"/downloads/cleanlanguage-instructions.txt /downloads/cleanlanguage-11k.md 301\n"
+        f"/downloads/clean-language-instructions.txt /downloads/cleanlanguage-11k.md 301\n"
+        f"/downloads/cleanlanguage-short.md /downloads/cleanlanguage-11k.md 301\n"
     )
 
 
