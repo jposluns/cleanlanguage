@@ -88,21 +88,17 @@ Follow these writing rules for this conversation.
 
 The easiest reusable Gemini method is a custom Gem.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md). It saves as `cleanlanguage.md`.
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md), then open the file and copy all of its text. It saves as `cleanlanguage.md`.
 2. On a computer, open Gemini.
 3. Open the menu on the left.
 4. Click **Gems**. When necessary, click **Settings and help**, then **Gems**.
 5. Click **New Gem**.
-6. Name it **Clean Language**.
-7. In the instructions box, enter:
+6. Name it **Clean Language**, and add a short description.
+7. Paste the copied `cleanlanguage.md` text into the **Instructions** box.
+8. Set **no default tool**.
+9. Click **Save**.
 
-```text
-Follow the Clean Language instructions in the uploaded knowledge file for every response unless I explicitly tell you not to.
-```
-
-8. Under **Knowledge**, click **Add files**, then **Upload files**.
-9. Select `cleanlanguage.md`.
-10. Click **Save**.
+You can also add `cleanlanguage.md` as Gem knowledge: under **Knowledge**, click **Add files**, then **Upload files**, and select it. Pasting the instructions has given better responses than uploading alone, which Gemini sometimes ignores, so paste is the primary method. Using both together is an option.
 
 After saving it, open **Gems** and select **Clean Language** whenever you need it. Gems created on the website can also appear in the Gemini mobile app.
 
