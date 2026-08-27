@@ -100,6 +100,10 @@ def rewrite(version: str, tag: str, checksum: str) -> dict[Path, str]:
             )
             if n != 1:
                 die(f"expected one checksum version sentence in {name}, found {n}")
+            # Bare version-named filenames in the hash commands must also name
+            # this release, not only the URLs.
+            text = re.sub(r"cleanlanguage-[0-9][0-9.]*\.zip",
+                          f"cleanlanguage-{version}.zip", text)
 
         planned[path] = text
     return planned

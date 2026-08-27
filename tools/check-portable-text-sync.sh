@@ -50,6 +50,14 @@ for f in "${skill_files[@]}"; do [ -f "${f}" ] || { echo "Missing skill file: ${
 computed="$(for f in "${skill_files[@]}"; do printf '%s  %s\n' "$(sha256sum "${f}" | cut -d' ' -f1)" "${f}"; done | sha256sum | cut -d' ' -f1)"
 
 if [ "${1:-}" = "--update" ]; then
+  # Refuse to bless a stale condensed file: if the source hash changed but
+  # cleanlanguage-short.md was not touched, the reconciliation did not happen.
+  if [ -f "${recorded_file}" ] && [ "${computed}" != "$(tr -d '"'"'[:space:]'"'"' < "${recorded_file}")" ]; then
+    if git -C "${repo_root}" diff --quiet HEAD -- "${short}" 2>/dev/null && [ "${2:-}" != "--force" ]; then
+      echo "The skill source changed but ${short} was not modified; reconcile it, or pass --force if no change is needed." >&2
+      exit 1
+    fi
+  fi
   python3 tools/build-portable-text.py --embed >/dev/null
   check_common || { echo "Refusing to record: the portable files failed the opening or version check." >&2; exit 1; }
   python3 tools/build-portable-text.py --check || { echo "Refusing to record: the generated file or embed is out of date." >&2; exit 1; }

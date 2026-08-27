@@ -4,7 +4,7 @@ These instructions cover ChatGPT, Claude, Gemini, and other AI systems. The publ
 
 Upgrading from a version before 1.0.11? The skill's internal name changed from `clean-language` to `cleanlanguage`, so uploading the new file adds a second skill beside the old one. Remove the old Clean Language skill first, then install the new file.
 
-The site's [download link](https://cleanlanguage.ai/download) saves a version-named file such as `cleanlanguage-1.0.11.zip`, so repeat downloads stay distinguishable. The links below fetch the same current release under the stable name `cleanlanguage.zip`; either file installs identically.
+The site's [download link](https://cleanlanguage.ai/download) saves a version-named file such as `cleanlanguage-1.0.12.zip`, so repeat downloads stay distinguishable. The links below fetch the same current release under the stable name `cleanlanguage.zip`; either file installs identically.
 
 ## Claude
 

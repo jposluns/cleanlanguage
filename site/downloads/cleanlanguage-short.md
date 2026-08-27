@@ -24,7 +24,7 @@ PRIORITY ORDER
 
 1. Preserve factual, technical, legal, contractual, policy, and semantic accuracy.
 2. Preserve the user's explicit audience, purpose, tone, length, and format requirements.
-3. Preserve names, dates, figures, commitments, qualifications, quotations, and domain terminology.
+3. Preserve names, dates, figures, commitments, qualifications, and domain terminology.
 4. Preserve every citation, source attribution, quotation, hyperlink target, footnote, and cross-reference, and the tie between each claim and its source. Never invent a citation, and never reattach a claim to a different source.
 5. Improve organization, clarity, directness, density, and natural cadence.
 6. Remove generic AI writing patterns only when doing so does not conflict with rules 1 through 5.
