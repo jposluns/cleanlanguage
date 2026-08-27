@@ -142,7 +142,22 @@ confirm_rounds=0
 deadline=$(( $(date +%s) + timeout_seconds ))
 
 while true; do
-  checks="$(read_checks)" || exit 3
+  if ! checks="$(read_checks)"; then
+    # A transient read error is not a verdict. In wait mode keep waiting until
+    # the deadline rather than aborting (a release step calls this AFTER
+    # publishing, so a false abort strands the release); a single-shot report
+    # still fails fast.
+    if [ "${wait_for_settle}" -eq 1 ]; then
+      now="$(date +%s)"
+      if [ "${now}" -lt "${deadline}" ]; then
+        printf 'ci-status: check read failed; retrying, %s seconds left\n' "$(( deadline - now ))" >&2
+        sleep "${interval_seconds}"
+        continue
+      fi
+      printf 'ci-status: check read still failing after %s seconds; giving up\n' "${timeout_seconds}" >&2
+    fi
+    exit 3
+  fi
   verdict="$(verdict_of "${checks}")"
 
   if [ "${verdict}" != "pass" ]; then
@@ -156,6 +171,14 @@ while true; do
       # that has not registered yet is not mistaken for one that does not
       # exist. Identical means same names, statuses, and conclusions.
       if [ "${confirming}" -eq 1 ] && [ "${checks}" = "${confirmed_snapshot}" ]; then
+        # The confirming read can start before the deadline yet block past it,
+        # so re-check right before the success exit: a pass is not confirmed
+        # once the wait window has closed.
+        if [ "${wait_for_settle}" -eq 1 ] && [ "$(date +%s)" -ge "${deadline}" ]; then
+          printf 'ci-status: checks passed but only after the %s second wait window closed\n' "${timeout_seconds}" >&2
+          report "${checks}" >&2
+          exit 2
+        fi
         printf 'ci-status: every check passed for %s, confirmed on two readings\n' "${full_sha}"
         report "${checks}"
         exit 0
@@ -168,9 +191,21 @@ while true; do
       fi
       confirmed_snapshot="${checks}"
       confirming=1
-      printf 'ci-status: all checks pass; re-reading in %ss to confirm none is still registering\n' "${interval_seconds}"
+      printf 'ci-status: all checks pass; re-reading to confirm none is still registering\n'
       report "${checks}"
-      sleep "${interval_seconds}"
+      # In wait mode never sleep past the deadline; in non-wait mode the single
+      # confirmation pause is independent of the wait timeout.
+      if [ "${wait_for_settle}" -eq 1 ]; then
+        now="$(date +%s)"; left=$(( deadline - now ))
+        if [ "${left}" -le 0 ]; then
+          printf 'ci-status: the %s second wait window closed before the confirmation reading\n' "${timeout_seconds}" >&2
+          report "${checks}" >&2
+          exit 2
+        fi
+        if [ "${left}" -lt "${interval_seconds}" ]; then sleep "${left}"; else sleep "${interval_seconds}"; fi
+      else
+        sleep "${interval_seconds}"
+      fi
       continue
       ;;
     fail)
@@ -179,8 +214,21 @@ while true; do
       exit 1
       ;;
     none)
-      printf 'ci-status: no checks are recorded for %s in %s\n' "${full_sha}" "${repo}" >&2
-      printf 'ci-status: treating absent checks as unreadable, not as a pass\n' >&2
+      # Absence is never a pass. In wait mode the checks may simply not have
+      # registered yet, so wait until the deadline; a single-shot report treats
+      # absence as unreadable and exits now.
+      if [ "${wait_for_settle}" -eq 1 ]; then
+        now="$(date +%s)"
+        if [ "${now}" -lt "${deadline}" ]; then
+          printf 'ci-status: no checks recorded yet for %s; waiting, %s seconds left\n' "${full_sha}" "$(( deadline - now ))" >&2
+          sleep "${interval_seconds}"
+          continue
+        fi
+        printf 'ci-status: no checks ever registered for %s within %s seconds\n' "${full_sha}" "${timeout_seconds}" >&2
+      else
+        printf 'ci-status: no checks are recorded for %s in %s\n' "${full_sha}" "${repo}" >&2
+        printf 'ci-status: treating absent checks as unreadable, not as a pass\n' >&2
+      fi
       exit 3
       ;;
   esac
