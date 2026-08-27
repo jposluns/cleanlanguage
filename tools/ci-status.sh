@@ -183,9 +183,20 @@ while true; do
       fi
       confirmed_snapshot="${checks}"
       confirming=1
-      printf 'ci-status: all checks pass; re-reading in %ss to confirm none is still registering\n' "${interval_seconds}"
+      # Honour the deadline before the confirmation pause, and never sleep past
+      # it, so a check that only goes green after the timeout is not confirmed
+      # and merged. The release uses a timeout far larger than one interval, so
+      # this bites only a degenerate tiny timeout, never a real run.
+      now="$(date +%s)"
+      if [ "${now}" -ge "${deadline}" ]; then
+        printf 'ci-status: checks passed but the confirmation window closed after %s seconds\n' "${timeout_seconds}" >&2
+        report "${checks}" >&2
+        exit 2
+      fi
+      printf 'ci-status: all checks pass; re-reading to confirm none is still registering\n'
       report "${checks}"
-      sleep "${interval_seconds}"
+      left=$(( deadline - now ))
+      if [ "${left}" -lt "${interval_seconds}" ]; then sleep "${left}"; else sleep "${interval_seconds}"; fi
       continue
       ;;
     fail)

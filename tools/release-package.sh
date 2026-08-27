@@ -97,28 +97,43 @@ fi
 # so a shipped skill never points at a missing asset. The path may be quoted
 # with double quotes, single quotes, or left bare.
 if git cat-file -e HEAD:cleanlanguage/agents/openai.yaml 2>/dev/null; then
-  yaml="$(git show HEAD:cleanlanguage/agents/openai.yaml)"
-  # Every icon_* key must yield a checkable path that exists in the package. A
-  # key whose value cannot be parsed is a failure, not a silent skip: count the
-  # icon_ keys and require the same number of extracted paths. The extractor
-  # accepts an optional ./ prefix, single/double/no quotes, and spaces around
-  # the colon.
-  icon_lines="$(printf '%s\n' "${yaml}" | grep -Ec '^[[:space:]]*icon_[a-z]*[[:space:]]*:' || true)"
+  # Every icon_* key in the ChatGPT config must reference a file present in the
+  # package. Parse each icon_* value in full, handling quotes and a trailing
+  # YAML comment, so a stray token after the path or a comment cannot make a
+  # broken reference look valid, and fail on any unparseable key rather than
+  # skipping it silently.
+  icons="$(git show HEAD:cleanlanguage/agents/openai.yaml | python3 -c '
+import sys, re
+bad = False
+for raw in sys.stdin:
+    m = re.match(r"\s*icon_[A-Za-z0-9]+\s*:(.*)", raw)
+    if not m:
+        continue
+    v = m.group(1).strip()
+    if v[:1] in ("\"", "\x27"):
+        end = v.find(v[0], 1)
+        if end == -1:
+            sys.stderr.write("release-package: unterminated quote in icon value: %s" % raw)
+            bad = True; continue
+        val = v[1:end]
+    else:
+        val = re.sub(r"\s+#.*$", "", v).rstrip()
+    if not val:
+        sys.stderr.write("release-package: empty icon value: %s" % raw)
+        bad = True; continue
+    print(val[2:] if val.startswith("./") else val)
+sys.exit(1 if bad else 0)
+')" || { echo "release-package: could not parse an icon path in agents/openai.yaml" >&2; exit 1; }
   missing_icon=0
-  extracted=0
-  while IFS= read -r icon; do
-    [ -n "${icon}" ] || continue
-    extracted=$((extracted + 1))
-    if ! git cat-file -e "HEAD:cleanlanguage/${icon#./}" 2>/dev/null; then
-      echo "release-package: icon referenced in agents/openai.yaml is missing: ${icon}" >&2
+  while IFS= read -r rel; do
+    [ -n "${rel}" ] || continue
+    git cat-file -e "HEAD:cleanlanguage/${rel}" 2>/dev/null || {
+      echo "release-package: icon referenced in agents/openai.yaml is missing: ${rel}" >&2
       missing_icon=1
-    fi
-  done < <(printf '%s\n' "${yaml}" \
-    | sed -n 's/.*icon_[a-z]*[[:space:]]*:[[:space:]]*["'"'"']\{0,1\}\(\.\{0,1\}\/\{0,1\}[^"'"'"'[:space:]]*\).*/\1/p')
-  if [ "${extracted}" -ne "${icon_lines}" ]; then
-    echo "release-package: agents/openai.yaml has ${icon_lines} icon_ keys but ${extracted} parseable icon paths." >&2
-    missing_icon=1
-  fi
+    }
+  done <<EOF_ICONS
+${icons}
+EOF_ICONS
   [ "${missing_icon}" -eq 0 ] || exit 1
 fi
 
