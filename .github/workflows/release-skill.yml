@@ -132,7 +132,7 @@ jobs:
               # between the original release and this re-run cannot false-fail.
               published_assets="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name')"
               for asset in cleanlanguage.zip cleanlanguage.zip.sha256 "cleanlanguage-${VERSION}.zip" "cleanlanguage-${VERSION}.zip.sha256"; do
-                printf '%s\n' "${published_assets}" | grep -qx "${asset}" || {
+                printf '%s\n' "${published_assets}" | grep -qxF -- "${asset}" || {
                   echo "Published release ${RELEASE_TAG} is missing the asset ${asset}." >&2
                   echo "Republish deliberately with a manual dispatch and the force input." >&2
                   exit 1

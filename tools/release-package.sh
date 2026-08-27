@@ -98,9 +98,11 @@ fi
 # with double quotes, single quotes, or left bare.
 if git cat-file -e HEAD:cleanlanguage/agents/openai.yaml 2>/dev/null; then
   # Every icon_* key in the ChatGPT config must reference a file present in the
-  # package. Parse the YAML properly so a doubled quote, a quoted key, or a
-  # stray token after the path cannot slip a broken reference through; fail on
-  # any icon_* value that is missing, empty, or unparseable.
+  # package. Parse the YAML and walk it at ANY depth (the keys nest under an
+  # interface: mapping), so a doubled quote, a quoted key, a stray token, or a
+  # nesting change cannot slip a broken reference through. Fail on any icon_*
+  # value that is missing, empty, or unparseable, and fail if the file has NO
+  # icon_* key at all, so the check can never silently become vacuous.
   icons="$(git show HEAD:cleanlanguage/agents/openai.yaml | python3 -c '
 import sys
 try:
@@ -108,20 +110,35 @@ try:
 except ImportError:
     sys.stderr.write("release-package: PyYAML is required to validate agents/openai.yaml icons.\n")
     sys.exit(1)
-data = yaml.safe_load(sys.stdin) or {}
-if not isinstance(data, dict):
-    sys.stderr.write("release-package: agents/openai.yaml is not a mapping.\n")
-    sys.exit(1)
+data = yaml.safe_load(sys.stdin)
 bad = False
-for key, value in data.items():
-    if not (isinstance(key, str) and key.startswith("icon_")):
-        continue
-    if not isinstance(value, str) or not value.strip():
-        sys.stderr.write("release-package: icon key %s has no usable path.\n" % key)
-        bad = True
-        continue
-    path = value.strip()
-    print(path[2:] if path.startswith("./") else path)
+found = 0
+def walk(node):
+    global bad, found
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(k, str) and k.startswith("icon_"):
+                found += 1
+                if not isinstance(v, str) or not v.strip():
+                    sys.stderr.write("release-package: icon key %s has no usable path.\n" % k)
+                    bad = True
+                    continue
+                p = v.strip()
+                rel = p[2:] if p.startswith("./") else p
+                if not rel:
+                    sys.stderr.write("release-package: icon key %s resolves to an empty path.\n" % k)
+                    bad = True
+                    continue
+                print(rel)
+            else:
+                walk(v)
+    elif isinstance(node, list):
+        for item in node:
+            walk(item)
+walk(data)
+if found == 0:
+    sys.stderr.write("release-package: no icon_ keys found in agents/openai.yaml; the icon check would be vacuous.\n")
+    sys.exit(1)
 sys.exit(1 if bad else 0)
 ')" || { echo "release-package: could not validate agents/openai.yaml icons" >&2; exit 1; }
   missing_icon=0
