@@ -16,7 +16,9 @@ on:
     paths:
       - "cleanlanguage/SKILL.md"
       - "cleanlanguage/references/**"
-      - "site/downloads/cleanlanguage-instructions.txt"
+      - "site/downloads/cleanlanguage.md"
+      - "site/downloads/cleanlanguage-short.md"
+      - "tools/build-portable-text.py"
       - "site/instructions/index.html"
       - "tools/portable-text-skill-source.sha256"
       - "tools/check-portable-text-sync.sh"
@@ -28,7 +30,9 @@ on:
     paths:
       - "cleanlanguage/SKILL.md"
       - "cleanlanguage/references/**"
-      - "site/downloads/cleanlanguage-instructions.txt"
+      - "site/downloads/cleanlanguage.md"
+      - "site/downloads/cleanlanguage-short.md"
+      - "tools/build-portable-text.py"
       - "site/instructions/index.html"
       - "tools/portable-text-skill-source.sha256"
       - "tools/check-portable-text-sync.sh"

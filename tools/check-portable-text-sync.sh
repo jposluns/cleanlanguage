@@ -1,78 +1,76 @@
 #!/usr/bin/env bash
 #
-# Flags when the packaged skill changes without the portable instructions file
-# being reconciled.
+# Keeps the two portable renderings of the skill in step with the source.
 #
-# The portable text at site/downloads/cleanlanguage-instructions.txt is a
-# hand-maintained flat rendering of the skill, so this check cannot compare the
-# two byte for byte. Instead it records a hash of the skill source (SKILL.md and
-# every reference file). When the skill changes, the recorded hash no longer
-# matches, and this check fails until a maintainer reviews the portable text,
-# brings it back into line with the skill, and records the new hash with
-# --update.
+# site/downloads/cleanlanguage.md is GENERATED from the skill by
+# tools/build-portable-text.py, so this gate regenerates it and the
+# /instructions/ embed and fails on any byte drift.
 #
-# This is a reconciliation gate, not a proof of semantic equivalence. It forces
-# a deliberate review of the portable text whenever the skill source changes; it
-# does not verify that the review made the two say the same thing.
+# site/downloads/cleanlanguage-short.md is a hand-maintained condensed rendering
+# that cannot be compared byte for byte, so this gate records a hash of the skill
+# source (SKILL.md and every reference). When the skill changes the hash no
+# longer matches and the gate fails until a maintainer reconciles the condensed
+# file and re-records with --update. It is a reconciliation gate, not a proof of
+# equivalence.
+#
+# It also checks that both portable files open with the canonical first line and
+# that the Version agrees across the skill and both files.
 #
 # Usage:
-#   tools/check-portable-text-sync.sh            Check and exit non-zero on drift.
-#   tools/check-portable-text-sync.sh --update   Record the current skill hash.
+#   tools/check-portable-text-sync.sh            Check; exit non-zero on drift.
+#   tools/check-portable-text-sync.sh --update   Regenerate, verify, record the hash.
 
 set -euo pipefail
-
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
 recorded_file="tools/portable-text-skill-source.sha256"
+extended="site/downloads/cleanlanguage.md"
+short="site/downloads/cleanlanguage-short.md"
+opening="This is the Clean Language skill, written out as rules. Apply it to the writing in this conversation unless I tell you not to."
 
-# Hash SKILL.md followed by every reference file, in a stable sorted order, so
-# the result depends only on content and not on filesystem ordering.
-mapfile -t skill_files < <(
-  printf '%s\n' "cleanlanguage/SKILL.md"
-  find cleanlanguage/references -type f -name '*.md' | sort
-)
+version_of() { sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$1" | head -1; }
 
-for f in "${skill_files[@]}"; do
-  if [ ! -f "${f}" ]; then
-    echo "Expected skill file is missing: ${f}" >&2
-    exit 1
+check_common() {
+  for f in "${extended}" "${short}"; do
+    [ -f "${f}" ] || { echo "Missing ${f}." >&2; return 1; }
+    if [ "$(head -1 "${f}")" != "${opening}" ]; then
+      echo "${f} does not open with the canonical first line." >&2; return 1
+    fi
+  done
+  local sv ev shv
+  sv="$(version_of cleanlanguage/SKILL.md)"; ev="$(version_of "${extended}")"; shv="$(version_of "${short}")"
+  if [ -z "${sv}" ] || [ "${sv}" != "${ev}" ] || [ "${sv}" != "${shv}" ]; then
+    echo "Version disagreement: SKILL.md=${sv} ${extended}=${ev} ${short}=${shv}." >&2; return 1
   fi
-done
+}
 
+mapfile -t skill_files < <(printf '%s\n' "cleanlanguage/SKILL.md"; find cleanlanguage/references -type f -name '*.md' | sort)
+for f in "${skill_files[@]}"; do [ -f "${f}" ] || { echo "Missing skill file: ${f}" >&2; exit 1; }; done
 computed="$(cat "${skill_files[@]}" | sha256sum | cut -d' ' -f1)"
 
 if [ "${1:-}" = "--update" ]; then
+  python3 tools/build-portable-text.py --embed >/dev/null
+  check_common || { echo "Refusing to record: the portable files failed the opening or version check." >&2; exit 1; }
+  python3 tools/build-portable-text.py --check || { echo "Refusing to record: the generated file or embed is out of date." >&2; exit 1; }
   printf '%s\n' "${computed}" > "${recorded_file}"
-  echo "Recorded skill-source hash ${computed} in ${recorded_file}."
-  echo "Confirm site/downloads/cleanlanguage-instructions.txt matches the skill before committing."
+  echo "Recorded skill-source hash ${computed}. Reconcile ${short} with the skill before committing."
   exit 0
 fi
 
-if [ ! -f "${recorded_file}" ]; then
-  echo "Missing ${recorded_file}. Record it with: tools/check-portable-text-sync.sh --update" >&2
-  exit 1
-fi
+python3 tools/build-portable-text.py --check
+check_common
 
+[ -f "${recorded_file}" ] || { echo "Missing ${recorded_file}. Record with --update." >&2; exit 1; }
 recorded="$(tr -d '[:space:]' < "${recorded_file}")"
-
 if [ "${computed}" != "${recorded}" ]; then
   cat >&2 <<EOF
-The skill source changed but the portable instructions file was not reconciled.
-
-The packaged skill (cleanlanguage/SKILL.md and cleanlanguage/references/*.md)
-no longer matches the hash recorded in ${recorded_file}.
-
-Review the portable rendering at
-site/downloads/cleanlanguage-instructions.txt, bring it back into line with the
-skill, then record the new hash:
-
+The skill source changed but the condensed portable file was not reconciled.
+Review ${short}, bring it into line with the skill, then re-record:
   tools/check-portable-text-sync.sh --update
-
 Recorded: ${recorded}
 Computed: ${computed}
 EOF
   exit 1
 fi
-
-echo "Portable instructions are reconciled with the skill source (${computed})."
+echo "Portable files reconciled with the skill source (${computed}); generated file and embed are current."

@@ -4,7 +4,7 @@
 ``site/instructions/index.html`` shows the full Clean Language rule set so a
 reader can copy it without downloading anything. The text is embedded in the
 page rather than fetched at runtime, which means the page now holds a second copy
-of ``site/downloads/cleanlanguage-instructions.txt`` and the two can drift. This
+of ``site/downloads/cleanlanguage.md`` and the two can drift. This
 check makes that drift fail.
 
 Why the page is static
@@ -57,7 +57,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SOURCE = REPO_ROOT / "site" / "downloads" / "cleanlanguage-instructions.txt"
+SOURCE = REPO_ROOT / "site" / "downloads" / "cleanlanguage.md"
 PAGE = REPO_ROOT / "site" / "instructions" / "index.html"
 
 # The embedded block. Matched on its id so a class or attribute change does not
