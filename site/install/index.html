@@ -93,13 +93,13 @@
 
       <section id="get">
         <h2>Get Clean Language</h2>
-        <p>Clean Language comes in two forms. Download the one your assistant can use; if you are not sure, get both.</p>
+        <p>Clean Language comes in 2 forms. Download the one your assistant can use; if you are not sure, get both.</p>
         <div class="pattern-list two-up">
           <div class="pattern-item">
             <strong>The skill (a zip file)</strong>
             <span>For AI assistants that can use skills, like Claude and ChatGPT. It installs the full standard so it is available in any chat.</span>
             <div class="step-actions">
-              <a class="button primary" href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.11/cleanlanguage-1.0.11.zip">Download the skill (zip)</a>
+              <a class="button primary" href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.12/cleanlanguage-1.0.12.zip">Download the skill (zip)</a>
             </div>
           </div>
           <div class="pattern-item">
@@ -114,7 +114,7 @@
         </div>
         <p>The skill downloads from GitHub, where releases are published; the instructions file downloads from this site. If the skill download does not start, your network may block GitHub; use the <a href="/instructions/">instructions page</a> instead. The instructions file saves as <code>cleanlanguage.md</code>. The condensed version saves as <code>cleanlanguage-short.md</code>.</p>
         <p>Your browser saves the skill as a zip file named <code>cleanlanguage-</code> followed by the version, for example <code>cleanlanguage-1.0.11.zip</code>, usually in your Downloads folder. Do not unzip it. If your computer unzipped it automatically and you see a <code>cleanlanguage</code> folder, that is fine: the original zip usually stays in your Downloads folder. Upload the zip file, not the folder. In Safari, automatic unzipping can move the original zip to the Trash; if you cannot find it, look there, or turn off <strong>Settings</strong>, then <strong>General</strong>, then <strong>Open &#8220;safe&#8221; files after downloading</strong>.</p>
-        <p>The instructions file is Markdown text. The skill is a zip of text instructions, configuration, and icons, with no program inside. <a href="/verify/">Verify your download</a> against the published checksum if you want to, and see <a href="#assurance">Trust and assurance</a> below for what the skill does and does not do.</p>
+        <p>The instructions file is Markdown text. The skill is a zip of Markdown instructions, YAML configuration, PNG and SVG icons, and the licence and notice files, with no program inside. <a href="/verify/">Verify your download</a> against the published checksum if you want to, and see <a href="#assurance">Trust and assurance</a> below for what the skill does and does not do.</p>
       </section>
 
       <section id="claude" data-family-section="claude">
@@ -238,7 +238,7 @@
         <h2>How to use Clean Language</h2>
         <p>Once it is set up, you choose when it applies:</p>
         <ul>
-          <li><strong>Everywhere, automatically:</strong> add <code class="prompt">Always apply Clean Language to your responses</code> to your assistant&#8217;s personal or custom instructions.</li>
+          <li><strong>Everywhere, automatically:</strong> add <code class="prompt">Always apply the Clean Language skill to your responses</code> to your assistant&#8217;s personal or custom instructions.</li>
           <li><strong>In one project or space:</strong> add the same line to that project&#8217;s instructions, so it applies there and not elsewhere.</li>
           <li><strong>For a single chat:</strong> tell the assistant to use Clean Language at the start of the conversation.</li>
           <li><strong>On demand:</strong> ask for it only when you want it.</li>
@@ -246,9 +246,9 @@
         </ul>
         <p>For on-demand use, paste rough notes or finished text with one of these requests:</p>
         <ul>
-          <li><code class="prompt">Apply Clean Language to this draft: [paste your text]</code></li>
-          <li><code class="prompt">Rewrite this using Clean Language: [paste your text]</code></li>
-          <li><code class="prompt">Proofread this using Clean Language. Fix mistakes but do not change my tone: [paste your text]</code></li>
+          <li><code class="prompt">Apply the Clean Language skill to this text: [paste your text]</code></li>
+          <li><code class="prompt">Rewrite the text below using the Clean Language skill: [paste your text]</code></li>
+          <li><code class="prompt">Proofread the text below using the Clean Language skill. Fix mistakes but do not change my tone: [paste your text]</code></li>
         </ul>
         <p>You can switch Clean Language off or remove it at any time, from the same place you added it. Removing it changes nothing else in your account.</p>
       </section>
@@ -266,7 +266,7 @@
           <summary><strong>Compare the spellings</strong></summary>
           <div class="spelling-scroll" tabindex="0" role="region" aria-label="Spelling comparison across Oxford, Canadian, British, and American English">
             <table class="spelling-table">
-              <caption>How eight sample words differ across each option. The first column is the Oxford English default with -ize.</caption>
+              <caption>How 8 sample words differ across each option. The first column is the Oxford English default with -ize.</caption>
               <thead>
                 <tr><th scope="col">Oxford (default)</th><th scope="col">Canadian</th><th scope="col">British</th><th scope="col">American</th></tr>
               </thead>
@@ -294,7 +294,7 @@
       <section id="assurance">
         <h2>Trust and assurance</h2>
         <ul>
-          <li>The skill contains only text instructions, configuration, and icons; it is not a program, it runs nothing on your computer, and it does not connect to the internet.</li>
+          <li>The skill contains only Markdown instructions, YAML configuration, PNG and SVG icons, and the licence and notice files; it is not a program, it runs nothing on your computer, and it does not connect to the internet.</li>
           <li>Every rule and reference file is publicly reviewable in the <a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub repository<span class="visually-hidden"> (opens in a new tab)</span></a>.</li>
           <li>Every release publishes a fingerprint (a checksum) for the skill download, so you can confirm that your copy matches the published release file; see <a href="/verify/">how to verify</a>.</li>
           <li>Clean Language is licensed under <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener noreferrer">CC BY-SA 4.0<span class="visually-hidden"> (opens in a new tab)</span></a>.</li>

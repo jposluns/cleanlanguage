@@ -60,7 +60,7 @@ Tagged releases provide:
 
 Upgrading from a version before 1.0.11? The skill's internal name changed from `clean-language` to `cleanlanguage`, so uploading the new file adds a second skill beside the old one. Remove the old Clean Language skill first, then install the new file.
 
-The package contains prose instructions, metadata, and reference material. It contains no executable scripts, software dependencies, or instructions that require external network access.
+The package contains prose instructions, metadata, reference material, PNG and SVG icons, and the licence and notice files. It contains no executable scripts, software dependencies, or instructions that require external network access.
 
 ## Licence
 

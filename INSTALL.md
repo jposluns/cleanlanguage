@@ -106,9 +106,22 @@ Follow the Clean Language instructions in the uploaded knowledge file for every 
 
 After saving it, open **Gems** and select **Clean Language** whenever you need it. Gems created on the website can also appear in the Gemini mobile app.
 
+## Copilot
+
+Last verified 27 July 2026. The reusable method is a Copilot agent: create it once with Agent Builder, then select it whenever you write. How you use Clean Language may depend on your licence; if you have trouble, ask your Microsoft 365 administrator, or use the portable instructions below.
+
+1. Open Microsoft 365 Copilot on a computer.
+2. Open the agents panel and click **New agent**.
+3. Name it Clean Language.
+4. In the instructions box, enter: `Follow the Clean Language instructions in the uploaded knowledge file for every response unless I explicitly tell you not to.`
+5. Under **Knowledge**, upload `cleanlanguage.md` from your device.
+6. Click **Create**, then select the Clean Language agent whenever you write.
+
+No agent access? Attach `cleanlanguage.md` to a normal Copilot chat and say: `Follow these writing rules for this conversation.`
+
 ## Other AI systems
 
-Clean Language works with Microsoft Copilot, local models, API-based assistants, and other systems that accept custom instructions, project knowledge, system prompts, or uploaded reference files.
+Clean Language works with local models, API-based assistants, and other systems that accept custom instructions, project knowledge, system prompts, or uploaded reference files.
 
 1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md).
 2. Save the file or copy its contents.
@@ -151,4 +164,4 @@ The resulting archive must contain one `SKILL.md` entry point and retain its rel
 
 ## Package contents and assurance
 
-`cleanlanguage.zip` contains the `cleanlanguage/` directory with `SKILL.md` and reference material. It contains no executable code and makes no network calls.
+`cleanlanguage.zip` contains the `cleanlanguage/` directory with `SKILL.md`, the reference material, the agent configuration, the icons, and the licence and notice files. It contains no executable code and makes no network calls.
