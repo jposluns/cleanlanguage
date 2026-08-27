@@ -24,8 +24,8 @@ permissions:
   contents: write
 
 concurrency:
-  # Serialize releases for a tag so two runs cannot interleave the tag, the
-  # release, and the site steps. A release in progress is never cancelled.
+  # Serialize releases for a tag so two runs cannot interleave the tag and the
+  # release. A release in progress is never cancelled.
   group: release-skill-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
@@ -58,8 +58,8 @@ jobs:
             echo "Set the Version line in cleanlanguage/SKILL.md to match the tag, or cut the matching tag." >&2
             exit 1
           fi
-          # The release flips the site to name this version, and the site step
-          # reads main's SKILL.md as authoritative. Require the version bump to
+          # The orchestrator flips the site to name this version after the release,
+          # reading main's SKILL.md as authoritative. Require the version bump to
           # be on main ALREADY (main at or ahead of this version), so a release
           # whose bump has not landed fails HERE, before anything is published,
           # rather than publishing and then stranding an unmergeable site flip.
