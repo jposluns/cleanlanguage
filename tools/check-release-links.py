@@ -28,8 +28,8 @@ What it does not verify
 
 It does not fetch anything. It cannot tell whether the displayed checksum is the
 true value of the published asset, only that it is well formed and consistent within
-the site. Confirming the value against the release requires the network and
-belongs to the release workflow, which computes it.
+the site. Confirming the value against the release requires the network and is
+done by the orchestrator's post-release site flip, which reads the published checksum.
 
 Exit codes:
   0  every release link and the displayed checksum agree with SKILL.md
@@ -126,8 +126,9 @@ def main() -> int:
         for problem in dict.fromkeys(problems):
             print(f"  - {problem}")
         print(
-            f"\nRun the release workflow, or update the version and checksum by hand, "
-            f"so the site matches SKILL.md ({expected})."
+            f"\nFlip the site with tools/set-release-links.py using the published "
+            f"release checksum (see the release runbook), or update the version and "
+            f"checksum by hand, so the site matches SKILL.md ({expected})."
         )
         return 1
 

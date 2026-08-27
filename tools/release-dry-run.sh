@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# Proves the release path end to end without publishing anything.
+# Proves the local, side-effect-free part of the release path without publishing.
 #
-# The release workflow does four things a test can prove without touching
-# GitHub: validate and package the skill, rewrite the site at the new release,
-# stamp the modified dates that rewrite implies, and satisfy the gates the
-# auto-opened site pull request must pass. This script runs all four against a
-# throwaway git worktree, at a synthetic next version, and asserts the results.
-# The side-effecting steps (tag push, gh release, opening and merging the pull
-# request) stay in the workflow and are deliberately absent here: this script
-# contains no gh call and no git push, and it proves at exit that no
-# repository ref moved.
+# The release path does four things a test can prove without touching GitHub:
+# validate and package the skill, rewrite the site at the new release, stamp the
+# modified dates that rewrite implies, and satisfy the gates the site pull
+# request must pass. This script runs all four against a throwaway git worktree,
+# at a synthetic next version, and asserts the results. The side-effecting steps
+# are deliberately absent here: the tag push and gh release stay in the workflow,
+# the site checksum flip and its pull request are performed by the orchestrator
+# out of band after the release publishes, and this script contains no gh call
+# and no git push, proving at exit that no repository ref moved.
 #
 # To keep the date-stamp proof honest, the worktree's modified-date fields are
 # first seeded with an old sentinel, so the gates and the assertions can only
@@ -122,13 +122,14 @@ second_sum="$(cut -d' ' -f1 < dist/cleanlanguage.zip.sha256)"
 [ "${first_sum}" = "${second_sum}" ] \
   || fail "the build is not reproducible: ${first_sum} vs ${second_sum} under a different umask/ZIPOPT"
 
-# 2. Point the site at the dry-run release, exactly as the release does,
+# 2. Point the site at the dry-run release, exactly as the orchestrator's
+#    post-release flip does,
 #    including the real checksum of the zip just built.
 checksum="$(cut -d' ' -f1 < "dist/cleanlanguage-${dry_version}.zip.sha256")"
 tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
   --checksum "${checksum}" --date "${dry_date}"
 
-# 3. The writer's own gate, then every gate the auto-opened site pull request
+# 3. The writer's own gate, then every gate the site pull request
 #    triggers (link check, page metadata, and the install page; the portable
 #    text gate does not run on a site-only pull request, and the synthetic
 #    version bump above stands in for a human commit that gate already
