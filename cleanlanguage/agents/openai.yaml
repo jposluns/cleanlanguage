@@ -4,4 +4,4 @@ interface:
   icon_small: "./assets/CL_icon.svg"
   icon_large: "./assets/CL_icon.png"
   brand_color: "#145c3b"
-  default_prompt: "Apply Clean Language to draft, rewrite, or review this prose while preserving factual and technical meaning."
+  default_prompt: "Apply the Clean Language skill to draft, rewrite, or review this text while preserving factual and technical meaning."

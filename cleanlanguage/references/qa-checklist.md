@@ -8,6 +8,7 @@ Review finished prose against these questions.
 - Did the output introduce any owner, figure, date, risk, cause, or action that the source does not contain? If so, remove it or flag it as missing.
 - Did any stylistic change alter technical, legal, contractual, policy, or standards meaning?
 - Are assumptions and uncertainty labelled accurately?
+- Did the output preserve every citation, source attribution, quotation, hyperlink target, footnote, and cross-reference, and the tie between each claim and its source? Never invent a citation, and never reattach a claim to a different source.
 
 ## Directness
 
@@ -47,7 +48,9 @@ Review finished prose against these questions.
 
 - Use Oxford English and `-ize` spellings.
 - After any verb that can take either a direct object or a clause, such as `confirm`, `verify`, `ensure`, `note`, or `report`, check whether the following words could be read as a direct object when a clause is intended; if so, mark the clause with `that`, adding it where it is missing. The density review does not remove this `that`.
-- Avoid em and en dashes unless the user or source requires them; write numeric and date ranges with a hyphen or `to`.
+- Follow `ensure` with `that` and a clause; use `assure` before a noun.
+- Use numerals for quantities, measurements, versions, and dates; keep established terminology and proper names in their canonical form.
+- Remove every em and en dash, converting each to the punctuation the sentence needs; write numeric and date ranges with a hyphen or `to`. Keep a dash only inside quoted or verbatim material.
 - Use punctuation and capitalization consistently.
 - Preserve channel-specific formatting requirements.
 - Do not end with an optional offer or generic engagement prompt.

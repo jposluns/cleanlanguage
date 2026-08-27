@@ -44,19 +44,19 @@ We found three issues: missing backups, an expired certificate, and an open admi
 
 ### Weak
 
-The team has made meaningful progress, but the process still lacks an accountable owner, an approval gate, and tested recovery.
+The team has been working hard, but the process still lacks an accountable owner, an approval gate, and tested recovery.
 
 ### Preferred
 
 The process lacks an accountable owner, an approval gate, and tested recovery.
 
-Add progress or mitigating evidence only when it changes the assessment.
+Add progress or mitigating evidence only when it changes the assessment; a specific, material gain is a fact and stays.
 
 ## Preserve technical agency
 
 ### Source
 
-After the change review, the infrastructure team configured the firewall to block inbound connections from untrusted networks.
+After the change review, the infrastructure team configured the firewall to block inbound connections from untrusted networks and confirmed that the firewall now blocks them.
 
 ### Preferred when the configuration is the relevant fact
 
@@ -64,7 +64,7 @@ The firewall blocks inbound connections from untrusted networks.
 
 ### Preferred when accountability is the relevant fact
 
-The infrastructure team configured that firewall rule.
+The infrastructure team made that firewall change.
 
 ## Preserve useful adverbs
 
@@ -90,7 +90,7 @@ I wanted to reach out to see if we could align on the warehouse project: the own
 
 ### Preferred
 
-Please confirm the warehouse project's owner, critical path, unresolved dependencies, and recovery plan by 3:00 p.m. Thursday.
+Please confirm the warehouse project's owner, critical path, unresolved dependencies, and recovery plan before 3:00 p.m. Thursday.
 
 ## Replace executive template phrasing
 
@@ -120,7 +120,7 @@ The situation appears to be under control, and the team is continuing to work di
 
 ### Preferred
 
-The affected server is isolated. File transfers resumed at 06:40. The root cause is not confirmed, and the legacy environment still requires rebuild approval.
+The affected server is isolated. File transfers resumed at 06:40. The root cause is not yet confirmed, and the legacy environment still requires rebuild approval.
 
 ## Proofreading with minimal intervention
 
