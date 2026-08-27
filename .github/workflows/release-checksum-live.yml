@@ -1,0 +1,45 @@
+name: Release checksum live
+
+# The machine-visible completion signal for a release. The release workflow
+# publishes the assets and stops; the orchestrator flips the site checksum out
+# of band under a user token (see the release runbook), matching the rest of the
+# fleet, which keeps pull request authorship out of GitHub Actions. This
+# checks-only workflow goes red if the verify page checksum does not match the
+# published release asset, so a forgotten or wrong flip cannot ship green and
+# stay wrong. It authors nothing: read-only, no pull request, no push. The daily
+# schedule catches a forgotten flip that produced no further push to main. See
+# tools/check-release-checksum-live.py for exactly what it proves.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "site/verify/index.html"
+      - "cleanlanguage/SKILL.md"
+      - "tools/check-release-checksum-live.py"
+      - ".github/workflows/release-checksum-live.yml"
+  pull_request:
+    paths:
+      - "site/verify/index.html"
+      - "cleanlanguage/SKILL.md"
+      - "tools/check-release-checksum-live.py"
+      - ".github/workflows/release-checksum-live.yml"
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Verify the site checksum matches the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: python3 tools/check-release-checksum-live.py
