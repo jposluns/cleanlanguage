@@ -46,8 +46,8 @@ case "${dry_date}" in
   [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
   *) fail "DRY_DATE must be YYYY-MM-DD, got ${dry_date}" ;;
 esac
-# A date the current page stamps predate, so a broken stamping step cannot pass
-# by leaving the existing dates in place.
+# A date that predates the current page stamps, so a broken stamping step
+# cannot pass by leaving the existing dates in place.
 seed_date="2020-01-01"
 
 refs_before="$(git for-each-ref | sha256sum)"
@@ -55,10 +55,8 @@ refs_before="$(git for-each-ref | sha256sum)"
 version="$(git show HEAD:cleanlanguage/SKILL.md \
   | sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -1)"
 [ -n "${version}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
-case "${version}" in
-  [0-9]*.[0-9]*.[0-9]*) ;;
-  *) fail "expected a three-part version like 1.0.11, got ${version}" ;;
-esac
+printf '%s' "${version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+  || fail "expected a three-part version like 1.0.11, got ${version}"
 patch="${version##*.}"
 dry_version="${version%.*}.$(( 10#${patch} + 1 ))"
 dry_tag="v${dry_version}"

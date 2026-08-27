@@ -6,7 +6,8 @@
 # metadata. Filesystem permission bits vary by machine (an ACL can add execute
 # bits the repository never recorded), so a check that read them would pass on
 # one machine and fail on another. The git tree is identical everywhere the
-# commit exists, so this script gives one answer everywhere.
+# commit exists, and the archive is stamped from the commit and ordered, so
+# the same commit gives the same bytes and the same checksum everywhere.
 #
 # What it does, in order:
 #
@@ -115,10 +116,19 @@ git show HEAD:LICENSE > "${staging}/cleanlanguage/LICENSE"
 git show HEAD:NOTICE.md > "${staging}/cleanlanguage/NOTICE.md"
 chmod 644 "${staging}/cleanlanguage/LICENSE" "${staging}/cleanlanguage/NOTICE.md"
 
+# A byte-reproducible archive: stamp every staged path with the commit's own
+# timestamp, order the entries, and read the DOS times in UTC, so the same
+# commit always yields the same zip and therefore the same checksum, on any
+# machine and at any clock time. Without this the staged licence files would
+# carry the build clock, so a later rebuild of the same commit would not match.
+commit_epoch="$(git show -s --format=%ct HEAD)"
+find "${staging}" -exec touch -h -d "@${commit_epoch}" {} +
+
 rm -rf dist
 mkdir -p dist
 dist_dir="$(pwd)/dist"
-(cd "${staging}" && zip -q -r -X "${dist_dir}/cleanlanguage.zip" cleanlanguage)
+(cd "${staging}" && find cleanlanguage -print | LC_ALL=C sort \
+  | TZ=UTC zip -q -X -@ "${dist_dir}/cleanlanguage.zip")
 cp dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip"
 (cd dist && sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256)
 (cd dist && sha256sum "cleanlanguage-${version}.zip" > "cleanlanguage-${version}.zip.sha256")

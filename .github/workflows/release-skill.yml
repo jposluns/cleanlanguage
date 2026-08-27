@@ -22,6 +22,12 @@ permissions:
   # tools/ci-status.sh reads the Check Runs API on the site pull request.
   checks: read
 
+concurrency:
+  # Serialize releases for a tag so two runs cannot interleave the tag, the
+  # release, and the site steps. A release in progress is never cancelled.
+  group: release-skill-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   package-and-release:
     runs-on: ubuntu-latest
@@ -70,9 +76,11 @@ jobs:
           # transient error fails closed rather than reading as "no release".
           response="$(mktemp)"
           set +e
-          gh api --include "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" >"${response}" 2>&1
+          gh api --include --silent "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" >"${response}" 2>&1
           set -e
-          status="$(awk 'toupper($1) ~ /^HTTP/ { code=$2 } END { print code }' "${response}")"
+          # --silent drops the body, so only headers are scanned; match a real
+          # status line and keep the last one, after any redirects.
+          status="$(awk '$1 ~ /^HTTP\/[0-9.]+$/ { code=$2 } END { print code }' "${response}")"
           rm -f "${response}"
           case "${status}" in
             200) release_exists=1 ;;
@@ -83,20 +91,34 @@ jobs:
               exit 1
               ;;
           esac
-          # Resolve the remote tag on its own, peeling an annotated tag to its
-          # commit, so tag moves are governed independently of the release.
-          remote_tag_sha="$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" "refs/tags/${RELEASE_TAG}" | awk 'END { print $1 }')"
+          # Resolve the remote tag on its own, preferring the peeled commit
+          # line (^{}) explicitly so an annotated tag resolves to its commit
+          # regardless of output order. Tag moves are governed independently.
+          remote_tag_sha="$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" "refs/tags/${RELEASE_TAG}" | awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { plain=$1 } END { print (peeled != "" ? peeled : plain) }')"
           if [ "${release_exists}" -eq 1 ]; then
             if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${FORCE}" = "true" ]; then
               echo "force is enabled; overwriting the published release ${RELEASE_TAG}."
             elif [ "${remote_tag_sha}" = "${GITHUB_SHA}" ]; then
-              # A re-run at the same commit: the assets are already published,
-              # and rebuilding would change their checksum, so leave them and
-              # continue to the site step.
-              echo "Release ${RELEASE_TAG} is already published at ${GITHUB_SHA}; leaving its assets untouched and continuing."
+              # A re-run at the same commit: keep the published assets rather
+              # than re-uploading (which would change their checksum). Require
+              # the four expected assets to be present, then take the published
+              # checksum files so the site step displays the checksum of the
+              # published bytes, not a fresh local build.
+              published_assets="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name')"
+              for asset in cleanlanguage.zip cleanlanguage.zip.sha256 "cleanlanguage-${VERSION}.zip" "cleanlanguage-${VERSION}.zip.sha256"; do
+                printf '%s\n' "${published_assets}" | grep -qx "${asset}" || {
+                  echo "Published release ${RELEASE_TAG} is missing the asset ${asset}." >&2
+                  echo "Republish deliberately with a manual dispatch and the force input." >&2
+                  exit 1
+                }
+              done
+              gh release download "${RELEASE_TAG}" --dir dist --clobber \
+                --pattern "cleanlanguage.zip.sha256" \
+                --pattern "cleanlanguage-${VERSION}.zip.sha256"
+              echo "Release ${RELEASE_TAG} is already published at ${GITHUB_SHA}; kept its assets and took its published checksum. Continuing to the site step."
               exit 0
             else
-              echo "Release ${RELEASE_TAG} is already published at a different commit." >&2
+              echo "Release ${RELEASE_TAG} is already published, but its tag now resolves to ${remote_tag_sha:-nothing}, not ${GITHUB_SHA}." >&2
               echo "Republishing different bytes under a published version would break its checksum as a trust signal." >&2
               echo "Cut a new version, or run this workflow manually with the force input to overwrite ${RELEASE_TAG} deliberately (select the tag as the run ref)." >&2
               exit 1
@@ -179,10 +201,17 @@ jobs:
           GIT_AUTHOR_DATE="${site_date}T12:00:00Z" GIT_COMMITTER_DATE="${site_date}T12:00:00Z" \
             git commit -m "Point the site downloads at ${RELEASE_TAG}"
           git push --force origin "HEAD:${branch}"
-          pr_url="$(gh pr create --base main --head "${branch}" \
-            --title "Point the site downloads at ${RELEASE_TAG}" \
-            --body "Automated for the ${RELEASE_TAG} release: the download buttons, the redirects, and the published checksum on the verify page now name the ${RELEASE_TAG} assets.")"
-          echo "Opened ${pr_url}"
+          # Reuse an open pull request for this branch if a previous run opened
+          # one, so a re-run finishes rather than failing on a duplicate.
+          pr_url="$(gh pr list --head "${branch}" --base main --state open --json url --jq '.[0].url // empty')"
+          if [ -z "${pr_url}" ]; then
+            pr_url="$(gh pr create --base main --head "${branch}" \
+              --title "Point the site downloads at ${RELEASE_TAG}" \
+              --body "Automated for the ${RELEASE_TAG} release: the download buttons, the redirects, and the published checksum on the verify page now name the ${RELEASE_TAG} assets.")"
+            echo "Opened ${pr_url}"
+          else
+            echo "Reusing the open pull request ${pr_url}."
+          fi
           sleep 20
           tools/ci-status.sh "$(git rev-parse HEAD)" --wait --repo "${GITHUB_REPOSITORY}"
           gh pr merge "${pr_url}" --squash --delete-branch
