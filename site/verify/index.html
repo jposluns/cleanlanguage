@@ -98,11 +98,11 @@
             <p>On macOS: press Command+Space, type <code>Terminal</code>, press Return, then type <code>cd Downloads</code> and press Return.</p>
             <p>Copy the command for your system, paste it into the window, and press Enter.</p>
             <p class="label">Windows (PowerShell)</p>
-            <pre><code>Get-FileHash cleanlanguage-*.zip -Algorithm SHA256</code></pre>
+            <pre><code>Get-FileHash cleanlanguage-1.0.11.zip -Algorithm SHA256</code></pre>
             <p class="label">macOS</p>
-            <pre><code>shasum -a 256 cleanlanguage-*.zip</code></pre>
+            <pre><code>shasum -a 256 cleanlanguage-1.0.11.zip</code></pre>
             <p class="label">Linux</p>
-            <pre><code>sha256sum cleanlanguage-*.zip</code></pre>
+            <pre><code>sha256sum cleanlanguage-1.0.11.zip</code></pre>
           </li>
           <li>Compare the value your computer prints with the published checksum shown in step one. Letter case does not matter: PowerShell prints the hash in upper case, while the published value is lower case, so compare the letters and digits, not the case. A match means your copy matches the published release. If the two differ, delete the file, download it again, and check once more. If the values still differ after a fresh download, do not install the file and <a href="https://github.com/jposluns/cleanlanguage/issues" target="_blank" rel="noopener noreferrer">report it on GitHub<span class="visually-hidden"> (opens in a new tab)</span></a>.</li>
         </ol>

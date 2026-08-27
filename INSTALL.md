@@ -22,7 +22,7 @@ The preferred Claude method installs the complete Skill package.
 Test it in a new chat:
 
 ```text
-Apply Clean Language to this draft: [paste your text]
+Apply the Clean Language skill to this text: [paste your text]
 ```
 
 Team and Enterprise administrators may need to enable Skills. An organization owner can upload the Skill once for everyone.
@@ -33,7 +33,7 @@ The matching checksum is available as [`cleanlanguage.zip.sha256`](https://githu
 
 Use this when Skills are unavailable.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.txt).
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md).
 2. In Claude, click **Projects**, then **New Project**.
 3. Name the project **Clean Language**.
 4. Under **Project knowledge**, click **+** and upload the saved file.
@@ -57,7 +57,7 @@ ChatGPT can use the same packaged Skill as Claude. Upload it once, and ChatGPT a
 Test it in a new chat:
 
 ```text
-Apply Clean Language to this draft: [paste your text]
+Apply the Clean Language skill to this text: [paste your text]
 ```
 
 Workspace administrators may need to allow members to use and upload Skills.
@@ -66,7 +66,7 @@ Workspace administrators may need to allow members to use and upload Skills.
 
 Use this when your account cannot upload a skill.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.txt). It saves as `cleanlanguage-instructions.txt`.
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md). It saves as `cleanlanguage.md`.
 2. Open ChatGPT, click **Plugins**, then open **Skills**.
 3. Click **Create**, then **Create with chat**.
 4. Enter:
@@ -75,7 +75,7 @@ Use this when your account cannot upload a skill.
 Create a skill named Clean Language using the instructions in the file I am about to upload.
 ```
 
-5. Attach `cleanlanguage-instructions.txt` and send the message.
+5. Attach `cleanlanguage.md` and send the message.
 6. When ChatGPT shows the completed Skill, click **Install**.
 
 When Plugins or Skills are unavailable, attach the instructions file to a normal chat and enter:
@@ -88,7 +88,7 @@ Follow these writing rules for this conversation.
 
 The easiest reusable Gemini method is a custom Gem.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.txt). It saves as `cleanlanguage-instructions.txt`.
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md). It saves as `cleanlanguage.md`.
 2. On a computer, open Gemini.
 3. Open the menu on the left.
 4. Click **Gems**. When necessary, click **Settings and help**, then **Gems**.
@@ -97,11 +97,11 @@ The easiest reusable Gemini method is a custom Gem.
 7. In the instructions box, enter:
 
 ```text
-Follow the Clean Language instructions in the attached knowledge file for every response.
+Follow the Clean Language instructions in the uploaded knowledge file for every response unless I explicitly tell you not to.
 ```
 
 8. Under **Knowledge**, click **Add files**, then **Upload files**.
-9. Select `cleanlanguage-instructions.txt`.
+9. Select `cleanlanguage.md`.
 10. Click **Save**.
 
 After saving it, open **Gems** and select **Clean Language** whenever you need it. Gems created on the website can also appear in the Gemini mobile app.
@@ -110,7 +110,7 @@ After saving it, open **Gems** and select **Clean Language** whenever you need i
 
 Clean Language works with Microsoft Copilot, local models, API-based assistants, and other systems that accept custom instructions, project knowledge, system prompts, or uploaded reference files.
 
-1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage-instructions.txt).
+1. Download the [portable Clean Language instructions](https://cleanlanguage.ai/downloads/cleanlanguage.md).
 2. Save the file or copy its contents.
 3. Add it to the AI tool as custom instructions, project knowledge, a system prompt, or an attached reference file.
 4. Enter:
