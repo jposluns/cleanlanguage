@@ -129,14 +129,20 @@ checksum="$(cut -d' ' -f1 < "dist/cleanlanguage-${dry_version}.zip.sha256")"
 tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
   --checksum "${checksum}" --date "${dry_date}"
 
+# The sitemap is regenerated from the restamped pages, repairing the sentinel
+# dates seeded above. set-release-links no longer edits the sitemap; the
+# generator owns it.
+python3 tools/generate-sitemap.py --write
+
 # 3. The writer's own gate, then every gate the site pull request
-#    triggers (link check, page metadata, and the install page; the portable
+#    triggers (link check, page metadata, the sitemap, and the install page; the portable
 #    text gate does not run on a site-only pull request, and the synthetic
 #    version bump above stands in for a human commit that gate already
 #    covers in real pull requests). check-page-metadata can only pass if the
 #    writer restamped the sentinel dates seeded above.
 tools/check-release-links.py
 python3 tools/check-page-metadata.py
+python3 tools/generate-sitemap.py
 python3 tools/check-links.py
 python3 tools/check-install-page.py
 

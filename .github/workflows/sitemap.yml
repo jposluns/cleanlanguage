@@ -1,0 +1,37 @@
+name: Sitemap
+
+# Verify that site/sitemap.xml is exactly what the generator produces from the
+# page tree and each page's article:modified_time. The sitemap is a generated
+# artefact: tools/generate-sitemap.py writes it and, with no flag, re-derives it
+# and compares byte for byte, so a hand edit, a stale entry, an added or removed
+# page, or a forgotten regeneration fails here.
+#
+# This workflow carries no paths filter on purpose. A path-filtered required
+# check never reports on a pull request outside its paths and blocks the merge
+# as forever-pending; running on every pull request keeps this gate promotable
+# to a required check later. The run needs no git history, so the checkout stays
+# shallow.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Verify the sitemap matches the pages
+        shell: bash
+        run: python3 tools/generate-sitemap.py
+
+      - name: Run the sitemap engine tests
+        shell: bash
+        run: python3 tools/test-sitemap.py
