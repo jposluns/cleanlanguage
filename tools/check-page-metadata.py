@@ -71,9 +71,6 @@ import sitemap_engine as engine  # noqa: E402
 
 SITEMAP_CONFIG = REPO_ROOT / "tools" / "sitemap-config.json"
 
-# Pages that must carry the metadata. 404.html is deliberately absent.
-EXCLUDED = {"404.html"}
-
 # Pages whose publish date cannot come from git history, with the reason. A page
 # that was deleted and re-added, or moved in from elsewhere, belongs here rather
 # than being handled by weakening the check.
@@ -136,9 +133,13 @@ def last_change_date(relative: str) -> str | None:
 
 def content_pages() -> list[Path]:
     """The content pages, enumerated by the shared engine so this gate and the
-    sitemap generator check definitionally the same set."""
-    config = engine.load_config(SITEMAP_CONFIG)
-    return engine.enumerate_pages(SITE_ROOT, config["include"], config["exclude"])
+    sitemap generator start from the same set. A bad shared config makes this
+    gate exit 3, matching its own could-not-run contract, rather than crashing."""
+    try:
+        config = engine.load_config(SITEMAP_CONFIG)
+        return engine.enumerate_pages(SITE_ROOT, config["include"], config["exclude"])
+    except engine.EngineError as error:
+        die(str(error))
 
 
 def check_page(path: Path, today: str) -> tuple[list[str], str | None]:

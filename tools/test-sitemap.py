@@ -183,5 +183,56 @@ class LiveTreeTest(unittest.TestCase):
         self.assertTrue(ok, message)
 
 
+class FixesTest(unittest.TestCase):
+    def test_nested_url_keeps_full_path(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            site = root / "site" / "docs" / "start"
+            site.mkdir(parents=True)
+            url = "https://x.test/docs/start/"
+            (site / "index.html").write_text(
+                PAGE.format(modified="2026-01-01", canonical=url, robots=""),
+                encoding="utf-8",
+            )
+            entries = engine.build_entries(config(include=["**/index.html"]), root)
+            self.assertEqual(entries, [(url, "2026-01-01")])
+
+    def test_include_escape_fails_closed(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            root = make_repo(Path(d), {"": {}})
+            (root / "evil.html").write_text("outside", encoding="utf-8")
+            with self.assertRaises(engine.EngineRunError):
+                engine.build_entries(config(include=["index.html", "../evil.html"]), root)
+
+    def test_impossible_date_rejected(self):
+        with self.assertRaises(engine.EngineError):
+            engine.read_meta_stamp(
+                '<meta property="article:modified_time" content="2026-02-31">',
+                "article:modified_time",
+            )
+
+    def test_noindex_cannot_be_masked(self):
+        html = (
+            '<meta name="robots" content="noindex">'
+            '<meta name="robots" content="index">'
+        )
+        self.assertFalse(engine.is_indexable(html))
+
+    def test_write_leaves_readable_mode(self):
+        import stat as _stat
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            root = make_repo(Path(d), {"": {}})
+            engine.write(config(), root)
+            mode = _stat.S_IMODE((root / "site" / "sitemap.xml").stat().st_mode)
+            self.assertTrue(mode & _stat.S_IRGRP or mode & _stat.S_IROTH,
+                            f"sitemap mode {oct(mode)} is not group/other readable")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

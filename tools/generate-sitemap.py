@@ -11,7 +11,8 @@ Exit codes:
   0  the committed sitemap matches (verify), or it was written (--write)
   1  the committed sitemap drifted, or an input was invalid
   2  the command line was wrong
-  3  the check could not run: the config or site root could not be read
+  3  the check could not run: the config, the site root, or a page could not
+     be read, or the config is invalid
 """
 
 from __future__ import annotations
@@ -44,14 +45,15 @@ def main() -> int:
         ok, message = engine.verify(config, REPO_ROOT)
         print(f"generate-sitemap: {message}")
         return 0 if ok else 1
+    except engine.EngineRunError as error:
+        # The check could not run: a bad or unreadable config, a missing or
+        # escaping site root, or an unreadable page.
+        print(f"generate-sitemap: {error}", file=sys.stderr)
+        return 3
     except engine.EngineError as error:
-        # A drift is a 1; an unreadable config or site root is a 3. The message
-        # already names which; distinguish on the two "cannot run" phrasings.
-        text = str(error)
-        if text.startswith("cannot read config") or "site root" in text or "config" in text:
-            print(f"generate-sitemap: {text}", file=sys.stderr)
-            return 3
-        print(f"generate-sitemap: {text}", file=sys.stderr)
+        # The tree is in an invalid state: drift, a canonical mismatch, a
+        # missing or duplicate stamp, or an empty page set.
+        print(f"generate-sitemap: {error}", file=sys.stderr)
         return 1
 
 

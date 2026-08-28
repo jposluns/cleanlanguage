@@ -18,18 +18,35 @@ The engine owns the shared primitives: config loading and validation, page
 enumeration, meta-tag parsing, the indexability filter, the last-modified
 resolvers, URL derivation, sorting, the canonical serializer, byte comparison,
 and the atomic write. The style constants live here too, so every adopting site
-renders identically.
+renders identically. The engine names no site: it holds no origin, no site
+directory, and no per-page policy.
 
-The engine names no site. It contains no origin, no site directory, and no
-per-page policy. A project supplies those through its config; see
-`tools/sitemap-config.json` for this project's.
+What a fleet consumer must not assume
+-------------------------------------
+
+* Pages are `index.html` files addressed as directory-style pretty URLs
+  (`site/guide/index.html` becomes `<base>/guide/`). A flat-file layout
+  (`about.html` served at `/about.html`) needs a deliberate engine extension,
+  not a config change; two root-level non-index files would both derive `<base>/`
+  and fail as duplicates. The `include` globs may nest to any depth, and the URL
+  keeps the full path (`site/a/b/index.html` becomes `<base>/a/b/`).
+* Indexability is read from an HTML `<meta name="robots">` tag. A page hidden by
+  a transport header (an `X-Robots-Tag`) is invisible here and must be named in
+  `exclude`.
+* HTML uses double-quoted attributes, matching this repository's pages and
+  `tools/check-page-metadata.py`. A single-quoted `rel="canonical"` or `robots`
+  tag is not recognized.
+* The `lastmod` stamp is the authority. The `git_last_change` resolver fails
+  closed on a page with no committed history rather than inventing a date.
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import os
 import re
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -45,9 +62,7 @@ INDENT = "  "
 # pattern would stop seeing it if the attributes were reordered.
 META_TAG = re.compile(r"<meta\s+([^>]*?)/?>", re.I)
 META_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
-CANONICAL = re.compile(
-    r'<link\s+[^>]*rel="canonical"[^>]*>', re.I
-)
+CANONICAL = re.compile(r'<link\s+[^>]*rel="canonical"[^>]*>', re.I)
 HREF_ATTR = re.compile(r'href="([^"]*)"', re.I)
 ROBOTS_NOINDEX = re.compile(r"\b(noindex|none)\b", re.I)
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -65,7 +80,24 @@ ALLOWED_LASTMOD_SOURCES = {"html_meta_property", "git_last_change"}
 
 
 class EngineError(Exception):
-    """A recoverable failure: bad config, an unreadable page, or drift."""
+    """A failure of the tree: drift, or a page that is not in a valid state.
+    The caller maps this to a gate failure (exit 1)."""
+
+
+class EngineRunError(EngineError):
+    """The check could not run: a bad or unreadable config, a missing or
+    escaping site root, or an unreadable page. The caller maps this to exit 3,
+    on the principle that an unanswerable check is never a pass."""
+
+
+def _contained(path: Path, root: Path) -> bool:
+    """True when path resolves to root itself or somewhere beneath it. Resolving
+    follows symlinks, so a link pointing outside the tree is caught."""
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 # --- Configuration -------------------------------------------------------
@@ -75,43 +107,44 @@ def load_config(path: Path) -> dict:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except OSError as error:
-        raise EngineError(f"cannot read config {path}: {error}") from error
+        raise EngineRunError(f"cannot read config {path}: {error}") from error
     except json.JSONDecodeError as error:
-        raise EngineError(f"config {path} does not parse: {error}") from error
+        raise EngineRunError(f"config {path} does not parse: {error}") from error
     if not isinstance(raw, dict):
-        raise EngineError(f"config {path} is not a JSON object")
+        raise EngineRunError(f"config {path} is not a JSON object")
 
     unknown = set(raw) - ALLOWED_CONFIG_KEYS
     if unknown:
-        raise EngineError(f"config has unknown keys: {', '.join(sorted(unknown))}")
+        raise EngineRunError(f"config has unknown keys: {', '.join(sorted(unknown))}")
     if raw.get("schema") != 1:
-        raise EngineError('config must set "schema": 1')
+        raise EngineRunError('config must set "schema": 1')
 
     base_url = raw.get("base_url", "")
-    if not isinstance(base_url, str) or not base_url.startswith("https://"):
-        raise EngineError('config "base_url" must be an https:// URL')
-    if any(c in base_url for c in "?#") or base_url.endswith("/"):
-        raise EngineError('config "base_url" must carry no query, fragment, or trailing slash')
+    if not isinstance(base_url, str) or not re.match(r"^https://[^/?#]+$", base_url):
+        raise EngineRunError(
+            'config "base_url" must be an https:// origin with no path, query, '
+            "fragment, or trailing slash"
+        )
 
     for key in ("site_root", "output"):
         value = raw.get(key)
         if not isinstance(value, str) or not value:
-            raise EngineError(f'config "{key}" must be a non-empty path')
+            raise EngineRunError(f'config "{key}" must be a non-empty path')
         if Path(value).is_absolute() or ".." in Path(value).parts:
-            raise EngineError(f'config "{key}" must be a relative path inside the repository')
+            raise EngineRunError(f'config "{key}" must be a relative path inside the repository')
 
     for key in ("include", "exclude"):
         value = raw.get(key, [])
         if not isinstance(value, list) or not all(isinstance(g, str) for g in value):
-            raise EngineError(f'config "{key}" must be a list of glob strings')
+            raise EngineRunError(f'config "{key}" must be a list of glob strings')
 
     lastmod = raw.get("lastmod", {})
     if not isinstance(lastmod, dict) or lastmod.get("source") not in ALLOWED_LASTMOD_SOURCES:
-        raise EngineError(
+        raise EngineRunError(
             f'config "lastmod.source" must be one of {sorted(ALLOWED_LASTMOD_SOURCES)}'
         )
     if lastmod["source"] == "html_meta_property" and not lastmod.get("key"):
-        raise EngineError('config "lastmod.key" is required for source html_meta_property')
+        raise EngineRunError('config "lastmod.key" is required for source html_meta_property')
 
     raw.setdefault("include", [])
     raw.setdefault("exclude", [])
@@ -122,8 +155,8 @@ def load_config(path: Path) -> dict:
 
 
 def parse_meta(html: str) -> tuple[dict[str, str], list[tuple[str, str]]]:
-    """Return (names, property_pairs). Properties are kept as a list so a
-    duplicate stamp can be detected rather than silently collapsed."""
+    """Return (names, property_pairs). Properties are a list so a duplicate
+    stamp can be detected rather than silently collapsed."""
     names: dict[str, str] = {}
     properties: list[tuple[str, str]] = []
     for tag in META_TAG.finditer(html):
@@ -139,9 +172,15 @@ def parse_meta(html: str) -> tuple[dict[str, str], list[tuple[str, str]]]:
 
 
 def is_indexable(html: str) -> bool:
-    names, _ = parse_meta(html)
-    robots = names.get("robots", "")
-    return not ROBOTS_NOINDEX.search(robots)
+    """False when any robots meta tag carries noindex or none. Every tag is
+    checked, so a later index token cannot mask an earlier noindex."""
+    for tag in META_TAG.finditer(html):
+        attributes = dict(META_ATTR.findall(tag.group(1)))
+        if attributes.get("name", "").lower() == "robots" and ROBOTS_NOINDEX.search(
+            attributes.get("content", "")
+        ):
+            return False
+    return True
 
 
 def canonical_href(html: str) -> str | None:
@@ -156,10 +195,17 @@ def canonical_href(html: str) -> str | None:
 
 
 def enumerate_pages(site_root: Path, include: list[str], exclude: list[str]) -> list[Path]:
+    if not _contained(site_root, site_root.parent):
+        pass  # site_root is always contained in its own parent; kept for symmetry
     seen: dict[Path, None] = {}
     for pattern in include:
         for path in site_root.glob(pattern):
             if path.is_file():
+                if not _contained(path, site_root):
+                    raise EngineRunError(
+                        f"include pattern {pattern!r} matched {path}, which escapes "
+                        f"the site root {site_root}"
+                    )
                 seen[path] = None
     excluded: set[Path] = set()
     for pattern in exclude:
@@ -168,9 +214,10 @@ def enumerate_pages(site_root: Path, include: list[str], exclude: list[str]) -> 
 
 
 def derive_url(base_url: str, site_root: Path, page: Path) -> str:
-    if page.parent == site_root:
+    relative = page.parent.resolve().relative_to(site_root.resolve())
+    if relative == Path("."):
         return base_url + "/"
-    return f"{base_url}/{page.parent.name}/"
+    return f"{base_url}/{relative.as_posix()}/"
 
 
 # --- Last-modified resolvers --------------------------------------------
@@ -181,9 +228,14 @@ def read_meta_stamp(html: str, key: str) -> str:
     stamps = [value for prop, value in properties if prop == key]
     if len(stamps) != 1:
         raise EngineError(f"expected exactly one {key} meta tag, found {len(stamps)}")
-    if not ISO_DATE.match(stamps[0]):
-        raise EngineError(f"{key} is {stamps[0]!r}, expected YYYY-MM-DD")
-    return stamps[0]
+    value = stamps[0]
+    if not ISO_DATE.match(value):
+        raise EngineError(f"{key} is {value!r}, expected YYYY-MM-DD")
+    try:
+        _dt.date.fromisoformat(value)
+    except ValueError as error:
+        raise EngineError(f"{key} {value!r} is not a real calendar date: {error}") from error
+    return value
 
 
 def git_last_change(repo_root: Path, relative: str) -> str:
@@ -211,10 +263,17 @@ def resolve_lastmod(config: dict, repo_root: Path, page: Path, html: str) -> str
 # --- Build, render, verify, write ---------------------------------------
 
 
-def build_entries(config: dict, repo_root: Path) -> list[tuple[str, str]]:
+def _site_root(config: dict, repo_root: Path) -> Path:
     site_root = repo_root / config["site_root"]
     if not site_root.is_dir():
-        raise EngineError(f"site root {site_root} does not exist")
+        raise EngineRunError(f"site root {site_root} does not exist")
+    if not _contained(site_root, repo_root):
+        raise EngineRunError(f"site root {site_root} resolves outside the repository")
+    return site_root
+
+
+def build_entries(config: dict, repo_root: Path) -> list[tuple[str, str]]:
+    site_root = _site_root(config, repo_root)
     pages = enumerate_pages(site_root, config["include"], config["exclude"])
 
     entries: list[tuple[str, str]] = []
@@ -223,7 +282,7 @@ def build_entries(config: dict, repo_root: Path) -> list[tuple[str, str]]:
         try:
             html = page.read_text(encoding="utf-8")
         except OSError as error:
-            raise EngineError(f"cannot read {page}: {error}") from error
+            raise EngineRunError(f"cannot read {page}: {error}") from error
         if not is_indexable(html):
             continue
         url = derive_url(config["base_url"], site_root, page)
@@ -247,11 +306,7 @@ def build_entries(config: dict, repo_root: Path) -> list[tuple[str, str]]:
 def render(entries: list[tuple[str, str]]) -> bytes:
     lines = [XML_DECLARATION, URLSET_OPEN]
     for url, lastmod in entries:
-        loc = (
-            url.replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
+        loc = url.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         lines.append(f"{INDENT}<url>")
         lines.append(f"{INDENT * 2}<loc>{loc}</loc>")
         lines.append(f"{INDENT * 2}<lastmod>{lastmod}</lastmod>")
@@ -265,7 +320,10 @@ def generate_bytes(config: dict, repo_root: Path) -> bytes:
 
 
 def output_path(config: dict, repo_root: Path) -> Path:
-    return repo_root / config["output"]
+    target = repo_root / config["output"]
+    if not _contained(target.parent, repo_root):
+        raise EngineRunError(f"output {target} resolves outside the repository")
+    return target
 
 
 def verify(config: dict, repo_root: Path) -> tuple[bool, str]:
@@ -273,7 +331,10 @@ def verify(config: dict, repo_root: Path) -> tuple[bool, str]:
     target = output_path(config, repo_root)
     if not target.is_file():
         return False, f"{config['output']} does not exist; run --write to create it"
-    actual = target.read_bytes()
+    try:
+        actual = target.read_bytes()
+    except OSError as error:
+        raise EngineRunError(f"cannot read {config['output']}: {error}") from error
     if actual == expected:
         count = expected.count(b"<url>")
         return True, f"{config['output']} matches the {count} pages; no drift"
@@ -291,11 +352,24 @@ def verify(config: dict, repo_root: Path) -> tuple[bool, str]:
     )
 
 
+def _target_mode(target: Path) -> int:
+    """The mode to give the written file: the existing file's mode if it exists,
+    otherwise a world-readable default narrowed by the process umask, so a
+    generated sitemap is readable by the web server and never left at the
+    private 0600 a temporary file is created with."""
+    if target.is_file():
+        return stat.S_IMODE(target.stat().st_mode)
+    current = os.umask(0)
+    os.umask(current)
+    return 0o666 & ~current
+
+
 def write(config: dict, repo_root: Path) -> int:
     data = generate_bytes(config, repo_root)
     target = output_path(config, repo_root)
     if target.is_file() and target.read_bytes() == data:
         return data.count(b"<url>")
+    mode = _target_mode(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
         "wb", dir=str(target.parent), prefix=".sitemap-", suffix=".tmp", delete=False
@@ -305,6 +379,7 @@ def write(config: dict, repo_root: Path) -> int:
         handle.flush()
         os.fsync(handle.fileno())
         handle.close()
+        os.chmod(handle.name, mode)
         os.replace(handle.name, target)
     except BaseException:
         handle.close()
