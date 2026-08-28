@@ -49,6 +49,7 @@ import re
 import stat
 import subprocess
 import tempfile
+import urllib.parse
 from pathlib import Path
 
 # The style, fixed for every adopting site so the fleet renders identically.
@@ -106,7 +107,7 @@ def _contained(path: Path, root: Path) -> bool:
 def load_config(path: Path) -> dict:
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except OSError as error:
+    except (OSError, UnicodeDecodeError) as error:
         raise EngineRunError(f"cannot read config {path}: {error}") from error
     except json.JSONDecodeError as error:
         raise EngineRunError(f"config {path} does not parse: {error}") from error
@@ -120,7 +121,7 @@ def load_config(path: Path) -> dict:
         raise EngineRunError('config must set "schema": 1')
 
     base_url = raw.get("base_url", "")
-    if not isinstance(base_url, str) or not re.match(r"^https://[^/?#]+$", base_url):
+    if not isinstance(base_url, str) or not re.fullmatch(r"https://[^\s/?#]+", base_url):
         raise EngineRunError(
             'config "base_url" must be an https:// origin with no path, query, '
             "fragment, or trailing slash"
@@ -235,7 +236,8 @@ def derive_url(base_url: str, site_root: Path, page: Path) -> str:
     relative = page.parent.relative_to(site_root)
     if relative == Path("."):
         return base_url + "/"
-    return f"{base_url}/{relative.as_posix()}/"
+    path = "/".join(urllib.parse.quote(part, safe="") for part in relative.parts)
+    return f"{base_url}/{path}/"
 
 
 # --- Last-modified resolvers --------------------------------------------
@@ -343,6 +345,8 @@ def output_path(config: dict, repo_root: Path) -> Path:
         raise EngineRunError(
             f"output {config['output']} is a symlink; refusing to read or write through it"
         )
+    if target.is_dir():
+        raise EngineRunError(f"output {config['output']} is a directory, not a file")
     if not _contained(target.parent, repo_root):
         raise EngineRunError(f"output {target} resolves outside the repository")
     return target

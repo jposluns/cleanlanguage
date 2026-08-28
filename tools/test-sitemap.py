@@ -280,5 +280,50 @@ class FixesTest(unittest.TestCase):
                 engine.build_entries(config(), root)
 
 
+class Round4Test(unittest.TestCase):
+    def test_config_bad_bytes_is_run_error(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Path(d) / "c.json"
+            cfg.write_bytes(b"\xff\xfe{")
+            with self.assertRaises(engine.EngineRunError):
+                engine.load_config(cfg)
+
+    def test_output_directory_refused(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            root = make_repo(Path(d), {"": {}})
+            (root / "adir").mkdir()
+            with self.assertRaises(engine.EngineRunError):
+                engine.write(config(output="adir"), root)
+
+    def test_url_segments_are_encoded(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            page_dir = root / "site" / "a#b"
+            page_dir.mkdir(parents=True)
+            url = "https://x.test/a%23b/"
+            (page_dir / "index.html").write_text(
+                PAGE.format(modified="2026-01-01", canonical=url, robots=""),
+                encoding="utf-8",
+            )
+            entries = engine.build_entries(config(include=["**/index.html"]), root)
+            self.assertEqual(entries, [(url, "2026-01-01")])
+
+    def test_base_url_whitespace_rejected(self):
+        import json as _json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            cfg = Path(d) / "c.json"
+            cfg.write_text(_json.dumps(config(base_url="https://x test")), encoding="utf-8")
+            with self.assertRaises(engine.EngineRunError):
+                engine.load_config(cfg)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
