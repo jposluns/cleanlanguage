@@ -137,14 +137,24 @@ def load_config(path: Path) -> dict:
         value = raw.get(key, [])
         if not isinstance(value, list) or not all(isinstance(g, str) for g in value):
             raise EngineRunError(f'config "{key}" must be a list of glob strings')
+        for glob in value:
+            if not glob or Path(glob).is_absolute() or ".." in Path(glob).parts:
+                raise EngineRunError(
+                    f'config "{key}" pattern {glob!r} must be a non-empty relative pattern '
+                    'with no ".."'
+                )
 
     lastmod = raw.get("lastmod", {})
     if not isinstance(lastmod, dict) or lastmod.get("source") not in ALLOWED_LASTMOD_SOURCES:
         raise EngineRunError(
             f'config "lastmod.source" must be one of {sorted(ALLOWED_LASTMOD_SOURCES)}'
         )
-    if lastmod["source"] == "html_meta_property" and not lastmod.get("key"):
-        raise EngineRunError('config "lastmod.key" is required for source html_meta_property')
+    if lastmod["source"] == "html_meta_property":
+        key = lastmod.get("key")
+        if not isinstance(key, str) or not key:
+            raise EngineRunError(
+                'config "lastmod.key" must be a non-empty string for source html_meta_property'
+            )
 
     raw.setdefault("include", [])
     raw.setdefault("exclude", [])
@@ -160,7 +170,7 @@ def parse_meta(html: str) -> tuple[dict[str, str], list[tuple[str, str]]]:
     names: dict[str, str] = {}
     properties: list[tuple[str, str]] = []
     for tag in META_TAG.finditer(html):
-        attributes = dict(META_ATTR.findall(tag.group(1)))
+        attributes = {k.lower(): v for k, v in META_ATTR.findall(tag.group(1))}
         content = attributes.get("content")
         if content is None:
             continue
@@ -175,7 +185,7 @@ def is_indexable(html: str) -> bool:
     """False when any robots meta tag carries noindex or none. Every tag is
     checked, so a later index token cannot mask an earlier noindex."""
     for tag in META_TAG.finditer(html):
-        attributes = dict(META_ATTR.findall(tag.group(1)))
+        attributes = {k.lower(): v for k, v in META_ATTR.findall(tag.group(1))}
         if attributes.get("name", "").lower() == "robots" and ROBOTS_NOINDEX.search(
             attributes.get("content", "")
         ):
@@ -194,12 +204,17 @@ def canonical_href(html: str) -> str | None:
 # --- Enumeration and URL derivation -------------------------------------
 
 
+def _glob(site_root: Path, pattern: str) -> list[Path]:
+    try:
+        return list(site_root.glob(pattern))
+    except (NotImplementedError, ValueError) as error:
+        raise EngineRunError(f"pattern {pattern!r} is not a usable glob: {error}") from error
+
+
 def enumerate_pages(site_root: Path, include: list[str], exclude: list[str]) -> list[Path]:
-    if not _contained(site_root, site_root.parent):
-        pass  # site_root is always contained in its own parent; kept for symmetry
     seen: dict[Path, None] = {}
     for pattern in include:
-        for path in site_root.glob(pattern):
+        for path in _glob(site_root, pattern):
             if path.is_file():
                 if not _contained(path, site_root):
                     raise EngineRunError(
@@ -209,12 +224,15 @@ def enumerate_pages(site_root: Path, include: list[str], exclude: list[str]) -> 
                 seen[path] = None
     excluded: set[Path] = set()
     for pattern in exclude:
-        excluded.update(p for p in site_root.glob(pattern) if p.is_file())
+        excluded.update(p for p in _glob(site_root, pattern) if p.is_file())
     return sorted(p for p in seen if p not in excluded)
 
 
 def derive_url(base_url: str, site_root: Path, page: Path) -> str:
-    relative = page.parent.resolve().relative_to(site_root.resolve())
+    # The logical path relative to the site root, not the resolved one, so an
+    # internal directory symlink keeps the name it is served under. Enumeration
+    # has already guaranteed containment, so this relative_to cannot escape.
+    relative = page.parent.relative_to(site_root)
     if relative == Path("."):
         return base_url + "/"
     return f"{base_url}/{relative.as_posix()}/"
@@ -281,7 +299,7 @@ def build_entries(config: dict, repo_root: Path) -> list[tuple[str, str]]:
     for page in pages:
         try:
             html = page.read_text(encoding="utf-8")
-        except OSError as error:
+        except (OSError, UnicodeDecodeError) as error:
             raise EngineRunError(f"cannot read {page}: {error}") from error
         if not is_indexable(html):
             continue
@@ -321,6 +339,10 @@ def generate_bytes(config: dict, repo_root: Path) -> bytes:
 
 def output_path(config: dict, repo_root: Path) -> Path:
     target = repo_root / config["output"]
+    if target.is_symlink():
+        raise EngineRunError(
+            f"output {config['output']} is a symlink; refusing to read or write through it"
+        )
     if not _contained(target.parent, repo_root):
         raise EngineRunError(f"output {target} resolves outside the repository")
     return target

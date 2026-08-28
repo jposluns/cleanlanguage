@@ -222,16 +222,62 @@ class FixesTest(unittest.TestCase):
         )
         self.assertFalse(engine.is_indexable(html))
 
-    def test_write_leaves_readable_mode(self):
+    def test_write_mode_respects_umask_not_0600(self):
+        import os
         import stat as _stat
+        import tempfile
+
+        old = os.umask(0o022)
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                root = make_repo(Path(d), {"": {}})
+                engine.write(config(), root)
+                mode = _stat.S_IMODE((root / "site" / "sitemap.xml").stat().st_mode)
+                self.assertEqual(mode, 0o644)
+        finally:
+            os.umask(old)
+
+    def test_uppercase_robots_noindex(self):
+        self.assertFalse(engine.is_indexable('<META NAME="ROBOTS" CONTENT="NOINDEX">'))
+
+    def test_symlink_output_refused(self):
+        import os
         import tempfile
 
         with tempfile.TemporaryDirectory() as d:
             root = make_repo(Path(d), {"": {}})
-            engine.write(config(), root)
-            mode = _stat.S_IMODE((root / "site" / "sitemap.xml").stat().st_mode)
-            self.assertTrue(mode & _stat.S_IRGRP or mode & _stat.S_IROTH,
-                            f"sitemap mode {oct(mode)} is not group/other readable")
+            outside = root / "outside.xml"
+            outside.write_text("x", encoding="utf-8")
+            target = root / "site" / "sitemap.xml"
+            os.symlink(outside, target)
+            with self.assertRaises(engine.EngineRunError):
+                engine.write(config(), root)
+
+    def test_malformed_config_is_run_error(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            for bad in (
+                {"include": [""]},
+                {"include": ["/etc/passwd"]},
+                {"lastmod": {"source": "html_meta_property", "key": 7}},
+            ):
+                cfgfile = Path(d) / "c.json"
+                import json as _json
+
+                cfgfile.write_text(_json.dumps(config(**bad)), encoding="utf-8")
+                with self.assertRaises(engine.EngineRunError):
+                    engine.load_config(cfgfile)
+
+    def test_undecodable_page_is_run_error(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            root = make_repo(Path(d), {"": {}})
+            (root / "site" / "bad").mkdir()
+            (root / "site" / "bad" / "index.html").write_bytes(b"\xff\xfe not utf8")
+            with self.assertRaises(engine.EngineRunError):
+                engine.build_entries(config(), root)
 
 
 if __name__ == "__main__":
