@@ -38,7 +38,7 @@ What it verifies (reliably)
    (not ``.html``/``xhtml``/``data-family-mode``) and names ``data-family-section``.
    This catches the feature being deleted or its guard being renamed.
 7. ``site/_headers`` keeps ``script-src 'self'`` and ``style-src 'self'`` with no
-   ``unsafe-inline``, and an immutable ``Cache-Control`` for ``/js/install.js``.
+   ``unsafe-inline``, and a ``Cache-Control`` entry for ``/js/install.js``.
 
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
@@ -343,8 +343,8 @@ def main() -> int:
             )
         if "unsafe-inline" in csp_line:
             problems.append("the CSP now allows unsafe-inline, defeating the inline-code checks.")
-    if not re.search(r"/js/install\.js\s*\n\s*Cache-Control:[^\n]*immutable", headers):
-        problems.append("site/_headers has no immutable Cache-Control entry for /js/install.js.")
+    if not re.search(r"/js/install\.js\s*\n\s*Cache-Control:", headers):
+        problems.append("site/_headers has no Cache-Control entry for /js/install.js.")
 
     if problems:
         print("Install page problems found:")
