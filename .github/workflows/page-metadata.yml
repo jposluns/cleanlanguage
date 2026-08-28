@@ -14,6 +14,9 @@ on:
       # image reference to a file, so removing an image must trigger it too.
       - "site/**"
       - "tools/check-page-metadata.py"
+      - "tools/sitemap_engine.py"
+      - "tools/generate-sitemap.py"
+      - "tools/sitemap-config.json"
       - ".github/workflows/page-metadata.yml"
   push:
     branches:
@@ -23,6 +26,9 @@ on:
       # image reference to a file, so removing an image must trigger it too.
       - "site/**"
       - "tools/check-page-metadata.py"
+      - "tools/sitemap_engine.py"
+      - "tools/generate-sitemap.py"
+      - "tools/sitemap-config.json"
       - ".github/workflows/page-metadata.yml"
 
 permissions:

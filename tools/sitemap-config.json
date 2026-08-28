@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "base_url": "https://cleanlanguage.ai",
+  "site_root": "site",
+  "output": "site/sitemap.xml",
+  "include": ["index.html", "*/index.html"],
+  "exclude": ["404.html"],
+  "lastmod": {"source": "html_meta_property", "key": "article:modified_time"}
+}

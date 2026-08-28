@@ -19,8 +19,9 @@ What it updates
 * ``site/verify/index.html``: the download button, the link to the checksum file,
   the displayed checksum value, and the version named beside it.
 * On any page this run changes, its ``article:modified_time`` and JSON-LD
-  ``dateModified`` stamps, and the matching ``site/sitemap.xml`` ``lastmod``, so
-  the page-metadata gate still passes on the pull request this rewrite feeds.
+  ``dateModified`` stamps, so the page-metadata gate still passes on the pull
+  request this rewrite feeds. ``site/sitemap.xml`` is regenerated separately by
+  ``tools/generate-sitemap.py``; this writer no longer edits it.
 
 The stable ``cleanlanguage.zip`` is deliberately not linked from the site. It
 exists as an always-latest URL to share by hand; the site serves version-named
@@ -73,9 +74,9 @@ def redirects_body(zip_url: str, sum_url: str) -> str:
 def stamp_dates(text: str, date: str, name: str) -> str:
     """Stamp the modified date on a page this release changes.
 
-    The page-metadata gate requires article:modified_time, JSON-LD
-    dateModified, and the sitemap lastmod to be no older than the file's last
-    change, so a release that rewrites a page must also restamp it.
+    The page-metadata gate requires article:modified_time and JSON-LD
+    dateModified to be no older than the file's last change, so a release that
+    rewrites a page must also restamp it.
     """
     for pattern in (
         r'(<meta property="article:modified_time" content=")[0-9]{4}-[0-9]{2}-[0-9]{2}(")',
@@ -93,7 +94,6 @@ def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str]
     sum_url = f"{zip_url}.sha256"
 
     planned: dict[Path, str] = {SITE / "_redirects": redirects_body(zip_url, sum_url)}
-    dated: list[str] = []
 
     for name in ("install/index.html", "verify/index.html"):
         path = SITE / name
@@ -131,23 +131,7 @@ def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str]
 
         if text != original:
             text = stamp_dates(text, date, name)
-            dated.append(name.split("/", 1)[0])
         planned[path] = text
-
-    if dated:
-        sitemap = SITE / "sitemap.xml"
-        if not sitemap.is_file():
-            die("site/sitemap.xml does not exist")
-        text = sitemap.read_text(encoding="utf-8")
-        for page in dated:
-            pattern = (
-                rf"(<loc>https://cleanlanguage\.ai/{page}/</loc>\s*<lastmod>)"
-                r"[0-9]{4}-[0-9]{2}-[0-9]{2}(</lastmod>)"
-            )
-            text, n = re.subn(pattern, lambda m: m.group(1) + date + m.group(2), text)
-            if n != 1:
-                die(f"expected one sitemap lastmod entry for /{page}/, found {n}")
-        planned[sitemap] = text
     return planned
 
 
