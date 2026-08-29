@@ -10,11 +10,11 @@ unresolved review threads requesting changes.
 
 ## Commit attribution
 
-Do not credit Claude as a commit co-author. Omit any `Co-authored-by` trailer
-naming Claude or an Anthropic no-reply address, because GitHub builds the
-contributors list from co-authors and this project does not list its AI tooling
-there. Credit human contributors as co-authors as usual, and keep the maintainer
-as the commit author.
+Do not credit Claude in commit metadata. Omit the `Co-authored-by` trailer
+naming Claude or an Anthropic no-reply address, and omit the `Claude-Session`
+trailer, so no commit adds Claude to the GitHub contributors list or carries an
+assistant-session link. Credit human contributors as co-authors as usual, and
+keep the maintainer as the commit author.
 
 ## Writing conventions
 
