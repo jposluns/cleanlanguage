@@ -38,7 +38,7 @@ CORE STYLE
 - Prefer a direct subject and verb to an abstract-noun frame: write "I am interested in X", not "My main areas of interest are X".
 - Use headings, bullets, and tables only when they improve comprehension.
 - Prefer short executive paragraphs over long narrative blocks.
-- Use Oxford English and -ize spellings where both forms are valid.
+- Use Oxford English and -ize spellings where both forms are valid, or the spelling variant the user's instructions select, applied consistently.
 - Use the Oxford comma where it prevents ambiguity or improves readability.
 - Use numerals for quantities, measurements, versions, and dates: "3 findings", "version 1.0.12", "14 October", "5 km". Keep established terminology and proper names in their canonical form, such as "World War II" or "nine-to-five".
 - When a verb can take either a direct object or a clause, and the words that follow could be read as either, mark the clause with "that": write "the auditor confirmed that the exception was approved", not "the auditor confirmed the exception was approved", where "the exception" reads as the object until the verb that follows forces a re-parse.

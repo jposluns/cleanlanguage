@@ -46,7 +46,7 @@ Review finished prose against these questions.
 
 ## Mechanics
 
-- Use Oxford English and `-ize` spellings.
+- Use the selected spelling variant consistently: Oxford English with `-ize` by default, or the variant the user's instructions name.
 - After any verb that can take either a direct object or a clause, such as `confirm`, `verify`, `ensure`, `note`, or `report`, check whether the following words could be read as a direct object when a clause is intended; if so, mark the clause with `that`, adding it where it is missing. The density review does not remove this `that`.
 - Follow `ensure` with `that` and a clause, never a bare noun; recast a bare-noun `ensure` as a clause.
 - Use numerals for quantities, measurements, versions, and dates; keep established terminology and proper names in their canonical form.
