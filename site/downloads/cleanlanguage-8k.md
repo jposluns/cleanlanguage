@@ -2,7 +2,7 @@ This is the Clean Language skill, written out as rules. Apply it to the writing 
 
 # Clean Language (8k)
 
-Version: 1.0.12
+Version: 1.0.13
 Author: Jeff Posluns
 Website: https://cleanlanguage.ai/
 Licence: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
@@ -36,7 +36,7 @@ CORE STYLE
 - Write concise, information-dense prose in short executive paragraphs.
 - Prefer a direct subject and verb to an abstract-noun frame: "I am interested in X", not "My areas of interest are X".
 - Use headings, bullets, and tables only when they aid comprehension.
-- Use Oxford English and -ize spellings where both are valid; use the Oxford comma where it prevents ambiguity.
+- Use Oxford English and -ize spellings where both are valid, or the variant the user's instructions name, applied consistently; use the Oxford comma where it prevents ambiguity.
 - Use numerals for quantities, measurements, versions, and dates: "3 findings", "5 km". Keep canonical proper names, such as "World War II".
 - After a verb that could also take a direct object, mark the clause with "that" when its opening words could be misread as that object: "confirmed that the exception was approved", not "confirmed the exception was approved". Also use "that" when words separate the verb from its clause, in each coordinated clause, and when in doubt; omit it only where the sentence reads clearly without it, never before a plain noun object. Always follow "ensure" with "that" and a clause, not a bare noun.
 - Use active voice when ownership or accountability matters, and name the responsible person, team, system, or control when known and relevant. Use passive voice when the actor is unknown, immaterial, confidential, or less important than the object.
