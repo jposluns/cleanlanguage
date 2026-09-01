@@ -2,7 +2,7 @@ This is the Clean Language skill, written out as rules. Apply it to the writing 
 
 # Clean Language (8k)
 
-Version: 1.0.13
+Version: 1.0.14
 Author: Jeff Posluns
 Website: https://cleanlanguage.ai/
 Licence: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)

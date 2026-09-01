@@ -21,7 +21,7 @@
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="Clean Language, a free cross-platform editorial standard for AI writing.">
   <meta property="article:published_time" content="2026-07-27">
-  <meta property="article:modified_time" content="2026-08-29">
+  <meta property="article:modified_time" content="2026-09-01">
   <meta property="article:author" content="https://linkedin.com/in/jposluns">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Install Clean Language without technical knowledge">
@@ -36,7 +36,7 @@
     "description": "Click-by-click setup for Claude Skills, ChatGPT Skills, Gemini Gems, Copilot agents, and other AI systems.",
     "image": "https://cleanlanguage.ai/cleanlanguage-card.png",
     "datePublished": "2026-07-27",
-    "dateModified": "2026-08-29",
+    "dateModified": "2026-09-01",
     "mainEntityOfPage": "https://cleanlanguage.ai/install/",
     "author": {
       "@type": "Person",
@@ -107,14 +107,14 @@
         <div class="pattern-list two-up">
           <div class="pattern-item">
             <strong>The skill (a zip file)</strong>
-            <span>For AI assistants that can use skills, like Claude and ChatGPT. It installs the full standard so it is available in any chat.</span>
+            <span>For AI assistants that can use skills, like Claude, ChatGPT, and Copilot Studio. It installs the full standard so it is available in any chat.</span>
             <div class="step-actions">
-              <a class="button primary" href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.13/cleanlanguage-1.0.13.zip">Download the skill (zip)</a>
+              <a class="button primary" href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.14/cleanlanguage-1.0.14.zip">Download the skill (zip)</a>
             </div>
           </div>
           <div class="pattern-item">
             <strong>The instructions file (Markdown)</strong>
-            <span>For the assistants that cannot use skills, such as Gemini, Copilot, and most others. It is the same standard in Markdown, in 3 sizes. Pick the largest your assistant accepts: the smaller files carry less of the finer detail to fit a tighter instruction limit, so they are a little less capable. That is a limit of some assistants, not of the standard.</span>
+            <span>For the assistants that cannot use skills, such as Gemini, a Microsoft 365 Copilot agent, and most others. It is the same standard in Markdown, in 3 sizes. Pick the largest your assistant accepts: the smaller files carry less of the finer detail to fit a tighter instruction limit, so they are a little less capable. That is a limit of some assistants, not of the standard.</span>
             <div class="step-actions">
               <a class="button primary" href="/downloads/cleanlanguage.md" download>Full, 29k</a>
               <a class="button secondary" href="/downloads/cleanlanguage-11k.md" download>Condensed, 11k</a>
@@ -124,7 +124,7 @@
           </div>
         </div>
         <p>The skill downloads from GitHub, where releases are published; the instructions file downloads from this site. If the skill download does not start, your network may block GitHub; use the <a href="/instructions/">instructions page</a> instead. The full instructions file saves as <code>cleanlanguage.md</code>; the smaller versions save as <code>cleanlanguage-11k.md</code> and <code>cleanlanguage-8k.md</code>.</p>
-        <p>Your browser saves the skill as a zip file named <code>cleanlanguage-</code> followed by the version, for example <code>cleanlanguage-1.0.13.zip</code>, usually in your Downloads folder. Do not unzip it. If your computer unzipped it automatically and you see a <code>cleanlanguage</code> folder, that is fine: the original zip usually stays in your Downloads folder. Upload the zip file, not the folder. In Safari, automatic unzipping can move the original zip to the Trash; if you cannot find it, look there, or turn off <strong>Settings</strong>, then <strong>General</strong>, then <strong>Open &#8220;safe&#8221; files after downloading</strong>.</p>
+        <p>Your browser saves the skill as a zip file named <code>cleanlanguage-</code> followed by the version, for example <code>cleanlanguage-1.0.14.zip</code>, usually in your Downloads folder. Do not unzip it. If your computer unzipped it automatically and you see a folder with the same name, that is fine: the original zip usually stays in your Downloads folder. Upload the zip file, not the folder. In Safari, automatic unzipping can move the original zip to the Trash; if you cannot find it, look there, or turn off <strong>Settings</strong>, then <strong>General</strong>, then <strong>Open &#8220;safe&#8221; files after downloading</strong>.</p>
         <p>The instructions file is Markdown text. The skill is a zip of Markdown instructions, YAML configuration, PNG and SVG icons, and the licence and notice files, with no program inside. <a href="/verify/">Verify your download</a> against the published checksum if you want to, and see <a href="#assurance">Trust and assurance</a> below for what the skill does and does not do.</p>
       </section>
 
@@ -203,8 +203,23 @@
 
       <section id="copilot" data-family-section="copilot">
         <h2>Copilot</h2>
-        <p class="verified">Last verified 27 August 2026.</p>
-        <p>The reusable method is a Copilot agent. Copilot caps an agent's instructions at 8000 characters, so paste the <strong>8k</strong> file as the instructions and add the full standard as reference. Use the files you downloaded in <a href="#get">Get Clean Language</a>.</p>
+        <p class="verified">Last verified 1 September 2026.</p>
+        <p>There are 2 ways to set up Clean Language in Copilot. <strong>Copilot Studio</strong> loads the full skill, the same zip file Claude and ChatGPT use, so it is the better choice where you have it. A <strong>Microsoft 365 Copilot agent</strong> cannot load a skill, so it takes the standard as pasted instructions instead.</p>
+
+        <h3>Copilot Studio</h3>
+        <p><strong>This is the recommended Copilot method.</strong> It loads the complete skill, so the full standard is available to the agent rather than a shortened copy. Use <strong>the skill (zip)</strong> you downloaded in <a href="#get">Get Clean Language</a>.</p>
+        <ol>
+          <li>On a computer, open <strong>copilotstudio.microsoft.com</strong>.</li>
+          <li>Open your list of agents and click <strong>New agent</strong>.</li>
+          <li>Click <strong>Skills</strong>, then upload the Clean Language zip file.</li>
+          <li>Finish creating the agent as you normally would.</li>
+          <li>Link the agent to any of your business processes, following the standard Copilot Studio steps.</li>
+        </ol>
+        <p class="section-links"><a href="#test">Test it</a> &#183; <a href="#spelling">Choose your spelling</a></p>
+        <div class="notice"><strong>Whole company:</strong> an administrator can create the agent once in Copilot Studio, then publish and deploy it to the organization through the standard Copilot Studio process, so everyone writes with Clean Language without building their own agent. Availability is a deliberate step, not automatic on publish.</div>
+
+        <h3>Microsoft 365 Copilot agent</h3>
+        <p>Use this if you do not have Copilot Studio. A Microsoft 365 Copilot agent caps its instructions at 8000 characters, so paste the <strong>8k</strong> file as the instructions and add the full standard as reference. Use the files you downloaded in <a href="#get">Get Clean Language</a>.</p>
         <ol>
           <li>Open Microsoft 365 Copilot on a computer.</li>
           <li>Open the agents panel and click <strong>New agent</strong>. Copilot offers to build the agent for you or to let you set it up yourself; click <strong>Skip</strong> to customize it yourself.</li>
@@ -213,7 +228,6 @@
           <li>Find the option to add specific websites, and add <code>https://cleanlanguage.ai/downloads/cleanlanguage.md</code> as reference the agent can consult; the pasted instructions are what it follows.</li>
           <li>Click <strong>Create</strong>, then select <strong>Clean Language</strong> whenever you write.</li>
         </ol>
-        <p class="section-links"><a href="#test">Test it</a> &#183; <a href="#spelling">Choose your spelling</a></p>
         <div class="notice"><strong>No agent access?</strong> Open the downloaded <code>cleanlanguage.md</code> (double-click it; it opens in Notepad or TextEdit), select all the text, copy it, paste it into a Copilot chat, and say: <code class="prompt">Follow these writing rules for this conversation.</code> Or open the <a href="/instructions/">instructions page</a> and click <strong>Copy everything</strong>.</div>
       </section>
 
