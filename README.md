@@ -35,7 +35,7 @@ Clean Language uses one canonical skill definition for Claude, ChatGPT, Gemini, 
 - **Claude:** download the packaged Skill, upload it through Claude's Skills interface, and enable it.
 - **ChatGPT:** create or upload a Skill using the Clean Language instructions.
 - **Gemini:** create a reusable Gem or install the Agent Skill through Gemini CLI.
-- **Copilot:** create a Copilot agent, paste the 8k instructions, and add the full standard as reference.
+- **Copilot Studio:** create an agent and upload the full skill zip (recommended). **Microsoft 365 Copilot agent:** create the agent, paste the 8k instructions, and add the full standard as reference.
 - **Other AI systems:** use the portable instructions as custom instructions, project knowledge, or a system prompt.
 
 See [INSTALL.md](INSTALL.md) for complete setup instructions.

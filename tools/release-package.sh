@@ -26,9 +26,11 @@
 #   4. Requires every icon the ChatGPT interface configuration references to
 #      exist in the package, whether the YAML quotes the path with double
 #      quotes, single quotes, or none.
-#   5. Stages the package from git archive, adds LICENSE and NOTICE.md into
-#      cleanlanguage/, and zips it, so the zip holds exactly what git records
-#      plus the two licence files, whatever state the checkout is in.
+#   5. Stages the package from git archive, adds LICENSE and NOTICE.md, and zips
+#      the files at the archive ROOT (SKILL.md, agents/, assets/, references/,
+#      LICENSE, NOTICE.md), with no cleanlanguage/ prefix, so the zip holds
+#      exactly what git records plus the two licence files, whatever state the
+#      checkout is in.
 #   6. Verifies the archive against an expected entry list derived from the
 #      same git tree, and verifies every archived file's bytes against its git
 #      blob, so a git attribute such as export-subst cannot change the shipped
@@ -174,7 +176,7 @@ dist_dir="$(pwd)/dist"
 # would otherwise vary); -X drops uid/gid and the extra timestamp fields; the
 # sorted list and TZ=UTC fix entry order and the DOS times. Same commit, same
 # bytes, on any machine and at any clock time and umask.
-(cd "${staging}" && find cleanlanguage -print | LC_ALL=C sort \
+(cd "${staging}/cleanlanguage" && find . -type f -printf '%P\n' | LC_ALL=C sort \
   | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ "${dist_dir}/cleanlanguage.zip")
 cp dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip"
 (cd dist && sha256sum cleanlanguage.zip > cleanlanguage.zip.sha256)
@@ -182,8 +184,8 @@ cp dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip"
 
 expected="$(
   {
-    printf '%s\n' "${files}"
-    printf 'cleanlanguage/LICENSE\ncleanlanguage/NOTICE.md\n'
+    printf '%s\n' "${files}" | sed 's#^cleanlanguage/##'
+    printf 'LICENSE\nNOTICE.md\n'
   } | LC_ALL=C sort
 )"
 actual="$(unzip -Z1 dist/cleanlanguage.zip | grep -v '/$' | LC_ALL=C sort)"
@@ -193,14 +195,27 @@ if [ "${expected}" != "${actual}" ]; then
   exit 1
 fi
 
+# Lock in the root-level layout. Claude, ChatGPT, and Copilot Studio all load
+# the skill only when SKILL.md sits at the archive root, so fail if the build
+# ever regresses to a wrapping cleanlanguage/ directory. The entry-list check
+# above proves the zip matches its own expected list; this proves that list is
+# rooted, which a coordinated revert of the zip and expected-list lines would
+# otherwise slip past.
+if grep -q '^cleanlanguage/' <<< "${actual}"; then
+  echo "release-package: the archive must place files at the root, but found cleanlanguage/-prefixed entries" >&2
+  exit 1
+fi
+grep -qx 'SKILL.md' <<< "${actual}" \
+  || fail "SKILL.md is not at the archive root"
+
 # Every archived byte must equal its git blob, so a git attribute such as
 # export-subst cannot alter the shipped content while leaving the names intact.
 while IFS= read -r entry; do
   [ -n "${entry}" ] || continue
   case "${entry}" in
-    cleanlanguage/LICENSE) blob="HEAD:LICENSE" ;;
-    cleanlanguage/NOTICE.md) blob="HEAD:NOTICE.md" ;;
-    *) blob="HEAD:${entry}" ;;
+    LICENSE) blob="HEAD:LICENSE" ;;
+    NOTICE.md) blob="HEAD:NOTICE.md" ;;
+    *) blob="HEAD:cleanlanguage/${entry}" ;;
   esac
   if ! cmp -s <(unzip -p dist/cleanlanguage.zip "${entry}") <(git cat-file blob "${blob}"); then
     echo "release-package: archived ${entry} differs from its git blob (${blob})" >&2

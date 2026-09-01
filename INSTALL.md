@@ -4,7 +4,7 @@ These instructions cover ChatGPT, Claude, Gemini, and other AI systems. The publ
 
 Upgrading from a version before 1.0.11? The skill's internal name changed from `clean-language` to `cleanlanguage`, so uploading the new file adds a second skill beside the old one. Remove the old Clean Language skill first, then install the new file.
 
-The site's [download link](https://cleanlanguage.ai/download) saves a version-named file such as `cleanlanguage-1.0.13.zip`, so repeat downloads stay distinguishable. The links below fetch the same current release under the stable name `cleanlanguage.zip`; either file installs identically.
+The site's [download link](https://cleanlanguage.ai/download) saves a version-named file such as `cleanlanguage-1.0.14.zip`, so repeat downloads stay distinguishable. The links below fetch the same current release under the stable name `cleanlanguage.zip`; either file installs identically.
 
 ## Claude
 
@@ -104,7 +104,24 @@ After saving it, open **Gems** and select **Clean Language** whenever you need i
 
 ## Copilot
 
-Last verified 27 August 2026. The reusable method is a Copilot agent. Copilot caps an agent's instructions at 8000 characters, so paste the 8k file as the instructions and add the full standard as reference.
+Last verified 1 September 2026. There are 2 ways to set up Clean Language in Copilot. Copilot Studio loads the full skill, the same zip Claude and ChatGPT use, so it is the better choice where you have it. A Microsoft 365 Copilot agent cannot load a skill, so it takes the standard as pasted instructions.
+
+### Copilot Studio (recommended)
+
+Copilot Studio loads the complete skill, so the full standard is available to the agent rather than a shortened copy.
+
+1. Download the Clean Language skill from https://cleanlanguage.ai/download. It saves as a zip file.
+2. On a computer, open copilotstudio.microsoft.com.
+3. Open your list of agents and click **New agent**.
+4. Click **Skills**, then upload the Clean Language zip file.
+5. Finish creating the agent as you normally would.
+6. Link the agent to any of your business processes, following the standard Copilot Studio steps.
+
+Whole company: an administrator can create the agent once in Copilot Studio, then publish and deploy it to the organization through the standard Copilot Studio process, so everyone writes with Clean Language without building their own agent. Availability is a deliberate step, not automatic on publish.
+
+### Microsoft 365 Copilot agent
+
+Use this if you do not have Copilot Studio. A Microsoft 365 Copilot agent caps its instructions at 8000 characters, so paste the 8k file as the instructions and add the full standard as reference.
 
 1. Download the [8k instructions](https://cleanlanguage.ai/downloads/cleanlanguage-8k.md). It saves as `cleanlanguage-8k.md`.
 2. Open Microsoft 365 Copilot on a computer.
@@ -161,4 +178,4 @@ The resulting archive must contain one `SKILL.md` entry point and retain its rel
 
 ## Package contents and assurance
 
-`cleanlanguage.zip` contains the `cleanlanguage/` directory with `SKILL.md`, the reference material, the agent configuration, the icons, and the licence and notice files. It contains no executable code and makes no network calls.
+`cleanlanguage.zip` contains `SKILL.md`, the reference material, the agent configuration, the icons, and the licence and notice files, all at the archive root. It contains no executable code and makes no network calls.
