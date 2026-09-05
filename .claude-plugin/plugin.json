@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "cleanlanguage",
+  "displayName": "Clean Language",
+  "version": "1.0.14",
+  "description": "Draft, rewrite, proofread, adapt, and audit prose to the Clean Language editorial standard.",
+  "author": {
+    "name": "Jeff Posluns",
+    "url": "https://cleanlanguage.ai/"
+  },
+  "homepage": "https://cleanlanguage.ai/",
+  "repository": "https://github.com/jposluns/cleanlanguage",
+  "license": "CC-BY-SA-4.0",
+  "keywords": ["writing", "editing", "prose", "style", "editorial-standard"],
+  "skills": ["./cleanlanguage"]
+}
