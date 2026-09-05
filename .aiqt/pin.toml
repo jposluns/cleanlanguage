@@ -1,0 +1,55 @@
+# AIQT Guardrails adoption pin
+#
+# Records exactly what was vendored so the official pack release (v1.1.0, the
+# "development assistant", in development) can recognize and advance this install.
+# See ../maintainer-decisions.md, the recon at aiqt-guardrails-recon-2026-09-05.md
+# in the durable store, and NOTICE.md. Adopter-owned files (this pin, config.md,
+# and anything under .claude/rules/external/) are never overwritten by an update.
+
+[source]
+name = "aiqt-guardrails"
+homepage = "https://aiqt.ai"
+license = "CC-BY-SA-4.0"
+author = "Jeff Posluns"
+vendored-from = "/opt/guardrails/guardrails"   # local pack checkout at adoption time
+adopted = "2026-09-05"
+
+[version]
+# The source pack versions these three independently. The maintainer's intent
+# (2026-09-05) is that the pack and skill versions be unified; that reconciliation
+# is upstream in the pack. The tree-sha256 below is the pack's digest over its full v1.0.0 source tree, so it
+# identifies the source RELEASE; the per-file hashes in .aiqt/manifest.toml are what pin
+# the adopted subset. Both are recorded regardless of the version label.
+pack = "1.0.0"          # VERSION, changelog.toml, manifest.toml release-version
+skill = "1.0.4"         # .aiqt/core/skill/skill-source.md meta.version
+hooks-plugin = "0.4.0"  # plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json
+
+[integrity]
+tree-sha256 = "9dbbe17c9bb1372b0bff9b01216d6860851d7b735983a0c40691d91329ca1fe4"
+root = "sha256:3b2b345e02c4e41845b7f59e28bc0a49a283ec6a06394c9933d536474d299f58"
+manifest = ".aiqt/manifest.toml"
+# Verified at adoption: all 125 rule files and the applicability files matched
+# their recorded hashes in the v1.0.0 manifest (codex assessment, 2026-09-05).
+
+[vendored]
+# Partial vendor: the rule corpus, the hooks plugin, and provenance metadata.
+# The pack's generators, standards manifests, gates, and skill build are NOT adopted.
+paths = [
+  ".aiqt/core/rules",
+  ".aiqt/core/applies.toml",
+  ".aiqt/core/applicability.toml",
+  ".aiqt/core/ownership.toml",
+  ".aiqt/core/order.toml",
+  ".aiqt/manifest.toml",
+  ".aiqt/release/root.txt",
+  "plugin/aiqt-guardrails-hooks",
+  ".claude/rules/aiqt",
+  ".claude/rules/security",
+]
+
+[active-rules]
+# Auto-loaded subset. Profile C: applicable to this project, minus low-value rules.
+profile = "coding + agent-harness + multi-agent, personal-data off"
+active = 106
+excluded = 19   # 9 app-security-no-surface, 5 personal-data, 1 atomic-claim-from-pool, 4 code-idiom
+basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see durable store)"

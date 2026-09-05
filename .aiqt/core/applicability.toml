@@ -1,0 +1,60 @@
+# .aiqt/core/applicability.toml
+#
+# Controlled applicability VOCABULARY for the rule corpus (GD-99): the conditions and profiles.
+# Hand-authored SOURCE. Per-rule assignments live in .aiqt/core/applies.toml; tools/check_applies.py
+# enforces both against the corpus (every rule tagged, no orphan, conditions drawn from this vocabulary).
+#
+# A profile selects the union of rules tagged with any condition it lists.
+# always is present in every profile. full-corpus contains every condition.
+
+version = 1
+
+[[condition]]
+slug = "always"
+question = "Does this rule apply in every profile, regardless of capabilities?"
+description = "Baseline governance that applies to every supported interaction and execution environment."
+
+[[condition]]
+slug = "writes-code"
+question = "Can the assistant create or modify code, configuration, tests, or other software artefacts?"
+description = "Rules governing software changes, engineering workflows, repositories, tests, builds, and releases."
+
+[[condition]]
+slug = "tools-retrieval"
+question = "Can the assistant call tools or retrieve information beyond the conversation?"
+description = "Rules governing tool invocation, retrieval, external claims, workspace reads, and retrieved content."
+
+[[condition]]
+slug = "personal-data"
+question = "Can the assistant access, infer, transform, store, or disclose personal data?"
+description = "Rules governing personal-data collection, use, minimization, retention, residency, and disclosure."
+
+[[condition]]
+slug = "agent-harness"
+question = "Is the assistant operating in an agent harness that can plan or act across multiple steps?"
+description = "Rules governing autonomous execution, state, recovery, side effects, long-running work, and harness lifecycle."
+
+[[condition]]
+slug = "multi-agent"
+question = "Can multiple agents or workers delegate, coordinate, or exchange results?"
+description = "Rules governing delegation, worker authority, inter-agent trust, concurrency, and result integration."
+
+[[profile]]
+name = "Chat"
+slug = "chat"
+conditions = ["always", "tools-retrieval"]
+
+[[profile]]
+name = "Coding"
+slug = "coding"
+conditions = ["always", "tools-retrieval", "writes-code"]
+
+[[profile]]
+name = "Agent-harness"
+slug = "agent-harness"
+conditions = ["always", "tools-retrieval", "writes-code", "agent-harness"]
+
+[[profile]]
+name = "Full corpus"
+slug = "full-corpus"
+conditions = ["always", "writes-code", "tools-retrieval", "personal-data", "agent-harness", "multi-agent"]
