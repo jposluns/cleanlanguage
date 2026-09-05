@@ -1,0 +1,34 @@
+# .aiqt/core/order.toml: the DECLARED ORDER RECORD (VER-CORE 6.5). Machine-readable rule precedence and
+# ordering semantics. ANY change to this file is a MAJOR version floor (6.2). Semantic precedence and
+# presentation order are separate: security facets render after the AIQT facets but are NOT semantically
+# weaker than any AIQT tier. Consistency with the operative generator constants (gen_rules.TIER_FACETS,
+# gen_rules.CIA_FACETS) is verified by check_manifest.py.
+
+format-version = 1
+apex-corpus-id = "prjint1"
+
+[[precedence-tier]]
+rank = 10
+members = ["ACCUR", "INTEG", "QUALI", "TRUST"]
+members-are-equal = true
+
+[[precedence-tier]]
+rank = 20
+members = ["PROGR"]
+members-are-equal = true
+
+[[precedence-tier]]
+rank = 30
+members = ["SPEED"]
+members-are-equal = true
+
+[[precedence-tier]]
+rank = 40
+members = ["COST"]
+members-are-equal = true
+
+[presentation-order]
+families = ["apex", "aiqt", "security"]
+aiqt-facets = ["ACCUR", "INTEG", "QUALI", "TRUST", "PROGR", "SPEED", "COST"]
+security-facets = ["SECC", "SECI", "SECA", "SECP"]
+tie-breaker = "slug-bytewise"

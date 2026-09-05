@@ -38,8 +38,10 @@ progress, speed, or cost.
 The full AIQT standard, including the five rules of AIQT, is at
 https://aiqt.ai.
 
-The AIQT Principle is adopted from Jeff Posluns's `grc_library` Claude Code rules
-pack, CC BY-SA 4.0. See [`rules/governance/PROVENANCE.md`](rules/governance/PROVENANCE.md).
+The authoritative full statement is the vendored apex rule
+[`rules/aiqt/00-project-integrity.md`](rules/aiqt/00-project-integrity.md). This
+repository adopts the AIQT Guardrails rule corpus (see Adopted governance below);
+provenance and the adopted version are in [`.aiqt/pin.toml`](../.aiqt/pin.toml).
 
 ## Writing standard
 
@@ -47,15 +49,28 @@ All repository and website prose follows the Clean Language standard defined in
 this repository's own skill. See
 [`rules/clean-language-authoring.md`](rules/clean-language-authoring.md).
 
-## Adopted governance disciplines
+## Adopted governance
 
-These rules, under `rules/governance/`, govern how Claude Code collaborates on
-this repository. They are adopted from `grc_library`; see the provenance record
-in that directory.
+This repository adopts the **AIQT Guardrails** rule corpus by Jeff Posluns
+(https://aiqt.ai), CC BY-SA 4.0, vendored under `.aiqt/` and auto-loaded as the rule
+tree under `rules/aiqt/` and `rules/security/` (106 active rules for this project's
+profile; the full 125-rule corpus is kept as reference under `.aiqt/core/rules/`).
+Provenance and the adopted version are in [`.aiqt/pin.toml`](../.aiqt/pin.toml); the
+licence attribution is in [`NOTICE.md`](../NOTICE.md).
 
-- [`express-authorization-before-execution.md`](rules/governance/express-authorization-before-execution.md): execute edits, commits, and outward actions only on an express, work-naming authorization. A conditional or sequenced go authorizes only its first step.
-- [`evidence-grounded-completion.md`](rules/governance/evidence-grounded-completion.md): never claim work is done, fixed, or passing without evidence that supports the claim.
-- [`clarify-before-acting.md`](rules/governance/clarify-before-acting.md): resolve a material ambiguity with the maintainer before acting on an assumption.
+Do not edit the vendored rule files. They are verbatim and are replaced wholesale
+when the pack updates. This project's own additional rules go under `rules/external/`.
+
+Three disciplines this repository previously vendored from `grc_library` are now the
+AIQT equivalents in that tree, which are the best-practice versions: express
+authorization before execution, evidence-grounded completion, and clarify before
+acting.
+
+The AIQT Guardrails **hooks** (mechanical, action-time enforcement, for example
+blocking a `reset --hard` on a dirty tree or an AI commit-author trailer) are enabled
+for dev-time sessions through [`settings.json`](settings.json) and the local
+marketplace at `plugin/aiqt-guardrails-hooks/`. Nine orchestrator hooks stay inert by
+design.
 
 ## Asking the maintainer questions
 

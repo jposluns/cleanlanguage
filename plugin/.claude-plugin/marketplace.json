@@ -1,0 +1,12 @@
+{
+  "name": "aiqt-guardrails",
+  "owner": { "name": "Jeff Posluns", "url": "https://aiqt.ai" },
+  "description": "Local marketplace that registers the vendored AIQT Guardrails hooks plugin for dev-time use in this repository. Vendored from the AIQT Guardrails pack; see .aiqt/pin.toml.",
+  "plugins": [
+    {
+      "name": "aiqt-guardrails-hooks",
+      "source": "./aiqt-guardrails-hooks",
+      "description": "AIQT Guardrails action-time hooks (git-discard, commit-identity, branch/protected-line guards, and more). Vendored verbatim; do not edit."
+    }
+  ]
+}

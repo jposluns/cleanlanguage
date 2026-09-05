@@ -34,28 +34,32 @@ MD_LINK = re.compile(r'\]\(([^)]+)\)')
 
 SKIP_PREFIXES = ("http://", "https://", "mailto:", "tel:", "data:", "#", "//")
 
+# Vendored-verbatim rule trees: foreign content, excluded from link-checking.
+VENDORED_PREFIXES = (".aiqt/", ".claude/rules/aiqt/", ".claude/rules/security/")
+
 def markdown_docs() -> list[str]:
+    def keep(p: str) -> bool:
+        return not any(p.startswith(pre) for pre in VENDORED_PREFIXES)
     try:
         out = subprocess.run(
             ["git", "ls-files", "*.md"], cwd=REPO_ROOT,
             capture_output=True, text=True, check=True).stdout
         docs = [d for d in out.splitlines() if d]
         if docs:
-            return docs
+            return [d for d in docs if keep(d)]
     except Exception:
         pass
-    return sorted(str(x.relative_to(REPO_ROOT)) for x in REPO_ROOT.rglob("*.md")
-                  if ".git" not in x.parts)
+    return sorted(p for p in (str(x.relative_to(REPO_ROOT))
+                              for x in REPO_ROOT.rglob("*.md")
+                              if ".git" not in x.parts)
+                  if keep(p))
 
 
-# Links left unresolved on purpose: the governance rules are vendored verbatim
-# and reference rules this repository did not adopt (see PROVENANCE.md). Each is
-# checked as USED so a stale exception fails the gate.
-ALLOWED_MISSING = {
-    (".claude/rules/governance/express-authorization-before-execution.md", "session-lifecycle.md"),
-    (".claude/rules/governance/express-authorization-before-execution.md", "surface-counterproductive-instructions.md"),
-    (".claude/rules/governance/express-authorization-before-execution.md", "decision-classification-before-enacting.md"),
-}
+# No link exceptions remain. The former governance-rule exceptions were removed
+# when those rules were retired in favour of the vendored AIQT Guardrails corpus,
+# which is skipped from link-checking. The downstream unused-exception check is
+# kept intact; it simply has nothing to check now.
+ALLOWED_MISSING: set[tuple[str, str]] = set()
 
 
 def redirect_sources() -> set[str]:
