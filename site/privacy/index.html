@@ -79,7 +79,7 @@
     <section class="page-hero">
       <p class="eyebrow">How this site handles your data</p>
       <h1>Privacy.</h1>
-      <p>This site has no accounts, no sign-in, and no forms, so you never hand it anything to store. We do not track you across the web, build a profile of you, or sell data about you, and we add no analytics code of our own. Other companies deliver the site, the downloads, and our email, and their systems see your requests and keep their own records.</p>
+      <p>This site has no accounts, no sign-in, and no forms, so there is nothing for you to submit. Reading it still discloses your request to the companies that deliver it, as it would on any website. We do not track you across the web, build a profile of you, or sell data about you, and we add no analytics code of our own. Other companies deliver the site, the downloads, and our email, and their systems see your requests and keep their own records.</p>
     </section>
 
       <section>
@@ -95,18 +95,18 @@
 
       <section>
         <h2>Cookies and storage</h2>
-        <p>The site's own code sets no cookies and includes no client-side analytics. It uses no local storage or session storage in your browser. The site's 2 small scripts, which handle the copy buttons and the install picker, make no network calls and set no cookies, no Web Storage, and no IndexedDB. The copy button writes the text you are looking at to your clipboard when you click it, and the install picker rewrites the address in your browser's history when you choose an AI. You can read both scripts in the published source.</p>
+        <p>The site's own code sets no cookies and includes no client-side analytics. It uses no local storage or session storage in your browser. The site's 2 small scripts, which handle the copy buttons and the install picker, make no network calls and set no cookies, no Web Storage, and no IndexedDB. The copy button tries to write the text you are looking at to your clipboard when you click it, and selects the text for you to copy by hand if that fails, and the install picker rewrites the address in your browser's history when you choose an AI. You can read both scripts in the published source.</p>
         <p>Cloudflare, which serves the site, processes request data such as IP addresses for delivery, security, and aggregate traffic analytics, and may set a security cookie. That cookie helps distinguish human visitors from automated traffic. It carries no advertising function.</p>
       </section>
 
       <section>
         <h2>Who else is involved</h2>
         <ul>
-          <li><strong>Cloudflare</strong> hosts the site, serves the Markdown instruction files, and carries the privacy mailbox described below, under <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener noreferrer">its own privacy policy<span class="visually-hidden"> (opens in a new tab)</span></a>. It also runs the email routing described below.</li>
+          <li><strong>Cloudflare</strong> hosts the site, serves the Markdown instruction files, and carries the privacy mailbox described below. Its Pages integration also reads the GitHub repository to build the site, so it receives the repository's contents and the deployment metadata attached to each push. All of it falls under <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener noreferrer">its own privacy policy<span class="visually-hidden"> (opens in a new tab)</span></a>. It also runs the email routing described below.</li>
           <li><strong>GitHub</strong> serves the skill archive and the source code. Following a download or source link makes a request to GitHub and the content delivery servers it redirects downloads to, which keep their own records under <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener noreferrer">its own privacy statement<span class="visually-hidden"> (opens in a new tab)</span></a>. If you report a problem by opening a GitHub issue, your GitHub account name and everything you write there are normally public, and the maintainer can read it as the repository owner. The same applies to pull requests, comments, reviews, and the authorship details attached to any commit you contribute.</li>
           <li><strong>The sites we link to.</strong> The clickable links on these pages go to external sites including GitHub, GitHub Docs, LinkedIn, Creative Commons, Cloudflare, and grclibrary.ai. Following any link tells that site you visited it, under that site's own terms.</li>
         </ul>
-        <p>We do not sell personal data, disclose it for advertising, or pass it to data brokers. Data does reach the companies above, because delivering a website and an email address requires it, and it reaches any site you choose to click through to. Beyond that we would disclose data only where the law required it. Most of the data that could be demanded sits with those companies rather than with us. The exception is the correspondence described below, which we do hold.</p>
+        <p>We do not sell personal data, disclose it for advertising, or pass it to data brokers. Data does reach the companies above, because delivering a website and an email address requires it, and it reaches any site you choose to click through to. Beyond that we would disclose data only where the law required it. What we hold ourselves is the correspondence described below, and local copies of the public repository, which carry contributors' names and email addresses in the git history. The request logs and analytics sit with Cloudflare and GitHub.</p>
       </section>
 
       <section>
@@ -122,7 +122,7 @@
 
       <section>
         <h2>How long data is kept</h2>
-        <p>The website code stores no visitor data. Cloudflare and GitHub retain their own logs and analytics for their own periods, set by them under their own policies, and Cloudflare retains email routing events for a period it sets. We do not set, extend, or control any of those periods. The records we hold ourselves are the messages people send to the privacy address, which sit in the privacy interface described above until Jeff Posluns deletes them, and local clones and working copies of the public repository, which carry contributors' names, email addresses, and commit dates as git history records them. Git history persists in those copies after something is removed from GitHub's display, and clones other people make are outside our control. Public contributions to the GitHub repository, such as issues, comments, and pull requests, stay in that repository under GitHub's terms.</p>
+        <p>The website code stores no visitor data. Cloudflare and GitHub retain their own logs and analytics for their own periods, set by them under their own policies, and Cloudflare retains email routing events for a period it sets. We do not set, extend, or control any of those periods. The records we hold ourselves are the messages people send to the privacy address, which sit in the privacy interface described above until Jeff Posluns deletes them, and local clones and working copies of the public repository, which carry contributors' names, email addresses, and commit dates as git history records them. Git history persists in those copies after something is removed from GitHub's display, and clones other people make are outside our control. Public contributions to the GitHub repository, such as issues, comments, and pull requests, are hosted by GitHub under its retention rules; issues and comments can be edited or deleted, while commits already pulled into other people's clones cannot be recalled.</p>
       </section>
 
       <section>
@@ -141,7 +141,7 @@
         <ul>
           <li><strong>Data from other sources.</strong> We buy no data about you and append nothing from data brokers. What we receive from others is the traffic analytics Cloudflare derives from requests, and the repository traffic and download figures GitHub reports to us.</li>
           <li><strong>Automated decisions about you.</strong> We make no automated decisions that have a legal or similarly significant effect on you, and we do not profile visitors. Cloudflare's automated security filtering separates human from automated traffic as part of delivering the site, and makes no such decision about you.</li>
-          <li><strong>Children's data.</strong> The site is not directed at children, requires nobody to provide personal data in order to read or download anything, and operates no age check. A child who visits generates the same request data as any other visitor, and anyone who writes to us sends whatever their message contains.</li>
+          <li><strong>Children's data.</strong> The site is not directed at children, requires nobody to submit personal data in order to read or download anything, and operates no age check. Reading and downloading still disclose request data to Cloudflare or GitHub, as described above. A child who visits generates the same request data as any other visitor, and anyone who writes to us sends whatever their message contains.</li>
         </ul>
       </section>
 
