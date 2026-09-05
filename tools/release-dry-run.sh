@@ -84,6 +84,20 @@ cd "${worktree}"
 sed -i -E "s/^(Version:[[:space:]]*)[0-9][0-9.]*/\1${dry_version}/" cleanlanguage/SKILL.md
 grep -qE "^Version:[[:space:]]*${dry_version}([[:space:]]|\$)" cleanlanguage/SKILL.md \
   || fail "could not set the dry-run version in SKILL.md"
+
+# The plugin manifest carries the same version, and release-package.sh asserts the
+# two agree. A real release bumps both together, so the dry run must too, or it
+# would fail on a mismatch it created itself.
+python3 - "${dry_version}" <<'PYVER'
+import json, pathlib, sys
+v = sys.argv[1]
+p = pathlib.Path(".claude-plugin/plugin.json")
+d = json.loads(p.read_text(encoding="utf-8"))
+d["version"] = v
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PYVER
+python3 -c 'import json,sys; v=json.load(open(".claude-plugin/plugin.json"))["version"]; sys.exit(0 if v==sys.argv[1] else 1)' "${dry_version}" \
+  || fail "could not set the dry-run version in .claude-plugin/plugin.json"
 GIT_AUTHOR_DATE="${dry_date}T12:00:00 +0000" GIT_COMMITTER_DATE="${dry_date}T12:00:00 +0000" \
   git -c user.name="release-dry-run" -c user.email="release-dry-run@invalid" \
   commit -q -am "Dry run: version ${dry_version}"
