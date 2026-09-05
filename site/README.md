@@ -26,6 +26,7 @@ Add `cleanlanguage.ai` as the custom domain after the first deployment.
 - `install/index.html`: click-by-click installation instructions
 - `verify/index.html`: plain-language download verification guide
 - `instructions/index.html`: the full instructions as copyable plain text
+- `privacy/index.html`: privacy information for the site, the downloads, GitHub interactions, and the privacy mailbox
 - `404.html`: not-found page
 - `styles.css`: shared responsive styles
 - `js/copy.js`: copy-to-clipboard behaviour for the demo and instructions pages
