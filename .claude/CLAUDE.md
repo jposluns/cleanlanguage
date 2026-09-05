@@ -61,16 +61,18 @@ licence attribution is in [`NOTICE.md`](../NOTICE.md).
 Do not edit the vendored rule files. They are verbatim and are replaced wholesale
 when the pack updates. This project's own additional rules go under `rules/external/`.
 
-Three disciplines this repository previously vendored from `grc_library` are now the
-AIQT equivalents in that tree, which are the best-practice versions: express
-authorization before execution, evidence-grounded completion, and clarify before
-acting.
+3 disciplines this repository previously vendored from `grc_library` are now their AIQT
+equivalents in that tree: express authorization before execution, evidence-grounded
+completion, and clarify before acting. The AIQT renderings are terser than the
+originals; the 3 concrete clauses they drop are restored in
+[`rules/external/aiqt-adopter-supplements.md`](rules/external/aiqt-adopter-supplements.md).
 
 The AIQT Guardrails **hooks** (mechanical, action-time enforcement, for example
 blocking a `reset --hard` on a dirty tree or an AI commit-author trailer) are enabled
 for dev-time sessions through [`settings.json`](settings.json) and the local
-marketplace at `plugin/aiqt-guardrails-hooks/`. Nine orchestrator hooks stay inert by
-design.
+marketplace at `plugin/`. Of the 13 core hooks, 11 fire out of the box; `gensrc_guard`
+and `write_scope_guard` are registry-gated and inert here, and the 9 orchestrator hooks
+are inert by design (see [`../.aiqt/config.md`](../.aiqt/config.md)).
 
 ## Asking the maintainer questions
 

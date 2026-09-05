@@ -35,7 +35,7 @@ MD_LINK = re.compile(r'\]\(([^)]+)\)')
 SKIP_PREFIXES = ("http://", "https://", "mailto:", "tel:", "data:", "#", "//")
 
 # Vendored-verbatim rule trees: foreign content, excluded from link-checking.
-VENDORED_PREFIXES = (".aiqt/", ".claude/rules/aiqt/", ".claude/rules/security/")
+VENDORED_PREFIXES = (".aiqt/core/rules/", ".claude/rules/aiqt/", ".claude/rules/security/")
 
 def markdown_docs() -> list[str]:
     def keep(p: str) -> bool:

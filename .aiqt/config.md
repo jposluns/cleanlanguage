@@ -16,17 +16,21 @@ handoff store, attended and sometimes unattended operation).
 106 of 125 rules auto-load under `.claude/rules/aiqt/` and `.claude/rules/security/`.
 The full 125-rule corpus is vendored as reference under `.aiqt/core/rules/`.
 
-Excluded (19):
+Excluded (19), grouped by exclusion reason (not by the rules' AIQT facet; for example
+log-redaction is a SECI rule listed here for its personal-data subject). Full per-rule
+reasoning is in the codex applicability assessment in the durable store.
 
-- Application-security rules with no surface here (no application code): authentication,
-  authorization, federated-identity-flow, key-management, least-privilege-retrieval,
-  symlink-resolution, ssrf-prevention, session-token-management, file-upload-handling.
-- Personal-data rules (no end-user personal data in the maintenance scope):
-  data-minimization, data-residency-retention, purpose-limitation, log-redaction,
-  synthetic-fixture-data.
-- No surface: atomic-claim-from-pool.
-- Code-idiom rules, low value for a small content repository: match-surrounding-code,
-  test-hermeticity, compatibility-or-migration, minimize-dependencies.
+- No application-code surface (9): authentication, authorization, federated-identity-flow,
+  key-management, least-privilege-retrieval, symlink-resolution, ssrf-prevention,
+  session-token-management, file-upload-handling.
+- No end-user personal data in scope (5): data-minimization, data-residency-retention,
+  purpose-limitation, log-redaction, synthetic-fixture-data.
+- No shared-claim-pool surface (1): atomic-claim-from-pool. Judgement call: this repository
+  dispatches workers concurrently, which is arguably a shared pool, but the orchestrator holds
+  a single session lease and does not implement atomic pool claiming in its own code. Re-include
+  if it gains a shared claim pool.
+- Low value for a small content repository (4): match-surrounding-code, test-hermeticity,
+  compatibility-or-migration, minimize-dependencies.
 
 Basis: an expensive codex applicability assessment and a fable value ranking, both
 2026-09-05, preserved in the durable store.
@@ -34,7 +38,12 @@ Basis: an expensive codex applicability assessment and a fable value ranking, bo
 ## Hooks
 
 The AIQT Guardrails hooks plugin is enabled for dev-time sessions through
-`.claude/settings.json` and the local marketplace at `plugin/`. The 13 core hooks are
-active. The 9 orchestrator hooks stay inert: they require an orchestration registry
-(`.aiqt/orchestration*.json`) this adoption did not add. Arming them is a recorded
-follow-up (fable flagged three past incidents they would mechanically prevent).
+`.claude/settings.json` and the local marketplace at `plugin/`. Of the 13 core hooks, 11
+fire out of the box. Two are registry-gated and inert here, like the orchestrator hooks:
+`gensrc_guard` needs `.aiqt/gensrc.json` and `write_scope_guard` needs `write-scope.json`
+(with `.aiqt/frozen.json` for its frozen floor); neither registry was authored, so those
+2 do not fire. Authoring a `gensrc.json` for this repository's generated artefacts
+(the sitemap and the portable text) is a recorded follow-up. The 9 orchestrator hooks stay
+inert: they require an orchestration registry (`.aiqt/orchestration*.json`) this adoption
+did not add. Arming them is a recorded follow-up (a value review flagged 3 past incidents
+they would mechanically prevent).

@@ -17,8 +17,9 @@ adopted = "2026-09-05"
 [version]
 # The source pack versions these three independently. The maintainer's intent
 # (2026-09-05) is that the pack and skill versions be unified; that reconciliation
-# is upstream in the pack. The immutable tree-sha256 below identifies the exact
-# adopted bytes regardless of the version label.
+# is upstream in the pack. The tree-sha256 below is the pack's digest over its full v1.0.0 source tree, so it
+# identifies the source RELEASE; the per-file hashes in .aiqt/manifest.toml are what pin
+# the adopted subset. Both are recorded regardless of the version label.
 pack = "1.0.0"          # VERSION, changelog.toml, manifest.toml release-version
 skill = "1.0.4"         # .aiqt/core/skill/skill-source.md meta.version
 hooks-plugin = "0.4.0"  # plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json
