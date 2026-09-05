@@ -77,6 +77,31 @@ fi
 printf '%s\n' "${skill}" | grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' \
   || fail "cleanlanguage/SKILL.md is missing the 'name: cleanlanguage' line"
 
+# The plugin manifests are not packaged: they sit at the repository root, outside
+# the cleanlanguage/ tree this script archives, so they change neither the
+# allowlist nor the archive. They are checked here anyway, because this is the
+# script that runs at release time and a version that disagrees with SKILL.md is
+# exactly what would ship a plugin pinned to the wrong release. Read from the git
+# tree at HEAD, like everything else above, so a dirty working tree cannot pass a
+# check the release would fail.
+git cat-file -e HEAD:.claude-plugin/plugin.json 2>/dev/null \
+  || fail ".claude-plugin/plugin.json is missing at HEAD"
+git cat-file -e HEAD:.claude-plugin/marketplace.json 2>/dev/null \
+  || fail ".claude-plugin/marketplace.json is missing at HEAD"
+
+plugin_version="$(git show HEAD:.claude-plugin/plugin.json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))')"
+[ "${plugin_version}" = "${version}" ] \
+  || fail "plugin.json version (${plugin_version}) does not match SKILL.md (${version})"
+
+plugin_name="$(git show HEAD:.claude-plugin/plugin.json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))')"
+marketplace_name="$(git show HEAD:.claude-plugin/marketplace.json \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("plugins") or [{}]; print(p[0].get("name",""))')"
+[ -n "${plugin_name}" ] || fail "plugin.json has no name at HEAD"
+[ "${marketplace_name}" = "${plugin_name}" ] \
+  || fail "marketplace.json plugins[0].name (${marketplace_name}) does not match plugin.json name (${plugin_name})"
+
 bad_modes="$(git ls-tree -r HEAD -- cleanlanguage | awk '$1 != "100644"')"
 if [ -n "${bad_modes}" ]; then
   printf 'release-package: every packaged file must be a regular, non-executable file (git mode 100644); found:\n%s\n' "${bad_modes}" >&2

@@ -1,0 +1,16 @@
+{
+  "name": "cleanlanguage",
+  "owner": {
+    "name": "Jeff Posluns",
+    "url": "https://cleanlanguage.ai/"
+  },
+  "description": "Clean Language, an editorial standard for AI writing.",
+  "plugins": [
+    {
+      "name": "cleanlanguage",
+      "source": "./",
+      "skills": ["./cleanlanguage"],
+      "category": "productivity"
+    }
+  ]
+}

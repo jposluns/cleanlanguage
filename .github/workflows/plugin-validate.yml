@@ -1,0 +1,64 @@
+name: Plugin manifests
+
+# Validate the two plugin manifests at .claude-plugin/ so a malformed manifest
+# cannot reach main. Two checks run, because neither covers the other:
+#
+#   1. `claude plugin validate .` reads .claude-plugin/marketplace.json and, because
+#      that manifest's plugin entry uses `source: "./"`, recurses into plugin.json.
+#      A missing name or a skills path pointing nowhere fails here.
+#   2. The skill's own frontmatter is read by NEITHER of those runs. The validator
+#      only performs the frontmatter pass when the holding directory is named
+#      `skills`, so the skill is staged into one and validated there. `--strict` is
+#      load-bearing: a missing frontmatter block is reported as a WARNING, and
+#      without --strict the step exits 0 and proves nothing.
+#
+# The CLI version is PINNED. The repository pins actions/checkout to a commit SHA
+# for the same reason: a dependency release must not red an unrelated pull request,
+# and a given commit should validate the same way months from now. The cost of a pin
+# is that it goes stale, and a stale validator produces a FALSE GREEN while users
+# install with current versions. That risk is covered by plugin-drift.yml, which runs
+# the same checks against the current release on a schedule.
+#
+# No paths filter, deliberately. A path-filtered required check never reports on a
+# pull request outside its paths and blocks the merge as forever-pending, so keeping
+# this unfiltered leaves it promotable to a required check.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  CLAUDE_CODE_VERSION: "2.1.261"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install the pinned Claude Code CLI
+        shell: bash
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Report the CLI version actually installed
+        shell: bash
+        run: claude --version
+
+      - name: Validate the marketplace and plugin manifests
+        shell: bash
+        run: claude plugin validate . --strict
+
+      - name: Validate the skill frontmatter through a staged skills directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          staged="$(mktemp -d)"
+          mkdir -p "${staged}/skills"
+          cp -r cleanlanguage "${staged}/skills/cleanlanguage"
+          claude plugin validate "${staged}/skills" --strict

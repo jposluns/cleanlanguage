@@ -1,0 +1,67 @@
+name: Plugin manifest drift
+
+# Run the same validation as plugin-validate.yml, but against the CURRENT Claude
+# Code release rather than the pinned one, to catch the failure a pin cannot: our
+# manifests still satisfying an old validator while the rules have moved on.
+#
+# This matters because readers install the plugin with THEIR current version, not
+# ours. A manifest that passes our pinned validator and fails the current one
+# produces broken installs we would otherwise never hear about, and after
+# publication the directory re-screens the repository on each push. A stale pin
+# therefore fails silently, which is the failure mode this repository's gates exist
+# to prevent.
+#
+# WHAT THIS DOES NOT PROVE. It runs the CLI's local schema validator. It does not
+# test what Anthropic's directory accepts at submission, the claude.ai install path,
+# or the marketplace sync. Those are separate systems the CLI cannot see, so treat a
+# green run here as evidence about manifest shape only.
+#
+# LIMITATION, from GitHub's own documentation: "In a public repository, scheduled
+# workflows are automatically disabled when no repository activity has occurred in
+# 60 days." So this guard shares the failure mode it covers, and protects the
+# active-but-untouched case rather than true dormancy. The maintainer keeps a
+# monthly reminder to touch the repository when no code has landed; the intended
+# form of that touch is bumping CLAUDE_CODE_VERSION in plugin-validate.yml, which
+# resets the clock and does the pin maintenance in one commit. Do not delete that
+# monthly commit as noise. The dormancy backstop is re-verifying against the
+# then-current CLI immediately before submission.
+#
+# This never gates a merge. It runs on no pull request and must not become a
+# required check: a red run here means the outside world moved, not that someone's
+# change was wrong.
+
+on:
+  schedule:
+    - cron: "41 14 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install the current Claude Code CLI
+        shell: bash
+        run: npm install -g "@anthropic-ai/claude-code@latest"
+
+      - name: Report the CLI version actually installed
+        shell: bash
+        run: claude --version
+
+      - name: Validate the marketplace and plugin manifests
+        shell: bash
+        run: claude plugin validate . --strict
+
+      - name: Validate the skill frontmatter through a staged skills directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          staged="$(mktemp -d)"
+          mkdir -p "${staged}/skills"
+          cp -r cleanlanguage "${staged}/skills/cleanlanguage"
+          claude plugin validate "${staged}/skills" --strict
