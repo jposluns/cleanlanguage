@@ -19,22 +19,24 @@
 #      which rejects executable files (100755), symlinks (120000), and
 #      submodules (160000) in one comparison.
 #   3. Requires every path to match the package allowlist by shape: SKILL.md,
-#      agent configuration in agents/, the CL_icon files in assets/, and
-#      Markdown references in references/. This checks path shape and git mode,
-#      not file content: a new flat Markdown reference is allowed, while a new
-#      directory, a script extension, or a nested path fails.
+#      the plugin manifest at .claude-plugin/plugin.json, agent configuration
+#      in agents/, the CL_icon files in assets/, and Markdown references in
+#      references/. This checks path shape and git mode, not file content: a
+#      new flat Markdown reference is allowed, while a new directory, a script
+#      extension, or a nested path fails.
 #   4. Requires every icon the ChatGPT interface configuration references to
 #      exist in the package, whether the YAML quotes the path with double
 #      quotes, single quotes, or none.
-#   5. Stages the package from git archive, adds LICENSE and NOTICE.md, and zips
-#      the files at the archive ROOT (SKILL.md, agents/, assets/, references/,
-#      LICENSE, NOTICE.md), with no cleanlanguage/ prefix, so the zip holds
-#      exactly what git records plus the two licence files, whatever state the
-#      checkout is in.
+#   5. Stages the package from git archive, removes the plugin manifest, which
+#      ships through the marketplace rather than the zip, adds LICENSE and
+#      NOTICE.md, and zips the files at the archive ROOT (SKILL.md, agents/,
+#      assets/, references/, LICENSE, NOTICE.md), with no cleanlanguage/
+#      prefix, so the zip holds exactly what git records, minus that manifest,
+#      plus the two licence files, whatever state the checkout is in.
 #   6. Verifies the archive against an expected entry list derived from the
-#      same git tree, and verifies every archived file's bytes against its git
-#      blob, so a git attribute such as export-subst cannot change the shipped
-#      bytes unnoticed.
+#      same git tree, excluding the plugin manifest, and verifies every
+#      archived file's bytes against its git blob, so a git attribute such as
+#      export-subst cannot change the shipped bytes unnoticed.
 #
 # It writes dist/cleanlanguage.zip, dist/cleanlanguage-<version>.zip, and a
 # .sha256 beside each. It never tags, pushes, or talks to the network.
@@ -77,6 +79,42 @@ fi
 printf '%s\n' "${skill}" | grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' \
   || fail "cleanlanguage/SKILL.md is missing the 'name: cleanlanguage' line"
 
+# The plugin manifests live in two places: marketplace.json at the repository
+# root, which is what makes this repository a marketplace, and plugin.json
+# inside cleanlanguage/.claude-plugin/, which makes cleanlanguage/ the plugin
+# root so a marketplace install copies only the skill tree. The plugin
+# manifest therefore sits inside the tree this script archives, and the
+# staging step below deliberately keeps it out of the zip: the zip is the
+# skill artefact, and the plugin ships through the marketplace. The version,
+# name, and source checks run here because this is the script that runs at
+# release time. A version that disagrees with SKILL.md is exactly what would
+# ship a plugin pinned to the wrong release, and a source that regresses to
+# "./" is exactly what would ship the whole repository. Read from the git
+# tree at HEAD, like everything else above, so a dirty working tree cannot
+# pass a check the release would fail.
+git cat-file -e HEAD:cleanlanguage/.claude-plugin/plugin.json 2>/dev/null \
+  || fail "cleanlanguage/.claude-plugin/plugin.json is missing at HEAD"
+git cat-file -e HEAD:.claude-plugin/marketplace.json 2>/dev/null \
+  || fail ".claude-plugin/marketplace.json is missing at HEAD"
+
+plugin_version="$(git show HEAD:cleanlanguage/.claude-plugin/plugin.json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))')"
+[ "${plugin_version}" = "${version}" ] \
+  || fail "plugin.json version (${plugin_version}) does not match SKILL.md (${version})"
+
+plugin_name="$(git show HEAD:cleanlanguage/.claude-plugin/plugin.json \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))')"
+marketplace_name="$(git show HEAD:.claude-plugin/marketplace.json \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("plugins") or [{}]; print(p[0].get("name",""))')"
+[ -n "${plugin_name}" ] || fail "plugin.json has no name at HEAD"
+[ "${marketplace_name}" = "${plugin_name}" ] \
+  || fail "marketplace.json plugins[0].name (${marketplace_name}) does not match plugin.json name (${plugin_name})"
+
+marketplace_source="$(git show HEAD:.claude-plugin/marketplace.json \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("plugins") or [{}]; print(p[0].get("source",""))')"
+[ "${marketplace_source}" = "./cleanlanguage" ] \
+  || fail "marketplace.json plugins[0].source (${marketplace_source}) must be ./cleanlanguage so an install ships only the skill tree"
+
 bad_modes="$(git ls-tree -r HEAD -- cleanlanguage | awk '$1 != "100644"')"
 if [ -n "${bad_modes}" ]; then
   printf 'release-package: every packaged file must be a regular, non-executable file (git mode 100644); found:\n%s\n' "${bad_modes}" >&2
@@ -88,7 +126,7 @@ files="$(git ls-tree -r HEAD --name-only -- cleanlanguage)"
 printf '%s\n' "${files}" | grep -Eq '^cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' \
   || fail "cleanlanguage/references holds no Markdown reference at HEAD"
 unexpected="$(printf '%s\n' "${files}" | grep -Ev \
-  '^cleanlanguage/(SKILL\.md|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
+  '^cleanlanguage/(SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
   || true)"
 if [ -n "${unexpected}" ]; then
   printf 'release-package: paths outside the package allowlist:\n%s\n' "${unexpected}" >&2
@@ -149,6 +187,12 @@ fi
 staging="$(mktemp -d)"
 trap 'rm -rf "${staging}"' EXIT
 git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${staging}"
+# Keep the downloadable skill zip free of plugin metadata: the manifest ships
+# through the marketplace install, never through the zip. rmdir, not rm -rf,
+# so an unexpected extra file under .claude-plugin/ fails the build loudly
+# instead of being discarded.
+rm "${staging}/cleanlanguage/.claude-plugin/plugin.json"
+rmdir "${staging}/cleanlanguage/.claude-plugin"
 git show HEAD:LICENSE > "${staging}/cleanlanguage/LICENSE"
 git show HEAD:NOTICE.md > "${staging}/cleanlanguage/NOTICE.md"
 chmod 644 "${staging}/cleanlanguage/LICENSE" "${staging}/cleanlanguage/NOTICE.md"
@@ -184,7 +228,9 @@ cp dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip"
 
 expected="$(
   {
-    printf '%s\n' "${files}" | sed 's#^cleanlanguage/##'
+    printf '%s\n' "${files}" \
+      | grep -Fvx 'cleanlanguage/.claude-plugin/plugin.json' \
+      | sed 's#^cleanlanguage/##'
     printf 'LICENSE\nNOTICE.md\n'
   } | LC_ALL=C sort
 )"
@@ -207,6 +253,16 @@ if grep -q '^cleanlanguage/' <<< "${actual}"; then
 fi
 grep -qx 'SKILL.md' <<< "${actual}" \
   || fail "SKILL.md is not at the archive root"
+
+# The entry-list check above already excludes the plugin manifest, but a
+# coordinated revert of the staging rm and the expected-list filter would put
+# the manifest in both lists and slip past it, the same shape the root-layout
+# check above guards for its own pair of lines. This proves the shipped zip
+# itself carries no plugin metadata.
+if grep -q '^\.claude-plugin/' <<< "${actual}"; then
+  echo "release-package: the plugin manifest must not ship in the skill zip" >&2
+  exit 1
+fi
 
 # Every archived byte must equal its git blob, so a git attribute such as
 # export-subst cannot alter the shipped content while leaving the names intact.
