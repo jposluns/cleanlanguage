@@ -17,9 +17,16 @@ daily schedule, and the orchestrator runs it as the final step of the runbook.
 
 Behaviour:
   - Reads the version and displayed checksum from ``site/verify/index.html``.
-  - If the release ``vX`` for that version is not published yet, there is no
-    drift to report: the site is legitimately ahead of the release, which the
-    release workflow's own precondition requires. Passes.
+  - If the release ``vX`` for that version is not published yet, the pass is
+    conditional. The site is legitimately ahead of the release only when it
+    names the current skill version (``Version:`` in ``cleanlanguage/SKILL.md``)
+    and the tag ``vX`` does not exist yet, which is the pre-tag window the
+    release runbook creates. A different version with no release is a real
+    inconsistency and fails. An existing tag with no published release is a
+    deleted or unfinished release and reads as unverifiable. One broken state
+    stays invisible to this check: a bump that updated both the verify page and
+    SKILL.md but whose tag was never pushed is indistinguishable from the
+    pre-tag window by repository state alone.
   - If the release exists, downloads the version-named zip and its ``.sha256``,
     proves the release is self-consistent (the zip hashes to its own manifest),
     and requires the site's displayed checksum to equal that published digest.
@@ -27,10 +34,14 @@ Behaviour:
 Requires the ``gh`` CLI and, in CI, ``GH_TOKEN`` with ``contents: read``.
 
 Exit codes:
-  0  the site checksum matches the published release, or the release is not yet
-     published (nothing to reconcile)
-  1  drift: the release is published but the site shows a different checksum
-  2  could not verify (gh or network error, or the published release is malformed)
+  0  the site checksum matches the published release, or the site is
+     legitimately ahead of an unpublished release (it names the current skill
+     version and the tag does not exist yet)
+  1  drift or inconsistency: the release is published but the site shows a
+     different checksum, or the site names an unreleased version that is not
+     the current skill version
+  2  could not verify (gh or network error, the published release is malformed,
+     or the tag exists with no published release)
   3  a required file could not be read
 """
 
@@ -45,11 +56,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VERIFY_PAGE = REPO_ROOT / "site" / "verify" / "index.html"
+SKILL = REPO_ROOT / "cleanlanguage" / "SKILL.md"
 REPO = "jposluns/cleanlanguage"
 
 DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
+VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
 
 
 def die(message: str) -> None:
@@ -66,25 +80,47 @@ def gh(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(["gh", *args], capture_output=True, text=True, check=check)
 
 
-def release_status(tag: str) -> int:
-    """Return the HTTP status for the release, mirroring the release workflow.
+def api_status(path: str, what: str) -> int:
+    """Return the HTTP status for a GitHub API path.
 
-    A transient error must not read as "no release", so a status this cannot
+    A transient error must not read as "not found", so a status this cannot
     parse is treated as unverifiable rather than as a 404.
     """
     try:
-        proc = gh(
-            "api", "--include", "--silent",
-            f"repos/{REPO}/releases/tags/{tag}", check=False,
-        )
+        proc = gh("api", "--include", "--silent", path, check=False)
     except FileNotFoundError:
         cannot_verify("the gh CLI is not available")
-    codes = re.findall(r"^HTTP/[0-9.]+ (\d{3})", proc.stdout + proc.stderr, re.M)
+    codes = re.findall(r"^HTTP/[0-9.]+ (\d{3})", proc.stdout + "\n" + proc.stderr, re.M)
     if not codes:
-        cannot_verify(
-            f"could not read the release status for {tag} (gh exit {proc.returncode})"
-        )
+        cannot_verify(f"could not read {what} (gh exit {proc.returncode})")
     return int(codes[-1])
+
+
+def release_status(tag: str) -> int:
+    """Return the HTTP status for the release, mirroring the release workflow."""
+    return api_status(f"repos/{REPO}/releases/tags/{tag}", f"the release status for {tag}")
+
+
+def tag_status(tag: str) -> int:
+    """Return the HTTP status for the tag ref itself."""
+    return api_status(f"repos/{REPO}/git/ref/tags/{tag}", f"the tag status for {tag}")
+
+
+def skill_version() -> str:
+    """Return the current version named by ``cleanlanguage/SKILL.md``."""
+    if not SKILL.is_file():
+        die(f"{SKILL.relative_to(REPO_ROOT)} does not exist")
+    try:
+        text = SKILL.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        die(f"cleanlanguage/SKILL.md could not be read: {error}")
+    line = VERSION_LINE.search(text)
+    if line is None:
+        die("no 'Version:' line found in cleanlanguage/SKILL.md")
+    match = SKILL_VERSION.match(line.group(0))
+    if match is None:
+        die("the first 'Version:' line in cleanlanguage/SKILL.md is not a bare X.Y.Z version")
+    return match.group(1)
 
 
 def main() -> int:
@@ -109,9 +145,30 @@ def main() -> int:
 
     status = release_status(tag)
     if status == 404:
+        current = skill_version()
+        if version != current:
+            print("Release checksum inconsistency found:")
+            print(f"  - the verify page names version {version}, which has no published release")
+            print(f"  - cleanlanguage/SKILL.md names {current} as the current version")
+            print(
+                f"\nA site legitimately ahead of its release names the current skill "
+                f"version. This looks like a typo or a stale bump; align the verify "
+                f"page with SKILL.md, or publish release {tag}."
+            )
+            return 1
+        tag_state = tag_status(tag)
+        if tag_state == 200:
+            cannot_verify(
+                f"tag {tag} exists but release {tag} is not published; if a release "
+                f"run is publishing {tag} right now, re-run this check once it "
+                f"completes, and otherwise the release was deleted or its publish failed"
+            )
+        if tag_state != 404:
+            cannot_verify(f"unexpected HTTP {tag_state} reading tag {tag}")
         print(
-            f"Release {tag} is not published yet; the site names {version} ahead of "
-            f"the release, which is expected before the tag. Nothing to reconcile."
+            f"Release {tag} is not published yet; the site and SKILL.md both name "
+            f"{version} ahead of the release, which is expected before the tag. "
+            f"Nothing to reconcile."
         )
         return 0
     if status != 200:
@@ -120,7 +177,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         try:
             gh(
-                "release", "download", tag, "--dir", tmp, "--clobber",
+                "release", "download", tag, "--repo", REPO, "--dir", tmp, "--clobber",
                 "--pattern", zip_name, "--pattern", manifest_name,
             )
         except subprocess.CalledProcessError as exc:
