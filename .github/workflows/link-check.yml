@@ -23,6 +23,7 @@ on:
       - "tools/check-release-links.py"
       - "tools/set-release-links.py"
       - "tools/check-release-links.py"
+      - "tools/test-release-links.py"
       - ".github/workflows/link-check.yml"
   push:
     branches:
@@ -36,6 +37,7 @@ on:
       - "tools/check-release-links.py"
       - "tools/set-release-links.py"
       - "tools/check-release-links.py"
+      - "tools/test-release-links.py"
       - ".github/workflows/link-check.yml"
 
 permissions:
@@ -51,6 +53,10 @@ jobs:
       - name: Check internal links resolve
         shell: bash
         run: python3 tools/check-links.py
+
+      - name: Run the release-links gate tests
+        shell: bash
+        run: python3 tools/test-release-links.py
 
       - name: Check release links name the current version
         shell: bash
