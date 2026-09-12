@@ -2256,13 +2256,13 @@ sha256 = "d0a878cceb8a33d2baa4c0f658e1cac39b92fbdccdf859e6bc73eedfb49f2915"
 
 [[sources]]
 path = "plugin/aiqt-guardrails-hooks/hooks/hooks.json"
-bytes = 7961
-sha256 = "765a088dedaee16af2af61e61c0079244802e9eb7d8caa46fb77f837293a6fa9"
+bytes = 8663
+sha256 = "18753794b9438846aff40658337b5a211664b2579d976df2087aea143e4d206c"
 
 [[sources]]
 path = "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py"
-bytes = 493834
-sha256 = "89523f48cf2d7e006a32b6139212f2b8922c90347721e0b1b4af30990a91a107"
+bytes = 686941
+sha256 = "ff3b2c67931f13356ae44dd15b006eb92df560d97d65acd0594f02d910645bd5"
 
 [[sources]]
 path = "roadmap.toml"

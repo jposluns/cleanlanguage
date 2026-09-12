@@ -53,3 +53,19 @@ profile = "coding + agent-harness + multi-agent, personal-data off"
 active = 106
 excluded = 19   # 9 app-security-no-surface, 5 personal-data, 1 atomic-claim-from-pool, 4 code-idiom
 basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see durable store)"
+
+[hooks-update]
+# 2026-09-12: the enforcement hooks were advanced from the v1.0.0 baseline to guardrails
+# round-2 (PR #232, merged as fa5f942) - the no-ask posture conversion plus git_discard /
+# wrtscp / cnsdif hardening. This is a SCOPED, hooks-only advance: the rule corpus and
+# everything else remain at v1.0.0. The [integrity] tree-sha256 above (9dbbe17c) therefore
+# describes the v1.0.0 baseline and NO LONGER matches the working tree; the per-file hashes
+# in .aiqt/manifest.toml (updated for the two plugin hook files) are authoritative for what
+# is installed.
+advanced = "2026-09-12"
+source-commit = "fa5f942c30986a5c0df3d03c2e7c4eb43876f200"   # guardrails main, PR #232
+files = [
+  "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py",  # 686941 B, sha256 ff3b2c67931f13356ae44dd15b006eb92df560d97d65acd0594f02d910645bd5
+  "plugin/aiqt-guardrails-hooks/hooks/hooks.json",             # 8663 B, sha256 18753794b9438846aff40658337b5a211664b2579d976df2087aea143e4d206c
+]
+verified = "byte-identical to the merged manifest (tri-family --expensive QA upstream); plus adopter no-ask invariant + cnsdif discrimination probes and an independent codex verifier"
