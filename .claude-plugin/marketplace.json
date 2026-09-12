@@ -1,5 +1,5 @@
 {
-  "name": "cleanlanguage",
+  "name": "jposluns",
   "owner": {
     "name": "Jeff Posluns",
     "url": "https://cleanlanguage.ai/"
@@ -8,8 +8,7 @@
   "plugins": [
     {
       "name": "cleanlanguage",
-      "source": "./",
-      "skills": ["./cleanlanguage"],
+      "source": "./cleanlanguage",
       "category": "productivity"
     }
   ]

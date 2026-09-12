@@ -1,12 +1,16 @@
 name: Plugin manifests
 
-# Validate the two plugin manifests at .claude-plugin/ so a malformed manifest
-# cannot reach main. Two checks run, because neither covers the other:
+# Validate the plugin manifests so a malformed manifest cannot reach main. Three
+# checks run, because none covers the others:
 #
 #   1. `claude plugin validate .` reads .claude-plugin/marketplace.json and, because
-#      that manifest's plugin entry uses `source: "./"`, recurses into plugin.json.
-#      A missing name or a skills path pointing nowhere fails here.
-#   2. The skill's own frontmatter is read by NEITHER of those runs. The validator
+#      that manifest's plugin entry uses `source: "./cleanlanguage"`, recurses into
+#      cleanlanguage/.claude-plugin/plugin.json. A missing name or a skills path
+#      pointing nowhere fails here.
+#   2. `claude plugin validate ./cleanlanguage` validates the exact directory a
+#      marketplace install copies, so the plugin stays valid even if a CLI release
+#      changes how marketplace validation recurses into plugin sources.
+#   3. The skill's own frontmatter is read by NEITHER of those runs. The validator
 #      only performs the frontmatter pass when the holding directory is named
 #      `skills`, so the skill is staged into one and validated there. `--strict` is
 #      load-bearing: a missing frontmatter block is reported as a WARNING, and
@@ -53,6 +57,10 @@ jobs:
       - name: Validate the marketplace and plugin manifests
         shell: bash
         run: claude plugin validate . --strict
+
+      - name: Validate the plugin directory an install copies
+        shell: bash
+        run: claude plugin validate ./cleanlanguage --strict
 
       - name: Validate the skill frontmatter through a staged skills directory
         shell: bash
