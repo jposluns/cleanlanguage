@@ -138,6 +138,21 @@
         ]
       },
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "-I",
+              "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/aiqt_hooks.py",
+              "git_explicit_binding"
+            ],
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "AskUserQuestion",
         "hooks": [
           {
@@ -177,6 +192,21 @@
               "-I",
               "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/aiqt_hooks.py",
               "orch_truncation_guard"
+            ],
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "-I",
+              "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/aiqt_hooks.py",
+              "orch_untracked_wait_loop"
             ],
             "timeout": 10
           }
