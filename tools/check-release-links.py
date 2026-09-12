@@ -53,7 +53,7 @@ RELEASE_URL = re.compile(
     r"https://github\.com/jposluns/cleanlanguage/releases/download/"
     r"(?P<tag>[^/\"\s]+)/cleanlanguage-(?P<version>[0-9][0-9.]*)\.zip(?:\.sha256)?"
 )
-SKILL_VERSION = re.compile(r"^Version:\s*([0-9][0-9.]*)", re.M)
+SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
 DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")

@@ -18,12 +18,14 @@ on:
       - "site/verify/index.html"
       - "cleanlanguage/SKILL.md"
       - "tools/check-release-checksum-live.py"
+      - "tools/test-release-checksum-live.py"
       - ".github/workflows/release-checksum-live.yml"
   pull_request:
     paths:
       - "site/verify/index.html"
       - "cleanlanguage/SKILL.md"
       - "tools/check-release-checksum-live.py"
+      - "tools/test-release-checksum-live.py"
       - ".github/workflows/release-checksum-live.yml"
   schedule:
     - cron: "17 13 * * *"
@@ -38,6 +40,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Run the live checksum gate tests
+        shell: bash
+        run: python3 tools/test-release-checksum-live.py
       - name: Verify the site checksum matches the published release
         env:
           GH_TOKEN: ${{ github.token }}
