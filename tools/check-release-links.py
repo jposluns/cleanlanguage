@@ -54,6 +54,7 @@ RELEASE_URL = re.compile(
     r"(?P<tag>[^/\"\s]+)/cleanlanguage-(?P<version>[0-9][0-9.]*)\.zip(?:\.sha256)?"
 )
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
+VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
 DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -69,9 +70,16 @@ def main() -> int:
         if not path.is_file():
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
 
-    match = SKILL_VERSION.search(SKILL.read_text(encoding="utf-8"))
-    if match is None:
+    try:
+        skill_text = SKILL.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        die(f"cleanlanguage/SKILL.md could not be read: {error}")
+    line = VERSION_LINE.search(skill_text)
+    if line is None:
         die("no 'Version:' line found in cleanlanguage/SKILL.md")
+    match = SKILL_VERSION.match(line.group(0))
+    if match is None:
+        die("the first 'Version:' line in cleanlanguage/SKILL.md is not a bare X.Y.Z version")
     expected = match.group(1)
 
     problems: list[str] = []
