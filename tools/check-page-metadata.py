@@ -20,8 +20,16 @@ What it verifies, per page
    repository, so a publish date cannot be invented. ``PUBLISHED_OVERRIDES``
    records the deliberate exceptions, of which there are currently none.
 5. ``article:modified_time`` is not in the future.
-6. Where a page carries JSON-LD, its ``datePublished``, ``dateModified``, and
-   author name agree with the meta tags, so a page cannot contradict itself.
+6. Every page's primary content entity (an Article and its siblings, a
+   CreativeWork, or a WebPage) carries an ``author`` in which every author is a
+   Person object whose name is the meta author, so a stray co-author fails. A
+   secondary entity (a Comment, a Review, an FAQPage, or a typeless object) is
+   exempt. The gate reads top-level JSON-LD objects and the members of a
+   top-level array, skipping HTML comments; it does not descend into an
+   ``@graph`` container, so a page whose only author sits inside an ``@graph``
+   fails loudly rather than passing. An author name may be a string or a value
+   object (``@value``); JSON-LD dates are not cross-checked here, since the
+   meta-versus-git checks above already guard date rot.
 7. Every page names the same author, so one page cannot drift from the rest.
 8. Each ``og:image`` and ``twitter:image`` URL on the site's own origin resolves
    to a file that exists. These URLs are absolute, because a crawler needs them
@@ -57,6 +65,7 @@ Exit codes:
 from __future__ import annotations
 
 import datetime as dt
+import html.parser
 import json
 import re
 import subprocess
@@ -84,7 +93,125 @@ PUBLISHED_OVERRIDES: dict[str, str] = {}
 # property, which is intended.
 META_TAG = re.compile(r"<meta\s+([^>]*?)/?>", re.I)
 META_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
-JSON_LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
+# Match the ld+json script tag tolerant of attribute order and quote style, and
+# strip HTML comments before scanning so a commented-out block cannot satisfy
+# the author requirement.
+class _LDJSONScripts(html.parser.HTMLParser):
+    """Collect the text of ``<script type="application/ld+json">`` elements.
+
+    Parsing the markup, rather than matching a regex over raw HTML, matches the
+    ``type`` attribute exactly (never a ``data-type`` suffix), handles attribute
+    order and quoting, does not end a tag on a quoted ``>``, and never collects a
+    commented-out block, all without altering the JSON text (a global comment
+    strip would corrupt a JSON string that contains the comment delimiters).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.blocks: list[str] = []
+        self._collecting = False
+        self._buf: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "script":
+            # HTML tokenization keeps the first of a repeated attribute, so a
+            # later duplicate never changes the effective type.
+            values: dict[str, str] = {}
+            for name, value in attrs:
+                values.setdefault(name.lower(), value or "")
+            self._collecting = (
+                values.get("type", "").strip(" \t\n\f\r").lower() == "application/ld+json"
+            )
+            self._buf = []
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self._collecting:
+            self.blocks.append("".join(self._buf))
+            self._collecting = False
+            self._buf = []
+
+    def handle_startendtag(self, tag, attrs):
+        # HTML does not honour a self-closing flag on the non-void <script>
+        # element: a browser's parser treats <script .../> as an opening tag
+        # whose content follows. Mirror that so a mis-serialized block is
+        # collected and checked, not silently dropped.
+        if tag == "script":
+            self.handle_starttag(tag, attrs)
+
+    def handle_data(self, data):
+        if self._collecting:
+            self._buf.append(data)
+
+    def close(self) -> None:
+        # An unclosed <script> at end of input still holds buffered content; flush
+        # it so a missing </script> cannot drop (and thus hide) a block.
+        super().close()
+        if self._collecting and self._buf:
+            self.blocks.append("".join(self._buf))
+            self._collecting = False
+            self._buf = []
+
+
+def ld_json_blocks(text: str) -> list[str]:
+    """The text content of every ld+json script block in ``text``."""
+    parser = _LDJSONScripts()
+    parser.feed(text)
+    parser.close()
+    return parser.blocks
+
+
+def _reject_json_constant(token: str) -> None:
+    """Reject the constants ``json.loads`` accepts but strict JSON forbids.
+
+    NaN and Infinity parse by default, so a block that carries them would read
+    as well formed here yet be rejected by a strict consumer. Treat them as a
+    parse failure, like any other malformed block.
+    """
+    raise ValueError(f"non-standard JSON constant {token}")
+
+
+# The JSON-LD @type values that mark a page's primary content entity, whose
+# author must name the meta author. Secondary entities (a Comment, a Review, an
+# FAQPage, or a typeless object) are exempt. CreativeWork covers the landing
+# page; Article and its siblings cover the rest.
+PRIMARY_TYPES = frozenset({
+    "Article", "NewsArticle", "TechArticle", "BlogPosting", "ScholarlyArticle",
+    "Report", "CreativeWork", "WebPage",
+})
+# The schema.org author @type the gate accepts. A matching name carried on any
+# other type (for example PostalAddress) does not satisfy the requirement.
+AUTHOR_TYPES = frozenset({"Person"})
+
+
+def _ld_types(obj: dict) -> set:
+    """The set of @type values on ``obj`` (a string, or a list of strings)."""
+    value = obj.get("@type")
+    if isinstance(value, str):
+        return {value}
+    if isinstance(value, list):
+        return {t for t in value if isinstance(t, str)}
+    return set()
+
+
+def _author_ok(author: object, meta_author: str) -> bool:
+    """True when there is at least one author entry and EVERY entry is an
+    accepted author-type object whose ``name`` is ``meta_author``. A stray or
+    stale co-author, a non-Person author, or a bare-string author fails; a name
+    may be a string or a value object ``{"@value": "..."}``. This enforces the
+    site's single-author convention."""
+    items = [item for item in (author if isinstance(author, list) else [author])
+             if item is not None]
+    if not items:
+        return False
+    for item in items:
+        if not isinstance(item, dict) or not (_ld_types(item) & AUTHOR_TYPES):
+            return False
+        name = item.get("name")
+        if isinstance(name, dict):
+            name = name.get("@value")
+        if not (isinstance(name, str) and name.strip() == meta_author):
+            return False
+    return True
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 REQUIRED_PROPERTIES = ("article:published_time", "article:modified_time", "article:author")
@@ -207,32 +334,38 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
                     f"does not exist"
                 )
 
-    for match in JSON_LD.finditer(text):
+    ld_author_ok = False
+    ld_author_problem = False
+    for raw in ld_json_blocks(text):
         try:
-            data = json.loads(match.group(1))
-        except json.JSONDecodeError as error:
+            parsed = json.loads(raw, parse_constant=_reject_json_constant)
+        except (ValueError, RecursionError) as error:
             problems.append(f"JSON-LD does not parse: {error}")
+            ld_author_problem = True
             continue
-        if not isinstance(data, dict):
-            continue
-        ld_published, ld_modified = data.get("datePublished"), data.get("dateModified")
-        if ld_published and published and ld_published != published:
-            problems.append(
-                f"JSON-LD datePublished {ld_published} disagrees with "
-                f"article:published_time {published}"
-            )
-        if ld_modified and modified and ld_modified != modified:
-            problems.append(
-                f"JSON-LD dateModified {ld_modified} disagrees with "
-                f"article:modified_time {modified}"
-            )
-        ld_author = data.get("author")
-        if isinstance(ld_author, dict):
-            ld_name = ld_author.get("name")
-            if ld_name and author and ld_name != author:
+        for data in (parsed if isinstance(parsed, list) else [parsed]):
+            if not isinstance(data, dict) or not (_ld_types(data) & PRIMARY_TYPES):
+                # Only a primary content entity (Article, CreativeWork, ...) must
+                # carry the author. A secondary entity (Comment, Review, FAQPage,
+                # or a typeless object) is exempt, so a multi-entity page is
+                # neither false-failed nor able to satisfy the requirement from a
+                # secondary object. Date agreement is left to the meta-vs-git
+                # checks above.
+                continue
+            if author is not None and _author_ok(data.get("author"), author):
+                ld_author_ok = True
+            else:
                 problems.append(
-                    f"JSON-LD author {ld_name!r} disagrees with meta author {author!r}"
+                    "a primary JSON-LD content entity does not carry an author "
+                    "that is a Person object whose name matches the meta author"
                 )
+                ld_author_problem = True
+
+    if not ld_author_ok and not ld_author_problem:
+        problems.append(
+            "no JSON-LD primary content entity names an author matching the meta "
+            "author; add a Person author whose name matches the meta author"
+        )
 
     return problems, author
 
