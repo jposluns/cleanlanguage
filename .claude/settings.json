@@ -1,0 +1,10 @@
+{
+  "extraKnownMarketplaces": {
+    "aiqt-guardrails": {
+      "source": { "source": "directory", "path": "./plugin" }
+    }
+  },
+  "enabledPlugins": {
+    "aiqt-guardrails-hooks@aiqt-guardrails": true
+  }
+}
