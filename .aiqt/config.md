@@ -38,12 +38,12 @@ Basis: an expensive codex applicability assessment and a fable value ranking, bo
 ## Hooks
 
 The AIQT Guardrails hooks plugin is enabled for dev-time sessions through
-`.claude/settings.json` and the local marketplace at `plugin/`. Of the 13 core hooks, 11
+`.claude/settings.json` and the local marketplace at `plugin/`. Of the 14 core hooks, 12
 fire out of the box. Two are registry-gated and inert here, like the orchestrator hooks:
 `gensrc_guard` needs `.aiqt/gensrc.json` and `write_scope_guard` needs `write-scope.json`
 (with `.aiqt/frozen.json` for its frozen floor); neither registry was authored, so those
 2 do not fire. Authoring a `gensrc.json` for this repository's generated artefacts
-(the sitemap and the portable text) is a recorded follow-up. The 9 orchestrator hooks stay
+(the sitemap and the portable text) is a recorded follow-up. The 10 orchestrator hooks stay
 inert: they require an orchestration registry (`.aiqt/orchestration*.json`) this adoption
 did not add. Arming them is a recorded follow-up (a value review flagged 3 past incidents
 they would mechanically prevent).
