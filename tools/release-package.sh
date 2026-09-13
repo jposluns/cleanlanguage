@@ -89,6 +89,8 @@ try:
     text = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", newline=None).read()
 except UnicodeDecodeError:
     sys.exit(4)
+if not text:
+    sys.exit(5)
 line = re.search(r"^Version:[^\n]*", text, re.M)
 if line is None:
     sys.exit(2)
@@ -103,6 +105,7 @@ else
     2) fail "no Version: line found in cleanlanguage/SKILL.md at HEAD" ;;
     3) fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version" ;;
     4) fail "cleanlanguage/SKILL.md is not valid UTF-8 at HEAD" ;;
+    5) fail "cleanlanguage/SKILL.md is empty or could not be read at HEAD" ;;
     *) fail "could not read the version from cleanlanguage/SKILL.md at HEAD" ;;
   esac
 fi
