@@ -1191,6 +1191,103 @@ def _has_patch_flag(tokens):
     return any(t in _PATCH_FLAGS or t.startswith("--patch") for t in tokens)
 
 
+# --- cnsdif git-show no-patch exemption (F-R2-2/F-R2-3): a position/argument/cluster-aware pass -------
+# The no-patch exemption (git show -s / --no-patch prints only commit metadata and the message, no diff, so
+# it is NOT a console patch) is granted ONLY when a GENUINE suppression flag sits in a real OPTION position
+# AND no patch-enabling option and no UNKNOWN option shares the option region. Conservative by construction
+# (over-cover, never under-cover): an unrecognized option, a suppression token that is really a post-'--'
+# pathspec, or a suppression token that is really the VALUE of a value-taking option (-S/-G ...) never earns
+# the exemption. This supersedes the earlier exact-token _has_no_patch_flag/_has_patch_flag pair for the
+# 'show' branch, which scanned every token position-blind and so mistook a patch-implying option (-U/-sp) for
+# non-diff and a post-'--'/-S-argument -s for a suppression flag.
+# Patch enablers (any one in the region disqualifies the exemption): -p/-u, the --patch* family, -U/--unified
+# (attached =N or a separated value), -c/--cc (a combined diff is still a patch), and any SHORT cluster whose
+# scan reaches a p/u/U/c option letter. -U here is a patch enabler, not a mere value-taking option.
+_SHOW_LONG_PATCH_PREFIXES = ("--patch", "--unified")   # --patch, --patch-with-stat/-raw, --patch=, --unified=
+_SHOW_LONG_PATCH_EXACT = frozenset(("--cc",))
+# Value-taking SHORT option letters (-L range, -S/-G pickaxe, -O order-file, -o output): each consumes the
+# REST of its cluster (or the next token when it is the last letter) as its value, so a p/u AFTER one is that
+# value's bytes, not an option letter. Mirrors the value-option semantics _SHOW_VALUE_OPTS encodes for
+# _show_blob_selector; -U is deliberately absent (it is a patch enabler above, never merely skipped).
+_SHOW_SHORT_VALUE_LETTERS = frozenset(("L", "S", "G", "O", "o"))
+# Long options that ALWAYS consume a SEPARATED value, so skipping that value keeps a following patch flag
+# that is really this option's argument from being miscounted. Optional/attached-value display options
+# (--format/--pretty/--color and kin) are NOT here: they do not reliably consume a separated token, so
+# skipping one could hide a real patch flag; they are recognized non-patch below and consume nothing.
+_SHOW_LONG_REQ_VALUE = frozenset((
+    "--output", "--output-indicator-new", "--output-indicator-old", "--output-indicator-context",
+    "--line-prefix", "--src-prefix", "--dst-prefix", "--anchored"))
+# Recognized NON-patch long options that consume no separated value: --no-patch, the summary listings
+# (_SUMMARY_FLAGS, bare or '=value'), the raw/summary listings, and display-only options whose value, if
+# any, is attached. Any long option outside every recognized set is UNKNOWN and does NOT earn the exemption.
+_SHOW_LONG_NONPATCH = frozenset((
+    "--no-patch", "--raw", "--summary", "--format", "--pretty", "--color", "--no-color",
+    "--abbrev-commit", "--no-abbrev-commit", "--textconv", "--no-textconv")) | _SUMMARY_FLAGS
+
+
+def _show_short_cluster_kind(tok):
+    """Classify a SHORT git-show option token ('-' followed by letters, tok[1] != '-') for the no-patch
+    exemption. Returns (kind, saw_suppress, needs_sep_value): kind is 'patch' (a p/u/U/c option letter is
+    reached before any value-taking letter), 'unknown' (an unrecognized option letter), or 'ok' (only
+    recognized non-patch letters). Argument-aware: a value-taking letter (-L/-S/-G/-O/-o) consumes the REST
+    of the token as its value, so scanning stops there, and needs_sep_value is True when that letter is the
+    last char (its value is the NEXT token). 's' is the suppression flag."""
+    saw_suppress = False
+    n = len(tok)
+    j = 1
+    while j < n:
+        ch = tok[j]
+        if ch in ("p", "u", "U", "c"):
+            return ("patch", saw_suppress, False)
+        if ch in _SHOW_SHORT_VALUE_LETTERS:
+            return ("ok", saw_suppress, j + 1 >= n)  # the rest of the token (or the next token) is its value
+        if ch == "s":
+            saw_suppress = True
+            j += 1
+            continue
+        return ("unknown", saw_suppress, False)      # an unrecognized short option letter -> not exempt
+    return ("ok", saw_suppress, False)
+
+
+def _show_no_patch_exempt(args):
+    """True when a 'git show' argument list (the tokens AFTER the 'show' subcommand) earns the cnsdif
+    no-patch exemption: a genuine -s/--no-patch in a real option position, no patch-enabling option, and no
+    unknown option, judged by ONE '--'-boundary / value-argument / short-cluster-aware pass over the option
+    region (see the option sets above). Conservative: it errs toward NOT exempting (the segment stays a
+    diff producer, so cnsdif still covers it)."""
+    i = 0
+    n = len(args)
+    saw_suppress = False
+    while i < n:
+        tok = args[i]
+        if tok in _DIFF_END_OF_OPTIONS:
+            break  # every remaining token is an operand (a pathspec/ref), never a suppression flag
+        if not tok.startswith("-") or tok == "-":
+            i += 1
+            continue  # a bare operand (a ref/commit) does not affect the exemption
+        if tok in ("-s", "--no-patch"):
+            saw_suppress = True
+            i += 1
+            continue
+        if tok.startswith("--"):
+            base = tok.split("=", 1)[0]
+            if base in _SHOW_LONG_PATCH_EXACT or any(base.startswith(p) for p in _SHOW_LONG_PATCH_PREFIXES):
+                return False                     # a patch-enabling long option anywhere in the region -> cover
+            if base in _SHOW_LONG_REQ_VALUE:
+                i += 1 if "=" in tok else 2      # skip a recognized required-value option's separated value
+                continue
+            if base in _SHOW_LONG_NONPATCH:
+                i += 1
+                continue
+            return False                         # an unknown long option -> conservative, not exempt (cover)
+        kind, sup, needs_value = _show_short_cluster_kind(tok)
+        if kind in ("patch", "unknown"):
+            return False
+        saw_suppress = saw_suppress or sup
+        i += 2 if needs_value else 1
+    return saw_suppress
+
+
 def _has_summary_flag(tokens):
     """True when a segment carries a summary/listing flag (--stat, --name-only, --name-status, --numstat,
     --shortstat), in either the bare or the '=value' shape. A summary flag is a listing rather than a raw
@@ -1220,7 +1317,19 @@ def _is_diff_producer(tokens):
         return True
     if sub == "show":
         # A blob selector (<ref>:<path> / :<path>) makes git show a file read, not a diff dump.
-        return not _show_blob_selector(rest)
+        if _show_blob_selector(rest):
+            return False
+        # -s / --no-patch SUPPRESSES the patch (git prints only the commit metadata and message, no diff),
+        # the same non-diff class as the --stat/--name-only summary forms cnsdif already allows. The
+        # exemption is granted only by a position/argument/cluster-aware pass (_show_no_patch_exempt over the
+        # show ARGS): a genuine suppression flag in a real option position, no patch-enabling option
+        # (-p/-u/--patch*/-U/--unified/-c/--cc or a p/u short cluster), and no unknown option. A suppression
+        # token after '--' (a pathspec) or consumed as a value-taking option's argument (git show -S -s) does
+        # NOT earn it, and any patch enabler re-enables the diff (git show -s -p). cleanlanguage adopter
+        # report 2026-09-12; F-R2-2/F-R2-3 hardening 2026-09-12.
+        if _show_no_patch_exempt(rest):
+            return False
+        return True
     if sub in ("log", "diff-tree", "diff-index", "diff-files"):
         return _has_patch_flag(tokens)
     if sub == "format-patch":
@@ -1336,23 +1445,82 @@ def _final_stdout_dest(redirects):
     return dest
 
 
+# Patch-ENABLING short option letters the summary classifier recognizes: -p/-u and -U (unified). It
+# deliberately EXCLUDES the combined-diff letters -c/-cc, which emit a patch ONLY on a MERGE commit and are
+# NOPATCH on the ordinary (non-merge) commit the classifier sees; treating them as enablers would over-deny
+# the common `git show -c --stat` / `git show --cc --stat` summary form (verified NOPATCH against real git,
+# F-R2-5), so they stay summary-only allow-notes. The merge-commit --cc/-c-with-summary patch is a disclosed
+# residual (the guard cannot see whether the ref is a merge), not chased here. -U is an enabler whatever its
+# attached value (`-U`, `-U3`); git rejects the separated `-U 3` form outright, so no separated value is skipped.
+_SUMMARY_PATCH_SHORT = frozenset(("p", "u", "U"))
+
+
+def _argv_has_patch_enabler(argv):
+    """Argument-aware: True when a git producer's OPTION region (before a '--'/'--end-of-options' boundary)
+    carries a patch-ENABLING option - one that makes git emit a patch even alongside a summary selector.
+    Enablers: -p/-u, -U/--unified, the --patch* long family, and any short-option CLUSTER reaching a p/u/U
+    letter. It reuses the same option sets and value-argument/'--'-boundary parsing as the git-show no-patch
+    exemption (mirroring _show_no_patch_exempt / _show_short_cluster_kind): a value-taking option
+    (-L/-S/-G/-O/-o, and the separated-value long options _SHOW_LONG_REQ_VALUE) consumes its value, so a
+    p/u/U spelled inside that value is not miscounted, and the '--' boundary ends the option region. It
+    narrows the short patch-letter set to _SUMMARY_PATCH_SHORT (p/u/U, excluding the merge-only -c letter;
+    see that constant), and the long enablers to the --patch*/--unified* prefixes (excluding --cc, the
+    merge-only combined-diff form). Any other (unknown) option is not a patch enabler; this predicate
+    answers only 'is a patch forced on', leaving every other classification to the caller (F-R2-5)."""
+    i = 0
+    n = len(argv)
+    while i < n:
+        tok = argv[i]
+        if tok in _DIFF_END_OF_OPTIONS:
+            break  # every remaining token is an operand (a pathspec/ref), never an option
+        if not tok.startswith("-") or tok == "-":
+            i += 1
+            continue  # a bare operand (git, the subcommand, a ref) is not an option
+        if tok.startswith("--"):
+            base = tok.split("=", 1)[0]
+            if any(base.startswith(p) for p in _SHOW_LONG_PATCH_PREFIXES):
+                return True                      # --patch* / --unified* long enabler
+            if base in _SHOW_LONG_REQ_VALUE:
+                i += 1 if "=" in tok else 2      # skip a recognized required-value option's separated value
+                continue
+            i += 1                               # any other long option is not a summary patch enabler
+            continue
+        # a short cluster: scan its letters, honouring a value-taking letter that consumes the rest/next token
+        j = 1
+        m = len(tok)
+        consumes_next = False
+        found = False
+        while j < m:
+            ch = tok[j]
+            if ch in _SUMMARY_PATCH_SHORT:
+                found = True
+                break
+            if ch in _SHOW_SHORT_VALUE_LETTERS:
+                consumes_next = j + 1 >= m       # a value letter as the LAST char takes the NEXT token
+                break                            # the rest of this token is that letter's value
+            j += 1
+        if found:
+            return True
+        i += 2 if consumes_next else 1
+    return False
+
+
 def _diff_emits_only_summary(argv):
     """Role-aware: True when a producer's OPTION region (before a '--'/'--end-of-options' boundary) carries
     a summary selector (--stat/--name-only/--name-status/--numstat/--shortstat, bare or '=value') and NO
-    patch flag (-p/-u/--patch*). Distinguishes a genuine summary listing (git diff -M --stat, which is not a
-    console patch dump and so ASKS rather than DENIES) from a summary token in a NON-option position (git
-    diff -- --stat, a pathspec: a real dump) and from a summary with a co-present patch flag (git diff
-    --stat -p, still a full patch dump)."""
+    patch enabler. Distinguishes a genuine summary listing (git diff -M --stat, which is not a console patch
+    dump and so ASKS rather than DENIES) from a summary token in a NON-option position (git diff -- --stat, a
+    pathspec: a real dump) and from a summary with a co-present patch enabler (git diff --stat -p, or the
+    argument-aware -U/--unified and p/u/U-cluster forms, still a full patch dump). Patch-enabler recognition
+    is argument-aware via _argv_has_patch_enabler, so -U/--unified and a p/u short cluster (git show -s --stat
+    -U3 / --unified=3 / -sp) are no longer mistaken for summary-only (F-R2-5)."""
     has_summary = False
-    has_patch = False
     for word in argv:
         if word in _DIFF_END_OF_OPTIONS:
             break
         if word.split("=", 1)[0] in _SUMMARY_FLAGS:
             has_summary = True
-        if word in _PATCH_FLAGS or word.startswith("--patch"):
-            has_patch = True
-    return has_summary and not has_patch
+    return has_summary and not _argv_has_patch_enabler(argv)
 
 
 def _seg_stdout_reaches_console(seg, segments, index):
@@ -5482,7 +5650,58 @@ def _commit_post_switch_branch(sub, args):
     return None
 
 
-def _commit_on_protected(tokens, cwd, switched_to=None):
+def _repo_has_remote(repo):
+    """True when `repo` has a remote by ANY mechanism git resolves, False ONLY when every check is
+    evaluable AND finds none, None when any check is unevaluable (the caller fails CLOSED on None, so a
+    None denies). A repo with NO remote has no server-side branch protection and no PR/CI path, so
+    direct-to-main is its only model; the protected-branch COMMIT guard exempts it (a local record store's
+    handoff commit). The detection is COMPREHENSIVE across the ways git resolves a remote:
+      (a) CONFIG remotes (`[remote "<name>"]`), which `git remote` lists. Counted by LINES via
+          stdout.splitlines(), NOT stdout.strip() (F-R2-7b): a remote whose NAME is pure whitespace - which
+          git accepts and pushes through - prints a non-empty line that .strip() would erase, so a
+          line-presence test keeps it while a stripped test drops it. Zero remotes print no lines.
+      (b) LEGACY remotes that git resolves and pushes through but `git remote` does NOT enumerate
+          (F-R2-7a): the on-disk <git-common-dir>/remotes/<name> (URL:/Push:) and the very-legacy
+          <git-common-dir>/branches/<name> definitions. The git common dir is resolved via the same
+          scrubbed _branch_root_git primitive (common-dir, not git-dir, so a linked worktree sees the
+          main repo's legacy dirs), and each subdir is listed for ANY entry.
+    Fails CLOSED (None) when the config probe, the git-common-dir resolution, or a legacy-dir listing is
+    unevaluable (probe None/nonzero, an empty/opaque path, or an OSError other than absence). Inspection is
+    no-follow-safe: a symlinked legacy dir is not followed out, it fails closed to None; and only entry
+    NAMES are listed, never followed. Keys on remote ABSENCE, so every remote-backed repo stays protected
+    exactly as before."""
+    r = _branch_root_git(repo, "remote")
+    if r is None or r.returncode != 0:
+        return None
+    if r.stdout.splitlines():
+        return True  # (a) at least one config remote (a whitespace-named one is still a line)
+    # (b) legacy on-disk remote definitions git resolves but `git remote` does not list. Resolve the git
+    # COMMON dir (shared by all linked worktrees) via the scrubbed primitive; a relative path is anchored
+    # to repo, matching git's -C-relative output.
+    gd = _branch_root_git(repo, "rev-parse", "--git-common-dir")
+    if gd is None or gd.returncode != 0:
+        return None
+    common = gd.stdout.strip()
+    if not common:
+        return None
+    if not os.path.isabs(common):
+        common = os.path.join(repo, common)
+    for legacy in ("remotes", "branches"):
+        d = os.path.join(common, legacy)
+        if os.path.islink(d):
+            return None  # do not follow a symlinked legacy dir out; fail closed (deny)
+        try:
+            entries = os.listdir(d)
+        except FileNotFoundError:
+            continue  # the legacy dir is genuinely absent: no legacy remote by this mechanism
+        except OSError:
+            return None  # an unreadable legacy dir is a cannot-evaluate, not an absence
+        if entries:
+            return True  # a legacy remote (or branch shorthand) git resolves and pushes through
+    return False
+
+
+def _commit_on_protected(tokens, cwd, switched_to=None, lone_direct=False):
     """Classify a git commit segment against the protected line. Returns None (provably a non-protected
     branch: silent allow), ("deny", detail) when the commit will PROVABLY land on a protected branch (a
     confirmed direct commit on the protected line: deny-and-educate), or ("note", detail) when the guard
@@ -5533,6 +5752,21 @@ def _commit_on_protected(tokens, cwd, switched_to=None):
                 "directory, a detached HEAD, or a failed probe), so it cannot prove the commit lands "
                 "off the protected line")
     if _is_protected_ref(head):
+        # No-remote exemption (cleanlanguage adopter report, 2026-09-12): a repo with NO configured remote
+        # has no server-side branch protection and no PR/CI path, so direct-to-main is its only model (a
+        # local record store committed once per session at handoff). F-R2-1 (2026-09-12): it is granted ONLY
+        # for a LONE, directly-bound `git commit` whose repo/remote context is provable - lone_direct (a single
+        # simple command: no compound &&/;/|, no preceding cd or remote mutation, no redirect, and (F-R2-4) no
+        # executable command/process substitution in the segment, which could mutate the repo/remote before git
+        # runs) AND
+        # _segment_dir_simple (base is the session cwd the commit actually runs in, not a -C/redirect target).
+        # A compound/cd-bearing/redirected commit is denied here EXACTLY as before the exemption, since its
+        # pre-command remote-absence probe is stale (a `cd remote-repo && commit` or a `git remote add && commit`
+        # would otherwise be wrongly exempted). Only a PROVABLE remote-absence exempts; an unresolvable probe
+        # fails CLOSED (still denied). A repo WITH a remote stays protected exactly as before, including on a
+        # branch with no upstream.
+        if lone_direct and _segment_dir_simple(tokens) and _repo_has_remote(base) is False:
+            return None
         return ("deny", "would commit directly on the protected branch {!r}".format(head))
     return None
 
@@ -5623,9 +5857,29 @@ def protected_line(data):
             "string, so the protected-line check could not run; failing closed.",
             "AIQT guardrail: denied a Bash call with no readable command (rule prtbrn, fail-closed).")
     try:
-        segments = _segments(command)
+        seg_records = _lex_command(command)
     except ValueError:
         return _protected_line_fallback(command)
+    segments = [(seg.argv, seg.sep_after) for seg in seg_records]  # the (argv, sep) projection _segments gives
+    # F-R2-1: the no-remote commit exemption may only be granted to a LONE, directly-bound `git commit` whose
+    # repository/remote context is PROVABLE and unambiguous - a single simple command (no compound &&/;/|, so
+    # no preceding `cd` and no preceding `git remote add`/other repo/remote mutation, and no redirect). A
+    # compound/multi-segment/cd-bearing/redirected commit is handled EXACTLY as before the exemption existed
+    # (deny when it lands on a protected branch), because the pre-command repo/remote state the probe reads is
+    # then stale (cd changes the repo git commits to; `git remote add && commit` adds the remote after the
+    # probe ran). The commit segment must ALSO be _segment_dir_simple (base == the session cwd it actually runs
+    # in) for the exemption to apply; that is checked in _commit_on_protected.
+    # F-R2-4: a single segment with no redirects is NOT sufficient to prove the commit's repo/remote
+    # context is stable - an executable command/process substitution inside the command (a `$(...)`,
+    # a backtick, or a `<(`/`>(` process substitution) can mutate that context before git runs (e.g.
+    # `git commit -m "$(git remote add origin /path; echo qa)"` adds a remote the pre-command probe
+    # never saw). The segment's opaque_shell flag is exactly "an unquoted expansion/substitution the
+    # ALLOW proof may not rest on" (it is set for a double-quoted `$(...)` and an unquoted backtick;
+    # a `<(`/`>(` process substitution raises in the lexer and takes the fallback path), so a lone
+    # commit whose segment is opaque_shell is NOT exempted and falls through to the normal protected-
+    # branch deny. Conservative by direction: an opaque commit on a no-remote protected branch denies.
+    lone_direct_commit = (len(seg_records) == 1 and not seg_records[0].redirects
+                          and not seg_records[0].opaque_shell)
     cwd = data.get("cwd")
     # No-ask posture: a CONFIRMED protected-line rewrite (force-push/delete of a protected ref, or a commit
     # provably on the protected branch) DENIES-and-educates and returns immediately. A push this guard cannot
@@ -5703,7 +5957,8 @@ def protected_line(data):
                     "AIQT guardrail: denied a git push this guard cannot prove misses the protected branch "
                     "(rule prtbrn); push to a feature branch and merge on green.")
         elif sub == "commit":
-            result = _commit_on_protected(tokens, cwd, switched_to=switched_to)
+            result = _commit_on_protected(tokens, cwd, switched_to=switched_to,
+                                          lone_direct=lone_direct_commit)
             if result is None:
                 continue
             severity, detail = result

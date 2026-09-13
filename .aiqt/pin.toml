@@ -62,10 +62,18 @@ basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see d
 # describes the v1.0.0 baseline and NO LONGER matches the working tree; the per-file hashes
 # in .aiqt/manifest.toml (updated for the two plugin hook files) are authoritative for what
 # is installed.
-advanced = "2026-09-12"
-source-commit = "fa5f942c30986a5c0df3d03c2e7c4eb43876f200"   # guardrails main, PR #232
+# 2026-09-13: reconciled aiqt_hooks.py to guardrails main (PR #233, 2eb6812) - the
+# protected_line no-remote commit exemption (unblocks a local no-remote store's handoff
+# commit) and the cnsdif git-show no-patch (-s/--no-patch/--stat) exemption. Verified
+# byte-identical to upstream main at HEAD 0510edd (sha256 1052f4f4...), matching the upstream
+# manifest. hooks.json UNCHANGED (these change hook logic, not registrations). Still a SCOPED
+# hooks-only advance; the orchestrator suite stays inert (no registry). Adopted per maintainer
+# decision 2026-09-13 (32-adopt, option C sequenced, Step 1). Prior advance: 2026-09-12 PR #232
+# fa5f942 (round-2 hardening).
+advanced = "2026-09-13"
+source-commit = "2eb6812c" # guardrails main PR #233; file == upstream HEAD 0510edd
 files = [
-  "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py",  # 686941 B, sha256 ff3b2c67931f13356ae44dd15b006eb92df560d97d65acd0594f02d910645bd5
+  "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py",  # 704505 B, sha256 1052f4f48f2fe0e839c665455ad2af2c21abf3fe389fa8acb832fcdf842062ce
   "plugin/aiqt-guardrails-hooks/hooks/hooks.json",             # 8663 B, sha256 18753794b9438846aff40658337b5a211664b2579d976df2087aea143e4d206c
 ]
 verified = "byte-identical to the merged manifest (tri-family --expensive QA upstream); plus adopter no-ask invariant + cnsdif discrimination probes and an independent codex verifier"
