@@ -58,8 +58,17 @@ def skill_with(version_block: str | None) -> str:
 
 
 def gate_verdict(gate, skill_text: str):
-    """(matched, version) for a gate's select-and-validate on ``skill_text``."""
-    line = gate.VERSION_LINE.search(skill_text)
+    """(matched, version) for a gate's select-and-validate, read the way the real
+    gate reads a file: through Path.read_text, whose universal-newline handling
+    drops a trailing CR from a CRLF line ending."""
+    with tempfile.NamedTemporaryFile("wb", suffix=".md", delete=False) as handle:
+        handle.write(skill_text.encode("utf-8"))
+        path = handle.name
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    finally:
+        os.unlink(path)
+    line = gate.VERSION_LINE.search(text)
     if line is None:
         return False, None
     match = gate.SKILL_VERSION.match(line.group(0))
@@ -189,11 +198,17 @@ class UnicodeAndStressTest(unittest.TestCase):
         self.assertEqual(code, 1, stderr)
         self._gates_reject(block)
 
-    def test_crlf_is_rejected(self):
+    def test_crlf_line_ending_agrees(self):
+        # A CRLF line ending: the gate reads with universal newlines (drops the
+        # CR) and accepts 1.2.3; the packager strips a trailing CR too, so both
+        # accept. The pre-change packager rejected it (the CR survived).
         block = "Version: 1.2.3\r"
         code, stderr = run_packager(block, "1.2.3")
-        self.assertEqual(code, 1, stderr)
-        self._gates_reject(block)
+        self.assertEqual(code, 0, stderr)
+        for gate in (LINKS, CHECKSUM):
+            matched, version = gate_verdict(gate, skill_with(block))
+            self.assertTrue(matched)
+            self.assertEqual(version, "1.2.3")
 
     def test_large_valid_skill_builds(self):
         # A large but valid SKILL.md must build, not die with SIGPIPE (exit 141)
@@ -202,11 +217,16 @@ class UnicodeAndStressTest(unittest.TestCase):
         code, stderr = run_packager(None, "1.0.14", extra_tail=tail)
         self.assertEqual(code, 0, stderr)
 
-    def test_nul_line_is_rejected_by_the_gates(self):
-        # A NUL in the version line is the one shape the bash packager cannot see
-        # (command substitution strips it), so the authoritative gates are the
-        # backstop; assert they reject it. Fails safe: CI blocks such a release.
-        self._gates_reject("Version: 1.2.3\x00")
+    def test_nul_is_rejected_by_all_three(self):
+        # A NUL in SKILL.md: the gates reject a NUL in the version line, and the
+        # packager now refuses to build any SKILL.md carrying a NUL (bash strips
+        # it from the version line, so the packager checks the raw byte count).
+        # The pre-change packager stripped the NUL and built.
+        block = "Version: 1.2.3\x00"
+        code, stderr = run_packager(block, "1.2.3")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("NUL byte", stderr)
+        self._gates_reject(block)
 
 
 if __name__ == "__main__":

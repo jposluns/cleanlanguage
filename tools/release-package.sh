@@ -71,6 +71,15 @@ done
 git cat-file -e HEAD:cleanlanguage/SKILL.md 2>/dev/null \
   || fail "cleanlanguage/SKILL.md is missing at HEAD"
 skill="$(git show HEAD:cleanlanguage/SKILL.md)"
+# Bash command substitution silently drops NUL bytes, so a NUL in the version
+# line would slip past the check below while the gates, which read the file
+# bytes, reject it. Refuse to build a SKILL.md that carries a NUL at all: that is
+# corruption and never an authored shape, so the packager stays at least as
+# strict as the gates.
+if [ "$(git show HEAD:cleanlanguage/SKILL.md | wc -c)" \
+   != "$(git show HEAD:cleanlanguage/SKILL.md | tr -d '\0' | wc -c)" ]; then
+  fail "cleanlanguage/SKILL.md contains a NUL byte at HEAD"
+fi
 # Select the first Version: line and require a bare X.Y.Z, the same select and
 # validation as the two release gates (SKILL_VERSION in check-release-links.py
 # and check-release-checksum-live.py), so a malformed first line fails here
@@ -93,6 +102,9 @@ while IFS= read -r _version_scan || [ -n "${_version_scan}" ]; do
   esac
 done <<< "${skill}"
 [ -n "${version_line}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
+# The gates read SKILL.md with universal newlines, which drop a trailing CR from
+# a CRLF line ending, so strip one here too to keep the three verdicts identical.
+version_line="${version_line%$'\r'}"
 strict_version=$'^Version:[ \t]*([0123456789]+\\.[0123456789]+\\.[0123456789]+)[ \t]*$'
 [[ "${version_line}" =~ ${strict_version} ]] \
   || fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version"
