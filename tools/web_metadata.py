@@ -33,6 +33,7 @@ from __future__ import annotations
 import html.parser
 import os
 import re
+import stat
 import urllib.parse
 from pathlib import Path
 
@@ -43,7 +44,7 @@ from pathlib import Path
 # style, and, by the CDATA extension below, noscript) are handled by html.parser
 # itself; the ones listed here are the containers html.parser parses normally, so
 # the collector tracks them itself and does not depend on the interpreter version.
-INERT_ELEMENTS = frozenset({"template", "title", "textarea"})
+INERT_ELEMENTS = frozenset({"template"})
 
 _COLLECTED_ELEMENTS = frozenset({"meta", "link"})
 
@@ -65,11 +66,16 @@ class _DocumentTags(html.parser.HTMLParser):
     do, where a plain depth counter would stay stuck and hide the rest of the page.
     """
 
-    # Treat <noscript> as a raw-text element on every interpreter version, so its
-    # content is not parsed as active metadata. html.parser only gained a scripting
-    # flag for this distinction in 3.14; extending CDATA_CONTENT_ELEMENTS is the
-    # portable equivalent and matches what a scripting-enabled browser does.
-    CDATA_CONTENT_ELEMENTS = html.parser.HTMLParser.CDATA_CONTENT_ELEMENTS + ("noscript",)
+    # Treat <noscript>, <title>, and <textarea> as raw-text elements on every
+    # interpreter version, so their content is not parsed as active metadata and a
+    # crafted title cannot hide a following tag. html.parser only gained a scripting
+    # flag and improved title handling in 3.14; extending CDATA_CONTENT_ELEMENTS is
+    # the portable equivalent and matches what a browser does.
+    CDATA_CONTENT_ELEMENTS = html.parser.HTMLParser.CDATA_CONTENT_ELEMENTS + (
+        "noscript",
+        "title",
+        "textarea",
+    )
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
@@ -154,7 +160,7 @@ def parse_origin(origin: str) -> tuple[str, str, int]:
     if parts.username is not None or parts.password is not None:
         raise UrlError(f"origin must not carry userinfo: {origin!r}")
     host = parts.hostname
-    if not host or _CONTROL.search(host) or "\\" in host:
+    if not host or _CONTROL.search(host) or "\\" in host or not host.strip("."):
         raise UrlError(f"origin has no usable host: {origin!r}")
     try:
         port = parts.port
@@ -171,9 +177,11 @@ def same_origin_path(url: str, origin: str) -> str | None:
     relative, scheme-relative, another scheme, or another origin. Raises
     :class:`UrlError` when ``url`` claims this origin but is malformed."""
     origin_scheme, origin_host, origin_port = parse_origin(origin)
-    # A browser normalizes a backslash to a forward slash in an http(s) URL, so a
-    # card written with backslashes still resolves against this origin.
+    # A browser normalizes a backslash to a forward slash in an http(s) URL and
+    # treats any run of slashes after the scheme as the authority separator, so a
+    # card written with backslashes or the wrong slash count still resolves here.
     url = url.replace("\\", "/")
+    url = re.sub(r"(?i)\A(https?):/*", r"\1://", url)
     try:
         parts = urllib.parse.urlsplit(url)
     except ValueError as error:
@@ -265,7 +273,18 @@ def locate_on_disk(url_path: str, root: Path) -> tuple[str, Path]:
             return "missing", candidate
         current = current / actual
         spelled_differently = True
-    if not current.is_file():
+    # The walk may have followed a case-corrected symlink, so re-confirm the final
+    # target is still inside the root before trusting it.
+    if not contained(current, root):
+        return "outside", candidate
+    # is_file() would swallow a permission error as False; stat lets a genuine I/O
+    # error propagate to the caller's could-not-run path while a missing file is a
+    # content problem.
+    try:
+        mode = current.stat().st_mode
+    except FileNotFoundError:
+        return "missing", candidate
+    if not stat.S_ISREG(mode):
         return "missing", candidate
     if spelled_differently:
         return "case", current

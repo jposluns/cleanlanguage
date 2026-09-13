@@ -116,6 +116,17 @@ class CollectorTest(unittest.TestCase):
         self.assertEqual(self.metas('<style><meta name="a" content="x"></style>'
                                     '<title><meta name="b" content="y"></title>'), [])
 
+    def test_meta_inside_textarea_absent(self):
+        self.assertEqual(self.metas('<textarea><meta name="a" content="x"></textarea>'), [])
+
+    def test_crafted_title_does_not_hide_a_following_link(self):
+        # <title> is raw text, so <!-- is literal and the first </title> closes it;
+        # the following link is active, as in a browser. A naive parser would read
+        # <!--</title>--> as a comment, keep title open, and hide the link.
+        links = wm.link_tags(
+            '<title><!--</title>--><link rel="canonical" href="https://elsewhere.test/">')
+        self.assertEqual(links, [{"rel": "canonical", "href": "https://elsewhere.test/"}])
+
 
 class SameOriginPathTest(unittest.TestCase):
     def path(self, url):
@@ -188,6 +199,16 @@ class SameOriginPathTest(unittest.TestCase):
 
     def test_trailing_dot_host_is_on_origin(self):
         self.assertEqual(self.path("https://cleanlanguage.ai./card.png"), "/card.png")
+
+    def test_scheme_separator_backslash_maps(self):
+        # https:\\host\\file has the wrong slash count; a browser reads the run
+        # after the scheme as the authority separator, so it is on-origin.
+        self.assertEqual(
+            self.path("https:\\cleanlanguage.ai\\missing.png"), "/missing.png")
+
+    def test_parse_origin_rejects_dot_only_host(self):
+        with self.assertRaises(wm.UrlError):
+            wm.parse_origin("https://.")
 
     def test_malformed_bracket_url_raises(self):
         with self.assertRaises(wm.UrlError):
@@ -283,6 +304,42 @@ class LocateOnDiskTest(unittest.TestCase):
         status, _ = wm.locate_on_disk("link.png", self.root)
         self.assertEqual(status, "outside")
         outside.unlink()
+
+    def test_case_walk_through_escaping_symlink_is_outside(self):
+        outside = Path(self._tmp.name).parent / ("esc-" + self.root.name)
+        outside.mkdir()
+        (outside / "card.png").write_bytes(b"x")
+        try:
+            (self.root / "link").symlink_to(outside)
+        except (OSError, NotImplementedError):
+            outside.rmdir() if outside.exists() else None
+            self.skipTest("symlinks unavailable")
+        # A case-corrected component (LINK -> link) must not follow the symlink out
+        # of the tree without re-checking containment.
+        status, _ = wm.locate_on_disk("LINK/card.png", self.root)
+        self.assertEqual(status, "outside")
+        (outside / "card.png").unlink()
+        outside.rmdir()
+
+    def test_permission_error_on_final_file_propagates(self):
+        import os
+        if os.geteuid() == 0:
+            self.skipTest("running as root bypasses permission checks")
+        blocked = self.root / "blocked"
+        blocked.mkdir()
+        (blocked / "card.png").write_bytes(b"x")
+        os.chmod(blocked, 0o400)  # readable (scandir) but not traversable (stat)
+        try:
+            try:
+                wm.locate_on_disk("blocked/card.png", self.root)
+                raised = False
+            except OSError:
+                raised = True
+        finally:
+            os.chmod(blocked, 0o700)
+        if not raised:
+            self.skipTest("filesystem does not enforce the missing execute bit")
+        self.assertTrue(raised)
 
 
 if __name__ == "__main__":
