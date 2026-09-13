@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""Cross-consumer contract: the packager and the two release gates select and
+validate the SKILL.md ``Version:`` line by the same rule.
+
+The two gates (check-release-links.py, check-release-checksum-live.py) already
+apply a strict rule: the first ``Version:`` line must be a bare ``X.Y.Z``. This
+test pins that the packager (release-package.sh) selects and validates
+identically, so a malformed first line fails in all three, and a clean version
+still passes. It runs offline: the packager is exercised in a throwaway git
+worktree, and the gates are exercised through their own compiled regexes.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+PACKAGER = REPO / "tools" / "release-package.sh"
+
+
+def _load(name: str, filename: str):
+    spec = importlib.util.spec_from_file_location(name, REPO / "tools" / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+LINKS = _load("crl_gate", "check-release-links.py")
+CHECKSUM = _load("crc_gate", "check-release-checksum-live.py")
+
+HEAD_SKILL = subprocess.run(
+    ["git", "-C", str(REPO), "show", "HEAD:cleanlanguage/SKILL.md"],
+    capture_output=True, text=True, check=True,
+).stdout
+
+
+def skill_with(version_block: str | None) -> str:
+    """The real SKILL.md text with its first ``Version:`` line replaced by
+    ``version_block`` (which may be empty to drop it, or multi-line)."""
+    if version_block is None:
+        return HEAD_SKILL
+    out, replaced = [], False
+    for line in HEAD_SKILL.splitlines(keepends=True):
+        if not replaced and line.startswith("Version:"):
+            if version_block:
+                out.append(version_block + "\n")
+            replaced = True
+        else:
+            out.append(line)
+    return "".join(out)
+
+
+def gate_verdict(gate, skill_text: str):
+    """(matched, version) for a gate's select-and-validate on ``skill_text``."""
+    line = gate.VERSION_LINE.search(skill_text)
+    if line is None:
+        return False, None
+    match = gate.SKILL_VERSION.match(line.group(0))
+    return (True, match.group(1)) if match else (False, None)
+
+
+def run_packager(version_block: str | None, plugin_version: str):
+    """Build in a throwaway worktree whose HEAD carries the fixture; run the
+    CHECKOUT's release-package.sh (so the code under test, not HEAD's copy, is
+    exercised). Returns (exit_code, stderr)."""
+    skill = skill_with(version_block)
+    with tempfile.TemporaryDirectory() as tmp:
+        wt = Path(tmp) / "wt"
+        subprocess.run(
+            ["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), "HEAD"],
+            capture_output=True, check=True,
+        )
+        try:
+            (wt / "cleanlanguage" / "SKILL.md").write_text(skill, encoding="utf-8")
+            pj = wt / "cleanlanguage" / ".claude-plugin" / "plugin.json"
+            data = json.loads(pj.read_text(encoding="utf-8"))
+            data["version"] = plugin_version
+            pj.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(wt), "-c", "user.name=t", "-c", "user.email=t@t",
+                 "commit", "-qam", "fixture"],
+                capture_output=True, check=True,
+            )
+            shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
+            os.chmod(wt / "tools" / "release-package.sh", 0o755)
+            result = subprocess.run(
+                ["bash", str(wt / "tools" / "release-package.sh")],
+                capture_output=True, text=True,
+            )
+            return result.returncode, result.stderr
+        finally:
+            subprocess.run(
+                ["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+                capture_output=True,
+            )
+
+
+# label -> (version_block, plugin_version, packager_accepts, gate_expected_version)
+MALFORMED = {
+    "two_part": ("Version: 1.2", "1.2", None),
+    "four_part": ("Version: 1.2.3.4", "1.2.3.4", None),
+    "trailing_text": ("Version: 1.2.3 beta", "1.2.3", None),
+    "double_dot": ("Version: 1..2", "1..2", None),
+    "draft_then_valid": ("Version: draft\nVersion: 1.2.3", "1.2.3", None),
+}
+
+
+class GateParseTest(unittest.TestCase):
+    def test_gates_agree_and_are_identical(self):
+        # Both gates apply the identical rule; assert on each so a future
+        # divergence between them also goes red.
+        for gate in (LINKS, CHECKSUM):
+            matched, version = gate_verdict(gate, skill_with(None))
+            self.assertTrue(matched)
+            self.assertEqual(version, "1.0.14")
+            matched, version = gate_verdict(gate, skill_with("Version: 9.9.9  "))
+            self.assertTrue(matched)
+            self.assertEqual(version, "9.9.9")
+            for block, _plugin, _ in MALFORMED.values():
+                matched, _ = gate_verdict(gate, skill_with(block))
+                self.assertFalse(matched, block)
+            matched, _ = gate_verdict(gate, skill_with(""))
+            self.assertFalse(matched)
+
+
+class PackagerContractTest(unittest.TestCase):
+    def test_real_head_version_builds(self):
+        code, stderr = run_packager(None, "1.0.14")
+        self.assertEqual(code, 0, stderr)
+
+    def test_malformed_first_line_is_rejected(self):
+        for label, (block, plugin, _) in MALFORMED.items():
+            with self.subTest(label):
+                code, stderr = run_packager(block, plugin)
+                self.assertEqual(code, 1, f"{label}: stderr={stderr!r}")
+                self.assertIn("not a bare X.Y.Z", stderr)
+
+    def test_no_version_line_is_rejected(self):
+        code, stderr = run_packager("", "1.0.14")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("no Version: line found", stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

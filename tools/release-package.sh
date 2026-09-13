@@ -11,8 +11,9 @@
 #
 # What it does, in order:
 #
-#   1. Reads the version from the Version: line in cleanlanguage/SKILL.md at
-#      HEAD; with --tag, fails unless the tag is v<version>. Also requires the
+#   1. Reads the version from the first Version: line in cleanlanguage/SKILL.md
+#      at HEAD and requires a bare X.Y.Z, the same rule the release gates apply;
+#      with --tag, fails unless the tag is v<version>. Also requires the
 #      skill name line and at least one Markdown reference, the two structural
 #      checks the previous inline validation enforced.
 #   2. Requires every git entry under cleanlanguage/ to carry mode 100644,
@@ -70,9 +71,17 @@ done
 git cat-file -e HEAD:cleanlanguage/SKILL.md 2>/dev/null \
   || fail "cleanlanguage/SKILL.md is missing at HEAD"
 skill="$(git show HEAD:cleanlanguage/SKILL.md)"
-version="$(printf '%s\n' "${skill}" \
-  | sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -1)"
-[ -n "${version}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
+# Select the first Version: line and require a bare X.Y.Z, the same select and
+# validation as the two release gates (SKILL_VERSION in check-release-links.py
+# and check-release-checksum-live.py), so a malformed first line fails here
+# exactly as it fails there. [[:blank:]] is space and tab, the gates' [ \t]; a
+# wider class would accept characters the gates reject.
+version_line="$(printf '%s\n' "${skill}" | awk '/^Version:/ { print; exit }')"
+[ -n "${version_line}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
+strict_version='^Version:[[:blank:]]*([0-9]+\.[0-9]+\.[0-9]+)[[:blank:]]*$'
+[[ "${version_line}" =~ ${strict_version} ]] \
+  || fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version"
+version="${BASH_REMATCH[1]}"
 if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
   fail "SKILL.md version (${version}) does not match the tag (${tag})"
 fi

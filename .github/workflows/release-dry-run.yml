@@ -22,6 +22,8 @@ on:
       - "tools/release-dry-run.sh"
       - "tools/set-release-links.py"
       - "tools/check-release-links.py"
+      - "tools/check-release-checksum-live.py"
+      - "tools/test-skill-version-consumers.py"
       - "tools/check-page-metadata.py"
       - "tools/sitemap_engine.py"
       - "tools/web_metadata.py"
@@ -47,6 +49,8 @@ on:
       - "tools/release-dry-run.sh"
       - "tools/set-release-links.py"
       - "tools/check-release-links.py"
+      - "tools/check-release-checksum-live.py"
+      - "tools/test-skill-version-consumers.py"
       - "tools/check-page-metadata.py"
       - "tools/sitemap_engine.py"
       - "tools/web_metadata.py"
@@ -73,6 +77,10 @@ jobs:
           fetch-depth: 0
           # The dry run needs no credentials after checkout, so none are kept.
           persist-credentials: false
+
+      - name: Cross-consumer version-parse contract
+        shell: bash
+        run: python3 tools/test-skill-version-consumers.py
 
       - name: Run the release dry run
         shell: bash
