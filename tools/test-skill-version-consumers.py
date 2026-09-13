@@ -247,12 +247,16 @@ class UnicodeAndStressTest(unittest.TestCase):
         self.assertTrue(matched)
         self.assertEqual(version, "1.0.0")
 
-    def test_empty_skill_reports_read_error_not_missing_version(self):
-        # If git show yields empty output (a read failure or an empty file), the
-        # packager reports a read error, not the misleading "no Version: line".
+    def test_empty_skill_agrees_with_gates(self):
+        # An empty SKILL.md: both the packager and the gates report no Version
+        # line (exact message parity). A genuine git-read failure is reported
+        # separately by the explicit check on the skill read.
         code, stderr = run_packager(None, "1.0.14", raw_skill=b"")
         self.assertEqual(code, 1, stderr)
-        self.assertIn("empty or could not be read", stderr)
+        self.assertIn("no Version: line found", stderr)
+        for gate in (LINKS, CHECKSUM):
+            matched, _ = gate_verdict(gate, "")
+            self.assertFalse(matched)
 
     def test_invalid_utf8_is_rejected(self):
         # An invalid UTF-8 byte anywhere: the gates' read_text raises and the

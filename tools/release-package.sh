@@ -70,7 +70,8 @@ done
 
 git cat-file -e HEAD:cleanlanguage/SKILL.md 2>/dev/null \
   || fail "cleanlanguage/SKILL.md is missing at HEAD"
-skill="$(git show HEAD:cleanlanguage/SKILL.md)"
+skill="$(git show HEAD:cleanlanguage/SKILL.md)" \
+  || fail "could not read cleanlanguage/SKILL.md at HEAD"
 # Read the version exactly as the two release gates do, so all three consumers
 # agree on every input by construction instead of re-implementing the gates'
 # parse in shell (three QA rounds found byte-level divergences that a shell
@@ -89,8 +90,6 @@ try:
     text = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", newline=None).read()
 except UnicodeDecodeError:
     sys.exit(4)
-if not text:
-    sys.exit(5)
 line = re.search(r"^Version:[^\n]*", text, re.M)
 if line is None:
     sys.exit(2)
@@ -105,7 +104,6 @@ else
     2) fail "no Version: line found in cleanlanguage/SKILL.md at HEAD" ;;
     3) fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version" ;;
     4) fail "cleanlanguage/SKILL.md is not valid UTF-8 at HEAD" ;;
-    5) fail "cleanlanguage/SKILL.md is empty or could not be read at HEAD" ;;
     *) fail "could not read the version from cleanlanguage/SKILL.md at HEAD" ;;
   esac
 fi
