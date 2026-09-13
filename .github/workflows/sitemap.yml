@@ -32,6 +32,10 @@ jobs:
         shell: bash
         run: python3 tools/generate-sitemap.py
 
+      - name: Run the shared web-metadata tests
+        shell: bash
+        run: python3 tools/test-web-metadata.py
+
       - name: Run the sitemap engine tests
         shell: bash
         run: python3 tools/test-sitemap.py

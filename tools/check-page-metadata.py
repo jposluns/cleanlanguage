@@ -31,10 +31,13 @@ What it verifies, per page
    object (``@value``); JSON-LD dates are not cross-checked here, since the
    meta-versus-git checks above already guard date rot.
 7. Every page names the same author, so one page cannot drift from the rest.
-8. Each ``og:image`` and ``twitter:image`` URL on the site's own origin resolves
-   to a file that exists. These URLs are absolute, because a crawler needs them
-   to be, which puts them outside the relative-link scope of check-links.py, so
-   a card pointing at a missing file would otherwise ship unnoticed.
+8. Every active ``og:image`` and ``twitter:image`` URL on the site's own origin
+   resolves to a file that exists at its exact spelling. The origin is matched by
+   normalized scheme, host, and port, the query and fragment are ignored, and a
+   declaration inside a ``<template>`` or ``<noscript>`` does not count. These
+   URLs are absolute, because a crawler needs them to be, which puts them outside
+   the relative-link scope of check-links.py, so a card pointing at a missing
+   file would otherwise ship unnoticed.
 The sitemap is no longer checked here. ``tools/generate-sitemap.py`` regenerates
 ``site/sitemap.xml`` from these same pages, driven by the same
 ``tools/sitemap-config.json``, and verifies it byte for byte, which subsumes and
@@ -77,6 +80,7 @@ SITE_ROOT = REPO_ROOT / "site"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sitemap_engine as engine  # noqa: E402
+import web_metadata  # noqa: E402
 
 SITEMAP_CONFIG = REPO_ROOT / "tools" / "sitemap-config.json"
 
@@ -85,14 +89,6 @@ SITEMAP_CONFIG = REPO_ROOT / "tools" / "sitemap-config.json"
 # than being handled by weakening the check.
 PUBLISHED_OVERRIDES: dict[str, str] = {}
 
-# Meta tags are parsed attribute by attribute rather than with a fixed-order
-# pattern, because the site carries tags that set both name and property on one
-# element (LinkedIn's documented form for og:title and og:image) and a
-# fixed-order pattern would silently stop seeing them if the attributes were
-# ever reordered. A tag carrying both appears under both its name and its
-# property, which is intended.
-META_TAG = re.compile(r"<meta\s+([^>]*?)/?>", re.I)
-META_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
 # Match the ld+json script tag tolerant of attribute order and quote style, and
 # strip HTML comments before scanning so a commented-out block cannot satisfy
 # the author requirement.
@@ -273,12 +269,15 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
     """Return the problems found on one page, and the author it names."""
     relative = path.relative_to(REPO_ROOT).as_posix()
     problems: list[str] = []
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        die(f"could not read {relative}: {error}")
 
     names: dict[str, str] = {}
     properties: dict[str, str] = {}
-    for tag in META_TAG.finditer(text):
-        attributes = dict(META_ATTR.findall(tag.group(1)))
+    image_refs: list[tuple[str, str]] = []
+    for attributes in web_metadata.meta_tags(text):
         content = attributes.get("content")
         if content is None:
             continue
@@ -286,6 +285,9 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
             names[attributes["name"]] = content
         if "property" in attributes:
             properties[attributes["property"]] = content
+        for ref in IMAGE_REFERENCES:
+            if ref in (attributes.get("property"), attributes.get("name")):
+                image_refs.append((ref, content))
 
     author = names.get("author")
     if not author:
@@ -324,15 +326,34 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
                 f"{added}; correct the stamp, or record the exception in PUBLISHED_OVERRIDES"
             )
 
-    for reference in IMAGE_REFERENCES:
-        url = properties.get(reference) or names.get(reference)
-        if url and url.startswith(SITE_ORIGIN):
-            target = SITE_ROOT / url[len(SITE_ORIGIN) :].lstrip("/")
-            if not target.is_file():
-                problems.append(
-                    f"{reference} points at {url}, but {target.relative_to(REPO_ROOT)} "
-                    f"does not exist"
-                )
+    for reference, url in image_refs:
+        try:
+            url_path = web_metadata.same_origin_path(url, SITE_ORIGIN)
+        except web_metadata.UrlError as error:
+            problems.append(
+                f"{reference} points at {url!r}, which is not a valid image URL "
+                f"({error})"
+            )
+            continue
+        if url_path is None:
+            continue
+        status, target = web_metadata.locate_on_disk(url_path, SITE_ROOT)
+        if status == "outside":
+            problems.append(
+                f"{reference} points at {url}, which resolves outside "
+                f"the site directory"
+            )
+        elif status == "missing":
+            problems.append(
+                f"{reference} points at {url}, but "
+                f"{target.relative_to(REPO_ROOT)} does not exist"
+            )
+        elif status == "case":
+            problems.append(
+                f"{reference} points at {url}, but the file on disk is spelled "
+                f"{target.relative_to(REPO_ROOT)}; a case-sensitive server "
+                f"would return 404"
+            )
 
     ld_author_ok = False
     ld_author_problem = False
@@ -384,7 +405,7 @@ def main() -> int:
         relative = path.relative_to(REPO_ROOT).as_posix()
         try:
             problems, author = check_page(path, today)
-        except OSError as error:
+        except (OSError, ValueError) as error:
             die(f"could not read {relative}: {error}")
         if problems:
             findings[relative] = problems
