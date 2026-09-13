@@ -74,18 +74,36 @@ skill="$(git show HEAD:cleanlanguage/SKILL.md)"
 # Select the first Version: line and require a bare X.Y.Z, the same select and
 # validation as the two release gates (SKILL_VERSION in check-release-links.py
 # and check-release-checksum-live.py), so a malformed first line fails here
-# exactly as it fails there. [[:blank:]] is space and tab, the gates' [ \t]; a
-# wider class would accept characters the gates reject.
-version_line="$(printf '%s\n' "${skill}" | awk '/^Version:/ { print; exit }')"
+# exactly as it fails there. The class is a literal space and tab and an explicit
+# ASCII digit list, not [[:blank:]] or [0-9]: a bash regex class is locale
+# sensitive (in some UTF-8 locales [[:blank:]] matches other Unicode blanks and
+# [0-9] matches non-ASCII digits) while the gates' Python classes are ASCII, so
+# the literals keep the three in agreement in any locale. The first line is found
+# with a plain read loop, not a printf-into-awk pipe, because awk exiting on the
+# first match closes the pipe and, under set -o pipefail, kills the packager with
+# exit 141 on a large but valid SKILL.md.
+# A NUL in the line is the one shape not reconciled here: bash command
+# substitution strips NUL from ${skill}, so the packager never sees it, while the
+# gates read the file bytes and reject it. That divergence fails safe (the gates
+# block the release) and a NUL in SKILL.md is not an authored shape.
+version_line=""
+while IFS= read -r _version_scan || [ -n "${_version_scan}" ]; do
+  case "${_version_scan}" in
+    Version:*) version_line="${_version_scan}"; break ;;
+  esac
+done <<< "${skill}"
 [ -n "${version_line}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
-strict_version='^Version:[[:blank:]]*([0-9]+\.[0-9]+\.[0-9]+)[[:blank:]]*$'
+strict_version=$'^Version:[ \t]*([0123456789]+\\.[0123456789]+\\.[0123456789]+)[ \t]*$'
 [[ "${version_line}" =~ ${strict_version} ]] \
   || fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version"
 version="${BASH_REMATCH[1]}"
 if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
   fail "SKILL.md version (${version}) does not match the tag (${tag})"
 fi
-printf '%s\n' "${skill}" | grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' \
+# grep -Eq exits on the first match, so a here-string (not a printf pipe) avoids
+# a SIGPIPE that set -o pipefail would turn into a spurious failure on a large
+# SKILL.md.
+grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' <<< "${skill}" \
   || fail "cleanlanguage/SKILL.md is missing the 'name: cleanlanguage' line"
 
 # The plugin manifests live in two places: marketplace.json at the repository
@@ -132,7 +150,7 @@ fi
 
 files="$(git ls-tree -r HEAD --name-only -- cleanlanguage)"
 [ -n "${files}" ] || fail "git records no files under cleanlanguage/"
-printf '%s\n' "${files}" | grep -Eq '^cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' \
+grep -Eq '^cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' <<< "${files}" \
   || fail "cleanlanguage/references holds no Markdown reference at HEAD"
 unexpected="$(printf '%s\n' "${files}" | grep -Ev \
   '^cleanlanguage/(SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \

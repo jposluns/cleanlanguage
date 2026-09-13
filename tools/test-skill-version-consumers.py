@@ -66,11 +66,11 @@ def gate_verdict(gate, skill_text: str):
     return (True, match.group(1)) if match else (False, None)
 
 
-def run_packager(version_block: str | None, plugin_version: str):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = ""):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
     CHECKOUT's release-package.sh (so the code under test, not HEAD's copy, is
     exercised). Returns (exit_code, stderr)."""
-    skill = skill_with(version_block)
+    skill = skill_with(version_block) + extra_tail
     with tempfile.TemporaryDirectory() as tmp:
         wt = Path(tmp) / "wt"
         subprocess.run(
@@ -90,9 +90,12 @@ def run_packager(version_block: str | None, plugin_version: str):
             )
             shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
             os.chmod(wt / "tools" / "release-package.sh", 0o755)
+            env = dict(os.environ)
+            if locale is not None:
+                env["LC_ALL"] = locale
             result = subprocess.run(
                 ["bash", str(wt / "tools" / "release-package.sh")],
-                capture_output=True, text=True,
+                capture_output=True, text=True, env=env,
             )
             return result.returncode, result.stderr
         finally:
@@ -146,6 +149,64 @@ class PackagerContractTest(unittest.TestCase):
         code, stderr = run_packager("", "1.0.14")
         self.assertEqual(code, 1, stderr)
         self.assertIn("no Version: line found", stderr)
+
+
+def _locale_available(name: str) -> bool:
+    try:
+        return subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout \
+            .lower().find(name.lower().replace("-", "")) >= 0 or name in \
+            subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout
+    except OSError:
+        return False
+
+
+class UnicodeAndStressTest(unittest.TestCase):
+    """A bash regex class is locale sensitive; the packager must still agree with
+    the gates' ASCII rule on non-ASCII blanks and digits, and must not crash on a
+    large but valid SKILL.md."""
+
+    def _gates_reject(self, version_block):
+        for gate in (LINKS, CHECKSUM):
+            matched, _ = gate_verdict(gate, skill_with(version_block))
+            self.assertFalse(matched, version_block)
+
+    def test_unicode_blank_is_rejected(self):
+        # U+2000 (EN QUAD) is matched by [[:blank:]] under C.UTF-8 but not by the
+        # gates' [ \t]; the literal class must reject it, matching the gates.
+        block = "Version: 1.2.3\u2000"
+        code, stderr = run_packager(block, "1.2.3", locale="C.UTF-8")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("not a bare X.Y.Z", stderr)
+        self._gates_reject(block)
+
+    def test_unicode_digit_is_rejected(self):
+        # A fullwidth digit is matched by [0-9] under a full UTF-8 locale but not
+        # by the gates' ASCII [0-9]; the ASCII digit list must reject it.
+        if not _locale_available("en_US.utf8"):
+            self.skipTest("en_US.UTF-8 locale not installed")
+        block = "Version: \uff11.2.3"
+        code, stderr = run_packager(block, "\uff11.2.3", locale="en_US.UTF-8")
+        self.assertEqual(code, 1, stderr)
+        self._gates_reject(block)
+
+    def test_crlf_is_rejected(self):
+        block = "Version: 1.2.3\r"
+        code, stderr = run_packager(block, "1.2.3")
+        self.assertEqual(code, 1, stderr)
+        self._gates_reject(block)
+
+    def test_large_valid_skill_builds(self):
+        # A large but valid SKILL.md must build, not die with SIGPIPE (exit 141)
+        # from an awk pipe that closes early.
+        tail = "\n<!-- " + ("x" * 200000) + " -->\n"
+        code, stderr = run_packager(None, "1.0.14", extra_tail=tail)
+        self.assertEqual(code, 0, stderr)
+
+    def test_nul_line_is_rejected_by_the_gates(self):
+        # A NUL in the version line is the one shape the bash packager cannot see
+        # (command substitution strips it), so the authoritative gates are the
+        # backstop; assert they reject it. Fails safe: CI blocks such a release.
+        self._gates_reject("Version: 1.2.3\x00")
 
 
 if __name__ == "__main__":
