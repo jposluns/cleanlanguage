@@ -305,6 +305,12 @@ GA_PLUS_EXTRA='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}},
   {"status":"completed","conclusion":"success","name":"extra","app":{"slug":"github-actions"}}
 ]}'
+# The REAL Cloudflare app slug on this repository is cloudflare-workers-and-pages,
+# not cloudflare-pages; the required-check match is by the "cloudflare" prefix.
+REAL_CLOUDFLARE='{"check_runs":[
+  {"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}},
+  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages"}}
+]}'
 # A digit-only timeout with a leading zero (08) is base-10, not octal: it does not
 # error, and a green commit still confirms green.
 run_case "leading-zero timeout is base 10, not octal -> green" "$GA_PRESENT" "" "" 0 --wait --timeout 08
@@ -359,6 +365,10 @@ run_rc_case "green body with nonzero gh exit is rejected fail-closed" 3
 run_case "wait does not give up early on a changing green set" "$GA_PRESENT" "$GA_PLUS_EXTRA" "g a g a g a g g" 0 --wait --timeout 30
 # A zero-length wait window fails closed rather than overrunning the deadline.
 run_case "zero-timeout wait window fails closed" "$GA_IN_PROGRESS" "" "" 3 --wait --timeout 0
+# The real Cloudflare app slug (cloudflare-workers-and-pages) satisfies the required
+# Cloudflare check via the prefix match -> green (regression: an exact cloudflare-pages
+# match would false-red every real commit).
+run_case "real cloudflare-workers-and-pages slug satisfies the required check" "$REAL_CLOUDFLARE" "" "" 0
 run_timed_case "wait stops near the deadline, not a whole interval past it" "$GA_IN_PROGRESS" 4 2 --wait --timeout 2 --interval 5
 
 if [ "$fails" -eq 0 ]; then

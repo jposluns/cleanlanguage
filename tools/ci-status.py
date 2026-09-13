@@ -315,12 +315,19 @@ def verdict_of(checks) -> str:
 # build, which CLAUDE.md names as the required check. A passing reading that is
 # missing either means that check has not registered yet (or the branch is
 # malformed), so it is not green until both are present.
-REQUIRED_SLUGS = ("github-actions", "cloudflare-pages")
+# Each required check is matched by its app slug, not its forgeable name. The
+# github-actions app slug is exact; the Cloudflare app slug is
+# "cloudflare-workers-and-pages" on this repository, so it is matched by the
+# "cloudflare" prefix to stay robust to Cloudflare's app naming.
+REQUIRED_CHECKS = (
+    ("github-actions", lambda slug: slug == "github-actions"),
+    ("Cloudflare Pages", lambda slug: slug.startswith("cloudflare")),
+)
 
 
 def missing_required(checks) -> list:
-    present = {c["slug"] for c in checks}
-    return [slug for slug in REQUIRED_SLUGS if slug not in present]
+    slugs = {c["slug"] for c in checks}
+    return [label for label, matches in REQUIRED_CHECKS if not any(matches(s) for s in slugs)]
 
 
 def snapshot(checks) -> str:
