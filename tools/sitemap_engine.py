@@ -33,9 +33,8 @@ What a fleet consumer must not assume
 * Indexability is read from an HTML `<meta name="robots">` tag. A page hidden by
   a transport header (an `X-Robots-Tag`) is invisible here and must be named in
   `exclude`.
-* HTML uses double-quoted attributes, matching this repository's pages and
-  `tools/check-page-metadata.py`. A single-quoted `rel="canonical"` or `robots`
-  tag is not recognized.
+* HTML uses double-quoted attributes, matching this repository's pages. A
+  single-quoted `rel="canonical"` or `robots` tag is not recognized.
 * The `lastmod` stamp is the authority. The `git_last_change` resolver fails
   closed on a page with no committed history rather than inventing a date.
 """
@@ -58,9 +57,9 @@ URLSET_OPEN = '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
 URLSET_CLOSE = "</urlset>"
 INDENT = "  "
 
-# Meta tags are parsed attribute by attribute, matching tools/check-page-metadata.py,
-# because a tag may carry both name and property on one element and a fixed-order
-# pattern would stop seeing it if the attributes were reordered.
+# Meta tags are parsed attribute by attribute, because a tag may carry both name
+# and property on one element and a fixed-order pattern would stop seeing it if
+# the attributes were reordered.
 META_TAG = re.compile(r"<meta\s+([^>]*?)/?>", re.I)
 META_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
 CANONICAL = re.compile(r'<link\s+[^>]*rel="canonical"[^>]*>', re.I)

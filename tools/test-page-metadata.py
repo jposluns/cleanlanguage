@@ -7,11 +7,17 @@ These tests pin that requirement, and the preserved disagreement checks, on
 fixture pages. They run offline with the standard library: the fixtures patch
 the module's git readers, so no history is needed. The CI workflow invokes this
 file before the gate itself runs against the real pages.
+
+They also pin the gate's meta-tag parsing, its handling of an unreadable
+(non-UTF-8) page, and its containment of image references to the site
+directory.
 """
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import tempfile
 import unittest
 from pathlib import Path
@@ -291,6 +297,117 @@ class AuthorRequirementTest(unittest.TestCase):
         )
         problems, _ = gate.check_page(page, TODAY)
         self.assertEqual(problems, [WRONG_PRIMARY_AUTHOR])
+
+
+GATE_PAGE = """<!doctype html>
+<html><head>
+{extra_meta}
+<meta property="article:published_time" content="2026-01-01">
+<meta property="article:modified_time" content="2026-01-02">
+<meta property="article:author" content="https://posluns.ca">
+{json_ld}
+</head><body></body></html>
+"""
+
+
+class _PatchedGateTest(unittest.TestCase):
+    """A temporary repository root with a site/ directory and stubbed git readers."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._saved = (gate.REPO_ROOT, gate.SITE_ROOT,
+                       gate.added_date, gate.last_change_date)
+        root = Path(self._tmp.name).resolve()
+        gate.REPO_ROOT = root
+        gate.SITE_ROOT = root / "site"
+        gate.SITE_ROOT.mkdir()
+        gate.added_date = lambda relative: "2026-01-01"
+        gate.last_change_date = lambda relative: "2026-01-02"
+
+    def tearDown(self):
+        (gate.REPO_ROOT, gate.SITE_ROOT,
+         gate.added_date, gate.last_change_date) = self._saved
+        self._tmp.cleanup()
+
+
+class UnreadablePageTest(_PatchedGateTest):
+    def test_non_utf8_page_is_reported_unreadable_exit_3(self):
+        page = gate.SITE_ROOT / "index.html"
+        page.write_bytes(b"<html>\xff\xfe not utf-8</html>")
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as caught:
+                gate.check_page(page, TODAY)
+        self.assertEqual(caught.exception.code, 3)
+        self.assertIn("could not read", stderr.getvalue())
+
+
+class MetaParsingTest(_PatchedGateTest):
+    def check(self, author_meta: str, ld_author: str):
+        page = gate.SITE_ROOT / "index.html"
+        block = article('{"@type": "Person", "name": "' + ld_author + '"}')
+        page.write_text(GATE_PAGE.format(extra_meta=author_meta, json_ld=block),
+                        encoding="utf-8")
+        return gate.check_page(page, TODAY)
+
+    def test_quoted_gt_in_content_is_parsed(self):
+        problems, author = self.check('<meta name="author" content="a > b">', "a > b")
+        self.assertEqual(author, "a > b")
+        self.assertEqual(problems, [])
+
+    def test_single_quoted_meta_is_parsed(self):
+        problems, author = self.check(
+            "<meta name='author' content='Jeff Posluns'>", "Jeff Posluns")
+        self.assertEqual(author, "Jeff Posluns")
+        self.assertEqual(problems, [])
+
+    def test_uppercase_self_closing_meta_is_parsed(self):
+        problems, author = self.check(
+            '<meta NAME="author" CONTENT="Jeff Posluns"/>', "Jeff Posluns")
+        self.assertEqual(author, "Jeff Posluns")
+        self.assertEqual(problems, [])
+
+    def test_commented_meta_does_not_satisfy(self):
+        problems, author = self.check(
+            '<!-- <meta name="author" content="Jeff Posluns"> -->', "Jeff Posluns")
+        self.assertIsNone(author)
+        self.assertIn('missing <meta name="author">', problems)
+
+    def test_commented_meta_does_not_override(self):
+        problems, author = self.check(
+            '<meta name="author" content="Jeff Posluns">\n'
+            '<!-- <meta name="author" content="Mallory"> -->', "Jeff Posluns")
+        self.assertEqual(author, "Jeff Posluns")
+        self.assertEqual(problems, [])
+
+
+class ImageReferenceTest(_PatchedGateTest):
+    def _check(self, image_url: str) -> list[str]:
+        page = gate.SITE_ROOT / "index.html"
+        block = article('{"@type": "Person", "name": "Jeff Posluns"}')
+        extra = ('<meta name="author" content="Jeff Posluns">\n'
+                 f'<meta property="og:image" content="{image_url}">')
+        page.write_text(GATE_PAGE.format(extra_meta=extra, json_ld=block),
+                        encoding="utf-8")
+        return gate.check_page(page, TODAY)[0]
+
+    def test_out_of_tree_traversal_is_reported_not_passed(self):
+        (gate.REPO_ROOT / "secret.txt").write_text("x", encoding="utf-8")
+        problems = self._check("https://cleanlanguage.ai/../secret.txt")
+        self.assertTrue(any("outside the site directory" in p for p in problems))
+
+    def test_traversal_to_missing_target_reports_cleanly(self):
+        problems = self._check("https://cleanlanguage.ai/../no-such-file.png")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("og:image", problems[0])
+
+    def test_in_tree_image_passes(self):
+        (gate.SITE_ROOT / "card.png").write_bytes(b"x")
+        self.assertEqual(self._check("https://cleanlanguage.ai/card.png"), [])
+
+    def test_missing_in_tree_image_is_reported(self):
+        problems = self._check("https://cleanlanguage.ai/missing.png")
+        self.assertTrue(any("does not exist" in p for p in problems))
 
 
 if __name__ == "__main__":

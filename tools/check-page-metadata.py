@@ -85,14 +85,6 @@ SITEMAP_CONFIG = REPO_ROOT / "tools" / "sitemap-config.json"
 # than being handled by weakening the check.
 PUBLISHED_OVERRIDES: dict[str, str] = {}
 
-# Meta tags are parsed attribute by attribute rather than with a fixed-order
-# pattern, because the site carries tags that set both name and property on one
-# element (LinkedIn's documented form for og:title and og:image) and a
-# fixed-order pattern would silently stop seeing them if the attributes were
-# ever reordered. A tag carrying both appears under both its name and its
-# property, which is intended.
-META_TAG = re.compile(r"<meta\s+([^>]*?)/?>", re.I)
-META_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
 # Match the ld+json script tag tolerant of attribute order and quote style, and
 # strip HTML comments before scanning so a commented-out block cannot satisfy
 # the author requirement.
@@ -158,6 +150,46 @@ def ld_json_blocks(text: str) -> list[str]:
     parser.feed(text)
     parser.close()
     return parser.blocks
+
+
+class _MetaTags(html.parser.HTMLParser):
+    """Collect the attributes of every ``<meta>`` element.
+
+    Parsing the markup, rather than matching a regex over raw HTML, does not
+    end a tag on a ``>`` inside a quoted value, accepts single-quoted,
+    double-quoted, and unquoted attribute values, lowercases attribute names,
+    treats a self-closing ``<meta/>`` as the void element a browser sees, and
+    never collects a ``<meta>`` written inside an HTML comment. Attributes
+    are kept tag by tag, because a tag may set both name and property on one
+    element (LinkedIn's documented form) and must appear under both.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.tags: list[dict[str, str]] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "meta":
+            return
+        # HTML tokenization keeps the first of a repeated attribute,
+        # matching _LDJSONScripts above.
+        values: dict[str, str] = {}
+        for name, value in attrs:
+            values.setdefault(name.lower(), value or "")
+        self.tags.append(values)
+
+    def handle_startendtag(self, tag, attrs):
+        # <meta> is a void element: a browser treats <meta .../> exactly as
+        # <meta ...>, so collect it the same way.
+        self.handle_starttag(tag, attrs)
+
+
+def meta_tags(text: str) -> list[dict[str, str]]:
+    """The attribute dict of every ``<meta>`` element in ``text``."""
+    parser = _MetaTags()
+    parser.feed(text)
+    parser.close()
+    return parser.tags
 
 
 def _reject_json_constant(token: str) -> None:
@@ -273,12 +305,14 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
     """Return the problems found on one page, and the author it names."""
     relative = path.relative_to(REPO_ROOT).as_posix()
     problems: list[str] = []
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        die(f"could not read {relative}: {error}")
 
     names: dict[str, str] = {}
     properties: dict[str, str] = {}
-    for tag in META_TAG.finditer(text):
-        attributes = dict(META_ATTR.findall(tag.group(1)))
+    for attributes in meta_tags(text):
         content = attributes.get("content")
         if content is None:
             continue
@@ -324,14 +358,20 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
                 f"{added}; correct the stamp, or record the exception in PUBLISHED_OVERRIDES"
             )
 
+    site_root = SITE_ROOT.resolve()
     for reference in IMAGE_REFERENCES:
         url = properties.get(reference) or names.get(reference)
         if url and url.startswith(SITE_ORIGIN):
-            target = SITE_ROOT / url[len(SITE_ORIGIN) :].lstrip("/")
-            if not target.is_file():
+            target = (SITE_ROOT / url[len(SITE_ORIGIN) :].lstrip("/")).resolve()
+            if not target.is_relative_to(site_root):
                 problems.append(
-                    f"{reference} points at {url}, but {target.relative_to(REPO_ROOT)} "
-                    f"does not exist"
+                    f"{reference} points at {url}, which resolves outside "
+                    f"the site directory"
+                )
+            elif not target.is_file():
+                problems.append(
+                    f"{reference} points at {url}, but "
+                    f"{target.relative_to(REPO_ROOT)} does not exist"
                 )
 
     ld_author_ok = False
