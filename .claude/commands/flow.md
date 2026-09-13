@@ -2,7 +2,7 @@
 
 INTERIM. This command's own inlined text below is authoritative for cleanlanguage and is reviewed
 through this repository's PR gate. It adapts the fleet /flow standard, whose co-owned reference copy is
-`/opt/inbox/FLOW.md` (reconciled with lab_infra's `docs/operating-model.md`); that reference is a
+`/opt/inbox/FLOW.md` (reconciled with lab_infra's `docs/operating-model.md`, the NORMATIVE source that governs where the two differ); that reference is a
 cross-check, not an unreviewed override of this file. When lab_infra renders a shared `/flow` command
 (their TODO 208, the on-ramp to the future Orch plugin), adopt it THROUGH this repository's normal
 review, then delete this file; do not switch to it sight-unseen. `/flow` is a REMINDER; the mode is
@@ -52,7 +52,8 @@ only the affected file(s).
 7. CLOSE: evidence-grounded completion (enumerate files, re-read, quote support, search contradictions);
    AIQT self-check before the completion claim; records rotation (TODO delete + DONE add) in the same
    change; clear focus.
-8. PAUSE (post-merge): refresh; if an attended boundary is open, surface accumulated decisions ONE AT A
+8. PAUSE (after a merge, after a plan is verified pre-implementation, or when the queue composition
+   changed): refresh; if an attended boundary is open, surface accumulated decisions ONE AT A
    TIME (per .claude/rules/maintainer-questions.md); list the next items; continue on already-authorized
    safe actions.
 9. NOTHING ACTIONABLE: seeds/combines/QA in flight -> keep the pipeline topped up + read-only prep on
@@ -82,7 +83,7 @@ Per item:
     QA-tier declaration, and a rollback note. Execution-ready only when it passes that shape.
 (e) IMPLEMENT (serial): the orchestrator VERIFIES the plan against the seeds + live tree, may dispatch an
     implementation DRAFT to a worker, then FINALIZES it serially, re-verifying every line at source, as
-    the SOLE writer/merger. Commit BEFORE dispatching QA (QA pins a revision).
+    the SOLE writer/merger. Commit BEFORE dispatching QA (QA pins a revision); then run the tier's QA, fix at the WIDTH OF THE DEFECT CLASS, re-QA on the fixed state, and merge.
 
 GEMINI ROLE LIMIT: gemini may SEED and QA but NEVER plan-combines or drafts the implementation.
 
