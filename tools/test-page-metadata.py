@@ -414,5 +414,156 @@ class ImageReferenceTest(_PatchedGateTest):
         self.assertTrue(any("does not exist" in p for p in problems))
 
 
+
+def _img_meta(url):
+    return f'<meta property="og:image" content="{url}">'
+
+
+class OriginMatchTest(_PatchedGateTest):
+    def _problems(self, extra, files=()):
+        for rel in files:
+            (gate.SITE_ROOT / rel).write_bytes(b"x")
+        page = gate.SITE_ROOT / "index.html"
+        block = article('{"@type": "Person", "name": "Jeff Posluns"}')
+        extra = '<meta name="author" content="Jeff Posluns">\n' + extra
+        page.write_text(GATE_PAGE.format(extra_meta=extra, json_ld=block), encoding="utf-8")
+        return gate.check_page(page, TODAY)[0]
+
+    def test_uppercase_origin_missing_is_reported(self):
+        problems = self._problems(_img_meta("HTTPS://CLEANLANGUAGE.AI/missing.png"))
+        self.assertTrue(any("does not exist" in p for p in problems))
+
+    def test_explicit_default_port_maps_to_the_file(self):
+        # :443 is the default https port, so this is on-origin and maps to
+        # card.png. The old gate looked for site/:443/card.png and false-failed.
+        problems = self._problems(_img_meta("https://cleanlanguage.ai:443/card.png"),
+                                  files=["card.png"])
+        self.assertEqual(problems, [])
+
+    def test_subdomain_lookalike_is_ignored(self):
+        problems = self._problems(_img_meta("https://cleanlanguage.ai.evil/card.png"))
+        self.assertEqual(problems, [])
+
+    def test_query_and_fragment_are_stripped(self):
+        problems = self._problems(_img_meta("https://cleanlanguage.ai/card.png?v=1#top"),
+                                  files=["card.png"])
+        self.assertEqual(problems, [])
+
+
+class MultiImageTest(_PatchedGateTest):
+    def _problems(self, extra, files=()):
+        for rel in files:
+            (gate.SITE_ROOT / rel).write_bytes(b"x")
+        page = gate.SITE_ROOT / "index.html"
+        block = article('{"@type": "Person", "name": "Jeff Posluns"}')
+        extra = '<meta name="author" content="Jeff Posluns">\n' + extra
+        page.write_text(GATE_PAGE.format(extra_meta=extra, json_ld=block), encoding="utf-8")
+        return gate.check_page(page, TODAY)[0]
+
+    def test_first_of_two_og_images_is_checked(self):
+        extra = (_img_meta("https://cleanlanguage.ai/missing.png") + "\n"
+                 + _img_meta("https://cleanlanguage.ai/card.png"))
+        problems = self._problems(extra, files=["card.png"])
+        self.assertTrue(any("missing.png" in p and "does not exist" in p for p in problems))
+
+    def test_name_form_not_hidden_by_property_form(self):
+        extra = (_img_meta("https://cleanlanguage.ai/card.png") + "\n"
+                 + '<meta name="og:image" content="https://cleanlanguage.ai/missing.png">')
+        problems = self._problems(extra, files=["card.png"])
+        self.assertTrue(any("missing.png" in p for p in problems))
+
+    def test_twitter_image_reference_is_checked(self):
+        # Parity: og:image present, twitter:image missing -> the twitter reference
+        # is reported (passes before and after; guards the reference loop).
+        extra = (_img_meta("https://cleanlanguage.ai/card.png") + "\n"
+                 + '<meta name="twitter:image" content="https://cleanlanguage.ai/missing.png">')
+        problems = self._problems(extra, files=["card.png"])
+        self.assertTrue(any("twitter:image" in p for p in problems))
+
+
+class MetaContextTest(_PatchedGateTest):
+    def _check(self, extra_meta):
+        page = gate.SITE_ROOT / "index.html"
+        block = article('{"@type": "Person", "name": "Jeff Posluns"}')
+        page.write_text(GATE_PAGE.format(extra_meta=extra_meta, json_ld=block), encoding="utf-8")
+        return gate.check_page(page, TODAY)
+
+    def test_author_only_in_template_is_missing(self):
+        problems, author = self._check(
+            '<template><meta name="author" content="Jeff Posluns"></template>')
+        self.assertIsNone(author)
+        self.assertIn('missing <meta name="author">', problems)
+
+    def test_author_only_in_noscript_is_missing(self):
+        problems, author = self._check(
+            '<noscript><meta name="author" content="Jeff Posluns"></noscript>')
+        self.assertIsNone(author)
+        self.assertIn('missing <meta name="author">', problems)
+
+    def test_broken_image_in_template_is_ignored(self):
+        problems, _ = self._check(
+            '<meta name="author" content="Jeff Posluns">\n'
+            '<template>' + _img_meta("https://cleanlanguage.ai/missing.png") + '</template>')
+        self.assertEqual(problems, [])
+
+    def test_meta_after_closed_template_still_counts(self):
+        # Parity guard against over-suppression: the author after a closed
+        # template is active and satisfies the requirement.
+        problems, author = self._check(
+            '<template><meta name="robots" content="noindex"></template>\n'
+            '<meta name="author" content="Jeff Posluns">')
+        self.assertEqual(author, "Jeff Posluns")
+        self.assertEqual(problems, [])
+
+
+class MalformedImageUrlTest(_PatchedGateTest):
+    def _problems(self, url):
+        page = gate.SITE_ROOT / "index.html"
+        block = article('{"@type": "Person", "name": "Jeff Posluns"}')
+        extra = '<meta name="author" content="Jeff Posluns">\n' + _img_meta(url)
+        page.write_text(GATE_PAGE.format(extra_meta=extra, json_ld=block), encoding="utf-8")
+        return gate.check_page(page, TODAY)[0]
+
+    def test_literal_nul_is_a_content_problem(self):
+        problems = self._problems("https://cleanlanguage.ai/\x00.png")
+        self.assertTrue(any("not a valid image URL" in p for p in problems))
+
+    def test_encoded_nul_is_a_content_problem(self):
+        problems = self._problems("https://cleanlanguage.ai/%00.png")
+        self.assertTrue(any("not a valid image URL" in p for p in problems))
+
+    def test_value_error_in_check_page_exits_3(self):
+        page = gate.SITE_ROOT / "index.html"
+        page.write_text("<html></html>", encoding="utf-8")
+        saved = (gate.require_full_history, gate.content_pages, gate.check_page)
+        gate.require_full_history = lambda: None
+        gate.content_pages = lambda: [page]
+
+        def boom(*args, **kwargs):
+            raise ValueError("synthetic")
+
+        gate.check_page = boom
+        stderr = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(stderr):
+                with self.assertRaises(SystemExit) as caught:
+                    gate.main()
+        finally:
+            (gate.require_full_history, gate.content_pages, gate.check_page) = saved
+        self.assertEqual(caught.exception.code, 3)
+
+
+class CaseSpellingTest(_PatchedGateTest):
+    def test_wrong_case_image_reports_spelling(self):
+        (gate.SITE_ROOT / "card.png").write_bytes(b"x")
+        page = gate.SITE_ROOT / "index.html"
+        block = article('{"@type": "Person", "name": "Jeff Posluns"}')
+        extra = ('<meta name="author" content="Jeff Posluns">\n'
+                 + _img_meta("https://cleanlanguage.ai/CARD.PNG"))
+        page.write_text(GATE_PAGE.format(extra_meta=extra, json_ld=block), encoding="utf-8")
+        problems = gate.check_page(page, TODAY)[0]
+        self.assertTrue(any("spelled" in p and "404" in p for p in problems))
+
+
 if __name__ == "__main__":
     unittest.main()

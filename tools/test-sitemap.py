@@ -325,5 +325,92 @@ class Round4Test(unittest.TestCase):
                 engine.load_config(cfg)
 
 
+
+class SharedParserTest(unittest.TestCase):
+    """The engine now parses meta and link tags through web_metadata, so it reads
+    single-quoted, unquoted, and quoted-> attributes, ignores commented tags, and
+    ignores metadata inside inert containers."""
+
+    STAMP = "article:modified_time"
+
+    def _repo_with_head(self, tmp: Path, head: str) -> Path:
+        site = tmp / "site"
+        site.mkdir(parents=True, exist_ok=True)
+        (site / "index.html").write_text(
+            "<!doctype html><html><head>" + head + "</head><body></body></html>",
+            encoding="utf-8",
+        )
+        return tmp
+
+    def test_robots_noindex_inside_template_is_ignored(self):
+        self.assertTrue(engine.is_indexable(
+            '<template><meta name="robots" content="noindex"></template>'))
+
+    def test_single_quoted_stamp_is_read(self):
+        self.assertEqual(
+            engine.read_meta_stamp(
+                "<meta property='article:modified_time' content='2026-01-01'>", self.STAMP),
+            "2026-01-01")
+
+    def test_multi_token_mixed_case_canonical_is_recognized(self):
+        self.assertEqual(
+            engine.canonical_href('<link rel="Canonical alternate" href="https://x.test/">'),
+            "https://x.test/")
+
+    def test_template_wrapped_duplicate_stamp_is_not_a_duplicate(self):
+        self.assertEqual(
+            engine.read_meta_stamp(
+                '<meta property="article:modified_time" content="2026-01-01">'
+                '<template><meta property="article:modified_time" content="2020-01-01"></template>',
+                self.STAMP),
+            "2026-01-01")
+
+    def test_commented_stamp_is_not_a_duplicate(self):
+        self.assertEqual(
+            engine.read_meta_stamp(
+                '<meta property="article:modified_time" content="2026-01-01">'
+                '<!-- <meta property="article:modified_time" content="2020-01-01"> -->',
+                self.STAMP),
+            "2026-01-01")
+
+    def test_quoted_gt_in_unrelated_attribute_does_not_truncate(self):
+        self.assertEqual(
+            engine.read_meta_stamp(
+                '<meta data-x="a>b" property="article:modified_time" content="2026-01-01">',
+                self.STAMP),
+            "2026-01-01")
+
+    def test_template_canonical_before_active_builds_cleanly(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = self._repo_with_head(
+                Path(d),
+                '<meta property="article:modified_time" content="2026-01-01">'
+                '<template><link rel="canonical" href="https://x.test/wrong/"></template>'
+                '<link rel="canonical" href="https://x.test/">')
+            entries = engine.build_entries(config(include=["index.html"], exclude=[]), root)
+            self.assertEqual([url for url, _ in entries], ["https://x.test/"])
+
+    def test_single_quoted_canonical_mismatch_is_caught(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = self._repo_with_head(
+                Path(d),
+                '<meta property="article:modified_time" content="2026-01-01">'
+                "<link rel='canonical' href='https://x.test/wrong/'>")
+            with self.assertRaises(engine.EngineError):
+                engine.build_entries(config(include=["index.html"], exclude=[]), root)
+
+    def test_malformed_port_base_url_is_run_error(self):
+        import json as _json
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            cfgfile = Path(d) / "c.json"
+            cfgfile.write_text(_json.dumps(config(base_url="https://x.test:99999x")),
+                               encoding="utf-8")
+            with self.assertRaises(engine.EngineRunError):
+                engine.load_config(cfgfile)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
