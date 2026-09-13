@@ -71,44 +71,41 @@ done
 git cat-file -e HEAD:cleanlanguage/SKILL.md 2>/dev/null \
   || fail "cleanlanguage/SKILL.md is missing at HEAD"
 skill="$(git show HEAD:cleanlanguage/SKILL.md)"
-# Bash command substitution silently drops NUL bytes, so a NUL in the version
-# line would slip past the check below while the gates, which read the file
-# bytes, reject it. Refuse to build a SKILL.md that carries a NUL at all: that is
-# corruption and never an authored shape, so the packager stays at least as
-# strict as the gates.
-if [ "$(git show HEAD:cleanlanguage/SKILL.md | wc -c)" \
-   != "$(git show HEAD:cleanlanguage/SKILL.md | tr -d '\0' | wc -c)" ]; then
-  fail "cleanlanguage/SKILL.md contains a NUL byte at HEAD"
-fi
-# Select the first Version: line and require a bare X.Y.Z, the same select and
-# validation as the two release gates (SKILL_VERSION in check-release-links.py
-# and check-release-checksum-live.py), so a malformed first line fails here
-# exactly as it fails there. The class is a literal space and tab and an explicit
-# ASCII digit list, not [[:blank:]] or [0-9]: a bash regex class is locale
-# sensitive (in some UTF-8 locales [[:blank:]] matches other Unicode blanks and
-# [0-9] matches non-ASCII digits) while the gates' Python classes are ASCII, so
-# the literals keep the three in agreement in any locale. The first line is found
-# with a plain read loop, not a printf-into-awk pipe, because awk exiting on the
-# first match closes the pipe and, under set -o pipefail, kills the packager with
-# exit 141 on a large but valid SKILL.md.
-# A NUL in the line is the one shape not reconciled here: bash command
-# substitution strips NUL from ${skill}, so the packager never sees it, while the
-# gates read the file bytes and reject it. That divergence fails safe (the gates
-# block the release) and a NUL in SKILL.md is not an authored shape.
-version_line=""
-while IFS= read -r _version_scan || [ -n "${_version_scan}" ]; do
-  case "${_version_scan}" in
-    Version:*) version_line="${_version_scan}"; break ;;
+# Read the version exactly as the two release gates do, so all three consumers
+# agree on every input by construction instead of re-implementing the gates'
+# parse in shell (three QA rounds found byte-level divergences that a shell
+# re-implementation cannot fully reconcile: NUL location, invalid UTF-8, and CR
+# line endings). This decodes the blob as UTF-8 with universal newlines, exactly
+# as Path.read_text does, and applies the gates' own VERSION_LINE and
+# SKILL_VERSION patterns verbatim (check-release-links.py and
+# check-release-checksum-live.py), so the verdict and the extracted value are
+# identical here and there.
+if version="$(git show HEAD:cleanlanguage/SKILL.md | python3 -c '
+import io
+import re
+import sys
+
+try:
+    text = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", newline=None).read()
+except UnicodeDecodeError:
+    sys.exit(4)
+line = re.search(r"^Version:[^\n]*", text, re.M)
+if line is None:
+    sys.exit(2)
+match = re.match(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", line.group(0))
+if match is None:
+    sys.exit(3)
+sys.stdout.write(match.group(1))
+')"; then
+  :
+else
+  case "$?" in
+    2) fail "no Version: line found in cleanlanguage/SKILL.md at HEAD" ;;
+    3) fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version" ;;
+    4) fail "cleanlanguage/SKILL.md is not valid UTF-8 at HEAD" ;;
+    *) fail "could not read the version from cleanlanguage/SKILL.md at HEAD" ;;
   esac
-done <<< "${skill}"
-[ -n "${version_line}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
-# The gates read SKILL.md with universal newlines, which drop a trailing CR from
-# a CRLF line ending, so strip one here too to keep the three verdicts identical.
-version_line="${version_line%$'\r'}"
-strict_version=$'^Version:[ \t]*([0123456789]+\\.[0123456789]+\\.[0123456789]+)[ \t]*$'
-[[ "${version_line}" =~ ${strict_version} ]] \
-  || fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version"
-version="${BASH_REMATCH[1]}"
+fi
 if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
   fail "SKILL.md version (${version}) does not match the tag (${tag})"
 fi

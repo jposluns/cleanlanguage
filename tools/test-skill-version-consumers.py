@@ -75,7 +75,7 @@ def gate_verdict(gate, skill_text: str):
     return (True, match.group(1)) if match else (False, None)
 
 
-def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = ""):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
     CHECKOUT's release-package.sh (so the code under test, not HEAD's copy, is
     exercised). Returns (exit_code, stderr)."""
@@ -87,7 +87,10 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             capture_output=True, check=True,
         )
         try:
-            (wt / "cleanlanguage" / "SKILL.md").write_text(skill, encoding="utf-8")
+            if raw_skill is not None:
+                (wt / "cleanlanguage" / "SKILL.md").write_bytes(raw_skill)
+            else:
+                (wt / "cleanlanguage" / "SKILL.md").write_text(skill, encoding="utf-8")
             pj = wt / "cleanlanguage" / ".claude-plugin" / "plugin.json"
             data = json.loads(pj.read_text(encoding="utf-8"))
             data["version"] = plugin_version
@@ -217,16 +220,45 @@ class UnicodeAndStressTest(unittest.TestCase):
         code, stderr = run_packager(None, "1.0.14", extra_tail=tail)
         self.assertEqual(code, 0, stderr)
 
-    def test_nul_is_rejected_by_all_three(self):
-        # A NUL in SKILL.md: the gates reject a NUL in the version line, and the
-        # packager now refuses to build any SKILL.md carrying a NUL (bash strips
-        # it from the version line, so the packager checks the raw byte count).
-        # The pre-change packager stripped the NUL and built.
+    def test_nul_in_version_line_is_rejected_by_all_three(self):
+        # A NUL in the version line: both the gates and the packager (which now
+        # reads the file the same way) reject it, because a NUL is not [ \t] and
+        # so breaks the bare-X.Y.Z match. The pre-change packager stripped it.
         block = "Version: 1.2.3\x00"
         code, stderr = run_packager(block, "1.2.3")
         self.assertEqual(code, 1, stderr)
-        self.assertIn("NUL byte", stderr)
+        self.assertIn("not a bare X.Y.Z", stderr)
         self._gates_reject(block)
+
+    def test_nul_outside_version_line_agrees(self):
+        # A NUL elsewhere leaves the version line clean, so both accept 1.0.14.
+        code, stderr = run_packager(None, "1.0.14", extra_tail="\n<!-- \x00 -->\n")
+        self.assertEqual(code, 0, stderr)
+
+    def test_lone_cr_mid_line_selects_the_same_version(self):
+        # A bare CR inside a line: read_text universal newlines split there, so
+        # the gate's first Version line is 1.0.0; the packager, reading the file
+        # the same way, also selects 1.0.0. A plain bash read loop (split on LF
+        # only) would have skipped the hidden token and chosen 2.0.0 instead.
+        block = "foo\rVersion: 1.0.0\nVersion: 2.0.0"
+        code, _ = run_packager(block, "1.0.0")
+        self.assertEqual(code, 0)
+        matched, version = gate_verdict(LINKS, skill_with(block))
+        self.assertTrue(matched)
+        self.assertEqual(version, "1.0.0")
+
+    def test_invalid_utf8_is_rejected(self):
+        # An invalid UTF-8 byte anywhere: the gates' read_text raises and the
+        # packager's decode raises too, so both reject rather than the packager
+        # building malformed text.
+        head = subprocess.run(
+            ["git", "-C", str(REPO), "show", "HEAD:cleanlanguage/SKILL.md"],
+            capture_output=True, check=True,
+        ).stdout
+        raw = head + b"\n<!-- \xff -->\n"
+        code, stderr = run_packager(None, "1.0.14", raw_skill=raw)
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("not valid UTF-8", stderr)
 
 
 if __name__ == "__main__":
