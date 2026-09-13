@@ -260,6 +260,10 @@ def locate_on_disk(url_path: str, root: Path) -> tuple[str, Path]:
     current = root_resolved
     spelled_differently = False
     for part in target.relative_to(root_resolved).parts:
+        # Re-confirm containment before enumerating, so a case-corrected symlink
+        # that escaped the tree is caught before its target directory is read.
+        if not contained(current, root):
+            return "outside", candidate
         try:
             entries = {entry.name for entry in os.scandir(current)}
         except NotADirectoryError:

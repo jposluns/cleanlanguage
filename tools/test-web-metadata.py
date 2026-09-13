@@ -321,6 +321,21 @@ class LocateOnDiskTest(unittest.TestCase):
         (outside / "card.png").unlink()
         outside.rmdir()
 
+    def test_case_walk_escaping_symlink_missing_final_is_outside(self):
+        outside = Path(self._tmp.name).parent / ("gap-" + self.root.name)
+        outside.mkdir()
+        try:
+            (self.root / "jump").symlink_to(outside)
+        except (OSError, NotImplementedError):
+            outside.rmdir()
+            self.skipTest("symlinks unavailable")
+        # An escaping symlink with a MISSING final component must be caught as a
+        # containment escape before its target directory is enumerated, not
+        # reported as a plain "missing".
+        status, _ = wm.locate_on_disk("JUMP/absent.png", self.root)
+        self.assertEqual(status, "outside")
+        outside.rmdir()
+
     def test_permission_error_on_final_file_propagates(self):
         import os
         if os.geteuid() == 0:
@@ -330,16 +345,21 @@ class LocateOnDiskTest(unittest.TestCase):
         (blocked / "card.png").write_bytes(b"x")
         os.chmod(blocked, 0o400)  # readable (scandir) but not traversable (stat)
         try:
+            # Confirm the filesystem actually enforces the missing execute bit;
+            # otherwise the regression this pins cannot be exercised here.
             try:
+                (blocked / "card.png").stat()
+                enforced = False
+            except PermissionError:
+                enforced = True
+            if not enforced:
+                self.skipTest("filesystem does not enforce the missing execute bit")
+            # It does enforce, so the fix MUST propagate the error (the old
+            # is_file()-based code swallowed it and returned "missing").
+            with self.assertRaises(OSError):
                 wm.locate_on_disk("blocked/card.png", self.root)
-                raised = False
-            except OSError:
-                raised = True
         finally:
             os.chmod(blocked, 0o700)
-        if not raised:
-            self.skipTest("filesystem does not enforce the missing execute bit")
-        self.assertTrue(raised)
 
 
 if __name__ == "__main__":
