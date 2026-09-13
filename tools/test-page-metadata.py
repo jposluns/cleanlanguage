@@ -396,10 +396,14 @@ class ImageReferenceTest(_PatchedGateTest):
         problems = self._check("https://cleanlanguage.ai/../secret.txt")
         self.assertTrue(any("outside the site directory" in p for p in problems))
 
-    def test_traversal_to_missing_target_reports_cleanly(self):
+    def test_traversal_to_missing_target_is_reported_outside(self):
+        # A traversal to a MISSING out-of-tree target must be reported as a
+        # containment violation, not as a plain "does not exist": the old
+        # unresolved code emitted "does not exist", so asserting the
+        # "outside" message makes this a real change-detector for fix (c).
         problems = self._check("https://cleanlanguage.ai/../no-such-file.png")
         self.assertEqual(len(problems), 1)
-        self.assertIn("og:image", problems[0])
+        self.assertIn("outside the site directory", problems[0])
 
     def test_in_tree_image_passes(self):
         (gate.SITE_ROOT / "card.png").write_bytes(b"x")
