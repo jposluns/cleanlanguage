@@ -266,7 +266,11 @@ def locate_on_disk(url_path: str, root: Path) -> tuple[str, Path]:
             return "outside", candidate
         try:
             entries = {entry.name for entry in os.scandir(current)}
-        except NotADirectoryError:
+        except (NotADirectoryError, FileNotFoundError):
+            # A component before the last is a regular file, or a dangling
+            # symlink, so the path cannot exist: a content problem, not an
+            # unreadable tree. A genuine I/O error (a permission error, say)
+            # is not caught here and propagates to the could-not-run path.
             return "missing", candidate
         if part in entries:
             current = current / part

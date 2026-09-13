@@ -321,6 +321,20 @@ class LocateOnDiskTest(unittest.TestCase):
         (outside / "card.png").unlink()
         outside.rmdir()
 
+    def test_case_mismatch_through_dangling_symlink_is_missing(self):
+        # BROKEN case-folds to a dangling symlink inside the tree: scandir raises
+        # FileNotFoundError, which must be a content problem (missing), not a
+        # gate-aborting exit-3 crash.
+        try:
+            (self.root / "broken").symlink_to("does-not-exist")
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks unavailable")
+        # scandir on the dangling symlink raises FileNotFoundError; the fix makes
+        # that a content problem. The pre-fix code let it propagate, so this call
+        # raising (rather than returning) is the regression the test detects.
+        status, _ = wm.locate_on_disk("BROKEN/file.png", self.root)
+        self.assertEqual(status, "missing")
+
     def test_case_walk_escaping_symlink_missing_final_is_outside(self):
         outside = Path(self._tmp.name).parent / ("gap-" + self.root.name)
         outside.mkdir()
