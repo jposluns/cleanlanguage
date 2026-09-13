@@ -11,8 +11,9 @@
 #
 # What it does, in order:
 #
-#   1. Reads the version from the Version: line in cleanlanguage/SKILL.md at
-#      HEAD; with --tag, fails unless the tag is v<version>. Also requires the
+#   1. Reads the version from the first Version: line in cleanlanguage/SKILL.md
+#      at HEAD and requires a bare X.Y.Z, the same rule the release gates apply;
+#      with --tag, fails unless the tag is v<version>. Also requires the
 #      skill name line and at least one Markdown reference, the two structural
 #      checks the previous inline validation enforced.
 #   2. Requires every git entry under cleanlanguage/ to carry mode 100644,
@@ -69,14 +70,50 @@ done
 
 git cat-file -e HEAD:cleanlanguage/SKILL.md 2>/dev/null \
   || fail "cleanlanguage/SKILL.md is missing at HEAD"
-skill="$(git show HEAD:cleanlanguage/SKILL.md)"
-version="$(printf '%s\n' "${skill}" \
-  | sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -1)"
-[ -n "${version}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
+skill="$(git show HEAD:cleanlanguage/SKILL.md)" \
+  || fail "could not read cleanlanguage/SKILL.md at HEAD"
+# Read the version exactly as the two release gates do, so all three consumers
+# agree on every input by construction instead of re-implementing the gates'
+# parse in shell (three QA rounds found byte-level divergences that a shell
+# re-implementation cannot fully reconcile: NUL location, invalid UTF-8, and CR
+# line endings). This decodes the blob as UTF-8 with universal newlines, exactly
+# as Path.read_text does, and applies the gates' own VERSION_LINE and
+# SKILL_VERSION patterns verbatim (check-release-links.py and
+# check-release-checksum-live.py), so the verdict and the extracted value are
+# identical here and there.
+if version="$(git show HEAD:cleanlanguage/SKILL.md | python3 -c '
+import io
+import re
+import sys
+
+try:
+    text = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8", newline=None).read()
+except UnicodeDecodeError:
+    sys.exit(4)
+line = re.search(r"^Version:[^\n]*", text, re.M)
+if line is None:
+    sys.exit(2)
+match = re.match(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", line.group(0))
+if match is None:
+    sys.exit(3)
+sys.stdout.write(match.group(1))
+')"; then
+  :
+else
+  case "$?" in
+    2) fail "no Version: line found in cleanlanguage/SKILL.md at HEAD" ;;
+    3) fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version" ;;
+    4) fail "cleanlanguage/SKILL.md is not valid UTF-8 at HEAD" ;;
+    *) fail "could not read the version from cleanlanguage/SKILL.md at HEAD" ;;
+  esac
+fi
 if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
   fail "SKILL.md version (${version}) does not match the tag (${tag})"
 fi
-printf '%s\n' "${skill}" | grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' \
+# grep -Eq exits on the first match, so a here-string (not a printf pipe) avoids
+# a SIGPIPE that set -o pipefail would turn into a spurious failure on a large
+# SKILL.md.
+grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' <<< "${skill}" \
   || fail "cleanlanguage/SKILL.md is missing the 'name: cleanlanguage' line"
 
 # The plugin manifests live in two places: marketplace.json at the repository
@@ -123,7 +160,7 @@ fi
 
 files="$(git ls-tree -r HEAD --name-only -- cleanlanguage)"
 [ -n "${files}" ] || fail "git records no files under cleanlanguage/"
-printf '%s\n' "${files}" | grep -Eq '^cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' \
+grep -Eq '^cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' <<< "${files}" \
   || fail "cleanlanguage/references holds no Markdown reference at HEAD"
 unexpected="$(printf '%s\n' "${files}" | grep -Ev \
   '^cleanlanguage/(SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
