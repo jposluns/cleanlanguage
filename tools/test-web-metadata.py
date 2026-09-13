@@ -89,12 +89,20 @@ class CollectorTest(unittest.TestCase):
                        '<meta name="b" content="y">'),
             [{"name": "b", "content": "y"}])
 
-    def test_end_tag_over_unclosed_inner_recovers(self):
-        # </template> closing over an unclosed <noscript>: a depth counter would
-        # stay stuck; the stack pops both and collection resumes.
+    def test_nested_noscript_recovers(self):
+        # <noscript> is raw text (scripting-enabled semantics): the inner
+        # "<noscript>" is text, the first </noscript> closes the container, and
+        # the following meta is active. A naive depth counter would stay stuck.
+        self.assertEqual(
+            self.metas('<noscript><noscript></noscript><meta name="a" content="x">'),
+            [{"name": "a", "content": "x"}])
+
+    def test_template_wrapping_unclosed_noscript_stays_inert(self):
+        # </template> written inside a raw-text <noscript> is text, not a real end
+        # tag, so the template never closes and the meta is inert, as in a browser.
         self.assertEqual(
             self.metas('<template><noscript></template><meta name="a" content="x">'),
-            [{"name": "a", "content": "x"}])
+            [])
 
     def test_self_closing_template_opens_suppression(self):
         # A browser ignores the slash on a non-void element, so <template/> opens
@@ -174,6 +182,38 @@ class SameOriginPathTest(unittest.TestCase):
     def test_encoded_space_decodes_and_maps(self):
         self.assertEqual(self.path("https://cleanlanguage.ai/my%20card.png"), "/my card.png")
 
+    def test_backslash_normalizes_to_origin(self):
+        # A browser reads the backslash as a slash, so this is on-origin.
+        self.assertEqual(self.path("https://cleanlanguage.ai\\missing.png"), "/missing.png")
+
+    def test_trailing_dot_host_is_on_origin(self):
+        self.assertEqual(self.path("https://cleanlanguage.ai./card.png"), "/card.png")
+
+    def test_malformed_bracket_url_raises(self):
+        with self.assertRaises(wm.UrlError):
+            self.path("https://[x")
+
+    def test_percent_encoded_host_is_treated_off_origin(self):
+        # Disclosed residual: urllib does not canonicalize a percent-encoded or
+        # punycode host the way a browser would, so such a host reads as another
+        # origin (skipped) rather than being matched. No authored page uses one.
+        self.assertIsNone(self.path("https://cleanlanguage%2Eai/card.png"))
+
+    def test_parse_origin_rejects_userinfo(self):
+        with self.assertRaises(wm.UrlError):
+            wm.parse_origin("https://user@x.test")
+
+    def test_parse_origin_wraps_malformed_as_urlerror(self):
+        with self.assertRaises(wm.UrlError):
+            wm.parse_origin("https://[x")
+
+    def test_parse_origin_rejects_backslash_host(self):
+        with self.assertRaises(wm.UrlError):
+            wm.parse_origin("https://x.test\\evil")
+
+    def test_parse_origin_strips_trailing_dot(self):
+        self.assertEqual(wm.parse_origin("https://x.test."), ("https", "x.test", 443))
+
     def test_parse_origin_rejects_non_https(self):
         with self.assertRaises(wm.UrlError):
             wm.parse_origin("ftp://cleanlanguage.ai")
@@ -211,6 +251,27 @@ class LocateOnDiskTest(unittest.TestCase):
         (self.root / "sub").mkdir()
         status, _ = wm.locate_on_disk("sub", self.root)
         self.assertEqual(status, "missing")
+
+    def test_intermediate_file_is_missing_not_error(self):
+        # A path traversing THROUGH a regular file cannot exist; it is a content
+        # problem (missing), never an unreadable-tree error.
+        (self.root / "card.png").write_bytes(b"x")
+        status, _ = wm.locate_on_disk("card.png/child.png", self.root)
+        self.assertEqual(status, "missing")
+
+    def test_case_mismatch_directory_then_missing_file(self):
+        # A case mismatch on a directory must not short-circuit to "case" when the
+        # file inside it is actually missing.
+        (self.root / "real").mkdir()
+        status, _ = wm.locate_on_disk("REAL/missing.png", self.root)
+        self.assertEqual(status, "missing")
+
+    def test_case_mismatch_full_path_reports_actual_spelling(self):
+        (self.root / "real").mkdir()
+        (self.root / "real" / "card.png").write_bytes(b"x")
+        status, target = wm.locate_on_disk("REAL/card.png", self.root)
+        self.assertEqual(status, "case")
+        self.assertEqual(target, self.root / "real" / "card.png")
 
     def test_symlink_escaping_root_is_outside(self):
         outside = Path(self._tmp.name).parent / ("out-" + self.root.name)

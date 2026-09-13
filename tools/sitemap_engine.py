@@ -181,12 +181,27 @@ def is_indexable(html: str) -> bool:
     return True
 
 
-def canonical_href(html: str) -> str | None:
+def _rel_tokens(rel: str) -> list[str]:
+    """The rel value as its set of tokens. HTML separates rel tokens by ASCII
+    whitespace only, so a non-breaking space does not split a token."""
+    return [token.casefold() for token in re.split(r"[ \t\n\f\r]+", rel) if token]
+
+
+def canonical_hrefs(html: str) -> list[str]:
+    """The href of every active ``<link rel="canonical">`` that carries one, in
+    document order, so a later contradicting canonical is not hidden by an earlier
+    matching one."""
+    hrefs: list[str] = []
     for attributes in web_metadata.link_tags(html):
-        rel = attributes.get("rel", "")
-        if "canonical" in rel.casefold().split():
-            return attributes.get("href")
-    return None
+        if "canonical" in _rel_tokens(attributes.get("rel", "")) and "href" in attributes:
+            hrefs.append(attributes["href"])
+    return hrefs
+
+
+def canonical_href(html: str) -> str | None:
+    """The href of the first active canonical link, or ``None``."""
+    hrefs = canonical_hrefs(html)
+    return hrefs[0] if hrefs else None
 
 
 # --- Enumeration and URL derivation -------------------------------------
@@ -293,12 +308,12 @@ def build_entries(config: dict, repo_root: Path) -> list[tuple[str, str]]:
         if not is_indexable(html):
             continue
         url = derive_url(config["base_url"], site_root, page)
-        canonical = canonical_href(html)
-        if canonical is not None and canonical != url:
-            raise EngineError(
-                f"{page.relative_to(repo_root).as_posix()} derives URL {url} but its "
-                f"canonical link is {canonical}; they must agree"
-            )
+        for canonical in canonical_hrefs(html):
+            if canonical != url:
+                raise EngineError(
+                    f"{page.relative_to(repo_root).as_posix()} derives URL {url} but a "
+                    f"canonical link is {canonical}; they must agree"
+                )
         if url in seen_urls:
             raise EngineError(f"two pages derive the same URL {url}")
         seen_urls.add(url)

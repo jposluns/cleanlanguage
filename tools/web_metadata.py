@@ -39,13 +39,11 @@ from pathlib import Path
 # Elements whose content a browser does not treat as active document metadata: a
 # template is an inert fragment, a noscript body is inert while scripting is on,
 # and the rest are raw-text elements. A <meta> or <link> inside any of them is
-# not live metadata, so the collector ignores it. html.parser skips the raw-text
-# elements' content itself on some interpreter versions, but which versions do so
-# is not fixed, so the collector tracks the whole set and does not depend on the
-# interpreter.
-INERT_ELEMENTS = frozenset(
-    {"template", "noscript", "script", "style", "title", "textarea"}
-)
+# not live metadata, so the collector ignores it. The raw-text elements (script,
+# style, and, by the CDATA extension below, noscript) are handled by html.parser
+# itself; the ones listed here are the containers html.parser parses normally, so
+# the collector tracks them itself and does not depend on the interpreter version.
+INERT_ELEMENTS = frozenset({"template", "title", "textarea"})
 
 _COLLECTED_ELEMENTS = frozenset({"meta", "link"})
 
@@ -58,12 +56,20 @@ _PERCENT_ESCAPE = re.compile(r"\A(?:[^%]|%[0-9A-Fa-f]{2})*\Z")
 class _DocumentTags(html.parser.HTMLParser):
     """Collect the attributes of every active ``<meta>`` and ``<link>`` element.
 
-    A stack of open inert containers is kept. While it is non-empty the collector
-    reads nothing, so a tag inside ``<template>`` or ``<noscript>`` is ignored the
-    way a browser ignores it. An end tag pops the stack to and including its match,
+    A ``<meta>`` or ``<link>`` inside an inert container is ignored the way a
+    browser ignores it. The raw-text containers (``<script>``, ``<style>``, and
+    ``<noscript>`` via the CDATA extension below) are handled by html.parser, whose
+    tokenizer does not emit their inner tags. The rest are tracked here with a
+    stack of open containers; an end tag pops the stack to and including its match,
     which recovers from an unclosed inner container the way HTML's implied end tags
     do, where a plain depth counter would stay stuck and hide the rest of the page.
     """
+
+    # Treat <noscript> as a raw-text element on every interpreter version, so its
+    # content is not parsed as active metadata. html.parser only gained a scripting
+    # flag for this distinction in 3.14; extending CDATA_CONTENT_ELEMENTS is the
+    # portable equivalent and matches what a scripting-enabled browser does.
+    CDATA_CONTENT_ELEMENTS = html.parser.HTMLParser.CDATA_CONTENT_ELEMENTS + ("noscript",)
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=False)
@@ -123,25 +129,40 @@ class UrlError(ValueError):
     percent escape, a malformed port, or a decoded path separator."""
 
 
+def _normalize_host(host: str) -> str:
+    """Lowercase a host and drop a single trailing dot, so a fully qualified name
+    like ``example.com.`` compares equal to ``example.com``."""
+    host = host.lower()
+    if len(host) > 1 and host.endswith("."):
+        host = host[:-1]
+    return host
+
+
 def parse_origin(origin: str) -> tuple[str, str, int]:
     """The normalized ``(scheme, host, effective port)`` of an absolute http or
-    https URL. The scheme and host are lowercased; the port is 80 or 443 when it
-    is omitted. Raises :class:`UrlError` when the scheme is not http(s), the host
-    is missing, or the port is malformed."""
-    parts = urllib.parse.urlsplit(origin)
+    https URL. The scheme and host are lowercased and a single trailing dot is
+    dropped from the host; the port is 80 or 443 when it is omitted. Raises
+    :class:`UrlError` when the URL is unparseable, its scheme is not http(s), it
+    carries userinfo, its host is missing or malformed, or its port is malformed."""
+    try:
+        parts = urllib.parse.urlsplit(origin)
+    except ValueError as error:
+        raise UrlError(f"origin is malformed: {origin!r}") from error
     scheme = parts.scheme.lower()
     if scheme not in ("http", "https"):
         raise UrlError(f"origin scheme is not http(s): {origin!r}")
+    if parts.username is not None or parts.password is not None:
+        raise UrlError(f"origin must not carry userinfo: {origin!r}")
     host = parts.hostname
-    if not host:
-        raise UrlError(f"origin has no host: {origin!r}")
+    if not host or _CONTROL.search(host) or "\\" in host:
+        raise UrlError(f"origin has no usable host: {origin!r}")
     try:
         port = parts.port
     except ValueError as error:
         raise UrlError(f"origin has a malformed port: {origin!r}") from error
     if port is None:
         port = 443 if scheme == "https" else 80
-    return scheme, host.lower(), port
+    return scheme, _normalize_host(host), port
 
 
 def same_origin_path(url: str, origin: str) -> str | None:
@@ -150,12 +171,18 @@ def same_origin_path(url: str, origin: str) -> str | None:
     relative, scheme-relative, another scheme, or another origin. Raises
     :class:`UrlError` when ``url`` claims this origin but is malformed."""
     origin_scheme, origin_host, origin_port = parse_origin(origin)
-    parts = urllib.parse.urlsplit(url)
+    # A browser normalizes a backslash to a forward slash in an http(s) URL, so a
+    # card written with backslashes still resolves against this origin.
+    url = url.replace("\\", "/")
+    try:
+        parts = urllib.parse.urlsplit(url)
+    except ValueError as error:
+        raise UrlError(f"image URL is malformed: {url!r}") from error
     scheme = parts.scheme.lower()
     host = parts.hostname
     if not scheme or not host or scheme not in ("http", "https"):
         return None
-    if host.lower() != origin_host:
+    if _normalize_host(host) != origin_host:
         return None
     try:
         port = parts.port
@@ -206,14 +233,16 @@ def locate_on_disk(url_path: str, root: Path) -> tuple[str, Path]:
     Returns a ``(status, path)`` pair:
 
     - ``"outside"``: the candidate resolves outside ``root`` (path: the candidate).
-    - ``"missing"``: no entry at that path, or the final entry is not a regular
-      file (path: the candidate or resolved target).
-    - ``"case"``: every component exists case-insensitively but a spelling differs
-      (path: the actual on-disk spelling at the first mismatch).
+    - ``"missing"``: no entry at that path, the final entry is not a regular file,
+      or a component before the last is itself a file (path: the candidate).
+    - ``"case"``: the file exists but a path component's spelling differs from the
+      request (path: the actual on-disk spelling).
     - ``"ok"``: the file exists at the exact spelling (path: the resolved target).
 
-    An ``OSError`` from ``scandir`` or ``resolve`` propagates: an unreadable tree
-    is the caller's could-not-run case, never a verdict.
+    A genuine ``OSError`` (a permission or I/O error) from ``scandir`` or
+    ``resolve`` propagates: an unreadable tree is the caller's could-not-run case,
+    never a verdict. A ``NotADirectoryError`` from walking through a file is a
+    content problem and is reported as ``"missing"``.
     """
     candidate = root / url_path.lstrip("/")
     target = candidate.resolve()
@@ -221,16 +250,23 @@ def locate_on_disk(url_path: str, root: Path) -> tuple[str, Path]:
         return "outside", candidate
     root_resolved = root.resolve()
     current = root_resolved
+    spelled_differently = False
     for part in target.relative_to(root_resolved).parts:
-        entries = {entry.name for entry in os.scandir(current)}
+        try:
+            entries = {entry.name for entry in os.scandir(current)}
+        except NotADirectoryError:
+            return "missing", candidate
         if part in entries:
             current = current / part
             continue
         folded = {name.casefold(): name for name in entries}
         actual = folded.get(part.casefold())
-        if actual is not None:
-            return "case", current / actual
-        return "missing", candidate
+        if actual is None:
+            return "missing", candidate
+        current = current / actual
+        spelled_differently = True
     if not current.is_file():
-        return "missing", target
-    return "ok", target
+        return "missing", candidate
+    if spelled_differently:
+        return "case", current
+    return "ok", current

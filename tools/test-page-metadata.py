@@ -449,6 +449,13 @@ class OriginMatchTest(_PatchedGateTest):
                                   files=["card.png"])
         self.assertEqual(problems, [])
 
+    def test_backslash_url_missing_is_reported(self):
+        # A browser normalizes the backslash to a slash, so this is on-origin and
+        # points at a missing file. The old textual check also caught it; the new
+        # parser must not silently pass it.
+        problems = self._problems(_img_meta("https://cleanlanguage.ai\\missing.png"))
+        self.assertTrue(any("does not exist" in p for p in problems))
+
 
 class MultiImageTest(_PatchedGateTest):
     def _problems(self, extra, files=()):
@@ -531,6 +538,13 @@ class MalformedImageUrlTest(_PatchedGateTest):
     def test_encoded_nul_is_a_content_problem(self):
         problems = self._problems("https://cleanlanguage.ai/%00.png")
         self.assertTrue(any("not a valid image URL" in p for p in problems))
+
+    def test_url_through_a_file_is_a_content_problem_not_exit_3(self):
+        # og:image traverses THROUGH an existing file: a content problem (exit 1),
+        # never a whole-gate exit-3 traceback.
+        (gate.SITE_ROOT / "card.png").write_bytes(b"x")
+        problems = self._problems("https://cleanlanguage.ai/card.png/child.png")
+        self.assertTrue(any("does not exist" in p for p in problems))
 
     def test_value_error_in_check_page_exits_3(self):
         page = gate.SITE_ROOT / "index.html"

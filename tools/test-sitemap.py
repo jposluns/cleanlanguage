@@ -401,6 +401,29 @@ class SharedParserTest(unittest.TestCase):
             with self.assertRaises(engine.EngineError):
                 engine.build_entries(config(include=["index.html"], exclude=[]), root)
 
+    def test_contradicting_canonical_is_caught(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            root = self._repo_with_head(
+                Path(d),
+                '<meta property="article:modified_time" content="2026-01-01">'
+                '<link rel="canonical alternate" href="https://x.test/">'
+                '<link rel="canonical" href="https://x.test/wrong/">')
+            with self.assertRaises(engine.EngineError):
+                engine.build_entries(config(include=["index.html"], exclude=[]), root)
+
+    def test_nbsp_rel_is_not_a_canonical_token(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            # A non-breaking space is not an HTML rel separator, so this is one
+            # non-canonical token and must be ignored (no false mismatch).
+            root = self._repo_with_head(
+                Path(d),
+                '<meta property="article:modified_time" content="2026-01-01">'
+                '<link rel="canonical\u00a0alternate" href="https://x.test/wrong/">')
+            entries = engine.build_entries(config(include=["index.html"], exclude=[]), root)
+            self.assertEqual([u for u, _ in entries], ["https://x.test/"])
+
     def test_malformed_port_base_url_is_run_error(self):
         import json as _json
         import tempfile
