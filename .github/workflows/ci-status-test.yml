@@ -1,0 +1,40 @@
+name: CI status tests
+
+# Runs the offline tests for tools/ci-status.sh, the tool that reports the CI
+# verdict for a commit. The tests stub the GitHub CLI, so they need no network
+# and no token; they pin the premise-less github-actions fail-safe (TODO 19):
+# a passing commit with no github-actions check, or one that cannot be read, is
+# not reported green; presence is read from the same reading as the verdict (so a
+# forged or injected check name cannot fabricate it); the same set of checks
+# compares equal regardless of API order; and a wait does not overshoot its
+# deadline.
+
+on:
+  pull_request:
+    paths:
+      - "tools/ci-status.sh"
+      - "tools/ci-status.py"
+      - "tools/test-ci-status.sh"
+      - ".github/workflows/ci-status-test.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "tools/ci-status.sh"
+      - "tools/ci-status.py"
+      - "tools/test-ci-status.sh"
+      - ".github/workflows/ci-status-test.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: CI status tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Run the ci-status tests
+        shell: bash
+        run: bash tools/test-ci-status.sh
