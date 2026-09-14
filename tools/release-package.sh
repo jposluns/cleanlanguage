@@ -20,7 +20,8 @@
 #      which rejects executable files (100755), symlinks (120000), and
 #      submodules (160000) in one comparison.
 #   3. Requires every path to match the package allowlist by shape: SKILL.md,
-#      the plugin manifest at .claude-plugin/plugin.json, agent configuration
+#      the Claude manifest at .claude-plugin/plugin.json, the Agent Plugins
+#      manifest at plugin.json, agent configuration
 #      in agents/, the CL_icon files in assets/, and Markdown references in
 #      references/. This checks path shape and git mode, not file content: a
 #      new flat Markdown reference is allowed, while a new directory, a script
@@ -32,7 +33,7 @@
 #      ships through the marketplace rather than the zip, adds LICENSE and
 #      NOTICE.md, and zips the files at the archive ROOT (SKILL.md, agents/,
 #      assets/, references/, LICENSE, NOTICE.md), with no cleanlanguage/
-#      prefix, so the zip holds exactly what git records, minus that manifest,
+#      prefix, so the zip holds exactly what git records, minus both manifests,
 #      plus the two licence files, whatever state the checkout is in.
 #   6. Verifies the archive against an expected entry list derived from the
 #      same git tree, excluding the plugin manifest, and verifies every
@@ -163,7 +164,7 @@ files="$(git ls-tree -r HEAD --name-only -- cleanlanguage)"
 grep -Eq '^cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' <<< "${files}" \
   || fail "cleanlanguage/references holds no Markdown reference at HEAD"
 unexpected="$(printf '%s\n' "${files}" | grep -Ev \
-  '^cleanlanguage/(SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
+  '^cleanlanguage/(plugin\.json|SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
   || true)"
 if [ -n "${unexpected}" ]; then
   printf 'release-package: paths outside the package allowlist:\n%s\n' "${unexpected}" >&2
@@ -224,10 +225,12 @@ fi
 staging="$(mktemp -d)"
 trap 'rm -rf "${staging}"' EXIT
 git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${staging}"
-# Keep the downloadable skill zip free of plugin metadata: the manifest ships
-# through the marketplace install, never through the zip. rmdir, not rm -rf,
-# so an unexpected extra file under .claude-plugin/ fails the build loudly
-# instead of being discarded.
+# Keep the downloadable skill zip free of plugin metadata: the Claude manifest
+# (.claude-plugin/plugin.json) and the Agent Plugins manifest (the root
+# plugin.json) both ship through the marketplace install, never through the zip.
+# rmdir, not rm -rf, so an unexpected extra file under .claude-plugin/ fails the
+# build loudly instead of being discarded.
+rm "${staging}/cleanlanguage/plugin.json"
 rm "${staging}/cleanlanguage/.claude-plugin/plugin.json"
 rmdir "${staging}/cleanlanguage/.claude-plugin"
 git show HEAD:LICENSE > "${staging}/cleanlanguage/LICENSE"
@@ -267,6 +270,7 @@ expected="$(
   {
     printf '%s\n' "${files}" \
       | grep -Fvx 'cleanlanguage/.claude-plugin/plugin.json' \
+      | grep -Fvx 'cleanlanguage/plugin.json' \
       | sed 's#^cleanlanguage/##'
     printf 'LICENSE\nNOTICE.md\n'
   } | LC_ALL=C sort
@@ -298,6 +302,11 @@ grep -qx 'SKILL.md' <<< "${actual}" \
 # itself carries no plugin metadata.
 if grep -q '^\.claude-plugin/' <<< "${actual}"; then
   echo "release-package: the plugin manifest must not ship in the skill zip" >&2
+  exit 1
+fi
+
+if grep -qx 'plugin.json' <<< "${actual}"; then
+  echo "release-package: the Agent Plugins manifest (plugin.json) must not ship in the skill zip" >&2
   exit 1
 fi
 
