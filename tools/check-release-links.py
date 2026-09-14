@@ -39,9 +39,12 @@ Exit codes:
 
 from __future__ import annotations
 
+import os
 import re
+import stat
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SITE_ROOT = REPO_ROOT / "site"
@@ -60,7 +63,7 @@ DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) i
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
-def die(message: str) -> None:
+def die(message: str) -> NoReturn:
     print(f"check-release-links: {message}", file=sys.stderr)
     raise SystemExit(3)
 
@@ -85,13 +88,47 @@ def main() -> int:
     problems: list[str] = []
     found: dict[str, list[str]] = {}
 
-    for path in sorted(SITE_ROOT.rglob("*")):
-        if not path.is_file() or path.suffix not in {".html", ""} or path.name.startswith("."):
+    def collect_site_files(root: Path) -> list[Path]:
+        # Walk site/ with os.scandir so every listing or classification error
+        # fails closed. os.walk and Path.rglob both swallow such errors: a
+        # directory that cannot be listed, or an entry whose is_dir() raises,
+        # is silently dropped along with its subtree. Here each OSError, from
+        # scandir or from is_dir, routes through die (exit 3), naming the path.
+        found_paths: list[Path] = []
+        stack = [root]
+        while stack:
+            directory = stack.pop()
+            try:
+                entries = list(os.scandir(directory))
+            except OSError as error:
+                die(f"{directory.relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
+            for entry in entries:
+                entry_path = Path(entry.path)
+                try:
+                    is_directory = entry.is_dir(follow_symlinks=False)
+                except OSError as error:
+                    die(f"{entry_path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
+                if is_directory:
+                    stack.append(entry_path)
+                else:
+                    found_paths.append(entry_path)
+        return found_paths
+
+    site_paths = collect_site_files(SITE_ROOT)
+
+    for path in sorted(site_paths):
+        if path.suffix not in {".html", ""} or path.name.startswith("."):
+            continue
+        try:
+            mode = path.stat().st_mode
+        except OSError as error:
+            die(f"{path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
+        if not stat.S_ISREG(mode):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="strict")
-        except (UnicodeDecodeError, OSError):
-            continue
+        except (OSError, UnicodeError) as error:
+            die(f"{path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
         relative = path.relative_to(REPO_ROOT).as_posix()
         for hit in RELEASE_URL.finditer(text):
             version, tag = hit.group("version"), hit.group("tag")
@@ -106,11 +143,17 @@ def main() -> int:
     if not found:
         die(f"no release-asset URLs found under {SITE_ROOT.relative_to(REPO_ROOT)}")
 
-    redirects = REDIRECTS.read_text(encoding="utf-8")
+    try:
+        redirects = REDIRECTS.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        die(f"site/_redirects could not be read: {error}")
     if not RELEASE_URL.search(redirects):
         problems.append("site/_redirects contains no release-asset URL")
 
-    verify = VERIFY_PAGE.read_text(encoding="utf-8")
+    try:
+        verify = VERIFY_PAGE.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        die(f"site/verify/index.html could not be read: {error}")
     shown = DISPLAYED_SUM.search(verify)
     if shown is None:
         problems.append('the verify page has no <code id="published-checksum"> block')
