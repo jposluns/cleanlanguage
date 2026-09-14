@@ -37,6 +37,16 @@
         "tools/sitemap_engine.py"
       ],
       "target": "site/sitemap.xml"
+    },
+    {
+      "kind": "file",
+      "regenerate": "tools/check-portable-text-sync.sh --update",
+      "sources": [
+        "cleanlanguage/SKILL.md",
+        "cleanlanguage/references/",
+        "tools/check-portable-text-sync.sh"
+      ],
+      "target": "tools/portable-text-skill-source.sha256"
     }
   ],
   "version": 1
