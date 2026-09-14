@@ -59,27 +59,15 @@ refs_before="$(git for-each-ref | sha256sum)"
 
 # The first Version: line is authoritative and must be a bare X.Y.Z, the same
 # strict rule the release gates apply; a malformed first line is rejected here,
-# never skipped to a later matching line.
-#
-# Capture the whole blob first: the command substitution reads all of git show's
-# output, so git show completes normally and cannot take SIGPIPE from a reader
-# that quits early. Extracting with `sed -n '/^Version:/{p;q}'` piped straight
-# off a live git show made a valid but large SKILL.md (over the ~64KB pipe
-# buffer) abort with exit 141 under set -o pipefail; capturing first removes that
-# live pipe. Then normalize CR (both CRLF and a lone CR) to LF, matching the
-# release gates' Python read (Path.read_text universal newlines), so a CRLF or
-# lone-CR version line agrees with them. The one residual: command substitution
-# strips NUL bytes, so a NUL in the line that the Python gates reject is not
-# caught here; the release gate (release-package.sh, via Python) is authoritative
-# for that byte-exact case.
-skill_content="$(git show HEAD:cleanlanguage/SKILL.md)" \
-  || fail "could not read cleanlanguage/SKILL.md at HEAD"
-skill_content="${skill_content//$'\r'/$'\n'}"
-version_line="$(sed -n '/^Version:/{p;q}' <<<"${skill_content}")"
-[ -n "${version_line}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
-printf '%s' "${version_line}" | grep -Eq $'^Version:[ \t]*[0-9]+\\.[0-9]+\\.[0-9]+[ \t]*$' \
-  || fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version: ${version_line}"
-version="$(printf '%s' "${version_line}" | sed -E $'s/^Version:[ \t]*([0-9]+\\.[0-9]+\\.[0-9]+)[ \t]*$/\\1/')"
+# never skipped to a later matching line. One shared strict extractor,
+# tools/skill-version.py, does the reading and validation for every site, so the
+# shell, the workflow, and the Python gates agree byte for byte (including on a
+# NUL, which the old capture-then-sed form silently stripped). The raw blob is
+# piped straight in: skill-version.py reads ALL of stdin, so git show completes
+# and can take no SIGPIPE, and the ~64KB-pipe exit-141 regression cannot recur.
+if ! version="$(git show HEAD:cleanlanguage/SKILL.md | python3 tools/skill-version.py)"; then
+  fail "could not read a valid bare X.Y.Z Version: line from cleanlanguage/SKILL.md at HEAD"
+fi
 patch="${version##*.}"
 dry_version="${version%.*}.$(( 10#${patch} + 1 ))"
 dry_tag="v${dry_version}"

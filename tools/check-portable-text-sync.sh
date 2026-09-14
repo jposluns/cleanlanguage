@@ -43,20 +43,15 @@ opening="This is the Clean Language skill, written out as rules. Apply it to the
 # output), never skipped to a later matching line; callers treat empty as an
 # error.
 #
-# Capture the file into a variable first, then extract from that variable (via a
-# here-string, never a live pipe into an early-quitting sed, which would SIGPIPE
-# on a file over the ~64KB pipe buffer). Normalize CR (CRLF and lone CR) to LF
-# first, matching the release gates' Python read (Path.read_text universal
-# newlines), so a CRLF or lone-CR version line agrees. One residual: command
-# substitution strips NUL, so a NUL in the line that the Python gates reject is
-# not caught here; the Python release gate is authoritative for that byte case.
+# One shared strict extractor, tools/skill-version.py, does the reading and
+# validation, so this helper agrees with the workflow, the dry run, and the
+# Python gates byte for byte (including on CRLF, a lone CR, and a NUL). It reads
+# the file directly, so there is no early-quit pipe and no SIGPIPE on a large
+# file. The contract callers rely on under set -e is unchanged: exit 0 always,
+# printing the version on success and nothing on any failure (2>/dev/null || true
+# absorbs the extractor's error message and non-zero exit).
 version_of() {
-  local content line
-  content="$(cat "$1")" || return 0
-  content="${content//$'\r'/$'\n'}"
-  line="$(sed -n '/^Version:/{p;q}' <<<"${content}")"
-  printf '%s' "${line}" | grep -Eq $'^Version:[ \t]*[0-9]+\\.[0-9]+\\.[0-9]+[ \t]*$' || return 0
-  printf '%s' "${line}" | sed -E $'s/^Version:[ \t]*([0-9]+\\.[0-9]+\\.[0-9]+)[ \t]*$/\\1/'
+  python3 tools/skill-version.py "$1" 2>/dev/null || true
 }
 
 check_common() {
