@@ -2,10 +2,11 @@
 """Tests for check-release-links.py's skill-version parsing.
 
 The gate reads the current version from the first ``Version:`` line of
-``cleanlanguage/SKILL.md``. These tests pin the failure paths, which reject a
-malformed, missing, or unreadable version before the gate walks the site, so no
-site fixture is needed. They run offline with the standard library: the fixtures
-patch the module's file paths.
+``cleanlanguage/SKILL.md``. These tests pin the gate's failure paths: the version parse (a malformed,
+missing, or unreadable SKILL, which fails before the site walk), and the
+fail-closed reads of scanned site files, ``site/_redirects``, and the verify
+page (which build a small site fixture). They run offline with the standard
+library: the fixtures patch the module's file paths.
 """
 
 from __future__ import annotations
@@ -77,6 +78,44 @@ class VersionParseTest(unittest.TestCase):
     def test_non_utf8_skill_is_rejected(self):
         gate.SKILL.write_bytes(b"Version: 1.0.14\xff\n")
         self._expect_die("could not be read")
+
+    def _valid_url(self, version):
+        return (
+            "https://github.com/jposluns/cleanlanguage/releases/download/"
+            f"v{version}/cleanlanguage-{version}.zip"
+        )
+
+    def test_unreadable_site_file_fails_closed(self):
+        # A scanned site file that is not valid UTF-8 must fail closed and name
+        # the file, not be silently skipped -- a skipped file could carry a
+        # stale release link that then ships unnoticed.
+        gate.SKILL.write_text("Version: 1.0.14\n", encoding="utf-8")
+        gate.SITE_ROOT.mkdir(parents=True, exist_ok=True)
+        (gate.SITE_ROOT / "page.html").write_bytes(b"<a>\xff</a>\n")
+        self._expect_die("site/page.html could not be read")
+
+    def test_unreadable_redirects_fails_closed(self):
+        # A present-but-unreadable _redirects must exit 3 naming the file, not
+        # raise an uncaught traceback (which mislabels it as exit 1).
+        gate.SKILL.write_text("Version: 1.0.14\n", encoding="utf-8")
+        gate.SITE_ROOT.mkdir(parents=True, exist_ok=True)
+        (gate.SITE_ROOT / "index.html").write_text(
+            f'<a href="{self._valid_url("1.0.14")}">dl</a>\n', encoding="utf-8"
+        )
+        gate.REDIRECTS.write_bytes(b"\xff\n")
+        self._expect_die("site/_redirects could not be read")
+
+    def test_unreadable_verify_page_fails_closed(self):
+        # A present-but-unreadable verify page must exit 3 naming the file, not
+        # raise an uncaught traceback.
+        gate.SKILL.write_text("Version: 1.0.14\n", encoding="utf-8")
+        gate.SITE_ROOT.mkdir(parents=True, exist_ok=True)
+        (gate.SITE_ROOT / "index.html").write_text(
+            f'<a href="{self._valid_url("1.0.14")}">dl</a>\n', encoding="utf-8"
+        )
+        gate.REDIRECTS.write_text(self._valid_url("1.0.14") + "\n", encoding="utf-8")
+        gate.VERIFY_PAGE.write_bytes(b"\xff\n")
+        self._expect_die("site/verify/index.html could not be read")
 
 
 if __name__ == "__main__":

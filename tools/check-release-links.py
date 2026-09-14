@@ -90,8 +90,8 @@ def main() -> int:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="strict")
-        except (UnicodeDecodeError, OSError):
-            continue
+        except (OSError, UnicodeError) as error:
+            die(f"{path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
         relative = path.relative_to(REPO_ROOT).as_posix()
         for hit in RELEASE_URL.finditer(text):
             version, tag = hit.group("version"), hit.group("tag")
@@ -106,11 +106,17 @@ def main() -> int:
     if not found:
         die(f"no release-asset URLs found under {SITE_ROOT.relative_to(REPO_ROOT)}")
 
-    redirects = REDIRECTS.read_text(encoding="utf-8")
+    try:
+        redirects = REDIRECTS.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        die(f"site/_redirects could not be read: {error}")
     if not RELEASE_URL.search(redirects):
         problems.append("site/_redirects contains no release-asset URL")
 
-    verify = VERIFY_PAGE.read_text(encoding="utf-8")
+    try:
+        verify = VERIFY_PAGE.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        die(f"site/verify/index.html could not be read: {error}")
     shown = DISPLAYED_SUM.search(verify)
     if shown is None:
         problems.append('the verify page has no <code id="published-checksum"> block')
