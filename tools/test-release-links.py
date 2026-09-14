@@ -140,6 +140,29 @@ class VersionParseTest(unittest.TestCase):
         finally:
             os.chmod(secret, 0o755)
 
+    @unittest.skipIf(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        "chmod is not restrictive when running as root",
+    )
+    def test_unreadable_file_in_unreadable_directory_fails_closed(self):
+        # A directory readable for names but not traversable (mode 0o400) lets
+        # os.walk list a file inside it, but stat and read of that file are
+        # denied. is_file() would swallow the error and skip the file; the gate
+        # must fail closed instead of dropping a possibly-stale page.
+        gate.SKILL.write_text("Version: 1.0.14\n", encoding="utf-8")
+        gate.SITE_ROOT.mkdir(parents=True, exist_ok=True)
+        (gate.SITE_ROOT / "index.html").write_text(
+            f'<a href="{self._valid_url("1.0.14")}">dl</a>\n', encoding="utf-8"
+        )
+        locked = gate.SITE_ROOT / "archive"
+        locked.mkdir()
+        (locked / "old.html").write_text("stale", encoding="utf-8")
+        os.chmod(locked, 0o400)
+        try:
+            self._expect_die("site/archive/old.html could not be read")
+        finally:
+            os.chmod(locked, 0o755)
+
 
 if __name__ == "__main__":
     unittest.main()

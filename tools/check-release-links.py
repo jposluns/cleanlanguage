@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import sys
 from pathlib import Path
 
@@ -99,7 +100,13 @@ def main() -> int:
             site_paths.append(Path(dirpath) / filename)
 
     for path in sorted(site_paths):
-        if not path.is_file() or path.suffix not in {".html", ""} or path.name.startswith("."):
+        if path.suffix not in {".html", ""} or path.name.startswith("."):
+            continue
+        try:
+            mode = path.stat().st_mode
+        except OSError as error:
+            die(f"{path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
+        if not stat.S_ISREG(mode):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="strict")
