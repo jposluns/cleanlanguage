@@ -43,14 +43,18 @@ def die(message: str, code: int = 1) -> NoReturn:
     raise SystemExit(code)
 
 
+def _reject_constant(token: str) -> NoReturn:
+    raise ValueError(f"non-standard JSON constant {token!r}")
+
+
 def load(path: Path) -> dict:
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         die(f"{path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}", 3)
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError as error:
+        data = json.loads(text, parse_constant=_reject_constant)
+    except ValueError as error:
         die(f"{path.relative_to(REPO_ROOT).as_posix()} is not valid JSON: {error}")
     if not isinstance(data, dict):
         die(f"{path.relative_to(REPO_ROOT).as_posix()} is not a JSON object")
@@ -98,13 +102,21 @@ def main() -> int:
     claude = load(CLAUDE_MANIFEST)
     if claude.get("name") != name:
         die(f"name {name!r} does not match the Claude manifest name {claude.get('name')!r}")
-    if manifest.get("version") != claude.get("version"):
-        die(f"version {manifest.get('version')!r} does not match the Claude manifest version {claude.get('version')!r}")
+    version = manifest.get("version")
+    if not isinstance(version, str):
+        die("version is required and must be a string")
+    if version != claude.get("version"):
+        die(f"version {version!r} does not match the Claude manifest version {claude.get('version')!r}")
 
     market = load(MARKETPLACE)
-    plugins = market.get("plugins") or [{}]
-    if plugins[0].get("name") != name:
-        die(f"name {name!r} does not match marketplace plugins[0].name {plugins[0].get('name')!r}")
+    plugins = market.get("plugins")
+    if not isinstance(plugins, list) or not plugins:
+        die("marketplace.json has no plugins array")
+    first = plugins[0]
+    if not isinstance(first, dict):
+        die("marketplace.json plugins[0] is not an object")
+    if first.get("name") != name:
+        die(f"name {name!r} does not match marketplace plugins[0].name {first.get('name')!r}")
 
     print(f"check-agent-plugin-manifest: cleanlanguage/plugin.json is valid Agent Plugins {name!r} (schema 1.0.0).")
     return 0

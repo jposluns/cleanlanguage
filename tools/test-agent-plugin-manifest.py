@@ -130,13 +130,29 @@ class AgentPluginManifestTest(unittest.TestCase):
         manifest = valid_manifest()
         del manifest["version"]
         self.write(manifest)
-        self.expect_exit(1, "does not match the Claude manifest version")
+        self.expect_exit(1, "version is required")
 
     def test_trailing_newline_name_fails(self):
         manifest = valid_manifest()
         manifest["name"] = "cleanlanguage\n"
         self.write(manifest)
         self.expect_exit(1, "name must match")
+
+    def test_non_standard_json_number_fails(self):
+        # Python's json accepts NaN/Infinity by default; the gate must reject
+        # them as not valid JSON.
+        gate.MANIFEST.write_text(
+            '{"$schema": "' + SCHEMA + '", "name": "cleanlanguage", "version": NaN}',
+            encoding="utf-8",
+        )
+        self.expect_exit(1, "is not valid JSON")
+
+    def test_non_list_plugins_fails(self):
+        gate.MARKETPLACE.write_text(
+            json.dumps({"plugins": "not-a-list"}), encoding="utf-8"
+        )
+        self.write(valid_manifest())
+        self.expect_exit(1, "no plugins array")
 
 
 if __name__ == "__main__":
