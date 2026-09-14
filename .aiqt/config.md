@@ -49,6 +49,17 @@ orchestration registry below names `/opt/cleanlanguage/private`, the durable rec
 so a guarded-tool write into that store is permitted and audited rather than denied, while a
 guarded-tool write to any other outside repository is still denied.
 
+`commit_identity` (cmtidn) denies a git command whose tokens attribute a commit to a
+recognized AI identity, Claude, Anthropic, OpenAI, Codex, Copilot, or Gemini among them, as
+author, committer, or co-author, whether in a `Co-Authored-By` trailer, an `--author` value, a
+`GIT_AUTHOR` or `GIT_COMMITTER` assignment, or a `user.name` or `user.email` config set. A
+detected identity is denied absolutely, with no escape hatch. Detection scans the command
+itself: it ignores an AI product name in an ordinary commit message, and it does not inspect an
+identity already inherited from existing git config, so a session configures a human commit
+identity rather than relying on the scan alone. This repository requires the same for Claude in
+its [root `CLAUDE.md`](../CLAUDE.md): the maintainer is the sole author, with no Claude
+co-author or session trailer.
+
 A minimal orchestration registry (`.aiqt/orchestration.json`, version 1) now exists. It
 declares only `companion_stores`, so of the 10 orchestrator hooks it arms just the two that
 gate on the registry's mere presence: `orch_truncation_guard` and `orch_untracked_wait_loop`.
