@@ -7,11 +7,13 @@
 # bits the repository never recorded), so a check that read them would pass on
 # one machine and fail on another. The git tree is identical everywhere the
 # commit exists, and the archive is stamped from the commit and ordered, so
-# the same commit gives the same bytes and the same checksum everywhere.
+# the same commit rebuilt with the same zip implementation gives the same
+# bytes and checksum; different zip builds can differ, so a digest is
+# comparable only between builds made with the same zip binary.
 #
 # What it does, in order:
 #
-#   1. Reads the version from the first Version: line in cleanlanguage/SKILL.md
+#   1. Reads the version from the first Version: line in cleanlanguage/skills/cleanlanguage/SKILL.md
 #      at HEAD and requires a bare X.Y.Z, the same rule the release gates apply;
 #      with --tag, fails unless the tag is v<version>. Also requires the
 #      skill name line and at least one Markdown reference, the two structural
@@ -19,22 +21,25 @@
 #   2. Requires every git entry under cleanlanguage/ to carry mode 100644,
 #      which rejects executable files (100755), symlinks (120000), and
 #      submodules (160000) in one comparison.
-#   3. Requires every path to match the package allowlist by shape: SKILL.md,
-#      the Claude manifest at .claude-plugin/plugin.json, the Agent Plugins
-#      manifest at plugin.json, agent configuration
-#      in agents/, the CL_icon files in assets/, and Markdown references in
-#      references/. This checks path shape and git mode, not file content: a
-#      new flat Markdown reference is allowed, while a new directory, a script
-#      extension, or a nested path fails.
+#   3. Requires every path to match the package allowlist by shape:
+#      skills/cleanlanguage/SKILL.md, the Claude manifest at
+#      .claude-plugin/plugin.json, the Agent Plugins manifest at plugin.json,
+#      agent configuration in agents/, the CL_icon files in assets/, and
+#      Markdown references in skills/cleanlanguage/references/. This checks path
+#      shape and git mode, not file content: a new flat Markdown reference under
+#      skills/cleanlanguage/references/ is allowed, while a new directory, a
+#      script extension, or any other nested path fails.
 #   4. Requires every icon the ChatGPT interface configuration references to
 #      exist in the package, whether the YAML quotes the path with double
 #      quotes, single quotes, or none.
-#   5. Stages the package from git archive, removes the plugin manifest, which
-#      ships through the marketplace rather than the zip, adds LICENSE and
-#      NOTICE.md, and zips the files at the archive ROOT (SKILL.md, agents/,
-#      assets/, references/, LICENSE, NOTICE.md), with no cleanlanguage/
-#      prefix, so the zip holds exactly what git records, minus both manifests,
-#      plus the two licence files, whatever state the checkout is in.
+#   5. Stages the package from git archive, removes both plugin manifests, which
+#      ship through the marketplace rather than the zip, adds LICENSE and
+#      NOTICE.md, restores SKILL.md and references/ from skills/cleanlanguage/
+#      to the archive root, and zips the files at the archive ROOT (SKILL.md,
+#      agents/, assets/, references/, LICENSE, NOTICE.md), with no cleanlanguage/
+#      prefix, so the zip holds exactly what git records, minus both manifests
+#      and the skills/cleanlanguage/ nesting, plus the two licence files,
+#      whatever state the checkout is in.
 #   6. Verifies the archive against an expected entry list derived from the
 #      same git tree, excluding the plugin manifest, and verifies every
 #      archived file's bytes against its git blob, so a git attribute such as
@@ -69,10 +74,15 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-git cat-file -e HEAD:cleanlanguage/SKILL.md 2>/dev/null \
-  || fail "cleanlanguage/SKILL.md is missing at HEAD"
-skill="$(git show HEAD:cleanlanguage/SKILL.md)" \
-  || fail "could not read cleanlanguage/SKILL.md at HEAD"
+git cat-file -e HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md 2>/dev/null \
+  || fail "cleanlanguage/skills/cleanlanguage/SKILL.md is missing at HEAD"
+# The skill lives only under skills/cleanlanguage/ for Agent Plugins discovery;
+# a stray copy at the legacy root would silently regress the layout, so fail on it.
+if git cat-file -e HEAD:cleanlanguage/SKILL.md 2>/dev/null; then
+  fail "cleanlanguage/SKILL.md must live only at cleanlanguage/skills/cleanlanguage/SKILL.md; a copy exists at the legacy root"
+fi
+skill="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md)" \
+  || fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"
 # Read the version exactly as the two release gates do, so all three consumers
 # agree on every input by construction instead of re-implementing the gates'
 # parse in shell (three QA rounds found byte-level divergences that a shell
@@ -82,7 +92,7 @@ skill="$(git show HEAD:cleanlanguage/SKILL.md)" \
 # SKILL_VERSION patterns verbatim (check-release-links.py and
 # check-release-checksum-live.py), so the verdict and the extracted value are
 # identical here and there.
-if version="$(git show HEAD:cleanlanguage/SKILL.md | python3 -c '
+if version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -c '
 import io
 import re
 import sys
@@ -102,10 +112,10 @@ sys.stdout.write(match.group(1))
   :
 else
   case "$?" in
-    2) fail "no Version: line found in cleanlanguage/SKILL.md at HEAD" ;;
-    3) fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version" ;;
-    4) fail "cleanlanguage/SKILL.md is not valid UTF-8 at HEAD" ;;
-    *) fail "could not read the version from cleanlanguage/SKILL.md at HEAD" ;;
+    2) fail "no Version: line found in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD" ;;
+    3) fail "the first Version: line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version" ;;
+    4) fail "cleanlanguage/skills/cleanlanguage/SKILL.md is not valid UTF-8 at HEAD" ;;
+    *) fail "could not read the version from cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD" ;;
   esac
 fi
 if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
@@ -115,7 +125,7 @@ fi
 # a SIGPIPE that set -o pipefail would turn into a spurious failure on a large
 # SKILL.md.
 grep -Eq '^name:[[:space:]]*cleanlanguage[[:space:]]*$' <<< "${skill}" \
-  || fail "cleanlanguage/SKILL.md is missing the 'name: cleanlanguage' line"
+  || fail "cleanlanguage/skills/cleanlanguage/SKILL.md is missing the 'name: cleanlanguage' line"
 
 # The plugin manifests live in two places: marketplace.json at the repository
 # root, which is what makes this repository a marketplace, and plugin.json
@@ -161,10 +171,10 @@ fi
 
 files="$(git ls-tree -r HEAD --name-only -- cleanlanguage)"
 [ -n "${files}" ] || fail "git records no files under cleanlanguage/"
-grep -Eq '^cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' <<< "${files}" \
+grep -Eq '^cleanlanguage/skills/cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' <<< "${files}" \
   || fail "cleanlanguage/references holds no Markdown reference at HEAD"
 unexpected="$(printf '%s\n' "${files}" | grep -Ev \
-  '^cleanlanguage/(plugin\.json|SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
+  '^cleanlanguage/(plugin\.json|skills/cleanlanguage/SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|skills/cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
   || true)"
 if [ -n "${unexpected}" ]; then
   printf 'release-package: paths outside the package allowlist:\n%s\n' "${unexpected}" >&2
@@ -233,6 +243,14 @@ git archive --format=tar HEAD cleanlanguage | tar -xf - -C "${staging}"
 rm "${staging}/cleanlanguage/plugin.json"
 rm "${staging}/cleanlanguage/.claude-plugin/plugin.json"
 rmdir "${staging}/cleanlanguage/.claude-plugin"
+# The source keeps SKILL.md and references/ under skills/cleanlanguage/ for
+# Agent Plugins discovery; Claude, ChatGPT, and Copilot Studio load the zip
+# only with SKILL.md at the archive root, so restore the root layout here.
+# rmdir, not rm -rf, so an unexpected extra entry under skills/ fails loudly.
+mv "${staging}/cleanlanguage/skills/cleanlanguage/SKILL.md" "${staging}/cleanlanguage/SKILL.md"
+mv "${staging}/cleanlanguage/skills/cleanlanguage/references" "${staging}/cleanlanguage/references"
+rmdir "${staging}/cleanlanguage/skills/cleanlanguage"
+rmdir "${staging}/cleanlanguage/skills"
 git show HEAD:LICENSE > "${staging}/cleanlanguage/LICENSE"
 git show HEAD:NOTICE.md > "${staging}/cleanlanguage/NOTICE.md"
 chmod 644 "${staging}/cleanlanguage/LICENSE" "${staging}/cleanlanguage/NOTICE.md"
@@ -259,7 +277,7 @@ dist_dir="$(pwd)/dist"
 # change the archive bytes; -D omits directory records (whose modes and order
 # would otherwise vary); -X drops uid/gid and the extra timestamp fields; the
 # sorted list and TZ=UTC fix entry order and the DOS times. Same commit, same
-# bytes, on any machine and at any clock time and umask.
+# bytes at any clock time and umask, given the same zip implementation.
 (cd "${staging}/cleanlanguage" && find . -type f -printf '%P\n' | LC_ALL=C sort \
   | env -u ZIP -u ZIPOPT TZ=UTC zip -q -X -D -@ "${dist_dir}/cleanlanguage.zip")
 cp dist/cleanlanguage.zip "dist/cleanlanguage-${version}.zip"
@@ -271,6 +289,7 @@ expected="$(
     printf '%s\n' "${files}" \
       | grep -Fvx 'cleanlanguage/.claude-plugin/plugin.json' \
       | grep -Fvx 'cleanlanguage/plugin.json' \
+      | sed 's#^cleanlanguage/skills/cleanlanguage/#cleanlanguage/#' \
       | sed 's#^cleanlanguage/##'
     printf 'LICENSE\nNOTICE.md\n'
   } | LC_ALL=C sort
@@ -295,6 +314,13 @@ fi
 grep -qx 'SKILL.md' <<< "${actual}" \
   || fail "SKILL.md is not at the archive root"
 
+# The source nests the skill under skills/cleanlanguage/; the staging step above
+# re-roots it, so a surviving skills/ entry means that re-root was dropped.
+if grep -q '^skills/' <<< "${actual}"; then
+  echo "release-package: the archive must not carry a skills/ subtree" >&2
+  exit 1
+fi
+
 # The entry-list check above already excludes the plugin manifest, but a
 # coordinated revert of the staging rm and the expected-list filter would put
 # the manifest in both lists and slip past it, the same shape the root-layout
@@ -317,6 +343,8 @@ while IFS= read -r entry; do
   case "${entry}" in
     LICENSE) blob="HEAD:LICENSE" ;;
     NOTICE.md) blob="HEAD:NOTICE.md" ;;
+    SKILL.md) blob="HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md" ;;
+    references/*) blob="HEAD:cleanlanguage/skills/cleanlanguage/${entry}" ;;
     *) blob="HEAD:cleanlanguage/${entry}" ;;
   esac
   if ! cmp -s <(unzip -p dist/cleanlanguage.zip "${entry}") <(git cat-file blob "${blob}"); then
