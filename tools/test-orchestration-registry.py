@@ -127,11 +127,19 @@ class Rejects(unittest.TestCase):
             self.assertEqual(_run(link), 1)
 
     def test_invalid_utf8(self):
-        # A non-UTF-8 registry must fail cleanly (exit 1), not crash with an uncaught decode traceback.
+        # A non-UTF-8 registry must fail CLEANLY: a FAIL diagnostic on stderr, no traceback. Asserting
+        # only exit 1 would pass even without the decode handler (an uncaught traceback also exits 1),
+        # so this checks stderr and therefore fails without the handler that catches the read-time
+        # UnicodeError.
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "orchestration.json"
             p.write_bytes(b"\xff\xfe\x00")
-            self.assertEqual(_run(p), 1)
+            r = subprocess.run(
+                [sys.executable, str(VALIDATOR), str(p)], capture_output=True, text=True,
+            )
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("FAIL", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
 
 
 if __name__ == "__main__":
