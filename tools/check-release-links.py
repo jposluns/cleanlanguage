@@ -44,6 +44,7 @@ import re
 import stat
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SITE_ROOT = REPO_ROOT / "site"
@@ -62,7 +63,7 @@ DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) i
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
-def die(message: str) -> None:
+def die(message: str) -> NoReturn:
     print(f"check-release-links: {message}", file=sys.stderr)
     raise SystemExit(3)
 
@@ -87,17 +88,33 @@ def main() -> int:
     problems: list[str] = []
     found: dict[str, list[str]] = {}
 
-    def walk_error(error: OSError) -> None:
-        # os.walk swallows a directory it cannot list; surface it so an
-        # unreadable directory fails closed rather than silently hiding the
-        # files inside it (Path.rglob suppresses the same error).
-        name = getattr(error, "filename", None) or str(SITE_ROOT)
-        die(f"{Path(name).relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
+    def collect_site_files(root: Path) -> list[Path]:
+        # Walk site/ with os.scandir so every listing or classification error
+        # fails closed. os.walk and Path.rglob both swallow such errors: a
+        # directory that cannot be listed, or an entry whose is_dir() raises,
+        # is silently dropped along with its subtree. Here each OSError, from
+        # scandir or from is_dir, routes through die (exit 3), naming the path.
+        found_paths: list[Path] = []
+        stack = [root]
+        while stack:
+            directory = stack.pop()
+            try:
+                entries = list(os.scandir(directory))
+            except OSError as error:
+                die(f"{directory.relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
+            for entry in entries:
+                entry_path = Path(entry.path)
+                try:
+                    is_directory = entry.is_dir(follow_symlinks=False)
+                except OSError as error:
+                    die(f"{entry_path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
+                if is_directory:
+                    stack.append(entry_path)
+                else:
+                    found_paths.append(entry_path)
+        return found_paths
 
-    site_paths: list[Path] = []
-    for dirpath, _dirnames, filenames in os.walk(SITE_ROOT, onerror=walk_error):
-        for filename in filenames:
-            site_paths.append(Path(dirpath) / filename)
+    site_paths = collect_site_files(SITE_ROOT)
 
     for path in sorted(site_paths):
         if path.suffix not in {".html", ""} or path.name.startswith("."):

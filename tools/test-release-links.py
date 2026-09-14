@@ -17,6 +17,7 @@ import io
 import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 MODULE_PATH = Path(__file__).resolve().parent / "check-release-links.py"
@@ -162,6 +163,33 @@ class VersionParseTest(unittest.TestCase):
             self._expect_die("site/archive/old.html could not be read")
         finally:
             os.chmod(locked, 0o755)
+
+    def test_directory_classification_error_fails_closed(self):
+        # os.walk treats an entry whose is_dir() raises an OSError as a
+        # non-directory and never descends it, silently dropping the subtree.
+        # The scandir walk must fail closed on such a classification error.
+        gate.SKILL.write_text("Version: 1.0.14\n", encoding="utf-8")
+        gate.SITE_ROOT.mkdir(parents=True, exist_ok=True)
+        (gate.SITE_ROOT / "index.html").write_text(
+            f'<a href="{self._valid_url("1.0.14")}">dl</a>\n', encoding="utf-8"
+        )
+        (gate.SITE_ROOT / "install").mkdir()
+        (gate.SITE_ROOT / "install" / "page.html").write_text("stale", encoding="utf-8")
+        real_scandir = os.scandir
+
+        def raising_scandir(target):
+            for entry in real_scandir(target):
+                if entry.name == "install":
+                    proxy = unittest.mock.Mock(wraps=entry)
+                    proxy.name = entry.name
+                    proxy.path = entry.path
+                    proxy.is_dir.side_effect = OSError(5, "injected classification error")
+                    yield proxy
+                else:
+                    yield entry
+
+        with unittest.mock.patch("os.scandir", raising_scandir):
+            self._expect_die("site/install could not be read")
 
 
 if __name__ == "__main__":
