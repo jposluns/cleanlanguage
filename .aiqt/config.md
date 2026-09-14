@@ -38,15 +38,27 @@ Basis: an expensive codex applicability assessment and a fable value ranking, bo
 ## Hooks
 
 The AIQT Guardrails hooks plugin is enabled for dev-time sessions through
-`.claude/settings.json` and the local marketplace at `plugin/`. Of the 14 core hooks, 13
-can fire out of the box. Only `gensrc_guard` is wholly inert here: it needs
-`.aiqt/gensrc.json`, which was not authored, so it never fires. `write_scope_guard`
-is partly armed: without its per-slice `write-scope.json` declaration, and with no
-committed `.aiqt/frozen.json` floor, its slice confinement and frozen-floor denial are
-un-armed, but its structural cross-repository and nested-repository write denial stays
-active in both regimes, so it still fires (a guarded-tool write landing outside this
-repository is denied). Authoring a `gensrc.json` for this repository's generated artefacts
-(the sitemap and the portable text) is a recorded follow-up. The 10 orchestrator hooks stay
-inert: they require an orchestration registry (`.aiqt/orchestration*.json`) this adoption
-did not add. Arming them is a recorded follow-up (a value review flagged 3 past incidents
-they would mechanically prevent).
+`.claude/settings.json` and the local marketplace at `plugin/`. All 14 core hooks can
+fire: `gensrc_guard` was armed by authoring `.aiqt/gensrc.json` (PR #156), which lists
+this repository's generated artefacts (the sitemap and the portable text).
+`write_scope_guard` remains partly armed: without its per-slice `write-scope.json`
+declaration, and with no committed `.aiqt/frozen.json` floor, its slice confinement and
+frozen-floor denial are un-armed, but its structural cross-repository and nested-repository
+write denial stays active. That denial now exempts one declared companion store: the
+orchestration registry below names `/opt/cleanlanguage/private`, the durable record store,
+so a guarded-tool write into that store is permitted and audited rather than denied, while a
+guarded-tool write to any other outside repository is still denied.
+
+A minimal orchestration registry (`.aiqt/orchestration.json`, version 1) now exists. It
+declares only `companion_stores`, so of the 10 orchestrator hooks it arms just the two that
+gate on the registry's mere presence: `orch_truncation_guard` and `orch_untracked_wait_loop`,
+which deny an untracked background detach or a truncated background capture and were verified
+not to affect this project's dispatch idioms. `orch_resume_audit` reads the registry at
+SessionStart and is warn-only. The remaining seven orchestrator hooks (`orch_ask_guard`,
+`orch_resume_barrier`, `orch_yield_tool`, `orch_dispatch_ledger`, `orch_prompt_stamp`,
+`orch_stop_guard`, and `orch_teammate_idle`) stay inert, because they gate on a live scope
+the registry does not yet declare: it carries no `lease` and no `mode` record, so `scope_live`
+is false. Arming the full suite, by adding a `lease`, a `mode`, and an AEI enumerator so the
+stop and yield guards can judge the backlog, is the deferred 28.2 follow-up (a value review
+flagged three past incidents that `orch_dispatch_ledger`, `orch_truncation_guard`, and
+`orch_resume_audit` would mechanically prevent).
