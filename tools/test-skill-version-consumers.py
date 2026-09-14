@@ -292,6 +292,10 @@ class ZipLayoutTest(unittest.TestCase):
                 capture_output=True, check=True,
             )
             try:
+                # Exercise the checkout's packager, not HEAD's copy, so an
+                # uncommitted change to the re-root is caught locally too.
+                shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
+                os.chmod(wt / "tools" / "release-package.sh", 0o755)
                 proc = subprocess.run(
                     ["bash", str(wt / "tools" / "release-package.sh")],
                     capture_output=True, text=True,
