@@ -36,7 +36,7 @@ LINKS = _load("crl_gate", "check-release-links.py")
 CHECKSUM = _load("crc_gate", "check-release-checksum-live.py")
 
 HEAD_SKILL = subprocess.run(
-    ["git", "-C", str(REPO), "show", "HEAD:cleanlanguage/SKILL.md"],
+    ["git", "-C", str(REPO), "show", "HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md"],
     capture_output=True, text=True, check=True,
 ).stdout
 
@@ -88,9 +88,9 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
         )
         try:
             if raw_skill is not None:
-                (wt / "cleanlanguage" / "SKILL.md").write_bytes(raw_skill)
+                (wt / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md").write_bytes(raw_skill)
             else:
-                (wt / "cleanlanguage" / "SKILL.md").write_text(skill, encoding="utf-8")
+                (wt / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md").write_text(skill, encoding="utf-8")
             pj = wt / "cleanlanguage" / ".claude-plugin" / "plugin.json"
             data = json.loads(pj.read_text(encoding="utf-8"))
             data["version"] = plugin_version
@@ -263,13 +263,65 @@ class UnicodeAndStressTest(unittest.TestCase):
         # packager's decode raises too, so both reject rather than the packager
         # building malformed text.
         head = subprocess.run(
-            ["git", "-C", str(REPO), "show", "HEAD:cleanlanguage/SKILL.md"],
+            ["git", "-C", str(REPO), "show", "HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md"],
             capture_output=True, check=True,
         ).stdout
         raw = head + b"\n<!-- \xff -->\n"
         code, stderr = run_packager(None, "1.0.14", raw_skill=raw)
         self.assertEqual(code, 1, stderr)
         self.assertIn("not valid UTF-8", stderr)
+
+
+class ZipLayoutTest(unittest.TestCase):
+    """The skill source lives under skills/cleanlanguage/ for Agent Plugins
+    discovery, but the published zip must still carry SKILL.md and its
+    references at the archive root. This fails if the packager's re-root step
+    is dropped or the source path regresses to the legacy root."""
+
+    def test_source_is_nested_and_zip_is_rooted(self):
+        tree = subprocess.run(
+            ["git", "-C", str(REPO), "ls-tree", "-r", "--name-only", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout.splitlines()
+        self.assertIn("cleanlanguage/skills/cleanlanguage/SKILL.md", tree)
+        self.assertNotIn("cleanlanguage/SKILL.md", tree)
+        with tempfile.TemporaryDirectory() as tmp:
+            wt = Path(tmp) / "wt"
+            subprocess.run(
+                ["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), "HEAD"],
+                capture_output=True, check=True,
+            )
+            try:
+                proc = subprocess.run(
+                    ["bash", str(wt / "tools" / "release-package.sh")],
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                zip_path = wt / "dist" / "cleanlanguage.zip"
+                entries = subprocess.run(
+                    ["unzip", "-Z1", str(zip_path)],
+                    capture_output=True, text=True, check=True,
+                ).stdout.splitlines()
+                self.assertIn("SKILL.md", entries)
+                self.assertFalse(
+                    any(e.startswith("skills/") for e in entries),
+                    "the zip must not carry a skills/ subtree: %r" % entries,
+                )
+                archived = subprocess.run(
+                    ["unzip", "-p", str(zip_path), "SKILL.md"],
+                    capture_output=True, check=True,
+                ).stdout
+                blob = subprocess.run(
+                    ["git", "-C", str(REPO), "show",
+                     "HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md"],
+                    capture_output=True, check=True,
+                ).stdout
+                self.assertEqual(archived, blob)
+            finally:
+                subprocess.run(
+                    ["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+                    capture_output=True, check=True,
+                )
 
 
 if __name__ == "__main__":

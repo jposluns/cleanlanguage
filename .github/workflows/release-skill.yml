@@ -56,13 +56,13 @@ jobs:
           # for byte (including on a NUL, which the old capture-then-sed form
           # stripped). skill-version.py reads the whole file, so there is no
           # early-quit pipe and no SIGPIPE on a large blob.
-          if ! version="$(python3 tools/skill-version.py cleanlanguage/SKILL.md)"; then
-            echo "cleanlanguage/SKILL.md has no valid bare X.Y.Z 'Version:' line (see the error above)." >&2
+          if ! version="$(python3 tools/skill-version.py cleanlanguage/skills/cleanlanguage/SKILL.md)"; then
+            echo "cleanlanguage/skills/cleanlanguage/SKILL.md has no valid bare X.Y.Z 'Version:' line (see the error above)." >&2
             exit 1
           fi
           if [ "v${version}" != "${RELEASE_TAG}" ]; then
             echo "SKILL.md version (${version}) does not match the release tag (${RELEASE_TAG})." >&2
-            echo "Set the Version line in cleanlanguage/SKILL.md to match the tag, or cut the matching tag." >&2
+            echo "Set the Version line in cleanlanguage/skills/cleanlanguage/SKILL.md to match the tag, or cut the matching tag." >&2
             exit 1
           fi
           # The orchestrator flips the site to name this version after the release,
@@ -74,7 +74,7 @@ jobs:
           # Read main's version through the same shared strict extractor. The raw
           # blob is piped straight in: skill-version.py reads all of stdin, so git
           # show completes and can take no SIGPIPE on a large blob.
-          if ! main_version="$(git show FETCH_HEAD:cleanlanguage/SKILL.md | python3 tools/skill-version.py)"; then
+          if ! main_version="$(git show FETCH_HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-version.py)"; then
             echo "Could not read a valid bare X.Y.Z version on main." >&2
             exit 1
           fi

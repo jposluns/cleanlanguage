@@ -172,7 +172,7 @@ fi
 files="$(git ls-tree -r HEAD --name-only -- cleanlanguage)"
 [ -n "${files}" ] || fail "git records no files under cleanlanguage/"
 grep -Eq '^cleanlanguage/skills/cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md$' <<< "${files}" \
-  || fail "cleanlanguage/references holds no Markdown reference at HEAD"
+  || fail "cleanlanguage/skills/cleanlanguage/references holds no Markdown reference at HEAD"
 unexpected="$(printf '%s\n' "${files}" | grep -Ev \
   '^cleanlanguage/(plugin\.json|skills/cleanlanguage/SKILL\.md|\.claude-plugin/plugin\.json|agents/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.yaml|assets/CL_icon\.(png|svg)|skills/cleanlanguage/references/[a-z0-9]([a-z0-9-]*[a-z0-9])?\.md)$' \
   || true)"

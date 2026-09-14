@@ -2,7 +2,7 @@
 """Tests for check-release-links.py's skill-version parsing.
 
 The gate reads the current version from the first ``Version:`` line of
-``cleanlanguage/SKILL.md``. These tests pin the gate's failure paths: the version parse (a malformed,
+``cleanlanguage/skills/cleanlanguage/SKILL.md``. These tests pin the gate's failure paths: the version parse (a malformed,
 missing, or unreadable SKILL, which fails before the site walk), and the
 fail-closed reads of scanned site files, ``site/_redirects``, and the verify
 page (which build a small site fixture). They run offline with the standard

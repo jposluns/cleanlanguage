@@ -19,7 +19,7 @@ keep the maintainer as the commit author.
 ## Writing conventions
 
 All repository and website prose follows the Clean Language standard defined in
-[`cleanlanguage/SKILL.md`](cleanlanguage/SKILL.md) and its references. That
+[`cleanlanguage/skills/cleanlanguage/SKILL.md`](cleanlanguage/skills/cleanlanguage/SKILL.md) and its references. That
 skill is the authority. It requires Oxford English with -ize endings and no em
 dashes or en dashes, and it governs tone, structure, and semantic preservation.
 

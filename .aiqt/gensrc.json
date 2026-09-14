@@ -12,8 +12,8 @@
       "kind": "file",
       "regenerate": "python3 tools/build-portable-text.py --embed",
       "sources": [
-        "cleanlanguage/SKILL.md",
-        "cleanlanguage/references/",
+        "cleanlanguage/skills/cleanlanguage/SKILL.md",
+        "cleanlanguage/skills/cleanlanguage/references/",
         "tools/build-portable-text.py"
       ],
       "target": "site/downloads/cleanlanguage-29k.md"
@@ -22,8 +22,8 @@
       "kind": "file",
       "regenerate": "python3 tools/build-portable-text.py --embed",
       "sources": [
-        "cleanlanguage/SKILL.md",
-        "cleanlanguage/references/",
+        "cleanlanguage/skills/cleanlanguage/SKILL.md",
+        "cleanlanguage/skills/cleanlanguage/references/",
         "tools/build-portable-text.py"
       ],
       "target": "site/downloads/cleanlanguage.md"
@@ -42,8 +42,8 @@
       "kind": "file",
       "regenerate": "tools/check-portable-text-sync.sh --update",
       "sources": [
-        "cleanlanguage/SKILL.md",
-        "cleanlanguage/references/",
+        "cleanlanguage/skills/cleanlanguage/SKILL.md",
+        "cleanlanguage/skills/cleanlanguage/references/",
         "tools/check-portable-text-sync.sh"
       ],
       "target": "tools/portable-text-skill-source.sha256"

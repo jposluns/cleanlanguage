@@ -2,7 +2,7 @@
 """Extract the strict Clean Language skill version, the one shared way.
 
 This is the single strict extractor for the ``Version:`` line in
-``cleanlanguage/SKILL.md``. It reads the content the way the release gates do (a
+``cleanlanguage/skills/cleanlanguage/SKILL.md``. It reads the content the way the release gates do (a
 universal-newline text read, so a ``CRLF`` or a lone ``CR`` line ending agrees,
 and a ``NUL`` byte is preserved rather than stripped), takes the FIRST
 ``Version:`` line, and requires it to be a bare ``X.Y.Z``. A malformed first line
