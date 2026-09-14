@@ -215,6 +215,11 @@ bytes = 504
 sha256 = "04d66e54525d7ed4c8f1e7a1a5e7841e2fa6560430cdee4d2289a109614384d4"
 
 [[sources]]
+path = ".aiqt/core/rules/integ-explicit-binding-over-ambient-context.md"
+bytes = 3452
+sha256 = "42fadd1cf7769a4af1114d91d461114a1859e7fc3aee1fe5feb081e33e38bd79"
+
+[[sources]]
 path = ".aiqt/core/rules/integ-gate-discipline.md"
 bytes = 1362
 sha256 = "09b351c8c276f73b07fffaca5b19fbb113c2bf2572bea51668998f6a7c52249a"
@@ -958,6 +963,11 @@ sha256 = "77b2e76a348f1468c55988ab1427e04511560c1479e0206aed88416deedacafd"
 path = ".claude/rules/aiqt/10-INTEG-commit-identity.md"
 bytes = 504
 sha256 = "04d66e54525d7ed4c8f1e7a1a5e7841e2fa6560430cdee4d2289a109614384d4"
+
+[[sources]]
+path = ".claude/rules/aiqt/10-INTEG-explicit-binding-over-ambient-context.md"
+bytes = 3452
+sha256 = "42fadd1cf7769a4af1114d91d461114a1859e7fc3aee1fe5feb081e33e38bd79"
 
 [[sources]]
 path = ".claude/rules/aiqt/10-INTEG-gate-discipline.md"
@@ -2996,6 +3006,12 @@ artifact-id = "rules:.claude/rules/aiqt/10-INTEG-commit-identity.md"
 path = ".claude/rules/aiqt/10-INTEG-commit-identity.md"
 kind = "file"
 sha256 = "04d66e54525d7ed4c8f1e7a1a5e7841e2fa6560430cdee4d2289a109614384d4"
+
+[[artifacts]]
+artifact-id = "rules:.claude/rules/aiqt/10-INTEG-explicit-binding-over-ambient-context.md"
+path = ".claude/rules/aiqt/10-INTEG-explicit-binding-over-ambient-context.md"
+kind = "file"
+sha256 = "42fadd1cf7769a4af1114d91d461114a1859e7fc3aee1fe5feb081e33e38bd79"
 
 [[artifacts]]
 artifact-id = "rules:.claude/rules/aiqt/10-INTEG-gate-discipline.md"
