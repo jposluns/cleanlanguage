@@ -2,6 +2,14 @@
   "generated": [
     {
       "kind": "file",
+      "regenerate": "python3 tools/set-release-links.py --version <version> --checksum <sha256> --date <date>",
+      "sources": [
+        "tools/set-release-links.py"
+      ],
+      "target": "site/_redirects"
+    },
+    {
+      "kind": "file",
       "regenerate": "python3 tools/build-portable-text.py --embed",
       "sources": [
         "cleanlanguage/SKILL.md",
