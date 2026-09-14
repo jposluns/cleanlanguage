@@ -51,7 +51,15 @@ jobs:
           # The first Version: line is authoritative and must be a bare X.Y.Z,
           # the same strict rule the release gates apply; a malformed first line
           # is rejected, never skipped to a later matching line.
-          version_line="$(sed -n '/^Version:/{p;q}' cleanlanguage/SKILL.md)"
+          #
+          # Capture the file first, then extract from the variable (never a live
+          # pipe into an early-quitting sed, which would SIGPIPE on a large blob),
+          # and normalize CR to LF to match the gates' Python read_text universal
+          # newlines, so a CRLF or lone-CR line agrees. (NUL bytes are stripped by
+          # command substitution; the Python release gate is authoritative there.)
+          skill_content="$(cat cleanlanguage/SKILL.md)"
+          skill_content="${skill_content//$'\r'/$'\n'}"
+          version_line="$(sed -n '/^Version:/{p;q}' <<<"${skill_content}")"
           if [ -z "${version_line}" ]; then
             echo "No 'Version:' line found in the cleanlanguage/SKILL.md body." >&2
             exit 1
@@ -72,7 +80,12 @@ jobs:
           # whose bump has not landed fails HERE, before anything is published,
           # rather than publishing and then stranding an unmergeable site flip.
           git fetch --quiet origin main
-          main_version_line="$(git show FETCH_HEAD:cleanlanguage/SKILL.md | sed -n '/^Version:/{p;q}')"
+          # Capture first (no live git show piped into an early-quitting sed, which
+          # would SIGPIPE on a large blob), then normalize CR to LF for parity with
+          # the gates' Python universal-newline read.
+          main_skill_content="$(git show FETCH_HEAD:cleanlanguage/SKILL.md)"
+          main_skill_content="${main_skill_content//$'\r'/$'\n'}"
+          main_version_line="$(sed -n '/^Version:/{p;q}' <<<"${main_skill_content}")"
           [ -n "${main_version_line}" ] || { echo "Could not read the version on main." >&2; exit 1; }
           if ! printf '%s' "${main_version_line}" | grep -Eq $'^Version:[ \t]*[0-9]+\\.[0-9]+\\.[0-9]+[ \t]*$'; then
             echo "The first 'Version:' line on main is not a bare X.Y.Z version: ${main_version_line}" >&2

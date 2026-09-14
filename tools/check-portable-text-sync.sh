@@ -42,9 +42,19 @@ opening="This is the Clean Language skill, written out as rules. Apply it to the
 # strict rule the release gates apply. A malformed first line is rejected (empty
 # output), never skipped to a later matching line; callers treat empty as an
 # error.
+#
+# Capture the file into a variable first, then extract from that variable (via a
+# here-string, never a live pipe into an early-quitting sed, which would SIGPIPE
+# on a file over the ~64KB pipe buffer). Normalize CR (CRLF and lone CR) to LF
+# first, matching the release gates' Python read (Path.read_text universal
+# newlines), so a CRLF or lone-CR version line agrees. One residual: command
+# substitution strips NUL, so a NUL in the line that the Python gates reject is
+# not caught here; the Python release gate is authoritative for that byte case.
 version_of() {
-  local line
-  line="$(sed -n '/^Version:/{p;q}' "$1")"
+  local content line
+  content="$(cat "$1")" || return 0
+  content="${content//$'\r'/$'\n'}"
+  line="$(sed -n '/^Version:/{p;q}' <<<"${content}")"
   printf '%s' "${line}" | grep -Eq $'^Version:[ \t]*[0-9]+\\.[0-9]+\\.[0-9]+[ \t]*$' || return 0
   printf '%s' "${line}" | sed -E $'s/^Version:[ \t]*([0-9]+\\.[0-9]+\\.[0-9]+)[ \t]*$/\\1/'
 }

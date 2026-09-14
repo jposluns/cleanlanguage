@@ -60,7 +60,22 @@ refs_before="$(git for-each-ref | sha256sum)"
 # The first Version: line is authoritative and must be a bare X.Y.Z, the same
 # strict rule the release gates apply; a malformed first line is rejected here,
 # never skipped to a later matching line.
-version_line="$(git show HEAD:cleanlanguage/SKILL.md | sed -n '/^Version:/{p;q}')"
+#
+# Capture the whole blob first: the command substitution reads all of git show's
+# output, so git show completes normally and cannot take SIGPIPE from a reader
+# that quits early. Extracting with `sed -n '/^Version:/{p;q}'` piped straight
+# off a live git show made a valid but large SKILL.md (over the ~64KB pipe
+# buffer) abort with exit 141 under set -o pipefail; capturing first removes that
+# live pipe. Then normalize CR (both CRLF and a lone CR) to LF, matching the
+# release gates' Python read (Path.read_text universal newlines), so a CRLF or
+# lone-CR version line agrees with them. The one residual: command substitution
+# strips NUL bytes, so a NUL in the line that the Python gates reject is not
+# caught here; the release gate (release-package.sh, via Python) is authoritative
+# for that byte-exact case.
+skill_content="$(git show HEAD:cleanlanguage/SKILL.md)" \
+  || fail "could not read cleanlanguage/SKILL.md at HEAD"
+skill_content="${skill_content//$'\r'/$'\n'}"
+version_line="$(sed -n '/^Version:/{p;q}' <<<"${skill_content}")"
 [ -n "${version_line}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
 printf '%s' "${version_line}" | grep -Eq $'^Version:[ \t]*[0-9]+\\.[0-9]+\\.[0-9]+[ \t]*$' \
   || fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version: ${version_line}"
