@@ -2,15 +2,17 @@
 """Tests for tools/check-orchestration-registry.py.
 
 Pins the structural gate on `.aiqt/orchestration.json`: the committed registry must
-stay valid, and every malformation class the hook would classify `bad` (which, once a
-lease or mode arms the scope-gated guards, fails them OPEN) must be rejected before it
-lands. Runs offline with the standard library; the CI workflow invokes it after the
+stay valid, and every malformation class the hook would classify `bad` (a corrupt
+registry has divergent, partly fail-open orchestrator outcomes once armed, and its
+`orch_yield_tool` denies scheduling fail-closed even unarmed) must be rejected before
+it lands. Runs offline with the standard library; the CI workflow invokes it after the
 check itself.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -66,6 +68,12 @@ class Accepts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {"version": 1, "companion_stores": []})), 0)
 
+    def test_windows_absolute_path_accepted(self):
+        # The hook's _is_absolute is OS-agnostic; a drive-and-root Windows path is structurally
+        # absolute, so the gate must accept it even running on POSIX, to match what the hook accepts.
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {"version": 1, "companion_stores": ["C:\\repo"]})), 0)
+
 
 class Rejects(unittest.TestCase):
     def _reject(self, payload):
@@ -103,8 +111,27 @@ class Rejects(unittest.TestCase):
     def test_companion_non_string(self):
         self._reject({"version": 1, "companion_stores": [123]})
 
-    def test_companion_control_char(self):
+    def test_companion_control_char_low(self):
         self._reject({"version": 1, "companion_stores": ["/opt/x\nevil"]})
+
+    def test_companion_control_char_del(self):
+        # 0x7f (DEL) is >= 0x20 but the hook rejects it too; the gate must match.
+        self._reject({"version": 1, "companion_stores": ["/opt/x\u007f"]})
+
+    def test_present_but_unreadable_dangling_symlink(self):
+        # A dangling registry symlink is present (lstat succeeds) but unreadable (open follows to a
+        # missing target); the hook classifies this bad, so the gate must fail, not treat it as absent.
+        with tempfile.TemporaryDirectory() as d:
+            link = Path(d) / "orchestration.json"
+            os.symlink(str(Path(d) / "missing-target.json"), str(link))
+            self.assertEqual(_run(link), 1)
+
+    def test_invalid_utf8(self):
+        # A non-UTF-8 registry must fail cleanly (exit 1), not crash with an uncaught decode traceback.
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "orchestration.json"
+            p.write_bytes(b"\xff\xfe\x00")
+            self.assertEqual(_run(p), 1)
 
 
 if __name__ == "__main__":

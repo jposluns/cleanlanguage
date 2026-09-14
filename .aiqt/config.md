@@ -69,12 +69,14 @@ logs a fail-open audit event. `orch_resume_barrier` is not scope-gated at all: i
 once `orch_resume_audit` has armed a `resume-barrier.json`, which has not happened, and
 `orch_resume_audit` itself reads the registry at SessionStart and is warn-only.
 
-One caution for the deferred arming: a malformed registry is fail-safe for the write path
-(`companion_stores` empties, so cross-repository writes deny), but the scope-gated stop,
-yield, and dispatch guards fail OPEN, with a warning, on a `bad` registry. That bites only
-once a `lease` or `mode` arms them, so `tools/check-orchestration-registry.py` (run by the
+One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
+empties, so cross-repository writes deny), but the scope-gated guards do not react to it
+uniformly. `orch_stop_guard` fails open with a warning; `orch_dispatch_ledger` silently allows
+without recording; and `orch_yield_tool` fails closed, denying a scheduling call, so a
+malformed registry blocks scheduling immediately, even with no `lease` or `mode`. To keep a
+corrupt registry from reaching a session, `tools/check-orchestration-registry.py` (run by the
 Orchestration registry workflow) rejects a structurally invalid `.aiqt/orchestration.json`
-before it lands, and the follow-up that arms the full suite (a `lease`, a `mode`, and an AEI
+before it lands. The follow-up that arms the full suite (a `lease`, a `mode`, and an AEI
 enumerator so the stop and yield guards can judge the backlog, the deferred 28.2 work) relies
 on that gate. A value review flagged three past incidents that `orch_dispatch_ledger`,
 `orch_truncation_guard`, and `orch_resume_audit` would mechanically prevent.
