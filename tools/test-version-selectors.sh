@@ -32,9 +32,13 @@
 #   D. Exit status is captured EXPLICITLY and asserted, so a crash (an injected
 #      SIGPIPE 141, say) that leaves empty output can never be mistaken for a
 #      legitimate reject: an accept must exit 0, a reject must exit non-zero and
-#      NOT 141. (version_of is the one exception: its contract is exit-0 with
-#      empty-on-failure, which callers rely on under set -e, so it is asserted on
-#      value alone.)
+#      NOT 141. Each selector runs on its own line and its status is captured
+#      into a variable with NO later command able to overwrite it, so a branch
+#      that crashes with 141 is caught, not masked by a trailing print.
+#      version_of has its own contract, exit 0 ALWAYS with empty output on
+#      failure (callers rely on it under set -e), so it is asserted to exit 0 on
+#      every fixture, accept or reject, with the version on accept and empty on
+#      reject.
 #   E. A structural guard asserts the OLD loose sed selector is gone (fixed-string
 #      match, so it genuinely detects the loose selector still on main), the old
 #      hand-rolled first-line sed is gone, and each site calls skill-version.py
@@ -183,7 +187,21 @@ run_dry() { # fixture-file
   git -C "${repo}" "${git_id[@]}" commit -qm fixture >/dev/null
   # Stub fail() to exit, matching release-dry-run.sh's own fail (which exits): a
   # reject aborts the subshell, so a malformed line yields empty and non-zero.
-  out="$(cd "${repo}"; set -euo pipefail; exec 2>/dev/null; fail() { exit 1; }; eval "${DRY_BLOCK}"; printf '%s' "${version}")" && rc=0 || rc=$?
+  # The selector runs on its own line and its status is captured into a variable
+  # BEFORE the version is printed; the subshell then re-exits with that captured
+  # status, so a branch that ends non-zero (an injected 141, say) cannot be
+  # masked by the trailing print. errexit is off inside so the capture always
+  # runs; pipefail stays on so a real SIGPIPE in the git-show pipe surfaces.
+  out="$(
+    cd "${repo}" || exit 1
+    set -uo pipefail
+    exec 2>/dev/null
+    fail() { exit 1; }
+    eval "${DRY_BLOCK}"
+    status=$?
+    printf '%s' "${version}"
+    exit "${status}"
+  )" && rc=0 || rc=$?
   rm -rf "${repo}"
   printf '%s' "${out}"
   return "${rc}"
@@ -196,7 +214,17 @@ run_wf_local() { # fixture-file
   mkdir -p "${dir}/cleanlanguage" "${dir}/tools"
   cp "$1" "${dir}/cleanlanguage/SKILL.md"
   cp tools/skill-version.py "${dir}/tools/skill-version.py"
-  out="$(cd "${dir}"; set -euo pipefail; exec 2>/dev/null; eval "${WF_LOCAL_BLOCK}"; printf '%s' "${version}")" && rc=0 || rc=$?
+  # Capture the selector's own exit status explicitly, then print the version
+  # and re-exit with that status, so no trailing command can overwrite it.
+  out="$(
+    cd "${dir}" || exit 1
+    set -uo pipefail
+    exec 2>/dev/null
+    eval "${WF_LOCAL_BLOCK}"
+    status=$?
+    printf '%s' "${version}"
+    exit "${status}"
+  )" && rc=0 || rc=$?
   rm -rf "${dir}"
   printf '%s' "${out}"
   return "${rc}"
@@ -216,7 +244,17 @@ run_wf_main() { # fixture-file
   cp tools/skill-version.py "${local_repo}/tools/skill-version.py"
   git init -q "${local_repo}"
   git -C "${local_repo}" fetch --quiet "${remote}" HEAD
-  out="$(cd "${local_repo}"; set -euo pipefail; exec 2>/dev/null; eval "${WF_MAIN_BLOCK}"; printf '%s' "${main_version}")" && rc=0 || rc=$?
+  # Capture the selector's own exit status explicitly, then print the version
+  # and re-exit with that status, so no trailing command can overwrite it.
+  out="$(
+    cd "${local_repo}" || exit 1
+    set -uo pipefail
+    exec 2>/dev/null
+    eval "${WF_MAIN_BLOCK}"
+    status=$?
+    printf '%s' "${main_version}"
+    exit "${status}"
+  )" && rc=0 || rc=$?
   rm -rf "${remote}" "${local_repo}"
   printf '%s' "${out}"
   return "${rc}"
@@ -230,14 +268,14 @@ declare -A RUNNERS=(
 )
 
 # check_site: run one site on one fixture; assert value AND exit-status class.
-#   want: "0" (accept, exit 0), "reject" (non-zero and NOT 141), or "any"
-#         (value only, for version_of's exit-0 contract).
+#   want: "0" (accept: exit 0), "reject" (non-zero and NOT 141), or "always0"
+#         (version_of: exit 0 on every fixture, its exit-0-always contract).
 check_site() { # label site fixture expected want
   local label="$1" site="$2" fixture="$3" expected="$4" want="$5" got rc
   got="$("${RUNNERS[$site]}" "${fixture}")" && rc=0 || rc=$?
   assert_eq "${label}: value" "${expected}" "${got}"
   case "${want}" in
-    any) : ;;
+    always0) assert_eq "${label}: exit 0 always (version_of contract)" "0" "${rc}" ;;
     0) assert_eq "${label}: exit 0 (no SIGPIPE)" "0" "${rc}" ;;
     reject)
       if [ "${rc}" -ne 0 ] && [ "${rc}" -ne 141 ]; then
@@ -294,7 +332,7 @@ for name in "${fixture_names[@]}"; do
   f="${tmp}/${name}"
   expected="$(gate_expect "${f}")"
   if [ -n "${expected}" ]; then want="0"; else want="reject"; fi
-  check_site "version_of: ${name}"      version_of      "${f}" "${expected}" any
+  check_site "version_of: ${name}"      version_of      "${f}" "${expected}" always0
   check_site "release-dry-run: ${name}" release-dry-run "${f}" "${expected}" "${want}"
   check_site "workflow-local: ${name}"  workflow-local  "${f}" "${expected}" "${want}"
   check_site "workflow-main: ${name}"   workflow-main   "${f}" "${expected}" "${want}"
@@ -303,7 +341,7 @@ done
 # --- No behaviour change on the real SKILL.md --------------------------------
 real_expected="$(gate_expect cleanlanguage/SKILL.md)"
 [ -n "${real_expected}" ] || fail "the gates' rule read no bare X.Y.Z from the real SKILL.md"
-check_site "real SKILL.md: version_of"      version_of      cleanlanguage/SKILL.md "${real_expected}" any
+check_site "real SKILL.md: version_of"      version_of      cleanlanguage/SKILL.md "${real_expected}" always0
 check_site "real SKILL.md: release-dry-run" release-dry-run cleanlanguage/SKILL.md "${real_expected}" 0
 check_site "real SKILL.md: workflow-local"  workflow-local  cleanlanguage/SKILL.md "${real_expected}" 0
 check_site "real SKILL.md: workflow-main"   workflow-main   cleanlanguage/SKILL.md "${real_expected}" 0
