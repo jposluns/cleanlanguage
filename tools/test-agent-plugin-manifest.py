@@ -98,11 +98,45 @@ class AgentPluginManifestTest(unittest.TestCase):
         manifest = valid_manifest()
         manifest["name"] = "other-name"
         self.write(manifest)
-        self.expect_exit(1, "does not match")
+        self.expect_exit(1, "does not match the Claude manifest name")
 
     def test_unreadable_manifest_fails_closed(self):
         gate.MANIFEST.write_bytes(b"\xff")
         self.expect_exit(3, "could not be read")
+
+    def test_unreadable_claude_manifest_fails_closed(self):
+        self.write(valid_manifest())
+        gate.CLAUDE_MANIFEST.write_bytes(b"\xff")
+        self.expect_exit(3, "could not be read")
+
+    def test_marketplace_name_mismatch_fails(self):
+        # Claude name matches the root manifest, but the marketplace entry does
+        # not, so the marketplace cross-check must fire.
+        gate.CLAUDE_MANIFEST.write_text(
+            json.dumps({"name": "other-name", "version": "1.0.14"}), encoding="utf-8"
+        )
+        manifest = valid_manifest()
+        manifest["name"] = "other-name"
+        self.write(manifest)
+        self.expect_exit(1, "marketplace plugins[0].name")
+
+    def test_extensions_value_not_object_fails(self):
+        manifest = valid_manifest()
+        manifest["extensions"] = {"org.example": 42}
+        self.write(manifest)
+        self.expect_exit(1, "must be an object")
+
+    def test_missing_version_fails(self):
+        manifest = valid_manifest()
+        del manifest["version"]
+        self.write(manifest)
+        self.expect_exit(1, "does not match the Claude manifest version")
+
+    def test_trailing_newline_name_fails(self):
+        manifest = valid_manifest()
+        manifest["name"] = "cleanlanguage\n"
+        self.write(manifest)
+        self.expect_exit(1, "name must match")
 
 
 if __name__ == "__main__":

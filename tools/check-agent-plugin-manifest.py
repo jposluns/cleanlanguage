@@ -7,7 +7,9 @@ in .claude-plugin/plugin.json. This gate checks that manifest structurally,
 without a network fetch: required $schema and name, the name pattern, known-only
 top-level keys (the schema is additionalProperties: false), field types, and the
 author object shape. It also cross-checks that the name and version agree with
-the Claude manifest and the marketplace entry, so the two manifests cannot drift.
+the Claude manifest, and that the name agrees with the marketplace entry (which
+carries no version). This gate requires the Agent Plugins version and requires it
+to equal the Claude manifest version, so the two manifests cannot drift.
 
 Exit codes:
   0  the manifest is valid and consistent
@@ -28,7 +30,7 @@ CLAUDE_MANIFEST = REPO_ROOT / "cleanlanguage" / ".claude-plugin" / "plugin.json"
 MARKETPLACE = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 
 SCHEMA_URL = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
-NAME_RE = re.compile(r"^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$")
+NAME_RE = re.compile(r"^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\Z")
 KNOWN_KEYS = {
     "$schema", "name", "version", "description", "author",
     "homepage", "repository", "license", "keywords", "extensions",
@@ -85,14 +87,19 @@ def main() -> int:
         for key, value in author.items():
             if not isinstance(value, str):
                 die(f"author.{key} must be a string")
-    if "extensions" in manifest and not isinstance(manifest["extensions"], dict):
-        die("extensions must be an object")
+    if "extensions" in manifest:
+        extensions = manifest["extensions"]
+        if not isinstance(extensions, dict):
+            die("extensions must be an object")
+        for namespace, value in extensions.items():
+            if not isinstance(value, dict):
+                die(f"extensions.{namespace} must be an object")
 
     claude = load(CLAUDE_MANIFEST)
     if claude.get("name") != name:
         die(f"name {name!r} does not match the Claude manifest name {claude.get('name')!r}")
-    if "version" in manifest and claude.get("version") != manifest["version"]:
-        die(f"version {manifest['version']!r} does not match the Claude manifest version {claude.get('version')!r}")
+    if manifest.get("version") != claude.get("version"):
+        die(f"version {manifest.get('version')!r} does not match the Claude manifest version {claude.get('version')!r}")
 
     market = load(MARKETPLACE)
     plugins = market.get("plugins") or [{}]
