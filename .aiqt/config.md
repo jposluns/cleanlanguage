@@ -13,8 +13,8 @@ handoff store, attended and sometimes unattended operation).
 
 ## Active rule set
 
-106 of 125 rules auto-load under `.claude/rules/aiqt/` and `.claude/rules/security/`.
-The full 125-rule corpus is vendored as reference under `.aiqt/core/rules/`.
+107 of 126 rules auto-load under `.claude/rules/aiqt/` and `.claude/rules/security/`.
+The full 126-rule corpus is vendored as reference under `.aiqt/core/rules/`.
 
 Excluded (19), grouped by exclusion reason (not by the rules' AIQT facet; for example
 log-redaction is a SECI rule listed here for its personal-data subject). Full per-rule

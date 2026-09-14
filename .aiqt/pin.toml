@@ -50,7 +50,7 @@ paths = [
 [active-rules]
 # Auto-loaded subset. Profile C: applicable to this project, minus low-value rules.
 profile = "coding + agent-harness + multi-agent, personal-data off"
-active = 106
+active = 107
 excluded = 19   # 9 app-security-no-surface, 5 personal-data, 1 atomic-claim-from-pool, 4 code-idiom
 basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see durable store)"
 
@@ -77,3 +77,22 @@ files = [
   "plugin/aiqt-guardrails-hooks/hooks/hooks.json",             # 8663 B, sha256 18753794b9438846aff40658337b5a211664b2579d976df2087aea143e4d206c
 ]
 verified = "byte-identical to the merged manifest (tri-family --expensive QA upstream); plus adopter no-ask invariant + cnsdif discrimination probes and an independent codex verifier"
+
+[rules-update]
+# 2026-09-13: added guardrails PR #205's rule "explicit-binding-over-ambient-context"
+# (corpus-id expbnd, INTEG) as a SCOPED, rule-corpus-only addition. #205 is a POST-v1.0.0
+# rule; its enforcement hook (git_explicit_binding) was ALREADY live here, having ridden in
+# with the 2026-09-13 hooks advance above, so only the rule DOCUMENTATION and bookkeeping were
+# missing. This mirrors the [hooks-update] scoped advance: the rest of the corpus stays at
+# v1.0.0, the [integrity] tree-sha256 above (9dbbe17c) still describes the v1.0.0 baseline and
+# does NOT match the working tree, and the per-file hashes in .aiqt/manifest.toml (updated with
+# the two new rule files below, matching upstream's manifest entries) are authoritative for
+# what is installed. [active-rules] active rises from 106 to 107; the full vendored corpus
+# rises from 125 to 126. Vendored byte-identical to upstream main at HEAD 7c6478c.
+advanced = "2026-09-13"
+source-commit = "6b32434" # guardrails PR #205 (GD-157/158/159); file == upstream HEAD 7c6478c
+files = [
+  ".aiqt/core/rules/integ-explicit-binding-over-ambient-context.md",      # 3452 B, sha256 42fadd1cf7769a4af1114d91d461114a1859e7fc3aee1fe5feb081e33e38bd79
+  ".claude/rules/aiqt/10-INTEG-explicit-binding-over-ambient-context.md", # 3452 B, sha256 42fadd1cf7769a4af1114d91d461114a1859e7fc3aee1fe5feb081e33e38bd79
+]
+verified = "byte-identical to upstream guardrails main at HEAD 7c6478c (source-commit 6b32434, PR #205), matching the upstream .aiqt/manifest.toml source and artifact entries; hook git_explicit_binding already live from the 2026-09-13 hooks advance"
