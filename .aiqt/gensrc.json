@@ -1,0 +1,35 @@
+{
+  "generated": [
+    {
+      "kind": "file",
+      "regenerate": "python3 tools/build-portable-text.py --embed",
+      "sources": [
+        "cleanlanguage/SKILL.md",
+        "cleanlanguage/references/",
+        "tools/build-portable-text.py"
+      ],
+      "target": "site/downloads/cleanlanguage-29k.md"
+    },
+    {
+      "kind": "file",
+      "regenerate": "python3 tools/build-portable-text.py --embed",
+      "sources": [
+        "cleanlanguage/SKILL.md",
+        "cleanlanguage/references/",
+        "tools/build-portable-text.py"
+      ],
+      "target": "site/downloads/cleanlanguage.md"
+    },
+    {
+      "kind": "file",
+      "regenerate": "python3 tools/generate-sitemap.py --write",
+      "sources": [
+        "tools/generate-sitemap.py",
+        "tools/sitemap-config.json",
+        "tools/sitemap_engine.py"
+      ],
+      "target": "site/sitemap.xml"
+    }
+  ],
+  "version": 1
+}
