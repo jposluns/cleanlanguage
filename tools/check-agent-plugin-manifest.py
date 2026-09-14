@@ -54,7 +54,7 @@ def load(path: Path) -> dict:
         die(f"{path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}", 3)
     try:
         data = json.loads(text, parse_constant=_reject_constant)
-    except ValueError as error:
+    except (ValueError, RecursionError) as error:
         die(f"{path.relative_to(REPO_ROOT).as_posix()} is not valid JSON: {error}")
     if not isinstance(data, dict):
         die(f"{path.relative_to(REPO_ROOT).as_posix()} is not a JSON object")

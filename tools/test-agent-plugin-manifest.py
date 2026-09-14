@@ -154,6 +154,13 @@ class AgentPluginManifestTest(unittest.TestCase):
         self.write(valid_manifest())
         self.expect_exit(1, "no plugins array")
 
+    def test_deeply_nested_json_fails_closed(self):
+        # A pathologically deep JSON document makes json.loads raise
+        # RecursionError; the gate must fail closed, not raise an uncaught
+        # traceback.
+        gate.MANIFEST.write_text('{"x":' + "[" * 100000, encoding="utf-8")
+        self.expect_exit(1, "is not valid JSON")
+
 
 if __name__ == "__main__":
     unittest.main()
