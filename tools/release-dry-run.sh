@@ -57,11 +57,14 @@ seed_date="2020-01-01"
 
 refs_before="$(git for-each-ref | sha256sum)"
 
-version="$(git show HEAD:cleanlanguage/SKILL.md \
-  | sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -1)"
-[ -n "${version}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
-printf '%s' "${version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
-  || fail "expected a three-part version like 1.0.11, got ${version}"
+# The first Version: line is authoritative and must be a bare X.Y.Z, the same
+# strict rule the release gates apply; a malformed first line is rejected here,
+# never skipped to a later matching line.
+version_line="$(git show HEAD:cleanlanguage/SKILL.md | sed -n '/^Version:/{p;q}')"
+[ -n "${version_line}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
+printf '%s' "${version_line}" | grep -Eq $'^Version:[ \t]*[0-9]+\\.[0-9]+\\.[0-9]+[ \t]*$' \
+  || fail "the first Version: line in cleanlanguage/SKILL.md at HEAD is not a bare X.Y.Z version: ${version_line}"
+version="$(printf '%s' "${version_line}" | sed -E $'s/^Version:[ \t]*([0-9]+\\.[0-9]+\\.[0-9]+)[ \t]*$/\\1/')"
 patch="${version##*.}"
 dry_version="${version%.*}.$(( 10#${patch} + 1 ))"
 dry_tag="v${dry_version}"

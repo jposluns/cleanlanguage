@@ -24,6 +24,8 @@ on:
       - "tools/check-release-links.py"
       - "tools/check-release-checksum-live.py"
       - "tools/test-skill-version-consumers.py"
+      - "tools/test-version-selectors.sh"
+      - "tools/check-portable-text-sync.sh"
       - "tools/check-page-metadata.py"
       - "tools/sitemap_engine.py"
       - "tools/web_metadata.py"
@@ -51,6 +53,8 @@ on:
       - "tools/check-release-links.py"
       - "tools/check-release-checksum-live.py"
       - "tools/test-skill-version-consumers.py"
+      - "tools/test-version-selectors.sh"
+      - "tools/check-portable-text-sync.sh"
       - "tools/check-page-metadata.py"
       - "tools/sitemap_engine.py"
       - "tools/web_metadata.py"
@@ -81,6 +85,10 @@ jobs:
       - name: Cross-consumer version-parse contract
         shell: bash
         run: python3 tools/test-skill-version-consumers.py
+
+      - name: Version-selector contract
+        shell: bash
+        run: bash tools/test-version-selectors.sh
 
       - name: Run the release dry run
         shell: bash

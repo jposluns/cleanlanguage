@@ -48,11 +48,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' cleanlanguage/SKILL.md | head -1)"
-          if [ -z "${version}" ]; then
+          # The first Version: line is authoritative and must be a bare X.Y.Z,
+          # the same strict rule the release gates apply; a malformed first line
+          # is rejected, never skipped to a later matching line.
+          version_line="$(sed -n '/^Version:/{p;q}' cleanlanguage/SKILL.md)"
+          if [ -z "${version_line}" ]; then
             echo "No 'Version:' line found in the cleanlanguage/SKILL.md body." >&2
             exit 1
           fi
+          if ! printf '%s' "${version_line}" | grep -Eq $'^Version:[ \t]*[0-9]+\\.[0-9]+\\.[0-9]+[ \t]*$'; then
+            echo "The first 'Version:' line in cleanlanguage/SKILL.md is not a bare X.Y.Z version: ${version_line}" >&2
+            exit 1
+          fi
+          version="$(printf '%s' "${version_line}" | sed -E $'s/^Version:[ \t]*([0-9]+\\.[0-9]+\\.[0-9]+)[ \t]*$/\\1/')"
           if [ "v${version}" != "${RELEASE_TAG}" ]; then
             echo "SKILL.md version (${version}) does not match the release tag (${RELEASE_TAG})." >&2
             echo "Set the Version line in cleanlanguage/SKILL.md to match the tag, or cut the matching tag." >&2
@@ -64,9 +72,13 @@ jobs:
           # whose bump has not landed fails HERE, before anything is published,
           # rather than publishing and then stranding an unmergeable site flip.
           git fetch --quiet origin main
-          main_version="$(git show FETCH_HEAD:cleanlanguage/SKILL.md \
-            | sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -1)"
-          [ -n "${main_version}" ] || { echo "Could not read the version on main." >&2; exit 1; }
+          main_version_line="$(git show FETCH_HEAD:cleanlanguage/SKILL.md | sed -n '/^Version:/{p;q}')"
+          [ -n "${main_version_line}" ] || { echo "Could not read the version on main." >&2; exit 1; }
+          if ! printf '%s' "${main_version_line}" | grep -Eq $'^Version:[ \t]*[0-9]+\\.[0-9]+\\.[0-9]+[ \t]*$'; then
+            echo "The first 'Version:' line on main is not a bare X.Y.Z version: ${main_version_line}" >&2
+            exit 1
+          fi
+          main_version="$(printf '%s' "${main_version_line}" | sed -E $'s/^Version:[ \t]*([0-9]+\\.[0-9]+\\.[0-9]+)[ \t]*$/\\1/')"
           higher="$(printf '%s\n%s\n' "${main_version}" "${version}" | sort -V | tail -1)"
           if [ "${main_version}" != "${version}" ] && [ "${higher}" = "${version}" ]; then
             echo "main names version ${main_version}, older than the release ${version}." >&2

@@ -38,7 +38,16 @@ hand_maintained=("${eleven}" "${eight}")
 all_files=("${canonical}" "${twin29}" "${eleven}" "${eight}")
 opening="This is the Clean Language skill, written out as rules. Apply it to the writing in this conversation unless I tell you not to."
 
-version_of() { sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$1" | head -1; }
+# The first Version: line is authoritative and must be a bare X.Y.Z, the same
+# strict rule the release gates apply. A malformed first line is rejected (empty
+# output), never skipped to a later matching line; callers treat empty as an
+# error.
+version_of() {
+  local line
+  line="$(sed -n '/^Version:/{p;q}' "$1")"
+  printf '%s' "${line}" | grep -Eq $'^Version:[ \t]*[0-9]+\\.[0-9]+\\.[0-9]+[ \t]*$' || return 0
+  printf '%s' "${line}" | sed -E $'s/^Version:[ \t]*([0-9]+\\.[0-9]+\\.[0-9]+)[ \t]*$/\\1/'
+}
 
 check_common() {
   local f
@@ -50,7 +59,7 @@ check_common() {
   done
   local sv
   sv="$(version_of cleanlanguage/SKILL.md)"
-  [ -n "${sv}" ] || { echo "No Version in cleanlanguage/SKILL.md." >&2; return 1; }
+  [ -n "${sv}" ] || { echo "No valid bare X.Y.Z Version: line in cleanlanguage/SKILL.md." >&2; return 1; }
   for f in "${all_files[@]}"; do
     if [ "$(version_of "${f}")" != "${sv}" ]; then
       echo "Version disagreement: SKILL.md=${sv}, ${f}=$(version_of "${f}")." >&2; return 1
