@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -116,6 +117,28 @@ class VersionParseTest(unittest.TestCase):
         gate.REDIRECTS.write_text(self._valid_url("1.0.14") + "\n", encoding="utf-8")
         gate.VERIFY_PAGE.write_bytes(b"\xff\n")
         self._expect_die("site/verify/index.html could not be read")
+
+    @unittest.skipIf(
+        hasattr(os, "geteuid") and os.geteuid() == 0,
+        "chmod is not restrictive when running as root",
+    )
+    def test_unreadable_site_directory_fails_closed(self):
+        # os.walk/rglob silently drop files under a directory they cannot list;
+        # the gate must fail closed on such a directory, not skip it (a stale
+        # link inside it would otherwise ship undetected).
+        gate.SKILL.write_text("Version: 1.0.14\n", encoding="utf-8")
+        gate.SITE_ROOT.mkdir(parents=True, exist_ok=True)
+        (gate.SITE_ROOT / "index.html").write_text(
+            f'<a href="{self._valid_url("1.0.14")}">dl</a>\n', encoding="utf-8"
+        )
+        secret = gate.SITE_ROOT / "archive"
+        secret.mkdir()
+        (secret / "old.html").write_text("stale", encoding="utf-8")
+        os.chmod(secret, 0o000)
+        try:
+            self._expect_die("site/archive could not be read")
+        finally:
+            os.chmod(secret, 0o755)
 
 
 if __name__ == "__main__":

@@ -39,6 +39,7 @@ Exit codes:
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -85,7 +86,19 @@ def main() -> int:
     problems: list[str] = []
     found: dict[str, list[str]] = {}
 
-    for path in sorted(SITE_ROOT.rglob("*")):
+    def walk_error(error: OSError) -> None:
+        # os.walk swallows a directory it cannot list; surface it so an
+        # unreadable directory fails closed rather than silently hiding the
+        # files inside it (Path.rglob suppresses the same error).
+        name = getattr(error, "filename", None) or str(SITE_ROOT)
+        die(f"{Path(name).relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
+
+    site_paths: list[Path] = []
+    for dirpath, _dirnames, filenames in os.walk(SITE_ROOT, onerror=walk_error):
+        for filename in filenames:
+            site_paths.append(Path(dirpath) / filename)
+
+    for path in sorted(site_paths):
         if not path.is_file() or path.suffix not in {".html", ""} or path.name.startswith("."):
             continue
         try:
