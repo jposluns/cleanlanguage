@@ -49,6 +49,13 @@ orchestration registry below names `/opt/cleanlanguage/private`, the durable rec
 so a guarded-tool write into that store is permitted and audited rather than denied, while a
 guarded-tool write to any other outside repository is still denied.
 
+`commit_identity` denies any git command that records an AI as author, committer, or
+co-author, whether through a `Co-Authored-By` trailer, an `--author`, or a `GIT_AUTHOR` or
+`GIT_COMMITTER` identity; the rule is absolute, with no escape hatch. An adopter running these
+hooks therefore omits AI attribution from commits entirely, or the commit is denied. This
+repository already requires it: its [root `CLAUDE.md`](../CLAUDE.md) keeps the maintainer as
+the sole commit author and lists no AI as author, committer, or co-author.
+
 A minimal orchestration registry (`.aiqt/orchestration.json`, version 1) now exists. It
 declares only `companion_stores`, so of the 10 orchestrator hooks it arms just the two that
 gate on the registry's mere presence: `orch_truncation_guard` and `orch_untracked_wait_loop`.
