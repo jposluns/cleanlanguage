@@ -57,11 +57,17 @@ seed_date="2020-01-01"
 
 refs_before="$(git for-each-ref | sha256sum)"
 
-version="$(git show HEAD:cleanlanguage/SKILL.md \
-  | sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -1)"
-[ -n "${version}" ] || fail "no Version: line found in cleanlanguage/SKILL.md at HEAD"
-printf '%s' "${version}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
-  || fail "expected a three-part version like 1.0.11, got ${version}"
+# The first Version: line is authoritative and must be a bare X.Y.Z, the same
+# strict rule the release gates apply; a malformed first line is rejected here,
+# never skipped to a later matching line. One shared strict extractor,
+# tools/skill-version.py, does the reading and validation for every site, so the
+# shell, the workflow, and the Python gates agree byte for byte (including on a
+# NUL, which the old capture-then-sed form silently stripped). The raw blob is
+# piped straight in: skill-version.py reads ALL of stdin, so git show completes
+# and can take no SIGPIPE, and the ~64KB-pipe exit-141 regression cannot recur.
+if ! version="$(git show HEAD:cleanlanguage/SKILL.md | python3 tools/skill-version.py)"; then
+  fail "could not read a valid bare X.Y.Z Version: line from cleanlanguage/SKILL.md at HEAD"
+fi
 patch="${version##*.}"
 dry_version="${version%.*}.$(( 10#${patch} + 1 ))"
 dry_tag="v${dry_version}"

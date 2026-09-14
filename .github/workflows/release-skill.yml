@@ -48,9 +48,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' cleanlanguage/SKILL.md | head -1)"
-          if [ -z "${version}" ]; then
-            echo "No 'Version:' line found in the cleanlanguage/SKILL.md body." >&2
+          # The first Version: line is authoritative and must be a bare X.Y.Z,
+          # the same strict rule the release gates apply; a malformed first line
+          # is rejected, never skipped to a later matching line. One shared strict
+          # extractor, tools/skill-version.py, reads and validates it for every
+          # site, so the workflow, the dry run, and the Python gates agree byte
+          # for byte (including on a NUL, which the old capture-then-sed form
+          # stripped). skill-version.py reads the whole file, so there is no
+          # early-quit pipe and no SIGPIPE on a large blob.
+          if ! version="$(python3 tools/skill-version.py cleanlanguage/SKILL.md)"; then
+            echo "cleanlanguage/SKILL.md has no valid bare X.Y.Z 'Version:' line (see the error above)." >&2
             exit 1
           fi
           if [ "v${version}" != "${RELEASE_TAG}" ]; then
@@ -64,9 +71,13 @@ jobs:
           # whose bump has not landed fails HERE, before anything is published,
           # rather than publishing and then stranding an unmergeable site flip.
           git fetch --quiet origin main
-          main_version="$(git show FETCH_HEAD:cleanlanguage/SKILL.md \
-            | sed -n 's/^Version:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' | head -1)"
-          [ -n "${main_version}" ] || { echo "Could not read the version on main." >&2; exit 1; }
+          # Read main's version through the same shared strict extractor. The raw
+          # blob is piped straight in: skill-version.py reads all of stdin, so git
+          # show completes and can take no SIGPIPE on a large blob.
+          if ! main_version="$(git show FETCH_HEAD:cleanlanguage/SKILL.md | python3 tools/skill-version.py)"; then
+            echo "Could not read a valid bare X.Y.Z version on main." >&2
+            exit 1
+          fi
           higher="$(printf '%s\n%s\n' "${main_version}" "${version}" | sort -V | tail -1)"
           if [ "${main_version}" != "${version}" ] && [ "${higher}" = "${version}" ]; then
             echo "main names version ${main_version}, older than the release ${version}." >&2
