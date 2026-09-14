@@ -1,0 +1,41 @@
+name: Agent Plugins manifest
+
+# Validate cleanlanguage/plugin.json against the Agent Plugins 1.0.0 schema, so a
+# malformed or drifted root manifest cannot reach main. Structural, offline, and
+# stdlib-only; also runs the gate's own unit tests.
+
+on:
+  pull_request:
+    paths:
+      - "cleanlanguage/plugin.json"
+      - "cleanlanguage/.claude-plugin/plugin.json"
+      - ".claude-plugin/marketplace.json"
+      - "tools/check-agent-plugin-manifest.py"
+      - "tools/test-agent-plugin-manifest.py"
+      - ".github/workflows/agent-plugin-manifest.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "cleanlanguage/plugin.json"
+      - "cleanlanguage/.claude-plugin/plugin.json"
+      - ".claude-plugin/marketplace.json"
+      - "tools/check-agent-plugin-manifest.py"
+      - "tools/test-agent-plugin-manifest.py"
+      - ".github/workflows/agent-plugin-manifest.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Run the Agent Plugins manifest tests
+        shell: bash
+        run: python3 tools/test-agent-plugin-manifest.py
+      - name: Validate the Agent Plugins manifest
+        shell: bash
+        run: python3 tools/check-agent-plugin-manifest.py
