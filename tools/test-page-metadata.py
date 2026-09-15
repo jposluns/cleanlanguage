@@ -299,6 +299,107 @@ class AuthorRequirementTest(unittest.TestCase):
         self.assertEqual(problems, [WRONG_PRIMARY_AUTHOR])
 
 
+class ModifiedStampToleranceTest(unittest.TestCase):
+    """The modified-stamp check tolerates a bounded window between the stamp and
+    the file's last commit date, so a normal cross-day squash merge does not red
+    the gate, while a stamp well beyond that window still flags a forgotten bump,
+    and a future stamp is still rejected regardless."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._saved = (gate.REPO_ROOT, gate.added_date, gate.last_change_date)
+        gate.REPO_ROOT = Path(self._tmp.name)
+
+    def tearDown(self):
+        gate.REPO_ROOT, gate.added_date, gate.last_change_date = self._saved
+        self._tmp.cleanup()
+
+    def check(self, *, published: str, modified: str, changed: str, today: str) -> list[str]:
+        # A fully author-compliant page whose only varying inputs are the date
+        # stamps, so the sole problem that can surface is the modified-stamp one.
+        # published_time equals the mocked added_date and the JSON-LD
+        # dateModified equals the meta article:modified_time.
+        gate.added_date = lambda relative: published
+        gate.last_change_date = lambda relative: changed
+        author = '{"@type": "Person", "name": "Jeff Posluns"}'
+        json_ld = (
+            '<script type="application/ld+json">'
+            '{"@context": "https://schema.org", "@type": "Article",'
+            f' "datePublished": "{published}", "dateModified": "{modified}",'
+            ' "author": ' + author + "}"
+            "</script>"
+        )
+        page_html = (
+            "<!doctype html>\n<html><head>\n"
+            '<meta name="author" content="Jeff Posluns">\n'
+            f'<meta property="article:published_time" content="{published}">\n'
+            f'<meta property="article:modified_time" content="{modified}">\n'
+            '<meta property="article:author" content="https://posluns.ca">\n'
+            + json_ld
+            + "\n</head><body></body></html>\n"
+        )
+        page = Path(self._tmp.name) / "index.html"
+        page.write_text(page_html, encoding="utf-8")
+        problems, _author = gate.check_page(page, today)
+        return problems
+
+    def test_stamp_within_tolerance_passes(self):
+        # modified = D (2026-01-10); the file last changed D + 4 days, within the
+        # 7-day tolerance; today is well after both. The OLD gate flagged any
+        # changed > modified; the NEW gate tolerates the short window.
+        problems = self.check(
+            published="2026-01-01", modified="2026-01-10",
+            changed="2026-01-14", today="2026-02-01")
+        self.assertEqual(problems, [], problems)
+
+    def test_stamp_beyond_tolerance_fails(self):
+        # modified = D (2026-01-10); the file last changed D + 20 days, beyond the
+        # 7-day tolerance; today is after both.
+        problems = self.check(
+            published="2026-01-01", modified="2026-01-10",
+            changed="2026-01-30", today="2026-02-01")
+        self.assertTrue(
+            any("the file last changed" in p and "tolerance" in p for p in problems),
+            problems)
+        self.assertTrue(
+            any("beyond the 7-day tolerance" in p for p in problems), problems)
+
+    def test_stamp_exactly_at_tolerance_passes(self):
+        # The file last changed exactly D + 7 days, the tolerance boundary. The
+        # check is `> tolerance`, so exactly 7 passes; a `>=` mutation would fail
+        # this.
+        problems = self.check(
+            published="2026-01-01", modified="2026-01-10",
+            changed="2026-01-17", today="2026-02-01")
+        self.assertEqual(problems, [], problems)
+
+    def test_stamp_one_day_past_tolerance_fails(self):
+        # The file last changed D + 8 days, one day past the boundary.
+        problems = self.check(
+            published="2026-01-01", modified="2026-01-10",
+            changed="2026-01-18", today="2026-02-01")
+        self.assertTrue(
+            any("beyond the 7-day tolerance" in p for p in problems), problems)
+
+    def test_modified_in_future_still_rejected(self):
+        # modified is after today; the tolerance branch stays silent (changed
+        # equals modified) so only the future check fires.
+        problems = self.check(
+            published="2026-01-01", modified="2026-02-15",
+            changed="2026-02-15", today="2026-02-01")
+        self.assertTrue(
+            any("is in the future" in p for p in problems), problems)
+
+    def test_invalid_calendar_date_is_reported_not_crashed(self):
+        # An ISO-shaped but invalid date (fromisoformat rejects it) must produce
+        # a clean problem, not a traceback. Before the guard, the tolerance math
+        # raised ValueError here.
+        problems = self.check(
+            published="2026-01-01", modified="2026-13-40",
+            changed="2026-01-14", today="2026-02-01")
+        self.assertTrue(any("not a real calendar date" in p for p in problems), problems)
+
+
 GATE_PAGE = """<!doctype html>
 <html><head>
 {extra_meta}
