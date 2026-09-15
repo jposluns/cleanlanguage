@@ -136,14 +136,17 @@ class VersionParseTest(unittest.TestCase):
             self._expect_die("SKILL.md could not be read: [Errno 13]")
 
     def test_present_but_non_regular_skill_is_rejected(self):
-        # A required path that exists but is not a regular file (a fifo, say)
-        # must fail closed at the pre-check, never reach a read that could hang
-        # on a writer-less fifo or consume unintended bytes.
-        os.mkfifo(gate.SKILL)
+        # A required path that exists but is not a regular file must fail closed
+        # at the pre-check with "is not a regular file". A directory is used
+        # rather than a fifo so that if the S_ISREG guard ever regressed, the
+        # downstream read fails fast (IsADirectoryError) and this test fails
+        # cleanly, instead of blocking forever on a writer-less fifo. The guard
+        # rejects fifos and sockets by the same S_ISREG check.
+        gate.SKILL.mkdir()
         try:
             self._expect_die("SKILL.md is not a regular file")
         finally:
-            gate.SKILL.unlink()
+            gate.SKILL.rmdir()
 
     @unittest.skipIf(
         hasattr(os, "geteuid") and os.geteuid() == 0,
