@@ -119,6 +119,35 @@ class VersionParseTest(unittest.TestCase):
         gate.VERIFY_PAGE.write_bytes(b"\xff\n")
         self._expect_die("site/verify/index.html could not be read")
 
+    def test_present_but_unreadable_skill_reports_could_not_be_read(self):
+        # The existence pre-check must distinguish a missing file from one that
+        # exists but cannot be stat'd (an unreadable parent, say): the latter
+        # reports "could not be read", not the misleading "does not exist". It
+        # still fails closed either way; only the message differs.
+        gate.SKILL.write_text("Version: 1.0.14\n", encoding="utf-8")
+        real_stat = Path.stat
+
+        def fake_stat(self, *args, **kwargs):
+            if self == gate.SKILL:
+                raise PermissionError(13, "Permission denied")
+            return real_stat(self, *args, **kwargs)
+
+        with unittest.mock.patch.object(Path, "stat", fake_stat):
+            self._expect_die("SKILL.md could not be read: [Errno 13]")
+
+    def test_present_but_non_regular_skill_is_rejected(self):
+        # A required path that exists but is not a regular file must fail closed
+        # at the pre-check with "is not a regular file". A directory is used
+        # rather than a fifo so that if the S_ISREG guard ever regressed, the
+        # downstream read fails fast (IsADirectoryError) and this test fails
+        # cleanly, instead of blocking forever on a writer-less fifo. The guard
+        # rejects fifos and sockets by the same S_ISREG check.
+        gate.SKILL.mkdir()
+        try:
+            self._expect_die("SKILL.md is not a regular file")
+        finally:
+            gate.SKILL.rmdir()
+
     @unittest.skipIf(
         hasattr(os, "geteuid") and os.geteuid() == 0,
         "chmod is not restrictive when running as root",
