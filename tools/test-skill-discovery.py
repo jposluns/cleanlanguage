@@ -153,19 +153,50 @@ class SkillDiscoveryTest(unittest.TestCase):
         )
         self.expect_exit(1, "missing 'description'")
 
-    def test_frontmatter_duplicate_name_fails(self):
+    def test_duplicate_name_last_wins_mismatch_fails(self):
+        # PyYAML keeps the last of duplicate keys, so the trailing name wins and is
+        # checked against the directory; here that surviving value mismatches (C9).
         self.skill_md().write_text(
-            "---\nname: cleanlanguage\nname: cleanlanguage\ndescription: x\n---\nBody.\n",
+            "---\nname: cleanlanguage\nname: other\ndescription: x\n---\nBody.\n",
             encoding="utf-8",
         )
-        self.expect_exit(1, "duplicate")
+        self.expect_exit(1, "does not match its directory")
 
     def test_frontmatter_block_scalar_description_fails(self):
+        # An empty block scalar parses to an empty string under PyYAML.
         self.skill_md().write_text(
-            "---\nname: cleanlanguage\ndescription: >-\n  folded value\n---\nBody.\n",
+            "---\nname: cleanlanguage\ndescription: |\n---\nBody.\n",
             encoding="utf-8",
         )
-        self.expect_exit(1, "does not parse")
+        self.expect_exit(1, "must be a non-empty string")
+
+    def test_multiline_block_scalar_description_passes(self):
+        # A block scalar with real content parses to a non-empty string.
+        self.skill_md().write_text(
+            "---\nname: cleanlanguage\ndescription: |\n  Line one.\n  Line two.\n---\nBody.\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(gate.main(), 0)
+
+    def test_invalid_yaml_frontmatter_fails(self):
+        self.skill_md().write_text(
+            "---\nname: [unclosed\n---\nBody.\n", encoding="utf-8"
+        )
+        self.expect_exit(1, "is not valid YAML")
+
+    def test_non_mapping_frontmatter_fails(self):
+        # Frontmatter that parses to a bare scalar rather than a mapping.
+        self.skill_md().write_text(
+            "---\njust a scalar\n---\nBody.\n", encoding="utf-8"
+        )
+        self.expect_exit(1, "is not a YAML mapping")
+
+    def test_whitespace_only_description_fails(self):
+        self.skill_md().write_text(
+            '---\nname: cleanlanguage\ndescription: " "\n---\nBody.\n',
+            encoding="utf-8",
+        )
+        self.expect_exit(1, "must be a non-empty string")
 
     # --- 15: name matches directory ----------------------------------------
 
@@ -178,18 +209,32 @@ class SkillDiscoveryTest(unittest.TestCase):
     # --- 16-17: bidirectional reconciliation and eponymous policy ----------
 
     def test_undeclared_skill_dir_fails(self):
+        # C10 reverse reconciliation: an on-disk skill directory with no entry.
+        # The needle is unique to C10 (C11 shares the bare "is not declared").
         (self.skills_dir / "extra").mkdir()
-        self.expect_exit(1, "is not declared")
+        self.expect_exit(1, "skill directory skills/extra is not declared")
 
     def test_eponymous_skill_absent_fails(self):
         # Only a non-eponymous skill exists and is declared; the plugin's own
-        # ./skills/cleanlanguage entry is absent.
+        # ./skills/cleanlanguage entry is absent (C11). The needle is unique to
+        # C11 (C10 shares the bare "is not declared").
         import shutil
 
         shutil.rmtree(self.skills_dir / "cleanlanguage")
         self.write_skill("other")
         self.write_manifest({"name": "cleanlanguage", "skills": ["./skills/other"]})
-        self.expect_exit(1, "is not declared")
+        self.expect_exit(1, "expected skill entry")
+
+    def test_eponymous_name_derived_from_manifest(self):
+        # A valid tree whose plugin/skill name is not "cleanlanguage" still passes.
+        # This fails if C11's expected entry is ever hardcoded to "cleanlanguage"
+        # rather than derived from the manifest name (guard-input-soundness).
+        import shutil
+
+        shutil.rmtree(self.skills_dir / "cleanlanguage")
+        self.write_skill("otherplug")
+        self.write_manifest({"name": "otherplug", "skills": ["./skills/otherplug"]})
+        self.assertEqual(gate.main(), 0)
 
     # --- 18: legacy relocation guard ---------------------------------------
 
@@ -206,6 +251,84 @@ class SkillDiscoveryTest(unittest.TestCase):
     def test_unreadable_manifest_fails_closed(self):
         self.claude_manifest.write_bytes(b"\xff")
         self.expect_exit(3, "could not be read")
+
+    # --- 22-23: Claude manifest load (C0) ----------------------------------
+
+    def test_malformed_manifest_json_fails(self):
+        self.claude_manifest.write_text("{not json", encoding="utf-8")
+        self.expect_exit(1, "is not valid JSON")
+
+    def test_non_object_manifest_fails(self):
+        self.claude_manifest.write_text("[1, 2, 3]", encoding="utf-8")
+        self.expect_exit(1, "is not a JSON object")
+
+    # --- 24: duplicate skills entry ----------------------------------------
+
+    def test_duplicate_skills_entry_fails(self):
+        self.write_manifest(
+            {
+                "name": "cleanlanguage",
+                "skills": ["./skills/cleanlanguage", "./skills/cleanlanguage"],
+            }
+        )
+        self.expect_exit(1, "is declared more than once")
+
+    # --- 25-27: declared entry disk shape (C4/C5) --------------------------
+
+    def test_skill_entry_resolves_to_file_fails(self):
+        # A declared entry that resolves to a file, not a directory, under skills/.
+        (self.skills_dir / "afile").write_text("x", encoding="utf-8")
+        self.write_manifest(
+            {
+                "name": "cleanlanguage",
+                "skills": ["./skills/cleanlanguage", "./skills/afile"],
+            }
+        )
+        self.expect_exit(1, "is not a directory under skills/")
+
+    def test_symlink_skill_md_fails(self):
+        # SKILL.md is a symlink to a valid regular file inside the plugin (C5).
+        target = self.skills_dir / "cleanlanguage" / "real.md"
+        target.write_text(make_frontmatter(name="cleanlanguage"), encoding="utf-8")
+        self.skill_md().unlink()
+        os.symlink(str(target), str(self.skill_md()))
+        self.expect_exit(1, "must be a regular file, not a symlink")
+
+    def test_non_regular_skill_md_fails(self):
+        # SKILL.md is a directory, not a regular file (C5).
+        self.skill_md().unlink()
+        self.skill_md().mkdir()
+        self.expect_exit(1, "SKILL.md is missing")
+
+    # --- 28-29: reverse reconciliation and legacy symlink (C10/C12) --------
+
+    def test_undeclared_symlink_alias_dir_fails(self):
+        # An on-disk skills/alias symlink to the declared skills/cleanlanguage is
+        # itself an undeclared skill directory (C10).
+        os.symlink(
+            str(self.skills_dir / "cleanlanguage"),
+            str(self.skills_dir / "alias"),
+        )
+        self.expect_exit(1, "skills/alias is not declared")
+
+    def test_dangling_legacy_symlink_fails(self):
+        # A legacy cleanlanguage/SKILL.md that is a dangling symlink (C12).
+        os.symlink(str(self.plugin_root / "nonexistent"), str(self.legacy_skill))
+        self.expect_exit(1, "legacy")
+
+    # --- 30: reverse reconciliation fails closed on an unreadable skills/ ---
+
+    def test_skills_dir_unreadable_fails_closed(self):
+        # C10's iterdir must fail closed (exit 3) when skills/ cannot be listed.
+        # chmod on the directory trips an earlier per-entry check rather than the
+        # iterdir path (and would be a no-op as root), so drive the OSError at
+        # iterdir directly; the mock leaves no unreadable temp dir behind.
+        from unittest import mock
+
+        with mock.patch.object(
+            gate.Path, "iterdir", side_effect=OSError("Permission denied")
+        ):
+            self.expect_exit(3, "could not be read")
 
     # --- 21: CRLF frontmatter tolerated ------------------------------------
 
