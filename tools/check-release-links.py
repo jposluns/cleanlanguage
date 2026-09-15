@@ -71,11 +71,16 @@ def die(message: str) -> NoReturn:
 def main() -> int:
     for path in (SKILL, REDIRECTS, VERIFY_PAGE):
         try:
-            path.stat()
+            info = path.stat()
         except FileNotFoundError:
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
         except OSError as error:
             die(f"{path.relative_to(REPO_ROOT)} could not be read: {error}")
+        # is_file() rejected non-regular files; preserve that so a fifo, socket,
+        # or directory at a required path fails closed here instead of reaching a
+        # read that could hang (a writer-less fifo) or consume unintended bytes.
+        if not stat.S_ISREG(info.st_mode):
+            die(f"{path.relative_to(REPO_ROOT)} is not a regular file")
 
     try:
         skill_text = SKILL.read_text(encoding="utf-8")

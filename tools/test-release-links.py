@@ -133,7 +133,17 @@ class VersionParseTest(unittest.TestCase):
             return real_stat(self, *args, **kwargs)
 
         with unittest.mock.patch.object(Path, "stat", fake_stat):
-            self._expect_die("SKILL.md could not be read")
+            self._expect_die("SKILL.md could not be read: [Errno 13]")
+
+    def test_present_but_non_regular_skill_is_rejected(self):
+        # A required path that exists but is not a regular file (a fifo, say)
+        # must fail closed at the pre-check, never reach a read that could hang
+        # on a writer-less fifo or consume unintended bytes.
+        os.mkfifo(gate.SKILL)
+        try:
+            self._expect_die("SKILL.md is not a regular file")
+        finally:
+            gate.SKILL.unlink()
 
     @unittest.skipIf(
         hasattr(os, "geteuid") and os.geteuid() == 0,
