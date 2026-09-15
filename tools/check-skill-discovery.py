@@ -69,6 +69,38 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     yaml = None
 
+if yaml is not None:
+    _MERGE_TAG = "tag:yaml.org,2002:merge"
+    _VALUE_TAG = "tag:yaml.org,2002:value"
+    _STR_TAG = "tag:yaml.org,2002:str"
+
+    _MERGE_MARKER = object()
+    _UNCONSTRUCTIBLE = object()
+
+    def _canonical_key(key_node):
+        """The canonical constructed value of a scalar key, matching what safe_load
+        stores, so different spellings of one key collide (an integer 1 and its 0x1
+        spelling, or a !!value-tagged key and a plain string) while distinct YAML types
+        stay apart (an integer 1 and the string "1"). Returns _UNCONSTRUCTIBLE when the
+        key cannot be constructed; the base parse has already accepted or rejected it.
+        """
+        tag = key_node.tag
+        if tag == _VALUE_TAG:
+            tag = _STR_TAG
+        probe = yaml.ScalarNode(
+            tag, key_node.value, key_node.start_mark, key_node.end_mark, key_node.style
+        )
+        try:
+            return yaml.constructor.SafeConstructor().construct_object(probe, deep=True)
+        except Exception:
+            return _UNCONSTRUCTIBLE
+else:  # pragma: no cover
+    _MERGE_TAG = _VALUE_TAG = _STR_TAG = None
+    _MERGE_MARKER = _UNCONSTRUCTIBLE = object()
+
+    def _canonical_key(key_node):
+        return _UNCONSTRUCTIBLE
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_ROOT = REPO_ROOT / "cleanlanguage"
 CLAUDE_MANIFEST = PLUGIN_ROOT / ".claude-plugin" / "plugin.json"
@@ -147,37 +179,50 @@ def parse_frontmatter(text: str, entry: str) -> dict:
         die("PyYAML is required to validate SKILL.md frontmatter", 3)
     try:
         data = yaml.safe_load(block_text)
-    except (yaml.YAMLError, ValueError) as error:
-        # A ValueError escapes safe_load's YAML wrapping when a standard scalar
-        # constructor (an implicit timestamp, an explicit !!int, and the like) rejects
-        # its value; classify it as invalid YAML instead of a raw traceback.
-        die(f"SKILL.md frontmatter at {entry} is not valid YAML: {error}")
     except RecursionError:
         die(f"SKILL.md frontmatter at {entry} could not be decoded (too deeply nested)", 3)
+    except Exception as error:
+        # Any failure from parsing or constructing the block means the frontmatter is
+        # not usable: a YAML syntax error, or a scalar constructor rejecting its value
+        # (an implicit bad date, or an explicit typed scalar whose constructor raises
+        # KeyError, IndexError, AttributeError, and the like, none of which is a
+        # YAMLError). Classify every such case rather than let it escape as a traceback.
+        die(f"SKILL.md frontmatter at {entry} is not valid YAML: {error}")
     if not isinstance(data, dict):
         die(f"SKILL.md frontmatter at {entry} is not a YAML mapping")
 
     # Reject a frontmatter that declares the same top-level key twice: safe_load keeps
     # the last, which could let a second, matching value mask a mismatched first one.
-    # The composed node tree exposes the raw keys before that collapse.
+    # Compare keys by their canonical constructed value, so a duplicate survives an
+    # alternate spelling or the !!value tag, while a legitimate merge override (whose
+    # keys expand only later) is not mistaken for one; a repeated merge key is itself a
+    # duplicate.
     try:
         root = yaml.compose(block_text)
-    except yaml.YAMLError as error:
-        die(f"SKILL.md frontmatter at {entry} is not valid YAML: {error}")
     except RecursionError:
         die(f"SKILL.md frontmatter at {entry} could not be decoded (too deeply nested)", 3)
+    except Exception as error:
+        die(f"SKILL.md frontmatter at {entry} is not valid YAML: {error}")
     if isinstance(root, yaml.MappingNode):
-        seen: set[tuple[str, str]] = set()
+        seen: set = set()
         for key_node, _ in root.value:
             if not isinstance(key_node, yaml.ScalarNode):
-                continue  # a complex key; safe_load has already validated the mapping
-            # Compare on (tag, value): a repeated merge key is the duplicate it is, and
-            # two scalars that share a spelling but differ in YAML type (a string "1"
-            # and an integer 1) stay distinct, avoiding a false positive.
-            marker = (key_node.tag, key_node.value)
-            if marker in seen:
-                die(f"SKILL.md frontmatter at {entry} has a duplicate key {key_node.value!r}")
-            seen.add(marker)
+                continue
+            if key_node.tag == _MERGE_TAG:
+                marker = _MERGE_MARKER
+                canonical = None
+            else:
+                canonical = _canonical_key(key_node)
+                if canonical is _UNCONSTRUCTIBLE:
+                    continue
+                marker = ("key", canonical)
+            try:
+                if marker in seen:
+                    detail = "(repeated merge key)" if marker is _MERGE_MARKER else repr(canonical)
+                    die(f"SKILL.md frontmatter at {entry} has a duplicate key {detail}")
+                seen.add(marker)
+            except TypeError:
+                continue
 
     fields: dict[str, str] = {}
     for key in ("name", "description"):

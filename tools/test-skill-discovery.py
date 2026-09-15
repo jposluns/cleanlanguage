@@ -485,6 +485,36 @@ class SkillDiscoveryTest(unittest.TestCase):
         )
         self.expect_exit(1, "NUL or surrogate")
 
+    def test_explicit_tag_scalar_constructor_fails(self):
+        # PyYAML's explicit-tag scalar constructors raise KeyError/IndexError/
+        # AttributeError (not YAMLError or ValueError); the broad catch classifies each
+        # as exit-1 'not valid YAML' rather than letting it escape as a raw traceback.
+        for value in ("!!bool notabool", '!!int ""', "!!timestamp notatime"):
+            self.skill_md().write_text(
+                f"---\nname: cleanlanguage\ndescription: {value}\n---\nBody.\n",
+                encoding="utf-8",
+            )
+            self.expect_exit(1, "is not valid YAML")
+
+    def test_value_tagged_duplicate_name_fails(self):
+        # A duplicate name via the !!value tag constructs to the same canonical key as a
+        # plain name, so the canonical duplicate scan catches it even though the raw
+        # node tags differ.
+        self.skill_md().write_text(
+            "---\n!!value name: other\nname: cleanlanguage\ndescription: x\n---\nBody.\n",
+            encoding="utf-8",
+        )
+        self.expect_exit(1, "duplicate key")
+
+    def test_canonical_collapse_duplicate_fails(self):
+        # Two integer keys with different spellings collapse to one canonical value and
+        # are flagged as duplicates (1 and 0x1 both construct to the integer 1).
+        self.skill_md().write_text(
+            "---\nname: cleanlanguage\ndescription: x\n1: a\n0x1: b\n---\nBody.\n",
+            encoding="utf-8",
+        )
+        self.expect_exit(1, "duplicate key")
+
     def test_crlf_frontmatter_passes(self):
         self.skill_md().write_bytes(
             b"---\r\nname: cleanlanguage\r\ndescription: x\r\n---\r\nBody.\r\n"
