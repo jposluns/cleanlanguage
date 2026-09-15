@@ -105,11 +105,11 @@ class SkillDiscoveryTest(unittest.TestCase):
 
     def test_skills_entry_no_dot_slash_fails(self):
         self.write_manifest({"name": "cleanlanguage", "skills": ["skills/cleanlanguage"]})
-        self.expect_exit(1, "must be a canonical plugin-relative path")
+        self.expect_exit(1, "must be a canonical './skills/<name>' path")
 
     def test_skills_entry_traversal_fails(self):
         self.write_manifest({"name": "cleanlanguage", "skills": ["./skills/../../evil"]})
-        self.expect_exit(1, "must be a canonical plugin-relative path")
+        self.expect_exit(1, "must be a canonical './skills/<name>' path")
 
     def test_skills_entry_symlink_escape_fails(self):
         # An in-fixture symlink under skills/ that points outside the tmp root;
@@ -153,14 +153,14 @@ class SkillDiscoveryTest(unittest.TestCase):
         )
         self.expect_exit(1, "missing 'description'")
 
-    def test_duplicate_name_last_wins_mismatch_fails(self):
-        # PyYAML keeps the last of duplicate keys, so the trailing name wins and is
-        # checked against the directory; here that surviving value mismatches (C9).
+    def test_duplicate_frontmatter_key_fails(self):
+        # Duplicate mapping keys are rejected outright rather than silently kept
+        # last-wins, so a second matching name cannot mask a mismatched first value.
         self.skill_md().write_text(
             "---\nname: cleanlanguage\nname: other\ndescription: x\n---\nBody.\n",
             encoding="utf-8",
         )
-        self.expect_exit(1, "does not match its directory")
+        self.expect_exit(1, "duplicate key")
 
     def test_frontmatter_block_scalar_description_fails(self):
         # An empty block scalar parses to an empty string under PyYAML.
@@ -331,6 +331,58 @@ class SkillDiscoveryTest(unittest.TestCase):
             self.expect_exit(3, "could not be read")
 
     # --- 21: CRLF frontmatter tolerated ------------------------------------
+
+    def test_name_with_surrounding_whitespace_fails(self):
+        # The frontmatter name is compared verbatim to the directory basename, so a
+        # whitespace-padded name that would strip-match is still a mismatch (C9).
+        self.skill_md().write_text(
+            "---\nname: ' cleanlanguage '\ndescription: x\n---\nBody.\n",
+            encoding="utf-8",
+        )
+        self.expect_exit(1, "does not match its directory")
+
+    def test_manifest_name_missing_fails(self):
+        # The manifest name is load-bearing for C11; a missing name fails closed with
+        # a clear message rather than resolving an './skills/None' entry (C0).
+        self.write_manifest({"skills": ["./skills/cleanlanguage"]})
+        self.expect_exit(1, "'name' is missing or not a non-empty string")
+
+    def test_entry_reaching_skill_via_sibling_path_fails(self):
+        # codex round-2 HIGH: an entry outside './skills/' that resolves into skills/
+        # through a symlink, paired with an undeclared same-basename skills/<x>
+        # directory, previously passed by basename reconciliation. It must now be
+        # rejected at entry syntax.
+        (self.skills_dir / "extra").mkdir()  # undeclared, no SKILL.md
+        (self.plugin_root / "elsewhere").mkdir()
+        os.symlink(
+            str(self.skills_dir / "cleanlanguage"),
+            str(self.plugin_root / "elsewhere" / "extra"),
+        )
+        self.write_manifest(
+            {
+                "name": "cleanlanguage",
+                "skills": ["./skills/cleanlanguage", "./elsewhere/extra"],
+            }
+        )
+        self.expect_exit(1, "must be a canonical './skills/<name>' path")
+
+    def test_deeply_nested_frontmatter_fails_closed(self):
+        # Deeply nested YAML raises RecursionError, which PyYAML does not wrap as a
+        # YAMLError; the gate catches it and fails closed (exit 3) rather than letting
+        # a traceback escape.
+        body = "[" * 5000 + "]" * 5000
+        self.skill_md().write_text(f"---\n{body}\n---\nBody.\n", encoding="utf-8")
+        self.expect_exit(3, "could not be decoded")
+
+    def test_entry_metadata_oserror_fails_closed(self):
+        # A filesystem-metadata error while inspecting a declared entry fails closed
+        # (exit 3) rather than escaping as an uncaught OSError.
+        from unittest import mock
+
+        with mock.patch.object(
+            gate.Path, "is_dir", side_effect=OSError("Permission denied")
+        ):
+            self.expect_exit(3, "could not be inspected")
 
     def test_crlf_frontmatter_passes(self):
         self.skill_md().write_bytes(
