@@ -171,10 +171,10 @@ gemini skills list
 ### ChatGPT package creation
 
 ```bash
-python /path/to/skill-creator/scripts/package_skill.py ./cleanlanguage/skills/cleanlanguage ./dist
+/path/to/cleanlanguage/tools/release-package.sh
 ```
 
-The resulting archive must contain one `SKILL.md` entry point and retain its relative `references/` paths.
+This builds `dist/cleanlanguage.zip`, the same archive the release publishes: `SKILL.md` at the archive root beside its `references/`, the agent configuration, and the icons.
 
 ## Package contents and assurance
 
