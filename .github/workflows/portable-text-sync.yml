@@ -16,8 +16,8 @@ name: Portable text sync
 on:
   pull_request:
     paths:
-      - "cleanlanguage/SKILL.md"
-      - "cleanlanguage/references/**"
+      - "cleanlanguage/skills/cleanlanguage/SKILL.md"
+      - "cleanlanguage/skills/cleanlanguage/references/**"
       - "site/downloads/cleanlanguage.md"
       - "site/downloads/cleanlanguage-29k.md"
       - "site/downloads/cleanlanguage-11k.md"
@@ -33,8 +33,8 @@ on:
     branches:
       - main
     paths:
-      - "cleanlanguage/SKILL.md"
-      - "cleanlanguage/references/**"
+      - "cleanlanguage/skills/cleanlanguage/SKILL.md"
+      - "cleanlanguage/skills/cleanlanguage/references/**"
       - "site/downloads/cleanlanguage.md"
       - "site/downloads/cleanlanguage-29k.md"
       - "site/downloads/cleanlanguage-11k.md"

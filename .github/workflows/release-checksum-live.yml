@@ -16,14 +16,14 @@ on:
       - main
     paths:
       - "site/verify/index.html"
-      - "cleanlanguage/SKILL.md"
+      - "cleanlanguage/skills/cleanlanguage/SKILL.md"
       - "tools/check-release-checksum-live.py"
       - "tools/test-release-checksum-live.py"
       - ".github/workflows/release-checksum-live.yml"
   pull_request:
     paths:
       - "site/verify/index.html"
-      - "cleanlanguage/SKILL.md"
+      - "cleanlanguage/skills/cleanlanguage/SKILL.md"
       - "tools/check-release-checksum-live.py"
       - "tools/test-release-checksum-live.py"
       - ".github/workflows/release-checksum-live.yml"

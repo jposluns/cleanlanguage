@@ -19,7 +19,7 @@ Behaviour:
   - Reads the version and displayed checksum from ``site/verify/index.html``.
   - If the release ``vX`` for that version is not published yet, the pass is
     conditional. The site is legitimately ahead of the release only when it
-    names the current skill version (``Version:`` in ``cleanlanguage/SKILL.md``)
+    names the current skill version (``Version:`` in ``cleanlanguage/skills/cleanlanguage/SKILL.md``)
     and the tag ``vX`` does not exist yet, which is the pre-tag window the
     release runbook creates. A different version with no release is a real
     inconsistency and fails. An existing tag with no published release is a
@@ -56,7 +56,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VERIFY_PAGE = REPO_ROOT / "site" / "verify" / "index.html"
-SKILL = REPO_ROOT / "cleanlanguage" / "SKILL.md"
+SKILL = REPO_ROOT / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
 REPO = "jposluns/cleanlanguage"
 
 DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
@@ -107,19 +107,19 @@ def tag_status(tag: str) -> int:
 
 
 def skill_version() -> str:
-    """Return the current version named by ``cleanlanguage/SKILL.md``."""
+    """Return the current version named by ``cleanlanguage/skills/cleanlanguage/SKILL.md``."""
     if not SKILL.is_file():
         die(f"{SKILL.relative_to(REPO_ROOT)} does not exist")
     try:
         text = SKILL.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
-        die(f"cleanlanguage/SKILL.md could not be read: {error}")
+        die(f"cleanlanguage/skills/cleanlanguage/SKILL.md could not be read: {error}")
     line = VERSION_LINE.search(text)
     if line is None:
-        die("no 'Version:' line found in cleanlanguage/SKILL.md")
+        die("no 'Version:' line found in cleanlanguage/skills/cleanlanguage/SKILL.md")
     match = SKILL_VERSION.match(line.group(0))
     if match is None:
-        die("the first 'Version:' line in cleanlanguage/SKILL.md is not a bare X.Y.Z version")
+        die("the first 'Version:' line in cleanlanguage/skills/cleanlanguage/SKILL.md is not a bare X.Y.Z version")
     return match.group(1)
 
 
@@ -149,7 +149,7 @@ def main() -> int:
         if version != current:
             print("Release checksum inconsistency found:")
             print(f"  - the verify page names version {version}, which has no published release")
-            print(f"  - cleanlanguage/SKILL.md names {current} as the current version")
+            print(f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {current} as the current version")
             print(
                 f"\nA site legitimately ahead of its release names the current skill "
                 f"version. This looks like a typo or a stale bump; align the verify "

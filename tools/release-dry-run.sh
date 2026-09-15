@@ -65,8 +65,8 @@ refs_before="$(git for-each-ref | sha256sum)"
 # NUL, which the old capture-then-sed form silently stripped). The raw blob is
 # piped straight in: skill-version.py reads ALL of stdin, so git show completes
 # and can take no SIGPIPE, and the ~64KB-pipe exit-141 regression cannot recur.
-if ! version="$(git show HEAD:cleanlanguage/SKILL.md | python3 tools/skill-version.py)"; then
-  fail "could not read a valid bare X.Y.Z Version: line from cleanlanguage/SKILL.md at HEAD"
+if ! version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-version.py)"; then
+  fail "could not read a valid bare X.Y.Z Version: line from cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"
 fi
 patch="${version##*.}"
 dry_version="${version%.*}.$(( 10#${patch} + 1 ))"
@@ -87,8 +87,8 @@ cd "${worktree}"
 # The commit lives on the worktree's detached HEAD and is discarded with it.
 # The Version: line can carry trailing whitespace (a Markdown hard break),
 # so replace the number in place and keep the rest of the line intact.
-sed -i -E "s/^(Version:[[:space:]]*)[0-9][0-9.]*/\1${dry_version}/" cleanlanguage/SKILL.md
-grep -qE "^Version:[[:space:]]*${dry_version}([[:space:]]|\$)" cleanlanguage/SKILL.md \
+sed -i -E "s/^(Version:[[:space:]]*)[0-9][0-9.]*/\1${dry_version}/" cleanlanguage/skills/cleanlanguage/SKILL.md
+grep -qE "^Version:[[:space:]]*${dry_version}([[:space:]]|\$)" cleanlanguage/skills/cleanlanguage/SKILL.md \
   || fail "could not set the dry-run version in SKILL.md"
 
 # The plugin manifest carries the same version, and release-package.sh asserts the

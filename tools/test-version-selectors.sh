@@ -155,11 +155,11 @@ extract_block() { # file start end
 }
 
 DRY_BLOCK="$(extract_block tools/release-dry-run.sh \
-  'if ! version="$(git show HEAD:cleanlanguage/SKILL.md | python3 tools/skill-version.py)"' 'fi')"
+  'if ! version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-version.py)"' 'fi')"
 WF_LOCAL_BLOCK="$(extract_block .github/workflows/release-skill.yml \
-  'if ! version="$(python3 tools/skill-version.py cleanlanguage/SKILL.md)"' 'fi')"
+  'if ! version="$(python3 tools/skill-version.py cleanlanguage/skills/cleanlanguage/SKILL.md)"' 'fi')"
 WF_MAIN_BLOCK="$(extract_block .github/workflows/release-skill.yml \
-  'if ! main_version="$(git show FETCH_HEAD:cleanlanguage/SKILL.md | python3 tools/skill-version.py)"' 'fi')"
+  'if ! main_version="$(git show FETCH_HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-version.py)"' 'fi')"
 for name in DRY_BLOCK WF_LOCAL_BLOCK WF_MAIN_BLOCK; do
   [ -n "${!name}" ] || { echo "Could not extract ${name} from its source" >&2; exit 1; }
 done
@@ -175,15 +175,15 @@ git_id=(-c user.email=t@t -c user.name=t -c commit.gpgsign=false)
 # Site 3: version_of, reading the fixture file directly.
 run_version_of() { version_of "$1"; }
 
-# Site 1: release-dry-run.sh, reading git show HEAD:cleanlanguage/SKILL.md.
+# Site 1: release-dry-run.sh, reading git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md.
 run_dry() { # fixture-file
   local repo out rc
   repo="$(mktemp -d)"
-  mkdir -p "${repo}/cleanlanguage" "${repo}/tools"
-  cp "$1" "${repo}/cleanlanguage/SKILL.md"
+  mkdir -p "${repo}/cleanlanguage/skills/cleanlanguage" "${repo}/tools"
+  cp "$1" "${repo}/cleanlanguage/skills/cleanlanguage/SKILL.md"
   cp tools/skill-version.py "${repo}/tools/skill-version.py"
   git init -q "${repo}"
-  git -C "${repo}" "${git_id[@]}" add cleanlanguage/SKILL.md
+  git -C "${repo}" "${git_id[@]}" add cleanlanguage/skills/cleanlanguage/SKILL.md
   git -C "${repo}" "${git_id[@]}" commit -qm fixture >/dev/null
   # Stub fail() to exit, matching release-dry-run.sh's own fail (which exits): a
   # reject aborts the subshell, so a malformed line yields empty and non-zero.
@@ -211,8 +211,8 @@ run_dry() { # fixture-file
 run_wf_local() { # fixture-file
   local dir out rc
   dir="$(mktemp -d)"
-  mkdir -p "${dir}/cleanlanguage" "${dir}/tools"
-  cp "$1" "${dir}/cleanlanguage/SKILL.md"
+  mkdir -p "${dir}/cleanlanguage/skills/cleanlanguage" "${dir}/tools"
+  cp "$1" "${dir}/cleanlanguage/skills/cleanlanguage/SKILL.md"
   cp tools/skill-version.py "${dir}/tools/skill-version.py"
   # Capture the selector's own exit status explicitly, then print the version
   # and re-exit with that status, so no trailing command can overwrite it.
@@ -230,14 +230,14 @@ run_wf_local() { # fixture-file
   return "${rc}"
 }
 
-# Site 2b: release-skill.yml main read (git show FETCH_HEAD:cleanlanguage/SKILL.md).
+# Site 2b: release-skill.yml main read (git show FETCH_HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md).
 run_wf_main() { # fixture-file
   local remote local_repo out rc
   remote="$(mktemp -d)"
-  mkdir -p "${remote}/cleanlanguage"
-  cp "$1" "${remote}/cleanlanguage/SKILL.md"
+  mkdir -p "${remote}/cleanlanguage/skills/cleanlanguage"
+  cp "$1" "${remote}/cleanlanguage/skills/cleanlanguage/SKILL.md"
   git init -q "${remote}"
-  git -C "${remote}" "${git_id[@]}" add cleanlanguage/SKILL.md
+  git -C "${remote}" "${git_id[@]}" add cleanlanguage/skills/cleanlanguage/SKILL.md
   git -C "${remote}" "${git_id[@]}" commit -qm fixture >/dev/null
   local_repo="$(mktemp -d)"
   mkdir -p "${local_repo}/tools"
@@ -339,12 +339,12 @@ for name in "${fixture_names[@]}"; do
 done
 
 # --- No behaviour change on the real SKILL.md --------------------------------
-real_expected="$(gate_expect cleanlanguage/SKILL.md)"
+real_expected="$(gate_expect cleanlanguage/skills/cleanlanguage/SKILL.md)"
 [ -n "${real_expected}" ] || fail "the gates' rule read no bare X.Y.Z from the real SKILL.md"
-check_site "real SKILL.md: version_of"      version_of      cleanlanguage/SKILL.md "${real_expected}" always0
-check_site "real SKILL.md: release-dry-run" release-dry-run cleanlanguage/SKILL.md "${real_expected}" 0
-check_site "real SKILL.md: workflow-local"  workflow-local  cleanlanguage/SKILL.md "${real_expected}" 0
-check_site "real SKILL.md: workflow-main"   workflow-main   cleanlanguage/SKILL.md "${real_expected}" 0
+check_site "real SKILL.md: version_of"      version_of      cleanlanguage/skills/cleanlanguage/SKILL.md "${real_expected}" always0
+check_site "real SKILL.md: release-dry-run" release-dry-run cleanlanguage/skills/cleanlanguage/SKILL.md "${real_expected}" 0
+check_site "real SKILL.md: workflow-local"  workflow-local  cleanlanguage/skills/cleanlanguage/SKILL.md "${real_expected}" 0
+check_site "real SKILL.md: workflow-main"   workflow-main   cleanlanguage/skills/cleanlanguage/SKILL.md "${real_expected}" 0
 
 echo
 if [ "${fails}" -eq 0 ]; then

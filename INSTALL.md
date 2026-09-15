@@ -152,14 +152,14 @@ Use the Clean Language instructions for every response unless I explicitly tell 
 
 ```bash
 mkdir -p .claude/skills
-cp -R /path/to/cleanlanguage/cleanlanguage .claude/skills/cleanlanguage
+cp -R /path/to/cleanlanguage/cleanlanguage/skills/cleanlanguage .claude/skills/cleanlanguage
 ```
 
 ### Gemini CLI
 
 ```bash
 gemini skills install https://github.com/jposluns/cleanlanguage.git \
-  --path cleanlanguage
+  --path cleanlanguage/skills/cleanlanguage
 ```
 
 Add `--scope workspace` for a project-specific installation. Verify discovery with:
@@ -171,10 +171,10 @@ gemini skills list
 ### ChatGPT package creation
 
 ```bash
-python /path/to/skill-creator/scripts/package_skill.py ./cleanlanguage ./dist
+/path/to/cleanlanguage/tools/release-package.sh
 ```
 
-The resulting archive must contain one `SKILL.md` entry point and retain its relative `references/` paths.
+This builds `dist/cleanlanguage.zip`, the same archive the release publishes: `SKILL.md` at the archive root beside its `references/`, the agent configuration, and the icons.
 
 ## Package contents and assurance
 

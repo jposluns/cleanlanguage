@@ -68,5 +68,5 @@ jobs:
           set -euo pipefail
           staged="$(mktemp -d)"
           mkdir -p "${staged}/skills"
-          cp -r cleanlanguage "${staged}/skills/cleanlanguage"
+          cp -r cleanlanguage/skills/cleanlanguage "${staged}/skills/cleanlanguage"
           claude plugin validate "${staged}/skills" --strict

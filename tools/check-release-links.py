@@ -15,7 +15,7 @@ What it verifies
 ----------------
 
 1. Every release-asset URL under ``site/`` names one and the same version.
-2. That version matches ``Version:`` in ``cleanlanguage/SKILL.md``, which is the
+2. That version matches ``Version:`` in ``cleanlanguage/skills/cleanlanguage/SKILL.md``, which is the
    source of truth the release workflow validates the tag against.
 3. The tag in each URL is that version prefixed with ``v``.
 4. The published checksum displayed on the verify page is a well-formed SHA-256,
@@ -48,7 +48,7 @@ from typing import NoReturn
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SITE_ROOT = REPO_ROOT / "site"
-SKILL = REPO_ROOT / "cleanlanguage" / "SKILL.md"
+SKILL = REPO_ROOT / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
 REDIRECTS = SITE_ROOT / "_redirects"
 VERIFY_PAGE = SITE_ROOT / "verify" / "index.html"
 
@@ -76,13 +76,13 @@ def main() -> int:
     try:
         skill_text = SKILL.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
-        die(f"cleanlanguage/SKILL.md could not be read: {error}")
+        die(f"cleanlanguage/skills/cleanlanguage/SKILL.md could not be read: {error}")
     line = VERSION_LINE.search(skill_text)
     if line is None:
-        die("no 'Version:' line found in cleanlanguage/SKILL.md")
+        die("no 'Version:' line found in cleanlanguage/skills/cleanlanguage/SKILL.md")
     match = SKILL_VERSION.match(line.group(0))
     if match is None:
-        die("the first 'Version:' line in cleanlanguage/SKILL.md is not a bare X.Y.Z version")
+        die("the first 'Version:' line in cleanlanguage/skills/cleanlanguage/SKILL.md is not a bare X.Y.Z version")
     expected = match.group(1)
 
     problems: list[str] = []

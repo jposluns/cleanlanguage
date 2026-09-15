@@ -63,8 +63,8 @@ check_common() {
     fi
   done
   local sv
-  sv="$(version_of cleanlanguage/SKILL.md)"
-  [ -n "${sv}" ] || { echo "No valid bare X.Y.Z Version: line in cleanlanguage/SKILL.md." >&2; return 1; }
+  sv="$(version_of cleanlanguage/skills/cleanlanguage/SKILL.md)"
+  [ -n "${sv}" ] || { echo "No valid bare X.Y.Z Version: line in cleanlanguage/skills/cleanlanguage/SKILL.md." >&2; return 1; }
   for f in "${all_files[@]}"; do
     if [ "$(version_of "${f}")" != "${sv}" ]; then
       echo "Version disagreement: SKILL.md=${sv}, ${f}=$(version_of "${f}")." >&2; return 1
@@ -82,7 +82,7 @@ check_common() {
   [ "${n}" -le 11000 ] || { echo "${eleven} is ${n} chars, over its 11000 label." >&2; return 1; }
 }
 
-mapfile -t skill_files < <(printf '%s\n' "cleanlanguage/SKILL.md"; find cleanlanguage/references -type f -name '*.md' | sort)
+mapfile -t skill_files < <(printf '%s\n' "cleanlanguage/skills/cleanlanguage/SKILL.md"; find cleanlanguage/skills/cleanlanguage/references -type f -name '*.md' | sort)
 for f in "${skill_files[@]}"; do [ -f "${f}" ] || { echo "Missing skill file: ${f}" >&2; exit 1; }; done
 computed="$(for f in "${skill_files[@]}"; do printf '%s  %s\n' "$(sha256sum "${f}" | cut -d' ' -f1)" "${f}"; done | sha256sum | cut -d' ' -f1)"
 

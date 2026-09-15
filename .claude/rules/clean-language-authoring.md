@@ -7,8 +7,8 @@ pull request descriptions.
 
 The authority for the standard is the skill in this repository:
 
-- [`cleanlanguage/SKILL.md`](../../cleanlanguage/SKILL.md)
-- [`cleanlanguage/references/`](../../cleanlanguage/references/)
+- [`cleanlanguage/skills/cleanlanguage/SKILL.md`](../../cleanlanguage/skills/cleanlanguage/SKILL.md)
+- [`cleanlanguage/skills/cleanlanguage/references/`](../../cleanlanguage/skills/cleanlanguage/references/)
 
 Apply that skill directly. Do not restate its rules here, so that this
 instruction follows the skill whenever the skill changes. When the skill and any
@@ -41,6 +41,6 @@ place: the checklist page title, "Clean Language - AI writing quality assurance"
 Do not add disambiguation elsewhere.
 
 **Condensed site renderings of the skill are intentional.** The website presents
-the standard more briefly than `cleanlanguage/SKILL.md` does. Brevity against the
+the standard more briefly than `cleanlanguage/skills/cleanlanguage/SKILL.md` does. Brevity against the
 skill is not a defect; only semantic drift is. Compare meaning, not length.
 
