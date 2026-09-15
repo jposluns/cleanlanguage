@@ -318,16 +318,21 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
         problems.append("git records no commit for this file, so its dates cannot be checked")
 
     if modified and ISO_DATE.match(modified):
-        if changed:
-            days_late = (dt.date.fromisoformat(changed) - dt.date.fromisoformat(modified)).days
-            if days_late > MODIFIED_STAMP_TOLERANCE_DAYS:
-                problems.append(
-                    f"article:modified_time is {modified} but the file last changed {changed}, "
-                    f"{days_late} days later, beyond the {MODIFIED_STAMP_TOLERANCE_DAYS}-day tolerance; "
-                    f"update the stamp to {changed} or nearer"
-                )
-        if modified > today:
-            problems.append(f"article:modified_time {modified} is in the future (today is {today})")
+        try:
+            modified_date = dt.date.fromisoformat(modified)
+        except ValueError:
+            problems.append(f"article:modified_time {modified} is not a real calendar date")
+        else:
+            if changed:
+                days_late = (dt.date.fromisoformat(changed) - modified_date).days
+                if days_late > MODIFIED_STAMP_TOLERANCE_DAYS:
+                    problems.append(
+                        f"article:modified_time is {modified} but the file last changed {changed}, "
+                        f"{days_late} days later, beyond the {MODIFIED_STAMP_TOLERANCE_DAYS}-day tolerance; "
+                        f"update the stamp to {changed} or nearer"
+                    )
+            if modified > today:
+                problems.append(f"article:modified_time {modified} is in the future (today is {today})")
 
     if published and ISO_DATE.match(published):
         override = PUBLISHED_OVERRIDES.get(relative)

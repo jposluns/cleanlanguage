@@ -374,6 +374,15 @@ class ModifiedStampToleranceTest(unittest.TestCase):
         self.assertTrue(
             any("is in the future" in p for p in problems), problems)
 
+    def test_invalid_calendar_date_is_reported_not_crashed(self):
+        # An ISO-shaped but invalid date (fromisoformat rejects it) must produce
+        # a clean problem, not a traceback. Before the guard, the tolerance math
+        # raised ValueError here.
+        problems = self.check(
+            published="2026-01-01", modified="2026-13-40",
+            changed="2026-01-14", today="2026-02-01")
+        self.assertTrue(any("not a real calendar date" in p for p in problems), problems)
+
 
 GATE_PAGE = """<!doctype html>
 <html><head>
