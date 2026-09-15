@@ -111,12 +111,21 @@ class SkillDiscoveryTest(unittest.TestCase):
         self.write_manifest({"name": "cleanlanguage", "skills": ["./skills/../../evil"]})
         self.expect_exit(1, "must be a canonical './skills/<name>' path")
 
-    def test_skills_entry_symlink_escape_fails(self):
-        # An in-fixture symlink under skills/ that points outside the tmp root;
-        # the entry is syntactically canonical but resolves out of the plugin.
-        os.symlink(str(self.root.parent), str(self.skills_dir / "escape"))
-        self.write_manifest({"name": "cleanlanguage", "skills": ["./skills/escape"]})
-        self.expect_exit(1, "resolves outside the plugin root")
+    def test_symlinked_skill_directory_fails(self):
+        # A declared skill entry that is a symlink to another real skill directory is
+        # rejected: os.lstat sees the symlink, so a declared './skills/<alias>' cannot
+        # borrow another skill's identity and slip past the name==dir check (C9).
+        os.symlink(
+            str(self.skills_dir / "cleanlanguage"),
+            str(self.skills_dir / "aliasname"),
+        )
+        self.write_manifest(
+            {
+                "name": "cleanlanguage",
+                "skills": ["./skills/cleanlanguage", "./skills/aliasname"],
+            }
+        )
+        self.expect_exit(1, "must be a real directory, not a symlink")
 
     # --- 7-8: declared path exists on disk ---------------------------------
 
@@ -319,14 +328,13 @@ class SkillDiscoveryTest(unittest.TestCase):
     # --- 30: reverse reconciliation fails closed on an unreadable skills/ ---
 
     def test_skills_dir_unreadable_fails_closed(self):
-        # C10's iterdir must fail closed (exit 3) when skills/ cannot be listed.
-        # chmod on the directory trips an earlier per-entry check rather than the
-        # iterdir path (and would be a no-op as root), so drive the OSError at
-        # iterdir directly; the mock leaves no unreadable temp dir behind.
+        # C10's os.listdir must fail closed (exit 3) when skills/ cannot be listed.
+        # Drive the OSError at os.listdir directly; the mock leaves no unreadable temp
+        # dir behind (and chmod would be a no-op as root).
         from unittest import mock
 
         with mock.patch.object(
-            gate.Path, "iterdir", side_effect=OSError("Permission denied")
+            gate.os, "listdir", side_effect=OSError("Permission denied")
         ):
             self.expect_exit(3, "could not be read")
 
@@ -375,14 +383,59 @@ class SkillDiscoveryTest(unittest.TestCase):
         self.expect_exit(3, "could not be decoded")
 
     def test_entry_metadata_oserror_fails_closed(self):
-        # A filesystem-metadata error while inspecting a declared entry fails closed
-        # (exit 3) rather than escaping as an uncaught OSError.
+        # A filesystem-metadata error (os.lstat) while inspecting the skills tree fails
+        # closed (exit 3) rather than escaping as an uncaught OSError.
         from unittest import mock
 
         with mock.patch.object(
-            gate.Path, "is_dir", side_effect=OSError("Permission denied")
+            gate.os, "lstat", side_effect=OSError("Permission denied")
         ):
             self.expect_exit(3, "could not be inspected")
+
+    def test_merge_key_frontmatter_passes(self):
+        # A YAML merge key ('<<') is valid YAML; safe_load expands it, so a SKILL.md
+        # that pulls its description from an anchored mapping is accepted.
+        self.skill_md().write_text(
+            "---\n"
+            "defaults: &d\n"
+            "  description: Clean Language prose standard.\n"
+            "name: cleanlanguage\n"
+            "<<: *d\n"
+            "---\nBody.\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(gate.main(), 0)
+
+    def test_unhashable_frontmatter_key_fails(self):
+        # A complex (unhashable) YAML key must surface as a classified 'not valid YAML'
+        # failure (exit 1), not an uncaught TypeError traceback.
+        self.skill_md().write_text(
+            "---\n? - a\n  - b\n: 1\nname: cleanlanguage\ndescription: x\n---\nBody.\n",
+            encoding="utf-8",
+        )
+        self.expect_exit(1, "is not valid YAML")
+
+    def test_bom_prefixed_files_pass(self):
+        # A leading UTF-8 BOM on the manifest or a SKILL.md must not falsely reject an
+        # otherwise conforming plugin; the readers use utf-8-sig.
+        bom = b"\xef\xbb\xbf"
+        self.claude_manifest.write_bytes(
+            bom
+            + json.dumps(
+                {"name": "cleanlanguage", "skills": ["./skills/cleanlanguage"]}
+            ).encode("utf-8")
+        )
+        self.skill_md().write_bytes(
+            bom + b"---\nname: cleanlanguage\ndescription: x\n---\nBody.\n"
+        )
+        self.assertEqual(gate.main(), 0)
+
+    def test_manifest_json_recursion_fails_closed(self):
+        # JSON decoder recursion is a decode failure (exit 3), consistent with YAML.
+        from unittest import mock
+
+        with mock.patch.object(gate.json, "loads", side_effect=RecursionError):
+            self.expect_exit(3, "could not be decoded")
 
     def test_crlf_frontmatter_passes(self):
         self.skill_md().write_bytes(
