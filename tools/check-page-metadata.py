@@ -210,6 +210,14 @@ def _author_ok(author: object, meta_author: str) -> bool:
     return True
 ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# A page's modified stamp may sit a little before the file's last commit date:
+# a squash merge re-dates edited pages to the merge day, which can be a day or
+# more after the stamp was set. Tolerate that window so a normal cross-day merge
+# does not red the gate, while a stamp more than this many days behind the last
+# commit still flags a forgotten bump. article:modified_time in the future is
+# still rejected separately.
+MODIFIED_STAMP_TOLERANCE_DAYS = 7
+
 REQUIRED_PROPERTIES = ("article:published_time", "article:modified_time", "article:author")
 
 # The site's own origin. Image URLs are written absolute, because a crawler needs
@@ -310,11 +318,14 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
         problems.append("git records no commit for this file, so its dates cannot be checked")
 
     if modified and ISO_DATE.match(modified):
-        if changed and changed > modified:
-            problems.append(
-                f"article:modified_time is {modified} but the file last changed {changed}; "
-                f"update the stamp to {changed} or later"
-            )
+        if changed:
+            days_late = (dt.date.fromisoformat(changed) - dt.date.fromisoformat(modified)).days
+            if days_late > MODIFIED_STAMP_TOLERANCE_DAYS:
+                problems.append(
+                    f"article:modified_time is {modified} but the file last changed {changed}, "
+                    f"{days_late} days later, beyond the {MODIFIED_STAMP_TOLERANCE_DAYS}-day tolerance; "
+                    f"update the stamp to {changed} or nearer"
+                )
         if modified > today:
             problems.append(f"article:modified_time {modified} is in the future (today is {today})")
 
