@@ -161,6 +161,14 @@ class AgentPluginManifestTest(unittest.TestCase):
         gate.MANIFEST.write_text('{"x":' + "[" * 100000, encoding="utf-8")
         self.expect_exit(1, "is not valid JSON")
 
+    def test_root_skills_key_stays_rejected(self):
+        # Step-3 decision: skill discovery is convention-based; the root
+        # Agent Plugins manifest carries no skills field.
+        manifest = valid_manifest()
+        manifest["skills"] = ["./skills/cleanlanguage"]
+        self.write(manifest)
+        self.expect_exit(1, "unknown top-level keys")
+
 
 if __name__ == "__main__":
     unittest.main()

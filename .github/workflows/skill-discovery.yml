@@ -1,0 +1,48 @@
+name: Skill discovery
+
+# Verify that the skill stays discoverable through its manifests, so a rename,
+# relocation, or metadata drift cannot reach main. Structural, offline, and
+# fail-closed; also runs the gate's own unit tests.
+#
+# This gate is path-filtered, like agent-plugin-manifest.yml, so it does not run
+# on every push and is therefore NOT a required branch-protection check: a pull
+# request that touches none of these paths would leave a required check pending
+# forever. To promote it to a required check, drop the paths filters so it runs
+# unfiltered on every pull request and push, the reason plugin-validate.yml runs
+# without a paths filter.
+
+on:
+  pull_request:
+    paths:
+      - "cleanlanguage/.claude-plugin/plugin.json"
+      - "cleanlanguage/skills/**"
+      - "cleanlanguage/SKILL.md"
+      - "tools/check-skill-discovery.py"
+      - "tools/test-skill-discovery.py"
+      - ".github/workflows/skill-discovery.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "cleanlanguage/.claude-plugin/plugin.json"
+      - "cleanlanguage/skills/**"
+      - "cleanlanguage/SKILL.md"
+      - "tools/check-skill-discovery.py"
+      - "tools/test-skill-discovery.py"
+      - ".github/workflows/skill-discovery.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Run the skill-discovery tests
+        shell: bash
+        run: python3 tools/test-skill-discovery.py
+      - name: Validate skill discovery
+        shell: bash
+        run: python3 tools/check-skill-discovery.py
