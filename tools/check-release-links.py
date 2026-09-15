@@ -70,8 +70,12 @@ def die(message: str) -> NoReturn:
 
 def main() -> int:
     for path in (SKILL, REDIRECTS, VERIFY_PAGE):
-        if not path.is_file():
+        try:
+            path.stat()
+        except FileNotFoundError:
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
+        except OSError as error:
+            die(f"{path.relative_to(REPO_ROOT)} could not be read: {error}")
 
     try:
         skill_text = SKILL.read_text(encoding="utf-8")
