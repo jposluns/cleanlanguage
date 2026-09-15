@@ -350,8 +350,7 @@ class ModifiedStampToleranceTest(unittest.TestCase):
         problems = self.check(
             published="2026-01-01", modified="2026-01-10",
             changed="2026-01-14", today="2026-02-01")
-        self.assertFalse(
-            any("but the file last changed" in p for p in problems), problems)
+        self.assertEqual(problems, [], problems)
 
     def test_stamp_beyond_tolerance_fails(self):
         # modified = D (2026-01-10); the file last changed D + 20 days, beyond the
@@ -362,6 +361,23 @@ class ModifiedStampToleranceTest(unittest.TestCase):
         self.assertTrue(
             any("the file last changed" in p and "tolerance" in p for p in problems),
             problems)
+        self.assertTrue(
+            any("beyond the 7-day tolerance" in p for p in problems), problems)
+
+    def test_stamp_exactly_at_tolerance_passes(self):
+        # The file last changed exactly D + 7 days, the tolerance boundary. The
+        # check is `> tolerance`, so exactly 7 passes; a `>=` mutation would fail
+        # this.
+        problems = self.check(
+            published="2026-01-01", modified="2026-01-10",
+            changed="2026-01-17", today="2026-02-01")
+        self.assertEqual(problems, [], problems)
+
+    def test_stamp_one_day_past_tolerance_fails(self):
+        # The file last changed D + 8 days, one day past the boundary.
+        problems = self.check(
+            published="2026-01-01", modified="2026-01-10",
+            changed="2026-01-18", today="2026-02-01")
         self.assertTrue(
             any("beyond the 7-day tolerance" in p for p in problems), problems)
 

@@ -12,10 +12,13 @@ What it verifies, per page
 1. The required tags are present: ``author``, ``article:published_time``,
    ``article:modified_time``, and ``article:author``.
 2. Both dates are ``YYYY-MM-DD``.
-3. ``article:modified_time`` is not older than the file's last commit date.
-   This is the rot check: if a page changed after the date it claims, the claim
-   is false. The comparison is one-sided on purpose, so a stamp made in a
-   working tree before the commit lands does not fail spuriously.
+3. ``article:modified_time`` is not more than ``MODIFIED_STAMP_TOLERANCE_DAYS``
+   days older than the file's last commit date, and is not in the future. This
+   is the rot check: if a page changed well after the date it claims, the claim
+   is false. A bounded tolerance is allowed because a squash merge re-dates
+   edited pages to the merge day, which can be a day or more after the stamp was
+   set. The comparison is one-sided, so a stamp made in a working tree before the
+   commit lands does not fail spuriously.
 4. ``article:published_time`` matches the date the file was added to the
    repository, so a publish date cannot be invented. ``PUBLISHED_OVERRIDES``
    records the deliberate exceptions, of which there are currently none.
@@ -329,7 +332,7 @@ def check_page(path: Path, today: str) -> tuple[list[str], str | None]:
                     problems.append(
                         f"article:modified_time is {modified} but the file last changed {changed}, "
                         f"{days_late} days later, beyond the {MODIFIED_STAMP_TOLERANCE_DAYS}-day tolerance; "
-                        f"update the stamp to {changed} or nearer"
+                        f"update the stamp to {changed} or to within {MODIFIED_STAMP_TOLERANCE_DAYS} days of it"
                     )
             if modified > today:
                 problems.append(f"article:modified_time {modified} is in the future (today is {today})")
