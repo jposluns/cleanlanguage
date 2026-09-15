@@ -147,7 +147,10 @@ def parse_frontmatter(text: str, entry: str) -> dict:
         die("PyYAML is required to validate SKILL.md frontmatter", 3)
     try:
         data = yaml.safe_load(block_text)
-    except yaml.YAMLError as error:
+    except (yaml.YAMLError, ValueError) as error:
+        # A ValueError escapes safe_load's YAML wrapping when a standard scalar
+        # constructor (an implicit timestamp, an explicit !!int, and the like) rejects
+        # its value; classify it as invalid YAML instead of a raw traceback.
         die(f"SKILL.md frontmatter at {entry} is not valid YAML: {error}")
     except RecursionError:
         die(f"SKILL.md frontmatter at {entry} could not be decoded (too deeply nested)", 3)
@@ -164,16 +167,17 @@ def parse_frontmatter(text: str, entry: str) -> dict:
     except RecursionError:
         die(f"SKILL.md frontmatter at {entry} could not be decoded (too deeply nested)", 3)
     if isinstance(root, yaml.MappingNode):
-        seen: set[str] = set()
+        seen: set[tuple[str, str]] = set()
         for key_node, _ in root.value:
             if not isinstance(key_node, yaml.ScalarNode):
-                continue
-            if key_node.tag == "tag:yaml.org,2002:merge":
-                continue  # '<<' merge key, expanded by safe_load
-            key = key_node.value
-            if key in seen:
-                die(f"SKILL.md frontmatter at {entry} has a duplicate key {key!r}")
-            seen.add(key)
+                continue  # a complex key; safe_load has already validated the mapping
+            # Compare on (tag, value): a repeated merge key is the duplicate it is, and
+            # two scalars that share a spelling but differ in YAML type (a string "1"
+            # and an integer 1) stay distinct, avoiding a false positive.
+            marker = (key_node.tag, key_node.value)
+            if marker in seen:
+                die(f"SKILL.md frontmatter at {entry} has a duplicate key {key_node.value!r}")
+            seen.add(marker)
 
     fields: dict[str, str] = {}
     for key in ("name", "description"):
@@ -202,6 +206,10 @@ def _check_entry_syntax(entry: str) -> None:
         or name in (".", "..")
     ):
         die(f"skills entry {entry!r} must be a canonical './skills/<name>' path")
+    if any(ord(ch) == 0 or 0xD800 <= ord(ch) <= 0xDFFF for ch in entry):
+        # A NUL or surrogate code point would raise an uncaught ValueError or
+        # UnicodeEncodeError from os.lstat on the path; reject it at the boundary.
+        die(f"skills entry {entry!r} contains a NUL or surrogate character")
 
 
 def _entry_name(entry: str) -> str:

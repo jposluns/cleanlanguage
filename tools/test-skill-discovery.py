@@ -383,13 +383,20 @@ class SkillDiscoveryTest(unittest.TestCase):
         self.expect_exit(3, "could not be decoded")
 
     def test_entry_metadata_oserror_fails_closed(self):
-        # A filesystem-metadata error (os.lstat) while inspecting the skills tree fails
-        # closed (exit 3) rather than escaping as an uncaught OSError.
+        # A filesystem-metadata error (os.lstat) while inspecting a DECLARED ENTRY
+        # fails closed (exit 3). The mock raises only for the entry directory, so the
+        # entry handler (not the earlier skills/ root check) is what is exercised.
         from unittest import mock
 
-        with mock.patch.object(
-            gate.os, "lstat", side_effect=OSError("Permission denied")
-        ):
+        real_lstat = gate.os.lstat
+        entry_dir = str(self.skills_dir / "cleanlanguage")
+
+        def fake_lstat(path, *args, **kwargs):
+            if str(path) == entry_dir:
+                raise OSError("Permission denied")
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch.object(gate.os, "lstat", side_effect=fake_lstat):
             self.expect_exit(3, "could not be inspected")
 
     def test_merge_key_frontmatter_passes(self):
@@ -436,6 +443,47 @@ class SkillDiscoveryTest(unittest.TestCase):
 
         with mock.patch.object(gate.json, "loads", side_effect=RecursionError):
             self.expect_exit(3, "could not be decoded")
+
+    def test_frontmatter_scalar_valueerror_fails(self):
+        # safe_load's scalar constructors raise a bare ValueError on an invalid implicit
+        # timestamp; classify it as exit-1 'not valid YAML', not an uncaught traceback.
+        self.skill_md().write_text(
+            "---\nname: cleanlanguage\ndescription: 2026-99-99\n---\nBody.\n",
+            encoding="utf-8",
+        )
+        self.expect_exit(1, "is not valid YAML")
+
+    def test_duplicate_merge_key_fails(self):
+        # A repeated YAML merge key is a duplicate top-level key and is rejected, even
+        # though safe_load would otherwise silently combine the mappings.
+        self.skill_md().write_text(
+            "---\n"
+            "<<: {name: other}\n"
+            "<<: {name: cleanlanguage, description: x}\n"
+            "---\nBody.\n",
+            encoding="utf-8",
+        )
+        self.expect_exit(1, "duplicate key")
+
+    def test_distinct_typed_keys_pass(self):
+        # Two top-level keys that share a spelling but differ in YAML type (a string
+        # "1" and an integer 1) are distinct and must not be flagged as duplicates.
+        self.skill_md().write_text(
+            "---\nname: cleanlanguage\ndescription: x\n1: a\n'1': b\n---\nBody.\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(gate.main(), 0)
+
+    def test_entry_with_nul_character_fails(self):
+        # A NUL in a declared entry would raise an uncaught ValueError from os.lstat;
+        # it is rejected at entry syntax (exit 1) instead.
+        self.write_manifest(
+            {
+                "name": "cleanlanguage",
+                "skills": ["./skills/cleanlanguage", "./skills/x\x00y"],
+            }
+        )
+        self.expect_exit(1, "NUL or surrogate")
 
     def test_crlf_frontmatter_passes(self):
         self.skill_md().write_bytes(
