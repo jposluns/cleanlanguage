@@ -143,6 +143,16 @@ class Accepts(unittest.TestCase):
             sd.mkdir()
             self.assertEqual(_run(_write(d, {"version": 1, "state_dir": str(sd)})), 0)
 
+    def test_absent_state_dir_deep_path_accepted(self):
+        # HIGH-2 (codex QA round 5) over-rejection guard: a GENUINELY-ABSENT state_dir (missing leaf AND
+        # missing parent) raises FileNotFoundError on lstat, which is absence -> accept (the not-yet-created
+        # residual stays disclosed). Only a NON-FileNotFound OSError (ENOTDIR/ENAMETOOLONG/...) is the
+        # known-unusable case the round-5 classification rejects, so this genuinely-absent path must stay
+        # GREEN after that change. RED would signal the classification over-rejects real absence.
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {
+                "version": 1, "state_dir": str(Path(d) / "absent-parent" / "state")})), 0)
+
 
 class Rejects(unittest.TestCase):
     def _reject(self, payload):
@@ -351,6 +361,42 @@ class Rejects(unittest.TestCase):
             real_file = Path(d) / "state-is-a-file"
             real_file.write_text("not a directory\n", encoding="utf-8")
             self.assertEqual(_run(_write(d, {"version": 1, "state_dir": str(real_file)})), 1)
+
+    # --- codex QA round 5: derived-path reserve (HIGH-1) and known-unusable state_dir (HIGH-2) -------
+    def test_state_dir_derived_path_reserve_rejected(self):
+        # HIGH-1: a state_dir WITHIN PATH_MAX whose length leaves no room for the machine-state files the
+        # hooks WRITE under it. Every component is <= NAME_MAX and the whole path <= PATH_MAX, so the
+        # per-component and whole-path checks BOTH pass; only the state_dir-specific reserve check rejects.
+        # At runtime lstat(<state_dir>/write-scope.json) would raise ENAMETOOLONG, classify the write-scope
+        # declaration 'bad', and drive a persistent covered-write denial. RED without STATE_DERIVED_RESERVE.
+        seg = "a" * 255  # NAME_MAX
+        sd = "/" + "/".join([seg] * 15) + "/" + "a" * 244  # 4085 bytes
+        self.assertLessEqual(len(sd.encode()), 4096, "fixture must stay within PATH_MAX")
+        self.assertGreater(len(sd.encode()) + 1 + 64, 4096, "fixture must overflow the derived reserve")
+        self._reject({"version": 1, "state_dir": sd})
+
+    def test_state_dir_path_through_regular_file_rejected(self):
+        # HIGH-2: a state_dir whose path runs THROUGH a regular file (the "/etc/passwd/state" shape). lstat
+        # raises ENOTDIR (a NON-FileNotFound OSError), which round-4 SWALLOWED as absence and accepted. The
+        # round-5 classification treats any non-FileNotFound stat fault as known-unusable and rejects, since
+        # the hook would hit the same ENOTDIR at runtime reading <state_dir>/write-scope.json -> 'bad' -> a
+        # persistent covered-write denial. RED without the fix. Hermetic: a real temp regular file stands in
+        # for /etc/passwd (verified at source: os.lstat("/etc/passwd/state") raises ENOTDIR).
+        with tempfile.TemporaryDirectory() as d:
+            real_file = Path(d) / "passwd"
+            real_file.write_text("root:x:0:0:root:/root:/bin/sh\n", encoding="utf-8")
+            self.assertEqual(_run(_write(d, {
+                "version": 1, "state_dir": str(real_file / "state")})), 1)
+
+    def test_state_dir_trailing_slash_on_regular_file_rejected(self):
+        # HIGH-2: the "/etc/passwd/" shape -- a trailing separator on a path that IS a regular file also
+        # makes lstat raise ENOTDIR, not FileNotFoundError, so round-4 swallowed it as absence too. Round-5
+        # rejects it. RED without the fix. (verified at source: os.lstat("/etc/passwd/") raises ENOTDIR.)
+        with tempfile.TemporaryDirectory() as d:
+            real_file = Path(d) / "passwd"
+            real_file.write_text("root:x:0:0:root:/root:/bin/sh\n", encoding="utf-8")
+            self.assertEqual(_run(_write(d, {
+                "version": 1, "state_dir": str(real_file) + "/"})), 1)
 
     # --- lone surrogate code points (unencodable to UTF-8) ------------------------------------------
     # A lone surrogate (U+D800..U+DFFF) passes an ord()<0x20-or-0x7f control-char test but CANNOT be

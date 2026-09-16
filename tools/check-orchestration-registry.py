@@ -60,6 +60,20 @@ MAX_AGE_HOURS_MAX = 8760
 # it is caught here at author time rather than left to fail closed at every write.
 NAME_MAX = 255   # bytes, a single path component
 PATH_MAX = 4096  # bytes, a whole path
+# Reserve room UNDER state_dir for the machine-state files the hooks WRITE there (codex QA HIGH-1, round 5).
+# _check_declared_path already bounds the state_dir STRING at PATH_MAX, but the hooks then join a basename
+# onto it, so a DERIVED path `<state_dir>/<basename>` can exceed PATH_MAX even when state_dir itself does
+# not. At runtime that overflow raises ENAMETOOLONG in write_scope_guard._load_write_scope's
+# `os.lstat(<state_dir>/write-scope.json)` (aiqt_hooks.py:9948-9953 via 10014-10015), the write-scope reader
+# classifies it 'bad', and an armed session then denies every covered write persistently
+# (aiqt_hooks.py:10388-10392). The longest basename the hooks derive under state_dir is
+# "attestations-validated.json" (27 bytes; the longest of every filename joined onto
+# _orch_state_dir_for_root in aiqt_hooks.py -- e.g. write-scope.json, resume-barrier.json,
+# dispatch-ledger.jsonl, forced-exit-surfaced.json, backlog-checkpoint.json, ESCAPE-ALLOW-YIELD). We reserve
+# that PLUS generous headroom, rounded up to 64, so a future recorder filename needs no re-count and one
+# path separator is covered. The state_dir-specific check below rejects a state_dir that leaves less than
+# this reserve (plus a separator) below PATH_MAX.
+STATE_DERIVED_RESERVE = 64  # bytes; >= len("attestations-validated.json") (27) + margin
 
 
 def _fail(msg):
@@ -229,20 +243,46 @@ def validate(path):
     # `state_dir`, if present: a declared path.
     if "state_dir" in obj:
         _check_declared_path("state_dir", obj["state_dir"])
-        # BEST-EFFORT gate-time type check (codex QA HIGH-2): if the declared state_dir EXISTS at gate time
-        # and is NOT a directory, reject it. write_scope_guard._load_write_scope reads
-        # <state_dir>/write-scope.json; when state_dir is a regular file (e.g. "/etc/passwd") that read's
-        # lstat raises ENOTDIR, the artifact reader classifies it 'bad', and an armed session then DENIES
-        # every covered write persistently (aiqt_hooks.py:9940-9946, 10015, 10388-10392). This is
-        # BEST-EFFORT, NOT a soundness guarantee: a state_dir ABSENT at gate time but created as a FILE (or
-        # otherwise unusable at runtime -- on a read-only or different filesystem) is NOT caught here,
-        # because the gate cannot verify a not-yet-created directory. When the path does not exist we do NOT
-        # fail. os.lstat (not os.stat/os.path.exists) so a symlink is judged by the link itself, and a
-        # dangling symlink (lstat succeeds, not S_ISDIR) is rejected rather than read as absent.
+        # Reserve room for the DERIVED machine-state paths (codex QA HIGH-1, round 5). _check_declared_path
+        # bounded the state_dir STRING at PATH_MAX, but the hooks join a basename onto it, so a near-limit
+        # state_dir makes `<state_dir>/<basename>` overflow PATH_MAX even though state_dir itself did not.
+        # At runtime that overflow raises ENAMETOOLONG in lstat(<state_dir>/write-scope.json), the
+        # write-scope reader classifies it 'bad', and an armed session denies every covered write
+        # persistently. Require len(state_dir) + one separator + STATE_DERIVED_RESERVE <= PATH_MAX, measured
+        # in BYTES (surrogatepass matches _check_declared_path, though surrogates are already rejected above).
+        _sd_bytes = len(obj["state_dir"].encode("utf-8", "surrogatepass"))
+        if _sd_bytes + 1 + STATE_DERIVED_RESERVE > PATH_MAX:
+            _fail("`state_dir` ({!r}) is {} bytes and leaves no room under PATH_MAX ({}) for the "
+                  "machine-state files the hooks derive under it: {} bytes + 1 separator + {} reserved "
+                  "for the longest derived filename exceeds PATH_MAX, so a path like "
+                  "<state_dir>/write-scope.json would hit ENAMETOOLONG and drive write_scope_guard to a "
+                  "persistent covered-write denial".format(
+                      obj["state_dir"], _sd_bytes, PATH_MAX, _sd_bytes, STATE_DERIVED_RESERVE))
+        # BEST-EFFORT gate-time type check (codex QA HIGH-2): classify the declared state_dir by what its
+        # lstat actually reports. write_scope_guard._load_write_scope reads <state_dir>/write-scope.json;
+        # when state_dir is a regular file (e.g. "/etc/passwd") or a path THROUGH a regular file (e.g.
+        # "/etc/passwd/" or "/etc/passwd/state") that read's lstat raises ENOTDIR, the artifact reader
+        # classifies it 'bad', and an armed session then DENIES every covered write persistently
+        # (aiqt_hooks.py:9948-9953, 10015, 10388-10392). Three outcomes, distinguished (round-5 fix; round-4
+        # collapsed every OSError to absence and ACCEPTED a known-unusable path):
+        #   - FileNotFoundError: GENUINE ABSENCE -> do NOT fail (the not-yet-created residual stays
+        #     disclosed; the gate cannot verify a not-yet-created directory).
+        #   - a successful lstat that is NOT a directory -> _fail (an existing non-dir, e.g. a regular file
+        #     or a dangling symlink whose lstat succeeds).
+        #   - ANY OTHER OSError (ENOTDIR, ENAMETOOLONG, ELOOP, EACCES, ...): the path is KNOWN-UNUSABLE at
+        #     gate time -> _fail naming it, since the hook hits the same fault at runtime. Do NOT swallow it
+        #     as absence.
+        # This is BEST-EFFORT, NOT a soundness guarantee: a state_dir absent at gate time but created as a
+        # FILE, or unusable at runtime (a read-only or different filesystem), is NOT caught here. os.lstat
+        # (not os.stat/os.path.exists) so a symlink is judged by the link itself.
         try:
             _sd_st = os.lstat(obj["state_dir"])
-        except OSError:
-            _sd_st = None
+        except FileNotFoundError:
+            _sd_st = None  # genuine absence: do NOT fail
+        except OSError as exc:
+            _fail("`state_dir` ({!r}) cannot be used as a directory at gate time ({}); the hooks write "
+                  "machine-state files inside it, so a known-unusable state_dir drives write_scope_guard "
+                  "to a persistent covered-write denial".format(obj["state_dir"], exc))
         if _sd_st is not None and not stat.S_ISDIR(_sd_st.st_mode):
             _fail("`state_dir` ({!r}) exists at gate time but is not a directory; the hooks write "
                   "machine-state files inside it, and a non-directory state_dir drives write_scope_guard "

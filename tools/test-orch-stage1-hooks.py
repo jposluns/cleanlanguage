@@ -522,9 +522,22 @@ class CorruptedRegistry(HookHarness):
         self.assertTrue(self.read_json_anywhere("resume-barrier.json")["active"])
 
     def test_resume_barrier_allows(self):
-        # status != "ok" -> _allow(), even with a pre-armed barrier (aiqt_hooks.py:9806-9807).
+        # status != "ok" -> _allow(), even with an ACTIVE barrier present (aiqt_hooks.py:9805-9807).
+        # LOAD-BEARING (codex QA round 5, LOW): on a BAD registry _orch_state_dir_for_root falls back to
+        # the XDG default (aiqt_hooks.py:7658-7659 -> _state_dir_from_registry(root, None)), NOT the
+        # registry-declared state_dir, so orch_resume_barrier reads its barrier from the XDG default. We
+        # ARM the barrier THERE by running orch_resume_audit first, which on a bad registry writes an
+        # active barrier to that XDG default (proven by test_resume_audit_warns_naming_the_registry). The
+        # real code takes the `status != "ok"` early-return and allows WITHOUT reading the barrier; a
+        # mutant that DELETES that early-return would fall through, read this active barrier, and reach the
+        # record-allowlist build where `reg` is the bad-registry detail STRING (aiqt_hooks.py:9821),
+        # changing the observed result (a fail-closed exit 2, not this clean exit-0 allow). The previous
+        # version seeded into the DECLARED state_dir, where the fall-through never looks, so the barrier
+        # was absent on both paths and the mutant survived.
         self.write_registry(self.TRUNCATED)
-        self.seed_state("resume-barrier.json", {"active": True, "warned": False, "findings": []})
+        self.run_hook("orch_resume_audit", {})  # arms an active barrier at the XDG default (bad registry)
+        self.assertTrue(self.read_json_anywhere("resume-barrier.json")["active"],
+                        "precondition: an active barrier is armed at the XDG default the handler reads")
         r = self.run_hook("orch_resume_barrier", {
             "tool_name": "Write", "tool_input": {"file_path": self._p("x.py")},
         })
