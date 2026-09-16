@@ -118,6 +118,16 @@ class Accepts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {"version": 1, "dispatch_tools": ["Workflow", "Task"]})), 0)
 
+    def test_record_sibling_of_state_dir_accepted(self):
+        # A record path that is a SIBLING of state_dir (shares a parent but is NOT inside it) is not a
+        # collision and must still validate. The prefix check must compare against `state_dir + os.sep`,
+        # so "/opt/x/orch-state-extra/..." must not be read as inside "/opt/x/orch-state". (codex QA HIGH)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {
+                "version": 1, "state_dir": "/opt/x/orch-state",
+                "record": {"handoff": "/opt/x/orch-state-extra/session-handoff.md"},
+            })), 0)
+
 
 class Rejects(unittest.TestCase):
     def _reject(self, payload):
@@ -267,6 +277,24 @@ class Rejects(unittest.TestCase):
 
     def test_dispatch_tools_non_string_entry(self):
         self._reject({"version": 1, "dispatch_tools": ["Workflow", 123]})
+
+    # --- record/lease path colliding with state_dir (codex QA HIGH) ---------------------------------
+    # A declared record/lease path ON or INSIDE state_dir collides with the machine-state files the hooks
+    # write there: orch_resume_audit opens <state_dir>/resume-barrier.json with mode "w" unconditionally
+    # (aiqt_hooks.py:9775, 9783-9785), so such a path would be clobbered by that hook write. The gate
+    # rejects the dangerous config. These are RED without the cross-field collision check (the per-key
+    # validation accepts each path in isolation).
+    def test_record_path_inside_state_dir_rejected(self):
+        self._reject({"version": 1, "state_dir": "/opt/x/orch-state",
+                      "record": {"handoff": "/opt/x/orch-state/resume-barrier.json"}})
+
+    def test_lease_path_inside_state_dir_rejected(self):
+        self._reject({"version": 1, "state_dir": "/opt/x/orch-state",
+                      "lease": {"path": "/opt/x/orch-state/session-state.md"}})
+
+    def test_record_path_equal_to_state_dir_rejected(self):
+        self._reject({"version": 1, "state_dir": "/opt/x/orch-state",
+                      "record": {"handoff": "/opt/x/orch-state"}})
 
     # --- lone surrogate code points (unencodable to UTF-8) ------------------------------------------
     # A lone surrogate (U+D800..U+DFFF) passes an ord()<0x20-or-0x7f control-char test but CANNOT be

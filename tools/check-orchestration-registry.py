@@ -111,8 +111,12 @@ def validate(path):
         _fail("cannot stat {}: {}".format(path, exc))
     # Disclosed residual (codex/claude QA LOW, not fixed here): the presence check is an lstat followed by
     # a plain blocking open() below, so a FIFO/named-pipe left at the registry path with no writer would
-    # block this open indefinitely. This is CI-SAFE: git cannot check out a FIFO, so the only exposure is
-    # an exotic hand-crafted local run, never a checked-out tree. lab_infra's validator opens
+    # block this open indefinitely. The same special-file hazard applies to a declared record/lease/state
+    # path: were one to point at a FIFO, it would block the HOOK's own read at read time, not this gate.
+    # That is out of the gate's scope: the gate validates the registry STRING (non-empty, absolute,
+    # control/surrogate-free), not the file type of the target, which may not exist at gate time. This is
+    # CI-SAFE: git cannot check out a FIFO, so the only exposure is an exotic hand-crafted local run, never
+    # a checked-out tree; the declared paths are store paths. lab_infra's validator opens
     # O_RDONLY|O_NONBLOCK and fstat-checks S_ISREG, and is the consolidation point at the stage-2 lift;
     # this gate is left as a disclosed residual rather than duplicating that hardening now.
     try:
@@ -194,6 +198,30 @@ def validate(path):
     # `state_dir`, if present: a declared path.
     if "state_dir" in obj:
         _check_declared_path("state_dir", obj["state_dir"])
+    # Cross-field collision (codex QA HIGH): a declared record/lease path that lands ON or INSIDE
+    # `state_dir` collides with the machine-state files the hooks write there. orch_resume_audit opens
+    # `<state_dir>/resume-barrier.json` with mode "w" UNCONDITIONALLY (aiqt_hooks.py:9775, 9783-9785), so
+    # a record/lease path pointing into state_dir would be clobbered by that hook write (destructive, no
+    # lease needed). The per-key checks above validate each path in isolation and cannot see this; this
+    # runs ONLY when `state_dir` is declared and valid (execution reaches here only past its
+    # _check_declared_path). `companion_stores` is intentionally NOT checked against state_dir: a state_dir
+    # legitimately MAY sit under a companion store; the hazard is a record/lease FILE landing on a
+    # machine-state file, not the state directory living under an exempt store.
+    if "state_dir" in obj:
+        norm_state_dir = os.path.normpath(obj["state_dir"])
+        declared = []
+        if isinstance(obj.get("record"), dict):
+            for key in sorted(obj["record"]):
+                declared.append(("record.{}".format(key), obj["record"][key]))
+        if isinstance(obj.get("lease"), dict) and "path" in obj["lease"]:
+            declared.append(("lease.path", obj["lease"]["path"]))
+        for label, value in declared:
+            norm_path = os.path.normpath(value)
+            if norm_path == norm_state_dir or norm_path.startswith(norm_state_dir + os.sep):
+                _fail("`{}` ({!r}) is inside `state_dir` ({!r}); a record/lease path on or under "
+                      "state_dir collides with the machine-state files the hooks write there (e.g. "
+                      "resume-barrier.json), so a hook write would clobber the declared record".format(
+                          label, value, obj["state_dir"]))
     # `dispatch_tools`, if present: a list of non-empty control-free strings.
     if "dispatch_tools" in obj:
         tools = obj["dispatch_tools"]

@@ -362,13 +362,24 @@ class ResumeAudit(HookHarness):
     def test_clean_audit_clears_barrier(self):
         # With readable record surfaces, a fresh lease, and no divergence markers, the audit is clean:
         # a silent allow and resume-barrier.json active:false (aiqt_hooks.py:9784, 9794).
+        # LOAD-BEARING: an ACTIVE barrier is SEEDED first (shape grounded at aiqt_hooks.py:9783-9785),
+        # so this proves the clean audit CLEARS an existing barrier (overwrites active:true -> false),
+        # not merely that a fresh barrier initializes inactive. orch_resume_audit writes the barrier with
+        # "active": bool(findings) unconditionally (mode "w", aiqt_hooks.py:9783-9785), so a no-findings
+        # audit overwrites the seed; removing that clear-write breaks this test.
         self.write_registry(self.stage1())
         self.arm_lease()
         self.write_record_files(handoff="Session handoff, no markers here.\n")
+        self.seed_state("resume-barrier.json", {
+            "active": True, "findings": ["seeded"], "ts": _now().isoformat(), "warned": False,
+        })
+        self.assertTrue(self.read_json("resume-barrier.json")["active"],
+                        "precondition: an active barrier is seeded before the clean audit")
         r = self.run_hook("orch_resume_audit", {})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "", "a clean audit is a silent allow")
-        self.assertFalse(self.read_json("resume-barrier.json")["active"])
+        self.assertFalse(self.read_json("resume-barrier.json")["active"],
+                         "a clean audit clears the seeded active barrier")
 
     def test_two_key_registry_finds_no_divergence(self):
         # LOAD-BEARING contrast: the same wrong-branch handoff file is on disk, but the two-key registry
