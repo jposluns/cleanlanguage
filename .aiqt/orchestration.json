@@ -10,6 +10,6 @@
     "path": "/opt/cleanlanguage/private/session-state.md",
     "max_age_hours": 24
   },
-  "state_dir": "/opt/cleanlanguage/private/orch-state",
+  "state_dir": "/opt/cleanlanguage/orch-state",
   "dispatch_tools": []
 }

@@ -278,16 +278,21 @@ class TaskOutputNoId(HookHarness):
 class PromptStamp(HookHarness):
     def test_human_prompt_stamps_and_zeroes_counters(self):
         # A genuine human prompt stamps last_human_input_utc and zeroes both denial counters
-        # (aiqt_hooks.py:9327-9333).
+        # (aiqt_hooks.py:9327-9333). LOAD-BEARING: the turn-state is SEEDED with NONZERO stop/schedule
+        # denial counters first, so a broken implementation that dropped the reset (preserving the seeded
+        # values) would fail these assertions instead of passing on a fresh (absent-key => 0) turn-state.
+        # The prompt is not a seeded wake digest, so it is genuine human input, not timer-originated.
         self.write_registry(self.stage1())
         self.arm_lease()
+        self.seed_state("turn-state.json", {"stop_denials": 5, "schedule_denials": 7})
         r = self.run_hook("orch_prompt_stamp", {"prompt": "please continue the work"})
         self.assertEqual(r.returncode, 0, r.stderr)
         ts = self.read_json("turn-state.json")
         self.assertIsNotNone(ts, "stage-1 must write turn-state.json")
         self.assertIn("last_human_input_utc", ts)
-        self.assertEqual(ts["stop_denials"], 0)
-        self.assertEqual(ts["schedule_denials"], 0)
+        self.assertEqual(ts["stop_denials"], 0, "a human prompt must zero a seeded nonzero stop counter")
+        self.assertEqual(ts["schedule_denials"], 0,
+                         "a human prompt must zero a seeded nonzero schedule counter")
 
     def test_timer_originated_prompt(self):
         # A prompt whose digest is a seeded wake digest is classified TIMER-ORIGINATED, injects the

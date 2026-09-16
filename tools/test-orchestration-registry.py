@@ -185,6 +185,22 @@ class Rejects(unittest.TestCase):
             self.assertIn("FAIL", r.stderr)
             self.assertNotIn("Traceback", r.stderr)
 
+    def test_deeply_nested_json_is_clean_fail(self):
+        # Deeply-nested JSON overflows json's recursive scanner with RecursionError, which is NOT a
+        # ValueError. Without RecursionError in the parse except it would escape as an uncaught traceback
+        # (still exit 1, but an ugly diagnostic); with it the gate emits a clean FAIL. Assert exit 1, a
+        # FAIL diagnostic, and NO traceback. The payload is written as raw bytes, not via the dict-based
+        # _write helper (which would round-trip through json.dumps).
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "orchestration.json"
+            p.write_bytes(b"[" * 100000 + b"]" * 100000)
+            r = subprocess.run(
+                [sys.executable, str(VALIDATOR), str(p)], capture_output=True, text=True,
+            )
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("FAIL", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
     # --- stage-1 arming keys ------------------------------------------------------------------------
     def test_unknown_top_level_key(self):
         # `enumerator` is a real stage-2 key deliberately used here: it documents the stage-2 seam.

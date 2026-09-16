@@ -17,7 +17,8 @@ It validates STRUCTURE only, and mirrors what the hook's `_orch_registry` and
 is inert by design), a present-but-unreadable one fails (matching the hook's `lstat` then
 read, which classify a permission fault or a dangling symlink as `bad`), and each
 `companion_stores` entry must be a non-empty absolute path (OS-agnostic, like the hook's
-`_is_absolute`) with no control character (below 0x20 or 0x7f). Whether an entry resolves to
+`_is_absolute`) with no control character (below 0x20 or 0x7f) or lone surrogate code point
+(U+D800..U+DFFF). Whether an entry resolves to
 a live git top level is a runtime property the hook checks fail-safe; the path need not
 exist on the machine running this gate.
 
@@ -44,7 +45,11 @@ ALLOWED_KEYS = {"version", "companion_stores", "record", "lease", "state_dir", "
 RECORD_KEYS = {"findings", "pending_decisions", "handoff"}
 # The lease shape _orch_scope_live and the resume audit read (aiqt_hooks.py:7786-7817, 9392-9409).
 LEASE_KEYS = {"path", "max_age_hours"}
-# The hook's own horizon sanity bound (_ORCH_MAX_HORIZON_HOURS, aiqt_hooks.py:8265).
+# A gate-side sanity bound on `lease.max_age_hours`, STRICTER than the hook. The hook's lease-freshness
+# read (aiqt_hooks.py:7793-7798) checks only `max_age_hours > 0` and applies NO upper bound to it (the
+# freshness window is `max_age * 3600`). _ORCH_MAX_HORIZON_HOURS = 8760 (aiqt_hooks.py:8265) bounds the
+# STALENESS schema's task_hours/external_hours (aiqt_hooks.py:8298-8299), NOT the lease. Capping the
+# committed lease at one year here is stricter than the hook, which is fail-safe for a committed artefact.
 MAX_AGE_HOURS_MAX = 8760
 
 
@@ -89,7 +94,7 @@ def _check_declared_path(label, value):
     if not _is_absolute(value):
         _fail("`{}` must be an absolute path, got {!r}".format(label, value))
     if _has_unsafe_char(value):
-        _fail("`{}` contains a control character".format(label))
+        _fail("`{}` contains a control or surrogate character".format(label))
 
 
 def validate(path):
@@ -104,6 +109,12 @@ def validate(path):
         return
     except OSError as exc:
         _fail("cannot stat {}: {}".format(path, exc))
+    # Disclosed residual (codex/claude QA LOW, not fixed here): the presence check is an lstat followed by
+    # a plain blocking open() below, so a FIFO/named-pipe left at the registry path with no writer would
+    # block this open indefinitely. This is CI-SAFE: git cannot check out a FIFO, so the only exposure is
+    # an exotic hand-crafted local run, never a checked-out tree. lab_infra's validator opens
+    # O_RDONLY|O_NONBLOCK and fstat-checks S_ISREG, and is the consolidation point at the stage-2 lift;
+    # this gate is left as a disclosed residual rather than duplicating that hardening now.
     try:
         with open(path, "r", encoding="utf-8") as fh:
             raw = fh.read()
@@ -115,7 +126,10 @@ def validate(path):
         _fail("{} is not valid UTF-8: {}".format(path, exc))
     try:
         obj = json.loads(raw)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
+        # ValueError covers ordinary malformed JSON; RecursionError (NOT a ValueError) covers deeply
+        # nested JSON (e.g. many thousands of open brackets) that overflows json's recursive scanner.
+        # Catching it keeps the gate a clean FAIL rather than an uncaught traceback (still fail-closed).
         _fail("{} is not valid JSON: {}".format(path, exc))
     if not isinstance(obj, dict):
         _fail("{} top level must be a JSON object, got {}".format(path, type(obj).__name__))
@@ -137,7 +151,7 @@ def validate(path):
             if not _is_absolute(entry):
                 _fail("`companion_stores[{}]` must be an absolute path, got {!r}".format(i, entry))
             if _has_unsafe_char(entry):
-                _fail("`companion_stores[{}]` contains a control character".format(i))
+                _fail("`companion_stores[{}]` contains a control or surrogate character".format(i))
     # Reject any top-level key outside the stage-1 allowlist. A new arming key lands only together with
     # its gate extension, so an unrecognized key is an ahead-of-gate or malformed registry.
     for key in obj:
@@ -172,7 +186,8 @@ def validate(path):
         if "max_age_hours" in lease:
             v = lease["max_age_hours"]
             # bool is a subclass of int; reject it. NaN/Infinity fail the range comparison and are
-            # rejected too. The (0, 8760] window mirrors the hook's horizon sanity bound.
+            # rejected too. The (0, 8760] window is a gate-side sanity cap, STRICTER than the hook, which
+            # applies no upper lease bound (see MAX_AGE_HOURS_MAX above); stricter is fail-safe here.
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not (0 < v <= MAX_AGE_HOURS_MAX):
                 _fail("`lease.max_age_hours` must be a number in (0, {}], got {!r}".format(
                     MAX_AGE_HOURS_MAX, v))
@@ -188,7 +203,7 @@ def validate(path):
             if not isinstance(entry, str) or not entry:
                 _fail("`dispatch_tools[{}]` must be a non-empty string, got {!r}".format(i, entry))
             if _has_unsafe_char(entry):
-                _fail("`dispatch_tools[{}]` contains a control character".format(i))
+                _fail("`dispatch_tools[{}]` contains a control or surrogate character".format(i))
     summary = "version 1"
     if "companion_stores" in obj:
         summary += ", {} companion store(s)".format(len(obj["companion_stores"]))
