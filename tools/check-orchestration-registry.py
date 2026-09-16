@@ -30,6 +30,8 @@ present registry.
 import json
 import os
 import pathlib
+import re
+import stat
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -51,6 +53,13 @@ LEASE_KEYS = {"path", "max_age_hours"}
 # STALENESS schema's task_hours/external_hours (aiqt_hooks.py:8298-8299), NOT the lease. Capping the
 # committed lease at one year here is stricter than the hook, which is fail-safe for a committed artefact.
 MAX_AGE_HOURS_MAX = 8760
+# POSIX filesystem length limits, applied as a pure commit-time string check to every declared path
+# (codex QA HIGH-2). A component longer than NAME_MAX, or a whole path longer than PATH_MAX, is what the
+# kernel rejects with ENAMETOOLONG at runtime. An over-long declared state_dir would, through exactly that
+# ENAMETOOLONG, drive write_scope_guard to a persistent covered-write denial (see _check_declared_path), so
+# it is caught here at author time rather than left to fail closed at every write.
+NAME_MAX = 255   # bytes, a single path component
+PATH_MAX = 4096  # bytes, a whole path
 
 
 def _fail(msg):
@@ -86,15 +95,40 @@ def _has_unsafe_char(text):
     return any(ord(ch) < 0x20 or ord(ch) == 0x7f or 0xD800 <= ord(ch) <= 0xDFFF for ch in text)
 
 
+def _norm_pathspell(p):
+    # Canonicalize a declared path for a containment comparison: collapse `.`, `..`, and redundant
+    # separators with normpath, THEN collapse any leading run of 2+ slashes to a single slash. POSIX
+    # normpath PRESERVES a leading exactly-"//" (its value is implementation-defined per POSIX) and already
+    # collapses 3+, so the only residual after normpath is a leading "//"; collapsing it makes "/a", "//a",
+    # and "///a" all compare equal. Without this, an alias spelling defeats the commonpath containment test
+    # below (norm("//opt/x") != norm("/opt/x")), which is codex QA HIGH-1's bypass.
+    return re.sub(r"^/{2,}", "/", os.path.normpath(p))
+
+
 def _check_declared_path(label, value):
-    # A registry-declared path (a record surface, the lease, the state dir) must be a non-empty absolute
-    # string with no control character, the same shape the hook's _orch_path plus its realpath walk need.
+    # A registry-declared path (a record surface, the lease, the state dir, a companion store) must be a
+    # non-empty absolute string with no control or surrogate character, the same shape the hook's _orch_path
+    # plus its realpath walk need.
     if not isinstance(value, str) or not value:
         _fail("`{}` must be a non-empty string, got {!r}".format(label, value))
     if not _is_absolute(value):
         _fail("`{}` must be an absolute path, got {!r}".format(label, value))
     if _has_unsafe_char(value):
         _fail("`{}` contains a control or surrogate character".format(label))
+    # Reject an over-long path: any single component longer than NAME_MAX bytes, or a whole path longer than
+    # PATH_MAX bytes. This is a PURE STRING check (fires in CI, no filesystem access). It closes codex QA
+    # HIGH-2's ENAMETOOLONG case: an over-long declared state_dir drives write_scope_guard._load_write_scope
+    # to a persistent covered-write DENIAL -- lstat(<state_dir>/write-scope.json) raises ENAMETOOLONG, the
+    # artifact reader classifies it 'bad', and an armed session then denies every covered write
+    # (aiqt_hooks.py:9940-9946, 10015, 10388-10392). Measured in BYTES, not code points, because the kernel
+    # limits are on the UTF-8 encoded length; surrogatepass keeps this from crashing on a surrogate that
+    # _has_unsafe_char has already rejected above. Split on both separators so a Windows-shaped path's
+    # components are measured too.
+    if len(value.encode("utf-8", "surrogatepass")) > PATH_MAX:
+        _fail("`{}` exceeds {} bytes (PATH_MAX)".format(label, PATH_MAX))
+    for comp in re.split(r"[/\\]", value):
+        if len(comp.encode("utf-8", "surrogatepass")) > NAME_MAX:
+            _fail("`{}` has a path component longer than {} bytes (NAME_MAX)".format(label, NAME_MAX))
 
 
 def validate(path):
@@ -150,12 +184,9 @@ def validate(path):
         if not isinstance(stores, list):
             _fail("`companion_stores` must be a list, got {}".format(type(stores).__name__))
         for i, entry in enumerate(stores):
-            if not isinstance(entry, str) or not entry:
-                _fail("`companion_stores[{}]` must be a non-empty string, got {!r}".format(i, entry))
-            if not _is_absolute(entry):
-                _fail("`companion_stores[{}]` must be an absolute path, got {!r}".format(i, entry))
-            if _has_unsafe_char(entry):
-                _fail("`companion_stores[{}]` contains a control or surrogate character".format(i))
+            # Route through the shared declared-path helper: same non-empty/absolute/control-and-surrogate
+            # checks as before, now also covered by the NAME_MAX/PATH_MAX over-long check (codex QA HIGH-2).
+            _check_declared_path("companion_stores[{}]".format(i), entry)
     # Reject any top-level key outside the stage-1 allowlist. A new arming key lands only together with
     # its gate extension, so an unrecognized key is an ahead-of-gate or malformed registry.
     for key in obj:
@@ -198,6 +229,24 @@ def validate(path):
     # `state_dir`, if present: a declared path.
     if "state_dir" in obj:
         _check_declared_path("state_dir", obj["state_dir"])
+        # BEST-EFFORT gate-time type check (codex QA HIGH-2): if the declared state_dir EXISTS at gate time
+        # and is NOT a directory, reject it. write_scope_guard._load_write_scope reads
+        # <state_dir>/write-scope.json; when state_dir is a regular file (e.g. "/etc/passwd") that read's
+        # lstat raises ENOTDIR, the artifact reader classifies it 'bad', and an armed session then DENIES
+        # every covered write persistently (aiqt_hooks.py:9940-9946, 10015, 10388-10392). This is
+        # BEST-EFFORT, NOT a soundness guarantee: a state_dir ABSENT at gate time but created as a FILE (or
+        # otherwise unusable at runtime -- on a read-only or different filesystem) is NOT caught here,
+        # because the gate cannot verify a not-yet-created directory. When the path does not exist we do NOT
+        # fail. os.lstat (not os.stat/os.path.exists) so a symlink is judged by the link itself, and a
+        # dangling symlink (lstat succeeds, not S_ISDIR) is rejected rather than read as absent.
+        try:
+            _sd_st = os.lstat(obj["state_dir"])
+        except OSError:
+            _sd_st = None
+        if _sd_st is not None and not stat.S_ISDIR(_sd_st.st_mode):
+            _fail("`state_dir` ({!r}) exists at gate time but is not a directory; the hooks write "
+                  "machine-state files inside it, and a non-directory state_dir drives write_scope_guard "
+                  "to a persistent covered-write denial".format(obj["state_dir"]))
     # Cross-field collision (codex QA HIGH): a declared record/lease path that lands ON or INSIDE
     # `state_dir` collides with the machine-state files the hooks write there. orch_resume_audit opens
     # `<state_dir>/resume-barrier.json` with mode "w" UNCONDITIONALLY (aiqt_hooks.py:9775, 9783-9785), so
@@ -208,7 +257,14 @@ def validate(path):
     # legitimately MAY sit under a companion store; the hazard is a record/lease FILE landing on a
     # machine-state file, not the state directory living under an exempt store.
     if "state_dir" in obj:
-        norm_state_dir = os.path.normpath(obj["state_dir"])
+        # Robust against path-spelling ALIASES (codex QA HIGH-1). The round-3 normpath+startswith test was
+        # bypassed by aliases the two spellings do not share: state_dir "/" + record "/x.json" (norm_state
+        # "/" + os.sep = "//", which "/x.json" does not start with), and any leading double-slash spelling
+        # (POSIX normpath preserves a leading "//"). _norm_pathspell canonicalizes BOTH sides and collapses
+        # that leading "//", and os.path.commonpath then decides containment component-wise, so a genuine
+        # SIBLING (e.g. /opt/x/orch-state-extra vs state_dir /opt/x/orch-state -> commonpath /opt/x) is
+        # still accepted while ON-or-INSIDE is rejected.
+        norm_state_dir = _norm_pathspell(obj["state_dir"])
         declared = []
         if isinstance(obj.get("record"), dict):
             for key in sorted(obj["record"]):
@@ -216,12 +272,30 @@ def validate(path):
         if isinstance(obj.get("lease"), dict) and "path" in obj["lease"]:
             declared.append(("lease.path", obj["lease"]["path"]))
         for label, value in declared:
-            norm_path = os.path.normpath(value)
-            if norm_path == norm_state_dir or norm_path.startswith(norm_state_dir + os.sep):
-                _fail("`{}` ({!r}) is inside `state_dir` ({!r}); a record/lease path on or under "
+            norm_path = _norm_pathspell(value)
+            collides = norm_path == norm_state_dir
+            if not collides:
+                try:
+                    collides = os.path.commonpath([norm_path, norm_state_dir]) == norm_state_dir
+                except ValueError:
+                    # commonpath raises only on mixing absolute and relative paths, or (on Windows) paths on
+                    # different drives. Both inputs here are validated absolute POSIX-shaped paths, so it
+                    # should not raise; if it somehow does, treat it as a collision and fail defensively
+                    # rather than accept an unproven-safe record path.
+                    collides = True
+            if collides:
+                _fail("`{}` ({!r}) is on or inside `state_dir` ({!r}); a record/lease path on or under "
                       "state_dir collides with the machine-state files the hooks write there (e.g. "
                       "resume-barrier.json), so a hook write would clobber the declared record".format(
                           label, value, obj["state_dir"]))
+        # IRREDUCIBLE RESIDUAL (codex QA HIGH-2, disclosed not closed): this gate validates commit-time
+        # STRINGS and, best-effort, the state_dir's gate-time TYPE (above). It CANNOT verify runtime
+        # directory-usability: a state_dir absent at gate time but unusable at runtime -- created as a file,
+        # or living on a read-only or different filesystem -- would drive write_scope_guard._load_write_scope
+        # to a persistent covered-write denial. That FAILS SAFE (a denial, never a bypass), is
+        # operator-fixable, and is backstopped by the committed registry plus human review. write_scope_guard
+        # is defence-in-depth, not a security boundary, so a fail-safe denial there is a degraded-but-safe
+        # state, not an exploitable one.
     # `dispatch_tools`, if present: a list of non-empty control-free strings.
     if "dispatch_tools" in obj:
         tools = obj["dispatch_tools"]

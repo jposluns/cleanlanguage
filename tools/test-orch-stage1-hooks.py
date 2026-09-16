@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Behavioural change-carries-check for the item 28.2 stage-1 arming of the recorder/audit hooks.
 
-This suite proves that the stage-1 `.aiqt/orchestration.json` arming keys (`record`, `lease`,
-`state_dir`, `dispatch_tools`) actually change the installed hook's behaviour, and that the change
-adds no unbounded or fail-closed path beyond the pre-existing bad-registry class. It does so by
+This suite proves that the stage-1 `.aiqt/orchestration.json` arming keys `record`, `lease`, and
+`state_dir` actually change the installed hook's behaviour, and that the change adds no unbounded or
+fail-closed path beyond the pre-existing bad-registry class. The fourth stage-1 key, `dispatch_tools`,
+is NOT behaviourally load-bearing at its committed value `[]`: the recorder reads it as
+`reg.get("dispatch_tools") if isinstance(..., list) else []` (aiqt_hooks.py:9277-9280), so declaring
+`[]` is identical to omitting the key, and a background Bash or a TaskOutput is recorded regardless of
+it. `dispatch_tools` only EXTENDS the dispatch set with extra tool names; the committed `[]` is declared
+for honesty and explicitness, not because it flips any assertion here. It does so by
 driving the REAL installed hook script directly: per case it builds a throwaway git repo and a
 temporary stand-in store, writes a fixture registry into the repo, and invokes
 
@@ -14,9 +19,11 @@ the hook wrote under the temporary store. It NEVER touches the real /opt/cleanla
 so it runs in CI.
 
 Every armed-behaviour proof runs against BOTH the stage-1 fixture (behaviour PRESENT) and today's
-two-key registry (behaviour ABSENT), so each arming key is shown load-bearing: a recorder that wrote
-unconditionally, or an audit that read an undeclared surface, would flip the two-key assertion. That
-dual run is the change-carries-check.
+two-key registry (behaviour ABSENT), so each behaviourally load-bearing arming key (`record`, `lease`,
+`state_dir`) is shown load-bearing: a recorder that wrote unconditionally, or an audit that read an
+undeclared surface, would flip the two-key assertion. That dual run is the change-carries-check.
+(`dispatch_tools` is exempt from this contrast, per the note above: its committed `[]` is
+behaviourally identical to omitting it, so a two-key contrast on it would prove nothing.)
 
 Grounding: every hook-behaviour assertion below is read from
 plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py at source; the cited line numbers are in the

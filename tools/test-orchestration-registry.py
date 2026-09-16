@@ -120,13 +120,28 @@ class Accepts(unittest.TestCase):
 
     def test_record_sibling_of_state_dir_accepted(self):
         # A record path that is a SIBLING of state_dir (shares a parent but is NOT inside it) is not a
-        # collision and must still validate. The prefix check must compare against `state_dir + os.sep`,
-        # so "/opt/x/orch-state-extra/..." must not be read as inside "/opt/x/orch-state". (codex QA HIGH)
+        # collision and must still validate. The containment check compares component-wise (commonpath),
+        # so "/opt/x/orch-state-extra/..." must not be read as inside "/opt/x/orch-state" (their commonpath
+        # is /opt/x, not the state_dir). (codex QA HIGH-1)
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {
                 "version": 1, "state_dir": "/opt/x/orch-state",
                 "record": {"handoff": "/opt/x/orch-state-extra/session-handoff.md"},
             })), 0)
+
+    def test_absent_state_dir_path_accepted(self):
+        # The best-effort non-directory check (codex QA HIGH-2) must NOT fire when the path does not exist:
+        # the gate cannot verify a not-yet-created directory, so an absent state_dir path stays valid.
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {
+                "version": 1, "state_dir": str(Path(d) / "not-created-yet")})), 0)
+
+    def test_existing_directory_state_dir_accepted(self):
+        # A state_dir that EXISTS as a real directory passes the best-effort gate-time type check.
+        with tempfile.TemporaryDirectory() as d:
+            sd = Path(d) / "orch-state"
+            sd.mkdir()
+            self.assertEqual(_run(_write(d, {"version": 1, "state_dir": str(sd)})), 0)
 
 
 class Rejects(unittest.TestCase):
@@ -295,6 +310,47 @@ class Rejects(unittest.TestCase):
     def test_record_path_equal_to_state_dir_rejected(self):
         self._reject({"version": 1, "state_dir": "/opt/x/orch-state",
                       "record": {"handoff": "/opt/x/orch-state"}})
+
+    # --- codex QA round 4: path-spelling ALIASES, over-long paths, non-dir state_dir ----------------
+    # These are RED against the round-3 normpath+startswith collision check (which accepted the aliases)
+    # and against the round-3 path validation (which had no length or state_dir-type check).
+    def test_state_dir_root_alias_collision_rejected(self):
+        # HIGH-1: state_dir "/" + a record path directly under it. The round-3 check accepted this because
+        # norm_state_dir "/" + os.sep = "//", which "/resume-barrier.json" does not start with. The
+        # commonpath check rejects it (commonpath(["/resume-barrier.json","/"]) == "/" == state_dir).
+        self._reject({"version": 1, "state_dir": "/",
+                      "record": {"handoff": "/resume-barrier.json"}})
+
+    def test_double_slash_collision_in_record_rejected(self):
+        # HIGH-1: a leading-double-slash spelling of an inside-state_dir record path. POSIX normpath
+        # PRESERVES a leading "//", so the round-3 startswith missed it; _norm_pathspell collapses it.
+        self._reject({"version": 1, "state_dir": "/opt/x/orch-state",
+                      "record": {"handoff": "//opt/x/orch-state/resume-barrier.json"}})
+
+    def test_double_slash_collision_in_state_dir_rejected(self):
+        # HIGH-1: the double-slash on the state_dir side instead; both spellings must reject.
+        self._reject({"version": 1, "state_dir": "//opt/x/orch-state",
+                      "lease": {"path": "/opt/x/orch-state/session-state.md"}})
+
+    def test_overlong_state_dir_component_rejected(self):
+        # HIGH-2: a path component over NAME_MAX (255) bytes. At runtime, lstat(<state_dir>/write-scope.json)
+        # would raise ENAMETOOLONG, the write-scope reader would classify it 'bad', and an armed session
+        # would deny every covered write persistently; the gate rejects the over-long string at author time.
+        self._reject({"version": 1, "state_dir": "/opt/" + "a" * 256})
+
+    def test_overlong_record_component_rejected(self):
+        # HIGH-2: the same over-long component in a record path.
+        self._reject({"version": 1, "record": {"findings": "/opt/" + "a" * 256}})
+
+    def test_state_dir_existing_non_directory_rejected(self):
+        # HIGH-2 best-effort: a state_dir that EXISTS at gate time as a regular file (the "/etc/passwd"
+        # shape) is rejected. A real temp regular file is created and state_dir points at it. At runtime
+        # write_scope_guard._load_write_scope would read <file>/write-scope.json -> ENOTDIR -> 'bad' -> a
+        # persistent covered-write denial; the gate catches the gate-time type. RED without the fix.
+        with tempfile.TemporaryDirectory() as d:
+            real_file = Path(d) / "state-is-a-file"
+            real_file.write_text("not a directory\n", encoding="utf-8")
+            self.assertEqual(_run(_write(d, {"version": 1, "state_dir": str(real_file)})), 1)
 
     # --- lone surrogate code points (unencodable to UTF-8) ------------------------------------------
     # A lone surrogate (U+D800..U+DFFF) passes an ord()<0x20-or-0x7f control-char test but CANNOT be
