@@ -57,16 +57,28 @@ def _is_absolute(path):
     # OS-agnostic, matching the hook's _is_absolute: a POSIX absolute path OR a Windows path
     # carrying both a drive and a root. This keeps the gate from falsely rejecting an entry the
     # hook would accept when the gate runs on a different OS than the committer.
+    #
+    # Disclosed residual (codex QA LOW, not fixed): because this is OS-agnostic, a PureWindowsPath value
+    # such as `C:\x` reads as absolute here, matching the installed hook and the pack's lab_infra
+    # validator. On this POSIX host the POSIX hook would instead resolve such a value RELATIVE to the
+    # repo. This is left as a disclosed residual rather than fixed, to preserve cross-OS parity with the
+    # pack; the committed store paths are POSIX-absolute, and both human review and the committed-registry
+    # change-carries-check guard the committed registry against a stray Windows-shaped path.
     return pathlib.PurePosixPath(path).is_absolute() or pathlib.PureWindowsPath(path).is_absolute()
 
 
-def _has_control_char(text):
-    # A control character (below 0x20 or 0x7f DEL) in a declared path is load-bearing to reject, not
-    # cosmetic: a NUL in a record path reaches os.path.realpath inside orch_resume_barrier
-    # (aiqt_hooks.py:9828), which raises ValueError, and the PreToolUse dispatcher fails closed exit 2
-    # on a handler crash (aiqt_hooks.py:10705-10716) -- the one route by which a stage-1 key could reach
-    # a blocking outcome. The gate closes it for the committed file (matching _wrtscp/companion_stores).
-    return any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in text)
+def _has_unsafe_char(text):
+    # A control character (below 0x20 or 0x7f DEL) OR a lone surrogate code point (U+D800..U+DFFF) in a
+    # declared path is load-bearing to reject, not cosmetic. Both crash the same PreToolUse path.
+    # Control character: a NUL in a record path reaches os.path.realpath inside orch_resume_barrier
+    # (aiqt_hooks.py:9828), which raises ValueError. Surrogate: a lone surrogate CANNOT be UTF-8 encoded
+    # (it is unpaired), so when the hook resolves the declared path (os.path.realpath / open in
+    # orch_resume_barrier, aiqt_hooks.py:9828-9830, a PreToolUse event) the encode to the filesystem
+    # encoding raises UnicodeEncodeError. Either crash makes the PreToolUse dispatcher fail closed exit 2
+    # (aiqt_hooks.py:10705-10716) -- the one route by which a stage-1 key could reach a blocking outcome.
+    # Rejecting surrogates here closes exactly the route the control-char rejection claims to close
+    # (closes the codex QA HIGH). The gate closes it for the committed file (matching _wrtscp/companion_stores).
+    return any(ord(ch) < 0x20 or ord(ch) == 0x7f or 0xD800 <= ord(ch) <= 0xDFFF for ch in text)
 
 
 def _check_declared_path(label, value):
@@ -76,7 +88,7 @@ def _check_declared_path(label, value):
         _fail("`{}` must be a non-empty string, got {!r}".format(label, value))
     if not _is_absolute(value):
         _fail("`{}` must be an absolute path, got {!r}".format(label, value))
-    if _has_control_char(value):
+    if _has_unsafe_char(value):
         _fail("`{}` contains a control character".format(label))
 
 
@@ -124,7 +136,7 @@ def validate(path):
                 _fail("`companion_stores[{}]` must be a non-empty string, got {!r}".format(i, entry))
             if not _is_absolute(entry):
                 _fail("`companion_stores[{}]` must be an absolute path, got {!r}".format(i, entry))
-            if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in entry):
+            if _has_unsafe_char(entry):
                 _fail("`companion_stores[{}]` contains a control character".format(i))
     # Reject any top-level key outside the stage-1 allowlist. A new arming key lands only together with
     # its gate extension, so an unrecognized key is an ahead-of-gate or malformed registry.
@@ -175,7 +187,7 @@ def validate(path):
         for i, entry in enumerate(tools):
             if not isinstance(entry, str) or not entry:
                 _fail("`dispatch_tools[{}]` must be a non-empty string, got {!r}".format(i, entry))
-            if _has_control_char(entry):
+            if _has_unsafe_char(entry):
                 _fail("`dispatch_tools[{}]` contains a control character".format(i))
     summary = "version 1"
     if "companion_stores" in obj:

@@ -72,7 +72,8 @@ class RealRegistry(unittest.TestCase):
         # two-key registry (record/lease/state_dir absent) and green only once the arming change lands,
         # so the gate's own test suite fails without the flip it guards.
         if not REAL_REGISTRY.exists():
-            self.skipTest("no committed .aiqt/orchestration.json")
+            self.fail("committed .aiqt/orchestration.json is missing; the stage-1 arming registry "
+                      "must be present and armed")
         obj = json.loads(REAL_REGISTRY.read_text(encoding="utf-8"))
         for key in ("record", "lease", "state_dir", "dispatch_tools"):
             self.assertIn(key, obj, "committed registry is missing the stage-1 arming key {!r}".format(key))
@@ -250,6 +251,28 @@ class Rejects(unittest.TestCase):
 
     def test_dispatch_tools_non_string_entry(self):
         self._reject({"version": 1, "dispatch_tools": ["Workflow", 123]})
+
+    # --- lone surrogate code points (unencodable to UTF-8) ------------------------------------------
+    # A lone surrogate (U+D800..U+DFFF) passes an ord()<0x20-or-0x7f control-char test but CANNOT be
+    # UTF-8 encoded, so when the hook resolves such a declared path (os.path.realpath in
+    # orch_resume_barrier, aiqt_hooks.py:9828-9830, a PreToolUse event) the encode raises
+    # UnicodeEncodeError and the PreToolUse dispatcher fails closed exit 2 (aiqt_hooks.py:10705-10716) --
+    # the very route the control-char rejection claims to close. The gate must reject surrogates in every
+    # declared-path surface. (codex QA HIGH)
+    def test_record_surrogate_path(self):
+        self._reject({"version": 1, "record": {"findings": "/opt/x/find" + chr(0xD800) + "ings.md"}})
+
+    def test_companion_surrogate(self):
+        self._reject({"version": 1, "companion_stores": ["/opt/x/" + chr(0xD800) + "store"]})
+
+    def test_state_dir_surrogate(self):
+        self._reject({"version": 1, "state_dir": "/opt/x/" + chr(0xD800) + "state"})
+
+    def test_lease_path_surrogate(self):
+        self._reject({"version": 1, "lease": {"path": "/opt/x/" + chr(0xD800) + "lease"}})
+
+    def test_dispatch_tools_surrogate(self):
+        self._reject({"version": 1, "dispatch_tools": ["Workflow", "Ta" + chr(0xD800) + "sk"]})
 
 
 if __name__ == "__main__":
