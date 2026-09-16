@@ -24,6 +24,22 @@ VALIDATOR = HERE / "check-orchestration-registry.py"
 REPO_ROOT = HERE.parent
 REAL_REGISTRY = REPO_ROOT / ".aiqt" / "orchestration.json"
 
+# A full stage-1 registry with every optional arming key present, used as the accept fixture. The
+# paths are illustrative absolutes (the gate validates STRUCTURE, not existence), so this stays
+# independent of any one machine's store layout.
+STAGE1 = {
+    "version": 1,
+    "companion_stores": ["/opt/x/private"],
+    "record": {
+        "findings": "/opt/x/private/open-findings.md",
+        "pending_decisions": "/opt/x/private/pending-decisions.md",
+        "handoff": "/opt/x/private/session-handoff.md",
+    },
+    "lease": {"path": "/opt/x/private/session-state.md", "max_age_hours": 24},
+    "state_dir": "/opt/x/private/orch-state",
+    "dispatch_tools": [],
+}
+
 
 def _run(path) -> int:
     """Run the validator against `path`; return its exit code."""
@@ -50,6 +66,19 @@ class RealRegistry(unittest.TestCase):
             self.skipTest("no committed .aiqt/orchestration.json")
         self.assertEqual(_run(REAL_REGISTRY), 0)
 
+    def test_committed_registry_is_stage1_armed(self):
+        # The change-carries-check on the REAL file: the committed stage-1 registry must carry the
+        # recorder/audit arming keys AND validate. This assertion is RED on a tree that still ships the
+        # two-key registry (record/lease/state_dir absent) and green only once the arming change lands,
+        # so the gate's own test suite fails without the flip it guards.
+        if not REAL_REGISTRY.exists():
+            self.skipTest("no committed .aiqt/orchestration.json")
+        obj = json.loads(REAL_REGISTRY.read_text(encoding="utf-8"))
+        for key in ("record", "lease", "state_dir", "dispatch_tools"):
+            self.assertIn(key, obj, "committed registry is missing the stage-1 arming key {!r}".format(key))
+        self.assertIn("path", obj["lease"])
+        self.assertEqual(_run(REAL_REGISTRY), 0)
+
 
 class Accepts(unittest.TestCase):
     def test_absent_is_ok(self):
@@ -73,6 +102,20 @@ class Accepts(unittest.TestCase):
         # absolute, so the gate must accept it even running on POSIX, to match what the hook accepts.
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {"version": 1, "companion_stores": ["C:\\repo"]})), 0)
+
+    def test_full_stage1_fixture(self):
+        # A full stage-1 registry with every optional arming key present must validate.
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, STAGE1)), 0)
+
+    def test_lease_without_max_age(self):
+        # max_age_hours is optional: a lease with only a path is valid.
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {"version": 1, "lease": {"path": "/opt/x/lease"}})), 0)
+
+    def test_dispatch_tools_with_strings(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {"version": 1, "dispatch_tools": ["Workflow", "Task"]})), 0)
 
 
 class Rejects(unittest.TestCase):
@@ -140,6 +183,73 @@ class Rejects(unittest.TestCase):
             self.assertEqual(r.returncode, 1)
             self.assertIn("FAIL", r.stderr)
             self.assertNotIn("Traceback", r.stderr)
+
+    # --- stage-1 arming keys ------------------------------------------------------------------------
+    def test_unknown_top_level_key(self):
+        # `enumerator` is a real stage-2 key deliberately used here: it documents the stage-2 seam.
+        # A key outside the stage-1 allowlist lands only with its own gate extension, so it is rejected
+        # now rather than shipping an ahead-of-gate registry an installed reader would act on.
+        self._reject({"version": 1, "enumerator": {"argv": ["true"]}})
+
+    def test_record_not_a_dict(self):
+        self._reject({"version": 1, "record": "/opt/x/findings.md"})
+
+    def test_record_empty(self):
+        self._reject({"version": 1, "record": {}})
+
+    def test_record_unknown_subkey(self):
+        self._reject({"version": 1, "record": {"bogus": "/opt/x/findings.md"}})
+
+    def test_record_empty_path(self):
+        self._reject({"version": 1, "record": {"findings": ""}})
+
+    def test_record_relative_path(self):
+        self._reject({"version": 1, "record": {"findings": "relative/findings.md"}})
+
+    def test_record_control_char_path(self):
+        self._reject({"version": 1, "record": {"findings": "/opt/x/find\nings.md"}})
+
+    def test_record_nul_in_path(self):
+        # A NUL in a declared record path is the load-bearing case: it would raise inside the hook's
+        # orch_resume_barrier realpath walk (aiqt_hooks.py:9828) on a PreToolUse event, and that
+        # dispatcher fails closed exit 2 on a handler crash. The gate rejects it here.
+        self._reject({"version": 1, "record": {"findings": "/opt/x/find" + chr(0) + "ings.md"}})
+
+    def test_lease_missing_path(self):
+        self._reject({"version": 1, "lease": {"max_age_hours": 24}})
+
+    def test_lease_max_age_bool(self):
+        # bool is a subclass of int; True/False are not durations.
+        self._reject({"version": 1, "lease": {"path": "/opt/x/lease", "max_age_hours": True}})
+
+    def test_lease_max_age_zero(self):
+        self._reject({"version": 1, "lease": {"path": "/opt/x/lease", "max_age_hours": 0}})
+
+    def test_lease_max_age_negative(self):
+        self._reject({"version": 1, "lease": {"path": "/opt/x/lease", "max_age_hours": -1}})
+
+    def test_lease_max_age_string(self):
+        self._reject({"version": 1, "lease": {"path": "/opt/x/lease", "max_age_hours": "24"}})
+
+    def test_lease_max_age_over_horizon(self):
+        self._reject({"version": 1, "lease": {"path": "/opt/x/lease", "max_age_hours": 9999}})
+
+    def test_lease_unknown_subkey(self):
+        # holder_is_session_id is the settled omission: an unknown lease key is rejected, mechanically
+        # keeping it out of the committed registry.
+        self._reject({"version": 1, "lease": {"path": "/opt/x/lease", "holder_is_session_id": True}})
+
+    def test_state_dir_control_char(self):
+        self._reject({"version": 1, "state_dir": "/opt/x/orch\tstate"})
+
+    def test_state_dir_relative(self):
+        self._reject({"version": 1, "state_dir": "orch-state"})
+
+    def test_dispatch_tools_not_a_list(self):
+        self._reject({"version": 1, "dispatch_tools": "Workflow"})
+
+    def test_dispatch_tools_non_string_entry(self):
+        self._reject({"version": 1, "dispatch_tools": ["Workflow", 123]})
 
 
 if __name__ == "__main__":

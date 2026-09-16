@@ -34,6 +34,17 @@ jobs:
         shell: bash
         run: python3 tools/check-orchestration-registry.py
 
-      - name: Run the orchestration-registry tests
+      - name: Run the orchestration-registry gate tests
         shell: bash
         run: python3 tools/test-orchestration-registry.py
+
+      - name: Run the stage-1 hook behaviour tests
+        shell: bash
+        run: python3 tools/test-orch-stage1-hooks.py
+
+      # Re-run the gate against the committed registry by its explicit path, so this step is RED both on
+      # a malformed edit and (via the gate tests above, which assert the arming keys are present) on a
+      # tree that lacks the stage-1 arming change.
+      - name: Validate the committed orchestration registry explicitly
+        shell: bash
+        run: python3 tools/check-orchestration-registry.py .aiqt/orchestration.json
