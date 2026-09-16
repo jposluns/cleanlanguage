@@ -143,6 +143,25 @@ class Accepts(unittest.TestCase):
             sd.mkdir()
             self.assertEqual(_run(_write(d, {"version": 1, "state_dir": str(sd)})), 0)
 
+    def test_symlink_record_resolving_outside_state_dir_accepted(self):
+        # HIGH-1 (codex QA round 6) over-rejection guard: a record path through a symlink that resolves
+        # OUTSIDE state_dir must still be ACCEPTED. real dir D is state_dir; a SEPARATE real dir E; sibling
+        # symlink L -> E; record.handoff = "<L>/session-handoff.md" resolves to E/session-handoff.md, which
+        # is not on or inside D. Both the lexical and the resolved-path checks must accept (exit 0), so the
+        # new resolved-path containment does not over-reject a legitimate symlinked record location.
+        with tempfile.TemporaryDirectory() as d:
+            state_dir = Path(d) / "state"
+            state_dir.mkdir()
+            elsewhere = Path(d) / "elsewhere"
+            elsewhere.mkdir()
+            alias = Path(d) / "alias"
+            os.symlink(str(elsewhere), str(alias))
+            reg = _write(d, {
+                "version": 1, "state_dir": str(state_dir),
+                "record": {"handoff": str(alias / "session-handoff.md")},
+            })
+            self.assertEqual(_run(reg), 0)
+
     def test_absent_state_dir_deep_path_accepted(self):
         # HIGH-2 (codex QA round 5) over-rejection guard: a GENUINELY-ABSENT state_dir (missing leaf AND
         # missing parent) raises FileNotFoundError on lstat, which is absence -> accept (the not-yet-created
@@ -352,6 +371,16 @@ class Rejects(unittest.TestCase):
         # HIGH-2: the same over-long component in a record path.
         self._reject({"version": 1, "record": {"findings": "/opt/" + "a" * 256}})
 
+    def test_overlong_component_with_backslash_rejected(self):
+        # HIGH-2 (codex QA round 6): on POSIX a backslash is a VALID filename character, so
+        # "a"*150 + "\\" + "a"*150 is ONE 301-byte POSIX component, over NAME_MAX (255). Round 5's
+        # `re.split(r"[/\\]", ...)` split it AT the backslash into two <=255-byte fragments and wrongly
+        # ACCEPTED it, only to hit ENAMETOOLONG at runtime. Splitting on "/" ONLY measures the true 301-byte
+        # component and rejects. RED against the round-5 `[/\\]` split (which returns exit 0 here).
+        comp = "a" * 150 + "\\" + "a" * 150  # 301 bytes, ONE POSIX component
+        self.assertEqual(len(comp.encode()), 301, "fixture must be a 301-byte single POSIX component")
+        self._reject({"version": 1, "record": {"findings": "/opt/x/" + comp}})
+
     def test_state_dir_existing_non_directory_rejected(self):
         # HIGH-2 best-effort: a state_dir that EXISTS at gate time as a regular file (the "/etc/passwd"
         # shape) is rejected. A real temp regular file is created and state_dir points at it. At runtime
@@ -397,6 +426,26 @@ class Rejects(unittest.TestCase):
             real_file.write_text("root:x:0:0:root:/root:/bin/sh\n", encoding="utf-8")
             self.assertEqual(_run(_write(d, {
                 "version": 1, "state_dir": str(real_file) + "/"})), 1)
+
+    # --- codex QA round 6: existing symlink alias defeats the LEXICAL containment check --------------
+    def test_symlink_alias_record_into_state_dir_rejected(self):
+        # HIGH-1 (codex QA round 6): an EXISTING symlink makes two DIFFERENT spellings resolve to the same
+        # file, so a record path that LEXICALLY looks like a sibling of state_dir actually resolves ONTO a
+        # machine-state file inside it. Hermetic reproduction: real dir D is state_dir; sibling symlink
+        # L -> D; record.handoff = "<L>/resume-barrier.json". Lexically norm(L/...) and norm(D) share only
+        # their parent tmp dir (commonpath != state_dir), so the lexical check ACCEPTS. The resolved-path
+        # check realpath's both -- realpath(L/resume-barrier.json) == realpath(D)/resume-barrier.json,
+        # inside realpath(D) -- and REJECTS. RED without the resolved-path check (gate would exit 0).
+        with tempfile.TemporaryDirectory() as d:
+            real_dir = Path(d) / "state"
+            real_dir.mkdir()
+            alias = Path(d) / "alias"
+            os.symlink(str(real_dir), str(alias))
+            reg = _write(d, {
+                "version": 1, "state_dir": str(real_dir),
+                "record": {"handoff": str(alias / "resume-barrier.json")},
+            })
+            self.assertEqual(_run(reg), 1)
 
     # --- lone surrogate code points (unencodable to UTF-8) ------------------------------------------
     # A lone surrogate (U+D800..U+DFFF) passes an ord()<0x20-or-0x7f control-char test but CANNOT be

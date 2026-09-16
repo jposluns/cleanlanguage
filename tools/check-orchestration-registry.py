@@ -119,6 +119,22 @@ def _norm_pathspell(p):
     return re.sub(r"^/{2,}", "/", os.path.normpath(p))
 
 
+def _contains_or_equal(child, parent):
+    # True when absolute `child` equals `parent` or lies inside it, decided component-wise by commonpath
+    # (so a genuine sibling like /opt/x/orch-state-extra is NOT read as inside /opt/x/orch-state, whose
+    # commonpath is /opt/x). Both arguments are absolute -- either canonicalized spellings (_norm_pathspell)
+    # or realpath'd values. commonpath raises ValueError only on mixing absolute and relative paths, or (on
+    # Windows) paths on different drives; neither applies to two validated absolute POSIX-shaped paths, but
+    # if it somehow does, treat it as a collision and fail defensively rather than accept an unproven-safe
+    # path. Shared by the lexical and the resolved-path containment checks (codex QA HIGH-1).
+    if child == parent:
+        return True
+    try:
+        return os.path.commonpath([child, parent]) == parent
+    except ValueError:
+        return True
+
+
 def _check_declared_path(label, value):
     # A registry-declared path (a record surface, the lease, the state dir, a companion store) must be a
     # non-empty absolute string with no control or surrogate character, the same shape the hook's _orch_path
@@ -136,11 +152,18 @@ def _check_declared_path(label, value):
     # artifact reader classifies it 'bad', and an armed session then denies every covered write
     # (aiqt_hooks.py:9940-9946, 10015, 10388-10392). Measured in BYTES, not code points, because the kernel
     # limits are on the UTF-8 encoded length; surrogatepass keeps this from crashing on a surrogate that
-    # _has_unsafe_char has already rejected above. Split on both separators so a Windows-shaped path's
-    # components are measured too.
+    # _has_unsafe_char has already rejected above.
     if len(value.encode("utf-8", "surrogatepass")) > PATH_MAX:
         _fail("`{}` exceeds {} bytes (PATH_MAX)".format(label, PATH_MAX))
-    for comp in re.split(r"[/\\]", value):
+    # Measure each component against NAME_MAX splitting on "/" ONLY -- POSIX component semantics. On POSIX a
+    # backslash is a VALID filename character, so an intrinsically over-long single component like
+    # ("a"*150 + "\\" + "a"*150) (301 bytes, ONE POSIX component) must NOT be broken at the backslash into
+    # two <=255-byte sub-components and wrongly accepted, only to hit ENAMETOOLONG at runtime (codex QA
+    # HIGH-2, round 6; this corrects the `[/\\]` split introduced in round 5, which under-counted such a
+    # component). A Windows-shaped path's backslash-separated segments are therefore measured as one run,
+    # which OVER-counts rather than under-counts: it can only make an over-long Windows path reject, never
+    # wrongly accept, so it stays fail-safe. The committed store paths are POSIX.
+    for comp in value.split("/"):
         if len(comp.encode("utf-8", "surrogatepass")) > NAME_MAX:
             _fail("`{}` has a path component longer than {} bytes (NAME_MAX)".format(label, NAME_MAX))
 
@@ -305,6 +328,16 @@ def validate(path):
         # SIBLING (e.g. /opt/x/orch-state-extra vs state_dir /opt/x/orch-state -> commonpath /opt/x) is
         # still accepted while ON-or-INSIDE is rejected.
         norm_state_dir = _norm_pathspell(obj["state_dir"])
+        # ADDITIONALLY compare RESOLVED paths (codex QA HIGH-1, round 6): an EXISTING symlink alias makes two
+        # different spellings resolve to the same file, which the lexical check cannot see. os.path.realpath
+        # resolves existing symlink components and leaves a non-existent tail intact, so a record/lease path
+        # that resolves onto or into the resolved state_dir is caught even when the spellings differ (codex
+        # reproduced: state_dir "/dev/shm" + record "/run/shm/resume-barrier.json" where /run/shm -> /dev/shm
+        # resolve to the same barrier file). BOTH the lexical and the resolved check run -- defence in depth.
+        # realpath is computed on the same state_dir as on each declared path, so a symlink anywhere in a
+        # shared prefix resolves identically on both sides and cannot manufacture a false collision for a
+        # genuine sibling.
+        real_state_dir = os.path.realpath(obj["state_dir"])
         declared = []
         if isinstance(obj.get("record"), dict):
             for key in sorted(obj["record"]):
@@ -312,30 +345,41 @@ def validate(path):
         if isinstance(obj.get("lease"), dict) and "path" in obj["lease"]:
             declared.append(("lease.path", obj["lease"]["path"]))
         for label, value in declared:
-            norm_path = _norm_pathspell(value)
-            collides = norm_path == norm_state_dir
-            if not collides:
-                try:
-                    collides = os.path.commonpath([norm_path, norm_state_dir]) == norm_state_dir
-                except ValueError:
-                    # commonpath raises only on mixing absolute and relative paths, or (on Windows) paths on
-                    # different drives. Both inputs here are validated absolute POSIX-shaped paths, so it
-                    # should not raise; if it somehow does, treat it as a collision and fail defensively
-                    # rather than accept an unproven-safe record path.
-                    collides = True
-            if collides:
+            if _contains_or_equal(_norm_pathspell(value), norm_state_dir):
                 _fail("`{}` ({!r}) is on or inside `state_dir` ({!r}); a record/lease path on or under "
                       "state_dir collides with the machine-state files the hooks write there (e.g. "
                       "resume-barrier.json), so a hook write would clobber the declared record".format(
                           label, value, obj["state_dir"]))
-        # IRREDUCIBLE RESIDUAL (codex QA HIGH-2, disclosed not closed): this gate validates commit-time
-        # STRINGS and, best-effort, the state_dir's gate-time TYPE (above). It CANNOT verify runtime
-        # directory-usability: a state_dir absent at gate time but unusable at runtime -- created as a file,
-        # or living on a read-only or different filesystem -- would drive write_scope_guard._load_write_scope
-        # to a persistent covered-write denial. That FAILS SAFE (a denial, never a bypass), is
-        # operator-fixable, and is backstopped by the committed registry plus human review. write_scope_guard
-        # is defence-in-depth, not a security boundary, so a fail-safe denial there is a degraded-but-safe
-        # state, not an exploitable one.
+            real_value = os.path.realpath(value)
+            if _contains_or_equal(real_value, real_state_dir):
+                _fail("`{}` ({!r}) RESOLVES onto or inside `state_dir` ({!r}) through an existing symlink "
+                      "(record/lease resolves to {!r}, state_dir to {!r}); a hook write to a machine-state "
+                      "file there (e.g. resume-barrier.json) would clobber the declared record".format(
+                          label, value, obj["state_dir"], real_value, real_state_dir))
+        # --- THE BOUND: accepted-input soundness is bounded to commit-time validation ---------------------
+        # This gate performs COMMIT-TIME validation only. What it establishes is: structural shape + concrete
+        # hazards (surrogate/control character, NAME_MAX/PATH_MAX length, derived-path reserve, record/lease-
+        # vs-state_dir collision) + BEST-EFFORT resolved-path containment (above) + BEST-EFFORT state_dir
+        # gate-time directory-type. Its accepted-input soundness is BOUNDED to what commit-time validation can
+        # establish; the maintainer directed this bound after round 6. The residuals below are IRREDUCIBLE
+        # (no commit-time string or stat check can close them) and each is FAIL-SAFE -- a denial or a caught
+        # collision at runtime, never a bypass:
+        #   (a) FUTURE symlink swap: a symlink created or retargeted AFTER this gate runs. The resolved-path
+        #       check above resolves symlinks at COMMIT time only; a later swap is not observable here.
+        #   (b) Runtime directory-usability of a NOT-YET-CREATED state_dir: an absent state_dir later created
+        #       as a regular file, or living on a read-only or different filesystem. The best-effort lstat
+        #       above classifies only what exists at gate time; genuine absence is accepted (it cannot be
+        #       verified). At runtime an unusable state_dir drives write_scope_guard._load_write_scope to a
+        #       persistent covered-write DENIAL (fail-safe), operator-fixable.
+        #   (c) A FIFO or other special file at a declared registry/record/lease/state path: it would block
+        #       the HOOK's own read at read time (see the FIFO disclosure at the presence check above, in
+        #       validate()). git cannot check out a FIFO, so the only exposure is an exotic hand-crafted local
+        #       run, never a checked-out tree.
+        # Also disclosed and left as a parity residual, not closed here: the OS-agnostic _is_absolute Windows
+        # spelling (see its LOW disclosure in _is_absolute above). write_scope_guard and the recorder/audit
+        # hooks are DEFENCE IN DEPTH, not a security boundary, so a fail-safe denial there is degraded-but-
+        # safe, not exploitable. The COMMITTED registry is verified safe by this gate plus its tests, and
+        # human review via change-carries-check is the backstop for future edits.
     # `dispatch_tools`, if present: a list of non-empty control-free strings.
     if "dispatch_tools" in obj:
         tools = obj["dispatch_tools"]
