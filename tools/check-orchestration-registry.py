@@ -153,8 +153,14 @@ def _check_declared_path(label, value):
     # (aiqt_hooks.py:9940-9946, 10015, 10388-10392). Measured in BYTES, not code points, because the kernel
     # limits are on the UTF-8 encoded length; surrogatepass keeps this from crashing on a surrogate that
     # _has_unsafe_char has already rejected above.
-    if len(value.encode("utf-8", "surrogatepass")) > PATH_MAX:
-        _fail("`{}` exceeds {} bytes (PATH_MAX)".format(label, PATH_MAX))
+    # PATH_MAX (4096) INCLUDES the terminating NUL, so the longest USABLE pathname is PATH_MAX - 1 (4095)
+    # bytes; a 4096-byte path passes a `> PATH_MAX` test but the kernel rejects it with ENAMETOOLONG at
+    # runtime (os.stat -> errno 36), which for a lease/state path drives the hook's stat to an OSError and,
+    # with no mode declared, an inactive scope (aiqt_hooks.py:7791,7813) -- so reject `>= PATH_MAX` (codex QA
+    # round 8). NAME_MAX (255) EXCLUDES the NUL, so the component check below correctly stays `> NAME_MAX`.
+    if len(value.encode("utf-8", "surrogatepass")) >= PATH_MAX:
+        _fail("`{}` is {} bytes; the longest usable path is {} bytes (PATH_MAX {} counts the NUL)".format(
+            label, len(value.encode("utf-8", "surrogatepass")), PATH_MAX - 1, PATH_MAX))
     # Measure each component against NAME_MAX splitting on "/" ONLY -- POSIX component semantics. On POSIX a
     # backslash is a VALID filename character, so an intrinsically over-long single component like
     # ("a"*150 + "\\" + "a"*150) (301 bytes, ONE POSIX component) must NOT be broken at the backslash into
@@ -274,7 +280,9 @@ def validate(path):
         # persistently. Require len(state_dir) + one separator + STATE_DERIVED_RESERVE <= PATH_MAX, measured
         # in BYTES (surrogatepass matches _check_declared_path, though surrogates are already rejected above).
         _sd_bytes = len(obj["state_dir"].encode("utf-8", "surrogatepass"))
-        if _sd_bytes + 1 + STATE_DERIVED_RESERVE > PATH_MAX:
+        # `>= PATH_MAX`, not `> PATH_MAX`: the derived path <state_dir>/<basename> must itself be <= PATH_MAX-1
+        # usable bytes (codex QA round 8, same off-by-one class as the whole-path check above).
+        if _sd_bytes + 1 + STATE_DERIVED_RESERVE >= PATH_MAX:
             _fail("`state_dir` ({!r}) is {} bytes and leaves no room under PATH_MAX ({}) for the "
                   "machine-state files the hooks derive under it: {} bytes + 1 separator + {} reserved "
                   "for the longest derived filename exceeds PATH_MAX, so a path like "

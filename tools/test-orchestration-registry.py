@@ -411,6 +411,27 @@ class Rejects(unittest.TestCase):
         self.assertEqual(len(comp.encode()), 301, "fixture must be a 301-byte single POSIX component")
         self._reject({"version": 1, "record": {"findings": "/opt/x/" + comp}})
 
+    def test_lease_path_at_path_max_rejected(self):
+        # codex QA round 8: PATH_MAX (4096) INCLUDES the NUL, so a path of exactly 4096 bytes is UNUSABLE
+        # (os.stat -> ENAMETOOLONG at runtime). The whole-path check must reject >= PATH_MAX, not just
+        # > PATH_MAX. Every component is <= NAME_MAX and state_dir is explicit+disjoint, so ONLY the
+        # whole-path length check can reject. RED against the `> PATH_MAX` check (exit 0).
+        base = "/" + "".join("a" * 255 + "/" for _ in range(15))  # 3841 bytes, ends with "/"
+        p4096 = base + "a" * (4096 - len(base.encode()))
+        self.assertEqual(len(p4096.encode()), 4096, "fixture must be exactly PATH_MAX bytes")
+        self._reject({"version": 1, "state_dir": "/opt/orch-isolate-sd",
+                      "lease": {"path": p4096}})
+
+    def test_lease_path_one_below_path_max_accepted(self):
+        # The true maximum usable path is PATH_MAX - 1 (4095) bytes; it must still be ACCEPTED (not
+        # over-rejected by the >= change). Same shape, one byte shorter.
+        base = "/" + "".join("a" * 255 + "/" for _ in range(15))
+        p4095 = base + "a" * (4095 - len(base.encode()))
+        self.assertEqual(len(p4095.encode()), 4095)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/orch-isolate-sd",
+                                             "lease": {"path": p4095}})), 0)
+
     def test_state_dir_existing_non_directory_rejected(self):
         # HIGH-2 best-effort: a state_dir that EXISTS at gate time as a regular file (the "/etc/passwd"
         # shape) is rejected. A real temp regular file is created and state_dir points at it. At runtime
