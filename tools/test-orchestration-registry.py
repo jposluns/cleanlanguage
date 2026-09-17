@@ -177,7 +177,19 @@ class Accepts(unittest.TestCase):
 
 
 class Rejects(unittest.TestCase):
-    def _reject(self, payload):
+    # claude QA round 8 (MEDIUM, test-isolation): the round-7 gate rule "a declared record/lease requires
+    # state_dir" rejects ANY record/lease fixture that omits state_dir, regardless of whether the fixture's
+    # OWN targeted check fires -- so a regression of that targeted check would go undetected (proven by
+    # mutation). For a reject fixture that declares record/lease but no state_dir, inject a DISJOINT (no
+    # collision with the fixture's paths) and ABSENT (the gate's lstat type check stays inert) state_dir, so
+    # the round-7 rule is inert here and ONLY the fixture's targeted check can reject it. The two
+    # test_*_without_state_dir_rejected tests, whose target IS the rule, opt out with add_state_dir=False.
+    _ISO_STATE_DIR = "/opt/orch-isolate-sd"
+
+    def _reject(self, payload, add_state_dir=True):
+        if (add_state_dir and isinstance(payload, dict)
+                and ("record" in payload or "lease" in payload) and "state_dir" not in payload):
+            payload = {**payload, "state_dir": self._ISO_STATE_DIR}
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, payload)), 1)
 
@@ -349,12 +361,14 @@ class Rejects(unittest.TestCase):
         # sees, and orch_resume_audit clobbers a record path landing inside it. RED before the co-requirement
         # (the gate exited 0 accepting record-without-state_dir).
         self._reject({"version": 1, "record": {
-            "handoff": "/home/x/.local/state/aiqt-guardrails/orch/deadbeef/resume-barrier.json"}})
+            "handoff": "/home/x/.local/state/aiqt-guardrails/orch/deadbeef/resume-barrier.json"}},
+            add_state_dir=False)
 
     def test_lease_without_state_dir_rejected(self):
         # claude QA round 7 HIGH (sibling): a declared `lease` with NO `state_dir` must be rejected for the
         # same reason -- lease.path can land in the same unseen XDG-default state dir. RED before the fix.
-        self._reject({"version": 1, "lease": {"path": "/opt/x/lease.md", "max_age_hours": 24}})
+        self._reject({"version": 1, "lease": {"path": "/opt/x/lease.md", "max_age_hours": 24}},
+                     add_state_dir=False)
 
     # --- codex QA round 4: path-spelling ALIASES, over-long paths, non-dir state_dir ----------------
     # These are RED against the round-3 normpath+startswith collision check (which accepted the aliases)
