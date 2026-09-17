@@ -110,9 +110,12 @@ class Accepts(unittest.TestCase):
             self.assertEqual(_run(_write(d, STAGE1)), 0)
 
     def test_lease_without_max_age(self):
-        # max_age_hours is optional: a lease with only a path is valid.
+        # max_age_hours is optional: a lease with only a path is valid. state_dir is declared because a
+        # declared lease now requires it (claude QA round 7 co-requirement); this test isolates max_age
+        # optionality, not the state_dir requirement.
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(_run(_write(d, {"version": 1, "lease": {"path": "/opt/x/lease"}})), 0)
+            self.assertEqual(_run(_write(d, {"version": 1, "lease": {"path": "/opt/x/lease"},
+                                             "state_dir": "/opt/x/orch-state"})), 0)
 
     def test_dispatch_tools_with_strings(self):
         with tempfile.TemporaryDirectory() as d:
@@ -339,6 +342,19 @@ class Rejects(unittest.TestCase):
     def test_record_path_equal_to_state_dir_rejected(self):
         self._reject({"version": 1, "state_dir": "/opt/x/orch-state",
                       "record": {"handoff": "/opt/x/orch-state"}})
+
+    def test_record_without_state_dir_rejected(self):
+        # claude QA round 7 HIGH: a declared `record` with NO `state_dir` must be rejected. Without state_dir
+        # the hooks fall back to the XDG-default orch state dir (aiqt_hooks.py:7638-7651) that this gate never
+        # sees, and orch_resume_audit clobbers a record path landing inside it. RED before the co-requirement
+        # (the gate exited 0 accepting record-without-state_dir).
+        self._reject({"version": 1, "record": {
+            "handoff": "/home/x/.local/state/aiqt-guardrails/orch/deadbeef/resume-barrier.json"}})
+
+    def test_lease_without_state_dir_rejected(self):
+        # claude QA round 7 HIGH (sibling): a declared `lease` with NO `state_dir` must be rejected for the
+        # same reason -- lease.path can land in the same unseen XDG-default state dir. RED before the fix.
+        self._reject({"version": 1, "lease": {"path": "/opt/x/lease.md", "max_age_hours": 24}})
 
     # --- codex QA round 4: path-spelling ALIASES, over-long paths, non-dir state_dir ----------------
     # These are RED against the round-3 normpath+startswith collision check (which accepted the aliases)

@@ -310,6 +310,23 @@ def validate(path):
             _fail("`state_dir` ({!r}) exists at gate time but is not a directory; the hooks write "
                   "machine-state files inside it, and a non-directory state_dir drives write_scope_guard "
                   "to a persistent covered-write denial".format(obj["state_dir"]))
+    # Cross-field REQUIREMENT (claude QA HIGH, round 7): a declared `record` or `lease` must be accompanied
+    # by an explicit `state_dir`. When `state_dir` is OMITTED the hooks do NOT stop using a state dir --
+    # _state_dir_from_registry (aiqt_hooks.py:7638-7651) falls back to
+    # ${XDG_STATE_HOME:-~/.local/state}/aiqt-guardrails/orch/<repo-key>/, and orch_resume_audit still opens
+    # `<state_dir>/resume-barrier.json` with mode "w" there (aiqt_hooks.py:9783-9785). A record/lease path
+    # landing inside that DEFAULT dir is clobbered exactly as the round-3 declared-state_dir collision, but
+    # the collision check below runs only `if "state_dir" in obj`, so the default-dir sibling slips through
+    # (claude QA round 7, reproduced gate-exit-0 -> hook clobber of the declared record). Requiring
+    # `state_dir` alongside record/lease closes the whole class at gate time: the location is then validated
+    # and collision-checked, and a gate-passing armed registry never falls back to the XDG default.
+    # `dispatch_tools` carries tool NAMES, not a path, so it cannot collide and does not trigger this.
+    if ("record" in obj or "lease" in obj) and "state_dir" not in obj:
+        _fail("`record`/`lease` is declared without `state_dir`: the hooks then fall back to an XDG-default "
+              "state directory ($XDG_STATE_HOME/aiqt-guardrails/orch/<repo-key>, aiqt_hooks.py:7638-7651) "
+              "that this gate never sees, and orch_resume_audit's unconditional `<state_dir>/"
+              "resume-barrier.json` write clobbers any record/lease path landing inside it; declare "
+              "`state_dir` explicitly so the machine-state location is validated and collision-checked")
     # Cross-field collision (codex QA HIGH): a declared record/lease path that lands ON or INSIDE
     # `state_dir` collides with the machine-state files the hooks write there. orch_resume_audit opens
     # `<state_dir>/resume-barrier.json` with mode "w" UNCONDITIONALLY (aiqt_hooks.py:9775, 9783-9785), so
