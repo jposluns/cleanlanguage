@@ -387,10 +387,10 @@ def validate(path):
         # vs-state_dir collision) + BEST-EFFORT resolved-path containment (above) + BEST-EFFORT state_dir
         # gate-time directory-type. Its accepted-input soundness is BOUNDED to what commit-time validation can
         # establish; the maintainer directed this bound after round 6. The residuals below are IRREDUCIBLE
-        # (no commit-time string or stat check can close them) and each is FAIL-SAFE -- a denial or a caught
-        # collision at runtime, never a bypass:
-        #   (a) FUTURE symlink swap: a symlink created or retargeted AFTER this gate runs. The resolved-path
-        #       check above resolves symlinks at COMMIT time only; a later swap is not observable here.
+        # (no commit-time string or stat check can close them). They do NOT all resolve to a fail-safe denial
+        # -- claude QA round 10 corrected an earlier overstatement that each was "a denial or a caught
+        # collision at runtime, never a bypass". They split by runtime outcome:
+        #   FAIL-SAFE DENIALS -- a denial or a caught collision at runtime, never a bypass:
         #   (b) Runtime directory-usability of a NOT-YET-CREATED state_dir: an absent state_dir later created
         #       as a regular file, or living on a read-only or different filesystem. The best-effort lstat
         #       above classifies only what exists at gate time; genuine absence is accepted (it cannot be
@@ -400,11 +400,31 @@ def validate(path):
         #       the HOOK's own read at read time (see the FIFO disclosure at the presence check above, in
         #       validate()). git cannot check out a FIFO, so the only exposure is an exotic hand-crafted local
         #       run, never a checked-out tree.
+        #   POST-GATE FILESYSTEM ALIASING -- a SILENT CLOBBER, not a denial; reachable ONLY with out-of-band
+        #   write access to the store or state_dir that ALREADY lets the actor clobber the record directly
+        #   (the recorder/audit hooks are DEFENCE IN DEPTH, not a security boundary), so it adds no exposure:
+        #   (a) FUTURE symlink swap: a symlink created or retargeted AFTER this gate runs. The resolved-path
+        #       check above resolves symlinks at COMMIT time only; a later swap is not observable here, and a
+        #       record/lease path later aliased onto a machine-state file is clobbered by the hook write.
+        #   (d) HARD LINK (or a symlink planted at a derived state path, e.g. the barrier name) between a
+        #       record/lease file and a machine-state file the hooks write. os.path.realpath resolves symlinks
+        #       but NOT hard links, the JSON cannot express a link, and the colliding derived file (e.g.
+        #       <state_dir>/resume-barrier.json) does not exist at gate time, so no commit-time comparison can
+        #       see it. orch_resume_audit's barrier write is a direct truncating open(barrier, "w") with NO
+        #       S_ISREG guard (aiqt_hooks.py:9783, unlike the shared _wrtscp_read_json_artifact reader), so an
+        #       aliased record file is SILENTLY CLOBBERED, not denied. Precondition: write+search access to
+        #       state_dir (and, under fs.protected_hardlinks, to the record file) -- already store-defeating.
         # Also disclosed and left as a parity residual, not closed here: the OS-agnostic _is_absolute Windows
-        # spelling (see its LOW disclosure in _is_absolute above). write_scope_guard and the recorder/audit
-        # hooks are DEFENCE IN DEPTH, not a security boundary, so a fail-safe denial there is degraded-but-
-        # safe, not exploitable. The COMMITTED registry is verified safe by this gate plus its tests, and
-        # human review via change-carries-check is the backstop for future edits.
+        # spelling (see its LOW disclosure in _is_absolute above). A consequence of accepting that spelling:
+        # on a POSIX host the record/lease-vs-state_dir collision check does NOT catch a BACKSLASH-spelled
+        # Windows collision (e.g. state_dir "C:\\s" + record "C:\\s\\resume-barrier.json"), because
+        # os.path.commonpath treats each backslash string as one POSIX component and finds them disjoint; the
+        # FORWARD-slash Windows spelling IS caught, and a mixed POSIX/Windows pair fails closed. Unreachable
+        # for the committed POSIX artefact and guarded by the committed-registry test plus human review.
+        # write_scope_guard and the recorder/audit hooks are DEFENCE IN DEPTH, not a security boundary, so a
+        # fail-safe denial there is degraded-but-safe, not exploitable. The COMMITTED registry is verified
+        # safe by this gate plus its tests, and human review via change-carries-check is the backstop for
+        # future edits.
     # `dispatch_tools`, if present: a list of non-empty control-free strings.
     if "dispatch_tools" in obj:
         tools = obj["dispatch_tools"]

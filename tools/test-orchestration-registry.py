@@ -391,6 +391,22 @@ class Rejects(unittest.TestCase):
         self._reject({"version": 1, "state_dir": "//opt/x/orch-state",
                       "lease": {"path": "/opt/x/orch-state/session-state.md"}})
 
+    def test_lexical_collision_branch_symlink_out_of_state_dir(self):
+        # change-carries-check for the LEXICAL containment branch (claude QA round 10, mutation survivor).
+        # Disabling the lexical branch while keeping the realpath branch leaves the other collision fixtures
+        # green, because os.path.realpath already normalizes their "//"/".." aliases, so the resolved branch
+        # subsumes them. THIS fixture rejects ONLY via the lexical branch: a record path lexically INSIDE
+        # state_dir but whose symlink component RESOLVES OUTSIDE it. The lexical check (no symlink resolution)
+        # sees it inside and rejects; the realpath check resolves the symlink out and would accept. So the
+        # gate exits 1 here only while the lexical branch is present -- reverting that branch flips this RED.
+        with tempfile.TemporaryDirectory() as sd, \
+                tempfile.TemporaryDirectory() as outside, \
+                tempfile.TemporaryDirectory() as reg:
+            os.symlink(outside, os.path.join(sd, "link-out"))
+            payload = {"version": 1, "state_dir": sd,
+                       "record": {"handoff": os.path.join(sd, "link-out", "f")}}
+            self.assertEqual(_run(_write(reg, payload)), 1)
+
     def test_overlong_state_dir_component_rejected(self):
         # HIGH-2: a path component over NAME_MAX (255) bytes. At runtime, lstat(<state_dir>/write-scope.json)
         # would raise ENAMETOOLONG, the write-scope reader would classify it 'bad', and an armed session
