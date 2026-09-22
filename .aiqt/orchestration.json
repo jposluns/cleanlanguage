@@ -1,4 +1,15 @@
 {
   "version": 1,
-  "companion_stores": ["/opt/cleanlanguage/private"]
+  "companion_stores": ["/opt/cleanlanguage/private"],
+  "record": {
+    "findings": "/opt/cleanlanguage/private/open-findings.md",
+    "pending_decisions": "/opt/cleanlanguage/private/pending-decisions.md",
+    "handoff": "/opt/cleanlanguage/private/session-handoff.md"
+  },
+  "lease": {
+    "path": "/opt/cleanlanguage/private/session-state.md",
+    "max_age_hours": 24
+  },
+  "state_dir": "/opt/cleanlanguage/orch-state",
+  "dispatch_tools": []
 }
