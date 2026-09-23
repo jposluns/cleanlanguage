@@ -52,7 +52,7 @@ this repository's own skill. See
 ## Adopted governance
 
 This repository adopts the **AIQT Guardrails** rule corpus by Jeff Posluns
-(https://aiqt.ai), CC BY-SA 4.0, vendored under `.aiqt/` and auto-loaded as the rule
+(https://aiqt.ai), Apache 2.0, vendored under `.aiqt/` and auto-loaded as the rule
 tree under `rules/aiqt/` and `rules/security/` (107 active rules for this project's
 profile; the full 126-rule corpus is kept as reference under `.aiqt/core/rules/`).
 Provenance and the adopted version are in [`.aiqt/pin.toml`](../.aiqt/pin.toml); the

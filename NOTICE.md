@@ -23,4 +23,4 @@ Clean Language is developed independently. If you know of another project workin
 
 ## Adopted governance rules
 
-The Claude Code governance in this repository is the AIQT Guardrails rule corpus and hooks, vendored under `.aiqt/`, `.claude/rules/aiqt/`, `.claude/rules/security/`, and `plugin/aiqt-guardrails-hooks/`, adopted from AIQT Guardrails by Jeff Posluns (https://aiqt.ai), licensed under CC BY-SA 4.0. See `.aiqt/pin.toml` for the adopted version and provenance. This supersedes the 3 governance rules previously vendored from `grc_library`.
+The Claude Code governance in this repository is the AIQT Guardrails rule corpus and hooks, vendored under `.aiqt/`, `.claude/rules/aiqt/`, `.claude/rules/security/`, and `plugin/aiqt-guardrails-hooks/`, adopted from AIQT Guardrails by Jeff Posluns (https://aiqt.ai), licensed under the Apache License 2.0. See `.aiqt/pin.toml` for the adopted version and provenance. This supersedes the 3 governance rules previously vendored from `grc_library`.
