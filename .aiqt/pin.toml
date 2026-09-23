@@ -9,7 +9,7 @@
 [source]
 name = "aiqt-guardrails"
 homepage = "https://aiqt.ai"
-license = "CC-BY-SA-4.0"
+license = "Apache-2.0"  # relicensed from CC-BY-SA-4.0 by the pack author; see jposluns/guardrails LICENSE (verified 2026-09-22)
 author = "Jeff Posluns"
 vendored-from = "/opt/guardrails/guardrails"   # local pack checkout at adoption time
 adopted = "2026-09-05"
