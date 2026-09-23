@@ -9,7 +9,7 @@
 [source]
 name = "aiqt-guardrails"
 homepage = "https://aiqt.ai"
-license = "Apache-2.0"  # relicensed from CC-BY-SA-4.0 by the pack author; see jposluns/guardrails LICENSE (verified 2026-09-22)
+license = "CC-BY-SA-4.0"  # licence of the adopted v1.0.0 source; the pack was later relicensed to Apache-2.0 by the author (jposluns/guardrails LICENSE, verified 2026-09-22), now reflected in NOTICE.md and .claude/CLAUDE.md; this adoption-time field advances on a re-vendor to an Apache-licensed release
 author = "Jeff Posluns"
 vendored-from = "/opt/guardrails/guardrails"   # local pack checkout at adoption time
 adopted = "2026-09-05"
