@@ -190,8 +190,8 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   TRANSIENT attended boundary and does NOT silently flip the mode.
 - DECISIONS: blocking + attended -> surface immediately, up to 4 per round, in the four-role shape.
   The repo `.claude/rules/maintainer-questions.md` sets that shape in its "Superseded in part" note:
-  the four roles replace its Option A to D lettering. See that note for the roles, their order, their
-  definitions, and which role carries the recommendation; this file does not restate them.
+  the four roles replace its Option A to D lettering. See that note for the roles, their order, and
+  which role carries the recommendation; this file does not restate them.
   Blocking + unattended -> record BLOCKED only under the provenance test above, route
   to the next independent item; if all items genuinely depend on it, close via /handoff. Non-blocking ->
   append to `/opt/cleanlanguage/private/pending-decisions.md` with a pre-drafted four-role block.

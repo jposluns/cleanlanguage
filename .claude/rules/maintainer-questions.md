@@ -10,7 +10,8 @@ words. These four roles replace the Option A to D lettering in the Format
 section. Wherever that section says Option A, read the best-on-the-merits option,
 whatever its position; it carries the clear recommendation and the brief
 statement of why it is recommended. Options B and C are the predicted and maximal
-options, and Option D is the free-form answer. When the predicted choice is the
+options, and Option D is the free-form answer, given through the dialog's own
+free-text field rather than a listed option. When the predicted choice is the
 same as the best-on-the-merits option, the asker says so and why. One
 AskUserQuestion round may carry up to 4 questions, whatever their weight. Where
 the text below differs, that dialog governs; in particular, "in prose", "Do not
