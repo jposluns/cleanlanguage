@@ -67,7 +67,7 @@ repository, but CANNOT read the private store, `/opt/inbox`, or the machine-loca
 QA brief that depends on any of those must EMBED that context, and the orchestrator self-verifies every
 private-context reference at source.
 
-Per substantive or sensitive item (a light item has no seeds or plan; it goes straight to (e)):
+Per substantive or sensitive item (a light item skips (a) to (d) and the plan check in (e)):
 (a) SEED BRIEF: 1 self-contained brief embedding all needed context (problem, exact file/line facts,
     constraints, deliverable shape, acceptance criteria).
 (b) SEEDS: `orch-verify claude|gemini <brief> /opt/cleanlanguage/cleanlanguage --expensive`, the
