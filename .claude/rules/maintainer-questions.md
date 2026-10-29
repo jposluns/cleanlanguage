@@ -13,12 +13,12 @@ section. Wherever that section says Option A, read the best-on-the-merits option
 whatever its position; it carries the clear recommendation and the brief
 statement of why it is recommended. If the maintainer chooses against it, the
 asker asks once, explains plainly why it is better, and lets the maintainer
-confirm or change their mind; after that, the choice stands. Options B and C
-are the predicted and maximal options, and Option D is the free-form answer,
-given through the dialog's own free-text field rather than a listed option.
-When the predicted choice is the same as the best-on-the-merits option, one
-option carries both roles, the asker says so and why, and Option B adds no
-separate option. One AskUserQuestion round may carry up to 4 questions,
+confirm or change their mind; after that, the choice stands. Option B is the
+predicted option unless it is the same as the best-on-the-merits option; then
+one option carries both roles, the asker says so and why, and there is no
+separate Option B. Option C is the maximal option, and Option D is the
+free-form answer, given through the dialog's own free-text field rather than a
+listed option. One AskUserQuestion round may carry up to 4 questions,
 whatever their weight. Where the text below differs, this note governs; in
 particular, "in prose", "Do not
 batch several questions into one message", and the ban on a multiple-choice chip
