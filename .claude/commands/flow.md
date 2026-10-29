@@ -189,10 +189,10 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   attended -> unattended (the safe/conservative direction only). An inbound operator message is a
   TRANSIENT attended boundary and does NOT silently flip the mode.
 - DECISIONS: blocking + attended -> surface immediately, ONE AT A TIME, in the four-role shape. The repo
-  `.claude/rules/maintainer-questions.md` sets the base shape (Option A recommended, B and C viable, D
-  free-form); the machine-local/home four-role layer refines A into "predicted" (the choice drawn from
-  the maintainer-decisions record) plus "best on the merits", then "maximal", then "free-form"; use
-  that layered shape. Blocking + unattended -> record BLOCKED only under the provenance test above, route
+  `.claude/rules/maintainer-questions.md` sets that shape in its "Superseded in part" note: the four
+  roles replace its Option A to D lettering, in the order predicted (the choice drawn from the
+  maintainer-decisions record), best on the merits (which carries the recommendation), maximal, and
+  free-form. Blocking + unattended -> record BLOCKED only under the provenance test above, route
   to the next independent item; if all items genuinely depend on it, close via /handoff. Non-blocking ->
   append to `/opt/cleanlanguage/private/pending-decisions.md` with a pre-drafted four-role block.
 - REVERSIBILITY GATE (every mode): only a closed allowlist auto-continues unattended/at timeout (observe;

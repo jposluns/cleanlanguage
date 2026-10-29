@@ -2,14 +2,11 @@
 
 **Superseded in part.** On 2026-10-29 the maintainer decided that these questions
 are asked in the AskUserQuestion dialog in the four-role shape: predicted, best on
-the merits, maximal, and free-form. PR #172 in this repository is the public
-record of that decision. The fleet operating model is machine-local, at
-/usr/local/share/orch/operating-model.md, and is not in this repository; its
-section 2 ("Decision urgency plus attendance routing") words the same four roles
-as "predicted choice, best for the project, the go-wild optimum, free-form". The
-options are presented in the order predicted, best on the merits, maximal, and
-free-form. These four roles replace the Option A to D lettering in the Format
-section; the best-on-the-merits option is the recommended answer. Where the text
+the merits, maximal, and free-form. The description of PR #172 in this repository
+quotes the maintainer's instruction. The options are presented in the order
+predicted, best on the merits, maximal, and free-form. These four roles replace
+the Option A to D lettering in the Format section. That section still requires a
+clear recommendation, and the best-on-the-merits option carries it. Where the text
 below differs, that dialog governs; in particular, "in prose" and the ban on a
 multiple-choice chip interface in the first bullet under Format no longer apply.
 The rule awaits the fleet-wide decision SOP owned by lab_infra, the
