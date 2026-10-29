@@ -54,9 +54,9 @@ only the affected file(s).
    AIQT self-check before the completion claim; records rotation (TODO delete + DONE add) in the same
    change; clear focus.
 8. PAUSE (after a merge, after a plan is verified pre-implementation, or when the queue composition
-   changed): refresh; if an attended boundary is open, surface accumulated decisions ONE AT A
-   TIME (per .claude/rules/maintainer-questions.md); list the next items; continue on already-authorized
-   safe actions.
+   changed): refresh; if an attended boundary is open, surface accumulated decisions, up to 4
+   per round (per .claude/rules/maintainer-questions.md); list the next items; continue on
+   already-authorized safe actions.
 9. NOTHING ACTIONABLE: seeds/combines/QA in flight -> keep the pipeline topped up + read-only prep on
    upcoming verified-DISJOINT items; re-enter on the next delivery. Nothing in flight -> run
    blocked-verification (below); only on genuine whole-set exhaustion, close on green via /handoff.
@@ -185,11 +185,11 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   Absent = attended (conservative). The ONE governed transition is a decision-timeout switching
   attended -> unattended (the safe/conservative direction only). An inbound operator message is a
   TRANSIENT attended boundary and does NOT silently flip the mode.
-- DECISIONS: blocking + attended -> surface immediately, ONE AT A TIME, in the four-role shape. The repo
-  `.claude/rules/maintainer-questions.md` sets the base shape (Option A recommended, B and C viable, D
-  free-form); the machine-local/home four-role layer refines A into "predicted" (the choice drawn from
-  the maintainer-decisions record) plus "best on the merits", then "maximal", then "free-form"; use
-  that layered shape. Blocking + unattended -> record BLOCKED only under the provenance test above, route
+- DECISIONS: blocking + attended -> surface immediately, up to 4 per round, in the four-role shape.
+  The repo `.claude/rules/maintainer-questions.md` sets that shape in its "Superseded in part" note:
+  the four roles replace its Option A to D lettering. See that note for the roles, their order, and
+  which role carries the recommendation; this file does not restate them.
+  Blocking + unattended -> record BLOCKED only under the provenance test above, route
   to the next independent item; if all items genuinely depend on it, close via /handoff. Non-blocking ->
   append to `/opt/cleanlanguage/private/pending-decisions.md` with a pre-drafted four-role block.
 - REVERSIBILITY GATE (every mode): only a closed allowlist auto-continues unattended/at timeout (observe;
