@@ -1,6 +1,7 @@
 # /flow (cleanlanguage, interim local command)
 
-INTERIM. This command's own inlined text below is authoritative for cleanlanguage and is reviewed
+INTERIM. This command's own inlined text below is authoritative for cleanlanguage (except for the
+tiers and the QA cycle, which the machine-local "Working method" section governs) and is reviewed
 through this repository's PR gate. It adapts the fleet /flow standard, whose co-owned reference copy is
 `/opt/inbox/FLOW.md` (reconciled with lab_infra's `docs/operating-model.md`, the NORMATIVE source that governs where the two differ); that reference is a
 cross-check, not an unreviewed override of this file. When lab_infra renders a shared `/flow` command
@@ -11,7 +12,7 @@ always on.
 ## The loop (invariant)
 
 2 interlocking loops. The APPLY loop is strictly SERIAL: 1 backlog item at a time, implement -> QA ->
-merge. The PLAN-PRODUCTION pipeline runs ALONGSIDE, in parallel, raising upcoming items to
+merge, or park. The PLAN-PRODUCTION pipeline runs ALONGSIDE, in parallel, raising upcoming items to
 execution-ready. CARDINAL RULE: parallelism lives ONLY in research (seeds, plan-combines, QA reads);
 APPLIES ARE NEVER PARALLEL (1 branch, 1 plan, 1 writer at a time).
 
@@ -42,13 +43,13 @@ only the affected file(s).
    non-blocking; move on.
 3. SELECT the top actionable item.
 4. GRADE the tier (light | substantive | sensitive), per the machine-local
-   `/opt/cleanlanguage/.claude/CLAUDE.md` "Working method" section; in doubt, heavier. Record it.
+   `/opt/cleanlanguage/.claude/CLAUDE.md` "Working method" section. Record the grade.
    Escalation is immediate; de-escalation needs a maintainer decision + a recorded basis.
 5. AUTHORIZE within the standing grant. Not covered: attended -> surface a work-naming go, hold THIS
    item, and continue other independent queued work (a question never halts independent work);
    unattended -> DEFER (propose a ?HOLD on the affected STEP, route to the next independent item), never
    self-grant, never self-author a block.
-6. RUN the tier (below).
+6. RUN the tier per that machine-local "Working method" section (see "Tiers and the QA cycle" below).
 7. CLOSE: evidence-grounded completion (enumerate files, re-read, quote support, search contradictions);
    AIQT self-check before the completion claim; records rotation (TODO delete + DONE add) in the same
    change; clear focus.
@@ -67,7 +68,7 @@ repository, but CANNOT read the private store, `/opt/inbox`, or the machine-loca
 QA brief that depends on any of those must EMBED that context, and the orchestrator self-verifies every
 private-context reference at source.
 
-Per item:
+Per item (the machine-local "Working method" section sets which of these steps a tier skips):
 (a) SEED BRIEF: 1 self-contained brief embedding all needed context (problem, exact file/line facts,
     constraints, deliverable shape, acceptance criteria).
 (b) SEEDS: `orch-verify claude|gemini <brief> /opt/cleanlanguage/cleanlanguage --expensive`, the
@@ -96,10 +97,11 @@ Per item:
     `orch-verify --pick claude` succeeds AND claude is not at its cost cap.
 (d) PLAN: land it with a numbered step list, a file manifest, an acceptance/verification section, a
     QA-tier declaration, and a rollback note. Execution-ready only when it passes that shape.
-(e) IMPLEMENT (serial): the orchestrator VERIFIES the plan against the seeds + live tree, may dispatch an
-    implementation DRAFT to a claude worker, then FINALIZES it serially, re-verifying every line at
+(e) IMPLEMENT (serial): the orchestrator VERIFIES the plan, where the tier has one, against the
+    seeds + live tree, may dispatch an implementation DRAFT to a claude worker, then FINALIZES it
+    serially, re-verifying every line at
     source, as the SOLE writer/merger. Commit BEFORE dispatching QA (QA pins a revision); then run the
-    tier's QA, fix at the WIDTH OF THE DEFECT CLASS, re-QA on the fixed state, and merge.
+    tier's QA and merge only as the machine-local "Working method" section allows.
 
 GEMINI ROLE LIMIT: gemini may SEED and QA but NEVER plan-combines or drafts the implementation.
 
@@ -110,14 +112,15 @@ ends at that bound in any form (`orch-verify` `FAILOVER_LIMIT` (exit 4), or an e
 cost cap, or that otherwise delivers no verdict (a dispatch timeout, a dispatch auth failure, or a
 delivery that lacks the agreed completion evidence; an UNVERIFIABLE result is a delivered verdict, not a
 failed leg), is a failed leg, NOT an unreachable family, whatever `orch-verify` advises about the family.
-It is recorded, then re-issued at most once, after a wait between attempts
-(not cycle step 8, PAUSE), never with a higher limit; the single re-issue happens at the
-first later FEED THE PIPELINE step (cycle step 2) at which `orch-verify --pick codex` succeeds
-AND codex is not at its cost cap. While undelivered, its seat is OWED, a ?HOLD on
+It is recorded, then re-issued at most once, after a wait between attempts (not cycle step 8,
+PAUSE), never with a higher limit, and only when `orch-verify --pick codex` succeeds AND codex is
+not at its cost cap; the machine-local "Working method" section sets when, and as which leg, the
+re-issue runs. While undelivered, its seat is OWED, a ?HOLD on
 that QA STEP (a proposal, per Blocked-verification): while it is owed, the run limits work on
 other items to pipeline top-up and read-only prep on upcoming verified-DISJOINT items, as
 cycle step 9 allows, and starts no other apply while this branch is open; the seat is never
-dropped or substituted on that basis. A review that hunts for ways past a security
+dropped or substituted on that basis. The machine-local "Working method" section sets when an owed
+seat ends. A review that hunts for ways past a security
 control (a review whose task includes, in whole or in part, finding inputs, commands, or paths that a
 guard, hook, sandbox, filter, or permission check fails to block) NEVER goes to codex: run it on
 claude + gemini and, where the tier needs a third family, add an independent, differently-primed
@@ -131,24 +134,17 @@ PROMISE: collect through the tracked background mechanism that survives to compl
 
 AIQT HOLD: plan-production throughput NEVER shortens a change's per-tier QA.
 
-## Tiers (per the machine-local /opt/cleanlanguage/.claude/CLAUDE.md)
+## Tiers and the QA cycle (per the machine-local /opt/cleanlanguage/.claude/CLAUDE.md)
 
-- LIGHT (quick fix / bookkeeping / version bumps / record edits): implement directly; mechanical gates;
-  DUAL-family QA (claude + codex, or claude + gemini where the CODEX ROLE LIMIT bars codex or codex is
-  genuinely unreachable; gemini is otherwise excluded on cost, which is allowed only because 2 families
-  still meet the verifier-diversity floor).
-- SUBSTANTIVE (skill/site-corpus change; new/edited gate/linter/hook/tool; multi-surface; control value /
-  citation / normative rule; new feature): the full pipeline; TRI-family adversarial QA weighting codex
-  within the CODEX ROLE LIMIT; where that limit bars codex or codex is genuinely unreachable, that
-  weighting passes to gemini (or, if gemini is also genuinely unreachable, to the fallback pass for
-  the gemini seat under VERIFIER DIVERSITY), and the codex seat is filled as VERIFIER DIVERSITY states;
-  validate every finding at source; up to 4 fixing rounds; if it has not converged, trigger a premise
-  review (re-derive the problem from fresh observation) and escalate the ITEM with a too-many-rounds
-  flag and recommendation, continuing other authorized work. The round limit alone never closes the
-  session.
-- SENSITIVE (gate-blind correctness AND delicate scale AND high escaped-error cost, all 3): substantive
-  plus the high-assurance harness (independent adversarial verifiers, deterministic apply, a persistent
-  register). No de-escalation without a maintainer decision.
+The tiers (light, substantive, and sensitive) and the per-change QA cycle (DISCOVERY and VERIFY
+rounds, the round budget, the premise review, failed rounds, convergence, and parking) are defined
+ONLY in that file's "Working method" section; do not restate them here. Pool workers cannot read it,
+so a brief that depends on it EMBEDS the parts a leg needs (see the pipeline section above).
+The GEMINI ROLE LIMIT, CODEX ROLE LIMIT, and VERIFIER DIVERSITY stay here and bind every tier;
+so do the two tier rules kept here: in cycle step 4 (GRADE), escalation is immediate and
+de-escalation needs a maintainer decision and a recorded basis; and the AIQT HOLD above. The
+"Working method" section in that file sets when a light item is regraded and how a regraded item
+enters the QA cycle.
 
 VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genuinely UNREACHABLE,
 never for cost; cost never buys the reduction. A codex seat barred by the CODEX ROLE LIMIT is filled
@@ -157,7 +153,8 @@ CODEX ROLE LIMIT claude pass fills it. Either way, the substitute is recorded as
 substitution, not as an unavailability drop. When a required family is genuinely unreachable, record
 the drop and give its seat to a reachable, unbarred family that holds no seat (gemini, for codex on a
 dual-family tier); only where there is none, run an independent, differently-primed second pass in a
-separate clean context as the recorded fallback, and re-run an unreachable family once it returns.
+separate clean context as the recorded fallback, and re-run an unreachable family once it returns,
+but only for an item that has not parked after DISCOVERY round 9 or that the maintainer resumes.
 Each lost seat gets its own substitute, so a tri-family tier with codex barred and gemini genuinely
 unreachable runs claude plus 2 independent, differently-primed claude passes, each in its own clean
 context: the fallback pass for the gemini seat and the fleet-rule substitution pass for the codex seat.
