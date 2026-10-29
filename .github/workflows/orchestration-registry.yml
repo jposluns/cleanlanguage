@@ -9,6 +9,11 @@ name: Orchestration registry
 # scheduling even with no lease or mode). This gate rejects a structurally invalid committed
 # registry before it lands, so a corrupt registry cannot reach a session.
 #
+# The stage-2 steps test the project backlog enumerator and the one-shot TODO.md migration
+# script, then drive the real hook with each stage-2 arming key against a contrast without
+# that key, together with the project orch_doctor tool. Each is its own named step, so a run
+# that omits one is visible in the step list, not only in the overall colour.
+#
 # This workflow carries no paths filter on purpose. A path-filtered required check never
 # reports on a pull request outside its paths and blocks the merge as forever-pending;
 # running on every pull request keeps this gate promotable to a required check later. The
@@ -41,6 +46,18 @@ jobs:
       - name: Run the stage-1 hook behaviour tests
         shell: bash
         run: python3 tools/test-orch-stage1-hooks.py
+
+      - name: Run the backlog enumerator tests
+        shell: bash
+        run: python3 tools/test-orch-enumerate-backlog.py
+
+      - name: Run the TODO.md migration tests
+        shell: bash
+        run: python3 tools/test-orch-migrate-todo.py
+
+      - name: Run the stage-2 hook behaviour and doctor tests
+        shell: bash
+        run: python3 tools/test-orch-stage2-hooks.py
 
       # Re-run the gate against the committed registry by its explicit path, so this step is RED both on
       # a malformed edit and (via the gate tests above, which assert the arming keys are present) on a

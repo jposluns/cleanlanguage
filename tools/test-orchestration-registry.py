@@ -11,8 +11,10 @@ check itself.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,6 +25,7 @@ HERE = Path(__file__).resolve().parent
 VALIDATOR = HERE / "check-orchestration-registry.py"
 REPO_ROOT = HERE.parent
 REAL_REGISTRY = REPO_ROOT / ".aiqt" / "orchestration.json"
+REAL_HOOKS_JSON = REPO_ROOT / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "hooks.json"
 
 # A full stage-1 registry with every optional arming key present, used as the accept fixture. The
 # paths are illustrative absolutes (the gate validates STRUCTURE, not existence), so this stays
@@ -38,6 +41,23 @@ STAGE1 = {
     "lease": {"path": "/opt/x/private/session-state.md", "max_age_hours": 24},
     "state_dir": "/opt/x/private/orch-state",
     "dispatch_tools": [],
+}
+
+# The full stage-2 registry: STAGE1 plus every stage-2 arming key, in the shape the plan proposes. Like
+# STAGE1 its paths are illustrative absolutes; the yield_tools roster is checked against the real
+# hooks.json of this checkout.
+STAGE2 = {
+    **STAGE1,
+    "enumerator": {
+        "argv": ["/usr/bin/python3", "-I", "tools/orch-enumerate-backlog.py", "/opt/x/private/TODO.md"],
+        "timeout": 5,
+    },
+    "yield_tools": ["ScheduleWakeup", "CronCreate"],
+    "mode": {"path": "/opt/x/private/operating-mode.md"},
+    "staleness": {"task_hours": 24, "external_hours": 72},
+    "escape": {"path": "ESCAPE-ALLOW-YIELD"},
+    "attestations": "/opt/x/private/attestations.jsonl",
+    "mistakes_register": "/opt/x/private/mistakes-register.jsonl",
 }
 
 
@@ -175,6 +195,31 @@ class Accepts(unittest.TestCase):
             self.assertEqual(_run(_write(d, {
                 "version": 1, "state_dir": str(Path(d) / "absent-parent" / "state")})), 0)
 
+    # --- stage-2 arming keys ------------------------------------------------------------------------
+    def test_full_stage2_fixture(self):
+        # The full stage-2 registry validates, including the yield_tools roster against the real
+        # orch_yield_tool matcher in hooks.json. Every stage-2 reject fixture is derived from this one.
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, STAGE2)), 0)
+
+    def test_escape_relative_accepted(self):
+        # A relative escape path joins onto the resolved state_dir, as the hook does (aiqt_hooks.py:7864).
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state",
+                                             "escape": {"path": "ESCAPE-ALLOW-YIELD"}})), 0)
+
+    def test_escape_absolute_under_state_dir_accepted(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state",
+                                             "escape": {"path": "/opt/x/orch-state/ESCAPE-ALLOW-YIELD"}})), 0)
+
+    def test_enumerator_and_yield_tools_without_registers_accepted(self):
+        # attestations and mistakes_register are optional: the stop and yield guards arm without them.
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {
+                "version": 1, "state_dir": "/opt/x/orch-state",
+                "enumerator": STAGE2["enumerator"], "yield_tools": STAGE2["yield_tools"]})), 0)
+
 
 class Rejects(unittest.TestCase):
     # claude QA round 8 (MEDIUM, test-isolation): the round-7 gate rule "a declared record/lease requires
@@ -272,10 +317,10 @@ class Rejects(unittest.TestCase):
 
     # --- stage-1 arming keys ------------------------------------------------------------------------
     def test_unknown_top_level_key(self):
-        # `enumerator` is a real stage-2 key deliberately used here: it documents the stage-2 seam.
-        # A key outside the stage-1 allowlist lands only with its own gate extension, so it is rejected
-        # now rather than shipping an ahead-of-gate registry an installed reader would act on.
-        self._reject({"version": 1, "enumerator": {"argv": ["true"]}})
+        # A key outside the allowlist lands only with its own gate extension, so it is rejected rather than
+        # shipping an ahead-of-gate registry an installed reader would act on. Before stage 2 this case
+        # used `enumerator`, which is now allowlisted and covered by its own reject tests below.
+        self._reject({"version": 1, "bogus_arming_key": {"argv": ["true"]}})
 
     def test_record_not_a_dict(self):
         self._reject({"version": 1, "record": "/opt/x/findings.md"})
@@ -535,6 +580,248 @@ class Rejects(unittest.TestCase):
 
     def test_dispatch_tools_surrogate(self):
         self._reject({"version": 1, "dispatch_tools": ["Workflow", "Ta" + chr(0xD800) + "sk"]})
+
+    # --- stage-2 arming keys ------------------------------------------------------------------------
+    # Each fixture is the full STAGE2 registry (which the gate accepts, see Accepts.test_full_stage2_fixture)
+    # with exactly one key replaced or dropped, so only the targeted stage-2 rule can reject it. On the
+    # stage-1 gate every one of these exits 1 for the wrong reason (unknown top-level key); with the key
+    # allowlisted but its rule absent, each exits 0 or crashes, so each is RED without its own rule. These
+    # use the stricter _reject_clean, so a traceback from later code can never stand in for the rule.
+    _DROP = object()
+
+    def _reject_clean(self, payload, add_state_dir=True):
+        # Stricter than _reject: exit 1 with a clean FAIL diagnostic and no traceback.
+        if (add_state_dir and isinstance(payload, dict)
+                and ("record" in payload or "lease" in payload) and "state_dir" not in payload):
+            payload = {**payload, "state_dir": self._ISO_STATE_DIR}
+        with tempfile.TemporaryDirectory() as d:
+            r = subprocess.run([sys.executable, str(VALIDATOR), str(_write(d, payload))],
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("FAIL", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def _reject_stage2(self, changes):
+        payload = copy.deepcopy(STAGE2)
+        for key, value in changes.items():
+            if value is self._DROP:
+                payload.pop(key, None)
+            else:
+                payload[key] = value
+        self._reject_clean(payload)
+
+    def _enum(self, argv=None, **extra):
+        spec = {"argv": list(STAGE2["enumerator"]["argv"]) if argv is None else argv, "timeout": 5}
+        spec.update(extra)
+        return spec
+
+    def test_enumerator_not_an_object(self):
+        # A list holding the key names passes the subkey and argv-presence checks, so only the object
+        # type check rejects it cleanly.
+        self._reject_stage2({"enumerator": ["argv", "timeout"]})
+
+    def test_enumerator_argv_empty(self):
+        self._reject_stage2({"enumerator": self._enum(argv=[])})
+
+    def test_enumerator_argv_not_a_list(self):
+        self._reject_stage2({"enumerator": self._enum(argv="/usr/bin/python3 tools/x.py")})
+
+    def test_enumerator_argv_contains_empty_string(self):
+        self._reject_stage2({"enumerator": self._enum(argv=["/usr/bin/python3", "", "tools/x.py"])})
+
+    def test_enumerator_argv0_relative(self):
+        # The hook runs argv with no shell (aiqt_hooks.py:7976); a bare interpreter name resolves through
+        # the session PATH, an ambient binding the registry cannot pin.
+        self._reject_stage2({"enumerator": self._enum(argv=["python3", "-I", "tools/x.py"])})
+
+    def test_enumerator_argv_control_char(self):
+        self._reject_stage2({"enumerator": self._enum(argv=["/usr/bin/python3", "tools/x\n.py"])})
+
+    def test_enumerator_timeout_absent(self):
+        spec = self._enum()
+        del spec["timeout"]
+        self._reject_stage2({"enumerator": spec})
+
+    def test_enumerator_timeout_60(self):
+        # 60 is inside the hook window (0, 600] but overruns the 10 second hook budget in hooks.json.
+        self._reject_stage2({"enumerator": self._enum(timeout=60)})
+
+    def test_enumerator_timeout_bool(self):
+        self._reject_stage2({"enumerator": self._enum(timeout=True)})
+
+    def test_enumerator_timeout_zero(self):
+        self._reject_stage2({"enumerator": self._enum(timeout=0)})
+
+    def test_enumerator_unknown_subkey(self):
+        self._reject_stage2({"enumerator": self._enum(shell=True)})
+
+    def test_enumerator_backlog_operand_inside_state_dir(self):
+        # An absolute operand (the backlog file) joins the state_dir collision list.
+        self._reject_stage2({"enumerator": self._enum(argv=[
+            "/usr/bin/python3", "-I", "tools/x.py", "/opt/x/private/orch-state/TODO.md"])})
+
+    def test_enumerator_without_state_dir(self):
+        # Opts out of the injected isolation state_dir: the target here IS the state_dir requirement. The
+        # enumerator is otherwise valid, so only that requirement can reject it.
+        self._reject_clean({"version": 1, "enumerator": self._enum()}, add_state_dir=False)
+
+    def test_other_stage2_keys_without_state_dir(self):
+        # The same requirement for every other STATE_DIR_REQUIRED_BY key, each otherwise valid.
+        for key in ("yield_tools", "mode", "escape", "attestations", "mistakes_register"):
+            with self.subTest(key=key):
+                self._reject_clean({"version": 1, key: STAGE2[key]}, add_state_dir=False)
+
+    def test_yield_tools_not_a_list(self):
+        # The string case is also caught by the matcher check (each character is no tool name); the
+        # integer case is caught only by the list type check.
+        for value in ("ScheduleWakeup", 5):
+            with self.subTest(value=value):
+                self._reject_stage2({"yield_tools": value})
+
+    def test_yield_tools_outside_matcher(self):
+        # Bash is not in the orch_yield_tool matcher, so the hook would never judge it as a yield.
+        self._reject_stage2({"yield_tools": ["ScheduleWakeup", "Bash"]})
+
+    def test_yield_tools_duplicate(self):
+        self._reject_stage2({"yield_tools": ["ScheduleWakeup", "ScheduleWakeup"]})
+
+    def test_mode_not_an_object(self):
+        # The string case is also caught by the subkey check; the list holding "path" only by the object
+        # type check.
+        for value in ("/opt/x/private/operating-mode.md", ["path"]):
+            with self.subTest(value=value):
+                self._reject_stage2({"mode": value})
+
+    def test_mode_without_path(self):
+        self._reject_stage2({"mode": {}})
+
+    def test_mode_extra_key(self):
+        self._reject_stage2({"mode": {"path": "/opt/x/private/operating-mode.md", "default": "attended"}})
+
+    def test_mode_path_relative(self):
+        self._reject_stage2({"mode": {"path": "private/operating-mode.md"}})
+
+    def test_mode_path_inside_state_dir(self):
+        self._reject_stage2({"mode": {"path": "/opt/x/private/orch-state/operating-mode.md"}})
+
+    def test_attestations_not_a_string(self):
+        self._reject_stage2({"attestations": {"path": "/opt/x/private/attestations.jsonl"}})
+
+    def test_attestations_relative(self):
+        self._reject_stage2({"attestations": "private/attestations.jsonl"})
+
+    def test_attestations_inside_state_dir(self):
+        self._reject_stage2({"attestations": "/opt/x/private/orch-state/attestations.jsonl"})
+
+    def test_attestations_anchor_component_overlong(self):
+        # A 250-byte final component is within NAME_MAX, but the <path>.anchor file the hook opens adds 7
+        # bytes and exceeds it; only the anchor length check rejects this.
+        self._reject_stage2({"attestations": "/opt/x/private/" + "a" * 250})
+
+    def test_attestations_anchor_on_state_dir(self):
+        # The register itself sits outside state_dir, but its <path>.anchor authority (aiqt_hooks.py:9541)
+        # lands exactly on it; only the anchor entry in the collision list can reject this.
+        self._reject_stage2({"state_dir": "/opt/x/private/at.anchor",
+                             "attestations": "/opt/x/private/at"})
+
+    def test_mistakes_register_not_a_string(self):
+        self._reject_stage2({"mistakes_register": 5})
+
+    def test_mistakes_register_inside_state_dir(self):
+        self._reject_stage2({"mistakes_register": "/opt/x/private/orch-state/mistakes-register.jsonl"})
+
+    def test_staleness_not_an_object(self):
+        # The string "24" is also caught by the subkey check; the list holding "task_hours" only by the
+        # object type check.
+        for value in ("24", ["task_hours"]):
+            with self.subTest(value=value):
+                self._reject_stage2({"staleness": value})
+
+    def test_staleness_task_hours_negative(self):
+        self._reject_stage2({"staleness": {"task_hours": -1, "external_hours": 72}})
+
+    def test_staleness_external_hours_9000(self):
+        self._reject_stage2({"staleness": {"task_hours": 24, "external_hours": 9000}})
+
+    def test_staleness_bool(self):
+        # bool is a subclass of int; True would read as one hour.
+        self._reject_stage2({"staleness": {"task_hours": True, "external_hours": 72}})
+
+    def test_staleness_unknown_subkey(self):
+        self._reject_stage2({"staleness": {"task_hours": 24, "lease_hours": 24}})
+
+    def test_escape_not_an_object(self):
+        # The string case is also caught by the subkey check; the list holding "path" only by the object
+        # type check.
+        for value in ("ESCAPE-ALLOW-YIELD", ["path"]):
+            with self.subTest(value=value):
+                self._reject_stage2({"escape": value})
+
+    def test_escape_without_path(self):
+        self._reject_stage2({"escape": {}})
+
+    def test_escape_empty_string(self):
+        # The hook disables the release with no record on an empty path (aiqt_hooks.py:7861-7862).
+        self._reject_stage2({"escape": {"path": ""}})
+
+    def test_escape_non_string(self):
+        self._reject_stage2({"escape": {"path": 5}})
+
+    def test_escape_dotdot(self):
+        self._reject_stage2({"escape": {"path": "../ESCAPE-ALLOW-YIELD"}})
+
+    def test_escape_absolute_outside_state_dir(self):
+        self._reject_stage2({"escape": {"path": "/opt/x/private/ESCAPE-ALLOW-YIELD"}})
+
+    def test_escape_onto_state_dir(self):
+        # "." resolves onto the anchor directory itself, which can never be the regular-file sentinel.
+        self._reject_stage2({"escape": {"path": "."}})
+
+    def test_truth_present(self):
+        # `truth` has no reader in the vendored hook, so it stays outside the allowlist.
+        self._reject_stage2({"truth": {"changelog": "changelog.toml", "merged_pr_history": True}})
+
+    # --- hooks.json as a guard input: unreadable or malformed fails, never skips ------------------------
+    def _run_gate_copy(self, tree, payload, hooks_json=None):
+        # Run a copy of the gate from <tree>/tools, so its ROOT (and so its HOOKS_JSON) is <tree>. When
+        # `hooks_json` is given it is written at the plugin path under <tree>; otherwise none exists.
+        tools_dir = Path(tree) / "tools"
+        tools_dir.mkdir(exist_ok=True)
+        gate = tools_dir / "check-orchestration-registry.py"
+        shutil.copyfile(VALIDATOR, gate)
+        if hooks_json is not None:
+            hp = Path(tree) / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "hooks.json"
+            hp.parent.mkdir(parents=True, exist_ok=True)
+            hp.write_text(hooks_json, encoding="utf-8")
+        reg = _write(tree, payload)
+        return subprocess.run([sys.executable, str(gate), str(reg)], capture_output=True, text=True)
+
+    def test_yield_tools_with_absent_hooks_json_rejected(self):
+        payload = {"version": 1, "state_dir": "/opt/x/orch-state", "yield_tools": ["ScheduleWakeup"]}
+        with tempfile.TemporaryDirectory() as d:
+            r = self._run_gate_copy(d, payload)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("hooks.json", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+        # Control: the same gate copy with the real hooks.json in place accepts the same registry, so the
+        # rejection above is caused by the missing hooks.json and nothing else.
+        with tempfile.TemporaryDirectory() as d:
+            r = self._run_gate_copy(d, payload, REAL_HOOKS_JSON.read_text(encoding="utf-8"))
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_yield_tools_with_hooks_json_lacking_the_entry_rejected(self):
+        payload = {"version": 1, "state_dir": "/opt/x/orch-state", "yield_tools": ["ScheduleWakeup"]}
+        with tempfile.TemporaryDirectory() as d:
+            r = self._run_gate_copy(d, payload, json.dumps({"hooks": {"PreToolUse": []}}))
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("orch_yield_tool", r.stderr)
+
+    def test_yield_tools_with_non_json_hooks_json_rejected(self):
+        payload = {"version": 1, "state_dir": "/opt/x/orch-state", "yield_tools": []}
+        with tempfile.TemporaryDirectory() as d:
+            r = self._run_gate_copy(d, payload, "{ not json")
+            self.assertEqual(r.returncode, 1)
+            self.assertNotIn("Traceback", r.stderr)
 
 
 if __name__ == "__main__":

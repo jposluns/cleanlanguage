@@ -22,12 +22,22 @@ read, which classify a permission fault or a dangling symlink as `bad`), and eac
 a live git top level is a runtime property the hook checks fail-safe; the path need not
 exist on the machine running this gate.
 
+It also validates the stage-2 arming keys (`enumerator`, `yield_tools`, `mode`,
+`attestations`, `mistakes_register`, `staleness`, and `escape`). Where the hook silently
+substitutes a default for a malformed value (a timeout outside its window, a staleness
+horizon out of range) or silently disables a control (a non-string escape path, a roster
+name outside the hook matcher), this gate rejects the value instead. A declared
+`yield_tools` roster is checked against the `orch_yield_tool` matcher read from
+`plugin/aiqt-guardrails-hooks/hooks/hooks.json` at gate time; an unreadable or malformed
+hooks.json is a gate failure, never a skip.
+
 Usage: check-orchestration-registry.py [registry-path]
 The path defaults to `<repo-root>/.aiqt/orchestration.json`. Exit 0 when the registry is
 genuinely absent (it is optional) or valid; exit 1 on a structural defect or an unreadable
 present registry.
 """
 import json
+import math
 import os
 import pathlib
 import re
@@ -36,13 +46,37 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_REGISTRY = os.path.join(ROOT, ".aiqt", "orchestration.json")
+# The vendored hook definitions. The orch_yield_tool matcher there bounds what a `yield_tools` roster may
+# name: a name outside the matcher never reaches the hook, so it would be a silent no-op entry.
+HOOKS_JSON = os.path.join(ROOT, "plugin", "aiqt-guardrails-hooks", "hooks", "hooks.json")
 
-# Stage-1 top-level allowlist. Any other top-level key is rejected: a new arming key
-# (an enumerator, a yield-tool roster, a mode record) lands only together with the gate
-# extension that validates it, so an unrecognized key is an ahead-of-gate or malformed
-# registry, never silently accepted. This also mechanically keeps a strict-lint omission
-# such as `lease.holder_is_session_id` out of the committed registry.
-ALLOWED_KEYS = {"version", "companion_stores", "record", "lease", "state_dir", "dispatch_tools"}
+# Stage-2 top-level allowlist. Any other top-level key is rejected: a new arming key lands
+# only together with the gate extension that validates it, so an unrecognized key is an
+# ahead-of-gate or malformed registry, never silently accepted. `truth` stays rejected: no
+# code in the vendored hook reads it. The lease subkey allowlist below also mechanically
+# keeps a strict-lint omission such as `lease.holder_is_session_id` out of the committed
+# registry.
+ALLOWED_KEYS = {"version", "companion_stores", "record", "lease", "state_dir", "dispatch_tools",
+                "enumerator", "yield_tools", "mode", "attestations", "mistakes_register",
+                "staleness", "escape"}
+# The stage-2 keys that drive machine state under state_dir, or name a path that must be
+# collision-checked against it, and so require an explicit `state_dir` (the same XDG-default fallback
+# hazard as `record`/`lease`; see the cross-field requirement in validate()). `staleness` names no
+# path and drives no write, so it is not listed.
+STATE_DIR_REQUIRED_BY = ("enumerator", "yield_tools", "mode", "escape", "attestations",
+                         "mistakes_register")
+# The enumerator shape _orch_enumerate reads (aiqt_hooks.py:7966-7976).
+ENUMERATOR_KEYS = {"argv", "timeout"}
+# The enumerator timeout bound, in seconds. The hook accepts any number in (0, 600] and silently
+# substitutes 60 otherwise (aiqt_hooks.py:7974), but hooks.json gives orch_stop_guard and
+# orch_yield_tool a 10 second budget, so an enumerator allowed to run past it overruns the hook that
+# runs it. The gate requires an explicit timeout in (0, 8], leaving headroom for the checkpoint work.
+ENUMERATOR_TIMEOUT_MAX = 8
+# The staleness shape _schema_staleness reads (aiqt_hooks.py:8294-8301).
+STALENESS_KEYS = {"task_hours", "external_hours"}
+# Mirrors _ORCH_MAX_HORIZON_HOURS (aiqt_hooks.py:8265). The hook turns a value outside (0, 8760] into
+# the 24 hour default (aiqt_hooks.py:8274-8279, 8300-8301); the gate rejects it instead.
+STALENESS_HOURS_MAX = 8760
 # The record surfaces the hook's resume audit and barrier read (aiqt_hooks.py:9355-9391, 9820-9832).
 RECORD_KEYS = {"findings", "pending_decisions", "handoff"}
 # The lease shape _orch_scope_live and the resume audit read (aiqt_hooks.py:7786-7817, 9392-9409).
@@ -174,6 +208,40 @@ def _check_declared_path(label, value):
             _fail("`{}` has a path component longer than {} bytes (NAME_MAX)".format(label, NAME_MAX))
 
 
+def _yield_matcher_tools():
+    # The tool names the orch_yield_tool PreToolUse entry in hooks.json routes to the hook (its matcher
+    # split on "|"). A roster name outside this set never reaches the hook, so the hook never judges it.
+    # This is a guard input, so it is read from the checkout at gate time and fails closed: an unreadable,
+    # non-UTF-8, or non-JSON file, or one with no orch_yield_tool entry carrying a usable matcher, is a
+    # gate failure (cannot evaluate), never a skip or an empty set.
+    try:
+        with open(HOOKS_JSON, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError, RecursionError) as exc:
+        _fail("cannot read the hook definitions {} to check `yield_tools`: {}".format(HOOKS_JSON, exc))
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    entries = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    if not isinstance(entries, list):
+        _fail("{} has no PreToolUse hook list; `yield_tools` cannot be checked".format(HOOKS_JSON))
+    names = set()
+    found = False
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+            continue
+        for hook in entry["hooks"]:
+            args = hook.get("args") if isinstance(hook, dict) else None
+            if isinstance(args, list) and "orch_yield_tool" in args:
+                matcher = entry.get("matcher")
+                if not isinstance(matcher, str) or not matcher:
+                    _fail("the orch_yield_tool entry in {} has no usable matcher".format(HOOKS_JSON))
+                found = True
+                names.update(matcher.split("|"))
+    if not found:
+        _fail("no PreToolUse entry in {} runs orch_yield_tool; `yield_tools` cannot be checked against "
+              "its matcher".format(HOOKS_JSON))
+    return names
+
+
 def validate(path):
     # Presence, matching the hook: a genuine FileNotFoundError on lstat is absence (pass); any other
     # stat fault (a permission error, a symlink loop) or a read failure (a dangling symlink follows to a
@@ -230,7 +298,7 @@ def validate(path):
             # Route through the shared declared-path helper: same non-empty/absolute/control-and-surrogate
             # checks as before, now also covered by the NAME_MAX/PATH_MAX over-long check (codex QA HIGH-2).
             _check_declared_path("companion_stores[{}]".format(i), entry)
-    # Reject any top-level key outside the stage-1 allowlist. A new arming key lands only together with
+    # Reject any top-level key outside the stage-2 allowlist. A new arming key lands only together with
     # its gate extension, so an unrecognized key is an ahead-of-gate or malformed registry.
     for key in obj:
         if key not in ALLOWED_KEYS:
@@ -318,6 +386,126 @@ def validate(path):
             _fail("`state_dir` ({!r}) exists at gate time but is not a directory; the hooks write "
                   "machine-state files inside it, and a non-directory state_dir drives write_scope_guard "
                   "to a persistent covered-write denial".format(obj["state_dir"]))
+    # --- stage-2 arming keys -------------------------------------------------------------------------
+    # Each check rejects a value the hook would act on wrongly. Where the hook fails a malformed value
+    # closed (an enumerator argv that is not a list of non-empty strings denies every Stop with
+    # ENUMERATOR_ERROR, aiqt_hooks.py:7969-7972) or open to a silent default or no-op (a timeout outside
+    # (0, 600] becomes 60, aiqt_hooks.py:7974; a staleness horizon out of range becomes 24,
+    # aiqt_hooks.py:8300-8301; a non-string or empty escape path disables the release with no record,
+    # aiqt_hooks.py:7861-7862; a roster name outside the matcher is never judged, aiqt_hooks.py:8665-8667),
+    # the gate rejects the value at author time so neither outcome reaches a session.
+    enum_paths = []  # absolute enumerator operands, collision-checked against state_dir below
+    if "enumerator" in obj:
+        spec = obj["enumerator"]
+        if not isinstance(spec, dict):
+            _fail("`enumerator` must be a JSON object, got {}".format(type(spec).__name__))
+        extra = set(spec) - ENUMERATOR_KEYS
+        if extra:
+            _fail("`enumerator` has unknown key(s) {}".format(sorted(extra)))
+        if "argv" not in spec:
+            _fail("`enumerator.argv` is required")
+        argv = spec["argv"]
+        if not isinstance(argv, list) or not argv:
+            _fail("`enumerator.argv` must be a non-empty list, got {!r}".format(argv))
+        for i, arg in enumerate(argv):
+            if not isinstance(arg, str) or not arg:
+                _fail("`enumerator.argv[{}]` must be a non-empty string, got {!r}".format(i, arg))
+            if _has_unsafe_char(arg):
+                _fail("`enumerator.argv[{}]` contains a control or surrogate character".format(i))
+        # argv[0] must be absolute: the hook runs argv with no shell and cwd set to the repository root
+        # (aiqt_hooks.py:7976), so a bare interpreter name would resolve through the session PATH, an
+        # ambient binding the registry cannot pin. Every later operand that is an absolute path (the
+        # backlog file) is validated as a declared path and joins the state_dir collision list.
+        _check_declared_path("enumerator.argv[0]", argv[0])
+        for i in range(1, len(argv)):
+            if _is_absolute(argv[i]):
+                _check_declared_path("enumerator.argv[{}]".format(i), argv[i])
+                enum_paths.append(("enumerator.argv[{}]".format(i), argv[i]))
+        if "timeout" not in spec:
+            _fail("`enumerator.timeout` is required: the hook substitutes 60 seconds for a missing value "
+                  "(aiqt_hooks.py:7974), which overruns the 10 second hook budget")
+        timeout = spec["timeout"]
+        # bool is a subclass of int; reject it. NaN and Infinity fail the range comparison.
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) \
+                or not (0 < timeout <= ENUMERATOR_TIMEOUT_MAX):
+            _fail("`enumerator.timeout` must be a number of seconds in (0, {}], got {!r}".format(
+                ENUMERATOR_TIMEOUT_MAX, timeout))
+    # `yield_tools`: a list of unique non-empty control-free names, each one the orch_yield_tool matcher
+    # in hooks.json actually routes to the hook. hooks.json is read whenever the key is declared, even for
+    # an empty roster, so an unreadable hooks.json always fails rather than skipping.
+    if "yield_tools" in obj:
+        roster = obj["yield_tools"]
+        if not isinstance(roster, list):
+            _fail("`yield_tools` must be a list, got {}".format(type(roster).__name__))
+        matched = _yield_matcher_tools()
+        seen = set()
+        for i, entry in enumerate(roster):
+            if not isinstance(entry, str) or not entry:
+                _fail("`yield_tools[{}]` must be a non-empty string, got {!r}".format(i, entry))
+            if _has_unsafe_char(entry):
+                _fail("`yield_tools[{}]` contains a control or surrogate character".format(i))
+            if entry in seen:
+                _fail("`yield_tools[{}]` ({!r}) is a duplicate".format(i, entry))
+            seen.add(entry)
+            if entry not in matched:
+                _fail("`yield_tools[{}]` ({!r}) is not in the orch_yield_tool matcher {} in {}; a name "
+                      "outside the matcher never reaches the hook, so the roster entry would be a silent "
+                      "no-op".format(i, entry, sorted(matched), HOOKS_JSON))
+    # `mode`: an object with exactly the key `path`, a declared path (the reader is _orch_mode,
+    # aiqt_hooks.py:7763-7776).
+    if "mode" in obj:
+        mode = obj["mode"]
+        if not isinstance(mode, dict):
+            _fail("`mode` must be a JSON object, got {}".format(type(mode).__name__))
+        extra = set(mode) - {"path"}
+        if extra:
+            _fail("`mode` has unknown key(s) {}".format(sorted(extra)))
+        if "path" not in mode:
+            _fail("`mode.path` is required")
+        _check_declared_path("mode.path", mode["path"])
+    # `attestations` and `mistakes_register`: each a path STRING, not an object (the readers are
+    # aiqt_hooks.py:8068, 9638, and 9677). The attestation anchor the hook opens at <path>.anchor
+    # (aiqt_hooks.py:9541) is length-checked too, since it is 7 bytes longer than the declared path.
+    for key in ("attestations", "mistakes_register"):
+        if key in obj:
+            _check_declared_path(key, obj[key])
+    if "attestations" in obj:
+        _check_declared_path("attestations.anchor", obj["attestations"] + ".anchor")
+    # `staleness`: an object whose keys are a subset of STALENESS_KEYS, each a non-bool finite number in
+    # (0, STALENESS_HOURS_MAX]. This mirrors _v_finite_pos (aiqt_hooks.py:8274-8279) but rejects where the
+    # hook would silently default to 24 hours.
+    if "staleness" in obj:
+        staleness = obj["staleness"]
+        if not isinstance(staleness, dict):
+            _fail("`staleness` must be a JSON object, got {}".format(type(staleness).__name__))
+        extra = set(staleness) - STALENESS_KEYS
+        if extra:
+            _fail("`staleness` has unknown key(s) {}".format(sorted(extra)))
+        for key in sorted(staleness):
+            v = staleness[key]
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) \
+                    or not (0 < v <= STALENESS_HOURS_MAX):
+                _fail("`staleness.{}` must be a finite number of hours in (0, {}], got {!r}".format(
+                    key, STALENESS_HOURS_MAX, v))
+    # `escape`: an object with exactly the key `path`, a non-empty control-free string with no ".."
+    # component (the hook rejects one, aiqt_hooks.py:7867-7868). Containment under state_dir is checked
+    # with the collision checks below, once state_dir is known to be declared.
+    if "escape" in obj:
+        esc = obj["escape"]
+        if not isinstance(esc, dict):
+            _fail("`escape` must be a JSON object, got {}".format(type(esc).__name__))
+        extra = set(esc) - {"path"}
+        if extra:
+            _fail("`escape` has unknown key(s) {}".format(sorted(extra)))
+        if "path" not in esc:
+            _fail("`escape.path` is required")
+        if not isinstance(esc["path"], str) or not esc["path"]:
+            _fail("`escape.path` must be a non-empty string, got {!r}; the hook disables the operator "
+                  "release with no record on such a value (aiqt_hooks.py:7861-7862)".format(esc["path"]))
+        if _has_unsafe_char(esc["path"]):
+            _fail("`escape.path` contains a control or surrogate character")
+        if ".." in esc["path"].split("/"):
+            _fail("`escape.path` ({!r}) has a \"..\" component, which the hook rejects".format(esc["path"]))
     # Cross-field REQUIREMENT (claude QA HIGH, round 7): a declared `record` or `lease` must be accompanied
     # by an explicit `state_dir`. When `state_dir` is OMITTED the hooks do NOT stop using a state dir --
     # _state_dir_from_registry (aiqt_hooks.py:7638-7651) falls back to
@@ -335,6 +523,16 @@ def validate(path):
               "that this gate never sees, and orch_resume_audit's unconditional `<state_dir>/"
               "resume-barrier.json` write clobbers any record/lease path landing inside it; declare "
               "`state_dir` explicitly so the machine-state location is validated and collision-checked")
+    # The same requirement for the stage-2 keys that drive machine state under state_dir or name a path
+    # the collision check below must see (STATE_DIR_REQUIRED_BY). Without an explicit state_dir the
+    # enumerator checkpoint, the yield denial counter, and the escape anchor would all bind to the unseen
+    # XDG-default directory, and a declared mode, attestation, or mistakes-register path would escape the
+    # collision check.
+    for key in STATE_DIR_REQUIRED_BY:
+        if key in obj and "state_dir" not in obj:
+            _fail("`{}` is declared without `state_dir`: the machine state it drives, or the collision "
+                  "check its path needs, would bind to an XDG-default state directory this gate never "
+                  "sees; declare `state_dir` explicitly".format(key))
     # Cross-field collision (codex QA HIGH): a declared record/lease path that lands ON or INSIDE
     # `state_dir` collides with the machine-state files the hooks write there. orch_resume_audit opens
     # `<state_dir>/resume-barrier.json` with mode "w" UNCONDITIONALLY (aiqt_hooks.py:9775, 9783-9785), so
@@ -369,18 +567,56 @@ def validate(path):
                 declared.append(("record.{}".format(key), obj["record"][key]))
         if isinstance(obj.get("lease"), dict) and "path" in obj["lease"]:
             declared.append(("lease.path", obj["lease"]["path"]))
+        # Stage 2 adds the declared files the hooks read or write outside state_dir to the same list: the
+        # mode record, the attestation register and its <path>.anchor authority (aiqt_hooks.py:9541), the
+        # mistakes register, and every absolute enumerator operand (the backlog file). All are validated
+        # strings by this point.
+        if isinstance(obj.get("mode"), dict) and "path" in obj["mode"]:
+            declared.append(("mode.path", obj["mode"]["path"]))
+        if "attestations" in obj:
+            declared.append(("attestations", obj["attestations"]))
+            declared.append(("attestations.anchor", obj["attestations"] + ".anchor"))
+        if "mistakes_register" in obj:
+            declared.append(("mistakes_register", obj["mistakes_register"]))
+        declared.extend(enum_paths)
         for label, value in declared:
             if _contains_or_equal(_norm_pathspell(value), norm_state_dir):
-                _fail("`{}` ({!r}) is on or inside `state_dir` ({!r}); a record/lease path on or under "
+                _fail("`{}` ({!r}) is on or inside `state_dir` ({!r}); a declared path on or under "
                       "state_dir collides with the machine-state files the hooks write there (e.g. "
-                      "resume-barrier.json), so a hook write would clobber the declared record".format(
+                      "resume-barrier.json), so a hook write would clobber the declared file".format(
                           label, value, obj["state_dir"]))
             real_value = os.path.realpath(value)
             if _contains_or_equal(real_value, real_state_dir):
                 _fail("`{}` ({!r}) RESOLVES onto or inside `state_dir` ({!r}) through an existing symlink "
-                      "(record/lease resolves to {!r}, state_dir to {!r}); a hook write to a machine-state "
-                      "file there (e.g. resume-barrier.json) would clobber the declared record".format(
-                          label, value, obj["state_dir"], real_value, real_state_dir))
+                      "(the declared path resolves to {!r}, state_dir to {!r}); a hook write to a "
+                      "machine-state file there (e.g. resume-barrier.json) would clobber the declared "
+                      "file".format(label, value, obj["state_dir"], real_value, real_state_dir))
+        # `escape` containment, mirroring _orch_escape_active (aiqt_hooks.py:7859-7871): the hook anchor is
+        # the REALPATH of state_dir, a relative value is joined onto that anchor, and the normpath of the
+        # result must lie under it; otherwise the hook ignores the sentinel ("outside the operator-trusted
+        # anchor") and the operator release is silently unusable. The gate additionally rejects a value that
+        # lands ON the anchor itself (for example "."), because a directory can never be the regular-file
+        # sentinel the hook requires (aiqt_hooks.py:7893-7900). An absolute value (os.path.isabs, as the hook
+        # tests it) is also checked lexically against the declared state_dir spelling, so both the spelling
+        # and the resolved anchor must contain it. Execution reaches here only with state_dir declared and
+        # valid, which the cross-field requirement above enforces whenever `escape` is declared.
+        if "escape" in obj:
+            esc_path = obj["escape"]["path"]
+            if os.path.isabs(esc_path):
+                _check_declared_path("escape.path", esc_path)
+                esc_lex = _norm_pathspell(esc_path)
+                if esc_lex == norm_state_dir or not _contains_or_equal(esc_lex, norm_state_dir):
+                    _fail("`escape.path` ({!r}) must lie strictly under `state_dir` ({!r}); the hook ignores "
+                          "a sentinel outside its trusted anchor".format(esc_path, obj["state_dir"]))
+                esc_raw = esc_path
+            else:
+                esc_raw = os.path.join(real_state_dir, esc_path)
+                _check_declared_path("escape.path joined onto state_dir", esc_raw)
+            esc_norm = os.path.normpath(esc_raw)
+            if esc_norm == real_state_dir or not esc_norm.startswith(real_state_dir.rstrip(os.sep) + os.sep):
+                _fail("`escape.path` ({!r}) resolves to {!r}, which is not strictly under the resolved "
+                      "`state_dir` ({!r}); the hook ignores a sentinel outside its trusted anchor, so the "
+                      "operator release would be silently unusable".format(esc_path, esc_norm, real_state_dir))
         # --- THE BOUND: accepted-input soundness is bounded to commit-time validation ---------------------
         # This gate performs COMMIT-TIME validation only. What it establishes is: structural shape + concrete
         # hazards (surrogate/control character, NAME_MAX/PATH_MAX length, derived-path reserve, record/lease-
@@ -438,7 +674,8 @@ def validate(path):
     summary = "version 1"
     if "companion_stores" in obj:
         summary += ", {} companion store(s)".format(len(obj["companion_stores"]))
-    arming = [k for k in ("record", "lease", "state_dir", "dispatch_tools") if k in obj]
+    arming = [k for k in ("record", "lease", "state_dir", "dispatch_tools", "enumerator", "yield_tools",
+                          "mode", "attestations", "mistakes_register", "staleness", "escape") if k in obj]
     summary += ", arming keys: {}".format(", ".join(arming)) if arming else ", no arming keys"
     print("check-orchestration-registry: OK ({}: {})".format(path, summary))
 
