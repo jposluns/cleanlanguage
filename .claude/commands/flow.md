@@ -97,7 +97,8 @@ Per item (the machine-local "Working method" section sets which of these steps a
     `orch-verify --pick claude` succeeds AND claude is not at its cost cap.
 (d) PLAN: land it with a numbered step list, a file manifest, an acceptance/verification section, a
     QA-tier declaration, and a rollback note. Execution-ready only when it passes that shape.
-(e) IMPLEMENT (serial): the orchestrator VERIFIES the plan against the seeds + live tree, may dispatch an
+(e) IMPLEMENT (serial): the orchestrator VERIFIES the plan, where the tier has one, against the seeds
+    + live tree, may dispatch an
     implementation DRAFT to a claude worker, then FINALIZES it serially, re-verifying every line at
     source, as the SOLE writer/merger. Commit BEFORE dispatching QA (QA pins a revision); then run the
     tier's QA and merge only as the machine-local "Working method" section allows.
@@ -140,8 +141,9 @@ rounds, the round budget, the premise review, failed rounds, convergence, and pa
 ONLY in that file's "Working method" section; do not restate them here. Pool workers cannot read it,
 so a brief that depends on it EMBEDS the parts a leg needs (see the pipeline section above).
 The GEMINI ROLE LIMIT, CODEX ROLE LIMIT, and VERIFIER DIVERSITY stay here and bind every tier;
-so does the one tier rule kept here: how tier escalation and de-escalation take effect, in cycle
-step 4 (GRADE). That file's "Working method" section sets when a light item is regraded.
+so do the two tier rules kept here: how tier escalation and de-escalation take effect, in cycle
+step 4 (GRADE), and the AIQT HOLD above. The "Working method" section in that file sets when a
+light item is regraded.
 
 VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genuinely UNREACHABLE,
 never for cost; cost never buys the reduction. A codex seat barred by the CODEX ROLE LIMIT is filled
