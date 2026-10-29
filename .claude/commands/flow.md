@@ -1,6 +1,7 @@
 # /flow (cleanlanguage, interim local command)
 
-INTERIM. This command's own inlined text below is authoritative for cleanlanguage and is reviewed
+INTERIM. This command's own inlined text below is authoritative for cleanlanguage (except for the
+tiers and the QA cycle, which the machine-local "Working method" section governs) and is reviewed
 through this repository's PR gate. It adapts the fleet /flow standard, whose co-owned reference copy is
 `/opt/inbox/FLOW.md` (reconciled with lab_infra's `docs/operating-model.md`, the NORMATIVE source that governs where the two differ); that reference is a
 cross-check, not an unreviewed override of this file. When lab_infra renders a shared `/flow` command
@@ -139,7 +140,8 @@ rounds, the round budget, the premise review, failed rounds, convergence, and pa
 ONLY in that file's "Working method" section; do not restate them here. Pool workers cannot read it,
 so a brief that depends on it EMBEDS the parts a leg needs (see the pipeline section above).
 The GEMINI ROLE LIMIT, CODEX ROLE LIMIT, and VERIFIER DIVERSITY stay here and bind every tier;
-so does the one tier rule kept here: tier escalation and de-escalation, in cycle step 4 (GRADE).
+so does the one tier rule kept here: how tier escalation and de-escalation take effect, in cycle
+step 4 (GRADE). That file's "Working method" section sets when a light item is regraded.
 
 VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genuinely UNREACHABLE,
 never for cost; cost never buys the reduction. A codex seat barred by the CODEX ROLE LIMIT is filled
