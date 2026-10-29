@@ -70,22 +70,28 @@ private-context reference at source.
 Per item:
 (a) SEED BRIEF: 1 self-contained brief embedding all needed context (problem, exact file/line facts,
     constraints, deliverable shape, acceptance criteria).
-(b) SEEDS: `orch-verify claude|codex|gemini <brief> /opt/cleanlanguage/cleanlanguage --expensive`, the
-    same brief to all 3 in parallel. A family genuinely unreachable OR at its cost cap is
-    skip-and-note (combine at a minimum of 2, queue a re-combine when it returns), never a block.
-(c) COMBINE with Fable: `orch-verify claude <combine-brief> ... --expensive` (the --expensive claude tier
-    is claude-fable-5). The combiner ADJUDICATES (state settled design; name disagreements + recommend;
+(b) SEEDS: `orch-verify claude|gemini <brief> /opt/cleanlanguage/cleanlanguage --expensive`, the
+    same brief to both in parallel. A family genuinely unreachable OR at its cost cap is
+    skip-and-note (combine at a minimum of 2 by adding an independent, differently-primed second seed
+    from the reachable family; queue a re-combine when it returns), never a block.
+(c) COMBINE with Fable: `orch-verify claude <combine-brief> ... --super-expensive` (claude-fable-5 at
+    high effort). The combiner ADJUDICATES (state settled design; name disagreements + recommend;
     do not average into mush; discard hallucinated claims, verify at source). Fallback when Fable is
-    exhausted: `orch-verify codex <combine-brief> ... --model gpt-5.6-sol --effort xhigh` (an explicit
-    override; note --expensive codex is gpt-6-astra, not this). NEVER gemini as combiner of record;
+    exhausted: `orch-verify claude <combine-brief> ... --expensive` (claude-opus-5-5 at xhigh effort).
+    NEVER codex or gemini as combiner of record;
     NEVER orchestrator self-synthesis as the combiner.
 (d) PLAN: land it with a numbered step list, a file manifest, an acceptance/verification section, a
     QA-tier declaration, and a rollback note. Execution-ready only when it passes that shape.
 (e) IMPLEMENT (serial): the orchestrator VERIFIES the plan against the seeds + live tree, may dispatch an
-    implementation DRAFT to a worker, then FINALIZES it serially, re-verifying every line at source, as
+    implementation DRAFT to a claude worker, then FINALIZES it serially, re-verifying every line at source, as
     the SOLE writer/merger. Commit BEFORE dispatching QA (QA pins a revision); then run the tier's QA, fix at the WIDTH OF THE DEFECT CLASS, re-QA on the fixed state, and merge.
 
 GEMINI ROLE LIMIT: gemini may SEED and QA but NEVER plan-combines or drafts the implementation.
+
+CODEX ROLE LIMIT: codex may QA ONLY; it NEVER seeds, plan-combines, drafts the implementation, or fixes.
+Every codex leg is dispatched with `ORCH_MAX_FAILOVERS=1`. A review that hunts for ways past a security
+control NEVER goes to codex: run it on claude + gemini, adding an independent, differently-primed claude
+pass in a separate clean context, recorded as the fallback, where the tier needs a third family.
 
 PROHIBITED: dispatch seeds in the background then END THE TURN before collecting them. STATE, DO NOT
 PROMISE: collect through the tracked background mechanism that survives to completion.
@@ -95,17 +101,19 @@ AIQT HOLD: plan-production throughput NEVER shortens a change's per-tier QA.
 ## Tiers (per the machine-local /opt/cleanlanguage/.claude/CLAUDE.md)
 
 - LIGHT (quick fix / bookkeeping / version bumps / record edits): implement directly; mechanical gates;
-  DUAL-family QA (claude + codex; gemini excluded on cost, which is allowed only because 2 families still
-  meet the verifier-diversity floor).
+  DUAL-family QA (claude + codex, or claude + gemini where the CODEX ROLE LIMIT bars codex; gemini is
+  otherwise excluded on cost, which is allowed only because 2 families still meet the verifier-diversity
+  floor).
 - SUBSTANTIVE (skill/site-corpus change; new/edited gate/linter/hook/tool; multi-surface; control value /
-  citation / normative rule; new feature): the full pipeline; TRI-family adversarial QA weighting codex;
+  citation / normative rule; new feature): the full pipeline; TRI-family adversarial QA weighting codex
+  within the CODEX ROLE LIMIT;
   validate every finding at source; up to 4 fixing rounds; if it has not converged, trigger a premise review (re-derive the problem from fresh observation) and escalate the ITEM with a too-many-rounds flag and recommendation, continuing other authorized work. The round limit alone never closes the session.
 - SENSITIVE (gate-blind correctness AND delicate scale AND high escaped-error cost, all 3): substantive
   plus the high-assurance harness (independent adversarial verifiers, deterministic apply, a persistent
   register). No de-escalation without a maintainer decision.
 
-VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genuinely UNREACHABLE, never
-for cost; cost never buys the reduction. When a required family is genuinely unreachable, run an independent, differently-primed second pass in a separate clean context as the recorded fallback, and re-run the dropped family once it returns. QA is dispatched read-only via `orch-verify`; judge by the
+VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genuinely UNREACHABLE or barred
+by the CODEX ROLE LIMIT, never for cost; cost never buys the reduction. When a required family is genuinely unreachable or so barred, run an independent, differently-primed second pass in a separate clean context as the recorded fallback, and re-run an unreachable family once it returns. QA is dispatched read-only via `orch-verify`; judge by the
 result signal, not by grepping worker output.
 
 ## Gates and merge (cleanlanguage)
