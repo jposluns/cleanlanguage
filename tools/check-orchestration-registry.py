@@ -16,9 +16,9 @@ It validates STRUCTURE only, and mirrors what the hook's `_orch_registry` and
 `_wrtscp_companion_stores` accept or reject: a genuinely absent registry passes (the suite
 is inert by design), a present-but-unreadable one fails (matching the hook's `lstat` then
 read, which classify a permission fault or a dangling symlink as `bad`), and each
-`companion_stores` entry must be a non-empty absolute path (OS-agnostic, like the hook's
-`_is_absolute`) with no control character (below 0x20 or 0x7f) or lone surrogate code point
-(U+D800..U+DFFF). Whether an entry resolves to
+`companion_stores` entry must be a non-empty POSIX absolute path with no backslash, no
+drive-letter prefix, no control character (below 0x20 or 0x7f), and no lone surrogate code
+point (U+D800..U+DFFF). Whether an entry resolves to
 a live git top level is a runtime property the hook checks fail-safe; the path need not
 exist on the machine running this gate.
 
@@ -27,9 +27,10 @@ It also validates the stage-2 arming keys (`enumerator`, `yield_tools`, `mode`,
 substitutes a default for a malformed value (a timeout outside its window, a staleness
 horizon out of range) or silently disables a control (a non-string escape path, a roster
 name outside the hook matcher), this gate rejects the value instead. A declared
-`yield_tools` roster is checked against the `orch_yield_tool` matcher read from
-`plugin/aiqt-guardrails-hooks/hooks/hooks.json` at gate time; an unreadable or malformed
-hooks.json is a gate failure, never a skip.
+`yield_tools` roster is checked against the `orch_yield_tool` PreToolUse matcher, and a
+declared `dispatch_tools` list against the `orch_dispatch_ledger` PostToolUse matcher, both
+read from `plugin/aiqt-guardrails-hooks/hooks/hooks.json` at gate time; an unreadable or
+malformed hooks.json is a gate failure, never a skip.
 
 Usage: check-orchestration-registry.py [registry-path]
 The path defaults to `<repo-root>/.aiqt/orchestration.json`. Exit 0 when the registry is
@@ -46,9 +47,36 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_REGISTRY = os.path.join(ROOT, ".aiqt", "orchestration.json")
-# The vendored hook definitions. The orch_yield_tool matcher there bounds what a `yield_tools` roster may
-# name: a name outside the matcher never reaches the hook, so it would be a silent no-op entry.
+# The vendored hook definitions. The orch_yield_tool PreToolUse matcher there bounds what a `yield_tools`
+# roster may name, and the orch_dispatch_ledger PostToolUse matcher (hooks.json:276-290, matcher
+# "Bash|TaskOutput" at hooks.json:278) bounds what `dispatch_tools` may name: a name outside the matcher
+# never reaches the hook, so it would be a silent no-op entry.
 HOOKS_JSON = os.path.join(ROOT, "plugin", "aiqt-guardrails-hooks", "hooks", "hooks.json")
+# Basenames of the files the hooks WRITE inside state_dir. An `escape.path` naming one of them would make
+# the operator release sentinel share a name with machine state the hooks create or overwrite, so the gate
+# rejects such a basename. Each entry cites its write site in aiqt_hooks.py:
+#   guard-events.jsonl           7732-7733 (_orch_guard_event via _orch_append_jsonl)
+#   turn-state.json              7753-7756 (_orch_save_turn_state, open mode "w")
+#   backlog-checkpoint.json      8359, 8414 (_orch_write_json_atomic)
+#   checkpoint-init.marker       8360, 8424 (_orch_write_json_atomic)
+#   escape-spoof.json            8520 (_orch_write_json)
+#   forced-exit.jsonl            8558 (_orch_append_jsonl)
+#   pending-asks.jsonl           8746, 8751 (_orch_append_jsonl)
+#   dispatch-ledger.jsonl        9300-9301 (_orch_append_jsonl)
+#   attestations-validated.json  9639, 9670 (_orch_write_json_atomic)
+#   forced-exit-surfaced.json    9715, 9734 (_orch_write_json_atomic)
+#   resume-barrier.json          9775, 9783, 9809, 9837 (open mode "w")
+#   resume-barrier.json.unused   9777 (_orch_append_jsonl probe on a bad registry)
+# _orch_write_json_atomic first writes a sibling "<name>.tmp" and then os.replace()s it (aiqt_hooks.py:
+# 7719-7722), so the .tmp sibling of every atomically written file is listed too.
+_ATOMIC_STATE_FILES = ("backlog-checkpoint.json", "checkpoint-init.marker", "attestations-validated.json",
+                       "forced-exit-surfaced.json")
+HOOK_STATE_FILES = frozenset(
+    ("guard-events.jsonl", "turn-state.json", "escape-spoof.json", "forced-exit.jsonl",
+     "pending-asks.jsonl", "dispatch-ledger.jsonl", "resume-barrier.json", "resume-barrier.json.unused")
+    + _ATOMIC_STATE_FILES + tuple(name + ".tmp" for name in _ATOMIC_STATE_FILES))
+# A Windows drive-letter prefix, as in "C:", "C:x", "C:/x", or "C:\x".
+_DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
 
 # Stage-2 top-level allowlist. Any other top-level key is rejected: a new arming key lands
 # only together with the gate extension that validates it, so an unrecognized key is an
@@ -116,17 +144,23 @@ def _fail(msg):
 
 
 def _is_absolute(path):
-    # OS-agnostic, matching the hook's _is_absolute: a POSIX absolute path OR a Windows path
-    # carrying both a drive and a root. This keeps the gate from falsely rejecting an entry the
-    # hook would accept when the gate runs on a different OS than the committer.
-    #
-    # Disclosed residual (codex QA LOW, not fixed): because this is OS-agnostic, a PureWindowsPath value
-    # such as `C:\x` reads as absolute here, matching the installed hook and the pack's lab_infra
-    # validator. On this POSIX host the POSIX hook would instead resolve such a value RELATIVE to the
-    # repo. This is left as a disclosed residual rather than fixed, to preserve cross-OS parity with the
-    # pack; the committed store paths are POSIX-absolute, and both human review and the committed-registry
-    # change-carries-check guard the committed registry against a stray Windows-shaped path.
+    # OS-agnostic, the same predicate as the hook _is_absolute (aiqt_hooks.py:1935): a POSIX absolute path
+    # OR a Windows path carrying both a drive and a root. Every caller first rejects a Windows-shaped value
+    # through _is_windows_shaped below, so in practice only the POSIX branch accepts a declared path here.
     return pathlib.PurePosixPath(path).is_absolute() or pathlib.PureWindowsPath(path).is_absolute()
+
+
+def _is_windows_shaped(text):
+    # True for a value carrying a backslash or a leading drive letter ("C:"). The hook resolves a registry
+    # path with POSIX os.path.isabs (_orch_path, aiqt_hooks.py:7631-7635; the escape anchor join,
+    # aiqt_hooks.py:7863-7864), so on a POSIX host a Windows absolute spelling such as "C:\x" or "C:/x" is
+    # NOT absolute there and is silently joined onto the repository root or the state_dir anchor, and a
+    # backslash is an ordinary filename character rather than a separator. The gate rejects both shapes in
+    # every declared path, every enumerator argv operand, and the escape path, so a value the gate accepts
+    # resolves the same way in the gate and in the hook (codex QA F6). This closes the parity residual an
+    # earlier revision disclosed here, at the cost of refusing every Windows spelling outright; the committed
+    # store paths are POSIX.
+    return "\\" in text or bool(_DRIVE_PREFIX.match(text))
 
 
 def _has_unsafe_char(text):
@@ -175,6 +209,10 @@ def _check_declared_path(label, value):
     # plus its realpath walk need.
     if not isinstance(value, str) or not value:
         _fail("`{}` must be a non-empty string, got {!r}".format(label, value))
+    if _is_windows_shaped(value):
+        _fail("`{}` ({!r}) is Windows-shaped (a backslash or a drive-letter prefix); the hook resolves a "
+              "declared path with POSIX os.path.isabs (aiqt_hooks.py:7631-7635), so on a POSIX host it "
+              "would not name the path its spelling suggests".format(label, value))
     if not _is_absolute(value):
         _fail("`{}` must be an absolute path, got {!r}".format(label, value))
     if _has_unsafe_char(value):
@@ -195,34 +233,29 @@ def _check_declared_path(label, value):
     if len(value.encode("utf-8", "surrogatepass")) >= PATH_MAX:
         _fail("`{}` is {} bytes; the longest usable path is {} bytes (PATH_MAX {} counts the NUL)".format(
             label, len(value.encode("utf-8", "surrogatepass")), PATH_MAX - 1, PATH_MAX))
-    # Measure each component against NAME_MAX splitting on "/" ONLY -- POSIX component semantics. On POSIX a
-    # backslash is a VALID filename character, so an intrinsically over-long single component like
-    # ("a"*150 + "\\" + "a"*150) (301 bytes, ONE POSIX component) must NOT be broken at the backslash into
-    # two <=255-byte sub-components and wrongly accepted, only to hit ENAMETOOLONG at runtime (codex QA
-    # HIGH-2, round 6; this corrects the `[/\\]` split introduced in round 5, which under-counted such a
-    # component). A Windows-shaped path's backslash-separated segments are therefore measured as one run,
-    # which OVER-counts rather than under-counts: it can only make an over-long Windows path reject, never
-    # wrongly accept, so it stays fail-safe. The committed store paths are POSIX.
+    # Measure each component against NAME_MAX splitting on "/" ONLY, POSIX component semantics (codex QA
+    # HIGH-2, round 6). A backslash never reaches this loop: _is_windows_shaped above rejects it first.
     for comp in value.split("/"):
         if len(comp.encode("utf-8", "surrogatepass")) > NAME_MAX:
             _fail("`{}` has a path component longer than {} bytes (NAME_MAX)".format(label, NAME_MAX))
 
 
-def _yield_matcher_tools():
-    # The tool names the orch_yield_tool PreToolUse entry in hooks.json routes to the hook (its matcher
-    # split on "|"). A roster name outside this set never reaches the hook, so the hook never judges it.
-    # This is a guard input, so it is read from the checkout at gate time and fails closed: an unreadable,
-    # non-UTF-8, or non-JSON file, or one with no orch_yield_tool entry carrying a usable matcher, is a
-    # gate failure (cannot evaluate), never a skip or an empty set.
+def _hook_matcher_tools(event, hook_name, key):
+    # The tool names the hooks.json entry under `event` that runs `hook_name` routes to the hook (its
+    # matcher split on "|"): orch_yield_tool under PreToolUse for `yield_tools`, and orch_dispatch_ledger
+    # under PostToolUse for `dispatch_tools` (hooks.json:276-290). A name outside this set never reaches the
+    # hook, so the hook never judges it. This is a guard input, so it is read from the checkout at gate time
+    # and fails closed: an unreadable, non-UTF-8, or non-JSON file, or one with no such entry carrying a
+    # usable matcher, is a gate failure (cannot evaluate), never a skip or an empty set.
     try:
         with open(HOOKS_JSON, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, ValueError, RecursionError) as exc:
-        _fail("cannot read the hook definitions {} to check `yield_tools`: {}".format(HOOKS_JSON, exc))
+        _fail("cannot read the hook definitions {} to check `{}`: {}".format(HOOKS_JSON, key, exc))
     hooks = data.get("hooks") if isinstance(data, dict) else None
-    entries = hooks.get("PreToolUse") if isinstance(hooks, dict) else None
+    entries = hooks.get(event) if isinstance(hooks, dict) else None
     if not isinstance(entries, list):
-        _fail("{} has no PreToolUse hook list; `yield_tools` cannot be checked".format(HOOKS_JSON))
+        _fail("{} has no {} hook list; `{}` cannot be checked".format(HOOKS_JSON, event, key))
     names = set()
     found = False
     for entry in entries:
@@ -230,15 +263,15 @@ def _yield_matcher_tools():
             continue
         for hook in entry["hooks"]:
             args = hook.get("args") if isinstance(hook, dict) else None
-            if isinstance(args, list) and "orch_yield_tool" in args:
+            if isinstance(args, list) and hook_name in args:
                 matcher = entry.get("matcher")
                 if not isinstance(matcher, str) or not matcher:
-                    _fail("the orch_yield_tool entry in {} has no usable matcher".format(HOOKS_JSON))
+                    _fail("the {} entry in {} has no usable matcher".format(hook_name, HOOKS_JSON))
                 found = True
                 names.update(matcher.split("|"))
     if not found:
-        _fail("no PreToolUse entry in {} runs orch_yield_tool; `yield_tools` cannot be checked against "
-              "its matcher".format(HOOKS_JSON))
+        _fail("no {} entry in {} runs {}; `{}` cannot be checked against its matcher".format(
+            event, HOOKS_JSON, hook_name, key))
     return names
 
 
@@ -412,11 +445,26 @@ def validate(path):
                 _fail("`enumerator.argv[{}]` must be a non-empty string, got {!r}".format(i, arg))
             if _has_unsafe_char(arg):
                 _fail("`enumerator.argv[{}]` contains a control or surrogate character".format(i))
+            # A Windows-shaped operand (a backslash or a drive-letter prefix) is rejected in every argv
+            # position: the hook runs argv verbatim with cwd at the repository root (aiqt_hooks.py:7976), so
+            # on POSIX such an operand is a relative name, never the Windows path its spelling suggests.
+            if _is_windows_shaped(arg):
+                _fail("`enumerator.argv[{}]` ({!r}) is Windows-shaped (a backslash or a drive-letter "
+                      "prefix); the hook runs it on POSIX, where it is not the path it spells".format(i, arg))
         # argv[0] must be absolute: the hook runs argv with no shell and cwd set to the repository root
         # (aiqt_hooks.py:7976), so a bare interpreter name would resolve through the session PATH, an
         # ambient binding the registry cannot pin. Every later operand that is an absolute path (the
         # backlog file) is validated as a declared path and joins the state_dir collision list.
         _check_declared_path("enumerator.argv[0]", argv[0])
+        # A Python interpreter must run isolated: when the basename of argv[0] starts with "python", argv[1]
+        # must be exactly "-I". Without it the interpreter puts the script directory first on sys.path and
+        # honours the PYTHON* environment variables, so a file beside the enumerator script could shadow a
+        # standard library import and steer the backlog verdict the stop and yield guards act on. Every
+        # hook launch in hooks.json carries the same "-I" (for example hooks.json:282-287).
+        if os.path.basename(argv[0]).startswith("python") and (len(argv) < 2 or argv[1] != "-I"):
+            _fail("`enumerator.argv[0]` ({!r}) is a Python interpreter, so `enumerator.argv[1]` must be "
+                  "exactly \"-I\" (isolated mode), got {!r}".format(
+                      argv[0], argv[1] if len(argv) > 1 else None))
         for i in range(1, len(argv)):
             if _is_absolute(argv[i]):
                 _check_declared_path("enumerator.argv[{}]".format(i), argv[i])
@@ -437,7 +485,7 @@ def validate(path):
         roster = obj["yield_tools"]
         if not isinstance(roster, list):
             _fail("`yield_tools` must be a list, got {}".format(type(roster).__name__))
-        matched = _yield_matcher_tools()
+        matched = _hook_matcher_tools("PreToolUse", "orch_yield_tool", "yield_tools")
         seen = set()
         for i, entry in enumerate(roster):
             if not isinstance(entry, str) or not entry:
@@ -504,8 +552,19 @@ def validate(path):
                   "release with no record on such a value (aiqt_hooks.py:7861-7862)".format(esc["path"]))
         if _has_unsafe_char(esc["path"]):
             _fail("`escape.path` contains a control or surrogate character")
+        if _is_windows_shaped(esc["path"]):
+            _fail("`escape.path` ({!r}) is Windows-shaped (a backslash or a drive-letter prefix); the hook "
+                  "joins it onto the state_dir anchor with POSIX semantics (aiqt_hooks.py:7863-7864), so it "
+                  "would not name the file its spelling suggests".format(esc["path"]))
         if ".." in esc["path"].split("/"):
             _fail("`escape.path` ({!r}) has a \"..\" component, which the hook rejects".format(esc["path"]))
+        # The sentinel must not share a basename with a file the hooks themselves write in state_dir
+        # (HOOK_STATE_FILES above, each cited to its write site): the hook would create or overwrite that
+        # file, so the release would collide with machine state rather than name an operator-owned file.
+        esc_base = os.path.basename(os.path.normpath(esc["path"]))
+        if esc_base in HOOK_STATE_FILES:
+            _fail("`escape.path` ({!r}) has the basename {!r}, a file the hooks write in state_dir; the "
+                  "operator release sentinel must not collide with machine state".format(esc["path"], esc_base))
     # Cross-field REQUIREMENT (claude QA HIGH, round 7): a declared `record` or `lease` must be accompanied
     # by an explicit `state_dir`. When `state_dir` is OMITTED the hooks do NOT stop using a state dir --
     # _state_dir_from_registry (aiqt_hooks.py:7638-7651) falls back to
@@ -650,27 +709,39 @@ def validate(path):
         #       S_ISREG guard (aiqt_hooks.py:9783, unlike the shared _wrtscp_read_json_artifact reader), so an
         #       aliased record file is SILENTLY CLOBBERED, not denied. Precondition: write+search access to
         #       state_dir (and, under fs.protected_hardlinks, to the record file) -- already store-defeating.
-        # Also disclosed and left as a parity residual, not closed here: the OS-agnostic _is_absolute Windows
-        # spelling (see its LOW disclosure in _is_absolute above). A consequence of accepting that spelling:
-        # on a POSIX host the record/lease-vs-state_dir collision check does NOT catch a BACKSLASH-spelled
-        # Windows collision (e.g. state_dir "C:\\s" + record "C:\\s\\resume-barrier.json"), because
-        # os.path.commonpath treats each backslash string as one POSIX component and finds them disjoint; the
-        # FORWARD-slash Windows spelling IS caught, and a mixed POSIX/Windows pair fails closed. Unreachable
-        # for the committed POSIX artefact and guarded by the committed-registry test plus human review.
+        # The Windows-spelling parity residual an earlier revision disclosed here is closed: every declared
+        # path, every enumerator argv operand, and the escape path reject a backslash or a drive-letter
+        # prefix (_is_windows_shaped), so no Windows-shaped spelling reaches the collision checks above.
         # write_scope_guard and the recorder/audit hooks are DEFENCE IN DEPTH, not a security boundary, so a
         # fail-safe denial there is degraded-but-safe, not exploitable. The COMMITTED registry is verified
         # safe by this gate plus its tests, and human review via change-carries-check is the backstop for
         # future edits.
-    # `dispatch_tools`, if present: a list of non-empty control-free strings.
+    # `dispatch_tools`, if present: a list of unique non-empty control-free names, each one the
+    # orch_dispatch_ledger PostToolUse matcher in hooks.json ("Bash|TaskOutput", hooks.json:276-290) actually
+    # routes to the hook. The hook compares the tool name against this list only after that matcher fired
+    # (aiqt_hooks.py:9276-9280), so a name outside the matcher would be a silent no-op entry. hooks.json is
+    # read whenever the key is declared, even for an empty list (which stays valid), so an unreadable
+    # hooks.json always fails rather than skipping. Disclosed residual: "TaskOutput" is inside the matcher,
+    # so it is accepted, but the hook routes a TaskOutput call to its completion branch
+    # (aiqt_hooks.py:9264-9275) before this list is consulted, so listing it records nothing extra.
     if "dispatch_tools" in obj:
         tools = obj["dispatch_tools"]
         if not isinstance(tools, list):
             _fail("`dispatch_tools` must be a list, got {}".format(type(tools).__name__))
+        matched = _hook_matcher_tools("PostToolUse", "orch_dispatch_ledger", "dispatch_tools")
+        seen = set()
         for i, entry in enumerate(tools):
             if not isinstance(entry, str) or not entry:
                 _fail("`dispatch_tools[{}]` must be a non-empty string, got {!r}".format(i, entry))
             if _has_unsafe_char(entry):
                 _fail("`dispatch_tools[{}]` contains a control or surrogate character".format(i))
+            if entry in seen:
+                _fail("`dispatch_tools[{}]` ({!r}) is a duplicate".format(i, entry))
+            seen.add(entry)
+            if entry not in matched:
+                _fail("`dispatch_tools[{}]` ({!r}) is not in the orch_dispatch_ledger matcher {} in {}; a "
+                      "name outside the matcher never reaches the hook, so the entry would be a silent "
+                      "no-op".format(i, entry, sorted(matched), HOOKS_JSON))
     summary = "version 1"
     if "companion_stores" in obj:
         summary += ", {} companion store(s)".format(len(obj["companion_stores"]))

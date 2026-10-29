@@ -11,6 +11,7 @@ check itself.
 
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import os
@@ -26,6 +27,20 @@ VALIDATOR = HERE / "check-orchestration-registry.py"
 REPO_ROOT = HERE.parent
 REAL_REGISTRY = REPO_ROOT / ".aiqt" / "orchestration.json"
 REAL_HOOKS_JSON = REPO_ROOT / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "hooks.json"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "orchestration-registry.yml"
+CONFIG_MD = REPO_ROOT / ".aiqt" / "config.md"
+# The basenames the hooks write inside state_dir, transcribed from the write sites in
+# plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py (7733, 7756, 8359-8360, 8414, 8424, 8520, 8558,
+# 8746-8751, 9300-9301, 9639, 9670, 9715, 9734, 9775-9777, 9783, 9837), plus the "<name>.tmp" sibling that
+# _orch_write_json_atomic writes first (7719-7722). Kept independent of the gate constant on purpose, so a
+# name dropped from the gate list fails here.
+HOOK_STATE_FILES = (
+    "guard-events.jsonl", "turn-state.json", "backlog-checkpoint.json", "checkpoint-init.marker",
+    "escape-spoof.json", "forced-exit.jsonl", "pending-asks.jsonl", "dispatch-ledger.jsonl",
+    "attestations-validated.json", "forced-exit-surfaced.json", "resume-barrier.json",
+    "resume-barrier.json.unused", "backlog-checkpoint.json.tmp", "checkpoint-init.marker.tmp",
+    "attestations-validated.json.tmp", "forced-exit-surfaced.json.tmp",
+)
 
 # A full stage-1 registry with every optional arming key present, used as the accept fixture. The
 # paths are illustrative absolutes (the gate validates STRUCTURE, not existence), so this stays
@@ -64,7 +79,7 @@ STAGE2 = {
 def _run(path) -> int:
     """Run the validator against `path`; return its exit code."""
     return subprocess.run(
-        [sys.executable, str(VALIDATOR), str(path)],
+        [sys.executable, "-I", str(VALIDATOR), str(path)],
         capture_output=True, text=True,
     ).returncode
 
@@ -118,12 +133,6 @@ class Accepts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {"version": 1, "companion_stores": []})), 0)
 
-    def test_windows_absolute_path_accepted(self):
-        # The hook's _is_absolute is OS-agnostic; a drive-and-root Windows path is structurally
-        # absolute, so the gate must accept it even running on POSIX, to match what the hook accepts.
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(_run(_write(d, {"version": 1, "companion_stores": ["C:\\repo"]})), 0)
-
     def test_full_stage1_fixture(self):
         # A full stage-1 registry with every optional arming key present must validate.
         with tempfile.TemporaryDirectory() as d:
@@ -138,8 +147,30 @@ class Accepts(unittest.TestCase):
                                              "state_dir": "/opt/x/orch-state"})), 0)
 
     def test_dispatch_tools_with_strings(self):
+        # Both names are inside the orch_dispatch_ledger PostToolUse matcher ("Bash|TaskOutput",
+        # hooks.json:278), so the matcher check accepts them.
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(_run(_write(d, {"version": 1, "dispatch_tools": ["Workflow", "Task"]})), 0)
+            self.assertEqual(_run(_write(d, {"version": 1, "dispatch_tools": ["Bash", "TaskOutput"]})), 0)
+
+    def test_dispatch_tools_empty_list_accepted(self):
+        # The committed shape: an empty list stays valid (it still requires a readable hooks.json).
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {"version": 1, "dispatch_tools": []})), 0)
+
+    def test_escape_in_subdirectory_accepted(self):
+        # A relative escape path in a subdirectory of the anchor, with no ".." and a non-state basename,
+        # stays valid; the hook-state basename rule does not over-reject it.
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state",
+                                             "escape": {"path": "operator/ESCAPE-ALLOW-YIELD"}})), 0)
+
+    def test_enumerator_non_python_interpreter_accepted(self):
+        # The "-I" requirement applies only when the basename of argv[0] starts with "python".
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(_run(_write(d, {
+                "version": 1, "state_dir": "/opt/x/orch-state",
+                "enumerator": {"argv": ["/bin/sh", "tools/enumerate.sh", "/opt/x/private/TODO.md"],
+                               "timeout": 5}})), 0)
 
     def test_record_sibling_of_state_dir_accepted(self):
         # A record path that is a SIBLING of state_dir (shares a parent but is NOT inside it) is not a
@@ -293,7 +324,7 @@ class Rejects(unittest.TestCase):
             p = Path(d) / "orchestration.json"
             p.write_bytes(b"\xff\xfe\x00")
             r = subprocess.run(
-                [sys.executable, str(VALIDATOR), str(p)], capture_output=True, text=True,
+                [sys.executable, "-I", str(VALIDATOR), str(p)], capture_output=True, text=True,
             )
             self.assertEqual(r.returncode, 1)
             self.assertIn("FAIL", r.stderr)
@@ -309,7 +340,7 @@ class Rejects(unittest.TestCase):
             p = Path(d) / "orchestration.json"
             p.write_bytes(b"[" * 100000 + b"]" * 100000)
             r = subprocess.run(
-                [sys.executable, str(VALIDATOR), str(p)], capture_output=True, text=True,
+                [sys.executable, "-I", str(VALIDATOR), str(p)], capture_output=True, text=True,
             )
             self.assertEqual(r.returncode, 1)
             self.assertIn("FAIL", r.stderr)
@@ -380,7 +411,15 @@ class Rejects(unittest.TestCase):
         self._reject({"version": 1, "dispatch_tools": "Workflow"})
 
     def test_dispatch_tools_non_string_entry(self):
-        self._reject({"version": 1, "dispatch_tools": ["Workflow", 123]})
+        self._reject({"version": 1, "dispatch_tools": ["Bash", 123]})
+
+    def test_dispatch_tools_outside_matcher(self):
+        # codex QA F3: Workflow is not in the orch_dispatch_ledger PostToolUse matcher ("Bash|TaskOutput",
+        # hooks.json:278), so the hook never sees that tool and the entry would be a silent no-op.
+        self._reject({"version": 1, "dispatch_tools": ["Workflow"]})
+
+    def test_dispatch_tools_duplicate(self):
+        self._reject({"version": 1, "dispatch_tools": ["Bash", "Bash"]})
 
     # --- record/lease path colliding with state_dir (codex QA HIGH) ---------------------------------
     # A declared record/lease path ON or INSIDE state_dir collides with the machine-state files the hooks
@@ -464,10 +503,10 @@ class Rejects(unittest.TestCase):
 
     def test_overlong_component_with_backslash_rejected(self):
         # HIGH-2 (codex QA round 6): on POSIX a backslash is a VALID filename character, so
-        # "a"*150 + "\\" + "a"*150 is ONE 301-byte POSIX component, over NAME_MAX (255). Round 5's
-        # `re.split(r"[/\\]", ...)` split it AT the backslash into two <=255-byte fragments and wrongly
-        # ACCEPTED it, only to hit ENAMETOOLONG at runtime. Splitting on "/" ONLY measures the true 301-byte
-        # component and rejects. RED against the round-5 `[/\\]` split (which returns exit 0 here).
+        # "a"*150 + "\\" + "a"*150 is ONE 301-byte POSIX component, over NAME_MAX (255). Round 5 split it AT
+        # the backslash and wrongly accepted it. Since codex QA F6 the Windows-shape rule rejects any
+        # backslash before the length checks run, so this fixture now pins that an over-long backslash
+        # component can never be accepted by either route.
         comp = "a" * 150 + "\\" + "a" * 150  # 301 bytes, ONE POSIX component
         self.assertEqual(len(comp.encode()), 301, "fixture must be a 301-byte single POSIX component")
         self._reject({"version": 1, "record": {"findings": "/opt/x/" + comp}})
@@ -579,7 +618,7 @@ class Rejects(unittest.TestCase):
         self._reject({"version": 1, "lease": {"path": "/opt/x/" + chr(0xD800) + "lease"}})
 
     def test_dispatch_tools_surrogate(self):
-        self._reject({"version": 1, "dispatch_tools": ["Workflow", "Ta" + chr(0xD800) + "sk"]})
+        self._reject({"version": 1, "dispatch_tools": ["Bash", "Ba" + chr(0xD800) + "sh"]})
 
     # --- stage-2 arming keys ------------------------------------------------------------------------
     # Each fixture is the full STAGE2 registry (which the gate accepts, see Accepts.test_full_stage2_fixture)
@@ -595,7 +634,7 @@ class Rejects(unittest.TestCase):
                 and ("record" in payload or "lease" in payload) and "state_dir" not in payload):
             payload = {**payload, "state_dir": self._ISO_STATE_DIR}
         with tempfile.TemporaryDirectory() as d:
-            r = subprocess.run([sys.executable, str(VALIDATOR), str(_write(d, payload))],
+            r = subprocess.run([sys.executable, "-I", str(VALIDATOR), str(_write(d, payload))],
                                capture_output=True, text=True)
             self.assertEqual(r.returncode, 1, r.stdout)
             self.assertIn("FAIL", r.stderr)
@@ -627,7 +666,7 @@ class Rejects(unittest.TestCase):
         self._reject_stage2({"enumerator": self._enum(argv="/usr/bin/python3 tools/x.py")})
 
     def test_enumerator_argv_contains_empty_string(self):
-        self._reject_stage2({"enumerator": self._enum(argv=["/usr/bin/python3", "", "tools/x.py"])})
+        self._reject_stage2({"enumerator": self._enum(argv=["/usr/bin/python3", "-I", "", "tools/x.py"])})
 
     def test_enumerator_argv0_relative(self):
         # The hook runs argv with no shell (aiqt_hooks.py:7976); a bare interpreter name resolves through
@@ -635,7 +674,31 @@ class Rejects(unittest.TestCase):
         self._reject_stage2({"enumerator": self._enum(argv=["python3", "-I", "tools/x.py"])})
 
     def test_enumerator_argv_control_char(self):
-        self._reject_stage2({"enumerator": self._enum(argv=["/usr/bin/python3", "tools/x\n.py"])})
+        self._reject_stage2({"enumerator": self._enum(argv=["/usr/bin/python3", "-I", "tools/x\n.py"])})
+
+    def test_enumerator_python_without_isolation(self):
+        # codex QA F7: a Python argv[0] must be followed by exactly "-I"; a missing flag, a different flag,
+        # or no argv[1] at all is rejected. Each fixture is otherwise valid.
+        for argv in (["/usr/bin/python3", "tools/x.py", "/opt/x/private/TODO.md"],
+                     ["/usr/bin/python3.12", "-E", "tools/x.py"],
+                     ["/usr/local/bin/python", "-P", "-I", "tools/x.py"],
+                     ["/usr/bin/python3"]):
+            with self.subTest(argv=argv):
+                self._reject_stage2({"enumerator": self._enum(argv=argv)})
+
+    def test_enumerator_windows_shaped_operands(self):
+        # codex QA F6: the hook runs argv verbatim on POSIX with cwd at the repository root
+        # (aiqt_hooks.py:7976), so a Windows-shaped operand is a relative POSIX name, not the path it
+        # spells. A drive-relative "C:TODO.md" and a backslash relative path are not absolute, so only the
+        # Windows-shape rule can reject them. (A drive-absolute operand such as "C:/backlog/TODO.md" was
+        # already rejected before F6: it joins the state_dir collision list, where mixing it with the POSIX
+        # state_dir makes commonpath raise, which the gate treats as a collision.)
+        for argv in (["/usr/bin/python3", "-I", "tools/x.py", "C:TODO.md"],
+                     ["/usr/bin/python3", "-I", "tools/x.py", "backlog\\TODO.md"],
+                     ["/usr/bin/python3", "-I", "tools\\x.py"],
+                     ["C:\\Python\\python.exe", "-I", "tools/x.py"]):
+            with self.subTest(argv=argv):
+                self._reject_stage2({"enumerator": self._enum(argv=argv)})
 
     def test_enumerator_timeout_absent(self):
         spec = self._enum()
@@ -770,6 +833,27 @@ class Rejects(unittest.TestCase):
     def test_escape_dotdot(self):
         self._reject_stage2({"escape": {"path": "../ESCAPE-ALLOW-YIELD"}})
 
+    def test_escape_dotdot_inside_anchor(self):
+        # The case above is also caught by containment. Here the ".." stays inside the anchor
+        # (normpath gives <state_dir>/ESCAPE-ALLOW-YIELD), so only the ".." rule rejects it, as the hook
+        # does on the raw path (aiqt_hooks.py:7867-7868).
+        self._reject_stage2({"escape": {"path": "sub/../ESCAPE-ALLOW-YIELD"}})
+
+    def test_escape_hook_state_basename(self):
+        # The escape sentinel must not share a basename with a file the hooks write in state_dir.
+        for name in HOOK_STATE_FILES:
+            for path in (name, "operator/" + name, "/opt/x/private/orch-state/" + name):
+                with self.subTest(path=path):
+                    self._reject_stage2({"escape": {"path": path}})
+
+    def test_escape_windows_shaped(self):
+        # codex QA F6: the hook joins the escape path onto the anchor with POSIX semantics
+        # (aiqt_hooks.py:7863-7864). "C:ESCAPE" joined there is a valid POSIX path under the anchor, so only
+        # the Windows-shape rule rejects it.
+        for path in ("operator\\ESCAPE-ALLOW-YIELD", "C:ESCAPE-ALLOW-YIELD"):
+            with self.subTest(path=path):
+                self._reject_stage2({"escape": {"path": path}})
+
     def test_escape_absolute_outside_state_dir(self):
         self._reject_stage2({"escape": {"path": "/opt/x/private/ESCAPE-ALLOW-YIELD"}})
 
@@ -780,6 +864,33 @@ class Rejects(unittest.TestCase):
     def test_truth_present(self):
         # `truth` has no reader in the vendored hook, so it stays outside the allowlist.
         self._reject_stage2({"truth": {"changelog": "changelog.toml", "merged_pr_history": True}})
+
+    def test_windows_shaped_declared_paths(self):
+        # codex QA F6: the hook resolves a declared path with POSIX os.path.isabs (aiqt_hooks.py:7631-7635),
+        # so a Windows spelling on a POSIX host is joined onto the repository root and a backslash is an
+        # ordinary filename character. Each STAGE2 fixture replaces one declared path with a value that is
+        # absolute to the gate predicate ("C:\\x" and "C:/x" through its Windows branch, a backslash POSIX
+        # path through its POSIX branch) and collides with nothing, so only the Windows-shape rule rejects
+        # it. (A drive-letter record, lease, mode, or register path was already rejected before F6 whenever
+        # a POSIX state_dir is declared, because commonpath raises on the mixed pair and the gate treats
+        # that as a collision; the backslash POSIX forms below are the ones that previously passed.)
+        cases = [
+            ("companion_stores", ["C:\\repo"]),
+            ("companion_stores", ["C:/repo"]),
+            ("companion_stores", ["/opt/x\\private"]),
+            ("record", {"findings": "/opt/x/private\\open-findings.md"}),
+            ("lease", {"path": "/opt/x/private\\session-state.md", "max_age_hours": 24}),
+            ("mode", {"path": "/opt/x/private\\operating-mode.md"}),
+            ("attestations", "/opt/x/private\\attestations.jsonl"),
+            ("mistakes_register", "/opt/x/private\\mistakes-register.jsonl"),
+        ]
+        for key, value in cases:
+            with self.subTest(key=key, value=value):
+                self._reject_stage2({key: value})
+        # A Windows-shaped state_dir with no other declared path to mix with is accepted without the rule.
+        for state_dir in ("C:/x/orch-state", "C:\\x\\orch-state", "/opt/x\\orch-state"):
+            with self.subTest(state_dir=state_dir):
+                self._reject_clean({"version": 1, "state_dir": state_dir})
 
     # --- hooks.json as a guard input: unreadable or malformed fails, never skips ------------------------
     def _run_gate_copy(self, tree, payload, hooks_json=None):
@@ -794,7 +905,7 @@ class Rejects(unittest.TestCase):
             hp.parent.mkdir(parents=True, exist_ok=True)
             hp.write_text(hooks_json, encoding="utf-8")
         reg = _write(tree, payload)
-        return subprocess.run([sys.executable, str(gate), str(reg)], capture_output=True, text=True)
+        return subprocess.run([sys.executable, "-I", str(gate), str(reg)], capture_output=True, text=True)
 
     def test_yield_tools_with_absent_hooks_json_rejected(self):
         payload = {"version": 1, "state_dir": "/opt/x/orch-state", "yield_tools": ["ScheduleWakeup"]}
@@ -822,6 +933,68 @@ class Rejects(unittest.TestCase):
             r = self._run_gate_copy(d, payload, "{ not json")
             self.assertEqual(r.returncode, 1)
             self.assertNotIn("Traceback", r.stderr)
+
+    def test_dispatch_tools_with_absent_hooks_json_rejected(self):
+        # codex QA F3: dispatch_tools, even the empty list, is checked against hooks.json, so a missing
+        # hooks.json is a cannot-evaluate gate failure, never a skip.
+        payload = {"version": 1, "dispatch_tools": []}
+        with tempfile.TemporaryDirectory() as d:
+            r = self._run_gate_copy(d, payload)
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("hooks.json", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+        # Control: with the real hooks.json in place the same registry is accepted.
+        with tempfile.TemporaryDirectory() as d:
+            r = self._run_gate_copy(d, payload, REAL_HOOKS_JSON.read_text(encoding="utf-8"))
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_dispatch_tools_with_hooks_json_lacking_the_entry_rejected(self):
+        payload = {"version": 1, "dispatch_tools": ["Bash"]}
+        with tempfile.TemporaryDirectory() as d:
+            r = self._run_gate_copy(d, payload, json.dumps({"hooks": {"PreToolUse": [], "PostToolUse": []}}))
+            self.assertEqual(r.returncode, 1)
+            self.assertIn("orch_dispatch_ledger", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
+
+class LaunchIsolation(unittest.TestCase):
+    # codex QA F7: every Python launch of the gate runs isolated (-I), so a file beside a script cannot
+    # shadow a standard library import and an ambient PYTHON* variable cannot steer it. These read the
+    # sources statically and fail if any launch drops the flag.
+    def test_workflow_python_launches_are_isolated(self):
+        runs = [line.strip() for line in WORKFLOW.read_text(encoding="utf-8").splitlines()
+                if line.strip().startswith("run:") and "python" in line]
+        self.assertGreaterEqual(len(runs), 7, "expected every workflow step to launch Python")
+        for run in runs:
+            with self.subTest(run=run):
+                self.assertTrue(run.startswith("run: python3 -I "), run)
+
+    def test_gate_subprocess_launches_are_isolated(self):
+        # Every list display in this file whose first element is sys.executable must have "-I" second.
+        tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+        launches = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.List) and node.elts:
+                head = node.elts[0]
+                if isinstance(head, ast.Attribute) and head.attr == "executable" \
+                        and isinstance(head.value, ast.Name) and head.value.id == "sys":
+                    launches.append(node)
+        self.assertGreaterEqual(len(launches), 5, "expected at least five gate launches")
+        for node in launches:
+            with self.subTest(line=node.lineno):
+                second = node.elts[1] if len(node.elts) > 1 else None
+                self.assertTrue(isinstance(second, ast.Constant) and second.value == "-I",
+                                "line {} launches Python without -I".format(node.lineno))
+
+
+class ConfigDisclosure(unittest.TestCase):
+    # codex QA F8: the adoption config states every exit of the stop decision, including the loop bound
+    # (aiqt_hooks.py:8192-8195) and the fail-open on an unsaved denial counter (aiqt_hooks.py:8590-8595).
+    def test_stop_decision_exits_are_disclosed(self):
+        text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
+        for phrase in ("the loop bound", "denial counter cannot be saved", "guard fails open instead"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, text)
 
 
 if __name__ == "__main__":

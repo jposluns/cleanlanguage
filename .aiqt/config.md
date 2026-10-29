@@ -80,7 +80,14 @@ launch in `dispatch-ledger.jsonl`, and `orch_prompt_stamp` stamps each human pro
 one decision core. With no AEI enumerator declared, a turn-end Stop in scope is denied on
 `NO_ENUMERATOR` unless the operator escape sentinel `ESCAPE-ALLOW-YIELD` in `state_dir`
 releases it; on the maintainer host that sentinel is a root-owned file (observed 2026-10-29),
-and each release is logged as an operator escape event. `orch_yield_tool` is in scope but
+and each release is logged as an operator escape event. The denial has two further exits.
+It is bounded: after two denials since the last human prompt (the loop bound), or when the
+Stop event reports that a stop hook is already active, the Stop is allowed with the
+unresolved items reported as findings, and the forced exit is recorded for the next resume
+audit while open work remains or the backlog is not enumerable. An unreadable denial counter
+counts as the bound reached. If the denial counter cannot be saved to `turn-state.json`, the
+guard fails open instead: it allows the Stop with a warning, since an unsaved counter could
+never reach the bound. `orch_yield_tool` is in scope but
 finds no `yield_tools` roster, so it allows every scheduling call as out of roster.
 `orch_ask_guard` denies only in `unattended` mode; no `mode` record is declared, so it allows
 and logs a fail-open audit event. `orch_resume_audit` reads the registry at every

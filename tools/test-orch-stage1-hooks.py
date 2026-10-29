@@ -74,7 +74,7 @@ class HookHarness(unittest.TestCase):
 
     def setUp(self):
         if not HOOK.exists():
-            self.skipTest("installed hook not found: {}".format(HOOK))
+            self.fail("installed hook not found: {}".format(HOOK))
         self._tmp = Path(tempfile.mkdtemp(prefix="orch-stage1-"))
         self.repo = self._tmp / "repo"
         self.store = self._tmp / "store"

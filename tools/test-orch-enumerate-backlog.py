@@ -12,6 +12,12 @@ script path and cwd = the repo root, as the registry declares it.
 Fail-closed cases assert exit 1, an empty stdout, and a stderr that names the offending line, since a
 non-zero exit is ENUMERATOR_ERROR in the hook (aiqt_hooks.py:7979-7981) and an empty enumeration
 would read as a drained backlog. The real backlog is never read.
+
+A missing required input (the enumerator or the vendored hook) fails the test rather than skipping
+it, so an absent file can never read as a green run. The HiddenTablePrefix cases prove that a row
+whose "|" is kept off column 0 by an invisible, no-break or blockquote prefix fails closed rather than
+vanishing as prose (finding F1), and the Isolation case proves the script re-executes itself under
+python3 -I (finding F7).
 """
 
 from __future__ import annotations
@@ -55,6 +61,23 @@ reg = {"enumerator": {"argv": json.loads(sys.argv[3]), "timeout": 5}}
 status, detail = mod._orch_enumerate(reg, sys.argv[2])
 print(json.dumps({"status": status, "detail": detail}))
 """
+
+
+# Prefixes that keep a "|" off column 0 while it stays the first visible character (finding F1).
+HIDDEN_PREFIXES = [
+    ("no-break space U+00A0", "\u00a0"),
+    ("zero-width space U+200B", "\u200b"),
+    ("byte order mark U+FEFF", "\ufeff"),
+    ("ideographic space U+3000", "\u3000"),
+    ("word joiner U+2060", "\u2060"),
+    ("left-to-right mark U+200E", "\u200e"),
+    ("blockquote marker and space", "> "),
+    ("bare blockquote marker", ">"),
+    ("nested blockquote", "> > "),
+    ("space then no-break space", " \u00a0"),
+    ("tab then blockquote", "\t> "),
+    ("blockquote then zero-width space", ">\u200b"),
+]
 
 
 def row(iid, state="open", granted="yes", blocker="-", evidence="-", item="An item",
@@ -103,7 +126,7 @@ class EnumeratorHarness(unittest.TestCase):
 
     def hook_validate(self, stdout_text):
         if not HOOK.exists():
-            self.skipTest("vendored hook not found: {}".format(HOOK))
+            self.fail("vendored hook not found: {}".format(HOOK))
         r = subprocess.run([sys.executable, "-I", "-c", VALIDATE_PROG, str(HOOK)],
                            input=stdout_text, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, "hook validation process failed: {}".format(r.stderr))
@@ -210,7 +233,7 @@ class Golden(EnumeratorHarness):
 
     def test_hook_runs_the_enumerator_from_the_repo_root(self):
         if not HOOK.exists():
-            self.skipTest("vendored hook not found: {}".format(HOOK))
+            self.fail("vendored hook not found: {}".format(HOOK))
         path = self.write(self.fixture())
         argv = [sys.executable, "-I", "tools/orch-enumerate-backlog.py", str(path)]
         r = subprocess.run([sys.executable, "-I", "-c", ENUMERATE_PROG, str(HOOK), str(REPO_ROOT),
@@ -222,7 +245,7 @@ class Golden(EnumeratorHarness):
 
     def test_hook_reports_enumerator_error_on_a_malformed_backlog(self):
         if not HOOK.exists():
-            self.skipTest("vendored hook not found: {}".format(HOOK))
+            self.fail("vendored hook not found: {}".format(HOOK))
         path = self.write(table(row("1", state="done")))
         argv = [sys.executable, "-I", "tools/orch-enumerate-backlog.py", str(path)]
         r = subprocess.run([sys.executable, "-I", "-c", ENUMERATE_PROG, str(HOOK), str(REPO_ROOT),
@@ -419,6 +442,77 @@ class FailClosed(EnumeratorHarness):
             r = self.run_enum(*args)
             self.assertEqual(r.returncode, 2, "args {!r}: {}".format(args, r.stderr))
             self.assertEqual(r.stdout, "")
+
+
+class HiddenTablePrefix(EnumeratorHarness):
+    """A "|" kept off column 0 by an invisible, no-break or blockquote prefix fails closed (F1).
+
+    Before the fix such a row read as prose: the enumeration exited 0 without the item. In the
+    table() fixture the header is line 5 and the rows start at line 7.
+    """
+
+    def test_prefixed_data_row_fails_closed(self):
+        for name, prefix in HIDDEN_PREFIXES:
+            with self.subTest(prefix=name):
+                self.assert_fails(table(row("1"), prefix + row("2"), row("3")), line=8,
+                                  needle="prefixed table line")
+
+    def test_prefixed_data_row_fails_the_cell_dump(self):
+        for name, prefix in HIDDEN_PREFIXES:
+            with self.subTest(prefix=name):
+                r = self.run_enum("--dump-cells",
+                                  self.write(table(row("1"), prefix + row("2"))))
+                self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertEqual(r.stdout, "")
+                self.assertIn("line 8:", r.stderr)
+
+    def test_prefixed_header_fails_closed(self):
+        for name, prefix in HIDDEN_PREFIXES:
+            with self.subTest(prefix=name):
+                text = table(row("1")).replace(HEADER, prefix + HEADER, 1)
+                self.assert_fails(text, line=5, needle="prefixed table line")
+
+    def test_byte_order_mark_before_a_first_line_header(self):
+        text = "\ufeff" + HEADER + "\n" + SEPARATOR + "\n" + row("1") + "\n"
+        self.assert_fails(text, line=1, needle="U+FEFF")
+
+    def test_message_names_the_prefix_characters(self):
+        r = self.assert_fails(table("\u00a0\u200b> " + row("1")), line=7)
+        for name in ("U+00A0", "U+200B", "blockquote marker", "space"):
+            self.assertIn(name, r.stderr)
+
+    def test_prose_with_a_bar_after_other_text_is_not_a_table_line(self):
+        prose = ("Prose with a | bar mid-line.", "> A quoted line with a | bar.",
+                 "\u00a0No-break led prose | with a bar.", "\ufeffTitle line",
+                 "\u200b> quoted | text", "> ", "\u00a0")
+        text = table(row("1"), prose_before=("# Backlog", "") + prose + ("",),
+                     prose_after=("",) + prose)
+        out = self.enumerate_ok(text)
+        self.assertEqual([it["id"] for it in out["items"]], ["1"])
+
+
+class Isolation(EnumeratorHarness):
+    """Started without -I, the enumerator re-executes itself under python3 -I (finding F7)."""
+
+    def test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib(self):
+        tooldir = self._tmp / "tooldir"
+        tooldir.mkdir()
+        copy = tooldir / SCRIPT.name
+        shutil.copyfile(SCRIPT, copy)
+        # A planted json.py beside the script: a non-isolated start puts this directory first on
+        # the import path, so "import json" would load it and exit 97.
+        (tooldir / "json.py").write_text("raise SystemExit(97)\n", encoding="utf-8")
+        (tooldir / "probe.py").write_text("import json\n", encoding="utf-8")
+        env = dict(os.environ)
+        env.pop("PYTHONSAFEPATH", None)
+        probe = subprocess.run([sys.executable, str(tooldir / "probe.py")], capture_output=True,
+                               text=True, env=env)
+        self.assertEqual(probe.returncode, 97, "precondition: the planted module shadows json")
+        path = self.write(table(row("1")))
+        r = subprocess.run([sys.executable, str(copy), str(path)], capture_output=True, text=True,
+                           env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([it["id"] for it in json.loads(r.stdout)["items"]], ["1"])
 
 
 if __name__ == "__main__":

@@ -14,7 +14,12 @@ endings included. Blocker annotation is a separate, reviewed step after this mec
 
 The old table is parsed with a parser of its own, independent of tools/orch-enumerate-backlog.py, so
 the loss check can compare two parsers rather than one parser with itself:
-- a table line begins with "|" at column 0; an indented "|" line is rejected;
+- a table line begins with "|" at column 0; a line that does not, but whose first visible character
+  is "|" once leading Unicode whitespace (including U+00A0), format characters (category Cf, such
+  as U+200B and a U+FEFF byte order mark) and blockquote markers (">") are removed, is rejected
+  naming the line, so an indented, invisibly prefixed or quoted row is never copied through as
+  prose (both loss-check dumps would then agree on the loss); prose with a "|" after other text is
+  copied as usual;
 - cells are split on "|" not preceded by a backslash, and the line must end with an unescaped "|";
 - the header is the table line whose first cell is "#" and must equal the old header exactly; an
   input that already carries the new header is refused as already migrated;
@@ -25,8 +30,10 @@ The whole input is parsed before anything is written, so a malformed input write
 
 Write safety: the script never writes in place. The output path must be given explicitly, must not
 exist (not even as a dangling symlink), and must not resolve to the input. It is created with
-O_CREAT | O_EXCL and mode 0600, so an existing file is never overwritten. Applying the output to the
-record store is a separate step outside this script.
+O_CREAT | O_EXCL and mode 0600, so an existing file is never overwritten. A write that fails part
+way (for example ENOSPC) removes the partial output it created and exits 1, so a failed run never
+leaves a truncated file that a later step could mistake for a complete conversion. Applying the
+output to the record store is a separate step outside this script.
 
 Usage:
     migrate-todo-aei.py <input> <output>
@@ -41,6 +48,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 
 PROG = "migrate-todo-aei"
 OLD_HEADER = ["#", "Opened", "Item", "Closure evidence required"]
@@ -61,6 +69,23 @@ class MigrationError(Exception):
 def _fail(msg, code=1):
     print("{}: FAIL: {}".format(PROG, msg), file=sys.stderr)
     sys.exit(code)
+
+
+def _bar_behind_prefix(line):
+    """True when line does not begin with "|" but its first visible character is "|": leading
+    whitespace (str.lstrip, which strips all Unicode whitespace), blockquote markers and format
+    characters (category Cf) are peeled off, repeatedly, until none is left."""
+    if line.startswith("|"):
+        return False
+    visible = line
+    while True:
+        peeled = visible.lstrip().lstrip(">")
+        while peeled and unicodedata.category(peeled[0]) == "Cf":
+            peeled = peeled[1:]
+        if peeled == visible:
+            break
+        visible = peeled
+    return visible.startswith("|")
 
 
 def _segments(line, lineno):
@@ -87,8 +112,10 @@ def convert(text):
     header_at = None
     for lineno, line in enumerate(text.split("\n"), start=1):
         if not line.startswith("|"):
-            if line.lstrip(" \t").startswith("|"):
-                raise MigrationError("line {}: indented table line".format(lineno))
+            if _bar_behind_prefix(line):
+                raise MigrationError("line {}: indented or prefixed table line (a table row must "
+                                     "begin with \"|\" at column 0; leading {!r})"
+                                     .format(lineno, line[:line.index("|")]))
             out.append(line)
             continue
         segments, tail = _segments(line, lineno)
@@ -150,8 +177,40 @@ def write_output(in_path, out_path, text):
         fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except OSError as exc:
         raise MigrationError("cannot create output {}: {}".format(out_path, exc.strerror or exc))
-    with os.fdopen(fd, "wb") as fh:
-        fh.write(text.encode("utf-8"))
+    created = None
+    try:
+        created = os.fstat(fd)
+        fh = os.fdopen(fd, "wb")
+        fd = None
+        with fh:
+            fh.write(text.encode("utf-8"))
+            fh.flush()
+            os.fsync(fh.fileno())
+    except OSError as exc:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        raise MigrationError("cannot write output {}: {}; {}".format(
+            out_path, exc.strerror or exc, _remove_partial(out_path, created)))
+
+
+def _remove_partial(out_path, created):
+    """Remove the partial output this run created; the path is unlinked only while it is still the
+    file the exclusive create made (same device and inode), so a file swapped in since is kept."""
+    try:
+        current = os.lstat(out_path)
+    except OSError as exc:
+        return "the partial output could not be checked ({})".format(exc.strerror or exc)
+    if created is not None and (current.st_dev, current.st_ino) != (created.st_dev, created.st_ino):
+        return "the path no longer names the file this run created, so it was left in place"
+    try:
+        os.unlink(out_path)
+    except OSError as exc:
+        return "the partial output could NOT be removed ({}); delete it before any retry".format(
+            exc.strerror or exc)
+    return "the partial output was removed"
 
 
 def row_digest(row):

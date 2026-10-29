@@ -13,8 +13,13 @@ Backlog grammar (a markdown table, parsed strictly):
 
     | # | Opened | State | Granted | Blocker | Evidence | Item | Closure evidence required |
 
-- A line is a table line only if it begins with "|" at column 0. A line whose first non-blank
-  character is "|" but which is indented is rejected, so an indented row can never be skipped silently.
+- A line is a table line only if it begins with "|" at column 0. A line whose first character is
+  "|" once its leading Unicode whitespace (including U+00A0 and U+3000), format characters (Unicode
+  category Cf: zero-width characters such as U+200B and U+2060, the bidirectional marks, and a
+  U+FEFF byte order mark) and blockquote markers (">") are stripped, but which does not begin with
+  "|" at column 0, is rejected naming the line, so an indented, invisibly prefixed or quoted row can
+  never be skipped silently as prose. Prose that merely contains a "|" after other text is not a
+  table line and is not rejected.
 - The table line whose first cell is "#" is the header; its cells must equal the header above exactly,
   and only one header may appear. A row (separator or data) before the header is rejected.
 - A separator row (every cell made of dashes and colons, with at least one dash) is skipped.
@@ -46,12 +51,28 @@ Usage:
         loss check. This mode applies the same validation as the enumeration.
 Exit 0 on success, 1 on an unreadable or malformed backlog, 2 on a usage error. The backlog path is
 the only project-specific input; the script carries no store path of its own.
+
+The script runs isolated: started without -I, it re-executes itself under python3 -I before it
+imports anything beyond os and sys, so a file planted beside it cannot shadow a standard-library
+import (the same guard as tools/orch_doctor.py). A failed re-execution exits 1.
 """
+import os
+import sys
+
+if not sys.flags.isolated:
+    # Isolated mode keeps this script directory and the environment off the import path, so a file
+    # written beside the script cannot shadow a standard-library module (SECI config rule).
+    try:
+        os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
+    except OSError as exc:
+        print("orch-enumerate-backlog: FAIL: cannot re-execute under python3 -I: {}".format(exc),
+              file=sys.stderr)
+        sys.exit(1)
+
 import hashlib
 import json
-import os
 import re
-import sys
+import unicodedata
 from datetime import datetime, timezone
 
 PROG = "orch-enumerate-backlog"
@@ -80,6 +101,41 @@ def _fail(msg, code=1):
 
 def _line_error(lineno, detail):
     return BacklogError("line {}: {}".format(lineno, detail))
+
+
+def _hidden_bar_prefix(line):
+    """The leading text that keeps a "|" off column 0, or None. It strips Unicode whitespace
+    (str.isspace, which covers U+00A0 and U+3000), format characters (category Cf, which covers the
+    zero-width characters, the bidirectional marks and U+FEFF) and blockquote markers ">", and
+    returns the stripped prefix when the next character is "|". A line that begins with "|" at
+    column 0, or whose first such character is anything else, gives None."""
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if ch.isspace() or ch == ">" or unicodedata.category(ch) == "Cf":
+            i += 1
+            continue
+        break
+    if i and i < len(line) and line[i] == "|":
+        return line[:i]
+    return None
+
+
+def _describe_prefix(prefix):
+    """A readable, de-duplicated list of the prefix characters, named by code point."""
+    names = []
+    for ch in prefix:
+        if ch == " ":
+            name = "space"
+        elif ch == "\t":
+            name = "tab"
+        elif ch == ">":
+            name = "blockquote marker \">\""
+        else:
+            name = "U+{:04X}".format(ord(ch))
+        if name not in names:
+            names.append(name)
+    return ", ".join(names)
 
 
 def _split_cells(line, lineno):
@@ -171,8 +227,11 @@ def parse_backlog(text):
             markers.append(lineno)
             continue
         if not line.startswith("|"):
-            if line.lstrip(" \t").startswith("|"):
-                raise _line_error(lineno, "indented table line (a table row must begin at column 0)")
+            prefix = _hidden_bar_prefix(line)
+            if prefix is not None:
+                raise _line_error(lineno, "indented or prefixed table line (leading {}); a table "
+                                  "row must begin with \"|\" at column 0, or it would be read as "
+                                  "prose and the row lost".format(_describe_prefix(prefix)))
             continue
         table_seen = True
         raw = _split_cells(line, lineno)

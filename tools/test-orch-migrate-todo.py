@@ -13,7 +13,11 @@ the plan on the output:
   (c) the non-table lines of old and new are identical.
 They also prove the write-safety contract: the script refuses its input as output, an existing
 output path (including a dangling symlink), and an already migrated or malformed input, and in each
-refused case writes nothing.
+refused case writes nothing. A file that appears after the existence check is never truncated (the
+exclusive create refuses it), and a write that fails part way removes its partial output (finding
+L5). A row whose "|" is kept off column 0 by an invisible, no-break or blockquote prefix is refused
+by both parsers, so the two-parser loss check fails rather than agreeing on the loss (finding F1). A
+missing required input (either script or the vendored hook) fails the test rather than skipping it.
 """
 
 from __future__ import annotations
@@ -21,7 +25,9 @@ from __future__ import annotations
 import collections
 import json
 import os
+import resource
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -46,6 +52,48 @@ spec.loader.exec_module(mod)
 items, err = mod.validate_enumeration(json.loads(sys.stdin.read()))
 print(json.dumps({"items": items, "error": err}))
 """
+
+# Runs in a separate python3 -I process: import the migration by path, make the existence check
+# miss the output (as when the file appears after the check), and call write_output on it. Exit 0
+# with "refused: ..." when the exclusive create refuses it, 3 when it wrote.
+RACE_PROG = """
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("migrate_under_test", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+os.path.lexists = lambda p: False
+try:
+    mod.write_output(sys.argv[2], sys.argv[3], "new content\\n")
+except mod.MigrationError as exc:
+    print("refused: " + str(exc))
+    sys.exit(0)
+print("written")
+sys.exit(3)
+"""
+
+# Prefixes that keep a "|" off column 0 while it stays the first visible character (finding F1).
+HIDDEN_PREFIXES = [
+    ("no-break space U+00A0", "\u00a0"),
+    ("zero-width space U+200B", "\u200b"),
+    ("byte order mark U+FEFF", "\ufeff"),
+    ("ideographic space U+3000", "\u3000"),
+    ("word joiner U+2060", "\u2060"),
+    ("left-to-right mark U+200E", "\u200e"),
+    ("blockquote marker and space", "> "),
+    ("bare blockquote marker", ">"),
+    ("nested blockquote", "> > "),
+    ("space then no-break space", " \u00a0"),
+    ("tab then blockquote", "\t> "),
+    ("blockquote then zero-width space", ">\u200b"),
+]
+
+
+def _limit_file_size():
+    # Child-side: cap regular-file writes at 16 bytes and ignore SIGXFSZ, so the write past the cap
+    # fails with EFBIG part way, as a full disk fails with ENOSPC.
+    signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+    resource.setrlimit(resource.RLIMIT_FSIZE, (16, 16))
+
 
 OLD_ROWS = [
     "| 1 | 2026-09-01 | Ship the release notes | Merged PR and green CI |",
@@ -152,7 +200,7 @@ class Conversion(MigrateHarness):
 
     def test_b_loss_check_enumeration_passes_the_hook(self):
         if not HOOK.exists():
-            self.skipTest("vendored hook not found: {}".format(HOOK))
+            self.fail("vendored hook not found: {}".format(HOOK))
         self.migrate_ok(old_fixture())
         r = self.py(ENUMERATE, self.dst)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -239,6 +287,24 @@ class WriteSafety(MigrateHarness):
         self.assert_refused(self.py(MIGRATE, self.src, self.dst), "already exists")
         self.assertFalse(target.exists(), "nothing is written through a dangling symlink")
 
+    def test_never_truncates_an_output_that_appears_after_the_check(self):
+        # Red if O_EXCL were replaced by O_TRUNC: the create would then open and truncate the file.
+        self.write_src(old_fixture())
+        self.dst.write_bytes(b"keep me\n")
+        r = subprocess.run([sys.executable, "-I", "-c", RACE_PROG, str(MIGRATE), str(self.src),
+                            str(self.dst)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("refused: cannot create output", r.stdout)
+        self.assertEqual(self.dst.read_bytes(), b"keep me\n")
+
+    def test_a_failed_write_removes_the_partial_output(self):
+        self.write_src(old_fixture())
+        r = subprocess.run([sys.executable, "-I", str(MIGRATE), str(self.src), str(self.dst)],
+                           capture_output=True, text=True, preexec_fn=_limit_file_size)
+        self.assert_refused(r, "cannot write output")
+        self.assertIn("the partial output was removed", r.stderr)
+        self.assertFalse(os.path.lexists(self.dst), "a failed write leaves no partial output")
+
     def test_refuses_an_output_in_a_missing_directory(self):
         self.write_src(old_fixture())
         out = self._tmp / "absent-dir" / "out.md"
@@ -308,6 +374,68 @@ class MalformedInput(MigrateHarness):
         self.write_src(old_fixture(rows=["| 1 | a | b |"]))
         r = self.py(MIGRATE, "--dump-old-cells", self.src)
         self.assert_refused(r, "line 7: row has 3 cells")
+
+
+class HiddenTablePrefix(MigrateHarness):
+    """A "|" kept off column 0 by an invisible, no-break or blockquote prefix is refused (F1).
+
+    Before the fix the migration copied such a row through as prose and both dumps omitted it, so
+    the digest multisets agreed and the loss check could not see the loss. In old_fixture() the
+    header is line 5 and the rows start at line 7.
+    """
+
+    def rows_with(self, prefix):
+        return [OLD_ROWS[0], prefix + OLD_ROWS[1]] + OLD_ROWS[2:]
+
+    def test_prefixed_row_is_refused_and_writes_nothing(self):
+        for name, prefix in HIDDEN_PREFIXES:
+            with self.subTest(prefix=name):
+                self.write_src(old_fixture(rows=self.rows_with(prefix)))
+                self.assert_refused(self.py(MIGRATE, self.src, self.dst),
+                                    "line 8: indented or prefixed table line")
+                self.assertFalse(os.path.lexists(self.dst))
+
+    def test_prefixed_header_is_refused(self):
+        for name, prefix in HIDDEN_PREFIXES:
+            with self.subTest(prefix=name):
+                self.write_src(old_fixture().replace(OLD_HEADER, prefix + OLD_HEADER, 1))
+                self.assert_refused(self.py(MIGRATE, self.src, self.dst),
+                                    "line 5: indented or prefixed table line")
+                self.assertFalse(os.path.lexists(self.dst))
+
+    def test_byte_order_mark_before_a_first_line_header(self):
+        self.write_src("\ufeff" + OLD_HEADER + "\n|---|---|---|---|\n" + OLD_ROWS[0] + "\n")
+        self.assert_refused(self.py(MIGRATE, self.src, self.dst), "line 1: indented or prefixed")
+        self.assertFalse(os.path.lexists(self.dst))
+
+    def test_two_parser_loss_check_fails_rather_than_agreeing(self):
+        for name, prefix in HIDDEN_PREFIXES:
+            with self.subTest(prefix=name):
+                # The old file with a hidden row: the migration parser refuses its dump.
+                self.write_src(old_fixture(rows=self.rows_with(prefix)))
+                old = self.py(MIGRATE, "--dump-old-cells", self.src)
+                self.assert_refused(old, "line 8: indented or prefixed table line")
+                # The new file the unfixed migration wrote (the hidden row copied through as
+                # prose): the enumerator parser refuses its dump, so no two counts can agree.
+                carried = self._tmp / "carried.md"
+                carried.write_text("\n".join([
+                    NEW_HEADER, "|---|---|---|---|---|---|---|---|",
+                    "| 1 | 2026-09-01 | open | yes | - | - | Ship the release notes | Merged |",
+                    prefix + OLD_ROWS[1], ""]), encoding="utf-8")
+                new = self.py(ENUMERATE, "--dump-cells", carried)
+                self.assertEqual(new.returncode, 1, new.stderr)
+                self.assertEqual(new.stdout, "")
+                self.assertIn("line 4:", new.stderr)
+
+    def test_prose_with_a_bar_after_other_text_is_copied(self):
+        prose = ["Prose with a | bar mid-line.", "> A quoted line with a | bar.",
+                 "\u00a0No-break led prose | with a bar.", "\u200b> quoted | text", "> "]
+        src = "\n".join(prose) + "\n" + old_fixture()
+        self.migrate_ok(src)
+        new = self.dst.read_text(encoding="utf-8")
+        self.assertEqual(non_table_lines(src), non_table_lines(new))
+        self.assertEqual(json.loads(self.py(ENUMERATE, "--dump-cells", self.dst).stdout)["count"],
+                         len(OLD_ROWS))
 
 
 if __name__ == "__main__":

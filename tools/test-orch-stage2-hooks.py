@@ -36,7 +36,9 @@ malformed declaration disables the release, and the honour leg is verified on th
 
 Grounding: every hook-behaviour assertion is read from
 plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py at source; cited line numbers are in the
-per-test comments. The PR1-f doctor tests at the end drive tools/orch_doctor.py the same way.
+per-test comments. The PR1-f doctor tests at the end drive tools/orch_doctor.py the same way. A
+missing required input (the installed hook or the doctor) fails the test rather than skipping it, so
+an absent file can never read as a green run.
 """
 
 from __future__ import annotations
@@ -70,6 +72,38 @@ with open(path, "r", encoding="utf-8") as fh:
     items = json.load(fh)
 print(json.dumps({"version": 1, "generated_at_utc": datetime.now(timezone.utc).isoformat(),
                   "source": {"locator": path}, "items": items}))
+"""
+
+
+# The fixture enumerator, also appending one line to the file named by argv[2] each time it runs, so
+# a test can observe that the declared enumerator ran and that its write is its own.
+WRITING_ENUM_FIXTURE = ENUM_FIXTURE.replace(
+    "path = sys.argv[1]\n",
+    "path = sys.argv[1]\nwith open(sys.argv[2], \"a\", encoding=\"utf-8\") as mark:\n"
+    "    mark.write(\"ran\\n\")\n", 1)
+
+# Runs in a separate python3 -I process: load the doctor by path, replace the hook resume audit with
+# a writer that rewrites the barrier with new content but a ts from before the run, and return the
+# doctor exit status for that audit.
+STALE_TS_PROG = """
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("orch_doctor_under_test", sys.argv[1])
+doctor = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(doctor)
+hook = doctor._load_hook()
+root = sys.argv[2]
+
+
+def stale_writer(data):
+    path = os.path.join(hook._orch_state_dir_for_root(root), "resume-barrier.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump({"active": False, "findings": [], "ts": "2000-01-01T00:00:00+00:00",
+                   "warned": False}, fh)
+
+
+hook.orch_resume_audit = stale_writer
+sys.exit(doctor._resume_audit(hook, root))
 """
 
 
@@ -128,7 +162,7 @@ class Stage2Harness(unittest.TestCase):
 
     def setUp(self):
         if not HOOK.exists():
-            self.skipTest("installed hook not found: {}".format(HOOK))
+            self.fail("installed hook not found: {}".format(HOOK))
         self._tmp = Path(tempfile.mkdtemp(prefix="orch-stage2-"))
         self.repo = self._tmp / "repo"
         self.store = self._tmp / "store"
@@ -949,7 +983,7 @@ class Doctor(Stage2Harness):
     def setUp(self):
         super().setUp()
         if not DOCTOR.exists():
-            self.skipTest("doctor not found: {}".format(DOCTOR))
+            self.fail("doctor not found: {}".format(DOCTOR))
 
     def test_preflight_writes_nothing(self):
         self.write_registry(self.stage2())
@@ -1010,6 +1044,135 @@ class Doctor(Stage2Harness):
         r = subprocess.run([sys.executable, "-I", str(DOCTOR)], capture_output=True, text=True,
                            env=self._env(), timeout=60)
         self.assertEqual(r.returncode, 2)
+
+    # --- F4: the doctor writes nothing itself; the declared enumerator runs as the hook runs it ---
+    def test_preflight_discloses_that_the_declared_enumerator_runs(self):
+        self.assertIn("mark.write", WRITING_ENUM_FIXTURE, "precondition: the fixture writes")
+        script = self._tmp / "enum_writing.py"
+        script.write_text(WRITING_ENUM_FIXTURE, encoding="utf-8")
+        marker = self._tmp / "enumerator-ran.txt"
+        self.write_registry(self.stage2(enumerator={
+            "argv": [sys.executable, "-I", str(script), str(self.backlog), str(marker)],
+            "timeout": 5}))
+        self.arm_lease()
+        self.set_items([item("1", state="closed")])
+        r = self.run_doctor("preflight", "stop")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("writes: the doctor itself wrote nothing; the registry enumerator ran as the "
+                      "hook runs it", r.stdout)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "ran\n",
+                         "the declared enumerator ran once, and its write is its own")
+        self.assertFalse(self.state_dir().exists(), "the doctor wrote nothing under state_dir")
+
+    # --- F5: roster membership exactly as the hook tests it; the quiet claim is not previewed -----
+    def _arm_idle(self, roster):
+        self.write_registry(self.stage2(yield_tools=roster))
+        self.arm_lease()
+        self.set_items([item("42", title="Ship the widget")])
+
+    def test_preflight_idle_tool_outside_the_roster_allows_as_the_hook_does(self):
+        self._arm_idle(["CronCreate"])
+        r = self.run_doctor("preflight", "idle")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("tool ScheduleWakeup: not in the roster", r.stdout)
+        self.assertIn("effective verdict: ALLOW", r.stdout)
+        h = self.schedule(tool="ScheduleWakeup")
+        self.assertEqual(h.returncode, 0, h.stderr)
+        self.assertEqual(h.stdout.strip(), "", "the hook allows the same call unjudged")
+
+    def test_preflight_idle_named_tool_in_the_roster_denies_as_the_hook_does(self):
+        self._arm_idle(["CronCreate"])
+        r = self.run_doctor("preflight", "idle", "--tool", "CronCreate")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("tool CronCreate: in the roster, judged", r.stdout)
+        self.assertIn("effective verdict: DENY", r.stdout)
+        out = self.verdict_json(self.schedule(tool="CronCreate"))
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_preflight_idle_empty_roster_allows_as_the_hook_does(self):
+        self._arm_idle([])
+        r = self.run_doctor("preflight", "idle")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("yield_tools roster: (empty)", r.stdout)
+        self.assertIn("effective verdict: ALLOW", r.stdout)
+        self.assertEqual(self.schedule().stdout.strip(), "")
+
+    def test_preflight_idle_quiet_claim_is_not_previewed(self):
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.set_items([item("1", state="closed")])
+        self.seed_state("turn-state.json", {"last_human_input_utc": _iso(-5 / 60.0)})
+        claim = "quiet for 90 minutes, recheck the queue"
+        r = self.run_doctor("preflight", "idle", "--wake-text", claim)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("quiet-claim check: NOT PREVIEWED", r.stdout)
+        self.assertIn("effective verdict: UNPREVIEWED (ALLOW", r.stdout)
+        # The real hook denies the same call on the claim, so an ALLOW preview would be false.
+        out = self.verdict_json(self.schedule({"prompt": claim, "delaySeconds": 60}))
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("quiet minutes", out["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_preflight_idle_without_a_quiet_claim_allows(self):
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.set_items([item("1", state="closed")])
+        r = self.run_doctor("preflight", "idle", "--wake-text", "recheck the queue in 5 minutes")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("the check does not fire", r.stdout)
+        self.assertIn("effective verdict: ALLOW", r.stdout)
+
+    def test_tool_outside_preflight_idle_is_a_usage_error(self):
+        self.write_registry(self.stage2())
+        for args in (("preflight", "stop", "--tool", "CronCreate"),
+                     ("--resume-audit", "--tool", "CronCreate"),
+                     ("preflight", "idle", "--tool", "")):
+            with self.subTest(args=args):
+                r = self.run_doctor(*args)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("--tool", r.stderr)
+
+    # --- F2: the resume audit requires that the hook rewrote the barrier during this run ---------
+    def _read_only_stale_barrier(self, active):
+        self.seed_state("resume-barrier.json", {"active": active,
+                                                "findings": ["seeded"] if active else [],
+                                                "ts": _iso(-48), "warned": False})
+        path = self.state_dir() / "resume-barrier.json"
+        os.chmod(path, 0o444)
+        return path, path.read_bytes()
+
+    def test_resume_audit_read_only_stale_clear_barrier_is_unverified(self):
+        if os.geteuid() == 0:
+            self.skipTest("root writes a mode-0444 file, so the read-only case cannot arise")
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.write_record_files(handoff="Branch: some-other-branch\n")  # a real audit would arm
+        path, before = self._read_only_stale_barrier(False)
+        r = self.run_doctor("--resume-audit")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("NOT rewritten by this audit", r.stdout)
+        self.assertNotIn("barrier: clear", r.stdout)
+        self.assertEqual(path.read_bytes(), before, "precondition: the hook could not rewrite it")
+
+    def test_resume_audit_read_only_stale_active_barrier_is_unverified(self):
+        if os.geteuid() == 0:
+            self.skipTest("root writes a mode-0444 file, so the read-only case cannot arise")
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        path, before = self._read_only_stale_barrier(True)
+        r = self.run_doctor("--resume-audit")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("NOT rewritten by this audit", r.stdout)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_resume_audit_rewrite_with_a_ts_outside_the_run_is_unverified(self):
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        r = subprocess.run([sys.executable, "-I", "-c", STALE_TS_PROG, str(DOCTOR), str(self.repo)],
+                           capture_output=True, text=True, env=self._env(), timeout=120)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("is not from this audit run", r.stdout)
+        self.assertFalse(self.state_json("resume-barrier.json")["active"],
+                         "precondition: the barrier was rewritten, and reads clear")
 
 
 if __name__ == "__main__":

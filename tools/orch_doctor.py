@@ -12,17 +12,32 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          aiqt_hooks.py:8349-8351) and decide_yield (aiqt_hooks.py:8180), then prints
                          the verdict, the reason, the disposition table, and the verdict with the
                          escape sentinel forced off, so the operator sees what the Stop would do
-                         without the sentinel. It WRITES NOTHING: no checkpoint, no init marker, no
-                         guard event, no turn-state, no spoof record, and no bytecode cache. The only
-                         side effect is running the enumerator the registry declares, which the hook
-                         runs too.
+                         without the sentinel. The doctor itself WRITES NOTHING: no checkpoint, no
+                         init marker, no guard event, no turn-state, no spoof record, and no bytecode
+                         cache. It does run the enumerator the registry declares, exactly as the hook
+                         runs it (_orch_enumerate, aiqt_hooks.py:7962-7989: the declared argv as a
+                         subprocess with cwd = the root, no shell). That program is outside this tool,
+                         and anything it writes is its own, not the doctor's; the output says so.
+                         For idle, roster membership is modelled exactly as the hook tests it
+                         (aiqt_hooks.py:8664-8667): a tool outside a list-valued yield_tools roster,
+                         or any tool when yield_tools is not a list, is allowed unjudged. The
+                         quiet-duration check (aiqt_hooks.py:8675-8692) runs inline in the hook before
+                         the verdict and writes a guard event, so it cannot be called without
+                         writing and is NOT previewed: when the wake text carries a quiet-duration
+                         claim (the hook regex _ORCH_QUIET_CLAIM_RE plus the word "quiet"), a verdict
+                         other than DENY is reported as unpreviewed, exit 2.
 
   --resume-audit         Run the resume audit on demand. It delegates to orch_resume_audit in the
                          vendored hook (aiqt_hooks.py:9765-9794), so the probes (_orch_resume_probes,
                          aiqt_hooks.py:9351-9413, including the attestation snapshot refresh at
                          :9411), the resume-barrier.json write (:9781-9785), and the findings guard
-                         event are exactly those of the hook. It then re-reads the barrier it wrote
-                         and reports that observed state, never the return value of the call.
+                         event are exactly those of the hook. The hook swallows a failed barrier
+                         write (aiqt_hooks.py:9786-9787), so the doctor records the barrier mtime and
+                         content BEFORE the audit and requires that the audit rewrote it: the file
+                         must have changed and its ts must fall within this run. A barrier the hook
+                         could not rewrite (for example a read-only file) is reported as unverified,
+                         exit 2, never as the stale state it still holds. Otherwise it reports the
+                         observed rewritten state, never the return value of the call.
 
 Options:
   --root DIR         The repository whose registry is read. Default: the git top level of the
@@ -30,21 +45,29 @@ Options:
                      (_orch_root -> _recovery_toplevel, aiqt_hooks.py:7590-7595).
   --session-id ID    preflight only: the session id used for holder-scoped lease checks
                      (aiqt_hooks.py:7800-7811). Default: none.
-  --wake-text TEXT   preflight idle only: the text a scheduling call would carry, used for the
-                     wake-hygiene check (aiqt_hooks.py:8476-8478). Default: none.
+  --wake-text TEXT   preflight idle only: the text a scheduling call would carry (the hook joins
+                     the string values of tool_input, aiqt_hooks.py:8670), used for the wake-hygiene
+                     check (aiqt_hooks.py:8476-8478) and to detect a quiet-duration claim that is
+                     not previewed. Default: none.
+  --tool NAME        preflight idle only: the scheduling tool whose call is previewed, matched
+                     against yield_tools as the hook matches it. Default: ScheduleWakeup.
 
 Exit status:
   preflight      0 when the effective verdict is ALLOW (including out of scope or out of roster),
                  1 when it is DENY or ALLOW_WITH_FINDINGS, 2 on a usage error, an unresolvable root,
-                 or an absent or unreadable registry.
-  --resume-audit 0 when the barrier it wrote reads active false, 1 when it reads active true, 2 on a
-                 usage error, an unresolvable root, an absent registry, or a barrier that cannot be
-                 read back after the audit.
+                 an absent or unreadable registry, or an idle verdict that hangs on the quiet-claim
+                 check, which is not previewed.
+  --resume-audit 0 when the barrier this audit rewrote reads active false, 1 when it reads active
+                 true, 2 on a usage error, an unresolvable root, an absent registry, a barrier that
+                 cannot be recorded before or read back after the audit, or a barrier that this
+                 audit did not rewrite (unchanged, or a ts outside this run).
 
 Residuals (disclosed): the preview is a point-in-time reading. A later edit to the backlog, the
 ledger, the pending-decisions record, the sentinel, or the clock can change what the real hook
 decides. The enumerator is a program the registry declares; whatever it writes is outside the
-control of this tool. The tool runs isolated (it re-executes itself under python3 -I when started
+control of this tool. The quiet-duration check is not previewed (see above). The rewrite check on
+the barrier detects a write that did not happen; it cannot tell the hook from another writer that
+rewrites the file inside the same run. The tool runs isolated (it re-executes itself under python3 -I when started
 without -I), so a file planted beside it cannot shadow a standard-library import.
 """
 import os
@@ -56,6 +79,7 @@ if not sys.flags.isolated:
     os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
 
 import argparse
+import datetime
 import importlib.util
 import json
 
@@ -65,6 +89,9 @@ HOOK = os.path.join(ROOT, "plugin", "aiqt-guardrails-hooks", "hooks", "scripts",
 # preflight kind -> the decide_yield kind the hook passes (Stop and TeammateIdle use "stop",
 # aiqt_hooks.py:8621 and :8627; a scheduling call that parks the run uses "schedule_idle", :8669).
 KINDS = {"stop": "stop", "idle": "schedule_idle"}
+DEFAULT_TOOL = "ScheduleWakeup"
+# The barrier ts must fall inside this run, widened by this much for clock granularity.
+TS_SKEW = datetime.timedelta(seconds=1)
 
 
 def _load_hook():
@@ -99,7 +126,7 @@ def _print_disposition(disposition):
         print("  {:<16} {:<12} {} {}".format(cls, iid, col3, col4).rstrip())
 
 
-def _preflight(hook, root, kind_name, session_id, wake_text):
+def _preflight(hook, root, kind_name, session_id, wake_text, tool):
     kind = KINDS[kind_name]
     status, reg = hook._orch_registry(root)
     print("orch_doctor preflight {}: root {}".format(kind_name, root))
@@ -116,14 +143,29 @@ def _preflight(hook, root, kind_name, session_id, wake_text):
     print("scope: {}".format("live" if scope_live else
                              "not live (the hook allows without judging)"))
     in_roster = True
+    quiet_claim = False
     if kind == "schedule_idle":
-        roster = reg.get("yield_tools")
-        if isinstance(roster, list) and roster:
-            print("yield_tools roster: {}".format(", ".join(str(t) for t in roster)))
+        declared = reg.get("yield_tools")
+        # Exactly the hook test: allowed unjudged unless yield_tools is a list holding the tool
+        # (aiqt_hooks.py:8664-8667).
+        in_roster = isinstance(declared, list) and tool in declared
+        if isinstance(declared, list):
+            print("yield_tools roster: {}".format(", ".join(str(t) for t in declared) or "(empty)"))
         else:
-            in_roster = False
-            print("yield_tools roster: none declared (the hook allows every scheduling call "
-                  "unjudged, aiqt_hooks.py:8665-8667)")
+            print("yield_tools roster: not a declared list")
+        print("tool {}: {}".format(tool, "in the roster, judged" if in_roster else
+                                   "not in the roster; the hook allows it unjudged "
+                                   "(aiqt_hooks.py:8664-8667)"))
+        text = wake_text or ""
+        quiet_claim = bool(hook._ORCH_QUIET_CLAIM_RE.search(text)) and "quiet" in text.lower()
+        if quiet_claim:
+            print("quiet-claim check: NOT PREVIEWED; the wake text carries a quiet-duration claim, "
+                  "which the hook judges inline against the measured gap since the last human "
+                  "input before the verdict below (aiqt_hooks.py:8675-8692); it cannot be called "
+                  "without writing a guard event")
+        else:
+            print("quiet-claim check: not previewed (aiqt_hooks.py:8675-8692); the wake text "
+                  "carries no quiet-duration claim, so the check does not fire")
     data = {"session_id": session_id} if session_id else {}
     ctx, _ts, _basis = hook._orch_build_ctx(reg, root, kind, data, wake_text=wake_text,
                                             record_checkpoint=False)
@@ -131,6 +173,8 @@ def _preflight(hook, root, kind_name, session_id, wake_text):
         print("enumeration: ok")
     else:
         print("enumeration: {}: {}".format(ctx["enum_status"], ctx["enum_detail"]))
+    print("writes: the doctor itself wrote nothing; the registry enumerator ran as the hook runs it "
+          "(aiqt_hooks.py:7962-7989), and anything that program writes is its own")
     if ctx["escape"]:
         print("escape sentinel: active (an operator release is open)")
     elif ctx.get("escape_spoof"):
@@ -142,14 +186,32 @@ def _preflight(hook, root, kind_name, session_id, wake_text):
     no_escape = dict(ctx)
     no_escape["escape"] = False
     verdict_ne, reason_ne, _disp_ne = hook.decide_yield(no_escape)
-    effective = verdict if (scope_live and in_roster) else "ALLOW"
+    judged = scope_live and in_roster
+    effective = verdict if judged else "ALLOW"
     print("judged verdict: {}".format(verdict))
     print("judged reason: {}".format(reason))
     print("verdict without the escape sentinel: {}".format(verdict_ne))
     print("reason without the escape sentinel: {}".format(reason_ne))
+    if judged and quiet_claim and effective != "DENY":
+        # The quiet-claim check runs before decide_yield and may deny; a DENY stands either way.
+        print("effective verdict: UNPREVIEWED ({} unless the quiet-claim check denies)"
+              .format(effective))
+        _print_disposition(disposition)
+        return 2
     print("effective verdict: {}".format(effective))
     _print_disposition(disposition)
     return 0 if effective == "ALLOW" else 1
+
+
+def _barrier_snapshot(path):
+    """(mtime_ns, content bytes) of the barrier, None when it is absent; OSError on any other
+    failure, which the caller reports as cannot-evaluate."""
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return None
+    with open(path, "rb") as fh:
+        return (st.st_mtime_ns, fh.read())
 
 
 def _resume_audit(hook, root):
@@ -158,14 +220,43 @@ def _resume_audit(hook, root):
     if status == "absent":
         print("registry: absent; the orchestration suite is inert here, nothing to audit")
         return 2
-    hook.orch_resume_audit({"cwd": root})
     barrier_path = os.path.join(hook._orch_state_dir_for_root(root), "resume-barrier.json")
     try:
-        with open(barrier_path, "r", encoding="utf-8") as fh:
-            barrier = json.load(fh)
-    except (OSError, ValueError) as exc:
+        before = _barrier_snapshot(barrier_path)
+    except OSError as exc:
+        print("barrier: cannot be recorded before the audit at {} ({}); a rewrite could not be "
+              "confirmed, so the audit is not run".format(barrier_path, exc))
+        return 2
+    start = hook._orch_now()
+    hook.orch_resume_audit({"cwd": root})
+    end = hook._orch_now()
+    try:
+        after = _barrier_snapshot(barrier_path)
+    except OSError as exc:
+        after, read_error = None, exc
+    else:
+        read_error = "absent"
+    if after is None:
+        print("barrier: cannot be read back from {} ({}); the audit result is unverified"
+              .format(barrier_path, read_error))
+        return 2
+    if before is not None and after == before:
+        print("barrier: NOT rewritten by this audit ({} has the same mtime and content as before "
+              "the run); the hook could not write it (for example the file is read-only), so the "
+              "state it holds is stale and the audit result is unverified".format(barrier_path))
+        return 2
+    try:
+        barrier = json.loads(after[1].decode("utf-8"))
+    except ValueError as exc:
         print("barrier: cannot be read back from {} ({}); the audit result is unverified"
               .format(barrier_path, exc))
+        return 2
+    stamp = hook._orch_parse_utc(barrier.get("ts")) if isinstance(barrier, dict) else None
+    if stamp is None or stamp < start - TS_SKEW or stamp > end + TS_SKEW:
+        print("barrier: its ts {!r} is not from this audit run ({} to {}); it was not rewritten by "
+              "this audit, so the audit result is unverified".format(
+                  barrier.get("ts") if isinstance(barrier, dict) else None,
+                  start.isoformat(), end.isoformat()))
         return 2
     if not isinstance(barrier, dict) or not isinstance(barrier.get("active"), bool):
         print("barrier: malformed at {}; the audit result is unverified".format(barrier_path))
@@ -190,10 +281,17 @@ def main(argv):
     parser.add_argument("--root", default=None, help="repository root (default: git top level of cwd)")
     parser.add_argument("--session-id", default=None, help="preflight: session id for holder scoping")
     parser.add_argument("--wake-text", default=None, help="preflight idle: the wake text to judge")
+    parser.add_argument("--tool", default=None,
+                        help="preflight idle: the scheduling tool (default {})".format(DEFAULT_TOOL))
     args = parser.parse_args(argv)
     if bool(args.resume_audit) == bool(args.command):
         parser.print_usage(sys.stderr)
         print("orch_doctor.py: give exactly one of: preflight [stop|idle], or --resume-audit",
+              file=sys.stderr)
+        return 2
+    if args.tool is not None and (args.resume_audit or args.kind != "idle" or not args.tool):
+        parser.print_usage(sys.stderr)
+        print("orch_doctor.py: --tool takes a non-empty name and applies only to preflight idle",
               file=sys.stderr)
         return 2
     try:
@@ -208,7 +306,8 @@ def main(argv):
         return 2
     if args.resume_audit:
         return _resume_audit(hook, root)
-    return _preflight(hook, root, args.kind, args.session_id, args.wake_text)
+    return _preflight(hook, root, args.kind, args.session_id, args.wake_text,
+                      args.tool if args.tool is not None else DEFAULT_TOOL)
 
 
 if __name__ == "__main__":
