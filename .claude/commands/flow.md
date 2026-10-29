@@ -53,9 +53,9 @@ only the affected file(s).
    AIQT self-check before the completion claim; records rotation (TODO delete + DONE add) in the same
    change; clear focus.
 8. PAUSE (after a merge, after a plan is verified pre-implementation, or when the queue composition
-   changed): refresh; if an attended boundary is open, surface accumulated decisions ONE AT A
-   TIME (per .claude/rules/maintainer-questions.md); list the next items; continue on already-authorized
-   safe actions.
+   changed): refresh; if an attended boundary is open, surface accumulated decisions, up to 4
+   per round (per .claude/rules/maintainer-questions.md); list the next items; continue on
+   already-authorized safe actions.
 9. NOTHING ACTIONABLE: seeds/combines/QA in flight -> keep the pipeline topped up + read-only prep on
    upcoming verified-DISJOINT items; re-enter on the next delivery. Nothing in flight -> run
    blocked-verification (below); only on genuine whole-set exhaustion, close on green via /handoff.
