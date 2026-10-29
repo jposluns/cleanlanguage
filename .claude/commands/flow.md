@@ -67,7 +67,7 @@ repository, but CANNOT read the private store, `/opt/inbox`, or the machine-loca
 QA brief that depends on any of those must EMBED that context, and the orchestrator self-verifies every
 private-context reference at source.
 
-Per substantive or sensitive item (a light item skips (a) to (d) and the plan check in (e)):
+Per item (the machine-local "Working method" section sets which of these steps a tier skips):
 (a) SEED BRIEF: 1 self-contained brief embedding all needed context (problem, exact file/line facts,
     constraints, deliverable shape, acceptance criteria).
 (b) SEEDS: `orch-verify claude|gemini <brief> /opt/cleanlanguage/cleanlanguage --expensive`, the
@@ -99,8 +99,7 @@ Per substantive or sensitive item (a light item skips (a) to (d) and the plan ch
 (e) IMPLEMENT (serial): the orchestrator VERIFIES the plan against the seeds + live tree, may dispatch an
     implementation DRAFT to a claude worker, then FINALIZES it serially, re-verifying every line at
     source, as the SOLE writer/merger. Commit BEFORE dispatching QA (QA pins a revision); then run the
-    tier's QA (the QA cycle for a substantive or sensitive item, the dual-family re-QA for a light
-    item; see Tiers below) and merge only as the machine-local "Working method" section allows.
+    tier's QA and merge only as the machine-local "Working method" section allows.
 
 GEMINI ROLE LIMIT: gemini may SEED and QA but NEVER plan-combines or drafts the implementation.
 
@@ -118,9 +117,8 @@ AND codex is not at its cost cap. While undelivered, its seat is OWED, a ?HOLD o
 that QA STEP (a proposal, per Blocked-verification): while it is owed, the run limits work on
 other items to pipeline top-up and read-only prep on upcoming verified-DISJOINT items, as
 cycle step 9 allows, and starts no other apply while this branch is open; the seat is never
-dropped or substituted on that basis. If the single re-issue also fails, the seat stays owed until
-the codex leg of the next DISCOVERY round (for a light item, its next dual-family re-QA run) fills
-it, as the machine-local "Working method" section states. A review that hunts for ways past a security
+dropped or substituted on that basis. The machine-local "Working method" section sets when an owed
+seat ends. A review that hunts for ways past a security
 control (a review whose task includes, in whole or in part, finding inputs, commands, or paths that a
 guard, hook, sandbox, filter, or permission check fails to block) NEVER goes to codex: run it on
 claude + gemini and, where the tier needs a third family, add an independent, differently-primed
