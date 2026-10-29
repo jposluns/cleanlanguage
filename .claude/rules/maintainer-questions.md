@@ -8,11 +8,12 @@ record of that decision. The fleet operating model is machine-local, at
 section 2 ("Decision urgency plus attendance routing") words the same four roles
 as "predicted choice, best for the project, the go-wild optimum, free-form". The
 options are presented in the order predicted, best on the merits, maximal, and
-free-form; the best-on-the-merits option is the recommended one (Option A), and
-the free-form choice is Option D. Where the text below differs, that dialog
-governs; in particular, "in prose" and the ban on a multiple-choice chip interface
-in the first bullet under Format no longer apply. The rule awaits the fleet-wide
-decision SOP owned by lab_infra, the infrastructure orchestrator for the fleet.
+free-form. These four roles replace the Option A to D lettering in the Format
+section; the best-on-the-merits option is the recommended answer. Where the text
+below differs, that dialog governs; in particular, "in prose" and the ban on a
+multiple-choice chip interface in the first bullet under Format no longer apply.
+The rule awaits the fleet-wide decision SOP owned by lab_infra, the
+infrastructure orchestrator for the fleet.
 
 When work reaches a point that needs a decision only the maintainer can make, ask
 for it directly. Follow this format so the maintainer can decide quickly and in
