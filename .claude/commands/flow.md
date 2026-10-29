@@ -74,11 +74,12 @@ Per item:
     same brief to both in parallel. A family genuinely unreachable OR at its cost cap is
     skip-and-note (combine at a minimum of 2 by adding an independent, differently-primed second seed,
     given the same facts but a different framing and run in a separate clean context, drawn from
-    the reachable family; queue a re-combine when the skipped family returns), never a block to seeding;
+    the other seed family; queue a re-combine when the skipped family returns), never a block to seeding;
     when neither combiner in (c) can combine, the COMBINE step is still HELD, as (c) states. If no seed
-    family can run (each is unreachable or at its cost cap), the SEED step is HELD as (c) holds the
-    COMBINE step: the item is not execution-ready, the hold is recorded, and the run routes to the next
-    independent item.
+    family can run (each is unreachable or at its cost cap), the SEED step is HELD in the same way that
+    (c) holds the COMBINE step: the item is not execution-ready, the hold is recorded as a ?HOLD on
+    this STEP, the run routes to the next independent item, and each later FEED THE PIPELINE step
+    (cycle step 2) retries the seeds.
 (c) COMBINE with Fable: `orch-verify claude <combine-brief> ... --super-expensive` (claude-fable-5 at
     high effort). The combiner ADJUDICATES (state settled design; name disagreements + recommend;
     do not average into mush; discard hallucinated claims, verify at source). Fallback when Fable is
@@ -87,8 +88,10 @@ Per item:
     NEVER codex or gemini as a combiner, of record or otherwise;
     NEVER orchestrator self-synthesis as the combiner.
     The ONLY lawful combiners are Fable and that fallback (NEVER any other claude tier);
-    when neither can combine, the COMBINE step is HELD: the item is not execution-ready, the
-    hold is recorded, and the run routes to the next independent item.
+    when neither can combine, the COMBINE step is HELD: the item is not execution-ready, the hold is
+    recorded as a ?HOLD on this STEP (self-authored, so a proposal and never a grant, per
+    Blocked-verification), the run routes to the next independent item, and each later FEED THE
+    PIPELINE step (cycle step 2) retries the COMBINE.
 (d) PLAN: land it with a numbered step list, a file manifest, an acceptance/verification section, a
     QA-tier declaration, and a rollback note. Execution-ready only when it passes that shape.
 (e) IMPLEMENT (serial): the orchestrator VERIFIES the plan against the seeds + live tree, may dispatch an
@@ -99,12 +102,17 @@ Per item:
 GEMINI ROLE LIMIT: gemini may SEED and QA but NEVER plan-combines or drafts the implementation.
 
 CODEX ROLE LIMIT: codex may QA ONLY; it NEVER seeds, plan-combines, drafts the implementation, or fixes.
-Every codex leg is dispatched with `ORCH_MAX_FAILOVERS=1`. A review that hunts for ways past a security
-control (a review whose task is to find inputs, commands, or paths that a guard, hook, sandbox, filter,
-or permission check fails to block) NEVER goes to codex: run it on claude + gemini, adding an
-independent, differently-primed claude pass in a separate clean context, recorded as a fleet-rule
-substitution, where the tier needs a third family. The orchestrator classifies each review at brief
-time and records the classification in the item QA record.
+Every codex leg is dispatched with `ORCH_MAX_FAILOVERS=1`; a leg that exhausts that single failover
+without a result counts as genuinely UNREACHABLE under VERIFIER DIVERSITY (a leg stopped by a cost cap
+never does), and it is never retried with a higher limit. A review that hunts for ways past a security
+control (a review whose task includes, in whole or in part, finding inputs, commands, or paths that a
+guard, hook, sandbox, filter, or permission check fails to block) NEVER goes to codex: run it on
+claude + gemini and, where the tier needs a third family, add an independent, differently-primed
+claude pass in a separate clean context, recorded as a fleet-rule substitution (a seat change that a
+fleet rule, such as this limit, requires). The orchestrator classifies each review at brief time and
+records the classification in the item QA record (the QA notes on the item's entry in
+`/opt/cleanlanguage/private/TODO.md`, carried into `DONE.md` at CLOSE), where every QA substitution
+and drop is also recorded.
 
 PROHIBITED: dispatch seeds in the background then END THE TURN before collecting them. STATE, DO NOT
 PROMISE: collect through the tracked background mechanism that survives to completion.
@@ -114,14 +122,18 @@ AIQT HOLD: plan-production throughput NEVER shortens a change's per-tier QA.
 ## Tiers (per the machine-local /opt/cleanlanguage/.claude/CLAUDE.md)
 
 - LIGHT (quick fix / bookkeeping / version bumps / record edits): implement directly; mechanical gates;
-  DUAL-family QA (claude + codex, or claude + gemini where the CODEX ROLE LIMIT bars codex; gemini is
-  otherwise excluded on cost, which is allowed only because 2 families still meet the verifier-diversity
-  floor).
+  DUAL-family QA (claude + codex, or claude + gemini where the CODEX ROLE LIMIT bars codex or codex is
+  unreachable; gemini is otherwise excluded on cost, which is allowed only because 2 families still
+  meet the verifier-diversity floor).
 - SUBSTANTIVE (skill/site-corpus change; new/edited gate/linter/hook/tool; multi-surface; control value /
   citation / normative rule; new feature): the full pipeline; TRI-family adversarial QA weighting codex
-  within the CODEX ROLE LIMIT; where that limit bars codex, that weighting passes to gemini, and the
-  codex seat is filled as the CODEX ROLE LIMIT states;
-  validate every finding at source; up to 4 fixing rounds; if it has not converged, trigger a premise review (re-derive the problem from fresh observation) and escalate the ITEM with a too-many-rounds flag and recommendation, continuing other authorized work. The round limit alone never closes the session.
+  within the CODEX ROLE LIMIT; where that limit bars codex or codex is unreachable, that weighting
+  passes to gemini (or, if gemini is also lost, to the pass that fills gemini's seat), and the codex
+  seat is filled as VERIFIER DIVERSITY states;
+  validate every finding at source; up to 4 fixing rounds; if it has not converged, trigger a premise
+  review (re-derive the problem from fresh observation) and escalate the ITEM with a too-many-rounds
+  flag and recommendation, continuing other authorized work. The round limit alone never closes the
+  session.
 - SENSITIVE (gate-blind correctness AND delicate scale AND high escaped-error cost, all 3): substantive
   plus the high-assurance harness (independent adversarial verifiers, deterministic apply, a persistent
   register). No de-escalation without a maintainer decision.
@@ -130,10 +142,13 @@ VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genu
 never for cost; cost never buys the reduction. A codex seat barred by the CODEX ROLE LIMIT is filled
 by gemini only where gemini does not already hold a seat (a dual-family tier); where it does, the
 CODEX ROLE LIMIT claude pass fills it. Either way, the substitute is recorded as a fleet-rule
-substitution, not as an unavailability drop. When a required family is genuinely unreachable, run an
-independent, differently-primed second pass in a separate clean context as the recorded fallback, and
-re-run an unreachable family once it returns. QA is dispatched read-only via `orch-verify`; judge by
-the result signal, not by grepping worker output.
+substitution, not as an unavailability drop. When a required family is genuinely unreachable, record
+the drop and give its seat to a reachable, unbarred family that holds no seat (gemini, for codex on a
+dual-family tier); only where there is none, run an independent, differently-primed second pass in a
+separate clean context as the recorded fallback, and re-run an unreachable family once it returns.
+Each lost seat gets its own substitute, so a tri-family tier with codex barred and gemini unreachable
+runs claude plus 2 independent, differently-primed claude passes, each in its own clean context. QA is
+dispatched read-only via `orch-verify`; judge by the result signal, not by grepping worker output.
 
 ## Gates and merge (cleanlanguage)
 
