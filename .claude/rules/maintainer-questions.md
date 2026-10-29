@@ -3,18 +3,20 @@
 **Superseded in part.** On 2026-10-29 the maintainer decided that these questions
 are asked in the AskUserQuestion dialog in the four-role shape. The maintainer
 wrote "the SOP is askuser." The options are presented in this order: predicted,
-the choice the asker predicts the maintainer will make, drawn from the private
-record of past maintainer decisions and naming the pattern it rests on; best on
-the merits, what the asker judges best for the project; maximal, the most
-thorough or over-engineered option, shown to teach what is possible and never the
-default; and free-form, where the maintainer answers in their own words. These
-four roles replace the Option A to D lettering in the Format section. Wherever
-that section says Option A, read the best-on-the-merits option, whatever its
-position; it carries the clear recommendation and the brief statement of why it
-is recommended. Where the text below differs, that dialog governs; in particular,
-"in prose" and the ban on a multiple-choice chip interface in the first bullet
-under Format no longer apply. A fleet-wide decision SOP owned by lab_infra, the
-infrastructure orchestrator for the fleet, will later replace this rule.
+the choice the asker expects the maintainer to make; best on the merits, what the
+asker judges best for the project; maximal, the most thorough option, shown to
+teach what is possible; and free-form, where the maintainer answers in their own
+words. These four roles replace the Option A to D lettering in the Format
+section. Wherever that section says Option A, read the best-on-the-merits option,
+whatever its position; it carries the clear recommendation and the brief
+statement of why it is recommended. One AskUserQuestion round may carry up to 4
+questions, whatever their weight, and the next round follows only after the
+current one is answered. Where the text below differs, that dialog governs; in
+particular, "one question at a time", "in prose", "Do not batch several
+questions into one message", and the ban on a multiple-choice chip interface in
+the first bullet under Format no longer apply. A fleet-wide decision SOP owned
+by lab_infra, the infrastructure orchestrator for the fleet, will later replace
+this rule.
 
 When work reaches a point that needs a decision only the maintainer can make, ask
 for it directly. Follow this format so the maintainer can decide quickly and in

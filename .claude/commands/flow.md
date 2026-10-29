@@ -188,7 +188,7 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   Absent = attended (conservative). The ONE governed transition is a decision-timeout switching
   attended -> unattended (the safe/conservative direction only). An inbound operator message is a
   TRANSIENT attended boundary and does NOT silently flip the mode.
-- DECISIONS: blocking + attended -> surface immediately, ONE AT A TIME, in the four-role shape. The repo
+- DECISIONS: blocking + attended -> surface now, up to 4 per round, in the four-role shape. The repo
   `.claude/rules/maintainer-questions.md` sets that shape in its "Superseded in part" note: the four
   roles replace its Option A to D lettering. See that note for the roles, their order, their
   definitions, and which role carries the recommendation; this file does not restate them.
