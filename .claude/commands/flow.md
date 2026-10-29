@@ -107,8 +107,9 @@ CODEX ROLE LIMIT: codex may QA ONLY; it NEVER seeds, plan-combines, drafts the i
 Every codex leg is dispatched with `ORCH_MAX_FAILOVERS=1` (one account, no failover). A codex leg that
 ends at that bound in any form (`orch-verify` `FAILOVER_LIMIT` (exit 4), or an empty, degenerate, or
 5xx chain), or that ends `EXHAUSTED` (exit 5, rate-limited or out of quota), or that is stopped by a
-cost cap, or that otherwise delivers no verdict (a timeout, an auth error, or no completion marker),
-is a failed leg, NOT an unreachable family, whatever `orch-verify` advises about the family.
+cost cap, or that otherwise delivers no verdict (a dispatch timeout, a dispatch auth failure, or a
+delivery that lacks the agreed completion evidence; an UNVERIFIABLE result is a delivered verdict, not a
+failed leg), is a failed leg, NOT an unreachable family, whatever `orch-verify` advises about the family.
 It is recorded, then re-issued at most once, after a wait between attempts
 (not cycle step 8, PAUSE), never with a higher limit; the single re-issue happens at the
 first later FEED THE PIPELINE step (cycle step 2) at which `orch-verify --pick codex` succeeds
