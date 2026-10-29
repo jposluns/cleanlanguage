@@ -1,16 +1,20 @@
 # Asking the maintainer questions
 
 **Superseded in part.** On 2026-10-29 the maintainer decided that these questions
-are asked in the AskUserQuestion dialog in the four-role shape: predicted, best on
-the merits, maximal, and free-form. The description of PR #172 in this repository
-quotes the maintainer's instruction. The options are presented in the order
-predicted, best on the merits, maximal, and free-form. These four roles replace
-the Option A to D lettering in the Format section. That section still requires a
-clear recommendation, and the best-on-the-merits option carries it. Where the text
-below differs, that dialog governs; in particular, "in prose" and the ban on a
-multiple-choice chip interface in the first bullet under Format no longer apply.
-The rule awaits the fleet-wide decision SOP owned by lab_infra, the
-infrastructure orchestrator for the fleet.
+are asked in the AskUserQuestion dialog in the four-role shape. The maintainer
+wrote "the SOP is askuser." The options are presented in this order: predicted,
+the choice the asker predicts the maintainer will make, drawn from the private
+record of past maintainer decisions and naming the pattern it rests on; best on
+the merits, what the asker judges best for the project; maximal, the most
+thorough or over-engineered option, shown to teach what is possible and never the
+default; and free-form, where the maintainer answers in their own words. These
+four roles replace the Option A to D lettering in the Format section. Wherever
+that section says Option A, read the best-on-the-merits option, whatever its
+position; it carries the clear recommendation and the brief statement of why it
+is recommended. Where the text below differs, that dialog governs; in particular,
+"in prose" and the ban on a multiple-choice chip interface in the first bullet
+under Format no longer apply. A fleet-wide decision SOP owned by lab_infra, the
+infrastructure orchestrator for the fleet, will later replace this rule.
 
 When work reaches a point that needs a decision only the maintainer can make, ask
 for it directly. Follow this format so the maintainer can decide quickly and in
