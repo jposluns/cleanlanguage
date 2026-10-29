@@ -12,7 +12,7 @@ always on.
 ## The loop (invariant)
 
 2 interlocking loops. The APPLY loop is strictly SERIAL: 1 backlog item at a time, implement -> QA ->
-merge. The PLAN-PRODUCTION pipeline runs ALONGSIDE, in parallel, raising upcoming items to
+merge, or park. The PLAN-PRODUCTION pipeline runs ALONGSIDE, in parallel, raising upcoming items to
 execution-ready. CARDINAL RULE: parallelism lives ONLY in research (seeds, plan-combines, QA reads);
 APPLIES ARE NEVER PARALLEL (1 branch, 1 plan, 1 writer at a time).
 
@@ -97,9 +97,9 @@ Per item (the machine-local "Working method" section sets which of these steps a
     `orch-verify --pick claude` succeeds AND claude is not at its cost cap.
 (d) PLAN: land it with a numbered step list, a file manifest, an acceptance/verification section, a
     QA-tier declaration, and a rollback note. Execution-ready only when it passes that shape.
-(e) IMPLEMENT (serial): the orchestrator VERIFIES the plan, where the tier has one, against the seeds
-    + live tree, may dispatch an
-    implementation DRAFT to a claude worker, then FINALIZES it serially, re-verifying every line at
+(e) IMPLEMENT (serial): the orchestrator VERIFIES the plan, where the tier has one, against the
+    seeds + live tree, may dispatch an implementation DRAFT to a claude worker, then FINALIZES it
+    serially, re-verifying every line at
     source, as the SOLE writer/merger. Commit BEFORE dispatching QA (QA pins a revision); then run the
     tier's QA and merge only as the machine-local "Working method" section allows.
 
