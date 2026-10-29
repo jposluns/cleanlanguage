@@ -79,8 +79,8 @@ Per item:
     family can run (each is unreachable or at its cost cap), the SEED step is HELD in the same way that
     (c) holds the COMBINE step: the item is not execution-ready, the hold is recorded as a ?HOLD on
     this STEP, the run routes to the next independent item, and each later FEED THE PIPELINE step
-    (cycle step 2) retries the seeds only when a seed family can run, as a successful
-    `orch-verify --pick` for that family shows.
+    (cycle step 2) retries the seeds only when a seed family can run: `orch-verify --pick` for that
+    family succeeds AND that family is not at its cost cap.
 (c) COMBINE with Fable: `orch-verify claude <combine-brief> ... --super-expensive` (claude-fable-5 at
     high effort). The combiner ADJUDICATES (state settled design; name disagreements + recommend;
     do not average into mush; discard hallucinated claims, verify at source). Fallback when Fable is
@@ -92,8 +92,8 @@ Per item:
     when neither can combine, the COMBINE step is HELD: the item is not execution-ready, the hold is
     recorded as a ?HOLD on this STEP (self-authored, so a proposal and never a grant, per
     Blocked-verification), the run routes to the next independent item, and each later FEED THE
-    PIPELINE step (cycle step 2) retries the COMBINE only when a lawful combiner can run, as a
-    successful `orch-verify --pick claude` shows.
+    PIPELINE step (cycle step 2) retries the COMBINE only when a lawful combiner can run:
+    `orch-verify --pick claude` succeeds AND claude is not at its cost cap.
 (d) PLAN: land it with a numbered step list, a file manifest, an acceptance/verification section, a
     QA-tier declaration, and a rollback note. Execution-ready only when it passes that shape.
 (e) IMPLEMENT (serial): the orchestrator VERIFIES the plan against the seeds + live tree, may dispatch an
@@ -108,10 +108,13 @@ Every codex leg is dispatched with `ORCH_MAX_FAILOVERS=1` (one account, no failo
 ends at that bound in any form (`orch-verify` `FAILOVER_LIMIT`, exit 4, or an empty, degenerate, or
 5xx chain), or that ends `EXHAUSTED` (exit 5, rate-limited or out of quota), or that is stopped by a
 cost cap, is a failed leg, NOT an unreachable family, whatever `orch-verify` advises about the family.
-It is recorded, then re-issued at most once, after a pause, never with a higher limit, and only when
-`orch-verify --pick codex` succeeds; while undelivered, its seat is OWED, a ?HOLD on that QA STEP
-(a proposal, per Blocked-verification): the run routes to the next independent item,
-and the seat is never dropped or substituted on that basis. A review that hunts for ways past a security
+It is recorded, then re-issued at most once, after a pause, never with a higher limit; each
+later FEED THE PIPELINE step (cycle step 2) re-issues it only when `orch-verify --pick codex`
+succeeds AND codex is not at its cost cap. While undelivered, its seat is OWED, a ?HOLD on
+that QA STEP (a proposal, per Blocked-verification): while it is owed, the run limits work on
+other items to pipeline top-up and read-only prep on upcoming verified-DISJOINT items, as
+cycle step 9 allows, and starts no other apply while this branch is open; the seat is never
+dropped or substituted on that basis. A review that hunts for ways past a security
 control (a review whose task includes, in whole or in part, finding inputs, commands, or paths that a
 guard, hook, sandbox, filter, or permission check fails to block) NEVER goes to codex: run it on
 claude + gemini and, where the tier needs a third family, add an independent, differently-primed
@@ -129,13 +132,13 @@ AIQT HOLD: plan-production throughput NEVER shortens a change's per-tier QA.
 
 - LIGHT (quick fix / bookkeeping / version bumps / record edits): implement directly; mechanical gates;
   DUAL-family QA (claude + codex, or claude + gemini where the CODEX ROLE LIMIT bars codex or codex is
-  unreachable; gemini is otherwise excluded on cost, which is allowed only because 2 families still
-  meet the verifier-diversity floor).
+  genuinely unreachable; gemini is otherwise excluded on cost, which is allowed only because 2 families
+  still meet the verifier-diversity floor).
 - SUBSTANTIVE (skill/site-corpus change; new/edited gate/linter/hook/tool; multi-surface; control value /
   citation / normative rule; new feature): the full pipeline; TRI-family adversarial QA weighting codex
-  within the CODEX ROLE LIMIT; where that limit bars codex or codex is unreachable, that weighting
-  passes to gemini (or, if gemini is also genuinely unreachable, to the fallback pass for the gemini seat
-  under VERIFIER DIVERSITY), and the codex seat is filled as VERIFIER DIVERSITY states;
+  within the CODEX ROLE LIMIT; where that limit bars codex or codex is genuinely unreachable, that
+  weighting passes to gemini (or, if gemini is also genuinely unreachable, to the fallback pass for
+  the gemini seat under VERIFIER DIVERSITY), and the codex seat is filled as VERIFIER DIVERSITY states;
   validate every finding at source; up to 4 fixing rounds; if it has not converged, trigger a premise
   review (re-derive the problem from fresh observation) and escalate the ITEM with a too-many-rounds
   flag and recommendation, continuing other authorized work. The round limit alone never closes the
