@@ -113,9 +113,11 @@ cost cap, or that otherwise delivers no verdict (a dispatch timeout, a dispatch 
 delivery that lacks the agreed completion evidence; an UNVERIFIABLE result is a delivered verdict, not a
 failed leg), is a failed leg, NOT an unreachable family, whatever `orch-verify` advises about the family.
 It is recorded, then re-issued at most once, after a wait between attempts
-(not cycle step 8, PAUSE), never with a higher limit; the single re-issue happens at the
-first later FEED THE PIPELINE step (cycle step 2) at which `orch-verify --pick codex` succeeds
-AND codex is not at its cost cap. While undelivered, its seat is OWED, a ?HOLD on
+(not cycle step 8, PAUSE), never with a higher limit; the single re-issue is the codex leg of
+the next DISCOVERY round of that item (for a light item, of its next dual-family QA run), pinned
+to the revision of that round or run and dispatched when it starts, which needs
+`orch-verify --pick codex` to succeed AND codex not to be at its cost cap; no separate, earlier
+dispatch runs. While undelivered, its seat is OWED, a ?HOLD on
 that QA STEP (a proposal, per Blocked-verification): while it is owed, the run limits work on
 other items to pipeline top-up and read-only prep on upcoming verified-DISJOINT items, as
 cycle step 9 allows, and starts no other apply while this branch is open; the seat is never
