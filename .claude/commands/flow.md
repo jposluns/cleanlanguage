@@ -49,7 +49,7 @@ only the affected file(s).
    item, and continue other independent queued work (a question never halts independent work);
    unattended -> DEFER (propose a ?HOLD on the affected STEP, route to the next independent item), never
    self-grant, never self-author a block.
-6. RUN the tier per that machine-local "Working method" section (see Tiers below).
+6. RUN the tier per that machine-local "Working method" section (see "Tiers and the QA cycle" below).
 7. CLOSE: evidence-grounded completion (enumerate files, re-read, quote support, search contradictions);
    AIQT self-check before the completion claim; records rotation (TODO delete + DONE add) in the same
    change; clear focus.
