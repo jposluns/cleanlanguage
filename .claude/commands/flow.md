@@ -112,12 +112,10 @@ ends at that bound in any form (`orch-verify` `FAILOVER_LIMIT` (exit 4), or an e
 cost cap, or that otherwise delivers no verdict (a dispatch timeout, a dispatch auth failure, or a
 delivery that lacks the agreed completion evidence; an UNVERIFIABLE result is a delivered verdict, not a
 failed leg), is a failed leg, NOT an unreachable family, whatever `orch-verify` advises about the family.
-It is recorded, then re-issued at most once, after a wait between attempts
-(not cycle step 8, PAUSE), never with a higher limit; the single re-issue is the codex leg of
-the next DISCOVERY round of that item (for a light item, of its next dual-family QA run), pinned
-to the revision of that round or run and dispatched when it starts, which needs
-`orch-verify --pick codex` to succeed AND codex not to be at its cost cap; no separate, earlier
-dispatch runs. While undelivered, its seat is OWED, a ?HOLD on
+It is recorded, then re-issued at most once, after a wait between attempts (not cycle step 8,
+PAUSE), never with a higher limit, and only when `orch-verify --pick codex` succeeds AND codex is
+not at its cost cap; the machine-local "Working method" section sets when, and as which leg, the
+re-issue runs. While undelivered, its seat is OWED, a ?HOLD on
 that QA STEP (a proposal, per Blocked-verification): while it is owed, the run limits work on
 other items to pipeline top-up and read-only prep on upcoming verified-DISJOINT items, as
 cycle step 9 allows, and starts no other apply while this branch is open; the seat is never
@@ -143,9 +141,10 @@ rounds, the round budget, the premise review, failed rounds, convergence, and pa
 ONLY in that file's "Working method" section; do not restate them here. Pool workers cannot read it,
 so a brief that depends on it EMBEDS the parts a leg needs (see the pipeline section above).
 The GEMINI ROLE LIMIT, CODEX ROLE LIMIT, and VERIFIER DIVERSITY stay here and bind every tier;
-so do the two tier rules kept here: how tier escalation and de-escalation take effect, in cycle
-step 4 (GRADE), and the AIQT HOLD above. The "Working method" section in that file sets when a
-light item is regraded.
+so do the two tier rules kept here: in cycle step 4 (GRADE), escalation is immediate and
+de-escalation needs a maintainer decision and a recorded basis; and the AIQT HOLD above. The
+"Working method" section in that file sets when a light item is regraded and how a regraded item
+enters the QA cycle.
 
 VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genuinely UNREACHABLE,
 never for cost; cost never buys the reduction. A codex seat barred by the CODEX ROLE LIMIT is filled
