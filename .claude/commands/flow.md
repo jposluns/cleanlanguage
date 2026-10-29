@@ -153,7 +153,8 @@ CODEX ROLE LIMIT claude pass fills it. Either way, the substitute is recorded as
 substitution, not as an unavailability drop. When a required family is genuinely unreachable, record
 the drop and give its seat to a reachable, unbarred family that holds no seat (gemini, for codex on a
 dual-family tier); only where there is none, run an independent, differently-primed second pass in a
-separate clean context as the recorded fallback, and re-run an unreachable family once it returns.
+separate clean context as the recorded fallback, and re-run an unreachable family once it returns,
+but only for an item that has not parked after DISCOVERY round 9 or that the maintainer resumes.
 Each lost seat gets its own substitute, so a tri-family tier with codex barred and gemini genuinely
 unreachable runs claude plus 2 independent, differently-primed claude passes, each in its own clean
 context: the fallback pass for the gemini seat and the fleet-rule substitution pass for the codex seat.
