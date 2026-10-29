@@ -10,10 +10,10 @@ words. These four roles replace the Option A to D lettering in the Format
 section. Wherever that section says Option A, read the best-on-the-merits option,
 whatever its position; it carries the clear recommendation and the brief
 statement of why it is recommended. One AskUserQuestion round may carry up to 4
-questions, whatever their weight; read "question" in the Format section as
-"round", so the next round follows only after the current one is answered.
-Where the text below differs, that dialog governs; in particular, "in prose",
-"Do not batch several questions into one message", and the ban on a
+questions, whatever their weight. In the first and last bullets under Format,
+read "question" as "round": the next round follows only after the current one
+is answered. Where the text below differs, that dialog governs; in particular,
+"in prose", "Do not batch several questions into one message", and the ban on a
 multiple-choice chip interface in the first bullet under Format no longer apply.
 A fleet-wide decision SOP owned by lab_infra, the infrastructure orchestrator
 for the fleet, will later replace this rule.
