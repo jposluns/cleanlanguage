@@ -73,8 +73,8 @@ Per item:
 (b) SEEDS: `orch-verify claude|gemini <brief> /opt/cleanlanguage/cleanlanguage --expensive`, the
     same brief to both in parallel. A family genuinely unreachable OR at its cost cap is
     skip-and-note (combine at a minimum of 2 by adding an independent, differently-primed second seed,
-    given the same facts but a different framing and run in a separate clean context, drawn from
-    the other seed family; queue a re-combine when the skipped family returns), never a block to seeding;
+    given the same facts but a different framing and run in a separate clean context, drawn from the seed
+    family that can run; queue a re-combine when the skipped family returns), never a block to seeding;
     when neither combiner in (c) can combine, the COMBINE step is still HELD, as (c) states. If no seed
     family can run (each is unreachable or at its cost cap), the SEED step is HELD in the same way that
     (c) holds the COMBINE step: the item is not execution-ready, the hold is recorded as a ?HOLD on
@@ -105,12 +105,13 @@ GEMINI ROLE LIMIT: gemini may SEED and QA but NEVER plan-combines or drafts the 
 
 CODEX ROLE LIMIT: codex may QA ONLY; it NEVER seeds, plan-combines, drafts the implementation, or fixes.
 Every codex leg is dispatched with `ORCH_MAX_FAILOVERS=1` (one account, no failover). A codex leg that
-ends at that bound in any form (`orch-verify` `FAILOVER_LIMIT`, exit 4, or an empty, degenerate, or
+ends at that bound in any form (`orch-verify` `FAILOVER_LIMIT` (exit 4), or an empty, degenerate, or
 5xx chain), or that ends `EXHAUSTED` (exit 5, rate-limited or out of quota), or that is stopped by a
 cost cap, is a failed leg, NOT an unreachable family, whatever `orch-verify` advises about the family.
-It is recorded, then re-issued at most once, after a pause, never with a higher limit; each
-later FEED THE PIPELINE step (cycle step 2) re-issues it only when `orch-verify --pick codex`
-succeeds AND codex is not at its cost cap. While undelivered, its seat is OWED, a ?HOLD on
+It is recorded, then re-issued at most once, after a wait between attempts
+(not cycle step 8, PAUSE), never with a higher limit; the single re-issue happens at the
+first later FEED THE PIPELINE step (cycle step 2) at which `orch-verify --pick codex` succeeds
+AND codex is not at its cost cap. While undelivered, its seat is OWED, a ?HOLD on
 that QA STEP (a proposal, per Blocked-verification): while it is owed, the run limits work on
 other items to pipeline top-up and read-only prep on upcoming verified-DISJOINT items, as
 cycle step 9 allows, and starts no other apply while this branch is open; the seat is never
@@ -155,10 +156,10 @@ substitution, not as an unavailability drop. When a required family is genuinely
 the drop and give its seat to a reachable, unbarred family that holds no seat (gemini, for codex on a
 dual-family tier); only where there is none, run an independent, differently-primed second pass in a
 separate clean context as the recorded fallback, and re-run an unreachable family once it returns.
-Each lost seat gets its own substitute, so a tri-family tier with codex barred and gemini unreachable
-runs claude plus 2 independent, differently-primed claude passes, each in its own clean context: the
-fallback pass for the gemini seat and the fleet-rule substitution pass for the codex seat. QA is
-dispatched read-only via `orch-verify`; judge by the result signal, not by grepping worker output.
+Each lost seat gets its own substitute, so a tri-family tier with codex barred and gemini genuinely
+unreachable runs claude plus 2 independent, differently-primed claude passes, each in its own clean
+context: the fallback pass for the gemini seat and the fleet-rule substitution pass for the codex seat.
+QA is dispatched read-only via `orch-verify`; judge by the result signal, not by grepping worker output.
 
 ## Gates and merge (cleanlanguage)
 
