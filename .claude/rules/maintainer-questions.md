@@ -9,14 +9,16 @@ teach what is possible; and free-form, where the maintainer answers in their own
 words. These four roles replace the Option A to D lettering in the Format
 section. Wherever that section says Option A, read the best-on-the-merits option,
 whatever its position; it carries the clear recommendation and the brief
-statement of why it is recommended. One AskUserQuestion round may carry up to 4
-questions, whatever their weight. In the first and last bullets under Format,
-read "question" as "round": the next round follows only after the current one
-is answered. Where the text below differs, that dialog governs; in particular,
-"in prose", "Do not batch several questions into one message", and the ban on a
-multiple-choice chip interface in the first bullet under Format no longer apply.
-A fleet-wide decision SOP owned by lab_infra, the infrastructure orchestrator
-for the fleet, will later replace this rule.
+statement of why it is recommended. Options B and C are the predicted and maximal
+options, and Option D is the free-form answer. When the predicted choice is the
+same as the best-on-the-merits option, the asker says so and why. One
+AskUserQuestion round may carry up to 4 questions, whatever their weight. Where
+the text below differs, that dialog governs; in particular, "in prose", "Do not
+batch several questions into one message", and the ban on a multiple-choice chip
+interface in the first bullet under Format no longer apply. In the first and last
+bullets under Format, read "question" as "round": the next round follows only
+after the current one is answered. A fleet-wide decision SOP owned by lab_infra,
+the infrastructure orchestrator for the fleet, will later replace this rule.
 
 When work reaches a point that needs a decision only the maintainer can make, ask
 for it directly. Follow this format so the maintainer can decide quickly and in
