@@ -81,5 +81,5 @@ warn-only pending a fuller registry (see [`../.aiqt/config.md`](../.aiqt/config.
 
 When a decision needs the maintainer, follow
 [`rules/maintainer-questions.md`](rules/maintainer-questions.md): one question at a
-time, in prose, with a recommended Option A, viable Options B and C, and a
-free-form Option D, in priority order.
+time and in priority order, using the AskUserQuestion dialog in the four-role shape
+described in the supersession note at the top of that file.
