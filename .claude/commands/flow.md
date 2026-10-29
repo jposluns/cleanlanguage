@@ -74,15 +74,20 @@ Per item:
     same brief to both in parallel. A family genuinely unreachable OR at its cost cap is
     skip-and-note (combine at a minimum of 2 by adding an independent, differently-primed second seed,
     given the same facts but a different framing and run in a separate clean context, drawn
-    from the reachable family; queue a re-combine when it returns), never a block to seeding; when no
-    claude tier can combine, the COMBINE step is still HELD, as (c) states.
+    from the reachable family; queue a re-combine when that family returns), never a block to seeding;
+    when neither combiner in (c) can combine, the COMBINE step is still HELD, as (c) states. If no seed
+    family can run (each is unreachable or at its cost cap), the SEED step is HELD as (c) holds the
+    COMBINE step: the item is not execution-ready, the hold is recorded, and the run routes to the next
+    independent item.
 (c) COMBINE with Fable: `orch-verify claude <combine-brief> ... --super-expensive` (claude-fable-5 at
     high effort). The combiner ADJUDICATES (state settled design; name disagreements + recommend;
     do not average into mush; discard hallucinated claims, verify at source). Fallback when Fable is
-    exhausted: `orch-verify claude <combine-brief> ... --expensive` (claude-opus-5-5 at xhigh effort).
+    exhausted or unreachable: `orch-verify claude <combine-brief> ... --expensive` (claude-opus-5-5 at
+    xhigh effort).
     NEVER codex or gemini as combiner of record;
     NEVER orchestrator self-synthesis as the combiner.
-    When no claude tier can combine, the COMBINE step is HELD: the item is not execution-ready, the
+    The ONLY lawful combiners are Fable and that fallback (NEVER any other claude tier);
+    when neither can combine, the COMBINE step is HELD: the item is not execution-ready, the
     hold is recorded, and the run routes to the next independent item.
 (d) PLAN: land it with a numbered step list, a file manifest, an acceptance/verification section, a
     QA-tier declaration, and a rollback note. Execution-ready only when it passes that shape.
@@ -99,7 +104,7 @@ control (a review whose task is to find inputs, commands, or paths that a guard,
 or permission check fails to block) NEVER goes to codex: run it on claude + gemini, adding an
 independent, differently-primed claude pass in a separate clean context, recorded as the fallback,
 where the tier needs a third family. The orchestrator classifies each review at brief time and records
-the classification.
+the classification in the item QA record.
 
 PROHIBITED: dispatch seeds in the background then END THE TURN before collecting them. STATE, DO NOT
 PROMISE: collect through the tracked background mechanism that survives to completion.
@@ -114,15 +119,21 @@ AIQT HOLD: plan-production throughput NEVER shortens a change's per-tier QA.
   floor).
 - SUBSTANTIVE (skill/site-corpus change; new/edited gate/linter/hook/tool; multi-surface; control value /
   citation / normative rule; new feature): the full pipeline; TRI-family adversarial QA weighting codex
-  within the CODEX ROLE LIMIT, or gemini, which takes the codex seat where that limit bars codex;
+  within the CODEX ROLE LIMIT; where that limit bars codex, that weighting passes to gemini, and the
+  codex seat is filled as the CODEX ROLE LIMIT states;
   validate every finding at source; up to 4 fixing rounds; if it has not converged, trigger a premise review (re-derive the problem from fresh observation) and escalate the ITEM with a too-many-rounds flag and recommendation, continuing other authorized work. The round limit alone never closes the session.
 - SENSITIVE (gate-blind correctness AND delicate scale AND high escaped-error cost, all 3): substantive
   plus the high-assurance harness (independent adversarial verifiers, deterministic apply, a persistent
   register). No de-escalation without a maintainer decision.
 
 VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genuinely UNREACHABLE,
-never for cost; cost never buys the reduction. A codex seat barred by the CODEX ROLE LIMIT is filled by gemini. When a required family is genuinely unreachable, or codex is so barred where the tier needs a third family and gemini already holds a seat, run an independent, differently-primed second pass in a separate clean context as the recorded fallback, and re-run an unreachable family once it returns. QA is dispatched read-only via `orch-verify`; judge by the
-result signal, not by grepping worker output.
+never for cost; cost never buys the reduction. A codex seat barred by the CODEX ROLE LIMIT is filled
+by gemini only where gemini does not already hold a seat (a dual-family tier); where it does, the
+CODEX ROLE LIMIT fallback applies. Either way, the substitute is recorded as a fleet-rule
+substitution, not as an unavailability drop. When a required family is genuinely unreachable, run an
+independent, differently-primed second pass in a separate clean context as the recorded fallback, and
+re-run an unreachable family once it returns. QA is dispatched read-only via `orch-verify`; judge by
+the result signal, not by grepping worker output.
 
 ## Gates and merge (cleanlanguage)
 
