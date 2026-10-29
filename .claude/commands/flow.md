@@ -99,7 +99,7 @@ Per item:
 (e) IMPLEMENT (serial): the orchestrator VERIFIES the plan against the seeds + live tree, may dispatch an
     implementation DRAFT to a claude worker, then FINALIZES it serially, re-verifying every line at
     source, as the SOLE writer/merger. Commit BEFORE dispatching QA (QA pins a revision); then run the
-    tier's QA, fix at the WIDTH OF THE DEFECT CLASS, re-QA on the fixed state, and merge.
+    tier's QA cycle (see Tiers below) and merge only as that cycle allows.
 
 GEMINI ROLE LIMIT: gemini may SEED and QA but NEVER plan-combines or drafts the implementation.
 
@@ -131,24 +131,13 @@ PROMISE: collect through the tracked background mechanism that survives to compl
 
 AIQT HOLD: plan-production throughput NEVER shortens a change's per-tier QA.
 
-## Tiers (per the machine-local /opt/cleanlanguage/.claude/CLAUDE.md)
+## Tiers and the QA cycle (per the machine-local /opt/cleanlanguage/.claude/CLAUDE.md)
 
-- LIGHT (quick fix / bookkeeping / version bumps / record edits): implement directly; mechanical gates;
-  DUAL-family QA (claude + codex, or claude + gemini where the CODEX ROLE LIMIT bars codex or codex is
-  genuinely unreachable; gemini is otherwise excluded on cost, which is allowed only because 2 families
-  still meet the verifier-diversity floor).
-- SUBSTANTIVE (skill/site-corpus change; new/edited gate/linter/hook/tool; multi-surface; control value /
-  citation / normative rule; new feature): the full pipeline; TRI-family adversarial QA weighting codex
-  within the CODEX ROLE LIMIT; where that limit bars codex or codex is genuinely unreachable, that
-  weighting passes to gemini (or, if gemini is also genuinely unreachable, to the fallback pass for
-  the gemini seat under VERIFIER DIVERSITY), and the codex seat is filled as VERIFIER DIVERSITY states;
-  validate every finding at source; up to 4 fixing rounds; if it has not converged, trigger a premise
-  review (re-derive the problem from fresh observation) and escalate the ITEM with a too-many-rounds
-  flag and recommendation, continuing other authorized work. The round limit alone never closes the
-  session.
-- SENSITIVE (gate-blind correctness AND delicate scale AND high escaped-error cost, all 3): substantive
-  plus the high-assurance harness (independent adversarial verifiers, deterministic apply, a persistent
-  register). No de-escalation without a maintainer decision.
+The tiers (light, substantive, and sensitive) and the per-change QA cycle (DISCOVERY and VERIFY
+rounds, the round budget, the premise review, failed rounds, convergence, and parking) are defined
+ONLY in that file's "Working method" section; do not restate them here. Pool workers cannot read it,
+so a brief that depends on it EMBEDS the parts a leg needs (see the pipeline section above).
+The GEMINI ROLE LIMIT, CODEX ROLE LIMIT, and VERIFIER DIVERSITY stay here and bind every tier.
 
 VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genuinely UNREACHABLE,
 never for cost; cost never buys the reduction. A codex seat barred by the CODEX ROLE LIMIT is filled
