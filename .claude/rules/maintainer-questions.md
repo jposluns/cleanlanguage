@@ -2,7 +2,7 @@
 
 **Superseded in part.** On 2026-10-29 the maintainer decided that these questions
 are asked in the AskUserQuestion dialog in the four-role shape. The maintainer
-wrote "the SOP is askuser." The options are presented in this order: predicted,
+wrote "the SOP is askuser." The four roles, in this order, are: predicted,
 the choice the asker predicts the maintainer will make, drawn from the record of
 past maintainer decisions and naming the pattern it rests on; best on the merits,
 what the asker judges best for the project; maximal, the go-wild optimum, the
@@ -20,12 +20,12 @@ separate Option B. Option C is the maximal option, and Option D is the
 free-form answer, given through the dialog's own free-text field rather than a
 listed option. One AskUserQuestion round may carry up to 4 questions,
 whatever their weight. Where the text below differs, this note governs; in
-particular, "in prose", "Do not
-batch several questions into one message", and the ban on a multiple-choice chip
-interface in the first bullet under Format no longer apply. In the first and last
-bullets under Format, read "question" as "round": the next round follows only
-after the current one is answered. A fleet-wide decision SOP owned by lab_infra,
-the infrastructure orchestrator for the fleet, will later replace this rule.
+particular, "in prose", "Do not batch several questions into one message", and
+the ban on a multiple-choice chip interface in the first bullet under Format no
+longer apply. In the first and last bullets under Format, read "question" as
+"round": the next round follows only after the current one is answered. A
+fleet-wide decision SOP owned by lab_infra, the infrastructure orchestrator for
+the fleet, will later replace this rule.
 
 When work reaches a point that needs a decision only the maintainer can make, ask
 for it directly. Follow this format so the maintainer can decide quickly and in
