@@ -73,8 +73,8 @@ Per item:
 (b) SEEDS: `orch-verify claude|gemini <brief> /opt/cleanlanguage/cleanlanguage --expensive`, the
     same brief to both in parallel. A family genuinely unreachable OR at its cost cap is
     skip-and-note (combine at a minimum of 2 by adding an independent, differently-primed second seed,
-    given the same facts but a different framing and run in a separate clean context, drawn
-    from the reachable family; queue a re-combine when that family returns), never a block to seeding;
+    given the same facts but a different framing and run in a separate clean context, drawn from
+    the reachable family; queue a re-combine when the skipped family returns), never a block to seeding;
     when neither combiner in (c) can combine, the COMBINE step is still HELD, as (c) states. If no seed
     family can run (each is unreachable or at its cost cap), the SEED step is HELD as (c) holds the
     COMBINE step: the item is not execution-ready, the hold is recorded, and the run routes to the next
@@ -84,7 +84,7 @@ Per item:
     do not average into mush; discard hallucinated claims, verify at source). Fallback when Fable is
     exhausted or unreachable: `orch-verify claude <combine-brief> ... --expensive` (claude-opus-5-5 at
     xhigh effort).
-    NEVER codex or gemini as combiner of record;
+    NEVER codex or gemini as a combiner, of record or otherwise;
     NEVER orchestrator self-synthesis as the combiner.
     The ONLY lawful combiners are Fable and that fallback (NEVER any other claude tier);
     when neither can combine, the COMBINE step is HELD: the item is not execution-ready, the
@@ -102,9 +102,9 @@ CODEX ROLE LIMIT: codex may QA ONLY; it NEVER seeds, plan-combines, drafts the i
 Every codex leg is dispatched with `ORCH_MAX_FAILOVERS=1`. A review that hunts for ways past a security
 control (a review whose task is to find inputs, commands, or paths that a guard, hook, sandbox, filter,
 or permission check fails to block) NEVER goes to codex: run it on claude + gemini, adding an
-independent, differently-primed claude pass in a separate clean context, recorded as the fallback,
-where the tier needs a third family. The orchestrator classifies each review at brief time and records
-the classification in the item QA record.
+independent, differently-primed claude pass in a separate clean context, recorded as a fleet-rule
+substitution, where the tier needs a third family. The orchestrator classifies each review at brief
+time and records the classification in the item QA record.
 
 PROHIBITED: dispatch seeds in the background then END THE TURN before collecting them. STATE, DO NOT
 PROMISE: collect through the tracked background mechanism that survives to completion.
@@ -129,7 +129,7 @@ AIQT HOLD: plan-production throughput NEVER shortens a change's per-tier QA.
 VERIFIER DIVERSITY (QA, every tier): a required family is dropped only when genuinely UNREACHABLE,
 never for cost; cost never buys the reduction. A codex seat barred by the CODEX ROLE LIMIT is filled
 by gemini only where gemini does not already hold a seat (a dual-family tier); where it does, the
-CODEX ROLE LIMIT fallback applies. Either way, the substitute is recorded as a fleet-rule
+CODEX ROLE LIMIT claude pass fills it. Either way, the substitute is recorded as a fleet-rule
 substitution, not as an unavailability drop. When a required family is genuinely unreachable, run an
 independent, differently-primed second pass in a separate clean context as the recorded fallback, and
 re-run an unreachable family once it returns. QA is dispatched read-only via `orch-verify`; judge by
