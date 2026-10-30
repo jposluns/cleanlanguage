@@ -52,14 +52,16 @@ DEFAULT_REGISTRY = os.path.join(ROOT, ".aiqt", "orchestration.json")
 # "Bash|TaskOutput" at hooks.json:278) bounds what `dispatch_tools` may name: a name outside the matcher
 # never reaches the hook, so it would be a silent no-op entry.
 HOOKS_JSON = os.path.join(ROOT, "plugin", "aiqt-guardrails-hooks", "hooks", "hooks.json")
-# Basenames of the files the hooks WRITE inside state_dir. An `escape.path` naming one of them would make
-# the operator release sentinel share a name with machine state the hooks create or overwrite, so the gate
-# rejects such a basename. Each entry cites its write site in aiqt_hooks.py:
+# Basenames of the machine-state files the hooks WRITE or READ inside state_dir. An `escape.path` naming
+# one of them would make the operator release sentinel share a name with machine state the hooks create,
+# overwrite, rename, or interpret, so the gate rejects such a basename. Each entry cites its site in
+# aiqt_hooks.py:
 #   guard-events.jsonl           7732-7733 (_orch_guard_event via _orch_append_jsonl)
 #   turn-state.json              7753-7756 (_orch_save_turn_state, open mode "w")
 #   backlog-checkpoint.json      8359, 8414 (_orch_write_json_atomic)
 #   checkpoint-init.marker       8360, 8424 (_orch_write_json_atomic)
 #   escape-spoof.json            8520 (_orch_write_json)
+#   escape-spoof.json.surfaced   9745, 9755 (os.replace of escape-spoof.json once its finding surfaces)
 #   forced-exit.jsonl            8558 (_orch_append_jsonl)
 #   pending-asks.jsonl           8746, 8751 (_orch_append_jsonl)
 #   dispatch-ledger.jsonl        9300-9301 (_orch_append_jsonl)
@@ -67,16 +69,34 @@ HOOKS_JSON = os.path.join(ROOT, "plugin", "aiqt-guardrails-hooks", "hooks", "hoo
 #   forced-exit-surfaced.json    9715, 9734 (_orch_write_json_atomic)
 #   resume-barrier.json          9775, 9783, 9809, 9837 (open mode "w")
 #   resume-barrier.json.unused   9777 (_orch_append_jsonl probe on a bad registry)
+#   write-scope.json             9864, 10014-10015 (_WRTSCP_DECL_REL, READ by _load_write_scope as the
+#                                per-slice write-scope declaration; the hook never writes it and writes no
+#                                .tmp sibling of it, so only the name itself is listed)
 # _orch_write_json_atomic first writes a sibling "<name>.tmp" and then os.replace()s it (aiqt_hooks.py:
-# 7719-7722), so the .tmp sibling of every atomically written file is listed too.
+# 7719-7722), so the .tmp sibling of every atomically written file is listed too. The test suite derives
+# this set independently by scanning the hook source (HookStateFileScan in test-orchestration-registry.py)
+# and requires it to equal this constant, so a state file the hook gains is a red test, not a silent gap.
 _ATOMIC_STATE_FILES = ("backlog-checkpoint.json", "checkpoint-init.marker", "attestations-validated.json",
                        "forced-exit-surfaced.json")
 HOOK_STATE_FILES = frozenset(
-    ("guard-events.jsonl", "turn-state.json", "escape-spoof.json", "forced-exit.jsonl",
-     "pending-asks.jsonl", "dispatch-ledger.jsonl", "resume-barrier.json", "resume-barrier.json.unused")
+    ("guard-events.jsonl", "turn-state.json", "escape-spoof.json", "escape-spoof.json.surfaced",
+     "forced-exit.jsonl", "pending-asks.jsonl", "dispatch-ledger.jsonl", "resume-barrier.json",
+     "resume-barrier.json.unused", "write-scope.json")
     + _ATOMIC_STATE_FILES + tuple(name + ".tmp" for name in _ATOMIC_STATE_FILES))
 # A Windows drive-letter prefix, as in "C:", "C:x", "C:/x", or "C:\x".
 _DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
+# Interpreter wrappers an enumerator argv[0] must not name, judged on both the declared and the resolved
+# basename: `env` runs its first operand through the session PATH, and a shell runs a script whose own
+# interpreter launch the gate cannot see, so either would let a Python enumerator run without "-I".
+ENUM_WRAPPER_NAMES = frozenset(("env", "sh", "bash", "dash", "zsh", "ksh"))
+# The dispatch_tools names the orch_dispatch_ledger matcher routes to the hook but that the hook cannot use
+# as list entries, each with the hook line that makes it so (see the dispatch_tools check in validate()).
+DISPATCH_TOOLS_FORBIDDEN = {
+    "TaskOutput": "the hook routes a TaskOutput call to its completion branch (aiqt_hooks.py:9264) before it "
+                  "reads dispatch_tools (aiqt_hooks.py:9277), so the entry would be inert",
+    "Bash": "the hook would then treat EVERY Bash call, foreground included, as a dispatch and record it in "
+            "dispatch-ledger.jsonl (aiqt_hooks.py:9279-9280), not only a run_in_background launch",
+}
 
 # Stage-2 top-level allowlist. Any other top-level key is rejected: a new arming key lands
 # only together with the gate extension that validates it, so an unrecognized key is an
@@ -456,15 +476,49 @@ def validate(path):
         # ambient binding the registry cannot pin. Every later operand that is an absolute path (the
         # backlog file) is validated as a declared path and joins the state_dir collision list.
         _check_declared_path("enumerator.argv[0]", argv[0])
-        # A Python interpreter must run isolated: when the basename of argv[0] starts with "python", argv[1]
-        # must be exactly "-I". Without it the interpreter puts the script directory first on sys.path and
-        # honours the PYTHON* environment variables, so a file beside the enumerator script could shadow a
-        # standard library import and steer the backlog verdict the stop and yield guards act on. Every
-        # hook launch in hooks.json carries the same "-I" (for example hooks.json:282-287).
-        if os.path.basename(argv[0]).startswith("python") and (len(argv) < 2 or argv[1] != "-I"):
-            _fail("`enumerator.argv[0]` ({!r}) is a Python interpreter, so `enumerator.argv[1]` must be "
-                  "exactly \"-I\" (isolated mode), got {!r}".format(
-                      argv[0], argv[1] if len(argv) > 1 else None))
+        # A Python interpreter must run isolated: argv[1] must be exactly "-I". Without it the interpreter
+        # puts the script directory first on sys.path and honours the PYTHON* environment variables, so a
+        # file beside the enumerator script could shadow a standard library import and steer the backlog
+        # verdict the stop and yield guards act on. Every hook launch in hooks.json carries the same "-I"
+        # (for example hooks.json:282-287). argv[0] is judged by what it RESOLVES to as well as by its
+        # spelling (round 2 G2): a symlink alias whose own name does not start with "python", or a wrapper
+        # such as ["/usr/bin/env", "python3", ...], would otherwise pass without "-I". The rule:
+        #   - argv[0] is resolved with os.path.realpath(strict=True); one that cannot be resolved (absent, a
+        #     dangling link, a link loop, or unreadable) is a cannot-evaluate and fails closed;
+        #   - a declared or resolved basename in ENUM_WRAPPER_NAMES (env or a shell) is rejected outright;
+        #   - a declared or resolved basename starting with "python" (python, python3, python3.N, and their
+        #     suffixed builds) is a Python interpreter, and argv[1] must be exactly "-I";
+        #   - when argv[0] is not a Python interpreter, no argv element, argv[0] included, may end in ".py",
+        #     since a Python script behind a non-Python launcher (or run directly through its shebang) would
+        #     run without "-I".
+        # Disclosed residual: a non-Python executable that itself launches Python unisolated (a compiled
+        # launcher, a script in another language that spawns Python, or a Python interpreter installed under
+        # a name that does not start with "python", such as pypy3, running a script not named *.py) is not
+        # detectable by this gate, which sees only argv. Resolution is also judged at gate time, on the
+        # machine running the gate; the hook resolves argv[0] again when it runs it (aiqt_hooks.py:7976).
+        try:
+            real_argv0 = os.path.realpath(argv[0], strict=True)
+        except (OSError, ValueError) as exc:
+            _fail("`enumerator.argv[0]` ({!r}) cannot be resolved at gate time ({}); whether it is a Python "
+                  "interpreter that needs \"-I\" cannot be evaluated, so it is rejected".format(argv[0], exc))
+        argv0_names = {os.path.basename(argv[0]), os.path.basename(real_argv0)}
+        wrappers = sorted(name for name in argv0_names if name in ENUM_WRAPPER_NAMES)
+        if wrappers:
+            _fail("`enumerator.argv[0]` ({!r}, resolving to {!r}) is an interpreter wrapper ({}); it would "
+                  "run its operand without the gate seeing whether that is an isolated Python launch, so "
+                  "name the interpreter itself as argv[0]".format(argv[0], real_argv0, ", ".join(wrappers)))
+        argv0_is_python = any(name.startswith("python") for name in argv0_names)
+        if argv0_is_python and (len(argv) < 2 or argv[1] != "-I"):
+            _fail("`enumerator.argv[0]` ({!r}, resolving to {!r}) is a Python interpreter, so "
+                  "`enumerator.argv[1]` must be exactly \"-I\" (isolated mode), got {!r}".format(
+                      argv[0], real_argv0, argv[1] if len(argv) > 1 else None))
+        if not argv0_is_python:
+            for i, arg in enumerate(argv):
+                if arg.endswith(".py"):
+                    _fail("`enumerator.argv[{}]` ({!r}) is a Python script, but `enumerator.argv[0]` ({!r}, "
+                          "resolving to {!r}) is not a Python interpreter, so the script would run without "
+                          "\"-I\"; name the Python interpreter as argv[0] with argv[1] \"-I\"".format(
+                              i, arg, argv[0], real_argv0))
         for i in range(1, len(argv)):
             if _is_absolute(argv[i]):
                 _check_declared_path("enumerator.argv[{}]".format(i), argv[i])
@@ -718,12 +772,14 @@ def validate(path):
         # future edits.
     # `dispatch_tools`, if present: a list of unique non-empty control-free names, each one the
     # orch_dispatch_ledger PostToolUse matcher in hooks.json ("Bash|TaskOutput", hooks.json:276-290) actually
-    # routes to the hook. The hook compares the tool name against this list only after that matcher fired
-    # (aiqt_hooks.py:9276-9280), so a name outside the matcher would be a silent no-op entry. hooks.json is
-    # read whenever the key is declared, even for an empty list (which stays valid), so an unreadable
-    # hooks.json always fails rather than skipping. Disclosed residual: "TaskOutput" is inside the matcher,
-    # so it is accepted, but the hook routes a TaskOutput call to its completion branch
-    # (aiqt_hooks.py:9264-9275) before this list is consulted, so listing it records nothing extra.
+    # routes to the hook, AND none of them a name in DISPATCH_TOOLS_FORBIDDEN. The hook compares the tool name
+    # against this list only after that matcher fired (aiqt_hooks.py:9276-9280), so a name outside the
+    # matcher would be a silent no-op entry. Inside the matcher, "TaskOutput" is inert (the hook routes it to
+    # its completion branch at aiqt_hooks.py:9264 before reading the list at 9277) and "Bash" is harmful
+    # (aiqt_hooks.py:9279-9280 would then record every foreground Bash call as a dispatch), so both are
+    # rejected (round 2 G5). Under the current matcher, then, no non-empty value is valid: only the empty
+    # list passes, until the matcher gains a tool name the hook can use. hooks.json is read whenever the key
+    # is declared, even for an empty list, so an unreadable hooks.json always fails rather than skipping.
     if "dispatch_tools" in obj:
         tools = obj["dispatch_tools"]
         if not isinstance(tools, list):
@@ -738,6 +794,9 @@ def validate(path):
             if entry in seen:
                 _fail("`dispatch_tools[{}]` ({!r}) is a duplicate".format(i, entry))
             seen.add(entry)
+            if entry in DISPATCH_TOOLS_FORBIDDEN:
+                _fail("`dispatch_tools[{}]` ({!r}) is rejected: {}".format(
+                    i, entry, DISPATCH_TOOLS_FORBIDDEN[entry]))
             if entry not in matched:
                 _fail("`dispatch_tools[{}]` ({!r}) is not in the orch_dispatch_ledger matcher {} in {}; a "
                       "name outside the matcher never reaches the hook, so the entry would be a silent "

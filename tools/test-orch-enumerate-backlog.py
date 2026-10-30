@@ -15,13 +15,16 @@ would read as a drained backlog. The real backlog is never read.
 
 A missing required input (the enumerator or the vendored hook) fails the test rather than skipping
 it, so an absent file can never read as a green run. The HiddenTablePrefix cases prove that a row
-whose "|" is kept off column 0 by an invisible, no-break or blockquote prefix fails closed rather than
-vanishing as prose (finding F1), and the Isolation case proves the script re-executes itself under
-python3 -I (finding F7).
+whose "|" is kept off column 0 by an invisible, combining, filler, no-break or blockquote prefix
+fails closed rather than vanishing as prose (findings F1 and G1), that a GFM row with no leading
+pipe and a prose line with a mid-line pipe fail closed too (G1: one rule, any "|" off a column-0
+table line), and the class probe runs that rule over every code point of the Basic Multilingual
+Plane. The Isolation case proves the script re-executes itself under python3 -I (finding F7).
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -63,8 +66,14 @@ print(json.dumps({"status": status, "detail": detail}))
 """
 
 
-# Prefixes that keep a "|" off column 0 while it stays the first visible character (finding F1).
+# Prefixes that keep a "|" off column 0 while it stays the first visible character (findings F1 and
+# G1). The G1 entries are outside the classes the F1 fix enumerated: U+034F and U+FE0F are category
+# Mn, and U+3164 and U+FFA0 are blank fillers of category Lo.
 HIDDEN_PREFIXES = [
+    ("combining grapheme joiner U+034F", "\u034f"),
+    ("variation selector-16 U+FE0F", "\ufe0f"),
+    ("hangul filler U+3164", "\u3164"),
+    ("halfwidth hangul filler U+FFA0", "\uffa0"),
     ("no-break space U+00A0", "\u00a0"),
     ("zero-width space U+200B", "\u200b"),
     ("byte order mark U+FEFF", "\ufeff"),
@@ -78,6 +87,32 @@ HIDDEN_PREFIXES = [
     ("tab then blockquote", "\t> "),
     ("blockquote then zero-width space", ">\u200b"),
 ]
+
+
+# Runs in a separate python3 -I process: load the enumerator by path and call parse_backlog on the
+# fixture text (argv[2]) once per code point from U+0000 to U+FFFF, the code point prepended to the
+# data row at line 8. Surrogates (not encodable in a file), "|" itself, and "\n" (the line
+# terminator, which ends line 8 rather than prefixing it) are excluded. Prints the code points that
+# did NOT fail closed with the column-0 error at line 8, and the count probed.
+CLASS_PROBE_PROG = """
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("enumerator_under_test", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+head, data_row, tail = json.loads(sys.argv[2])
+escaped, probed = [], 0
+for cp in range(0x10000):
+    if 0xD800 <= cp <= 0xDFFF or cp in (0x0A, 0x7C):
+        continue
+    probed += 1
+    try:
+        mod.parse_backlog(head + chr(cp) + data_row + tail)
+    except mod.BacklogError as exc:
+        if str(exc).startswith("line 8: ") and "does not begin with" in str(exc):
+            continue
+    escaped.append("U+%04X" % cp)
+print(json.dumps({"probed": probed, "escaped": escaped}))
+"""
 
 
 def row(iid, state="open", granted="yes", blocker="-", evidence="-", item="An item",
@@ -368,7 +403,7 @@ class FailClosed(EnumeratorHarness):
         self.assert_fails(table(row("1")[:-1] + "\\|"), line=7, needle="does not end")
 
     def test_indented_row(self):
-        self.assert_fails(table("  " + row("1")), line=7, needle="indented")
+        self.assert_fails(table("  " + row("1")), line=7, needle="does not begin with")
 
     def test_bad_state(self):
         self.assert_fails(table(row("1", state="done")), line=7, needle="invalid state")
@@ -455,7 +490,7 @@ class HiddenTablePrefix(EnumeratorHarness):
         for name, prefix in HIDDEN_PREFIXES:
             with self.subTest(prefix=name):
                 self.assert_fails(table(row("1"), prefix + row("2"), row("3")), line=8,
-                                  needle="prefixed table line")
+                                  needle="does not begin with")
 
     def test_prefixed_data_row_fails_the_cell_dump(self):
         for name, prefix in HIDDEN_PREFIXES:
@@ -470,7 +505,7 @@ class HiddenTablePrefix(EnumeratorHarness):
         for name, prefix in HIDDEN_PREFIXES:
             with self.subTest(prefix=name):
                 text = table(row("1")).replace(HEADER, prefix + HEADER, 1)
-                self.assert_fails(text, line=5, needle="prefixed table line")
+                self.assert_fails(text, line=5, needle="does not begin with")
 
     def test_byte_order_mark_before_a_first_line_header(self):
         text = "\ufeff" + HEADER + "\n" + SEPARATOR + "\n" + row("1") + "\n"
@@ -481,14 +516,60 @@ class HiddenTablePrefix(EnumeratorHarness):
         for name in ("U+00A0", "U+200B", "blockquote marker", "space"):
             self.assertIn(name, r.stderr)
 
-    def test_prose_with_a_bar_after_other_text_is_not_a_table_line(self):
+    def test_message_names_the_g1_prefix_characters_by_code_point(self):
+        for name, prefix in HIDDEN_PREFIXES[:4]:
+            with self.subTest(prefix=name):
+                r = self.assert_fails(table(row("1"), prefix + row("2")), line=8)
+                self.assertIn("U+{:04X}".format(ord(prefix)), r.stderr)
+
+    def test_gfm_row_without_a_leading_pipe_mid_table_fails_closed(self):
+        # GFM accepts a row with no leading pipe, so a renderer shows it as a row of the table;
+        # before G1 the enumerator read it as prose and dropped item 2 silently.
+        self.assert_fails(table(row("1"), row("2")[1:].lstrip(), row("3")), line=8,
+                          needle="does not begin with")
+        self.assert_fails(table(row("1"), "2 | 2026-10-01 | open | yes | - | - | Item | Done |",
+                                row("3")), line=8, needle="does not begin with")
+
+    def test_prose_with_a_mid_line_bar_fails_closed(self):
+        # Replaces the F1-era test that prose with a "|" after other text passes: under G1 any "|"
+        # outside a column-0 table line fails closed, because a rule that lets some prefixed bars
+        # through has to enumerate which, and any prefix outside the list hides a row. The backlog
+        # format keeps every "|" inside a table line, so this costs nothing on a valid backlog.
         prose = ("Prose with a | bar mid-line.", "> A quoted line with a | bar.",
-                 "\u00a0No-break led prose | with a bar.", "\ufeffTitle line",
-                 "\u200b> quoted | text", "> ", "\u00a0")
+                 "\u00a0No-break led prose | with a bar.", "\u200b> quoted | text")
+        for line in prose:
+            with self.subTest(line=line):
+                self.assert_fails(table(row("1"), prose_before=("# Backlog", "", line, "")),
+                                  line=3, needle="does not begin with")
+                self.assert_fails(table(row("1"), prose_after=("", line)), line=9,
+                                  needle="does not begin with")
+
+    def test_prose_without_a_bar_is_still_prose(self):
+        prose = ("\ufeffTitle line", "> ", "\u00a0", "> A quoted line without a bar.",
+                 "\u3164Filler-led prose.")
         text = table(row("1"), prose_before=("# Backlog", "") + prose + ("",),
                      prose_after=("",) + prose)
         out = self.enumerate_ok(text)
         self.assertEqual([it["id"] for it in out["items"]], ["1"])
+
+    def test_class_probe_every_bmp_code_point_before_a_row_fails_closed(self):
+        lines = table(row("1"), "\x00", row("10")).split("\n")
+        self.assertEqual(lines[7], "\x00", "precondition: the probed row is line 8")
+        head = "\n".join(lines[:7]) + "\n"
+        tail = "\n" + "\n".join(lines[8:])
+        r = subprocess.run([sys.executable, "-I", "-c", CLASS_PROBE_PROG, str(SCRIPT),
+                            json.dumps([head, row("9"), tail])],
+                           capture_output=True, text=True, timeout=300)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        res = json.loads(r.stdout)
+        self.assertEqual(res["probed"], 0x10000 - 0x800 - 2)
+        self.assertEqual(res["escaped"], [], "code points whose prefixed row did not fail closed")
+        # The CLI path agrees with the in-process function on a sample of the probed code points.
+        for cp in (0x00, 0x09, 0x20, 0x3E, 0x41, 0xA0, 0x34F, 0x200B, 0x3164, 0xFE0F, 0xFEFF, 0xFFA0,
+                   0xFFFF):
+            with self.subTest(cp="U+%04X" % cp):
+                self.assert_fails(head + chr(cp) + row("9") + tail, line=8,
+                                  needle="does not begin with")
 
 
 class Isolation(EnumeratorHarness):

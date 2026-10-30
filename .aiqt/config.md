@@ -72,8 +72,9 @@ odd number of apostrophes is denied as though it were a detach. Write multi-line
 through the Write or Edit tool (which these Bash guards never see) or through `printf` rather
 than a Bash heredoc when the body carries such characters.
 
-The declared `lease` makes scope live: while the lease file is present and fresh, every
-session whose working directory resolves to this checkout and which can reach the lease file
+The declared `lease` makes scope live: while the lease file is present, non-empty, and
+fresh, every session whose working directory resolves to this checkout and which can
+reach the lease file
 is in scope, so the scope-gated hooks fire. `orch_dispatch_ledger` records each background
 launch in `dispatch-ledger.jsonl`, and `orch_prompt_stamp` stamps each human prompt in
 `turn-state.json`, both under `state_dir`. `orch_stop_guard` and `orch_teammate_idle` share

@@ -12,12 +12,20 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          aiqt_hooks.py:8349-8351) and decide_yield (aiqt_hooks.py:8180), then prints
                          the verdict, the reason, the disposition table, and the verdict with the
                          escape sentinel forced off, so the operator sees what the Stop would do
-                         without the sentinel. The doctor itself WRITES NOTHING: no checkpoint, no
-                         init marker, no guard event, no turn-state, no spoof record, and no bytecode
-                         cache. It does run the enumerator the registry declares, exactly as the hook
-                         runs it (_orch_enumerate, aiqt_hooks.py:7962-7989: the declared argv as a
-                         subprocess with cwd = the root, no shell). That program is outside this tool,
-                         and anything it writes is its own, not the doctor's; the output says so.
+                         without the sentinel. A Stop DENY holds only when the hook can save the
+                         denial counter to turn-state.json; when it cannot, the hook fails open with
+                         a warning instead (aiqt_hooks.py:8590-8596, the save at :7752-7760). The
+                         doctor therefore checks, with os.access and without writing, whether that
+                         save could succeed, and when it could not it reports the fail-open
+                         ALLOW_WITH_FINDINGS the hook would give, with the reason. A scheduling DENY
+                         stands whether or not the counter is saved (aiqt_hooks.py:8694-8698), so
+                         the check applies to stop only. The doctor itself WRITES NOTHING: no
+                         checkpoint, no init marker, no guard event, no turn-state, no spoof record,
+                         and no bytecode cache. It does run the enumerator the registry declares,
+                         exactly as the hook runs it (_orch_enumerate, aiqt_hooks.py:7962-7989: the
+                         declared argv as a subprocess with cwd = the root, no shell). That program
+                         is outside this tool, and anything it writes is its own, not the doctor's;
+                         the output says so.
                          For idle, roster membership is modelled exactly as the hook tests it
                          (aiqt_hooks.py:8664-8667): a tool outside a list-valued yield_tools roster,
                          or any tool when yield_tools is not a list, is allowed unjudged. The
@@ -64,7 +72,10 @@ Exit status:
 
 Residuals (disclosed): the preview is a point-in-time reading. A later edit to the backlog, the
 ledger, the pending-decisions record, the sentinel, or the clock can change what the real hook
-decides. The enumerator is a program the registry declares; whatever it writes is outside the
+decides. The counter-save check is an approximation: os.access tests the permission bits, ACLs and
+read-only mounts for the real uid, and it cannot foresee a full disk, a quota, a race with another
+writer, or an effective uid that differs from the real one, so its answer can be wrong in either
+direction. The enumerator is a program the registry declares; whatever it writes is outside the
 control of this tool. The quiet-duration check is not previewed (see above). The rewrite check on
 the barrier detects a write that did not happen; it cannot tell the hook from another writer that
 rewrites the file inside the same run. The tool runs isolated (it re-executes itself under python3 -I when started
@@ -115,6 +126,38 @@ def _resolve_root(hook, root_arg):
     if not os.path.isdir(start):
         return None
     return hook._recovery_toplevel(os.path.abspath(start))
+
+
+def _counter_save_blocker(state_dir):
+    """None when the hook could plausibly save the denial counter, else the reason it could not.
+    It mirrors _orch_save_turn_state (aiqt_hooks.py:7752-7760: os.makedirs(state_dir), then open
+    turn-state.json for writing) with os.access only, so it writes nothing. os.access is an
+    approximation (see Residuals)."""
+    path = os.path.join(state_dir, "turn-state.json")
+    if os.path.lexists(state_dir) and not os.path.isdir(state_dir):
+        return "the state directory {} exists but is not a directory".format(state_dir)
+    if not os.path.isdir(state_dir):
+        # os.makedirs would create it under the nearest existing ancestor.
+        ancestor = os.path.dirname(state_dir)
+        while ancestor and not os.path.lexists(ancestor) and ancestor != os.path.dirname(ancestor):
+            ancestor = os.path.dirname(ancestor)
+        if not os.path.isdir(ancestor) or not os.access(ancestor, os.W_OK | os.X_OK):
+            return ("the state directory {} is absent and cannot be created under {}"
+                    .format(state_dir, ancestor))
+        return None
+    if os.path.isdir(path):
+        return "{} is a directory".format(path)
+    if os.path.exists(path):
+        if not os.access(path, os.W_OK):
+            return "{} is not writable".format(path)
+        if not os.access(state_dir, os.X_OK):
+            return "the state directory {} is not searchable".format(state_dir)
+        return None
+    # Absent, or a dangling symlink, which the open would create at its target.
+    parent = os.path.dirname(os.path.realpath(path))
+    if not os.path.isdir(parent) or not os.access(parent, os.W_OK | os.X_OK):
+        return "{} is absent and cannot be created in {}".format(path, parent)
+    return None
 
 
 def _print_disposition(disposition):
@@ -192,6 +235,20 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
     print("judged reason: {}".format(reason))
     print("verdict without the escape sentinel: {}".format(verdict_ne))
     print("reason without the escape sentinel: {}".format(reason_ne))
+    if judged and kind == "stop":
+        blocker = _counter_save_blocker(hook._orch_state_dir_for_root(root))
+        if blocker is None:
+            print("denial counter: could be saved (an os.access check; the hook saves it on a DENY)")
+        else:
+            print("denial counter: could NOT be saved ({}; an os.access check)".format(blocker))
+            if effective == "DENY":
+                # aiqt_hooks.py:8590-8596: an unsaved counter never reaches the loop bound, so the
+                # Stop fails open with a warning rather than re-denying.
+                print("effective verdict: ALLOW_WITH_FINDINGS (the fail-open allow the hook gives "
+                      "when the denial counter cannot be saved, aiqt_hooks.py:8590-8596; the judged "
+                      "DENY would not hold. Underlying: {})".format(reason))
+                _print_disposition(disposition)
+                return 1
     if judged and quiet_claim and effective != "DENY":
         # The quiet-claim check runs before decide_yield and may deny; a DENY stands either way.
         print("effective verdict: UNPREVIEWED ({} unless the quiet-claim check denies)"
@@ -273,7 +330,8 @@ def main(argv):
         prog="orch_doctor.py",
         description="Preview the orchestration stop and yield verdicts, or run the resume audit.")
     parser.add_argument("command", nargs="?", choices=["preflight"],
-                        help="preflight: preview a verdict without writing anything")
+                        help="preflight: preview a verdict; the doctor itself writes nothing, and "
+                             "the declared enumerator runs as the hook runs it")
     parser.add_argument("kind", nargs="?", choices=sorted(KINDS), default="stop",
                         help="preflight boundary: stop (default) or idle")
     parser.add_argument("--resume-audit", action="store_true",

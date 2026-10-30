@@ -1131,6 +1131,66 @@ class Doctor(Stage2Harness):
                 self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
                 self.assertIn("--tool", r.stderr)
 
+    # --- G4: a Stop DENY whose denial counter cannot be saved fails open in the hook ------------
+    def _arm_actionable_stop(self):
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.set_items([item("7", title="Ship the widget")])
+
+    def _assert_doctor_reports_the_fail_open_allow(self):
+        before = tree_state(self._tmp)
+        r = self.run_doctor("preflight", "stop")
+        self.assertEqual(tree_state(self._tmp), before, "preflight changed a file or directory")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("judged verdict: DENY", r.stdout)
+        self.assertIn("denial counter: could NOT be saved", r.stdout)
+        self.assertIn("effective verdict: ALLOW_WITH_FINDINGS (the fail-open allow", r.stdout)
+        self.assertNotIn("effective verdict: DENY", r.stdout)
+        # The real hook on the same state: exit 0 with the fail-open warning, not the exit 2 deny
+        # (aiqt_hooks.py:8590-8596).
+        h = self.stop()
+        self.assertEqual(h.returncode, 0, h.stderr)
+        self.assertIn("the denial counter could not be persisted",
+                      self.verdict_json(h)["systemMessage"])
+
+    def test_preflight_stop_with_an_unwritable_state_dir_reports_the_fail_open_allow(self):
+        if os.geteuid() == 0:
+            self.skipTest("root writes into a mode-0555 directory, so the save cannot fail here")
+        self._arm_actionable_stop()
+        sd = self.state_dir()
+        sd.mkdir(parents=True)
+        os.chmod(sd, 0o555)
+        self._assert_doctor_reports_the_fail_open_allow()
+
+    def test_preflight_stop_with_a_read_only_turn_state_reports_the_fail_open_allow(self):
+        if os.geteuid() == 0:
+            self.skipTest("root writes a mode-0444 file, so the save cannot fail here")
+        self._arm_actionable_stop()
+        self.seed_state("turn-state.json", {})
+        os.chmod(self.state_dir() / "turn-state.json", 0o444)
+        self._assert_doctor_reports_the_fail_open_allow()
+
+    def test_preflight_stop_with_a_saveable_counter_reports_the_deny(self):
+        # Contrast: the state dir is absent but creatable, so the hook saves the counter and denies.
+        self._arm_actionable_stop()
+        self.assertFalse(self.state_dir().exists(), "precondition: no state dir yet")
+        r = self.run_doctor("preflight", "stop")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("denial counter: could be saved", r.stdout)
+        self.assertIn("effective verdict: DENY", r.stdout)
+        self.assertFalse(self.state_dir().exists(), "the doctor created no state dir")
+        self.assertEqual(self.stop().returncode, 2)
+
+    # --- G7: the help text says what preflight writes, and what it runs -------------------------
+    def test_help_text_says_the_doctor_writes_nothing_and_the_enumerator_runs(self):
+        r = subprocess.run([sys.executable, "-I", str(DOCTOR), "--help"], capture_output=True,
+                           text=True, env=self._env(), timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = " ".join(r.stdout.split())
+        self.assertIn("the doctor itself writes nothing", text)
+        self.assertIn("the declared enumerator runs as the hook runs it", text)
+        self.assertNotIn("without writing anything", text)
+
     # --- F2: the resume audit requires that the hook rewrote the barrier during this run ---------
     def _read_only_stale_barrier(self, active):
         self.seed_state("resume-barrier.json", {"active": active,

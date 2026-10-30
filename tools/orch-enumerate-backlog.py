@@ -13,13 +13,15 @@ Backlog grammar (a markdown table, parsed strictly):
 
     | # | Opened | State | Granted | Blocker | Evidence | Item | Closure evidence required |
 
-- A line is a table line only if it begins with "|" at column 0. A line whose first character is
-  "|" once its leading Unicode whitespace (including U+00A0 and U+3000), format characters (Unicode
-  category Cf: zero-width characters such as U+200B and U+2060, the bidirectional marks, and a
-  U+FEFF byte order mark) and blockquote markers (">") are stripped, but which does not begin with
-  "|" at column 0, is rejected naming the line, so an indented, invisibly prefixed or quoted row can
-  never be skipped silently as prose. Prose that merely contains a "|" after other text is not a
-  table line and is not rejected.
+- A line is a table line only if it begins with "|" at column 0 (the first character of the raw
+  line, after removing only the "\\n" terminator). Every other line that contains a "|" anywhere is
+  rejected naming the line, whatever precedes the bar: an indent, an invisible or combining
+  character (for example U+200B, U+034F, U+FE0F, U+3164, U+FFA0 or a U+FEFF byte order mark, even
+  before a line-1 header), a blockquote marker, a GFM row written without its leading pipe, or plain
+  prose. This is one rule, not a list of prefix classes, so no unlisted prefix can hide a row as
+  prose. The backlog format keeps every "|" inside a column-0 table line, so prose never carries
+  one. The message names each character before the first "|" that is not printable ASCII by its
+  code point.
 - The table line whose first cell is "#" is the header; its cells must equal the header above exactly,
   and only one header may appear. A row (separator or data) before the header is rejected.
 - A separator row (every cell made of dashes and colons, with at least one dash) is skipped.
@@ -72,7 +74,6 @@ if not sys.flags.isolated:
 import hashlib
 import json
 import re
-import unicodedata
 from datetime import datetime, timezone
 
 PROG = "orch-enumerate-backlog"
@@ -103,39 +104,32 @@ def _line_error(lineno, detail):
     return BacklogError("line {}: {}".format(lineno, detail))
 
 
-def _hidden_bar_prefix(line):
-    """The leading text that keeps a "|" off column 0, or None. It strips Unicode whitespace
-    (str.isspace, which covers U+00A0 and U+3000), format characters (category Cf, which covers the
-    zero-width characters, the bidirectional marks and U+FEFF) and blockquote markers ">", and
-    returns the stripped prefix when the next character is "|". A line that begins with "|" at
-    column 0, or whose first such character is anything else, gives None."""
-    i = 0
-    while i < len(line):
-        ch = line[i]
-        if ch.isspace() or ch == ">" or unicodedata.category(ch) == "Cf":
-            i += 1
-            continue
-        break
-    if i and i < len(line) and line[i] == "|":
-        return line[:i]
-    return None
-
-
-def _describe_prefix(prefix):
-    """A readable, de-duplicated list of the prefix characters, named by code point."""
+def _off_column_bar_error(line, lineno):
+    """The BacklogError for a line that holds a "|" but does not begin with one, else None. One
+    rule, with no list of allowed or forbidden prefix characters: any "|" off a column-0 table line
+    fails closed, so a row can never be dropped as prose whatever keeps its bar off column 0. The
+    message lists the characters before the first "|", each one that is not printable ASCII named
+    by its code point."""
+    if line.startswith("|") or "|" not in line:
+        return None
     names = []
-    for ch in prefix:
+    for ch in line[:line.index("|")]:
         if ch == " ":
             name = "space"
         elif ch == "\t":
             name = "tab"
         elif ch == ">":
             name = "blockquote marker \">\""
+        elif " " < ch <= "~":
+            name = "text"
         else:
             name = "U+{:04X}".format(ord(ch))
         if name not in names:
             names.append(name)
-    return ", ".join(names)
+    return _line_error(lineno, "a line containing \"|\" does not begin with \"|\" at column 0 "
+                       "(before the first \"|\": {}); a table row must begin with \"|\" at column "
+                       "0, and no \"|\" may appear outside a table row, so no row can be lost as "
+                       "prose".format(", ".join(names)))
 
 
 def _split_cells(line, lineno):
@@ -227,11 +221,9 @@ def parse_backlog(text):
             markers.append(lineno)
             continue
         if not line.startswith("|"):
-            prefix = _hidden_bar_prefix(line)
-            if prefix is not None:
-                raise _line_error(lineno, "indented or prefixed table line (leading {}); a table "
-                                  "row must begin with \"|\" at column 0, or it would be read as "
-                                  "prose and the row lost".format(_describe_prefix(prefix)))
+            error = _off_column_bar_error(line, lineno)
+            if error is not None:
+                raise error
             continue
         table_seen = True
         raw = _split_cells(line, lineno)

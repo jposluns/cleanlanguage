@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import importlib.util
 import json
 import os
 import shutil
@@ -29,16 +30,25 @@ REAL_REGISTRY = REPO_ROOT / ".aiqt" / "orchestration.json"
 REAL_HOOKS_JSON = REPO_ROOT / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "hooks.json"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "orchestration-registry.yml"
 CONFIG_MD = REPO_ROOT / ".aiqt" / "config.md"
-# The basenames the hooks write inside state_dir, transcribed from the write sites in
+CLAUDE_MD = REPO_ROOT / ".claude" / "CLAUDE.md"
+HOOK_PY = REPO_ROOT / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "scripts" / "aiqt_hooks.py"
+# The Python interpreter running these tests. It always resolves to a real interpreter, so a fixture whose
+# argv[0] is PY is hermetic: it does not depend on /usr/bin/python3 existing on the test host. It is held
+# in a plain name so the LaunchIsolation scan below (which looks for sys.executable list displays) judges
+# only real gate launches, not enumerator fixtures that deliberately omit "-I".
+PY = sys.executable
+# The machine-state basenames the hooks write or read inside state_dir, transcribed from the sites in
 # plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py (7733, 7756, 8359-8360, 8414, 8424, 8520, 8558,
-# 8746-8751, 9300-9301, 9639, 9670, 9715, 9734, 9775-9777, 9783, 9837), plus the "<name>.tmp" sibling that
-# _orch_write_json_atomic writes first (7719-7722). Kept independent of the gate constant on purpose, so a
-# name dropped from the gate list fails here.
+# 8746-8751, 9300-9301, 9639, 9670, 9715, 9734, 9745-9755, 9775-9777, 9783, 9837, 9864 with 10014-10015),
+# plus the "<name>.tmp" sibling that _orch_write_json_atomic writes first (7719-7722). Kept independent of
+# the gate constant on purpose, so a name dropped from the gate list fails here; HookStateFileScan below
+# also derives the set from the hook source and requires all three to agree.
 HOOK_STATE_FILES = (
     "guard-events.jsonl", "turn-state.json", "backlog-checkpoint.json", "checkpoint-init.marker",
-    "escape-spoof.json", "forced-exit.jsonl", "pending-asks.jsonl", "dispatch-ledger.jsonl",
-    "attestations-validated.json", "forced-exit-surfaced.json", "resume-barrier.json",
-    "resume-barrier.json.unused", "backlog-checkpoint.json.tmp", "checkpoint-init.marker.tmp",
+    "escape-spoof.json", "escape-spoof.json.surfaced", "forced-exit.jsonl", "pending-asks.jsonl",
+    "dispatch-ledger.jsonl", "attestations-validated.json", "forced-exit-surfaced.json",
+    "resume-barrier.json", "resume-barrier.json.unused", "write-scope.json",
+    "backlog-checkpoint.json.tmp", "checkpoint-init.marker.tmp",
     "attestations-validated.json.tmp", "forced-exit-surfaced.json.tmp",
 )
 
@@ -64,7 +74,7 @@ STAGE1 = {
 STAGE2 = {
     **STAGE1,
     "enumerator": {
-        "argv": ["/usr/bin/python3", "-I", "tools/orch-enumerate-backlog.py", "/opt/x/private/TODO.md"],
+        "argv": [PY, "-I", "tools/orch-enumerate-backlog.py", "/opt/x/private/TODO.md"],
         "timeout": 5,
     },
     "yield_tools": ["ScheduleWakeup", "CronCreate"],
@@ -76,12 +86,29 @@ STAGE2 = {
 }
 
 
-def _run(path) -> int:
-    """Run the validator against `path`; return its exit code."""
+def _run_full(path) -> subprocess.CompletedProcess:
+    """Run the validator against `path`; return the completed process (exit code and stderr)."""
     return subprocess.run(
         [sys.executable, "-I", str(VALIDATOR), str(path)],
         capture_output=True, text=True,
-    ).returncode
+    )
+
+
+def _run(path) -> int:
+    """Run the validator against `path`; return its exit code."""
+    return _run_full(path).returncode
+
+
+def _make_exe(directory, name, target=None) -> str:
+    """Create `name` in `directory`: a symlink to `target` when given, else a small executable regular
+    file that is not a Python interpreter. Return its absolute path."""
+    p = Path(directory) / name
+    if target is None:
+        p.write_text("#!/bin/false\n", encoding="utf-8")
+        p.chmod(0o755)
+    else:
+        os.symlink(target, str(p))
+    return str(p)
 
 
 def _write(tmpdir, payload) -> Path:
@@ -97,8 +124,10 @@ def _write(tmpdir, payload) -> Path:
 class RealRegistry(unittest.TestCase):
     def test_committed_registry_is_valid(self):
         # The actual committed registry must always pass; this is the regression guard.
+        # A missing committed registry is a failure, not a skip (round 2 G8): this is the regression guard
+        # on the committed file, so its absence must be visible in the test result.
         if not REAL_REGISTRY.exists():
-            self.skipTest("no committed .aiqt/orchestration.json")
+            self.fail("no committed .aiqt/orchestration.json; the regression guard has nothing to check")
         self.assertEqual(_run(REAL_REGISTRY), 0)
 
     def test_committed_registry_is_stage1_armed(self):
@@ -146,12 +175,6 @@ class Accepts(unittest.TestCase):
             self.assertEqual(_run(_write(d, {"version": 1, "lease": {"path": "/opt/x/lease"},
                                              "state_dir": "/opt/x/orch-state"})), 0)
 
-    def test_dispatch_tools_with_strings(self):
-        # Both names are inside the orch_dispatch_ledger PostToolUse matcher ("Bash|TaskOutput",
-        # hooks.json:278), so the matcher check accepts them.
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(_run(_write(d, {"version": 1, "dispatch_tools": ["Bash", "TaskOutput"]})), 0)
-
     def test_dispatch_tools_empty_list_accepted(self):
         # The committed shape: an empty list stays valid (it still requires a readable hooks.json).
         with tempfile.TemporaryDirectory() as d:
@@ -165,11 +188,14 @@ class Accepts(unittest.TestCase):
                                              "escape": {"path": "operator/ESCAPE-ALLOW-YIELD"}})), 0)
 
     def test_enumerator_non_python_interpreter_accepted(self):
-        # The "-I" requirement applies only when the basename of argv[0] starts with "python".
+        # The "-I" requirement applies only to a Python interpreter. A resolvable executable that is
+        # neither a Python interpreter nor a wrapper (env or a shell), running no *.py operand, is accepted.
+        # The executable is a temporary regular file, so the fixture does not depend on the host.
         with tempfile.TemporaryDirectory() as d:
+            runner = _make_exe(d, "enumerate-backlog")
             self.assertEqual(_run(_write(d, {
                 "version": 1, "state_dir": "/opt/x/orch-state",
-                "enumerator": {"argv": ["/bin/sh", "tools/enumerate.sh", "/opt/x/private/TODO.md"],
+                "enumerator": {"argv": [runner, "tools/enumerate.awk", "/opt/x/private/TODO.md"],
                                "timeout": 5}})), 0)
 
     def test_record_sibling_of_state_dir_accepted(self):
@@ -411,15 +437,31 @@ class Rejects(unittest.TestCase):
         self._reject({"version": 1, "dispatch_tools": "Workflow"})
 
     def test_dispatch_tools_non_string_entry(self):
-        self._reject({"version": 1, "dispatch_tools": ["Bash", 123]})
+        self._reject({"version": 1, "dispatch_tools": [123]})
 
     def test_dispatch_tools_outside_matcher(self):
         # codex QA F3: Workflow is not in the orch_dispatch_ledger PostToolUse matcher ("Bash|TaskOutput",
         # hooks.json:278), so the hook never sees that tool and the entry would be a silent no-op.
         self._reject({"version": 1, "dispatch_tools": ["Workflow"]})
 
-    def test_dispatch_tools_duplicate(self):
-        self._reject({"version": 1, "dispatch_tools": ["Bash", "Bash"]})
+    def test_dispatch_tools_bash_rejected(self):
+        # Round 2 G5: "Bash" is inside the matcher, but listing it makes the hook treat every Bash call,
+        # foreground included, as a dispatch and record it (aiqt_hooks.py:9279-9280). The rejection names
+        # that hook line, so this cannot pass on some other rule.
+        with tempfile.TemporaryDirectory() as d:
+            r = _run_full(_write(d, {"version": 1, "dispatch_tools": ["Bash"]}))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("aiqt_hooks.py:9279-9280", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_dispatch_tools_taskoutput_rejected(self):
+        # Round 2 G5: "TaskOutput" is inside the matcher, but the hook routes it to its completion branch
+        # (aiqt_hooks.py:9264) before it reads the list (aiqt_hooks.py:9277), so the entry is inert.
+        with tempfile.TemporaryDirectory() as d:
+            r = _run_full(_write(d, {"version": 1, "dispatch_tools": ["TaskOutput"]}))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("aiqt_hooks.py:9264", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
 
     # --- record/lease path colliding with state_dir (codex QA HIGH) ---------------------------------
     # A declared record/lease path ON or INSIDE state_dir collides with the machine-state files the hooks
@@ -618,7 +660,7 @@ class Rejects(unittest.TestCase):
         self._reject({"version": 1, "lease": {"path": "/opt/x/" + chr(0xD800) + "lease"}})
 
     def test_dispatch_tools_surrogate(self):
-        self._reject({"version": 1, "dispatch_tools": ["Bash", "Ba" + chr(0xD800) + "sh"]})
+        self._reject({"version": 1, "dispatch_tools": ["Ba" + chr(0xD800) + "sh"]})
 
     # --- stage-2 arming keys ------------------------------------------------------------------------
     # Each fixture is the full STAGE2 registry (which the gate accepts, see Accepts.test_full_stage2_fixture)
@@ -676,15 +718,91 @@ class Rejects(unittest.TestCase):
     def test_enumerator_argv_control_char(self):
         self._reject_stage2({"enumerator": self._enum(argv=["/usr/bin/python3", "-I", "tools/x\n.py"])})
 
+    def _run_stage2_enum(self, argv):
+        # Run the gate on STAGE2 with only the enumerator argv replaced; return the completed process, so a
+        # test can assert which rule rejected the fixture, not only that something did.
+        payload = copy.deepcopy(STAGE2)
+        payload["enumerator"] = self._enum(argv=argv)
+        with tempfile.TemporaryDirectory() as d:
+            return _run_full(_write(d, payload))
+
+    def _assert_enum_rejected_by(self, argv, needle):
+        r = self._run_stage2_enum(argv)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(needle, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
     def test_enumerator_python_without_isolation(self):
         # codex QA F7: a Python argv[0] must be followed by exactly "-I"; a missing flag, a different flag,
-        # or no argv[1] at all is rejected. Each fixture is otherwise valid.
-        for argv in (["/usr/bin/python3", "tools/x.py", "/opt/x/private/TODO.md"],
-                     ["/usr/bin/python3.12", "-E", "tools/x.py"],
-                     ["/usr/local/bin/python", "-P", "-I", "tools/x.py"],
-                     ["/usr/bin/python3"]):
-            with self.subTest(argv=argv):
-                self._reject_stage2({"enumerator": self._enum(argv=argv)})
+        # or no argv[1] at all is rejected. Each fixture is otherwise valid. The interpreters are the test
+        # interpreter itself and temporary symlinks to it named python3.12 and python, so every argv[0]
+        # resolves on any host and only the isolation rule can reject it.
+        with tempfile.TemporaryDirectory() as d:
+            py312 = _make_exe(d, "python3.12", os.path.realpath(PY))
+            pybare = _make_exe(d, "python", os.path.realpath(PY))
+            for argv in ([PY, "tools/x.py", "/opt/x/private/TODO.md"],
+                         [py312, "-E", "tools/x.py"],
+                         [pybare, "-P", "-I", "tools/x.py"],
+                         [PY]):
+                with self.subTest(argv=argv):
+                    self._assert_enum_rejected_by(argv, "is a Python interpreter")
+
+    def test_enumerator_symlink_alias_requires_isolation(self):
+        # Round 2 G2: a symlink alias of the Python interpreter whose own name does not start with
+        # "python" is judged by what it resolves to. Without "-I" it is rejected; with "-I" it is accepted.
+        with tempfile.TemporaryDirectory() as d:
+            alias = _make_exe(d, "enumerate-runner", os.path.realpath(PY))
+            self.assertFalse(os.path.basename(alias).startswith("python"))
+            self._assert_enum_rejected_by([alias, "tools/x.py", "/opt/x/private/TODO.md"],
+                                          "is a Python interpreter")
+            r = self._run_stage2_enum([alias, "-I", "tools/x.py", "/opt/x/private/TODO.md"])
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_enumerator_env_wrapper_rejected(self):
+        # Round 2 G2: ["<env>", "python3", ...] runs python3 through the session PATH, so the gate cannot
+        # see whether it is isolated; env is rejected as argv[0] by its declared name and by its resolved
+        # name (a symlink alias of env). The real /usr/bin/env is checked too where the host has it.
+        with tempfile.TemporaryDirectory() as d:
+            env = _make_exe(d, "env")
+            alias = _make_exe(d, "enumerate-runner", env)
+            cases = [[env, "python3", "-I", "tools/x.py"], [alias, "python3", "-I", "tools/x.py"]]
+            if os.path.exists("/usr/bin/env"):
+                cases.append(["/usr/bin/env", "python3", "-I", "tools/x.py"])
+            for argv in cases:
+                with self.subTest(argv=argv):
+                    self._assert_enum_rejected_by(argv, "interpreter wrapper")
+
+    def test_enumerator_shell_wrapper_rejected(self):
+        # Round 2 G2: a shell argv[0] runs a script whose own interpreter launch the gate cannot see.
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("sh", "bash", "dash", "zsh", "ksh"):
+                shell = _make_exe(d, name)
+                with self.subTest(shell=name):
+                    self._assert_enum_rejected_by([shell, "tools/enumerate.sh", "/opt/x/private/TODO.md"],
+                                                  "interpreter wrapper")
+
+    def test_enumerator_py_operand_behind_non_python_rejected(self):
+        # Round 2 G2: a *.py element behind a non-Python argv[0], or argv[0] itself a *.py script run
+        # through its shebang, would run Python without "-I". The control is the same non-Python argv[0]
+        # with no *.py element, which is accepted, so only the *.py rule rejects the two fixtures.
+        with tempfile.TemporaryDirectory() as d:
+            runner = _make_exe(d, "enumerate-runner")
+            script = _make_exe(d, "enumerate.py")
+            self._assert_enum_rejected_by([runner, "tools/x.py", "/opt/x/private/TODO.md"],
+                                          "is a Python script")
+            self._assert_enum_rejected_by([script, "/opt/x/private/TODO.md"], "is a Python script")
+            r = self._run_stage2_enum([runner, "tools/enumerate.awk", "/opt/x/private/TODO.md"])
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_enumerator_unresolvable_argv0_rejected(self):
+        # Round 2 G2: an argv[0] that cannot be resolved (absent, or a dangling symlink) is a
+        # cannot-evaluate, so the gate rejects it rather than guess whether it is a Python interpreter.
+        with tempfile.TemporaryDirectory() as d:
+            dangling = _make_exe(d, "enumerate-runner", os.path.join(d, "missing-target"))
+            for argv in (["/opt/x/does-not-exist/python3", "-I", "tools/x.py"],
+                         [dangling, "-I", "tools/x.py"]):
+                with self.subTest(argv=argv):
+                    self._assert_enum_rejected_by(argv, "cannot be resolved")
 
     def test_enumerator_windows_shaped_operands(self):
         # codex QA F6: the hook runs argv verbatim on POSIX with cwd at the repository root
@@ -949,12 +1067,170 @@ class Rejects(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_dispatch_tools_with_hooks_json_lacking_the_entry_rejected(self):
-        payload = {"version": 1, "dispatch_tools": ["Bash"]}
+        payload = {"version": 1, "dispatch_tools": []}
         with tempfile.TemporaryDirectory() as d:
             r = self._run_gate_copy(d, payload, json.dumps({"hooks": {"PreToolUse": [], "PostToolUse": []}}))
             self.assertEqual(r.returncode, 1)
             self.assertIn("orch_dispatch_ledger", r.stderr)
             self.assertNotIn("Traceback", r.stderr)
+
+    def test_dispatch_tools_under_a_widened_matcher(self):
+        # Under the real matcher ("Bash|TaskOutput") no non-empty dispatch_tools value is valid, so the
+        # matcher-accept and duplicate paths are exercised against a hooks.json whose orch_dispatch_ledger
+        # matcher also routes "Workflow": that name is accepted, its duplicate is rejected, and "Bash" stays
+        # rejected however the matcher reads.
+        hooks = json.loads(REAL_HOOKS_JSON.read_text(encoding="utf-8"))
+        widened = 0
+        for entry in hooks["hooks"]["PostToolUse"]:
+            if any("orch_dispatch_ledger" in h.get("args", []) for h in entry.get("hooks", [])):
+                entry["matcher"] += "|Workflow"
+                widened += 1
+        self.assertEqual(widened, 1, "expected exactly one orch_dispatch_ledger entry in hooks.json")
+        cases = ((["Workflow"], 0, None), (["Workflow", "Workflow"], 1, "duplicate"),
+                 (["Workflow", "Bash"], 1, "aiqt_hooks.py:9279-9280"))
+        for tools, code, needle in cases:
+            with self.subTest(tools=tools), tempfile.TemporaryDirectory() as d:
+                r = self._run_gate_copy(d, {"version": 1, "dispatch_tools": tools}, json.dumps(hooks))
+                self.assertEqual(r.returncode, code, r.stderr)
+                if needle:
+                    self.assertIn(needle, r.stderr)
+
+
+# --- the hook state-file set, derived from the hook source (round 2 G3) ------------------------------------
+_STATE_EXTS = (".json", ".jsonl", ".marker", ".unused")
+_STATE_DIR_CALLS = frozenset(("_orch_state_dir_for_root", "_state_dir_from_registry"))
+_STATE_DIR_NAMES = frozenset(("sd", "state_dir"))
+_ATOMIC_WRITERS = frozenset(("_orch_write_json_atomic",))
+
+
+def _call_name(node):
+    if isinstance(node, ast.Call):
+        f = node.func
+        if isinstance(f, ast.Name):
+            return f.id
+        if isinstance(f, ast.Attribute):
+            return f.attr
+    return None
+
+
+def _is_path_join(node):
+    f = node.func if isinstance(node, ast.Call) else None
+    return (isinstance(f, ast.Attribute) and f.attr == "join" and isinstance(f.value, ast.Attribute)
+            and f.value.attr == "path" and isinstance(f.value.value, ast.Name) and f.value.value.id == "os")
+
+
+def scan_hook_state_files(source):
+    """Derive, from hook source text, every machine-state basename joined onto state_dir.
+
+    A state-dir join is os.path.join(<base>, <name>) where <name> is a string literal or a module-level
+    string constant (such as _WRTSCP_DECL_REL) ending in one of _STATE_EXTS, and <base> is sd or state_dir,
+    a call to _orch_state_dir_for_root or _state_dir_from_registry, or a local assigned from such a call.
+    Within the same function, a variable holding a state-dir join that is extended with a "." suffix
+    literal (barrier_path + ".unused", path + ".surfaced") adds that derived name, and one passed to
+    _orch_write_json_atomic adds its "<name>.tmp" sibling. Returns (names, unclassified), where
+    unclassified lists every join of such a name onto a base the scan cannot classify as either the state
+    dir or the repository root, so a new join form fails the test rather than slipping past the scan."""
+    tree = ast.parse(source)
+    consts = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) \
+                and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            consts[node.targets[0].id] = node.value.value
+    names, unclassified = set(), []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        nodes = list(ast.walk(fn))
+        sd_vars = set(_STATE_DIR_NAMES)
+        for node in nodes:
+            if isinstance(node, ast.Assign) and _call_name(node.value) in _STATE_DIR_CALLS:
+                sd_vars.update(t.id for t in node.targets if isinstance(t, ast.Name))
+
+        def state_join(expr):
+            # The state basename `expr` joins onto state_dir, or None when it is no such join.
+            if not _is_path_join(expr) or len(expr.args) != 2:
+                return None
+            base, leaf = expr.args
+            if isinstance(leaf, ast.Constant) and isinstance(leaf.value, str):
+                name = leaf.value
+            elif isinstance(leaf, ast.Name) and leaf.id in consts:
+                name = consts[leaf.id]
+            else:
+                return None
+            if not name.endswith(_STATE_EXTS):
+                return None
+            if (isinstance(base, ast.Name) and base.id in sd_vars) or _call_name(base) in _STATE_DIR_CALLS:
+                return name
+            if isinstance(base, ast.Name) and base.id == "root":
+                return None  # an in-tree file under the repository root, not state_dir
+            unclassified.append("line {}: os.path.join({}, {!r})".format(
+                expr.lineno, ast.unparse(base), name))
+            return None
+
+        held = {}
+        for node in nodes:
+            if isinstance(node, ast.Call):
+                name = state_join(node)
+                if name:
+                    names.add(name)
+            if isinstance(node, ast.Assign):
+                name = state_join(node.value)
+                if name:
+                    held.update((t.id, name) for t in node.targets if isinstance(t, ast.Name))
+
+        def held_name(expr):
+            if isinstance(expr, ast.Name) and expr.id in held:
+                return held[expr.id]
+            return state_join(expr)
+
+        for node in nodes:
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add) \
+                    and isinstance(node.right, ast.Constant) and isinstance(node.right.value, str) \
+                    and node.right.value.startswith("."):
+                name = held_name(node.left)
+                if name:
+                    names.add(name + node.right.value)
+            if _call_name(node) in _ATOMIC_WRITERS and node.args:
+                name = held_name(node.args[0])
+                if name:
+                    names.add(name + ".tmp")
+    return names, sorted(set(unclassified))
+
+
+def _load_gate_module():
+    spec = importlib.util.spec_from_file_location("check_orchestration_registry_under_test", str(VALIDATOR))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class HookStateFileScan(unittest.TestCase):
+    # Round 2 G3: the escape.path basename rule is only as complete as the gate HOOK_STATE_FILES set, so
+    # the set is derived here from the hook source and must equal both the gate constant and the
+    # transcribed list at the top of this file. A state file the hook gains, or one the gate drops, is red.
+    def test_scanner_finds_a_new_state_file(self):
+        # The scanner itself is exercised on a small synthetic source, so a scan that silently found
+        # nothing could not pass the equality test below by accident of an empty gate set.
+        source = ("def f(root):\n"
+                  "    sd = _orch_state_dir_for_root(root)\n"
+                  "    p = os.path.join(sd, \"new-state.json\")\n"
+                  "    _orch_write_json_atomic(p, {})\n"
+                  "    os.replace(p, p + \".done\")\n"
+                  "    q = os.path.join(root, \".aiqt\", \"x.json\")\n"
+                  "    r = os.path.join(elsewhere, \"other.json\")\n")
+        names, unclassified = scan_hook_state_files(source)
+        self.assertEqual(names, {"new-state.json", "new-state.json.tmp", "new-state.json.done"})
+        self.assertEqual(len(unclassified), 1, unclassified)
+
+    def test_gate_set_matches_the_hook_source(self):
+        names, unclassified = scan_hook_state_files(HOOK_PY.read_text(encoding="utf-8"))
+        self.assertEqual(unclassified, [], "joins the scan cannot classify; extend the scan")
+        self.assertGreaterEqual(len(names), 18, sorted(names))
+        gate = _load_gate_module()
+        self.assertEqual(sorted(names), sorted(gate.HOOK_STATE_FILES),
+                         "the gate HOOK_STATE_FILES set differs from the state files the hook source joins "
+                         "onto state_dir")
+        self.assertEqual(sorted(names), sorted(HOOK_STATE_FILES))
 
 
 class LaunchIsolation(unittest.TestCase):
@@ -995,6 +1271,21 @@ class ConfigDisclosure(unittest.TestCase):
         for phrase in ("the loop bound", "denial counter cannot be saved", "guard fails open instead"):
             with self.subTest(phrase=phrase):
                 self.assertIn(phrase, text)
+
+    def test_lease_liveness_states_the_non_empty_condition(self):
+        # Round 2 G10: the lease makes scope live only when its file is non-empty as well as present and
+        # fresh (aiqt_hooks.py:7799, st.st_size > 0).
+        text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
+        self.assertIn("while the lease file is present, non-empty, and fresh", text)
+
+    def test_claude_md_defers_the_orchestrator_hook_account_to_config(self):
+        # Round 2 G6: .claude/CLAUDE.md must not claim that only two orchestrator hooks are armed, since
+        # the stop guard also denies on NO_ENUMERATOR while the lease is live (config.md); it points there.
+        text = " ".join(CLAUDE_MD.read_text(encoding="utf-8").split())
+        self.assertNotIn("arms two of the 10 orchestrator hooks", text)
+        self.assertIn("A minimal orchestration registry is declared; what each of the 10 orchestrator hooks "
+                      "does under it today, including the stop guard denial and the operator escape that "
+                      "releases it, is described in [`../.aiqt/config.md`](../.aiqt/config.md).", text)
 
 
 if __name__ == "__main__":

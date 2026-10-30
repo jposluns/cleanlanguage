@@ -14,12 +14,14 @@ endings included. Blocker annotation is a separate, reviewed step after this mec
 
 The old table is parsed with a parser of its own, independent of tools/orch-enumerate-backlog.py, so
 the loss check can compare two parsers rather than one parser with itself:
-- a table line begins with "|" at column 0; a line that does not, but whose first visible character
-  is "|" once leading Unicode whitespace (including U+00A0), format characters (category Cf, such
-  as U+200B and a U+FEFF byte order mark) and blockquote markers (">") are removed, is rejected
-  naming the line, so an indented, invisibly prefixed or quoted row is never copied through as
-  prose (both loss-check dumps would then agree on the loss); prose with a "|" after other text is
-  copied as usual;
+- a table line begins with "|" at column 0 (the first character of the line once only its "\\n"
+  terminator is removed); any other line that contains a "|" anywhere is rejected naming the line,
+  whatever comes before the bar (an indent, an invisible, combining or filler character such as
+  U+200B, U+034F, U+FE0F, U+3164, U+FFA0 or a U+FEFF byte order mark, a blockquote marker, a GFM
+  row with no leading pipe, or plain prose), so no row is ever copied through as prose, where both
+  loss-check dumps would agree on the loss. This is a single rule rather than a list of prefix
+  classes; the backlog keeps every "|" inside a column-0 table line. The message names, by code
+  point, each character before the first "|" that is not printable ASCII;
 - cells are split on "|" not preceded by a backslash, and the line must end with an unescaped "|";
 - the header is the table line whose first cell is "#" and must equal the old header exactly; an
   input that already carries the new header is refused as already migrated;
@@ -42,13 +44,27 @@ Usage:
         Print the id, opened, item and closure cells of every old data row (stripped of the
         surrounding blanks, escapes kept as written) with a sha256 per row, for the loss check.
 Exit 0 on success, 1 on a refused or malformed input or output, 2 on a usage error.
+
+The script runs isolated: started without -I, it re-executes itself under python3 -I before it
+imports anything beyond os and sys, so a file planted beside it cannot shadow a standard-library
+import (the same guard as tools/orch-enumerate-backlog.py). A failed re-execution exits 1.
 """
+import os
+import sys
+
+if not sys.flags.isolated:
+    # Isolated mode keeps this script directory and the environment off the import path, so a file
+    # written beside the script cannot shadow a standard-library module (SECI config rule).
+    try:
+        os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
+    except OSError as exc:
+        print("migrate-todo-aei: FAIL: cannot re-execute under python3 -I: {}".format(exc),
+              file=sys.stderr)
+        sys.exit(1)
+
 import hashlib
 import json
-import os
 import re
-import sys
-import unicodedata
 
 PROG = "migrate-todo-aei"
 OLD_HEADER = ["#", "Opened", "Item", "Closure evidence required"]
@@ -71,21 +87,26 @@ def _fail(msg, code=1):
     sys.exit(code)
 
 
-def _bar_behind_prefix(line):
-    """True when line does not begin with "|" but its first visible character is "|": leading
-    whitespace (str.lstrip, which strips all Unicode whitespace), blockquote markers and format
-    characters (category Cf) are peeled off, repeatedly, until none is left."""
-    if line.startswith("|"):
-        return False
-    visible = line
-    while True:
-        peeled = visible.lstrip().lstrip(">")
-        while peeled and unicodedata.category(peeled[0]) == "Cf":
-            peeled = peeled[1:]
-        if peeled == visible:
-            break
-        visible = peeled
-    return visible.startswith("|")
+def _misplaced_bar(line):
+    """None when line is a column-0 table line or holds no "|"; otherwise a description of the
+    text before its first "|", with every character outside printable ASCII given by code point.
+    A single rule, independent of what the prefix is made of."""
+    if line[:1] == "|":
+        return None
+    cut = line.find("|")
+    if cut < 0:
+        return None
+    lead = line[:cut]
+    hidden = []
+    for ch in lead:
+        code = ord(ch)
+        if not 0x20 <= code <= 0x7E:
+            label = "U+%04X" % code
+            if label not in hidden:
+                hidden.append(label)
+    if hidden:
+        return "{} character(s), including {}".format(len(lead), ", ".join(hidden))
+    return "{} character(s) of printable ASCII {!r}".format(len(lead), lead[:40])
 
 
 def _segments(line, lineno):
@@ -112,10 +133,12 @@ def convert(text):
     header_at = None
     for lineno, line in enumerate(text.split("\n"), start=1):
         if not line.startswith("|"):
-            if _bar_behind_prefix(line):
-                raise MigrationError("line {}: indented or prefixed table line (a table row must "
-                                     "begin with \"|\" at column 0; leading {!r})"
-                                     .format(lineno, line[:line.index("|")]))
+            misplaced = _misplaced_bar(line)
+            if misplaced is not None:
+                raise MigrationError("line {}: a \"|\" off column 0 (before it: {}); a table row "
+                                     "must begin with \"|\" at column 0 and no other line may "
+                                     "contain \"|\", so no row is copied through as prose"
+                                     .format(lineno, misplaced))
             out.append(line)
             continue
         segments, tail = _segments(line, lineno)
