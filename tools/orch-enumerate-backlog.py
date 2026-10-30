@@ -5,9 +5,14 @@ The AIQT orchestration hooks run the registry `enumerator` argv on every Stop, T
 in-roster scheduling call (aiqt_hooks.py:7962-7989, cwd = the repo root, never through a shell) and
 validate its stdout with `validate_enumeration` (aiqt_hooks.py:7904-7959). A non-zero exit, a non-JSON
 stdout, or an invalid enumeration is ENUMERATOR_ERROR, which denies the Stop and the scheduling call.
-This script therefore fails CLOSED: every unreadable input and every malformed row exits 1 naming the
-line, and it never prints an empty or partial enumeration in place of an error (an empty backlog must
-be affirmed in the file, never inferred from the absence of rows).
+This script therefore fails CLOSED: every unreadable input and every malformed row exits 1 naming its
+position, and it never prints an empty or partial enumeration in place of an error (an empty backlog
+must be affirmed in the file, never inferred from the absence of rows). Every failure message begins,
+after the "orch-enumerate-backlog: FAIL: " prefix, with its position: "line N" for a line of the
+input, "line N (end of input)" where the scan ended, "before line 1 (input unreadable)" for a backlog
+that cannot be opened or read or is not a regular file, and "before line 1 (no input read)" for a
+usage error or a failed re-execution. A failure that has no line to name says so rather than naming
+an invented one, and the test suite scans the source so that every failure message keeps its position.
 
 Backlog grammar (a markdown table, parsed strictly):
 
@@ -99,8 +104,8 @@ if not sys.flags.isolated:
     try:
         os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
     except OSError as exc:
-        print("orch-enumerate-backlog: FAIL: cannot re-execute under python3 -I: {}".format(exc),
-              file=sys.stderr)
+        print("orch-enumerate-backlog: FAIL: before line 1 (no input read): cannot re-execute "
+              "under python3 -I: {}".format(exc), file=sys.stderr)
         sys.exit(1)
 
 import hashlib
@@ -132,10 +137,16 @@ FILE_TYPES = ((stat.S_ISDIR, "directory"), (stat.S_ISCHR, "character device"),
               (stat.S_ISBLK, "block device"), (stat.S_ISFIFO, "FIFO"), (stat.S_ISSOCK, "socket"),
               (stat.S_ISLNK, "symbolic link"))
 READ_CHUNK = 1 << 20
+# The position of a failure that comes before any line is read: a backlog that cannot be opened or
+# read, or is not a regular file, has no line to name, so the message says so and invents none.
+BEFORE_INPUT = "before line 1 (input unreadable)"
+# The position of a usage error, where no backlog path was accepted and nothing was read.
+NOT_READ = "before line 1 (no input read)"
 
 
 class BacklogError(Exception):
-    """A malformed or unreadable backlog; the message names the line where one applies."""
+    """A malformed or unreadable backlog; the message begins with its position, a line of the input
+    or "before line 1" with the reason no line was read."""
 
 
 def _fail(msg, code=1):
@@ -145,6 +156,12 @@ def _fail(msg, code=1):
 
 def _line_error(lineno, detail):
     return BacklogError("line {}: {}".format(lineno, detail))
+
+
+def _input_error(detail):
+    """The BacklogError for a backlog that was not read: it has no line, so the position is
+    BEFORE_INPUT."""
+    return BacklogError("{}: {}".format(BEFORE_INPUT, detail))
 
 
 def _off_column_bar_error(line, lineno):
@@ -358,11 +375,11 @@ def _read_regular(path):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError as exc:
-        raise BacklogError("cannot read backlog {}: {}".format(path, exc.strerror or exc))
+        raise _input_error("cannot read backlog {}: {}".format(path, exc.strerror or exc))
     try:
         mode = os.fstat(fd).st_mode
         if not stat.S_ISREG(mode):
-            raise BacklogError("backlog {} is not a regular file (it is a {}); only a regular file "
+            raise _input_error("backlog {} is not a regular file (it is a {}); only a regular file "
                                "is read".format(path, _file_type(mode)))
         os.set_blocking(fd, True)
         chunks = []
@@ -373,7 +390,7 @@ def _read_regular(path):
             chunks.append(chunk)
         return b"".join(chunks)
     except OSError as exc:
-        raise BacklogError("cannot read backlog {}: {}".format(path, exc.strerror or exc))
+        raise _input_error("cannot read backlog {}: {}".format(path, exc.strerror or exc))
     finally:
         os.close(fd)
 
@@ -384,8 +401,8 @@ def read_backlog(path):
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise BacklogError("backlog {} is not valid UTF-8 (line {}, byte offset {})".format(
-            path, data.count(b"\n", 0, exc.start) + 1, exc.start))
+        raise _line_error(data.count(b"\n", 0, exc.start) + 1,
+                          "backlog {} is not valid UTF-8 (byte offset {})".format(path, exc.start))
 
 
 def row_digest(row):
@@ -399,7 +416,8 @@ def main(argv):
         dump = True
         argv = argv[1:]
     if len(argv) != 1 or not argv[0] or argv[0].startswith("-"):
-        _fail("usage: {0}.py <backlog-path> | {0}.py --dump-cells <backlog-path>".format(PROG), 2)
+        _fail("{0}: usage: {1}.py <backlog-path> | {1}.py --dump-cells <backlog-path>"
+              .format(NOT_READ, PROG), 2)
     path = os.path.abspath(argv[0])
     try:
         items, rows = parse_backlog(read_backlog(path))

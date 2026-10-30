@@ -39,9 +39,10 @@ the loss check can compare two parsers rather than one parser with itself:
   input that already carries the new header is refused as already migrated;
 - a separator row has 4 cells of dashes and colons; every other table line is a data row of exactly
   4 cells with an id matching ^[0-9]+(\\.[0-9]+)*$, unique, after the header;
-- one header only, and at least one data row (an empty table is refused, never converted). An input
-  with no header is refused at the line where the scan ended, as "line N (end of input)", N being
-  the last line of the input (the empty remainder after a final newline is not counted).
+- one header only, and at least one data row (an empty table is refused at its header line, never
+  converted). An input with no header is refused at the line where the scan ended, as "line N (end
+  of input)", N being the last line of the input (the empty remainder after a final newline is not
+  counted).
 The whole input is parsed before anything is written, so a malformed input writes nothing.
 
 Read safety: the input must be a regular file (a symlink to one is followed). It is opened
@@ -68,6 +69,14 @@ Usage:
 Exit 0 on success, 1 on a refused or malformed input or output, 2 on a usage error. An input that is
 not valid UTF-8 is refused naming the line and the byte offset of the first invalid byte.
 
+Every refusal begins, after the "migrate-todo-aei: FAIL: " prefix, with its position: "line N" for a
+line of the input, "line N (end of input)" where the scan ended, "line N (end of input, output
+refused)" for an output refused after the whole input was read, "before line 1 (input unreadable)"
+for an input that cannot be opened or read or is not a regular file, and "before line 1 (no input
+read)" for a usage error, an output path equal to the input path, or a failed re-execution. A
+refusal that has no line to name says so rather than naming an invented one, and the test suite
+scans the source so that every refusal keeps its position.
+
 The script runs isolated: started without -I, it re-executes itself under python3 -I before it
 imports anything beyond os and sys, so a file planted beside it cannot shadow a standard-library
 import (the same guard as tools/orch-enumerate-backlog.py). A failed re-execution exits 1.
@@ -81,8 +90,8 @@ if not sys.flags.isolated:
     try:
         os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
     except OSError as exc:
-        print("migrate-todo-aei: FAIL: cannot re-execute under python3 -I: {}".format(exc),
-              file=sys.stderr)
+        print("migrate-todo-aei: FAIL: before line 1 (no input read): cannot re-execute under "
+              "python3 -I: {}".format(exc), file=sys.stderr)
         sys.exit(1)
 
 import hashlib
@@ -102,15 +111,42 @@ NEW_DATA_CELLS = (" open ", " yes ", " - ", " - ")
 NEW_HEADER_CELLS = (" State ", " Granted ", " Blocker ", " Evidence ")
 NEW_SEPARATOR_CELLS = (" --- ", " --- ", " --- ", " --- ")
 READ_CHUNK = 1 << 20
+# The position of a refusal that comes before any line is read: an input that cannot be opened or
+# read, or is not a regular file, has no line to name, so the message says so and invents none.
+BEFORE_INPUT = "before line 1 (input unreadable)"
+# The position of a refusal made before the input is read: a usage error, or an output path that is
+# the input path.
+NOT_READ = "before line 1 (no input read)"
 
 
 class MigrationError(Exception):
-    """A refused or malformed input or output."""
+    """A refused or malformed input or output; the message begins with its position, a line of the
+    input or "before line 1" with the reason no line was read."""
 
 
 def _fail(msg, code=1):
     print("{}: FAIL: {}".format(PROG, msg), file=sys.stderr)
     sys.exit(code)
+
+
+def _input_error(detail):
+    """The MigrationError for an input that was not read: it has no line, so the position is
+    BEFORE_INPUT."""
+    return MigrationError("{}: {}".format(BEFORE_INPUT, detail))
+
+
+def _last_line(lines):
+    """The number of the last line of a split text; the empty remainder after a final newline is
+    not a line."""
+    return len(lines) - 1 if len(lines) > 1 and lines[-1] == "" else len(lines)
+
+
+def _output_error(text, detail):
+    """The MigrationError for an output refused after the whole input was read: the position is
+    the end of input. convert emits exactly one output line per input line, so the last line of the
+    output text is the last line of the input."""
+    return MigrationError("line {} (end of input, output refused): {}".format(
+        _last_line(text.split("\n")), detail))
 
 
 def _misplaced_bar(line):
@@ -237,11 +273,11 @@ def convert(text):
         out.append(_row(segments, NEW_DATA_CELLS, tail))
     if header_at is None:
         # Name the last line read; the empty remainder after a final newline is not a line.
-        end_line = len(lines) - 1 if len(lines) > 1 and lines[-1] == "" else len(lines)
         raise MigrationError("line {} (end of input): no 4-column header row, so no backlog table"
-                             .format(end_line))
+                             .format(_last_line(lines)))
     if not rows:
-        raise MigrationError("the table has no data row (an empty table is not converted)")
+        raise MigrationError("line {}: header with no data row (an empty table is not converted)"
+                             .format(header_at))
     return "\n".join(out), rows
 
 
@@ -263,12 +299,12 @@ def _read_regular(path):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError as exc:
-        raise MigrationError("cannot read input {}: {}".format(path, exc.strerror or exc))
+        raise _input_error("cannot read input {}: {}".format(path, exc.strerror or exc))
     try:
         mode = os.fstat(fd).st_mode
         if not stat.S_ISREG(mode):
-            raise MigrationError("input {} is not a regular file (it is a {}); only a regular file "
-                                 "is converted".format(path, _type_name(mode)))
+            raise _input_error("input {} is not a regular file (it is a {}); only a regular file "
+                               "is converted".format(path, _type_name(mode)))
         os.set_blocking(fd, True)
         parts = []
         chunk = os.read(fd, READ_CHUNK)
@@ -277,7 +313,7 @@ def _read_regular(path):
             chunk = os.read(fd, READ_CHUNK)
         return b"".join(parts)
     except OSError as exc:
-        raise MigrationError("cannot read input {}: {}".format(path, exc.strerror or exc))
+        raise _input_error("cannot read input {}: {}".format(path, exc.strerror or exc))
     finally:
         os.close(fd)
 
@@ -288,20 +324,23 @@ def read_input(path):
         return data.decode("utf-8")
     except UnicodeDecodeError as exc:
         line = data[:exc.start].count(b"\n") + 1
-        raise MigrationError("input {} is not valid UTF-8 (line {}, byte offset {})"
-                             .format(path, line, exc.start))
+        raise MigrationError("line {}: input {} is not valid UTF-8 (byte offset {})"
+                             .format(line, path, exc.start))
 
 
 def write_output(in_path, out_path, text):
-    """Create out_path exclusively; refuse an existing path or one that resolves to the input."""
+    """Create out_path exclusively; refuse an existing path or one that resolves to the input. Every
+    refusal is positioned at the end of input, since the whole input was read before the output."""
     if os.path.lexists(out_path):
-        raise MigrationError("output {} already exists (it is never overwritten)".format(out_path))
+        raise _output_error(text, "output {} already exists (it is never overwritten)"
+                            .format(out_path))
     if os.path.realpath(out_path) == os.path.realpath(in_path):
-        raise MigrationError("output {} resolves to the input".format(out_path))
+        raise _output_error(text, "output {} resolves to the input".format(out_path))
     try:
         fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except OSError as exc:
-        raise MigrationError("cannot create output {}: {}".format(out_path, exc.strerror or exc))
+        raise _output_error(text, "cannot create output {}: {}".format(out_path,
+                                                                       exc.strerror or exc))
     created = None
     try:
         created = os.fstat(fd)
@@ -317,7 +356,7 @@ def write_output(in_path, out_path, text):
                 os.close(fd)
             except OSError:
                 pass
-        raise MigrationError("cannot write output {}: {}; {}".format(
+        raise _output_error(text, "cannot write output {}: {}; {}".format(
             out_path, exc.strerror or exc, _remove_partial(out_path, created)))
 
 
@@ -355,11 +394,13 @@ def main(argv):
         sys.stdout.write(json.dumps(out) + "\n")
         return 0
     if len(argv) != 2 or not all(argv) or any(a.startswith("-") for a in argv):
-        _fail("usage: {0}.py <input> <output> | {0}.py --dump-old-cells <input>".format(PROG), 2)
+        _fail("{0}: usage: {1}.py <input> <output> | {1}.py --dump-old-cells <input>"
+              .format(NOT_READ, PROG), 2)
     in_path, out_path = os.path.abspath(argv[0]), os.path.abspath(argv[1])
     try:
         if in_path == out_path:
-            raise MigrationError("output path is the input path (the script never writes in place)")
+            raise MigrationError("{}: output path is the input path (the script never writes in "
+                                 "place)".format(NOT_READ))
         new_text, rows = convert(read_input(in_path))
         write_output(in_path, out_path, new_text)
     except MigrationError as exc:

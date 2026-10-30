@@ -47,6 +47,14 @@ StripProbe case is the class probe for that finding: it scans the enumerator sou
 lstrip or rstrip call with an explicit character set and requires each to be in a recorded allowlist
 with its reason, and requires each emitted value among them to carry the bare str.strip() blank test
 the hook applies, so a new narrower blank test fails the suite.
+
+The ErrorPosition cases prove that every failure the enumerator can produce begins with its position
+(round 9 X1): a line of the input, the line where the scan ended, or "before line 1" with the reason
+no line was read, for a missing, unreadable, FIFO, directory, device and invalid UTF-8 input, a
+malformed table, a usage error and a failed re-execution, in both modes. The PositionProbe case is
+the class probe for that finding: it scans the enumerator source for every BacklogError construction
+and every _fail call and requires each message to begin with a position, so a new failure that names
+none fails the suite.
 """
 
 from __future__ import annotations
@@ -56,6 +64,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -482,11 +491,10 @@ class FailClosed(EnumeratorHarness):
         # Finding R7: the report names the line of the first invalid byte, not only its offset.
         text = table(row("1")).encode("utf-8")
         line = text.count(b"\n") + 1
-        r = self.assert_fails(self.write(text + b"bad \xff byte\n"), needle="not valid UTF-8")
-        self.assertIn("line {}, byte offset {}".format(line, len(text) + 4), r.stderr)
-        r = self.assert_fails(self.write(b"# Backlog\n\nbad \xc3 here\n" + text),
-                              needle="not valid UTF-8")
-        self.assertIn("line 3, byte offset 15", r.stderr)
+        r = self.assert_fails(self.write(text + b"bad \xff byte\n"), line=line,
+                              needle="not valid UTF-8 (byte offset {})".format(len(text) + 4))
+        r = self.assert_fails(self.write(b"# Backlog\n\nbad \xc3 here\n" + text), line=3,
+                              needle="not valid UTF-8 (byte offset 15)")
 
     def test_missing_header(self):
         self.assert_fails("# Backlog\n\n" + row("1") + "\n", line=3, needle="before the header")
@@ -1127,6 +1135,177 @@ class StripProbe(unittest.TestCase):
                     self.assertTrue(has_bare_blank_test(func_node, receiver),
                                     "{} in {} is emitted, so its blank test must be the bare "
                                     "{}.strip() the hook applies".format(receiver, func, receiver))
+
+
+# Round 9 X1: a failure message, after the "FAIL: " prefix, begins with its position.
+POSITION_RE = re.compile(r"^orch-enumerate-backlog: FAIL: (line [1-9][0-9]*(?: \(end of input\))?"
+                         r"|before line 1 \((?:input unreadable|no input read)\)): \S")
+BEFORE_INPUT = "before line 1 (input unreadable)"
+NOT_READ = "before line 1 (no input read)"
+
+# Runs the enumerator with sys.executable pointing at an absent interpreter, so its re-execution
+# under python3 -I fails (the same technique as the doctor suite).
+FAILED_REEXEC_PROG = """
+import runpy, sys
+sys.executable = sys.argv[2]
+sys.argv = [sys.argv[1], sys.argv[3]]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+
+
+class ErrorPosition(EnumeratorHarness):
+    """Every failure the enumerator can produce names its position (round 9 X1). In the table()
+    fixture the header is line 5 and the first row line 7."""
+
+    TIMEOUT = 20
+
+    def run_bounded(self, *args):
+        try:
+            return subprocess.run([sys.executable, "-I", str(SCRIPT), *[str(a) for a in args]],
+                                  capture_output=True, text=True, timeout=self.TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.fail("the enumerator did not exit within {} s for {!r}"
+                      .format(self.TIMEOUT, [str(a) for a in args]))
+
+    def assert_position(self, r, position, code=1):
+        self.assertEqual(r.returncode, code, "expected exit {}: {}".format(code, r.stderr))
+        self.assertEqual(r.stdout, "", "a failing enumerator prints no enumeration")
+        lines = r.stderr.splitlines()
+        self.assertEqual(len(lines), 1, "one failure line: {!r}".format(r.stderr))
+        match = POSITION_RE.match(lines[0])
+        self.assertIsNotNone(match, "the failure names no position: {!r}".format(lines[0]))
+        self.assertEqual(match.group(1), position, lines[0])
+
+    def assert_path_position(self, path, position):
+        for args in ((path,), ("--dump-cells", path)):
+            with self.subTest(args=[str(a) for a in args]):
+                self.assert_position(self.run_bounded(*args), position)
+
+    def test_missing_input(self):
+        self.assert_path_position(self._tmp / "absent.md", BEFORE_INPUT)
+
+    def test_unreadable_input(self):
+        if os.geteuid() == 0:
+            self.skipTest("root reads a mode-000 file")
+        path = self.write(table(row("1")))
+        os.chmod(path, 0)
+        self.assert_path_position(path, BEFORE_INPUT)
+
+    def test_a_path_through_a_file_and_a_symlink_loop(self):
+        # ENOTDIR and ELOOP from the open, cases that also run as root.
+        through = self.write(table(row("1"))) / "child.md"
+        loop = self._tmp / "loop.md"
+        os.symlink(loop.name, loop)
+        for path in (through, loop):
+            with self.subTest(path=str(path)):
+                self.assert_path_position(path, BEFORE_INPUT)
+
+    def test_fifo_symlink_to_a_fifo_directory_and_device(self):
+        fifo = self._tmp / "TODO.fifo"
+        os.mkfifo(fifo)
+        link = self._tmp / "link.md"
+        os.symlink(fifo, link)
+        directory = self._tmp / "TODO.d"
+        directory.mkdir()
+        if not os.path.exists(os.devnull):
+            self.fail("{} is absent, so the device case cannot run".format(os.devnull))
+        for path in (fifo, link, directory, Path(os.devnull)):
+            with self.subTest(path=str(path)):
+                self.assert_path_position(path, BEFORE_INPUT)
+
+    def test_invalid_utf8(self):
+        text = table(row("1")).encode("utf-8")
+        line = text.count(b"\n") + 1
+        self.assert_path_position(self.write(text + b"bad \xff byte\n"), "line {}".format(line))
+        self.assert_path_position(self.write(b"# Backlog\n\nbad \xc3 here\n" + text), "line 3")
+
+    def test_malformed_table_no_table_and_header_without_rows(self):
+        cases = [(table(row("1", state="done")), "line 7"), (table(), "line 5"),
+                 ("# Backlog\n\nNothing here.\n", "line 3 (end of input)"),
+                 ("", "line 1 (end of input)")]
+        for text, position in cases:
+            with self.subTest(position=position):
+                self.assert_path_position(self.write(text), position)
+
+    def test_usage_errors(self):
+        for args in ([], ["a.md", "b.md"], ["-x"], ["--dump-cells"], [""],
+                     ["--dump-cells", "a.md", "b.md"]):
+            with self.subTest(args=args):
+                self.assert_position(self.run_bounded(*args), NOT_READ, code=2)
+
+    def test_a_failed_reexecution(self):
+        missing = self._tmp / "no-such-python"
+        self.assertFalse(missing.exists(), "precondition: the interpreter path is absent")
+        env = dict(os.environ)
+        env.pop("PYTHONSAFEPATH", None)
+        r = subprocess.run([sys.executable, "-c", FAILED_REEXEC_PROG, str(SCRIPT), str(missing),
+                            str(self.write(table(row("1"))))], capture_output=True, text=True,
+                           env=env, cwd=str(self._tmp), timeout=self.TIMEOUT)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assert_position(r, NOT_READ)
+
+
+def _names_a_position(arg, error_name):
+    # True when a message argument begins with a position: a template starting "line {}" or
+    # "before line 1", or "{}: " (or "{0}: ") formatted with BEFORE_INPUT or NOT_READ first; for
+    # _fail, also str(exc), which relays an error whose construction this probe checks.
+    if error_name == "_fail" and isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) \
+            and arg.func.id == "str" and len(arg.args) == 1 \
+            and isinstance(arg.args[0], ast.Name) and arg.args[0].id == "exc":
+        return True
+    template, first = None, None
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        template = arg.value
+    elif isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) \
+            and arg.func.attr == "format" and isinstance(arg.func.value, ast.Constant) \
+            and isinstance(arg.func.value.value, str):
+        template = arg.func.value.value
+        first = arg.args[0] if arg.args else None
+    if template is None:
+        return False
+    if template.startswith(("line {}", "before line 1")):
+        return True
+    return template.startswith(("{}: ", "{0}: ")) and isinstance(first, ast.Name) \
+        and first.id in ("BEFORE_INPUT", "NOT_READ")
+
+
+def position_probe(source, error_name):
+    """(checked, violations) over every call of error_name or _fail in source: checked is the
+    number of calls, violations the (line, source) of each whose message names no position."""
+    checked, bad = 0, []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id in (error_name, "_fail"):
+            checked += 1
+            if not _names_a_position(node.args[0] if node.args else None, node.func.id):
+                bad.append((node.lineno, ast.unparse(node)))
+    return checked, bad
+
+
+def module_constants(source):
+    return {node.targets[0].id: node.value.value for node in ast.parse(source).body
+            if isinstance(node, ast.Assign) and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Constant)}
+
+
+class PositionProbe(unittest.TestCase):
+    # Class probe for round 9 X1: every BacklogError construction and every _fail call in the
+    # enumerator begins its message with a position.
+
+    def test_every_failure_message_in_the_enumerator_names_a_position(self):
+        if not SCRIPT.exists():
+            self.fail("enumerator not found: {}".format(SCRIPT))
+        source = SCRIPT.read_text(encoding="utf-8")
+        checked, bad = position_probe(source, "BacklogError")
+        # 6 at round 9: _line_error, _input_error, the two end-of-input errors, the usage _fail and
+        # the _fail that relays a BacklogError. Every line-numbered failure goes through _line_error.
+        self.assertGreaterEqual(checked, 6, "the probe found fewer failure sites than the "
+                                "enumerator held at round 9, so it is not reading them")
+        self.assertEqual(bad, [], "a failure message that names no position")
+        constants = module_constants(source)
+        self.assertEqual(constants.get("BEFORE_INPUT"), BEFORE_INPUT)
+        self.assertEqual(constants.get("NOT_READ"), NOT_READ)
+        self.assertIn("FAIL: before line 1 (no input read): cannot re-execute", source)
 
 
 class EndOfInput(EnumeratorHarness):

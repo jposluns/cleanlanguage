@@ -41,6 +41,14 @@ scans the migration source for every reference to an opener (open, fdopen, read_
 write_text, write_bytes, called, aliased or imported) and accepts only the os.open in the checked
 read helper and the exclusive create of the output, so a new unchecked open fails the suite. The
 no-header refusal names the line where the scan ended (finding S4).
+
+The ErrorPosition cases prove that every refusal the migration can produce begins with its position
+(round 9 X1): a line of the input, the line where the scan ended, the end of input for a refused
+output, or "before line 1" with the reason no line was read, for a missing, unreadable, FIFO,
+directory, device and invalid UTF-8 input, a malformed or empty table, every output refusal, a
+usage error and a failed re-execution. The PositionProbe case is the class probe for that finding:
+it scans the migration source for every MigrationError construction and every _fail call and
+requires each message to begin with a position, so a new refusal that names none fails the suite.
 """
 
 from __future__ import annotations
@@ -50,6 +58,7 @@ import collections
 import io
 import json
 import os
+import re
 import resource
 import shutil
 import signal
@@ -404,7 +413,8 @@ class WriteSafety(MigrateHarness):
         r = subprocess.run([sys.executable, "-I", "-c", RACE_PROG, str(MIGRATE), str(self.src),
                             str(self.dst)], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("refused: cannot create output", r.stdout)
+        self.assertIn("refused: line 1 (end of input, output refused): cannot create output",
+                      r.stdout)
         self.assertEqual(self.dst.read_bytes(), b"keep me\n")
 
     def test_a_failed_write_removes_the_partial_output(self):
@@ -446,9 +456,10 @@ class MalformedInput(MigrateHarness):
     def test_invalid_utf8_names_the_line(self):
         # Finding R7: the refusal names the line of the first invalid byte, not only its offset.
         text = old_fixture().encode("utf-8")
-        self.refuse(text + b"bad \xff byte\n", "line {}, byte offset {}".format(
-            text.count(b"\n") + 1, len(text) + 4))
-        self.refuse(b"# Backlog\n\nbad \xc3 here\n" + text, "line 3, byte offset 15")
+        self.refuse(text + b"bad \xff byte\n", "line {}: input {} is not valid UTF-8 (byte offset {})"
+                    .format(text.count(b"\n") + 1, self.src, len(text) + 4))
+        self.refuse(b"# Backlog\n\nbad \xc3 here\n" + text,
+                    "line 3: input {} is not valid UTF-8 (byte offset 15)".format(self.src))
 
     def test_already_migrated(self):
         text = "\n".join([NEW_HEADER, "|---|---|---|---|---|---|---|---|",
@@ -492,7 +503,7 @@ class MalformedInput(MigrateHarness):
         self.refuse(old_fixture(rows=["| 1 | a | b | c |", OLD_HEADER]), "line 8: second header")
 
     def test_empty_table(self):
-        self.refuse(old_fixture(rows=[]), "no data row")
+        self.refuse(old_fixture(rows=[]), "line 5: header with no data row")
 
     def test_dump_old_cells_fails_closed(self):
         self.write_src(old_fixture(rows=["| 1 | a | b |"]))
@@ -840,6 +851,205 @@ class InputFileType(MigrateHarness):
         r = self.run_bounded(self.src, self.dst)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["converted"], 12000)
+
+
+# Round 9 X1: a refusal, after the "FAIL: " prefix, begins with its position.
+POSITION_RE = re.compile(r"^migrate-todo-aei: FAIL: (line [1-9][0-9]*(?: \(end of input"
+                         r"(?:, output refused)?\))?|before line 1 \((?:input unreadable|no input "
+                         r"read)\)): \S")
+BEFORE_INPUT = "before line 1 (input unreadable)"
+NOT_READ = "before line 1 (no input read)"
+
+# Runs the migration with sys.executable pointing at an absent interpreter, so its re-execution
+# under python3 -I fails (the same technique as the doctor suite).
+FAILED_REEXEC_PROG = """
+import runpy, sys
+sys.executable = sys.argv[2]
+sys.argv = [sys.argv[1], sys.argv[3]]
+runpy.run_path(sys.argv[0], run_name="__main__")
+"""
+
+
+def end_of_input(text):
+    # The position the migration names for an output refused after reading text.
+    lines = text.split("\n")
+    last = len(lines) - 1 if len(lines) > 1 and lines[-1] == "" else len(lines)
+    return "line {} (end of input, output refused)".format(last)
+
+
+class ErrorPosition(MigrateHarness):
+    """Every refusal the migration can produce names its position (round 9 X1). In old_fixture()
+    the header is line 5 and the first row line 7."""
+
+    TIMEOUT = 20
+
+    def run_bounded(self, *args, **kwargs):
+        try:
+            return subprocess.run([sys.executable, "-I", str(MIGRATE), *[str(a) for a in args]],
+                                  capture_output=True, text=True, timeout=self.TIMEOUT, **kwargs)
+        except subprocess.TimeoutExpired:
+            self.fail("the migration did not exit within {} s for {!r}"
+                      .format(self.TIMEOUT, [str(a) for a in args]))
+
+    def assert_position(self, r, position, code=1):
+        self.assertEqual(r.returncode, code, "expected exit {}: {}".format(code, r.stderr))
+        self.assertEqual(r.stdout, "")
+        lines = r.stderr.splitlines()
+        self.assertEqual(len(lines), 1, "one refusal line: {!r}".format(r.stderr))
+        match = POSITION_RE.match(lines[0])
+        self.assertIsNotNone(match, "the refusal names no position: {!r}".format(lines[0]))
+        self.assertEqual(match.group(1), position, lines[0])
+
+    def assert_input_position(self, path, position):
+        for args in ((path, self.dst), ("--dump-old-cells", path)):
+            with self.subTest(args=[str(a) for a in args]):
+                self.assert_position(self.run_bounded(*args), position)
+                self.assertFalse(os.path.lexists(self.dst), "a refused migration writes nothing")
+
+    def test_missing_input(self):
+        self.assert_input_position(self._tmp / "absent.md", BEFORE_INPUT)
+
+    def test_unreadable_input(self):
+        if os.geteuid() == 0:
+            self.skipTest("root reads a mode-000 file")
+        self.write_src(old_fixture())
+        os.chmod(self.src, 0)
+        self.assert_input_position(self.src, BEFORE_INPUT)
+
+    def test_a_path_through_a_file_and_a_symlink_loop(self):
+        # ENOTDIR and ELOOP from the open, cases that also run as root.
+        self.write_src(old_fixture())
+        loop = self._tmp / "loop.md"
+        os.symlink(loop.name, loop)
+        for path in (self.src / "child.md", loop):
+            with self.subTest(path=str(path)):
+                self.assert_input_position(path, BEFORE_INPUT)
+
+    def test_fifo_symlink_to_a_fifo_directory_and_device(self):
+        fifo = self._tmp / "TODO.fifo"
+        os.mkfifo(fifo)
+        link = self._tmp / "link.md"
+        os.symlink(fifo, link)
+        directory = self._tmp / "TODO.d"
+        directory.mkdir()
+        if not os.path.exists(os.devnull):
+            self.fail("{} is absent, so the device case cannot run".format(os.devnull))
+        for path in (fifo, link, directory, Path(os.devnull)):
+            with self.subTest(path=str(path)):
+                self.assert_input_position(path, BEFORE_INPUT)
+
+    def test_invalid_utf8(self):
+        text = old_fixture().encode("utf-8")
+        self.write_src(text + b"bad \xff byte\n")
+        self.assert_input_position(self.src, "line {}".format(text.count(b"\n") + 1))
+        self.write_src(b"# Backlog\n\nbad \xc3 here\n" + text)
+        self.assert_input_position(self.src, "line 3")
+
+    def test_malformed_input(self):
+        cases = [(old_fixture(rows=["| 1 | a | b |"]), "line 7"), (old_fixture(rows=[]), "line 5"),
+                 ("# Backlog\n\nNo table.\n", "line 3 (end of input)"), ("", "line 1 (end of input)"),
+                 (old_fixture().replace(OLD_HEADER, NEW_HEADER), "line 5")]
+        for text, position in cases:
+            with self.subTest(position=position):
+                self.write_src(text)
+                self.assert_input_position(self.src, position)
+
+    def test_every_output_refusal(self):
+        text = old_fixture()
+        self.write_src(text)
+        self.assert_position(self.run_bounded(self.src, self.src), NOT_READ)
+        self.dst.write_bytes(b"keep me\n")
+        self.assert_position(self.run_bounded(self.src, self.dst), end_of_input(text))
+        self.dst.unlink()
+        self.dst.symlink_to(self._tmp / "nowhere.md")
+        self.assert_position(self.run_bounded(self.src, self.dst), end_of_input(text))
+        self.dst.unlink()
+        self.assert_position(self.run_bounded(self.src, self._tmp / "absent-dir" / "out.md"),
+                             end_of_input(text))
+        r = self.run_bounded(self.src, self.dst, preexec_fn=_limit_file_size)
+        self.assert_position(r, end_of_input(text))
+        self.assertIn("cannot write output", r.stderr)
+        self.assertFalse(os.path.lexists(self.dst), "a failed write leaves no partial output")
+
+    def test_usage_errors(self):
+        for args in ([], [self.src], [self.src, self.dst, "x"], ["--dump-old-cells"], ["", ""],
+                     ["-x", self.dst]):
+            with self.subTest(args=[str(a) for a in args]):
+                self.assert_position(self.run_bounded(*args), NOT_READ, code=2)
+
+    def test_a_failed_reexecution(self):
+        missing = self._tmp / "no-such-python"
+        self.assertFalse(missing.exists(), "precondition: the interpreter path is absent")
+        self.write_src(old_fixture())
+        env = dict(os.environ)
+        env.pop("PYTHONSAFEPATH", None)
+        r = subprocess.run([sys.executable, "-c", FAILED_REEXEC_PROG, str(MIGRATE), str(missing),
+                            str(self.src)], capture_output=True, text=True, env=env,
+                           cwd=str(self._tmp), timeout=self.TIMEOUT)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assert_position(r, NOT_READ)
+
+
+def _names_a_position(arg, error_name):
+    # True when a message argument begins with a position: a template starting "line {}" or
+    # "before line 1", or "{}: " (or "{0}: ") formatted with BEFORE_INPUT or NOT_READ first; for
+    # _fail, also str(exc), which relays an error whose construction this probe checks.
+    if error_name == "_fail" and isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) \
+            and arg.func.id == "str" and len(arg.args) == 1 \
+            and isinstance(arg.args[0], ast.Name) and arg.args[0].id == "exc":
+        return True
+    template, first = None, None
+    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+        template = arg.value
+    elif isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) \
+            and arg.func.attr == "format" and isinstance(arg.func.value, ast.Constant) \
+            and isinstance(arg.func.value.value, str):
+        template = arg.func.value.value
+        first = arg.args[0] if arg.args else None
+    if template is None:
+        return False
+    if template.startswith(("line {}", "before line 1")):
+        return True
+    return template.startswith(("{}: ", "{0}: ")) and isinstance(first, ast.Name) \
+        and first.id in ("BEFORE_INPUT", "NOT_READ")
+
+
+def position_probe(source, error_name):
+    """(checked, violations) over every call of error_name or _fail in source: checked is the
+    number of calls, violations the (line, source) of each whose message names no position."""
+    checked, bad = 0, []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                and node.func.id in (error_name, "_fail"):
+            checked += 1
+            if not _names_a_position(node.args[0] if node.args else None, node.func.id):
+                bad.append((node.lineno, ast.unparse(node)))
+    return checked, bad
+
+
+def module_constants(source):
+    return {node.targets[0].id: node.value.value for node in ast.parse(source).body
+            if isinstance(node, ast.Assign) and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Constant)}
+
+
+class PositionProbe(unittest.TestCase):
+    # Class probe for round 9 X1: every MigrationError construction and every _fail call in the
+    # migration begins its message with a position.
+
+    def test_every_refusal_in_the_migration_names_a_position(self):
+        if not MIGRATE.exists():
+            self.fail("migration not found: {}".format(MIGRATE))
+        source = MIGRATE.read_text(encoding="utf-8")
+        checked, bad = position_probe(source, "MigrationError")
+        # 19 at round 9: every MigrationError construction and every _fail call in the migration.
+        self.assertGreaterEqual(checked, 19, "the probe found fewer refusal sites than the "
+                                "migration held at round 9, so it is not reading them")
+        self.assertEqual(bad, [], "a refusal message that names no position")
+        constants = module_constants(source)
+        self.assertEqual(constants.get("BEFORE_INPUT"), BEFORE_INPUT)
+        self.assertEqual(constants.get("NOT_READ"), NOT_READ)
+        self.assertIn("FAIL: before line 1 (no input read): cannot re-execute", source)
 
 
 # Every name that opens or reads a path; a reference to any of them, called, aliased or imported,

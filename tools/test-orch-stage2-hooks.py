@@ -64,7 +64,11 @@ and W2): the PRECHECK_SITES table lists every _site call in the doctor with its 
 condition and hook citation, a source probe keeps the table and the doctor in step, and for each
 site with an earlier exit a contrast case puts a FIFO where the hook takes that exit and requires
 that the doctor runs and that the same hook call path completes, beside the case in which the open
-is reached and the doctor refuses.
+is reached and the doctor refuses. The DoctorScopeMargin cases prove that a lease within
+SCOPE_MARGIN seconds of either freshness bound the hook applies, the max_age_hours upper bound and
+the clock-skew lower bound for a future mtime, makes the doctor check both scope opens, the holder
+lease and the mode record, refusing a special file at either; each case goes red with
+SCOPE_MARGIN = 0.0 (round 9 X2).
 """
 
 from __future__ import annotations
@@ -2257,6 +2261,93 @@ class DoctorPrecheckSites(Stage2Harness):
                 self.tearDown()
                 self.setUp()
                 self._run_case(expect, case)
+
+
+class DoctorScopeMargin(Stage2Harness):
+    """Round 9 X2: the hook judges a lease fresh when -_ORCH_CLOCK_SKEW <= age <= max_age_hours *
+    3600 (aiqt_hooks.py:7792-7798), and the doctor treats a lease within SCOPE_MARGIN seconds of
+    either bound as possibly on either side (orch_doctor.py _lease_fresh_states), so it checks both
+    the holder lease open (scope.lease, 7807) and the mode record open (scope.mode, 7817). Each case
+    sets the lease mtime NEAR seconds from a bound, on the side where the doctor sample at the
+    clock now gives one answer and the sample SCOPE_MARGIN seconds later gives the other: just
+    inside max_age_hours at the upper bound, and just beyond the skew tolerance into the future at
+    the lower bound. A special file goes at one site at a time and must be refused there. With
+    SCOPE_MARGIN = 0.0 the doctor samples one side only, so the upper case misses the mode record
+    and the lower case misses the lease. A FIFO has size 0, so a FIFO lease is never live and never
+    opened (case_lease_holder_fifo_is_empty): the special lease is a non-empty directory, which the
+    hook does open, and the special mode record is a FIFO. The skew is read from the hook source and
+    max_age_hours from the fixture registry, not restated here."""
+
+    NEAR = 4.5  # seconds from the bound; the case needs the doctor to check within this time
+
+    SPECIAL_TIMEOUT = Doctor.SPECIAL_TIMEOUT
+    _doctor_bounded = Doctor._doctor_bounded
+
+    def setUp(self):
+        super().setUp()
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+
+    def _hook_constant(self, name):
+        for node in ast.parse(HOOK.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                    and isinstance(node.targets[0], ast.Name) and node.targets[0].id == name \
+                    and isinstance(node.value, ast.Constant):
+                return node.value.value
+        self.fail("{} is not a module constant of {}".format(name, HOOK))
+
+    def _registry(self):
+        reg = self.stage2()
+        reg["lease"]["holder_is_session_id"] = True
+        self.write_registry(reg)
+        self.set_items([item("42")])
+        return reg
+
+    def _lease_age(self, reg, bound):
+        if bound == "upper":
+            return reg["lease"]["max_age_hours"] * 3600 - self.NEAR
+        skew = self._hook_constant("_ORCH_CLOCK_SKEW")
+        self.assertIsInstance(skew, (int, float))
+        return -skew - self.NEAR
+
+    def _assert_refused_near(self, bound, site):
+        reg = self._registry()
+        lease = Path(self._p("session-state.md"))
+        mode = Path(self._p("operating-mode.md"))
+        if site == "scope.lease":
+            lease.mkdir()
+            (lease / "entry").write_text("held\n", encoding="utf-8")
+            path, label, kind = lease, "lease.path", "directory"
+        else:
+            lease.write_text("held by sess-1\n", encoding="utf-8")
+            mode.unlink()
+            os.mkfifo(mode)
+            path, label, kind = mode, "mode.path", "FIFO"
+        self.assertGreater(os.stat(lease).st_size, 0, "precondition: a non-empty lease")
+        age = self._lease_age(reg, bound)
+        start = time.time()
+        os.utime(lease, (start - age, start - age))
+        r = self._doctor_bounded("preflight", "stop", "--session-id", "sess-1")
+        elapsed = time.time() - start
+        self.assertLess(elapsed, self.NEAR, "the doctor took {:.1f} s, so the lease may have crossed "
+                        "the bound before the check and the case proves nothing".format(elapsed))
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("cannot evaluate: the declared {} {} is not a regular file (it is a {})"
+                      .format(label, path, kind), r.stdout)
+
+    def _both_sites(self, bound):
+        for site in ("scope.lease", "scope.mode"):
+            with self.subTest(bound=bound, site=site):
+                self.tearDown()
+                self.setUp()
+                self._assert_refused_near(bound, site)
+
+    def test_near_the_max_age_bound_both_scope_opens_are_checked(self):
+        self._both_sites("upper")
+
+    def test_near_the_clock_skew_bound_both_scope_opens_are_checked(self):
+        self._both_sites("lower")
 
 
 def doctor_precheck_sites(source):
