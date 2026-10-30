@@ -68,8 +68,11 @@ exclusive create, a RuntimeError or a KeyboardInterrupt, leaves no output file, 
 the partial output was removed; when that removal itself fails, the refusal names the file left
 behind and says it must be deleted before any retry; when the removal meets an exception that is
 not an OSError (os.lstat raising ValueError), the refusal still names the output and the exception
-type and says it must be deleted before any retry. The remaining residual is a process ended
-without an exception (a signal, exec or os._exit), which names no position.
+type and says it must be deleted before any retry; when os.fstat fails after the exclusive create,
+by an OSError or by a RuntimeError, and another file has replaced the output path, that file is
+left untouched and the refusal names the output and says it could not be confirmed as the file
+this run created and must be checked and deleted before any retry. The remaining residual is a
+process ended without an exception (a signal, exec or os._exit), which names no position.
 """
 
 from __future__ import annotations
@@ -1508,7 +1511,7 @@ os.execv(sys.executable, [sys.executable, "-I"] + sys.argv[2:])
 # nothing), run main on the JSON argument list argv[3] with stdout and stderr captured, and print
 # the exit code, whether a KeyboardInterrupt passed through, and both captured streams.
 GUARD_PROG = """
-import importlib.util, io, json, sys
+import importlib.util, io, json, os, sys
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("migrate_under_test", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
@@ -1562,6 +1565,27 @@ if stage == "fsync-lstat":
     # A RuntimeError at fsync whose removal of the partial output then meets a ValueError from
     # os.lstat, an exception that is not an OSError; lstat is replaced only after the create.
     mod.os.fsync = boom_then_odd_lstat
+real_fstat = mod.os.fstat
+
+
+def fstat_then_swap(error):
+    # os.fstat fails once the exclusive create has made the output, after another file has
+    # replaced the output path; the os.fstat of the input read, before the output exists, is real.
+    def fake(fd):
+        out_path = args[-1]
+        if not os.path.lexists(out_path):
+            return real_fstat(fd)
+        os.unlink(out_path)
+        with open(out_path, "w", encoding="utf-8") as fh:
+            fh.write("a file this run did not create")
+        raise error
+    return fake
+
+
+if stage == "fstat-oserror":
+    mod.os.fstat = fstat_then_swap(OSError(5, "Input/output error"))
+if stage == "fstat-runtime":
+    mod.os.fstat = fstat_then_swap(RuntimeError("injected at the fstat-runtime stage"))
 out, err = (Refusing() if stage == "stdout" else Sink()), io.StringIO()
 real = (sys.stdout, sys.stderr)
 sys.stdout, sys.stderr = out, err
@@ -1575,6 +1599,7 @@ except KeyboardInterrupt:
 finally:
     sys.stdout, sys.stderr = real
     mod.os.lstat = real_lstat
+    mod.os.fstat = real_fstat
 print(json.dumps({"code": code, "interrupted": interrupted, "stdout": out.getvalue(),
                   "stderr": err.getvalue()}))
 """
@@ -1732,6 +1757,34 @@ class RuntimeGuard(MigrateHarness):
                           os.path.abspath(str(self.dst))), result["stderr"])
         self.assertNotIn("was removed", result["stderr"])
         self.assertTrue(os.path.lexists(self.dst), "the failed check left the partial output")
+
+    def test_an_fstat_failure_after_the_create_never_removes_a_file_swapped_in(self):
+        # os.fstat fails once the exclusive create has made the output, so the identity of the file
+        # this run created is never read, and another file has replaced the output path by then. By
+        # an OSError (refused through the write path) or by a RuntimeError (refused by the runtime
+        # guard), the replacement is left untouched, and the positioned refusal names the output
+        # and says it could not be confirmed as the file this run created and must be checked and
+        # deleted before any retry.
+        text = old_fixture()
+        self.write_src(text)
+        dst = os.path.abspath(str(self.dst))
+        status = ("the partial output could not be confirmed as the file this run created, so the "
+                  "path was left in place; check it and delete it before any retry")
+        cases = (("fstat-oserror", "cannot write output {}: Input/output error; {}".format(
+                     dst, status)),
+                 ("fstat-runtime", "unexpected RuntimeError: injected at the fstat-runtime stage; "
+                  "output {}: {}".format(dst, status)))
+        for stage, needle in cases:
+            with self.subTest(stage=stage):
+                result = self.run_stage(MIGRATE, stage, self.src, self.dst)
+                self.assertFalse(result["interrupted"])
+                self.assertEqual(result["stdout"], "")
+                self.assert_guarded(result["code"], result["stderr"], end_of_input(text), needle)
+                self.assertNotIn("was removed", result["stderr"])
+                self.assertTrue(os.path.lexists(self.dst), "the file swapped in was removed")
+                self.assertEqual(self.dst.read_text(encoding="utf-8"),
+                                 "a file this run did not create", "the file swapped in changed")
+                self.dst.unlink()
 
     def test_a_keyboard_interrupt_is_not_caught(self):
         self.write_src(old_fixture())

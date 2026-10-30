@@ -57,13 +57,17 @@ Write safety: the script never writes in place. The output path must be given ex
 exist (not even as a dangling symlink), and must not resolve to the input. It is created with
 O_CREAT | O_EXCL and mode 0600, so an existing file is never overwritten. A write that fails part
 way, by an OSError such as ENOSPC or by any other exception (for example a MemoryError while the
-text is encoded, or a KeyboardInterrupt), removes the partial output it created, so a failed run
-never leaves a truncated file that a later step could mistake for a complete conversion; an OSError
-is refused with exit 1 there, and any other exception propagates to the runtime guard below (or,
-for a KeyboardInterrupt, ends the run). Either refusal names the output and says, in the same
-words, what became of the partial output: removed, left in place because the path no longer names
-the file this run created, or NOT removed and to be deleted before any retry. Applying the output
-to the record store is a separate step outside this script.
+text is encoded, or a KeyboardInterrupt), removes the partial output it created where it can, so
+a later step does not mistake a truncated file for a complete conversion. The path is unlinked
+only once it is confirmed to name the file this run created (the device and inode read with fstat
+after the create), so a file this run did not create is never removed: a path whose identity was
+never read, or that now names another file, is left in place.
+An OSError is refused with exit 1 there, and any other exception propagates to the runtime guard
+below (or, for a KeyboardInterrupt, ends the run). Either refusal names the output and says, in the
+same words, what became of the partial output: removed, left in place because the path no longer
+names the file this run created, left in place because it could not be confirmed as the file this
+run created and to be checked and deleted before any retry, or NOT removed and to be deleted
+before any retry. Applying the output to the record store is a separate step outside this script.
 
 Usage:
     migrate-todo-aei.py <input> <output>
@@ -405,17 +409,21 @@ def write_output(in_path, out_path, text, reached=None):
 def _remove_partial(out_path, created):
     """Remove the partial output this run created; the path is unlinked only while it is still the
     file the exclusive create made (same device and inode), so a file swapped in since is kept.
+    When that identity was never read (created is None, an fstat that failed after the create),
+    nothing is unlinked and the status says the path must be checked and deleted before any retry.
     It is total: an Exception that is not an OSError, from the check, the removal or the formatting
     of a status, returns a status naming its type instead of escaping, so the refusal of the caller
     always says what became of the partial output. KeyboardInterrupt and SystemExit are not
     Exception and pass through."""
     try:
+        if created is None:
+            return ("the partial output could not be confirmed as the file this run created, so "
+                    "the path was left in place; check it and delete it before any retry")
         try:
             current = os.lstat(out_path)
         except OSError as exc:
             return "the partial output could not be checked ({})".format(exc.strerror or exc)
-        if created is not None and ((current.st_dev, current.st_ino)
-                                    != (created.st_dev, created.st_ino)):
+        if (current.st_dev, current.st_ino) != (created.st_dev, created.st_ino):
             return "the path no longer names the file this run created, so it was left in place"
         try:
             os.unlink(out_path)
