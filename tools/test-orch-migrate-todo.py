@@ -14,8 +14,8 @@ the plan on the output:
 They also prove the write-safety contract: the script refuses its input as output, an existing
 output path (including a dangling symlink), and an already migrated or malformed input, and in each
 refused case writes nothing. A file that appears after the existence check is never truncated (the
-exclusive create refuses it), and a write that fails part way removes its partial output (finding
-L5). A row whose "|" is kept off column 0 by an invisible, combining, filler, no-break or blockquote
+exclusive create refuses it), and a write that fails part way removes its partial output. A row
+whose "|" is kept off column 0 by an invisible, combining, filler, no-break or blockquote
 prefix, a GFM row with no leading pipe, and a prose line with a mid-line pipe are each refused by
 both parsers, so the two-parser loss check fails rather than agreeing on the loss (one rule:
 any "|" off a column-0 table line), and a class probe runs that rule in both parsers

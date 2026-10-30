@@ -545,8 +545,8 @@ class CorruptedRegistry(HookHarness):
         self.assertEqual(r.stdout.strip(), "")
 
     def test_stop_guard_fails_open_warn(self):
-        # DURABLE PIN of the fail-OPEN posture at aiqt_hooks.py:8579-8583, refuting the gemini seed's
-        # fail-closed claim: a bad registry warns (exit 0) and blocks NOTHING at the Stop boundary.
+        # DURABLE PIN of the fail-OPEN posture at aiqt_hooks.py:8579-8583, not fail-closed: a
+        # bad registry warns (exit 0) and blocks NOTHING at the Stop boundary.
         self.write_registry(self.TRUNCATED)
         r = self.run_hook("orch_stop_guard", {})
         self.assertEqual(r.returncode, 0, r.stderr)

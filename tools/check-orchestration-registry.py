@@ -808,8 +808,8 @@ def validate(path):
         # ADDITIONALLY compare RESOLVED paths: an EXISTING symlink alias makes two
         # different spellings resolve to the same file, which the lexical check cannot see. os.path.realpath
         # resolves existing symlink components and leaves a non-existent tail intact, so a record/lease path
-        # that resolves onto or into the resolved state_dir is caught even when the spellings differ (codex
-        # reproduced: state_dir "/dev/shm" + record "/run/shm/resume-barrier.json" where /run/shm -> /dev/shm
+        # that resolves onto or into the resolved state_dir is caught even when the spellings differ (for
+        # example state_dir "/dev/shm" + record "/run/shm/resume-barrier.json" where /run/shm -> /dev/shm
         # resolve to the same barrier file). BOTH the lexical and the resolved check run -- defence in depth.
         # realpath is computed on the same state_dir as on each declared path, so a symlink anywhere in a
         # shared prefix resolves identically on both sides and cannot manufacture a false collision for a
