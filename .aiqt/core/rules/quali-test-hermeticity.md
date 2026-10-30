@@ -31,3 +31,30 @@ ownership of only paths within a temporary location it made for itself and remov
 mutates state outside that location. Where a test must walk real parent directories, it bounds the walk by
 that fixture root, never by a host property such as ownership, which can reach far past the fixture and
 disturb unrelated state.
+
+Where verification substitutes for an external executable that the code under test reaches by command lookup
+or process launch, the substitute is an executable fixture, never a shell function or alias; an in-process
+double of the launch interface, which launches nothing, is outside this requirement. The verification declares
+the shells, if any, and the invocation routes it exercises, including child processes, has each fixture record
+the invocations it receives, and checks that invocation evidence against the invocations each test case
+expects. The harness initializes executable lookup and configuration from controlled inputs. The routes,
+including absolute paths, a replaced search path, and clients implemented without that executable, by which
+the substituted executable is launched or its service reached are all routes that the code under test, or
+the verification itself (its test cases, inputs, fixtures, harness, and mutations), can take when run as
+the verification runs it, including routes taken in turn, at any depth, by anything loaded, launched, or
+contacted along such a route; a route counts whether or not review finds it, and a route reachable only
+under inputs the verification neither supplies nor passes through does not count. Where any such route
+could, in that run, reach live credentials, among them credentials inherited through the passed
+environment, reach remote services, or write outside the fixture, the harness enforces isolation
+over every such route: it removes access to live credentials and remote services and confines writes
+to its fixture.
+Only where every such route to that executable or its service, not only the declared invocation routes,
+reaches no live credentials or remote services and writes only fixture state do executable fixtures and checked
+invocation evidence suffice without enforced isolation. Placing a fixture first on the executable
+search path does not intercept absolute-path calls, calls using a replaced search path, or clients
+implemented without that executable, so executable fixtures supplement required isolation and never replace
+it. If the required isolation cannot be established, or the verification cannot determine whether it is
+required, execution is refused and verification reports that it cannot be evaluated. Missing, malformed,
+or unexpected invocation evidence fails verification. Shell functions may
+themselves be the subject of a test; where that test also substitutes for an external executable, the
+requirements above apply to the substitution.

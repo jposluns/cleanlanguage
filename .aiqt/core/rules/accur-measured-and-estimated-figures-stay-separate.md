@@ -19,7 +19,6 @@ zero sits in a total as though it were measured. Any figure derived from an esti
 percentage, or a total that an estimated input feeds, is itself an estimate and is labelled as one.
 
 This does not forbid estimates, forecasts, or a combined figure whose composition is stated, such as a
-measured 40 plus an estimated 25 reported as roughly 65. What it forbids is the unlabelled blend: an estimate
-folded into a measured total and the whole presented as if it were measured. The label is the release. A
-figure that carries its grade honestly is sound however uncertain it is; a figure that hides its grade
-misreports precision it does not have.
+measured 40 plus an estimated 25 reported as roughly 65. A figure that
+carries its grade honestly is sound however uncertain; one that hides it misreports precision it does
+not have.

@@ -20,3 +20,14 @@ outside the intended tree. After the object is opened it confirms the opened obj
 because a name-based check performed before the open describes a path that may no longer point where it did.
 Where the platform offers no race-free containment primitive, the operation fails closed rather than
 falling back to an unguarded name-based resolution.
+
+When such code classifies a control or state path, a lock, marker, journal, or state directory, to
+decide what to do, the classification is a no-follow inspection bound to a trusted directory
+descriptor, never a re-resolved string-path existence or type check that follows links. The result
+is three-way: genuine absence, which may legitimately mean nothing to do; presence with exactly the
+expected type, confirmed on the opened object rather than on the name; and everything else, a
+regular file where a directory was expected, a symbolic link, a dangling link, any other wrong-type
+entry, a malformed name, or an entry the code cannot evaluate, which is refused as an error and
+never collapsed into absence or treated as clean. Enumeration and use after classification stay
+bound to the same descriptor rather than re-resolving the string path, so a substitution of the
+name cannot redirect those operations to a different object.

@@ -5,7 +5,7 @@ This suite proves that the stage-1 `.aiqt/orchestration.json` arming keys `recor
 `state_dir` actually change the installed hook's behaviour, and that the change adds no unbounded or
 fail-closed path beyond the pre-existing bad-registry class. The fourth stage-1 key, `dispatch_tools`,
 is NOT behaviourally load-bearing at its committed value `[]`: the recorder reads it as
-`reg.get("dispatch_tools") if isinstance(..., list) else []` (aiqt_hooks.py:9277-9280), so declaring
+`reg.get("dispatch_tools") if isinstance(..., list) else []` (aiqt_hooks.py:orch_dispatch_ledger), so declaring
 `[]` is identical to omitting the key, and a background Bash or a TaskOutput is recorded regardless of
 it. `dispatch_tools` only EXTENDS the dispatch set with extra tool names; the committed `[]` is declared
 for honesty and explicitness, not because it flips any assertion here. It does so by
@@ -27,10 +27,10 @@ behaviourally identical to omitting it, so a two-key contrast on it would prove 
 
 Grounding: every hook-behaviour assertion below is read from
 plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py at source; the cited line numbers are in the
-per-test comments. Dispatch-action names are the HANDLERS keys (aiqt_hooks.py:10594-10619), passed as
-the single argv (main(sys.argv[1:]), aiqt_hooks.py:10724). The repo root is the git top level of
-data["cwd"] (_orch_root -> _recovery_toplevel, aiqt_hooks.py:7590-7595, 3859), and scope goes live only
-when the declared lease file is present, non-empty and fresh (_orch_scope_live, aiqt_hooks.py:7779-7817).
+per-test comments. Dispatch-action names are the HANDLERS keys (aiqt_hooks.py:HANDLERS), passed as
+the single argv (main(sys.argv[1:]), aiqt_hooks.py:main). The repo root is the git top level of
+data["cwd"] (_orch_root -> _recovery_toplevel, aiqt_hooks.py:_orch_root, aiqt_hooks.py:_recovery_toplevel), and scope goes live only
+when the declared lease file is present, non-empty and fresh (_orch_scope_live, aiqt_hooks.py:_orch_scope_live).
 """
 
 from __future__ import annotations
@@ -201,12 +201,12 @@ class HookHarness(unittest.TestCase):
 
 
 # =====================================================================================================
-# 1. orch_dispatch_ledger (PostToolUse recorder; aiqt_hooks.py:9248-9304)
+# 1. orch_dispatch_ledger (PostToolUse recorder; aiqt_hooks.py:orch_dispatch_ledger)
 # =====================================================================================================
 class DispatchLedger(HookHarness):
     def test_background_bash_synthesized_id_wake_false(self):
         # A background Bash with no observed task id gets a synthesized "disp-" id and wake=False, so it
-        # can never be counted as a live task (aiqt_hooks.py:9279-9296).
+        # can never be counted as a live task (aiqt_hooks.py:orch_dispatch_ledger).
         self.write_registry(self.stage1())
         self.arm_lease()
         r = self.run_hook("orch_dispatch_ledger", {
@@ -223,7 +223,7 @@ class DispatchLedger(HookHarness):
         self.assertTrue(rows[0]["task_id"].startswith("disp-"))
 
     def test_background_bash_observed_id_wake_true(self):
-        # A REAL observed task id (tool_response.task_id) records wake=True (aiqt_hooks.py:9284-9296).
+        # A REAL observed task id (tool_response.task_id) records wake=True (aiqt_hooks.py:orch_dispatch_ledger).
         self.write_registry(self.stage1())
         self.arm_lease()
         r = self.run_hook("orch_dispatch_ledger", {
@@ -236,7 +236,7 @@ class DispatchLedger(HookHarness):
         self.assertEqual(rows[0], {**rows[0], "event": "launch", "task_id": "task-abc", "wake": True})
 
     def test_taskoutput_with_id_completes(self):
-        # TaskOutput carrying a task id appends a complete row, wake=True (aiqt_hooks.py:9264-9267).
+        # TaskOutput carrying a task id appends a complete row, wake=True (aiqt_hooks.py:orch_dispatch_ledger).
         self.write_registry(self.stage1())
         self.arm_lease()
         r = self.run_hook("orch_dispatch_ledger", {
@@ -250,7 +250,7 @@ class DispatchLedger(HookHarness):
 
     def test_two_key_registry_writes_nothing(self):
         # LOAD-BEARING contrast: with the two-key registry scope is never live (no lease, no mode), so
-        # the recorder returns _allow() and writes NO ledger anywhere (aiqt_hooks.py:9258-9259).
+        # the recorder returns _allow() and writes NO ledger anywhere (aiqt_hooks.py:orch_dispatch_ledger).
         self.write_registry(self.two_key())
         self.arm_lease()  # a lease file exists but the registry declares none, so scope stays inert
         r = self.run_hook("orch_dispatch_ledger", {
@@ -264,7 +264,7 @@ class DispatchLedger(HookHarness):
 
 
 # =====================================================================================================
-# 2. TaskOutput with no id -> unbound systemMessage, no row (aiqt_hooks.py:9268-9275)
+# 2. TaskOutput with no id -> unbound systemMessage, no row (aiqt_hooks.py:orch_dispatch_ledger)
 # =====================================================================================================
 class TaskOutputNoId(HookHarness):
     def test_unbound_taskoutput(self):
@@ -280,12 +280,12 @@ class TaskOutputNoId(HookHarness):
 
 
 # =====================================================================================================
-# 3. orch_prompt_stamp (UserPromptSubmit recorder; aiqt_hooks.py:9307-9348)
+# 3. orch_prompt_stamp (UserPromptSubmit recorder; aiqt_hooks.py:orch_prompt_stamp)
 # =====================================================================================================
 class PromptStamp(HookHarness):
     def test_human_prompt_stamps_and_zeroes_counters(self):
         # A genuine human prompt stamps last_human_input_utc and zeroes both denial counters
-        # (aiqt_hooks.py:9327-9333). LOAD-BEARING: the turn-state is SEEDED with NONZERO stop/schedule
+        # (aiqt_hooks.py:orch_prompt_stamp). LOAD-BEARING: the turn-state is SEEDED with NONZERO stop/schedule
         # denial counters first, so a broken implementation that dropped the reset (preserving the seeded
         # values) would fail these assertions instead of passing on a fresh (absent-key => 0) turn-state.
         # The prompt is not a seeded wake digest, so it is genuine human input, not timer-originated.
@@ -304,7 +304,7 @@ class PromptStamp(HookHarness):
     def test_timer_originated_prompt(self):
         # A prompt whose digest is a seeded wake digest is classified TIMER-ORIGINATED, injects the
         # measured gap, and consumes exactly one digest without resetting the counters
-        # (aiqt_hooks.py:9325, 9334-9348).
+        # (aiqt_hooks.py:orch_prompt_stamp).
         self.write_registry(self.stage1())
         self.arm_lease()
         prompt = "scheduled wake: recheck ci-7"
@@ -327,7 +327,7 @@ class PromptStamp(HookHarness):
 
     def test_two_key_registry_writes_nothing(self):
         # LOAD-BEARING contrast: two-key scope is inert, so no turn-state is written anywhere
-        # (aiqt_hooks.py:9317-9318).
+        # (aiqt_hooks.py:orch_prompt_stamp).
         self.write_registry(self.two_key())
         self.arm_lease()
         r = self.run_hook("orch_prompt_stamp", {"prompt": "please continue"})
@@ -337,12 +337,12 @@ class PromptStamp(HookHarness):
 
 
 # =====================================================================================================
-# 4. orch_resume_audit (SessionStart, warn-only; aiqt_hooks.py:9765-9794)
+# 4. orch_resume_audit (SessionStart, warn-only; aiqt_hooks.py:orch_resume_audit)
 # =====================================================================================================
 class ResumeAudit(HookHarness):
     def test_wrong_branch_handoff_arms_barrier(self):
         # A handoff naming a branch other than HEAD is a divergence finding; the audit warns and arms
-        # the resume barrier active:true (aiqt_hooks.py:9365-9370, 9783-9793).
+        # the resume barrier active:true (aiqt_hooks.py:_orch_resume_probes, aiqt_hooks.py:orch_resume_audit).
         self.write_registry(self.stage1())
         self.arm_lease()
         self.write_record_files(handoff="Branch: some-other-branch\n")
@@ -356,7 +356,7 @@ class ResumeAudit(HookHarness):
 
     def test_stale_gate_marker_arms_barrier(self):
         # A handoff gate marker citing a commit that is not HEAD is a divergence finding
-        # (aiqt_hooks.py:9371-9382).
+        # (aiqt_hooks.py:_orch_resume_probes).
         self.write_registry(self.stage1())
         self.arm_lease()
         self.write_record_files(handoff="Gate: green @ deadbeef1234\n")
@@ -368,11 +368,12 @@ class ResumeAudit(HookHarness):
 
     def test_clean_audit_clears_barrier(self):
         # With readable record surfaces, a fresh lease, and no divergence markers, the audit is clean:
-        # a silent allow and resume-barrier.json active:false (aiqt_hooks.py:9784, 9794).
-        # LOAD-BEARING: an ACTIVE barrier is SEEDED first (shape grounded at aiqt_hooks.py:9783-9785),
+        # a silent allow and resume-barrier.json active:false (aiqt_hooks.py:orch_resume_audit).
+        # LOAD-BEARING: an ACTIVE barrier is SEEDED first (shape grounded at aiqt_hooks.py:orch_resume_audit),
         # so this proves the clean audit CLEARS an existing barrier (overwrites active:true -> false),
         # not merely that a fresh barrier initializes inactive. orch_resume_audit writes the barrier with
-        # "active": bool(findings) unconditionally (mode "w", aiqt_hooks.py:9783-9785), so a no-findings
+        # "active": bool(findings) unconditionally (replaced whole, aiqt_hooks.py:orch_resume_audit
+        # `_orch_barrier_write(barrier_path, {"active": bool(findings),`), so a no-findings
         # audit overwrites the seed; removing that clear-write breaks this test.
         self.write_registry(self.stage1())
         self.arm_lease()
@@ -390,8 +391,8 @@ class ResumeAudit(HookHarness):
 
     def test_two_key_registry_finds_no_divergence(self):
         # LOAD-BEARING contrast: the same wrong-branch handoff file is on disk, but the two-key registry
-        # declares no record surface, so the audit reads nothing and stays clean (aiqt_hooks.py:9355,
-        # 9420) -- proving record.handoff is what makes the finding possible.
+        # declares no record surface, so the audit reads nothing and stays clean (aiqt_hooks.py:_orch_resume_probes,
+        # aiqt_hooks.py:_orch_merge_pending_findings) -- proving record.handoff is what makes the finding possible.
         self.write_registry(self.two_key())
         self.arm_lease()
         self.write_record_files(handoff="Branch: some-other-branch\n")
@@ -403,7 +404,7 @@ class ResumeAudit(HookHarness):
 
 
 # =====================================================================================================
-# 5. orch_resume_barrier (PreToolUse, warn-first BAKE posture; aiqt_hooks.py:9797-9845)
+# 5. orch_resume_barrier (PreToolUse, warn-first BAKE posture; aiqt_hooks.py:orch_resume_barrier)
 # =====================================================================================================
 class ResumeBarrier(HookHarness):
     def _arm_barrier(self, warned=False):
@@ -413,7 +414,7 @@ class ResumeBarrier(HookHarness):
 
     def test_first_out_of_allowlist_write_warns_once(self):
         # An active barrier surfaces the first mutation outside the allowlist exactly once, flipping
-        # warned:true (aiqt_hooks.py:9833-9845).
+        # warned:true (aiqt_hooks.py:orch_resume_barrier).
         self.write_registry(self.stage1())
         self._arm_barrier(warned=False)
         r = self.run_hook("orch_resume_barrier", {
@@ -426,7 +427,7 @@ class ResumeBarrier(HookHarness):
 
     def test_second_write_is_silent(self):
         # Once warned, further out-of-allowlist writes are silent: surface once per arming, never a nag
-        # wall (aiqt_hooks.py:9833-9834).
+        # wall (aiqt_hooks.py:orch_resume_barrier).
         self.write_registry(self.stage1())
         self._arm_barrier(warned=True)
         r = self.run_hook("orch_resume_barrier", {
@@ -437,7 +438,7 @@ class ResumeBarrier(HookHarness):
 
     def test_write_to_record_surface_is_silent(self):
         # The record surfaces stay writable, so the only exit (correcting the record) is never obstructed
-        # (aiqt_hooks.py:9820-9832).
+        # (aiqt_hooks.py:orch_resume_barrier).
         self.write_registry(self.stage1())
         self._arm_barrier(warned=False)
         self.write_record_files()
@@ -491,7 +492,7 @@ class CorruptedRegistry(HookHarness):
     TRUNCATED = '{ "version": 1, "record": { "findings":'
 
     def test_dispatch_ledger_silent_allow(self):
-        # status != "ok" -> _allow(); no row (aiqt_hooks.py:9256-9257).
+        # status != "ok" -> _allow(); no row (aiqt_hooks.py:orch_dispatch_ledger).
         self.write_registry(self.TRUNCATED)
         self.arm_lease()
         r = self.run_hook("orch_dispatch_ledger", {
@@ -502,7 +503,7 @@ class CorruptedRegistry(HookHarness):
         self.assertEqual(self.find_anywhere("dispatch-ledger.jsonl"), [])
 
     def test_prompt_stamp_silent_allow(self):
-        # status != "ok" -> _allow() (aiqt_hooks.py:9314-9315).
+        # status != "ok" -> _allow() (aiqt_hooks.py:orch_prompt_stamp).
         self.write_registry(self.TRUNCATED)
         self.arm_lease()
         r = self.run_hook("orch_prompt_stamp", {"prompt": "hello"})
@@ -512,7 +513,7 @@ class CorruptedRegistry(HookHarness):
 
     def test_resume_audit_warns_naming_the_registry(self):
         # status == "bad" -> a warn naming the unreadable registry and barrier active:true
-        # (aiqt_hooks.py:9776-9793).
+        # (aiqt_hooks.py:orch_resume_audit).
         self.write_registry(self.TRUNCATED)
         r = self.run_hook("orch_resume_audit", {})
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -522,15 +523,15 @@ class CorruptedRegistry(HookHarness):
         self.assertTrue(self.read_json_anywhere("resume-barrier.json")["active"])
 
     def test_resume_barrier_allows(self):
-        # status != "ok" -> _allow(), even with an ACTIVE barrier present (aiqt_hooks.py:9805-9807).
+        # status != "ok" -> _allow(), even with an ACTIVE barrier present (aiqt_hooks.py:orch_resume_barrier).
         # LOAD-BEARING: on a BAD registry _orch_state_dir_for_root falls back to
-        # the XDG default (aiqt_hooks.py:7658-7659 -> _state_dir_from_registry(root, None)), NOT the
+        # the XDG default (aiqt_hooks.py:_orch_state_dir_for_root -> _state_dir_from_registry(root, None)), NOT the
         # registry-declared state_dir, so orch_resume_barrier reads its barrier from the XDG default. We
         # ARM the barrier THERE by running orch_resume_audit first, which on a bad registry writes an
         # active barrier to that XDG default (proven by test_resume_audit_warns_naming_the_registry). The
         # real code takes the `status != "ok"` early-return and allows WITHOUT reading the barrier; a
         # mutant that DELETES that early-return would fall through, read this active barrier, and reach the
-        # record-allowlist build where `reg` is the bad-registry detail STRING (aiqt_hooks.py:9821),
+        # record-allowlist build where `reg` is the bad-registry detail STRING (aiqt_hooks.py:orch_resume_barrier),
         # changing the observed result (a fail-closed exit 2, not this clean exit-0 allow). The previous
         # version seeded into the DECLARED state_dir, where the fall-through never looks, so the barrier
         # was absent on both paths and the mutant survived.
@@ -545,7 +546,7 @@ class CorruptedRegistry(HookHarness):
         self.assertEqual(r.stdout.strip(), "")
 
     def test_stop_guard_fails_open_warn(self):
-        # DURABLE PIN of the fail-OPEN posture at aiqt_hooks.py:8579-8583, not fail-closed: a
+        # DURABLE PIN of the fail-OPEN posture at aiqt_hooks.py:_orch_stop_family, not fail-closed: a
         # bad registry warns (exit 0) and blocks NOTHING at the Stop boundary.
         self.write_registry(self.TRUNCATED)
         r = self.run_hook("orch_stop_guard", {})
@@ -557,7 +558,7 @@ class CorruptedRegistry(HookHarness):
     def test_yield_tool_fails_closed_deny(self):
         # PIN of the PRE-EXISTING fail-closed class (unchanged by stage 1): a bad registry denies a
         # scheduling call. A PreToolUse deny is exit 0 with permissionDecision "deny"
-        # (aiqt_hooks.py:8654-8661, _deny at :195-201).
+        # (aiqt_hooks.py:orch_yield_tool, _deny at :195-201).
         self.write_registry(self.TRUNCATED)
         r = self.run_hook("orch_yield_tool", {
             "tool_name": "ScheduleWakeup", "tool_input": {},
@@ -568,11 +569,11 @@ class CorruptedRegistry(HookHarness):
 
 
 # =====================================================================================================
-# 7. Missing / unwritable state_dir (aiqt_hooks.py:7666, 9301-9303)
+# 7. Missing / unwritable state_dir (aiqt_hooks.py:_orch_append_jsonl, aiqt_hooks.py:orch_dispatch_ledger)
 # =====================================================================================================
 class StateDirIO(HookHarness):
     def test_missing_state_dir_is_created_on_demand(self):
-        # The recorders makedirs the state dir on demand and the row lands (aiqt_hooks.py:7666).
+        # The recorders makedirs the state dir on demand and the row lands (aiqt_hooks.py:_orch_append_jsonl).
         self.write_registry(self.stage1())
         self.arm_lease()
         self.assertFalse(self.state_dir().exists(), "precondition: state_dir does not yet exist")
@@ -585,7 +586,7 @@ class StateDirIO(HookHarness):
     @unittest.skipIf(os.geteuid() == 0, "root bypasses directory write permissions")
     def test_unwritable_state_dir_surfaces_failed_write(self):
         # An unwritable state dir makes the ledger append fail; it surfaces a non-blocking systemMessage
-        # and never denies (aiqt_hooks.py:9301-9303). The prompt stamp likewise exits 0.
+        # and never denies (aiqt_hooks.py:orch_dispatch_ledger). The prompt stamp likewise exits 0.
         self.write_registry(self.stage1())
         self.arm_lease()
         sd = self.state_dir()
@@ -605,12 +606,12 @@ class StateDirIO(HookHarness):
 
 
 # =====================================================================================================
-# 8. Stale lease (aiqt_hooks.py:7793-7798, 9400-9401)
+# 8. Stale lease (aiqt_hooks.py:_orch_scope_live, aiqt_hooks.py:_orch_resume_probes)
 # =====================================================================================================
 class StaleLease(HookHarness):
     def test_recorders_noop_under_stale_lease(self):
         # A lease older than max_age_hours is not fresh, so scope is not live and the recorders write
-        # nothing (aiqt_hooks.py:7798-7799).
+        # nothing (aiqt_hooks.py:_orch_scope_live).
         self.write_registry(self.stage1())
         self.arm_lease(age_seconds=2 * 24 * 3600)  # two days old, past the 24h horizon
         r = self.run_hook("orch_dispatch_ledger", {
@@ -620,7 +621,7 @@ class StaleLease(HookHarness):
         self.assertEqual(self.find_anywhere("dispatch-ledger.jsonl"), [])
 
     def test_audit_reports_stale_lease(self):
-        # The resume audit surfaces the staleness as a warn-only finding (aiqt_hooks.py:9400-9401).
+        # The resume audit surfaces the staleness as a warn-only finding (aiqt_hooks.py:_orch_resume_probes).
         self.write_registry(self.stage1())
         self.arm_lease(age_seconds=2 * 24 * 3600)
         self.write_record_files(handoff="no markers\n")
@@ -632,13 +633,13 @@ class StaleLease(HookHarness):
 
 
 # =====================================================================================================
-# 9. Stop-family surface: stage-1 fixture, live lease, NO operator sentinel (aiqt_hooks.py:8196-8213,
-#    8190-8214, 8542-8566)
+# 9. Stop-family surface: stage-1 fixture, live lease, NO operator sentinel (aiqt_hooks.py:decide_yield,
+#    aiqt_hooks.py:_orch_record_forced_exit)
 # =====================================================================================================
 class StopFamilySurface(HookHarness):
     def test_stop_denies_with_no_enumerator(self):
         # With scope live and no enumerator declared, a turn-end Stop is DENIED once (exit 2) with the
-        # NO_ENUMERATOR reason (aiqt_hooks.py:7966-7968, 8196+8208-8213, 8590-8599).
+        # NO_ENUMERATOR reason (aiqt_hooks.py:_orch_enumerate, aiqt_hooks.py:decide_yield, aiqt_hooks.py:_orch_stop_family).
         self.write_registry(self.stage1())
         self.arm_lease()
         r = self.run_hook("orch_stop_guard", {})
@@ -647,7 +648,7 @@ class StopFamilySurface(HookHarness):
 
     def test_followup_stop_releases_with_forced_exit_row(self):
         # The follow-up Stop carrying stop_hook_active:true releases as ALLOW_WITH_FINDINGS (exit 0) and
-        # appends a forced-exit row (aiqt_hooks.py:8192-8195, 8601-8607, 8542-8561).
+        # appends a forced-exit row (aiqt_hooks.py:decide_yield, aiqt_hooks.py:_orch_stop_family, aiqt_hooks.py:_orch_record_forced_exit).
         self.write_registry(self.stage1())
         self.arm_lease()
         r = self.run_hook("orch_stop_guard", {"stop_hook_active": True})
@@ -660,10 +661,10 @@ class StopFamilySurface(HookHarness):
 
     def test_self_owned_sentinel_is_ignored_and_spoof_recorded(self):
         # A sentinel owned by the hook's OWN euid is not the operator's; it is ignored (the Stop still
-        # denies) and recorded as a spoof (aiqt_hooks.py:7897-7898, 8511-8521).
+        # denies) and recorded as a spoof (aiqt_hooks.py:_orch_escape_active, aiqt_hooks.py:_orch_record_escape_spoof).
         #
         # NOTE: the sentinel HONOUR leg (a sentinel owned by a DIFFERENT uid opening the clean-ALLOW
-        # channel, aiqt_hooks.py:8190-8191) needs a second uid to create a foreign-owned file and cannot
+        # channel, aiqt_hooks.py:decide_yield) needs a second uid to create a foreign-owned file and cannot
         # run in single-uid CI; it is verified at arming on the host with the root-owned sentinel.
         self.write_registry(self.stage1())
         self.arm_lease()

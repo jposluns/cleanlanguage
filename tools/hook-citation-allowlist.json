@@ -1,0 +1,64 @@
+{
+  "entries": [
+    {
+      "file": "tools/check-orchestration-registry.py",
+      "number": "8760",
+      "reason": "_ORCH_MAX_HORIZON_HOURS, the 8760-hour (365-day) horizon bound the gate mirrors as STALENESS_HOURS_MAX and MAX_AGE_HOURS_MAX; a value, not a hook line"
+    },
+    {
+      "file": "tools/check-orchestration-registry.py",
+      "number": "3600",
+      "reason": "seconds per hour in the lease freshness formula max_age * 3600; a value, not a hook line"
+    },
+    {
+      "file": "tools/check-orchestration-registry.py",
+      "number": "4096",
+      "reason": "PATH_MAX in bytes; a value, not a hook line"
+    },
+    {
+      "file": "tools/check-orchestration-registry.py",
+      "number": "4095",
+      "reason": "PATH_MAX - 1, the longest usable path in bytes; a value, not a hook line"
+    },
+    {
+      "file": "tools/migrate-todo-aei.py",
+      "number": "0600",
+      "reason": "the octal file mode of the migration output; a value, not a hook line"
+    },
+    {
+      "file": "tools/test-orch-enumerate-backlog.py",
+      "number": "2026",
+      "reason": "a year inside fixture backlog text; not a hook line"
+    },
+    {
+      "file": "tools/test-orch-migrate-todo.py",
+      "number": "2026",
+      "reason": "a year inside the malformed-date fixtures (2026/10/01); not a hook line"
+    },
+    {
+      "file": "tools/test-orch-stage2-hooks.py",
+      "number": "3600",
+      "reason": "seconds per hour in the lease freshness formula; a value, not a hook line"
+    },
+    {
+      "file": "tools/test-orchestration-registry.py",
+      "number": "4096",
+      "reason": "PATH_MAX in bytes; a value, not a hook line"
+    },
+    {
+      "file": "tools/test-orchestration-registry.py",
+      "number": "4095",
+      "reason": "PATH_MAX - 1, the longest usable path in bytes; a value, not a hook line"
+    },
+    {
+      "file": "tools/test-orchestration-registry.py",
+      "number": "3841",
+      "reason": "the byte length of a path fixture; a value, not a hook line"
+    },
+    {
+      "file": "tools/test-orchestration-registry.py",
+      "number": "4085",
+      "reason": "the byte length of a state_dir fixture; a value, not a hook line"
+    }
+  ]
+}

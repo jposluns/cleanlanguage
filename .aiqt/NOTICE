@@ -1,0 +1,206 @@
+AIQT Guardrails™: third-party attribution NOTICE
+
+This pack is published under the Apache License 2.0, except vendored third-party material which
+remains under its own terms (see below); see the LICENSE file. That licence covers the pack's own
+content and code, including its crosswalk mappings.
+
+AIQT Guardrails is authored and maintained by Jeff Posluns. The Apache License 2.0 covers the
+pack's copyrightable material and does not grant any trademark rights (Apache License 2.0, section
+6). AIQT™ and AIQT Guardrails™ are trademarks of Jeff Posluns (registration pending). AIQT is a
+brand, not a legal entity.
+
+The crosswalk mappings reference third-party security and AI-governance frameworks. Only control,
+guidance, risk, technique, and weakness IDENTIFIERS and their TITLES are reproduced, as
+navigational pointers (for public-domain sources such as NIST, a reproduced title may be a limited
+subcategory statement). No copyrighted specification prose, requirement text, control or clause
+bodies, figures, or tables from any framework are reproduced. Each framework's identifiers and
+titles remain the property of their respective publisher under the terms below, and no publisher
+listed here endorses, sponsors, or is affiliated with this pack.
+
+AIQT Guardrails reproduces only each referenced control's identifier and the publisher's official
+title or heading (or a brief AIQT-authored descriptor where the publisher publishes no title of
+its own), to help adopters align their own compliance and audit programs across frameworks. It
+reproduces no copyrighted requirement text, control descriptions, or other body content (for a
+public-domain source such as NIST, the publisher's official title reproduced as a pointer may
+itself be a subcategory statement, as noted above), and it lists only the controls it maps to its
+own rules. For OWASP MCP Top 10, OWASP Top 10 (Web Application Security Risks), and OWASP Top 10
+for LLM Applications it lists all 10 entries (the complete list); for every other referenced
+framework it lists a subset. To use the full standards, adopters must obtain them directly from
+the publisher and accept that publisher's own licence. AIQT Guardrails is not a substitute for,
+and does not relicense, any standard, and links adopters to each publisher's source.
+
+==================================================================================================
+
+Cloud Security Alliance
+-----------------------
+
+Frameworks referenced:
+  - CSA AI Controls Matrix (edition 1.1.0)
+      Required CSA attribution: attribute the portions to the Cloud Security Alliance AI Controls
+      Matrix Version 1.1.0.
+  - CSA Cloud Controls Matrix (edition 4.1.0)
+      Required CSA attribution: attribute the portions to the Cloud Security Alliance Cloud
+      Controls Matrix Version 4.1.0.
+
+Licence: Proprietary CSA copyright licence (non-commercial, no-redistribution reference use)
+(https://cloudsecurityalliance.org/artifacts/ccm-aicm-licensing-faq)
+
+The CSA matrices are copyright the Cloud Security Alliance under a non-commercial,
+no-redistribution, no-modification reference licence. This pack reproduces only control
+identifiers and titles as uncopyrightable factual pointers, with CSA attributed; it does NOT
+redistribute or relicense the CSA matrices, and reproduces no control-specification text. This
+pack's own Apache License 2.0 covers its own mappings, not the CSA catalogue.
+
+Attribution: Control identifiers and titles are Copyright the Cloud Security Alliance, used as
+factual references with attribution.
+
+CCM, AICM, and Cloud Security Alliance are works and marks of the Cloud Security Alliance.
+
+The Cloud Security Alliance does not endorse and is not affiliated with this pack; CSA marks are
+not used to imply endorsement.
+
+==================================================================================================
+
+ISO/IEC
+-------
+
+Frameworks referenced:
+  - ISO/IEC 23894:2023 AI guidance on risk management (edition 2023)
+  - ISO/IEC 42001:2023 AI management system (edition 2023)
+
+Licence: Proprietary International Standard (Copyright ISO/IEC)
+(https://www.iso.org/copyright.html)
+
+Copyright-protected International Standards. Only clause and Annex control NUMBERS and SHORT
+HEADINGS are reproduced, as navigational references for interoperability; NO clause, Annex, or
+requirement body text is reproduced. The full standards are available for purchase from ISO
+(https://www.iso.org). Referenced under fair use; this reuse is not affirmatively cleared by ISO
+and is made at the maintainer's discretion.
+
+Attribution: Clause and control identifiers and short headings from ISO/IEC 42001:2023 and ISO/IEC
+23894:2023 are Copyright ISO/IEC, referenced as navigational pointers only.
+
+ISO and IEC are protected marks of the International Organization for Standardization and the
+International Electrotechnical Commission.
+
+ISO/IEC does not endorse, license, or affiliate with this pack. This pack is not an ISO/IEC
+publication.
+
+==================================================================================================
+
+The MITRE Corporation
+---------------------
+
+Frameworks referenced:
+  - MITRE ATLAS (edition 2026.06)
+  - MITRE CWE (edition 4.20) [licensed CWE Terms of Use]
+      CWE Terms of Use (https://cwe.mitre.org/about/termsofuse.html), reproduced as the Terms
+      require: Copyright (c) 2006-2026, The MITRE Corporation. The MITRE Corporation hereby grants
+      you a non-exclusive, royalty-free license to use CWE for research, development, and
+      commercial purposes. Any copy you make for such purposes is authorized on the condition that
+      you reproduce MITRE's copyright designation and this license in any such copy. CWE, CWSS,
+      CWRAF, and the CWE logo are trademarks of The MITRE Corporation. This pack reproduces CWE
+      identifiers and short names only; no weakness description text is reproduced.
+
+Licence: Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0) (per-framework
+exceptions noted above)
+
+ATLAS data is licensed under the Apache License, Version 2.0. Identifiers and titles are
+reproduced as navigational pointers with the required copyright notice retained (Apache-2.0
+section 4).
+
+Attribution: MITRE ATLAS identifiers and titles: Copyright 2021-2026 The MITRE Corporation,
+licensed under the Apache License, Version 2.0. Approved for Public Release; Distribution
+Unlimited. Case Number 21-2363.
+
+MITRE ATLAS and MITRE ATT&CK are a trademark and registered trademark of The MITRE Corporation.
+
+The MITRE Corporation does not endorse and is not affiliated with this pack; MITRE marks and logos
+are not used.
+
+==================================================================================================
+
+National Institute of Standards and Technology
+----------------------------------------------
+
+Frameworks referenced:
+  - NIST AI Risk Management Framework (edition 1.0 (NIST AI 100-1))
+  - NIST SP 800-53 Security and Privacy Controls (edition Rev 5 (catalog 5.2.0))
+  - NIST Secure Software Development Framework (edition 1.1 (SP 800-218))
+
+Licence: U.S. Government work, public domain (17 U.S.C. 105)
+(https://www.nist.gov/open/copyright-fair-use-and-licensing-statements-srd-data-software-and-technical-series-publications)
+
+U.S. Government works, not subject to copyright in the United States (17 U.S.C. 105). Reproduced
+from the published Special Publications; attribution is appreciated by NIST, not legally required.
+
+Attribution: Republished courtesy of the National Institute of Standards and Technology.
+
+NIST does not endorse and is not affiliated with this pack; the NIST name and logo are not used to
+imply endorsement.
+
+==================================================================================================
+
+OWASP Foundation, Inc.
+----------------------
+
+Frameworks referenced:
+  - OWASP API Security Top 10 (edition 2023)
+  - OWASP Application Security Verification Standard (edition 5.0.0)
+  - OWASP Cheat Sheet Series (edition commit f54d8ded2764010ecacd0deb87e1586da32d41dd (2026-07-04))
+  - OWASP MCP Top 10 (edition 2025) [licensed CC BY-NC-SA 4.0]
+      The OWASP MCP Top 10 is licensed CC BY-NC-SA 4.0 (NonCommercial). Its risk identifiers and
+      titles are reproduced only as uncopyrightable factual pointers, NOT under the MCP CC
+      BY-NC-SA licence, and no MCP prose is reproduced, so no ShareAlike or NonCommercial
+      obligation is triggered.
+  - OWASP Top 10 (Web Application Security Risks) (edition 2025)
+  - OWASP Top 10 Proactive Controls (edition 4.0.0)
+  - OWASP Top 10 for Agentic Applications (edition 2026)
+  - OWASP Top 10 for LLM Applications (edition 2026)
+
+Licence: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/) (per-framework exceptions
+noted above)
+
+The OWASP materials are copyright the OWASP Foundation, Inc. and published under CC BY-SA 4.0.
+This pack reproduces only OWASP framework identifiers and their titles as uncopyrightable factual
+pointers, with OWASP attributed; it reproduces no OWASP specification or requirement prose, so no
+ShareAlike obligation is triggered. The mappings are the pack's own work. This pack does not
+redistribute or relicense the OWASP material, and its own Apache License 2.0 does not depend on
+OWASP's ShareAlike terms.
+
+Attribution: Framework identifiers and titles are Copyright the OWASP Foundation, Inc., used as
+factual references with attribution.
+
+OWASP is a registered trademark of the OWASP Foundation, Inc.
+
+The OWASP Foundation does not endorse and is not affiliated with this pack; the OWASP name and
+marks are not used to imply endorsement.
+
+==================================================================================================
+
+Vendored third-party components
+-------------------------------
+
+The pack bundles the following third-party components, which remain under their own licences. The
+pack's Apache License 2.0 does not relicense them; each is reproduced under the terms stated here.
+
+CommonMark specification examples (version 0.31.2)
+  Conformance fixture, vendored at
+  opf/tools/_vendor/commonmark-spec-0.31.2/spec-0.31.2-examples.json
+Licence: CC BY-SA 4.0 (https://creativecommons.org/licenses/by-sa/4.0/)
+Copyright John MacFarlane and the CommonMark project
+Source: https://spec.commonmark.org/0.31.2/
+The example set from the CommonMark 0.31.2 specification, vendored unchanged as a test fixture;
+its bytes are not modified. The CommonMark specification is authored by John MacFarlane and the
+CommonMark project and licensed under CC BY-SA 4.0.
+
+Marko (version 2.2.4)
+  CommonMark parser, vendored under opf/tools/_vendor/marko/
+Licence: MIT
+Copyright (c) 2019 Frost Ming
+Source: https://github.com/frostming/marko
+Vendored unchanged and used parse-only. The full MIT licence text is retained verbatim at
+opf/tools/_vendor/licenses/marko-MIT.txt; provenance is recorded in
+opf/tools/_vendor/marko-2.2.4.provenance.toml.
+
+==================================================================================================

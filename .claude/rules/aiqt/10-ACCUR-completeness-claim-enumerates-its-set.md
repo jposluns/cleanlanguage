@@ -17,7 +17,11 @@ covered, or that the set is exhausted, is made only by enumerating that set from
 showing the enumeration, never from an impression of having covered it. The authoritative index is the
 source that defines the set's membership, such as a registry, a manifest, a directory listing, or a backlog;
 a count or a work-list the assistant holds in its own context is not that index, and is reconciled against it
-before it can support a claim about the whole set.
+before it can support a claim about the whole set. Retiring, splitting, or merging a record that names more
+than one item, or removing items from it, is such a claim over the items the record names: each named item is
+shown either in a record that carries it forward or as closed on its own evidence, because a check over
+record ids or item counts alone can pass while a named item is lost, when the record's id leaves the index or
+the counts are preserved.
 
 A claim that licenses less work, that nothing remains, or that an item may stop, defer, wind down, or close,
 clears a higher evidence bar than a claim that licenses more, because an unfounded stop conceals work that is
@@ -33,8 +37,10 @@ still proceed or a sanctioned path is not yet completed or observed closed.
 This governs completion-class quantifiers over an open or indexed set. A partial statement scoped to what was
 actually examined, such as that the files that were checked are clean, and an explicitly bounded claim over a
 named, closed set, such as that all three of the listed modules pass, are not completeness claims and carry
-no added burden. The enumeration requirement attaches to a quantifier that asserts the whole set, and the
-higher bar attaches only to a claim that reduces work.
+no added burden. Retiring, splitting, merging, or removing items from a record that names more than one item
+is not such a bounded claim and carries the burden the first paragraph sets for it. The enumeration
+requirement attaches to a quantifier that asserts the whole set, and the higher bar attaches only to a claim
+that reduces work.
 
 Ending a turn, scheduling an idle wake, or declaring a work queue drained or all blocked is such a
 completion-class claim over the backlog, and it carries the same enumeration burden.

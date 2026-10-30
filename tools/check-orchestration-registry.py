@@ -68,41 +68,55 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_REGISTRY = os.path.join(ROOT, ".aiqt", "orchestration.json")
 # The vendored hook definitions. The orch_yield_tool PreToolUse matcher there bounds what a `yield_tools`
-# roster may name, and the orch_dispatch_ledger PostToolUse matcher (hooks.json:276-290, matcher
-# "Bash|TaskOutput" at hooks.json:278) bounds what `dispatch_tools` may name: a name outside the matcher
+# roster may name, and the orch_dispatch_ledger PostToolUse matcher (hooks.json:orch_dispatch_ledger, matcher
+# "Bash|TaskOutput" at hooks.json:orch_dispatch_ledger) bounds what `dispatch_tools` may name: a name outside the matcher
 # never reaches the hook, so it would be a silent no-op entry.
 HOOKS_JSON = os.path.join(ROOT, "plugin", "aiqt-guardrails-hooks", "hooks", "hooks.json")
 # Basenames of the machine-state files the hooks WRITE or READ inside state_dir. An `escape.path` naming
 # one of them would make the operator release sentinel share a name with machine state the hooks create,
 # overwrite, rename, or interpret, so the gate rejects such a basename. Each entry cites its site in
-# aiqt_hooks.py:
-#   guard-events.jsonl           7732-7733 (_orch_guard_event via _orch_append_jsonl)
-#   turn-state.json              7753-7756 (_orch_save_turn_state, open mode "w")
-#   backlog-checkpoint.json      8359, 8414 (_orch_write_json_atomic)
-#   checkpoint-init.marker       8360, 8424 (_orch_write_json_atomic)
-#   escape-spoof.json            8520 (_orch_write_json)
-#   escape-spoof.json.surfaced   9745, 9755 (os.replace of escape-spoof.json once its finding surfaces)
-#   forced-exit.jsonl            8558 (_orch_append_jsonl)
-#   pending-asks.jsonl           8746, 8751 (_orch_append_jsonl)
-#   dispatch-ledger.jsonl        9300-9301 (_orch_append_jsonl)
-#   attestations-validated.json  9639, 9670 (_orch_write_json_atomic)
-#   forced-exit-surfaced.json    9715, 9734 (_orch_write_json_atomic)
-#   resume-barrier.json          9775, 9783, 9809, 9837 (open mode "w")
-#   resume-barrier.json.unused   9777 (_orch_append_jsonl probe on a bad registry)
-#   write-scope.json             9864, 10014-10015 (_WRTSCP_DECL_REL, READ by _load_write_scope as the
+# the vendored hook:
+#   guard-events.jsonl           aiqt_hooks.py:_orch_guard_event (_orch_guard_event via _orch_append_jsonl)
+#   turn-state.json              aiqt_hooks.py:_orch_save_turn_state (_orch_write_json_atomic)
+#   backlog-checkpoint.json      aiqt_hooks.py:_orch_checkpoint_union (_orch_write_json_atomic)
+#   checkpoint-init.marker       aiqt_hooks.py:_orch_checkpoint_union (_orch_write_json_atomic)
+#   escape-spoof.json            aiqt_hooks.py:_orch_record_escape_spoof (_orch_write_json)
+#   escape-spoof.json.surfaced   aiqt_hooks.py:_orch_pending_artefact_findings (os.replace of escape-spoof.json once its finding surfaces)
+#   forced-exit.jsonl            aiqt_hooks.py:_orch_record_forced_exit (_orch_append_jsonl)
+#   pending-asks.jsonl           aiqt_hooks.py:orch_ask_guard (_orch_append_jsonl)
+#   dispatch-ledger.jsonl        aiqt_hooks.py:orch_dispatch_ledger (_orch_append_jsonl)
+#   attestations-validated.json  aiqt_hooks.py:_orch_validate_attestations (_orch_write_json_atomic)
+#   forced-exit-surfaced.json    aiqt_hooks.py:_orch_forced_exit_findings (_orch_write_json_atomic)
+#   resume-barrier.json          aiqt_hooks.py:orch_resume_audit, aiqt_hooks.py:orch_resume_barrier (_orch_barrier_write)
+#   lease-heartbeat.json         aiqt_hooks.py:_ORCH_LEASE_HB_RECORD, aiqt_hooks.py:_orch_lease_hb_dests (the lease heartbeat
+#                                past-holder memory, saved by its own writer aiqt_hooks.py:_orch_lease_hb_memory_save)
+#   resume-barrier.json.unused   aiqt_hooks.py:orch_resume_audit (_orch_append_jsonl probe on a bad registry)
+#   write-scope.json             aiqt_hooks.py:_WRTSCP_DECL_REL, aiqt_hooks.py:_load_write_scope (_WRTSCP_DECL_REL, READ by _load_write_scope as the
 #                                per-slice write-scope declaration; the hook never writes it and writes no
-#                                .tmp sibling of it, so only the name itself is listed)
-# _orch_write_json_atomic first writes a sibling "<name>.tmp" and then os.replace()s it (aiqt_hooks.py:
-# 7719-7722), so the .tmp sibling of every atomically written file is listed too. The test suite derives
-# this set independently by scanning the hook source (HookStateFileScan in test-orchestration-registry.py)
-# and requires it to equal this constant, so a state file the hook gains is a red test, not a silent gap.
-_ATOMIC_STATE_FILES = ("backlog-checkpoint.json", "checkpoint-init.marker", "attestations-validated.json",
-                       "forced-exit-surfaced.json")
+#                                temporary file beside it, so only the name itself is listed)
+# The test suite derives this set independently by scanning the hook source (HookStateFileScan in
+# test-orchestration-registry.py) and requires it to equal this constant, so a state file the hook gains is
+# a red test, not a silent gap.
+# The hook writes no fixed "<name>.tmp" sibling. Each whole-file replacement goes through a temporary file
+# under a random name, created with O_EXCL and then os.replace()d onto its target, in three name forms:
+# "<name>.<16 hex>.tmp" for the files _orch_write_json_atomic saves (aiqt_hooks.py:_orch_write_json_at
+# `tmp = "{}.{}.tmp".format(name, os.urandom(8).hex())`), "resume-barrier.json.<pid>.<16 hex>.tmp" for the
+# barrier (aiqt_hooks.py:_orch_barrier_write `tmp = "{}.{}.{}.tmp".format(path, os.getpid(),`), and
+# ".lease-heartbeat.json.<16 hex>.hb.tmp" for the heartbeat memory (aiqt_hooks.py:_orch_lease_hb_tmp_name).
+# HOOK_STATE_TEMP matches exactly those forms, so an escape.path spelled as one is rejected too; the
+# HookStateTempNames test in test-orchestration-registry.py requires the hook to hold exactly these
+# temporary-name literals.
+_ATOMIC_STATE_FILES = ("turn-state.json", "backlog-checkpoint.json", "checkpoint-init.marker",
+                       "attestations-validated.json", "forced-exit-surfaced.json")
 HOOK_STATE_FILES = frozenset(
-    ("guard-events.jsonl", "turn-state.json", "escape-spoof.json", "escape-spoof.json.surfaced",
+    ("guard-events.jsonl", "escape-spoof.json", "escape-spoof.json.surfaced",
      "forced-exit.jsonl", "pending-asks.jsonl", "dispatch-ledger.jsonl", "resume-barrier.json",
-     "resume-barrier.json.unused", "write-scope.json")
-    + _ATOMIC_STATE_FILES + tuple(name + ".tmp" for name in _ATOMIC_STATE_FILES))
+     "resume-barrier.json.unused", "write-scope.json", "lease-heartbeat.json")
+    + _ATOMIC_STATE_FILES)
+HOOK_STATE_TEMP = re.compile(
+    r"(?:(?:" + "|".join(re.escape(name) for name in _ATOMIC_STATE_FILES) + r")\.[0-9a-f]{16}\.tmp"
+    r"|resume-barrier\.json\.[0-9]+\.[0-9a-f]{16}\.tmp"
+    r"|\.lease-heartbeat\.json\.[0-9a-f]{16}\.hb\.tmp)")
 # A Windows drive-letter prefix, as in "C:", "C:x", "C:/x", or "C:\x".
 _DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
 # The resolved basenames an enumerator argv[0] may carry: a Python interpreter named python, python3, or
@@ -114,10 +128,13 @@ ENUM_PYTHON_NAME = re.compile(r"python(?:3(?:\.[0-9]+[a-z]?)?)?")
 # The dispatch_tools names the orch_dispatch_ledger matcher routes to the hook but that the hook cannot use
 # as list entries, each with the hook line that makes it so (see the dispatch_tools check in validate()).
 DISPATCH_TOOLS_FORBIDDEN = {
-    "TaskOutput": "the hook routes a TaskOutput call to its completion branch (aiqt_hooks.py:9264) before it "
-                  "reads dispatch_tools (aiqt_hooks.py:9277), so the entry would be inert",
+    "TaskOutput": "the hook routes a TaskOutput call to its completion branch "
+                  "(aiqt_hooks.py:orch_dispatch_ledger `this TaskOutput carried no task_id`) before it reads "
+                  "dispatch_tools (aiqt_hooks.py:orch_dispatch_ledger `dispatch_tools = reg.get(`), so the entry "
+                  "would be inert",
     "Bash": "the hook would then treat EVERY Bash call, foreground included, as a dispatch and record it in "
-            "dispatch-ledger.jsonl (aiqt_hooks.py:9279-9280), not only a run_in_background launch",
+            "dispatch-ledger.jsonl (aiqt_hooks.py:orch_dispatch_ledger `is_dispatch = (tool ==`), not only a "
+            "run_in_background launch",
 }
 
 # Stage-2 top-level allowlist. Any other top-level key is rejected: a new arming key lands
@@ -135,43 +152,45 @@ ALLOWED_KEYS = {"version", "companion_stores", "record", "lease", "state_dir", "
 # path and drives no write, so it is not listed.
 STATE_DIR_REQUIRED_BY = ("enumerator", "yield_tools", "mode", "escape", "attestations",
                          "mistakes_register")
-# The enumerator shape _orch_enumerate reads (aiqt_hooks.py:7966-7976).
+# The enumerator shape _orch_enumerate reads (aiqt_hooks.py:_orch_enumerate).
 ENUMERATOR_KEYS = {"argv", "timeout"}
 # The enumerator timeout bound, in seconds. The hook accepts any number in (0, 600] and silently
-# substitutes 60 otherwise (aiqt_hooks.py:7974), but hooks.json gives orch_stop_guard and
+# substitutes 60 otherwise (aiqt_hooks.py:_orch_enumerate), but hooks.json gives orch_stop_guard and
 # orch_yield_tool a 10 second budget, so an enumerator allowed to run past it overruns the hook that
 # runs it. The gate requires an explicit timeout in (0, 8], leaving headroom for the checkpoint work.
 ENUMERATOR_TIMEOUT_MAX = 8
-# The staleness shape _schema_staleness reads (aiqt_hooks.py:8294-8301). When `staleness` is declared the
+# The staleness shape _schema_staleness reads (aiqt_hooks.py:_schema_staleness). When `staleness` is declared the
 # gate requires BOTH keys: the hook silently substitutes 24 hours for a missing or invalid one
-# (aiqt_hooks.py:8297-8301, through _v_finite_pos at 8274-8279), so {} or a single field would arm a
+# (aiqt_hooks.py:_schema_staleness, through aiqt_hooks.py:_v_finite_pos), so {} or a single field would arm a
 # horizon nobody declared.
 STALENESS_KEYS = {"task_hours", "external_hours"}
-# Mirrors _ORCH_MAX_HORIZON_HOURS (aiqt_hooks.py:8265). The hook turns a value outside (0, 8760] into
-# the 24 hour default (aiqt_hooks.py:8274-8279, 8300-8301); the gate rejects it instead.
+# Mirrors _ORCH_MAX_HORIZON_HOURS (aiqt_hooks.py:_ORCH_MAX_HORIZON_HOURS). The hook turns a value outside (0, 8760] into
+# the 24 hour default (aiqt_hooks.py:_v_finite_pos, aiqt_hooks.py:_schema_staleness); the gate rejects it instead.
 STALENESS_HOURS_MAX = 8760
 # The declared keys whose control reads the staleness horizons, so `staleness` is REQUIRED alongside each
-# of these: the enumerated-backlog classification (_orch_build_ctx, aiqt_hooks.py:8439-8452, reached only
-# for an enumeration that ran, 8448) and the attestation derivation (aiqt_hooks.py:9595, reached from the
-# resume audit at 9657). Without `staleness` the hook applies 24 hours to both horizons (aiqt_hooks.py:
-# 8297-8301), a horizon nobody declared. A yield roster or a lease alone never reaches either reader.
+# of these: the enumerated-backlog classification (_orch_build_ctx, aiqt_hooks.py:_orch_build_ctx, reached only
+# for an enumeration that ran, aiqt_hooks.py:_orch_build_ctx `if status ==`) and the attestation derivation (aiqt_hooks.py:_orch_attestation_derive, reached from the
+# resume audit at aiqt_hooks.py:_orch_validate_attestations `refs, unsub, dfindings = _orch_attestation_derive(reg,`). Without `staleness` the hook applies 24 hours to both horizons (
+# aiqt_hooks.py:_schema_staleness), a horizon nobody declared. A yield roster or a lease alone never reaches either reader.
 STALENESS_REQUIRED_BY = ("enumerator", "attestations")
-# The keys a declared `mode` or `escape` object may carry (the readers are aiqt_hooks.py:7766-7767 and
-# 7860); `path` is required in each.
+# The keys a declared `mode` or `escape` object may carry (the readers are aiqt_hooks.py:_orch_mode and
+# aiqt_hooks.py:_orch_escape_active `declared = (reg.get(`); `path` is required in each.
 MODE_KEYS = {"path"}
 ESCAPE_KEYS = {"path"}
-# The record surfaces the hook's resume audit and barrier read (aiqt_hooks.py:9355-9391, 9820-9832).
+# The record surfaces the hook's resume audit and barrier read (aiqt_hooks.py:_orch_resume_probes, aiqt_hooks.py:orch_resume_barrier).
 RECORD_KEYS = {"findings", "pending_decisions", "handoff"}
-# The lease shape _orch_scope_live and the resume audit read (aiqt_hooks.py:7786-7817, 9392-9409).
+# The lease shape _orch_scope_live and the resume audit read (aiqt_hooks.py:_orch_scope_live, aiqt_hooks.py:_orch_resume_probes).
 # Both keys are REQUIRED. With `max_age_hours` absent, _orch_scope_live keeps `fresh = True`
-# (aiqt_hooks.py:7792-7798) and the resume audit raises no stale-lease finding (aiqt_hooks.py:9395-9401),
+# (aiqt_hooks.py:_orch_scope_live) and the resume audit raises no stale-lease finding (aiqt_hooks.py:_orch_resume_probes),
 # so a lease file left behind by a dead orchestrator keeps scope live forever. The committed registry
 # declares 24.
 LEASE_KEYS = {"path", "max_age_hours"}
-# A gate-side sanity bound on `lease.max_age_hours`, STRICTER than the hook. The hook's lease-freshness
-# read (aiqt_hooks.py:7793-7798) checks only `max_age_hours > 0` and applies NO upper bound to it (the
-# freshness window is `max_age * 3600`). _ORCH_MAX_HORIZON_HOURS = 8760 (aiqt_hooks.py:8265) bounds the
-# STALENESS schema's task_hours/external_hours (aiqt_hooks.py:8298-8299), NOT the lease. Capping the
+# A gate-side sanity bound on `lease.max_age_hours`, STRICTER than the hook. The hook classifies the horizon
+# with one classifier (aiqt_hooks.py:_orch_lease_age_class): a declared value that is a boolean, zero, negative,
+# NaN, infinite or not a number is a cannot-evaluate (aiqt_hooks.py:_orch_scope_live returns "cannot", which keeps
+# every scoped guard armed and makes the stop and yield guards deny), and a usable value has NO upper bound (the
+# freshness window is `max_age * 3600`). _ORCH_MAX_HORIZON_HOURS = 8760 (aiqt_hooks.py:_ORCH_MAX_HORIZON_HOURS) bounds the
+# STALENESS schema's task_hours/external_hours (aiqt_hooks.py:_schema_staleness), NOT the lease. Capping the
 # committed lease at one year here is stricter than the hook, which is fail-safe for a committed artefact.
 MAX_AGE_HOURS_MAX = 8760
 # POSIX filesystem length limits, applied as a pure commit-time string check to every declared path.
@@ -185,16 +204,17 @@ PATH_MAX = 4096  # bytes, a whole path
 # _check_declared_path already bounds the state_dir STRING at PATH_MAX, but the hooks then join a basename
 # onto it, so a DERIVED path `<state_dir>/<basename>` can exceed PATH_MAX even when state_dir itself does
 # not. At runtime that overflow raises ENAMETOOLONG in write_scope_guard._load_write_scope's
-# `os.lstat(<state_dir>/write-scope.json)` (aiqt_hooks.py:9948-9953 via 10014-10015), the write-scope reader
+# `os.lstat(<state_dir>/write-scope.json)` (aiqt_hooks.py:_wrtscp_read_json_artifact via aiqt_hooks.py:_load_write_scope), the write-scope reader
 # classifies it 'bad', and an armed session then denies every covered write persistently
-# (aiqt_hooks.py:10388-10392). The longest basename the hooks derive under state_dir is
+# (aiqt_hooks.py:write_scope_guard). The longest fixed basename the hooks join onto state_dir is
 # "attestations-validated.json" (27 bytes; the longest of every filename joined onto
 # _orch_state_dir_for_root in aiqt_hooks.py -- e.g. write-scope.json, resume-barrier.json,
-# dispatch-ledger.jsonl, forced-exit-surfaced.json, backlog-checkpoint.json, ESCAPE-ALLOW-YIELD). We reserve
-# that PLUS generous headroom, rounded up to 64, so a future recorder filename needs no re-count and one
-# path separator is covered. The state_dir-specific check below rejects a state_dir that leaves less than
+# dispatch-ledger.jsonl, forced-exit-surfaced.json, backlog-checkpoint.json, ESCAPE-ALLOW-YIELD), and the
+# longest temporary name (HOOK_STATE_TEMP above) is 48 bytes: "attestations-validated.json.<16 hex>.tmp", or
+# "resume-barrier.json.<pid>.<16 hex>.tmp" with a 7-digit pid (the Linux pid_max ceiling, 4194304). The
+# reserve of 64 covers both plus one path separator. The state_dir-specific check below rejects a state_dir that leaves less than
 # this reserve (plus a separator) below PATH_MAX.
-STATE_DERIVED_RESERVE = 64  # bytes; >= len("attestations-validated.json") (27) + margin
+STATE_DERIVED_RESERVE = 64  # bytes; >= the longest temporary name (48) + a separator + margin
 
 
 def _fail(msg):
@@ -203,7 +223,7 @@ def _fail(msg):
 
 
 def _is_absolute(path):
-    # OS-agnostic, the same predicate as the hook _is_absolute (aiqt_hooks.py:1935): a POSIX absolute path
+    # OS-agnostic, the same predicate as the hook _is_absolute (aiqt_hooks.py:_is_absolute): a POSIX absolute path
     # OR a Windows path carrying both a drive and a root. Every caller first rejects a Windows-shaped value
     # through _is_windows_shaped below, so in practice only the POSIX branch accepts a declared path here.
     return pathlib.PurePosixPath(path).is_absolute() or pathlib.PureWindowsPath(path).is_absolute()
@@ -211,8 +231,8 @@ def _is_absolute(path):
 
 def _is_windows_shaped(text):
     # True for a value carrying a backslash or a leading drive letter ("C:"). The hook resolves a registry
-    # path with POSIX os.path.isabs (_orch_path, aiqt_hooks.py:7631-7635; the escape anchor join,
-    # aiqt_hooks.py:7863-7864), so on a POSIX host a Windows absolute spelling such as "C:\x" or "C:/x" is
+    # path with POSIX os.path.isabs (_orch_path, aiqt_hooks.py:_orch_path; the escape anchor join,
+    # aiqt_hooks.py:_orch_escape_active), so on a POSIX host a Windows absolute spelling such as "C:\x" or "C:/x" is
     # NOT absolute there and is silently joined onto the repository root or the state_dir anchor, and a
     # backslash is an ordinary filename character rather than a separator. The gate rejects both shapes in
     # every declared path, every enumerator argv operand, and the escape path, so a value the gate accepts
@@ -226,11 +246,11 @@ def _has_unsafe_char(text):
     # A control character (below 0x20 or 0x7f DEL) OR a lone surrogate code point (U+D800..U+DFFF) in a
     # declared path is load-bearing to reject, not cosmetic. Both crash the same PreToolUse path.
     # Control character: a NUL in a record path reaches os.path.realpath inside orch_resume_barrier
-    # (aiqt_hooks.py:9828), which raises ValueError. Surrogate: a lone surrogate CANNOT be UTF-8 encoded
+    # (aiqt_hooks.py:orch_resume_barrier), which raises ValueError. Surrogate: a lone surrogate CANNOT be UTF-8 encoded
     # (it is unpaired), so when the hook resolves the declared path (os.path.realpath / open in
-    # orch_resume_barrier, aiqt_hooks.py:9828-9830, a PreToolUse event) the encode to the filesystem
+    # orch_resume_barrier, aiqt_hooks.py:orch_resume_barrier, a PreToolUse event) the encode to the filesystem
     # encoding raises UnicodeEncodeError. Either crash makes the PreToolUse dispatcher fail closed exit 2
-    # (aiqt_hooks.py:10705-10716) -- the one route by which a stage-1 key could reach a blocking outcome.
+    # (aiqt_hooks.py:main) -- the one route by which a stage-1 key could reach a blocking outcome.
     # Rejecting surrogates here closes exactly the route the control-char rejection claims to close.
     # The gate closes it for the committed file (matching _wrtscp/companion_stores).
     return any(ord(ch) < 0x20 or ord(ch) == 0x7f or 0xD800 <= ord(ch) <= 0xDFFF for ch in text)
@@ -270,7 +290,7 @@ def _check_declared_path(label, value):
         _fail("`{}` must be a non-empty string, got {!r}".format(label, value))
     if _is_windows_shaped(value):
         _fail("`{}` ({!r}) is Windows-shaped (a backslash or a drive-letter prefix); the hook resolves a "
-              "declared path with POSIX os.path.isabs (aiqt_hooks.py:7631-7635), so on a POSIX host it "
+              "declared path with POSIX os.path.isabs (aiqt_hooks.py:_orch_path), so on a POSIX host it "
               "would not name the path its spelling suggests".format(label, value))
     if not _is_absolute(value):
         _fail("`{}` must be an absolute path, got {!r}".format(label, value))
@@ -281,13 +301,13 @@ def _check_declared_path(label, value):
     # ENAMETOOLONG case: an over-long declared state_dir drives write_scope_guard._load_write_scope
     # to a persistent covered-write DENIAL -- lstat(<state_dir>/write-scope.json) raises ENAMETOOLONG, the
     # artifact reader classifies it 'bad', and an armed session then denies every covered write
-    # (aiqt_hooks.py:9940-9946, 10015, 10388-10392). Measured in BYTES, not code points, because the kernel
+    # (aiqt_hooks.py:_wrtscp_read_json_artifact, aiqt_hooks.py:_load_write_scope, aiqt_hooks.py:write_scope_guard). Measured in BYTES, not code points, because the kernel
     # limits are on the UTF-8 encoded length; surrogatepass keeps this from crashing on a surrogate that
     # _has_unsafe_char has already rejected above.
     # PATH_MAX (4096) INCLUDES the terminating NUL, so the longest USABLE pathname is PATH_MAX - 1 (4095)
     # bytes; a 4096-byte path passes a `> PATH_MAX` test but the kernel rejects it with ENAMETOOLONG at
     # runtime (os.stat -> errno 36), which for a lease/state path drives the hook's stat to an OSError and,
-    # with no mode declared, an inactive scope (aiqt_hooks.py:7791,7813) -- so reject `>= PATH_MAX`.
+    # with no mode declared, an inactive scope (aiqt_hooks.py:_orch_scope_live) -- so reject `>= PATH_MAX`.
     # NAME_MAX (255) EXCLUDES the NUL, so the component check below correctly stays `> NAME_MAX`.
     if len(value.encode("utf-8", "surrogatepass")) >= PATH_MAX:
         _fail("`{}` is {} bytes; the longest usable path is {} bytes (PATH_MAX {} counts the NUL)".format(
@@ -306,7 +326,7 @@ def _read_regular_text(path, label):
     # directory, before a single byte is read. A plain open() would block forever on such a FIFO, and a
     # device such as /dev/null would read as empty. The fstat runs on the opened descriptor, so the type
     # judged is the type of the file actually read. A symlink is followed, as the hook open follows it
-    # (aiqt_hooks.py:7619-7620); a dangling one fails the open.
+    # (aiqt_hooks.py:_orch_registry); a dangling one fails the open.
     flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
     try:
         fd = os.open(path, flags)
@@ -336,7 +356,7 @@ def _read_regular_text(path, label):
 def _hook_matcher_tools(event, hook_name, key):
     # The tool names the hooks.json entry under `event` that runs `hook_name` routes to the hook (its
     # matcher split on "|"): orch_yield_tool under PreToolUse for `yield_tools`, and orch_dispatch_ledger
-    # under PostToolUse for `dispatch_tools` (hooks.json:276-290). A name outside this set never reaches the
+    # under PostToolUse for `dispatch_tools` (hooks.json:orch_dispatch_ledger). A name outside this set never reaches the
     # hook, so the hook never judges it. This is a guard input, so it is read from the checkout at gate time
     # and fails closed: an unreadable, non-UTF-8, or non-JSON file, or one with no such entry carrying a
     # usable matcher, is a gate failure (cannot evaluate), never a skip or an empty set.
@@ -476,7 +496,7 @@ def validate(path):
         # when state_dir is a regular file (e.g. "/etc/passwd") or a path THROUGH a regular file (e.g.
         # "/etc/passwd/" or "/etc/passwd/state") that read's lstat raises ENOTDIR, the artifact reader
         # classifies it 'bad', and an armed session then DENIES every covered write persistently
-        # (aiqt_hooks.py:9948-9953, 10015, 10388-10392). Three outcomes, distinguished (an earlier revision
+        # (aiqt_hooks.py:_wrtscp_read_json_artifact, aiqt_hooks.py:_load_write_scope, aiqt_hooks.py:write_scope_guard). Three outcomes, distinguished (an earlier revision
         # collapsed every OSError to absence and ACCEPTED a known-unusable path):
         #   - FileNotFoundError: GENUINE ABSENCE -> do NOT fail (the not-yet-created residual stays
         #     disclosed; the gate cannot verify a not-yet-created directory).
@@ -503,10 +523,10 @@ def validate(path):
     # --- stage-2 arming keys -------------------------------------------------------------------------
     # Each check rejects a value the hook would act on wrongly. Where the hook fails a malformed value
     # closed (an enumerator argv that is not a list of non-empty strings denies every Stop with
-    # ENUMERATOR_ERROR, aiqt_hooks.py:7969-7972) or open to a silent default or no-op (a timeout outside
-    # (0, 600] becomes 60, aiqt_hooks.py:7974; a staleness horizon out of range becomes 24,
-    # aiqt_hooks.py:8300-8301; a non-string or empty escape path disables the release with no record,
-    # aiqt_hooks.py:7861-7862; a roster name outside the matcher is never judged, aiqt_hooks.py:8665-8667),
+    # ENUMERATOR_ERROR, aiqt_hooks.py:_orch_enumerate) or open to a silent default or no-op (a timeout outside
+    # (0, 600] becomes 60, aiqt_hooks.py:_orch_enumerate; a staleness horizon out of range becomes 24,
+    # aiqt_hooks.py:_schema_staleness; a non-string or empty escape path disables the release with no record,
+    # aiqt_hooks.py:_orch_escape_active; a roster name outside the matcher is never judged, aiqt_hooks.py:orch_yield_tool),
     # the gate rejects the value at author time so neither outcome reaches a session.
     enum_paths = []  # enumerator operands from argv[3] on, each absolute, collision-checked below
     if "enumerator" in obj:
@@ -527,20 +547,20 @@ def validate(path):
             if _has_unsafe_char(arg):
                 _fail("`enumerator.argv[{}]` contains a control or surrogate character".format(i))
             # A Windows-shaped operand (a backslash or a drive-letter prefix) is rejected in every argv
-            # position: the hook runs argv verbatim with cwd at the repository root (aiqt_hooks.py:7976), so
+            # position: the hook runs argv verbatim with cwd at the repository root (aiqt_hooks.py:_orch_enumerate), so
             # on POSIX such an operand is a relative name, never the Windows path its spelling suggests.
             if _is_windows_shaped(arg):
                 _fail("`enumerator.argv[{}]` ({!r}) is Windows-shaped (a backslash or a drive-letter "
                       "prefix); the hook runs it on POSIX, where it is not the path it spells".format(i, arg))
         # argv[0] must be absolute: the hook runs argv with no shell and cwd set to the repository root
-        # (aiqt_hooks.py:7976), so a bare interpreter name would resolve through the session PATH, an
+        # (aiqt_hooks.py:_orch_enumerate), so a bare interpreter name would resolve through the session PATH, an
         # ambient binding the registry cannot pin.
         _check_declared_path("enumerator.argv[0]", argv[0])
         # The gate admits only an isolated Python interpreter running a script. Without "-I"
         # the interpreter puts the script directory first on sys.path and honours the PYTHON* environment
         # variables, so a file beside the enumerator script could shadow a standard library import and steer
         # the backlog verdict the stop and yield guards act on. Every hook launch in hooks.json carries the
-        # same "-I" (for example hooks.json:282-287). The rule is an allowlist, so no launcher outside it
+        # same "-I" (for example hooks.json:orch_dispatch_ledger). The rule is an allowlist, so no launcher outside it
         # (env, nice, timeout, a shell, a renamed script, or any other executable) is admitted:
         #   - argv[0] is resolved with os.path.realpath(strict=True); one that cannot be resolved (absent, a
         #     dangling link, a link loop, or unreadable) is a cannot-evaluate and fails closed;
@@ -556,7 +576,7 @@ def validate(path):
         # admitted on that name, because the gate judges the resolved name and never executes argv[0]; and a
         # script that itself spawns an unisolated child process is not inspected. Resolution is judged at
         # gate time, on the machine running the gate; the hook resolves argv[0] again when it runs it
-        # (aiqt_hooks.py:7976).
+        # (aiqt_hooks.py:_orch_enumerate).
         try:
             real_argv0 = os.path.realpath(argv[0], strict=True)
         except (OSError, ValueError) as exc:
@@ -575,8 +595,8 @@ def validate(path):
             _fail("`enumerator.argv[2]` must be a script path ending in \".py\" (not \"-c\", \"-m\", or "
                   "another interpreter option), got {!r}".format(argv[2] if len(argv) > 2 else None))
         # The script, argv[2], is pinned to a canonical RELATIVE path. The hook runs argv with
-        # cwd set to the session repository root (aiqt_hooks.py:7976), the git top level of the session
-        # (_orch_root, aiqt_hooks.py:7590-7595), so a relative script names <root>/<script> on whatever host
+        # cwd set to the session repository root (aiqt_hooks.py:_orch_enumerate), the git top level of the session
+        # (_orch_root, aiqt_hooks.py:_orch_root), so a relative script names <root>/<script> on whatever host
         # runs the hook. The gate does NOT join the script onto any root for the collision checks: the
         # checkout running the gate (a CI runner, a host clone) can sit at a different depth than the
         # session root, and a verdict that depended on that depth would let CI and the host disagree.
@@ -594,7 +614,7 @@ def validate(path):
                   "path; the gate pins the script to a relative path inside the repository".format(script))
         if ".." in script.split("/"):
             _fail("`enumerator.argv[2]` ({!r}) has a \"..\" component; the script must stay inside the "
-                  "repository root the hook runs it from (aiqt_hooks.py:7976)".format(script))
+                  "repository root the hook runs it from (aiqt_hooks.py:_orch_enumerate)".format(script))
         if posixpath.normpath(script) != script:
             _fail("`enumerator.argv[2]` ({!r}) is not in canonical form (its normalized spelling is {!r}); "
                   "write the script path without \"./\", \".\" components, repeated or trailing "
@@ -630,7 +650,7 @@ def validate(path):
             label = "enumerator.argv[{}]".format(i)
             if not _is_absolute(argv[i]):
                 _fail("`{}` ({!r}) must be an absolute path: the hook runs the enumerator with cwd at the "
-                      "session repository root (aiqt_hooks.py:7976), so a relative operand would name a file "
+                      "session repository root (aiqt_hooks.py:_orch_enumerate), so a relative operand would name a file "
                       "whose location, and whose collision with state_dir, depends on where the checkout "
                       "sits; the gate pins every operand after the script to an absolute path".format(
                           label, argv[i]))
@@ -638,7 +658,7 @@ def validate(path):
             enum_paths.append((label, argv[i]))
         if "timeout" not in spec:
             _fail("`enumerator.timeout` is required: the hook substitutes 60 seconds for a missing value "
-                  "(aiqt_hooks.py:7974), which overruns the 10 second hook budget")
+                  "(aiqt_hooks.py:_orch_enumerate), which overruns the 10 second hook budget")
         timeout = spec["timeout"]
         # bool is a subclass of int; reject it. NaN and Infinity fail the range comparison.
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) \
@@ -667,7 +687,7 @@ def validate(path):
                       "outside the matcher never reaches the hook, so the roster entry would be a silent "
                       "no-op".format(i, entry, sorted(matched), HOOKS_JSON))
     # `mode`: an object with exactly the key `path`, a declared path (the reader is _orch_mode,
-    # aiqt_hooks.py:7763-7776).
+    # aiqt_hooks.py:_orch_mode).
     if "mode" in obj:
         mode = obj["mode"]
         if not isinstance(mode, dict):
@@ -679,15 +699,15 @@ def validate(path):
             _fail("`mode.path` is required")
         _check_declared_path("mode.path", mode["path"])
     # `attestations` and `mistakes_register`: each a path STRING, not an object (the readers are
-    # aiqt_hooks.py:8068, 9638, and 9677). The attestation anchor the hook opens at <path>.anchor
-    # (aiqt_hooks.py:9541) is length-checked too, since it is 7 bytes longer than the declared path.
+    # aiqt_hooks.py:_orch_attestation_refs, aiqt_hooks.py:_orch_validate_attestations). The attestation anchor the hook opens at <path>.anchor
+    # (aiqt_hooks.py:_orch_register_authority) is length-checked too, since it is 7 bytes longer than the declared path.
     for key in ("attestations", "mistakes_register"):
         if key in obj:
             _check_declared_path(key, obj[key])
     if "attestations" in obj:
         _check_declared_path("attestations.anchor", obj["attestations"] + ".anchor")
     # `staleness`: an object with exactly the keys in STALENESS_KEYS, each a non-bool finite number in
-    # (0, STALENESS_HOURS_MAX]. This mirrors _v_finite_pos (aiqt_hooks.py:8274-8279) but rejects where the
+    # (0, STALENESS_HOURS_MAX]. This mirrors _v_finite_pos (aiqt_hooks.py:_v_finite_pos) but rejects where the
     # hook would silently default to 24 hours. Only a float is passed to math.isfinite: an int is always
     # finite, and math.isfinite raises OverflowError on an int too large for a float (a JSON integer
     # literal of a few hundred digits), so an int is judged by the exact integer range comparison alone.
@@ -701,7 +721,7 @@ def validate(path):
         missing = STALENESS_KEYS - set(staleness)
         if missing:
             _fail("`staleness` must declare both `task_hours` and `external_hours`, missing {}; the hook "
-                  "silently substitutes 24 hours for a missing field (aiqt_hooks.py:8297-8301), so a partial "
+                  "silently substitutes 24 hours for a missing field (aiqt_hooks.py:_schema_staleness), so a partial "
                   "or empty object would arm a horizon nobody declared".format(sorted(missing)))
         for key in sorted(staleness):
             v = staleness[key]
@@ -711,16 +731,16 @@ def validate(path):
                 _fail("`staleness.{}` must be a finite number of hours in (0, {}], got {!r}".format(
                     key, STALENESS_HOURS_MAX, v))
     # `escape`: undeclared, or an object with exactly the key `path` naming a BARE FILE NAME.
-    # The hook formula (_orch_escape_active, aiqt_hooks.py:7859-7882) takes anchor = realpath(state_dir)
-    # (7859), uses the default name ESCAPE-ALLOW-YIELD when no path is declared (7865-7866, the name at
-    # 7556), joins a relative path onto the anchor (7864), rejects a ".." component (7867-7868), requires
-    # normpath containment under the anchor (7869-7871), and walks every intermediate component with lstat,
-    # rejecting a symlinked one (7872-7882). The gate pins the one shape this project needs: a bare file
+    # The hook formula (_orch_escape_active, aiqt_hooks.py:_orch_escape_active) takes anchor = realpath(state_dir)
+    # (aiqt_hooks.py:_orch_escape_active `anchor = os.path.realpath(_orch_state_dir_for_root(`), uses the default name ESCAPE-ALLOW-YIELD when no path is declared (aiqt_hooks.py:_orch_escape_active `raw = os.path.join(anchor, _ORCH_ESCAPE_NAME)`, the name at
+    # aiqt_hooks.py:_ORCH_ESCAPE_NAME), joins a relative path onto the anchor (aiqt_hooks.py:_orch_escape_active `raw = declared if os.path.isabs(declared) else os.path.`), rejects a ".." component (aiqt_hooks.py:_orch_escape_active `if os.pardir in raw.split(os.sep):`), requires
+    # normpath containment under the anchor (aiqt_hooks.py:_orch_escape_active `norm = os.path.normpath(raw)`), and walks every intermediate component with lstat,
+    # rejecting a symlinked one (aiqt_hooks.py:_orch_escape_active `rel = os.path.relpath(norm, anchor)`). The gate pins the one shape this project needs: a bare file
     # name, which the hook joins directly onto the anchor, so there is no intermediate component, the
     # symlinked-component class cannot arise, and containment holds by construction. An absolute or
     # multi-component path is rejected outright, with no attempt to replay the containment rule against
     # the unresolved state_dir spelling. The name must be a non-empty string (an empty or non-string value
-    # disables the release with no record, 7861-7862), contain no "/" and no Windows shape, not be "." or
+    # disables the release with no record, aiqt_hooks.py:_orch_escape_active `if declared is not None and (not isinstance(declared,`), contain no "/" and no Windows shape, not be "." or
     # "..", not be a hook state file name, and be at most STATE_DERIVED_RESERVE bytes, so the state_dir
     # reserve check above also covers <state_dir>/<name>.
     if "escape" in obj:
@@ -732,22 +752,22 @@ def validate(path):
             _fail("`escape` has unknown key(s) {}".format(sorted(extra)))
         if "path" not in esc:
             _fail("`escape.path` is required when `escape` is declared; leave `escape` undeclared to use the "
-                  "default sentinel name (aiqt_hooks.py:7865-7866)")
+                  "default sentinel name (aiqt_hooks.py:_orch_escape_active)")
         name = esc["path"]
         if not isinstance(name, str) or not name:
             _fail("`escape.path` must be a non-empty string, got {!r}; the hook disables the operator "
-                  "release with no record on such a value (aiqt_hooks.py:7861-7862)".format(name))
+                  "release with no record on such a value (aiqt_hooks.py:_orch_escape_active)".format(name))
         if _has_unsafe_char(name):
             _fail("`escape.path` contains a control or surrogate character")
         if _is_windows_shaped(name):
             _fail("`escape.path` ({!r}) is Windows-shaped (a backslash or a drive-letter prefix); the hook "
-                  "joins it onto the state_dir anchor with POSIX semantics (aiqt_hooks.py:7864), so it "
+                  "joins it onto the state_dir anchor with POSIX semantics (aiqt_hooks.py:_orch_escape_active), so it "
                   "would not name the file its spelling suggests".format(name))
         if "/" in name:
             _fail("`escape.path` ({!r}) must be a bare file name with no \"/\": the gate pins the sentinel "
                   "directly inside the state_dir anchor, so an absolute or multi-component path is "
                   "rejected (the hook would join it onto the anchor and walk its intermediate components, "
-                  "aiqt_hooks.py:7864-7882)".format(name))
+                  "aiqt_hooks.py:_orch_escape_active)".format(name))
         if name in (".", ".."):
             _fail("`escape.path` ({!r}) must be a bare file name, not \".\" or \"..\"; it would name the "
                   "anchor directory or leave it, never the regular-file sentinel the hook requires".format(name))
@@ -755,16 +775,17 @@ def validate(path):
             _fail("`escape.path` is longer than {} bytes, the room the state_dir reserve keeps for a file "
                   "name under it".format(STATE_DERIVED_RESERVE))
         # The sentinel must not share a name with a file the hooks themselves write or read in state_dir
-        # (HOOK_STATE_FILES above, each cited to its site): the release would collide with machine state
+        # (HOOK_STATE_FILES and HOOK_STATE_TEMP above, each cited to its site): the release would collide with machine state
         # rather than name an operator-owned file.
-        if name in HOOK_STATE_FILES:
+        if name in HOOK_STATE_FILES or HOOK_STATE_TEMP.fullmatch(name):
             _fail("`escape.path` ({!r}) is the name of a file the hooks write in state_dir; the operator "
                   "release sentinel must not collide with machine state".format(name))
     # Cross-field REQUIREMENT: a declared `record` or `lease` must be accompanied
     # by an explicit `state_dir`. When `state_dir` is OMITTED the hooks do NOT stop using a state dir --
-    # _state_dir_from_registry (aiqt_hooks.py:7638-7651) falls back to
-    # ${XDG_STATE_HOME:-~/.local/state}/aiqt-guardrails/orch/<repo-key>/, and orch_resume_audit still opens
-    # `<state_dir>/resume-barrier.json` with mode "w" there (aiqt_hooks.py:9783-9785). A record/lease path
+    # _state_dir_from_registry (aiqt_hooks.py:_state_dir_from_registry) falls back to
+    # ${XDG_STATE_HOME:-~/.local/state}/aiqt-guardrails/orch/<repo-key>/, and orch_resume_audit still replaces
+    # `<state_dir>/resume-barrier.json` there (aiqt_hooks.py:orch_resume_audit through aiqt_hooks.py:_orch_barrier_write
+    # `os.replace(tmp, path)`). A record/lease path
     # landing inside that DEFAULT dir is clobbered exactly as in a declared-state_dir collision, but
     # the collision check below runs only `if "state_dir" in obj`, so the default-dir sibling slips through
     # (reproduced: gate exit 0, then the hook clobbers the declared record). Requiring
@@ -773,7 +794,7 @@ def validate(path):
     # `dispatch_tools` carries tool NAMES, not a path, so it cannot collide and does not trigger this.
     if ("record" in obj or "lease" in obj) and "state_dir" not in obj:
         _fail("`record`/`lease` is declared without `state_dir`: the hooks then fall back to an XDG-default "
-              "state directory ($XDG_STATE_HOME/aiqt-guardrails/orch/<repo-key>, aiqt_hooks.py:7638-7651) "
+              "state directory ($XDG_STATE_HOME/aiqt-guardrails/orch/<repo-key>, aiqt_hooks.py:_state_dir_from_registry) "
               "that this gate never sees, and orch_resume_audit's unconditional `<state_dir>/"
               "resume-barrier.json` write clobbers any record/lease path landing inside it; declare "
               "`state_dir` explicitly so the machine-state location is validated and collision-checked")
@@ -788,8 +809,9 @@ def validate(path):
                   "check its path needs, would bind to an XDG-default state directory this gate never "
                   "sees; declare `state_dir` explicitly".format(key))
     # Cross-field collision: a declared record/lease path that lands ON or INSIDE
-    # `state_dir` collides with the machine-state files the hooks write there. orch_resume_audit opens
-    # `<state_dir>/resume-barrier.json` with mode "w" UNCONDITIONALLY (aiqt_hooks.py:9775, 9783-9785), so
+    # `state_dir` collides with the machine-state files the hooks write there. orch_resume_audit replaces
+    # `<state_dir>/resume-barrier.json` UNCONDITIONALLY (aiqt_hooks.py:orch_resume_audit through
+    # aiqt_hooks.py:_orch_barrier_write `os.replace(tmp, path)`), so
     # a record/lease path pointing into state_dir would be clobbered by that hook write (destructive, no
     # lease needed). The per-key checks above validate each path in isolation and cannot see this; this
     # runs ONLY when `state_dir` is declared and valid (execution reaches here only past its
@@ -822,7 +844,7 @@ def validate(path):
         if isinstance(obj.get("lease"), dict) and "path" in obj["lease"]:
             declared.append(("lease.path", obj["lease"]["path"]))
         # Stage 2 adds the declared files the hooks read or write outside state_dir to the same list: the
-        # mode record, the attestation register and its <path>.anchor authority (aiqt_hooks.py:9541), the
+        # mode record, the attestation register and its <path>.anchor authority (aiqt_hooks.py:_orch_register_authority), the
         # mistakes register, and every enumerator operand from argv[3] on (the backlog file), each one
         # absolute. The script (argv[2]) is relative and pinned inside the repository, so it is not listed.
         # All are validated strings by this point.
@@ -881,7 +903,7 @@ def validate(path):
         #       but NOT hard links, the JSON cannot express a link, and the colliding derived file (e.g.
         #       <state_dir>/resume-barrier.json) does not exist at gate time, so no commit-time comparison can
         #       see it. orch_resume_audit's barrier write is a direct truncating open(barrier, "w") with NO
-        #       S_ISREG guard (aiqt_hooks.py:9783, unlike the shared _wrtscp_read_json_artifact reader), so an
+        #       S_ISREG guard (aiqt_hooks.py:orch_resume_audit, unlike the shared _wrtscp_read_json_artifact reader), so an
         #       aliased record file is SILENTLY CLOBBERED, not denied. Precondition: write+search access to
         #       state_dir (and, under fs.protected_hardlinks, to the record file) -- already store-defeating.
         # The Windows-spelling parity residual an earlier revision disclosed here is closed: every declared
@@ -892,12 +914,12 @@ def validate(path):
         # safe by this gate plus its tests, and human review via change-carries-check is the backstop for
         # future edits.
     # `dispatch_tools`, if present: a list of unique non-empty control-free names, each one the
-    # orch_dispatch_ledger PostToolUse matcher in hooks.json ("Bash|TaskOutput", hooks.json:276-290) actually
+    # orch_dispatch_ledger PostToolUse matcher in hooks.json ("Bash|TaskOutput", hooks.json:orch_dispatch_ledger) actually
     # routes to the hook, AND none of them a name in DISPATCH_TOOLS_FORBIDDEN. The hook compares the tool name
-    # against this list only after that matcher fired (aiqt_hooks.py:9276-9280), so a name outside the
+    # against this list only after that matcher fired (aiqt_hooks.py:orch_dispatch_ledger), so a name outside the
     # matcher would be a silent no-op entry. Inside the matcher, "TaskOutput" is inert (the hook routes it to
-    # its completion branch at aiqt_hooks.py:9264 before reading the list at 9277) and "Bash" is harmful
-    # (aiqt_hooks.py:9279-9280 would then record every foreground Bash call as a dispatch), so both are
+    # its completion branch at aiqt_hooks.py:orch_dispatch_ledger before reading the list at aiqt_hooks.py:orch_dispatch_ledger `dispatch_tools = reg.get(`) and "Bash" is harmful
+    # (aiqt_hooks.py:orch_dispatch_ledger would then record every foreground Bash call as a dispatch), so both are
     # rejected. Under the current matcher, then, no non-empty value is valid: only the empty
     # list passes, until the matcher gains a tool name the hook can use. hooks.json is read whenever the key
     # is declared, even for an empty list, so an unreadable hooks.json always fails rather than skipping.
@@ -927,19 +949,19 @@ def validate(path):
     # is declared: its absence leaves the control armed but silently substitutes a hook default. These
     # checks run LAST, after every targeted check, so a fixture that omits a parameter is still rejected by
     # the rule it targets, never only by these.
-    #   lease.max_age_hours: see LEASE_KEYS above (aiqt_hooks.py:7792-7798, 9395-9401).
-    #   staleness: see STALENESS_REQUIRED_BY above (aiqt_hooks.py:8297-8301).
+    #   lease.max_age_hours: see LEASE_KEYS above (aiqt_hooks.py:_orch_scope_live, aiqt_hooks.py:_orch_resume_probes).
+    #   staleness: see STALENESS_REQUIRED_BY above (aiqt_hooks.py:_schema_staleness).
     # Every key the gate still accepts as optional is classified in OPTIONAL_KEY_CLASSIFICATION in
     # tools/test-orchestration-registry.py, which derives the optional set from this gate.
     if isinstance(obj.get("lease"), dict) and "max_age_hours" not in obj["lease"]:
         _fail("`lease.max_age_hours` is required: without it the hook treats a present, non-empty lease as "
-              "fresh forever (aiqt_hooks.py:7792-7798) and the resume audit never reports it stale "
-              "(aiqt_hooks.py:9395-9401), so a lease left by a dead orchestrator keeps scope live; the "
+              "fresh forever (aiqt_hooks.py:_orch_scope_live) and the resume audit never reports it stale "
+              "(aiqt_hooks.py:_orch_resume_probes), so a lease left by a dead orchestrator keeps scope live; the "
               "committed registry declares 24")
     for key in STALENESS_REQUIRED_BY:
         if key in obj and "staleness" not in obj:
             _fail("`{}` is declared without `staleness`: the hook then applies 24 hour task and external "
-                  "horizons nobody declared (aiqt_hooks.py:8297-8301); declare both horizons "
+                  "horizons nobody declared (aiqt_hooks.py:_schema_staleness); declare both horizons "
                   "explicitly".format(key))
     summary = "version 1"
     if "companion_stores" in obj:

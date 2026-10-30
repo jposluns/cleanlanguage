@@ -6,5 +6,23 @@
   },
   "enabledPlugins": {
     "aiqt-guardrails-hooks@aiqt-guardrails": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "-I",
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/shell_heredoc_detach_guard.py"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

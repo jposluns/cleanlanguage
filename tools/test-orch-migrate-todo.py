@@ -8,7 +8,7 @@ the plan on the output:
   (a) the multiset of (id, opened, item, closure) tuple digests from the old file, read by the
       migration parser, equals the one from the new file, read by the enumerator parser;
   (b) the enumerator output on the new file passes the hook function validate_enumeration
-      (aiqt_hooks.py:7904-7959), imported by path in a separate python3 -I process, with the old id
+      (aiqt_hooks.py:validate_enumeration), imported by path in a separate python3 -I process, with the old id
       set and every item open and granted;
   (c) the non-table lines of old and new are identical.
 They also prove the write-safety contract: the script refuses its input as output, an existing

@@ -33,4 +33,6 @@ sources with pinned provenance. A file that runs code when loaded is scanned bef
 introduced on the strength of its name or popularity alone. Before relying on a tool, MCP server,
 connector, or external server, the active surface is reconciled against the approved pinned inventory; an
 unrecognized, shadow, changed, or unpinned entry is treated as unavailable until it is reviewed and
-authorized.
+authorized. A tag or branch name is a movable label, not pinned provenance: a source fetched by one is
+pinned to the commit or digest it resolved to, and where the fetched content declares its own version, a
+mismatch with the version the label names is a changed entry.

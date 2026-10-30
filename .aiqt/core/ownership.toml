@@ -32,6 +32,50 @@ reason = "CI currency workflow; tracked, not shipped. Exact literal, not a glob 
 path = ".github/workflows/quality.yml"
 reason = "CI quality workflow; tracked, not shipped. Exact literal, not a glob (F-235)."
 
+[[exclusion]]
+path = ".github/workflows/msg-leaks.yml"
+reason = "CI message/metadata leak workflow; tracked, not shipped. Exact literal, not a glob (F-235)."
+
+[[exclusion]]
+path = ".github/check_newtab_contract.py"
+reason = "Repository-local NEWTAB declaration-content assertion; tracked, not shipped."
+
+[[exclusion]]
+path = ".github/check_cited_standards_contract.py"
+reason = "Repository-local assertion that .aiqt/cited-standards.toml keeps the rule files and every OPF prompt-pack member pack.toml lists in its corpus (pack.toml validated by opf/tools/check_opf_prompt_pack.py), and that every cited-standards gate line in both runners is exactly the permitted invocation (--config .aiqt/cited-standards.toml and nothing else); a mandatory member of tools/check_ci_parity.py, so removing it from both runners is a parity finding; tracked, not shipped."
+
+[[exclusion]]
+path = ".aiqt/newtab.toml"
+reason = "Repository-local NEWTAB coverage declaration; tracked, not shipped. Adopters own their roots, like .aiqt/derived-command-parameters.toml; this tracked file belongs to concern 1, not the untracked concern-2 namespace."
+
+[[exclusion]]
+path = ".aiqt/python-host.toml"
+reason = "Repository-local CI configuration: the exact CPython patch release the maintainer host runs, read by tools/check_python_host_pin.py and tools/check_python_floor.py to hold the host-patch CI jobs to it; tracked, not shipped, like .aiqt/newtab.toml. An adopter has no such jobs."
+
+[[exclusion]]
+path = ".aiqt/char-policy.json"
+reason = "Repository-local character policy read by tools/check_no_dashes.py and the char-policy-write preview hook; tracked, not shipped. Adopters own their roots (an absent file applies the gate's built-in default), like .aiqt/newtab.toml; this tracked file belongs to concern 1, not the untracked concern-2 namespace."
+
+[[exclusion]]
+path = ".aiqt/cited-standards.toml"
+reason = "Repository-local corpus config for tools/check_cited_standards.py, passed with --config by this repository's CI and tools/run_all_checks.sh to add the OPF prompt-pack members to the rule corpus, and pinned by .github/check_cited_standards_contract.py; tracked, not shipped. Run without --config, the gate applies its built-in default corpus (the rule files alone) and reads no default file. The shipped tools/run_all_checks.sh still passes --config, so in a tree without this file (an adopter install) its cited-standards gate exits 2 (cannot evaluate) and the runner ends RESULT: FAIL, as its newtab-repo-contract gate and its two cited-standards-repo-contract gate lines do there (their .github scripts are not shipped)."
+
+[[exclusion]]
+path = ".aiqt/license-qualification.toml"
+reason = "Repository-local licence-qualification gate configuration (the declared licence identity plus the class-3 exception list) read by tools/check_license_qualification.py; tracked, not shipped. Adopters own their configuration (an absent file applies no declaration and no exceptions), like .aiqt/newtab.toml; this tracked file belongs to concern 1, not the untracked concern-2 namespace."
+
+# The authoring-only roster (tools/gen_hooks.py AUTHORING_ONLY_REL): tracked here, never shipped. gen_manifest
+# refuses either path a release class, requires both tracked together under these exact literals, and allows
+# this one exclusion over a gensrc-registered kind=file target; every other gensrc target stays refused.
+
+[[exclusion]]
+path = ".claude/settings.json"
+reason = "Repository-local project hook registration (the gensrc-edit-guard dogfood wiring), generated whole and drift-gated by tools/gen_hooks.py in the authoring tree only, and gensrc-registered. Tracked, never shipped, so no release, pin or install can carry it over an adopter's own project settings."
+
+[[exclusion]]
+path = ".aiqt/authoring.toml"
+reason = "The authoring-tree marker tools/gen_hooks.py reads before it renders .claude/settings.json. Tracked, never shipped, so an adopter tree never carries it and an adopter run never touches its own .claude/settings.json."
+
 # --- concern-1: manifest-self and the managed block ----------------------------------------------------
 
 [[release-class]]
@@ -98,6 +142,31 @@ class = "pack-immutable"
 note = "Shipped pack tooling, byte-exact; explicitly NOT dev-only (Section 12 step 2)."
 
 [[release-class]]
+pattern = "opf/tools/**"
+class = "pack-immutable"
+note = "The dependency-closed OPF tooling subtree (OPF-SELF-CONTAIN). Shipped pack tooling, byte-exact, mirroring tools/**; disjoint from it. H-1 ratified: no new class family."
+
+[[release-class]]
+pattern = "opf/prompt-pack/**"
+class = "pack-immutable"
+note = "The OPF prompt pack (manifest and member documents), verified by opf/tools/check_opf_prompt_pack.py. Shipped pack content, byte-exact, beside opf/tools/** and opf/spec/** and disjoint from both. No new class family."
+
+[[release-class]]
+pattern = "opf/spec/**"
+class = "pack-immutable"
+note = "The OPF specification pair (OPF-SPEC.md, OPF-QUICKSTART.md) relocated under opf/ (OPF-SELF-CONTAIN). Shipped pack content, byte-exact. H-1 ratified: no new class family."
+
+[[release-class]]
+pattern = "opf/enforcement/**"
+class = "pack-immutable"
+note = "The OPF enforcement pack: adopter-installed CI, pre-commit, hook and instruction files, starting with the CI floor under ci/. Shipped pack content, byte-exact. No new class family."
+
+[[release-class]]
+pattern = ".preview/**"
+class = "pack-immutable"
+note = "The public hooks preview channel: standalone hook files, their README.md install page, and SHA256SUMS, byte-exact shipped content like the other top-level surfaces. Removed with the directory when the last preview hook moves into the plugin."
+
+[[release-class]]
 pattern = "docs/**"
 class = "pack-immutable"
 note = "Documentation Markdown sources (docs/<name>.md) and the shared shell template (docs/_shell.html) that tools/gen_site.py composes into site/<name>.html. Byte-exact shipped pack content; the site pages remain the byte-parity target of the drift gate."
@@ -117,6 +186,24 @@ path = ".aiqt/gensrc.json"
 class = "pack-immutable"
 
 [[release-class]]
+path = ".aiqt/release/first-pin-demonstration.toml"
+class = "pack-immutable"
+note = "The first-pin delivered-prefix-superset demonstration, generated by tools/gen_first_pin_demo.py from AGENTS.md and the rule corpus and byte-identity drift-gated; a SOURCES member, so it is manifest-covered like AGENTS.md. Above the .aiqt/release/** derived minimum."
+
+[[release-class]]
+path = ".aiqt/assurance.toml"
+class = "pack-immutable"
+
+[[release-class]]
+path = ".aiqt/assurance-schema.md"
+class = "pack-immutable"
+
+[[release-class]]
+path = ".aiqt/tracker-label-baseline.toml"
+class = "pack-immutable"
+note = "The per-file ratchet baseline of the shipped tracker-label layer in tools/check_internal_names.py: per-shape hit counts for shipped paths, always the exact output of --write-baseline, regenerated in the reviewed change that legitimately moves a count (lowered as labels are removed; raised, under review policy the gate does not itself enforce, only by a refresh that merges upstream files already carrying labels, the movement visible whole in the regenerated file's diff and recounted against the merge parent in review). Shipped so the gate holds in an adopter tree, where the same shipped files carry the same counts."
+
+[[release-class]]
 path = ".aiqt/record-sections.toml.example"
 class = "pack-immutable"
 note = "Adopter example for tools/check_record_sections.py; deliberately NOT the gate's live default path (.aiqt/record-sections.toml), so the gate stays NOT APPLICABLE until an adopter opts in."
@@ -124,6 +211,11 @@ note = "Adopter example for tools/check_record_sections.py; deliberately NOT the
 [[release-class]]
 path = ".claude/RULES-INDEX.md"
 class = "pack-immutable"
+
+[[release-class]]
+path = ".claude/worker-pack.md"
+class = "pack-immutable"
+note = "The generated worker-pack read surface (tools/gen_worker_pack.py); the dispatcher injects these bytes into every worker brief."
 
 [[release-class]]
 path = ".claude/rules/README.md"
@@ -154,7 +246,15 @@ path = "DISCLOSURE.md"
 class = "pack-immutable"
 
 [[release-class]]
+path = "ENFORCEMENT.md"
+class = "pack-immutable"
+
+[[release-class]]
 path = "GEMINI.md"
+class = "pack-immutable"
+
+[[release-class]]
+path = "INSTRUCTION-BUDGET.md"
 class = "pack-immutable"
 
 [[release-class]]
@@ -183,6 +283,10 @@ class = "pack-immutable"
 
 [[release-class]]
 path = "SYSTEM-HARDENING.md"
+class = "pack-immutable"
+
+[[release-class]]
+path = "TODO.md"
 class = "pack-immutable"
 
 [[release-class]]
@@ -230,6 +334,10 @@ path = "site/disclosure.html"
 class = "pack-immutable"
 
 [[release-class]]
+path = "site/enforcement.html"
+class = "pack-immutable"
+
+[[release-class]]
 path = "site/evidence.html"
 class = "pack-immutable"
 
@@ -266,23 +374,7 @@ path = "site/robots.txt"
 class = "pack-immutable"
 
 [[release-class]]
-path = "site/rule1.html"
-class = "pack-immutable"
-
-[[release-class]]
-path = "site/rule2.html"
-class = "pack-immutable"
-
-[[release-class]]
-path = "site/rule3.html"
-class = "pack-immutable"
-
-[[release-class]]
-path = "site/rule4.html"
-class = "pack-immutable"
-
-[[release-class]]
-path = "site/rule5.html"
+path = "site/rules.html"
 class = "pack-immutable"
 
 [[release-class]]
@@ -309,12 +401,27 @@ class = "pack-immutable"
 path = "site/js/install.js"
 class = "pack-immutable"
 
+# --- concern-1: the opfiles.ai site subtree (opf/site) -------------------------------------------------
+# The opfiles.ai website: the served site pages live directly under opf/site (Cloudflare Pages builds
+# opf/site as the site root). Hand-authored shippable site content, same class as the site/ pages above.
+# A single directory prefix (like site/downloads/**) rather than per-file literals: opf/site is one
+# coherent pack-immutable subtree with no internal class split. Disjoint from every other selector (no
+# other selector matches opf/).
+[[release-class]]
+pattern = "opf/site/**"
+class = "pack-immutable"
+
 # --- concern-2: reserved-namespace / adopter-state patterns (ZERO tracked entries; NO-STRAYS exempt) ----
 
 [[namespace-class]]
 path = ".aiqt/derived-command-parameters.toml"
 class = "adopter-state"
 note = "Adopter-authored configuration for tools/check_derived_command_parameters.py; reserved, never a pack-shipped file (absent = gate NOT APPLICABLE)."
+
+[[namespace-class]]
+path = ".aiqt/relied-exit-pipes.toml"
+class = "adopter-state"
+note = "Adopter-authored configuration for tools/check_relied_exit_pipes.py; reserved, never a pack-shipped file (absent = gate NOT APPLICABLE)."
 
 [[namespace-class]]
 path = ".aiqt/pin.toml"
@@ -355,9 +462,16 @@ class = "adopter-state"
 note = "The documented adopter vendoring location; reserved, never a pack-immutable set-equality member."
 
 # --- checkout byte stability (3.3): every concern-1 path is `text eol=lf` except these ------------------
+# The two vendored-marko exemptions appended below are byte-exact third-party provenance that cannot satisfy
+# the pack text canon while staying identical to upstream: marko/py.typed is a 0-byte PEP 561 marker (a text
+# newline would diverge from the pinned wheel bytes and the adapter manifest sha256), and the CommonMark
+# 0.31.2 spec-examples fixture ships upstream with no trailing newline (the conformance replay pins its exact
+# bytes). They are marked binary so git preserves their bytes verbatim and byte-canon does not canonicalize
+# them; their integrity stays pinned by opf/tools/_vendor/marko-2.2.4.manifest.sha256 and the release manifest.
+# The remaining vendored files are canonical text and stay text eol=lf.
 
 [checkout]
-binary = ["site/downloads/aiqt-skill.zip", "site/downloads/aiqt-skill-1.0.4.zip"]
+binary = ["site/downloads/aiqt-skill.zip", "site/downloads/aiqt-skill-1.0.6.zip", "opf/tools/_vendor/commonmark-spec-0.31.2/spec-0.31.2-examples.json", "opf/tools/_vendor/marko/py.typed"]
 
 # --- concern-3 hook: the adopter-installed extent is defined in the adopter-experience spec -------------
 

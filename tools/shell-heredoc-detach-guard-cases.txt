@@ -1,0 +1,152 @@
+# Cases for tools/test-shell-heredoc-detach-guard.py. Each case starts with a line
+# === <expect> <name>
+# and its command is every following line up to the next such line, newline-terminated.
+# expect: deny (the background deny rule), deny-closed (a fail-closed deny), allow.
+# <TAB> stands for a tab character. Lines starting with # before the first case are comments.
+=== deny d01-bash-single-quoted-delimiter
+bash <<'EOF'
+sleep 100 &
+EOF
+=== deny d02-sh-double-quoted-delimiter
+sh <<"EOF"
+sleep 100 &
+EOF
+=== deny d03-env-bash
+env bash <<'EOF'
+sleep 100 &
+EOF
+=== deny d04-absolute-bin-bash
+/bin/bash <<'EOF'
+sleep 100 &
+EOF
+=== deny d05-body-with-several-commands
+bash <<'EOF'
+echo start
+sleep 100 & echo next
+echo done
+EOF
+=== deny d06-env-options-assignment-dash-tab-strip
+/usr/bin/env -i PATH=/usr/bin dash <<-'EOF'
+<TAB>sleep 100 &
+<TAB>EOF
+=== deny d07-zsh-backslash-delimiter
+zsh <<\EOF
+sleep 100 &
+EOF
+=== deny d08-cat-piped-to-bash
+cat <<'EOF' | bash
+sleep 100 &
+EOF
+=== deny d09-ksh-subshell-backgrounded
+ksh <<'EOF'
+(sleep 100) &
+EOF
+=== deny d10-nested-shell-heredoc-in-body
+bash <<'OUTER'
+sh <<'INNER'
+sleep 100 &
+INNER
+OUTER
+=== deny d11-after-other-commands
+cd /opt && bash <<'EOF'
+sleep 100 &
+EOF
+echo after
+=== deny d12-command-wrapper-bash-s
+command bash -s <<'EOF'
+sleep 100 &
+EOF
+=== deny d13-no-delimiter-line
+bash <<'EOF'
+sleep 100 &
+=== deny d14-script-operand-over-refusal
+bash script.sh <<'EOF'
+sleep 100 &
+EOF
+=== deny-closed d15-body-unreadable
+bash <<'EOF'
+echo 'unclosed &
+EOF
+=== deny-closed d16-command-unreadable-with-shell
+bash <<'EOF
+sleep 100 &
+=== allow a01-cat-data-apostrophes-ampersands
+cat > notes.txt <<'EOF'
+It's Tom & Jerry's & more
+a && b; c &
+EOF
+=== allow a02-cat-to-stdout-data
+cat <<'EOF'
+sleep 100 &
+it's data
+EOF
+=== allow a03-git-commit-F-apostrophe
+git commit -F - <<'EOF'
+Fix the maintainer's note
+
+It's done.
+EOF
+=== allow a04-commit-message-form
+git commit -m "$(cat <<'EOF'
+Tom & Jerry's fix
+EOF
+)"
+=== allow a05-shell-body-double-ampersand
+bash <<'EOF'
+true && echo ok
+EOF
+=== allow a06-shell-body-descriptor-redirections
+bash <<'EOF'
+ls /nonexistent 2>&1
+echo x >&2
+EOF
+=== allow a07-shell-body-quoted-ampersands
+bash <<'EOF'
+echo "a & b" 'c & d' e\&f
+EOF
+=== allow a08-python-heredoc
+python3 - <<'EOF'
+import os
+print("it's" + " & ")
+EOF
+=== allow a09-shell-body-combined-redirect-and-stderr-pipe
+bash <<'EOF'
+ls &>/dev/null
+ls |& cat
+EOF
+=== allow a10-shell-body-comment-ampersand
+bash <<'EOF'
+echo hi # background with &
+EOF
+=== allow a11-unquoted-delimiter-out-of-scope
+bash <<EOF
+sleep 100 &
+EOF
+=== allow a12-data-heredoc-inside-shell-body
+bash <<'EOF'
+cat > f.txt <<'DATA'
+Tom & Jerry
+DATA
+EOF
+=== allow a13-no-heredoc-bare-ampersand-out-of-scope
+sleep 1 &
+=== allow a14-tee-data
+tee out.txt <<'EOF'
+a & b
+EOF
+=== allow a15-shell-body-case-fallthrough
+bash <<'EOF'
+case x in x) echo a ;& y) echo b ;; esac
+EOF
+=== allow a16-script-written-to-file
+cat > s.sh <<'EOF'
+#!/bin/bash
+sleep 100 &
+EOF
+=== allow a17-env-python
+env python3 <<'EOF'
+x = 1 & 2
+EOF
+=== allow a18-unreadable-without-shell-name
+cat <<'EOF
+Tom & Jerry

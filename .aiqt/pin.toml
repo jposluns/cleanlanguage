@@ -5,36 +5,52 @@
 # See ../maintainer-decisions.md, the recon at aiqt-guardrails-recon-2026-09-05.md
 # in the durable store, and NOTICE.md. Adopter-owned files (this pin, config.md,
 # and anything under .claude/rules/external/) are never overwritten by an update.
+#
+# DRAFT (items 38 and 40, whole-subset re-vendor at 466a519b850d9ae4e64ba1f2a8cbcd81771c66d2).
+# Not yet authorized to land: the [[weakenings]] rows below still carry placeholders for
+# their decision ids and status. OP4 and OP5 are decided (see [notes]). Remove this block
+# when the draft is finalized.
 
 [source]
 name = "aiqt-guardrails"
 homepage = "https://aiqt.ai"
-license = "CC-BY-SA-4.0"  # licence of the adopted v1.0.0 source; the pack was later relicensed to Apache-2.0 by the author (jposluns/guardrails LICENSE, verified 2026-09-22), now reflected in NOTICE.md and .claude/CLAUDE.md; this adoption-time field advances on a re-vendor to an Apache-licensed release
+license = "Apache-2.0"  # LICENSE at source-commit is the Apache License 2.0 (sha256 in [vendor] license-sha256); the v1.0.0 adoption source was CC-BY-SA-4.0, and the pack was relicensed by the author (Elastic License 2.0 at tag v1.0.5 c5d77b0, Apache 2.0 from eeba6d1, 2026-09-20)
 author = "Jeff Posluns"
-vendored-from = "/opt/guardrails/guardrails"   # local pack checkout at adoption time
+vendored-from = "/opt/guardrails/guardrails"   # local pack checkout
+source-commit = "466a519b850d9ae4e64ba1f2a8cbcd81771c66d2"  # full commit, never a tag or branch name
+source-date = "2026-10-30T03:03:04-04:00"  # committer date of source-commit
+source-ref = "origin/main of the local pack checkout at its fetch of 2026-10-30 07:31:43 UTC"
 adopted = "2026-09-05"
+revendored = "PLACEHOLDER: the merge date of the re-vendor PR"
 
 [version]
-# The source pack versions these three independently. The maintainer's intent
+# The source pack versions these three independently. The maintainer intent
 # (2026-09-05) is that the pack and skill versions be unified; that reconciliation
-# is upstream in the pack. The tree-sha256 below is the pack's digest over its full v1.0.0 source tree, so it
-# identifies the source RELEASE; the per-file hashes in .aiqt/manifest.toml are what pin
-# the adopted subset. Both are recorded regardless of the version label.
-pack = "1.0.0"          # VERSION, changelog.toml, manifest.toml release-version
-skill = "1.0.4"         # .aiqt/core/skill/skill-source.md meta.version
-hooks-plugin = "0.4.0"  # plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json
+# is upstream in the pack. The tree-sha256 below is the pack digest over its full source
+# tree at source-commit, so it identifies the source revision; the per-file hashes in
+# .aiqt/manifest.toml and in [vendor] below are what pin the adopted subset.
+pack = "1.0.5"          # VERSION and manifest.toml release-version at source-commit
+skill = "1.0.6"         # .aiqt/core/skill/skill-source.md meta version at source-commit
+hooks-plugin = "0.4.0"  # plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json (bytes unchanged since 2eb6812)
 
 [integrity]
-tree-sha256 = "9dbbe17c9bb1372b0bff9b01216d6860851d7b735983a0c40691d91329ca1fe4"
-root = "sha256:3b2b345e02c4e41845b7f59e28bc0a49a283ec6a06394c9933d536474d299f58"
+tree-sha256 = "90717703652dba780e92f90d4d48b32b079b374418c6d4bb02bec72fa82eb14e"
+root = "sha256:e5a226c25dd013307f3f4f4e7f4e2a1a43fbc323900a10f3977c8c4e29587e51"
 manifest = ".aiqt/manifest.toml"
-# Verified at adoption: all 125 rule files and the applicability files matched
-# their recorded hashes in the v1.0.0 manifest (codex assessment, 2026-09-05).
+# The manifest is the upstream generated file at source-commit, byte for byte, and is no
+# longer hand-edited. tools/check-aiqt-vendor.py verifies the vendored files against it and
+# it against this pin (checks 1 to 6); check 7 (--upstream) re-derives every vendored file
+# from the pack at source-commit. History: at adoption (2026-09-05) all 125 rule files and
+# the applicability files matched their recorded hashes in the v1.0.0 manifest (codex
+# assessment, 2026-09-05).
 
 [vendored]
-# Partial vendor: the rule corpus, the hooks plugin, and provenance metadata.
-# The pack's generators, standards manifests, gates, and skill build are NOT adopted.
+# Partial vendor: the rule corpus, the hooks plugin, provenance metadata, and the pack
+# licence and notice (relocated from the pack root; see [[vendor.relocated]]).
+# The pack generators, standards manifests, gates, and skill build are NOT adopted.
 paths = [
+  ".aiqt/LICENSE",
+  ".aiqt/NOTICE",
   ".aiqt/core/rules",
   ".aiqt/core/applies.toml",
   ".aiqt/core/applicability.toml",
@@ -49,12 +65,41 @@ paths = [
 
 [active-rules]
 # Auto-loaded subset. Profile C: applicable to this project, minus low-value rules.
+# The six rules new at source-commit (attint, citint, cntprd, kltwat, rvwpin, tmrrst) each
+# apply under a condition this profile has on (applies.toml at source-commit), and none is
+# excluded, so active rises from 107 to 113 and the corpus from 126 to 132.
 profile = "coding + agent-harness + multi-agent, personal-data off"
-active = 107
+active = 113
 excluded = 19   # 9 app-security-no-surface, 5 personal-data, 1 atomic-claim-from-pool, 4 code-idiom
-basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see durable store)"
+corpus = ".aiqt/core/rules"
+trees = [".claude/rules/aiqt", ".claude/rules/security"]
+excluded-ids = [
+  "atmclm",
+  "cmpmig",
+  "mindep",
+  "mtchcd",
+  "secau1",
+  "secazn",
+  "secdrr",
+  "secfid",
+  "seckey",
+  "seclpr",
+  "secmin",
+  "secpur",
+  "secred",
+  "secspr",
+  "secssr",
+  "secsyn",
+  "sectok",
+  "secupl",
+  "tsthrm",
+]
+basis = "codex applicability assessment + fable value ranking, 2026-09-05 (see durable store); exclusions unchanged by the whole-subset advance (maintainer decision OP1)"
 
 [hooks-update]
+# SUPERSEDED by [vendor] below (whole-subset re-vendor at 466a519b). Kept as history.
+# Every [integrity] value this history cites is the pre-re-vendor pin value (tree-sha256
+# 9dbbe17c..., root sha256:3b2b345e...), not the value now above.
 # 2026-09-12: the enforcement hooks were advanced from the v1.0.0 baseline to guardrails
 # round-2 (PR #232, merged as fa5f942) - the no-ask posture conversion plus git_discard /
 # wrtscp / cnsdif hardening. This is a SCOPED, hooks-only advance: the rule corpus and
@@ -77,8 +122,12 @@ files = [
   "plugin/aiqt-guardrails-hooks/hooks/hooks.json",             # 8663 B, sha256 18753794b9438846aff40658337b5a211664b2579d976df2087aea143e4d206c
 ]
 verified = "byte-identical to the merged manifest (tri-family --expensive QA upstream); plus adopter no-ask invariant + cnsdif discrimination probes and an independent codex verifier"
+superseded-by = "[vendor]"
 
 [rules-update]
+# SUPERSEDED by [vendor] below (whole-subset re-vendor at 466a519b). Kept as history.
+# Every [integrity] value this history cites is the pre-re-vendor pin value (tree-sha256
+# 9dbbe17c..., root sha256:3b2b345e...), not the value now above.
 # 2026-09-13: added guardrails PR #205's rule "explicit-binding-over-ambient-context"
 # (corpus-id expbnd, INTEG) as a SCOPED, rule-corpus-only addition. #205 is a POST-v1.0.0
 # rule; its enforcement hook (git_explicit_binding) was ALREADY live here, having ridden in
@@ -96,3 +145,1325 @@ files = [
   ".claude/rules/aiqt/10-INTEG-explicit-binding-over-ambient-context.md", # 3452 B, sha256 42fadd1cf7769a4af1114d91d461114a1859e7fc3aee1fe5feb081e33e38bd79
 ]
 verified = "byte-identical to upstream guardrails main at HEAD 7c6478c (source-commit 6b32434, PR #205), matching the upstream .aiqt/manifest.toml source and artifact entries; hook git_explicit_binding already live from the 2026-09-13 hooks advance"
+superseded-by = "[vendor]"
+
+[vendor]
+# Whole-subset re-vendor (backlog items 38 and 40; maintainer decision OP1):
+# every vendored path advanced to one upstream commit. Each file below is copied byte for
+# byte from git cat-file blob source-commit:path (path being the upstream path for a
+# relocated file) and equals its upstream manifest [[sources]] entry; the rendered rules
+# also equal their [[artifacts]] entry.
+source-commit = "466a519b850d9ae4e64ba1f2a8cbcd81771c66d2"
+source-date = "2026-10-30T03:03:04-04:00"
+license = "Apache-2.0"
+license-sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"  # LICENSE at source-commit
+whole = [".aiqt/core/rules", "plugin/aiqt-guardrails-hooks"]
+verified = "PLACEHOLDER: the final verification sentence (vendor gate checks 1 to 7 green, tri-family QA verdict ids, commit-content check) is written when the PR is verified"
+
+[[vendor.relocated]]
+# The pack licence and notice sit at the pack root; they are vendored under .aiqt/ so the
+# root LICENSE stays this repository's own CC BY-SA 4.0 text (maintainer decision OP4).
+path = ".aiqt/LICENSE"
+upstream = "LICENSE"
+
+[[vendor.relocated]]
+path = ".aiqt/NOTICE"
+upstream = "NOTICE"
+
+[[vendor.files]]
+path = ".aiqt/LICENSE"
+bytes = 11358
+sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+
+[[vendor.files]]
+path = ".aiqt/NOTICE"
+bytes = 11026
+sha256 = "aaf972bbdd8b8520076c1bb6f9d701fab580ed6fd34a91c2ba125d39d463aa11"
+
+[[vendor.files]]
+path = ".aiqt/core/applicability.toml"
+bytes = 2463
+sha256 = "99ce8ef683462539c3f27f96ca29a1f0ac890605906306f00de6f08dae2c9234"
+
+[[vendor.files]]
+path = ".aiqt/core/applies.toml"
+bytes = 4626
+sha256 = "a2188250b031d6168937b6857d01fe48bdc7f5ed5e93fbc682908b0415a1453f"
+
+[[vendor.files]]
+path = ".aiqt/core/order.toml"
+bytes = 1070
+sha256 = "f1625261cc219e8a08ac893874d74d2f1e435683d9e552d877fefcdde6880f9d"
+
+[[vendor.files]]
+path = ".aiqt/core/ownership.toml"
+bytes = 20439
+sha256 = "855800c7588ee1a295ce40f80326c3e57f844e7722035360743e0a42a8f80531"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/00-project-integrity.md"
+bytes = 622
+sha256 = "3cb951f3c0cbccc6a68feb7c6ba56ff0c02c27724c9aa665d7b87624b1c0fb3e"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-citation-from-opened-file.md"
+bytes = 905
+sha256 = "8f10de006546da9103ddb49c6cabaf6497ca18a8ef1c2aef91bfbb258fdea3c2"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-claims-rest-on-observation.md"
+bytes = 675
+sha256 = "81df92a591d35d1caa71e8cd27c352eeaf2037218c10e37f38b77e1513fa03ff"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-completeness-claim-enumerates-set.md"
+bytes = 3121
+sha256 = "f1fd587cf0d31974e1905c0bc76f35d2b6c5ad3149550c415874fe740e5fff92"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-corroborate-external-claims.md"
+bytes = 455
+sha256 = "14ecc6a4fa419a3b0b8223c9442b0f9c5ab7c32adeaa4e4a2b1fec1cf26b1fb9"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-count-carries-its-predicate.md"
+bytes = 1745
+sha256 = "0acbd49e4173c33393cb9fd2e31b9e1665e425fd7b5442f7e2ed327daf7445aa"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-disclose-guard-residuals.md"
+bytes = 762
+sha256 = "3b8bbb1a920a8c38d7763f6433eb457139c5dd814926559662dc8ffc0409271e"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-evidence-grounded-completion.md"
+bytes = 4279
+sha256 = "a98b09f42c472d707ac1b7eee98594593d181def80bfebfda57780cd9e9afe87"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-guard-input-soundness.md"
+bytes = 5173
+sha256 = "696b25910d8b7cb8c47949f717464d72032e4e3a897917c5fae89cb927f9253f"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-measured-and-estimated-figures-stay-separate.md"
+bytes = 1155
+sha256 = "c5bb9e32e68286eb65af30ecf46fbfcc9f370e9ca1db4607e7532d8f7e420e2b"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-no-fabrication.md"
+bytes = 450
+sha256 = "45e14b4c516cbe6969867102c239f895e9047794a90231cf6a18b1db489f4a26"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-observe-before-asserting-behaviour.md"
+bytes = 2135
+sha256 = "289035b0a883696a13b6e07eecdee0301a424a003b8c3c3ed8b65b0dcb1e0beb"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-partial-read-is-not-the-whole.md"
+bytes = 1257
+sha256 = "1c8eba842cf43ab8c8f2b8a6e691b967115f6f922cd264209644d3daa055ed1f"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-read-before-characterizing.md"
+bytes = 529
+sha256 = "0f3ab20e561d75181f5e5c573688f78154add9c115e51a2eeaa85aaabc7fffb5"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-reference-capture.md"
+bytes = 553
+sha256 = "16771120832a089c77aa198360d27b1e1cd5e287fdb322ee0ffae42ddae0a3f2"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-reproduce-before-fix.md"
+bytes = 463
+sha256 = "ba9cf2790a14e0b1b754fdd7924bf86b895c25043b9f2ee324579f9f8a568069"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-timestamp-from-clock.md"
+bytes = 632
+sha256 = "4cd20aa307683a46425e4c1e00f0da58ca05248f4a154fd771d6cf38430a1910"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-validate-inference-before-action.md"
+bytes = 268
+sha256 = "2981271ce9624a67f855d224b29fa51021e550b2a650b22c25223f3a70c91d3b"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/accur-verify-fix-in-commit.md"
+bytes = 6416
+sha256 = "f3ceb565910c155b18735a542cf32070241cfa0215acffc37cd88a6689be37ee"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/cost-tier.md"
+bytes = 340
+sha256 = "bf301122d02132e0d3a9f54988b2dbb645a1d07fee05b6676b9a6d18b888ea78"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-anything-wrong-fixed-first.md"
+bytes = 541
+sha256 = "7eae45965612b05da9802f2b211a4a58dba305f10b6e80e1514d09508b1d176c"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-attestation-is-harness-owned.md"
+bytes = 566
+sha256 = "dd3eab3381071080c059d31e998280fb3b29d5b07af6b3ea54a9ddbc7c8fa9b4"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-branch-and-merge-on-green.md"
+bytes = 719
+sha256 = "0b6e3cffbdcb82c6d729fe68286c44db290ef6d55f172175b6db6e0edb87f905"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-branch-rooted-on-live-main.md"
+bytes = 1357
+sha256 = "f3197be5d8d73e4ea53880a44c227d390a9b4c08d99f4cc0d00bed8a29026024"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-check-fails-closed-on-unreadable.md"
+bytes = 1363
+sha256 = "77b2e76a348f1468c55988ab1427e04511560c1479e0206aed88416deedacafd"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-commit-identity.md"
+bytes = 504
+sha256 = "04d66e54525d7ed4c8f1e7a1a5e7841e2fa6560430cdee4d2289a109614384d4"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-explicit-binding-over-ambient-context.md"
+bytes = 3452
+sha256 = "42fadd1cf7769a4af1114d91d461114a1859e7fc3aee1fe5feb081e33e38bd79"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-gate-discipline.md"
+bytes = 4665
+sha256 = "9a63652194fa01e678df4ee7043a086709382dbca362ae668691418535ca16c6"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-generated-artefact-source-only.md"
+bytes = 602
+sha256 = "b1426ec6d6697039df495fdf5d5f8d14620bb4aa93ca36ce4d131132e58523e9"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-licence-compatibility.md"
+bytes = 575
+sha256 = "994e4425fa85075bfde2951bbd22c2fffd7e74da95b016ee61df4e462140a5b4"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-no-concealed-failure.md"
+bytes = 505
+sha256 = "ee05fe9dd2edcba872cf7978870fa6eac20ba2578ee5a085293a4a6af18d3407"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-preserve-uncommitted-work.md"
+bytes = 803
+sha256 = "079b701bb284cb830c73014d506e6ba92310483b83f09a6eeb24e4537e4a6cef"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-protected-branch-integrity.md"
+bytes = 602
+sha256 = "59c40e70c51a3915f791927248162ecff2887ec97ed65b428149b3d2c6d327cf"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-required-step-remains-required.md"
+bytes = 1442
+sha256 = "ef4e9c629f937cc69b33eecafe0d1fb53c5ee0b6bc397b5bc16e231f1b27e478"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-rerun-pass-is-still-failure.md"
+bytes = 600
+sha256 = "39ade60ff7a2dfb27108061aa340f8e091118640e71d2c1f3e3bcb8dedeed92b"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-review-in-flight-pins-its-artefact.md"
+bytes = 1121
+sha256 = "66a13ad6f2a36a1362465ed34cdaa342bd53eee2b78d813c92d7fd6f8a2bed79"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-safe-retries.md"
+bytes = 431
+sha256 = "edfecac461bab41a3514c596b291c453fe01f49bd8f5613b95cb2aac98829549"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-separate-task-changes.md"
+bytes = 686
+sha256 = "a2e1df7edebc43fc90bf023efe316a2e3fc0aded3af28cc00936fcd50b513d52"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-stage-then-promote-on-green.md"
+bytes = 796
+sha256 = "63e9d9d79d38c31e27f5720b85ab47c5222cf9f6428da67a3d699c31a42bd20e"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-track-launched-work.md"
+bytes = 1745
+sha256 = "1a6ce97b0599e10e961d0c99689fbaa583b37ea208386216e9cdf46e1ea5ab74"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-validation-gates-apply.md"
+bytes = 474
+sha256 = "dfe15564e51ddab6e19af6995ad8e072229b5ba9d233efad288bf2c91a7aa842"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/integ-workers-produce-inert-data.md"
+bytes = 4053
+sha256 = "f792488e0a386d7ff3b93e31bf91dfe543a96175902a780496d892a5454284f9"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/progr-decision.md"
+bytes = 847
+sha256 = "dae06196008c0bf9f98c4c82961af2943e601b8374abf2717d0fba38ef78f476"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/progr-repeated-failure-triggers-premise-review.md"
+bytes = 497
+sha256 = "10f3addc005116937671bd2be90da3fde26828f6678226fb131ca4c500dcd7ac"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-absolute-paths.md"
+bytes = 558
+sha256 = "11fb788e9b4da6deb19b0e2ccde54822a3dd084c9044a94c44acc4d189ad9e3e"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-change-carries-check.md"
+bytes = 2527
+sha256 = "f0d64dd9542cc5c544853576120c7591f52a91d70c6838d609f02cc3cd87eb1f"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-compatibility-or-migration.md"
+bytes = 446
+sha256 = "172d1c6ae6f644bdcdad7a1a9d5a912cc94951ce2c63128a95b71ae5dd9ff9d1"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-confirm-execution-target.md"
+bytes = 1572
+sha256 = "d5c77943670abf446d40b528e75b2e4226c1ff231c1347ea959dd1d782240f8f"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-defence-in-depth-default.md"
+bytes = 1321
+sha256 = "869083e9ef683c85b8eb380961c656ce727214fa20b1d599c559559904c4e0d6"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-elapsed-aware-timer-restore.md"
+bytes = 1989
+sha256 = "a3e63913a6c51a518b4dcd6d64451eaf08202fa134d1e7ab6af35b0327214ad2"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-findings-are-fixed-not-argued.md"
+bytes = 628
+sha256 = "2422f9568c606f4e9f286c4f5b6c19e842fdee78b5a5e948cf4c71854dded45d"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-goal-fidelity-across-trajectory.md"
+bytes = 928
+sha256 = "57eba929d16870f286470300a85da43683b5d14d71e7335cecda4d10daebc092"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-high-assurance-verification.md"
+bytes = 462
+sha256 = "5f97f7ebd69a8b825747c384fbc0ac5717a3ccfecb86641c672b93afb32b96fa"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-kill-timeout-exceeds-callee-wait.md"
+bytes = 1732
+sha256 = "b5abc8e7aff81715c11ed49241607a5063adbdf933f215609d5060f4b7418756"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-lightweight-verifier-workers.md"
+bytes = 560
+sha256 = "8130dffb7ed200c34a55f877250082ea14036bce473cb6b34fe842cd07217572"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-match-surrounding-code.md"
+bytes = 381
+sha256 = "a5efa2d1c098f87119de27b85a57ba6dd72185a1f08acbbab4b8ff738363193c"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-minimize-dependencies.md"
+bytes = 695
+sha256 = "52847a4bb4339269f413a5a857dc0d36206240a119c02fa43201c7682ae15fdb"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-self-guardrail-from-error.md"
+bytes = 570
+sha256 = "f0bb93048360259f1ddf6e456c7b4a91d5414b649959397d382de14711b0a464"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-smallest-correct-change.md"
+bytes = 351
+sha256 = "52d59eb0d79af9a80aa6c529c197925f19d55c65bf730d32da4057fb547865c7"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-surface-counterproductive-instructions.md"
+bytes = 638
+sha256 = "ed3443fb13e8dd7d19719c83d747153d27cc782ba278831180a817ede477bf4d"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-test-hermeticity.md"
+bytes = 4358
+sha256 = "76fcd50b0c87390e1bb75af0454edc76c3ff7c9147e1f9e3f1f87c849f37a0da"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-verifier-delivery-completeness.md"
+bytes = 2329
+sha256 = "53ef601aa90474904622ba69b7f8abf8c412c8f2e0b7b305c45c009ac844ad36"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/quali-verifier-diversity.md"
+bytes = 997
+sha256 = "b9d0fa9a991d84fbe673a56208ef0c3f63dbea20425ace2b8ff3d43cf7f4071d"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seca-resource-bounds.md"
+bytes = 1275
+sha256 = "375447700ebc1747573126543b2b445f30616c29f87a215804a792150632e4b6"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seca-verified-restore-path.md"
+bytes = 946
+sha256 = "efb7cc448342f497f3a73d7a9480976b546d0e596f032ae154cf36de5e9160e0"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secc-data-boundary.md"
+bytes = 720
+sha256 = "8112e14e42ba88c5bad89d16183a7e38395e08a3d030b7062d2ad1527a641c86"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secc-egress-destinations.md"
+bytes = 934
+sha256 = "c1b18d883729b2f1871a3575265763fe5470ed1ebd90080e7bfa8e44e9a7f9f6"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secc-keep-secrets-out.md"
+bytes = 1247
+sha256 = "ed9b700dc61020f26f1fbc08d69823450809a44db0ebd990fe5e32b721dd8a54"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secc-least-privilege-retrieval.md"
+bytes = 745
+sha256 = "614ca3e928114e33bd238e1dcab39b7f4fec50ef8aada9ba11efdf89c30d4046"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secc-no-cross-context-bleed.md"
+bytes = 727
+sha256 = "4c35d3deddbe05cde0f59ed364610dd0e5b64eab05b02305d25df354ce4d5123"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secc-no-hidden-context-disclosure.md"
+bytes = 776
+sha256 = "f6d9184d603b813bd0856de9290e8d38212720683f28274a78550ca9957fe698"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secc-rotate-leaked-secret.md"
+bytes = 793
+sha256 = "49c9030bb835ac27bac61350f8093ea4737ee69205b1dc17171efe2ff723393f"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-authentication.md"
+bytes = 885
+sha256 = "72824b38e528d930f7c8752043c7377ab9a649f7be77df16ac50e7139499b181"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-authorization.md"
+bytes = 1114
+sha256 = "2e94a14bda0d0dd7293761463aa92ee1c2f9c22348e647f556d1d44c4b09f02c"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-config-is-executable-trust-gate.md"
+bytes = 1249
+sha256 = "d1163da189c678895879cc6048c03a56997cbac9fbd41d54968f50ef7d23714d"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-cryptography.md"
+bytes = 1810
+sha256 = "aecd04a29c4b0132ee3ddbec5b2220312d6fdbba149ea63b42d572f557cdc807"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-dependency-provenance.md"
+bytes = 1825
+sha256 = "3c14a6ea288a902ba213b62ad9cc8b555eb3e107319188d1e02c53fb4a8e71d3"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-fail-closed.md"
+bytes = 1172
+sha256 = "efd8286b499e21e270332b95b2082e229718209c6dee55af595f998d12ccaf80"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-federated-identity-flow.md"
+bytes = 809
+sha256 = "e1c0dae14b1204be462169b81743f010708c40e6277a396783d23154ab2e1855"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-file-upload-handling.md"
+bytes = 921
+sha256 = "31619a3ad20c7afd16cc84ce9f659a9ab010f2bd2eceb3993551335b0fc908e0"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-guardrail-config-integrity.md"
+bytes = 952
+sha256 = "5ee165abb675a399e5884653c80b26567b29e08b2419e53470a195dbeb3d4362"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-human-authorization.md"
+bytes = 1063
+sha256 = "f9889b4752d978001803c78822b36af2447df00032a887af538decae4c54b411"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-input-validation.md"
+bytes = 834
+sha256 = "83c0ebf7d7efd8f557a05a10842824dccbf83734dd67978b6ae9329ab59120f0"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-inter-agent-trust.md"
+bytes = 1071
+sha256 = "d0f3ec20a83fe33f723eb0d33356b1f9214a63c7933da78b2b079a82c57fcacb"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-key-management.md"
+bytes = 805
+sha256 = "4e0d28e987ee8b2b2fddc43b8897fccc5e3922c1e4dae160c69f5dc86b618b6c"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-least-privilege-tools.md"
+bytes = 1023
+sha256 = "984745e42aa24a3ff8598be91abcb0e6388d3398eef2c8d3d6112e0eb0acb37c"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-log-redaction.md"
+bytes = 750
+sha256 = "b9077ec66be2225ff1453c61d77f564ef9e2efbee316007c2b57d0bfd9af8b4a"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-operator-deception.md"
+bytes = 373
+sha256 = "c802446890d45f943fe6a83af57414ef42cb5717beea05c6c9054f27c619e465"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-output-encoding.md"
+bytes = 759
+sha256 = "93572b31a1c8e475ec8ab4802da2975dfc63dfb19e70c49aec25e075162084f4"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-output-handling.md"
+bytes = 1255
+sha256 = "0cad8990877f14074c63093154a447a4a7a0ad0b3f8b04f6006f6f830f27e749"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-pin-referenced-instructions.md"
+bytes = 1370
+sha256 = "e472b7766cb37f523dd6c36bc19134a8267a6e965de76a3c04c894e531b0bd1d"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-poisoning-resistance.md"
+bytes = 1118
+sha256 = "dd5ed3e86c0cb3bfb99005751c887bb8d65f9a3d146f589c54b2b7be67c21562"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-prefer-removing-a-path.md"
+bytes = 1401
+sha256 = "7318a8f5900c32ac72f956831f2aa38fdd207daa9436547852f845263ff0e0a6"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-preview-has-no-side-effects.md"
+bytes = 1629
+sha256 = "3377872cd6ff805bbf69d2178411f8152caa2064b234408c687e1226a710e052"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-prompt-trust-hierarchy.md"
+bytes = 1561
+sha256 = "7029abad5eae7ac2c25f19bf7ac76ca1beb968b5b5029ba3b3e84b12ca48cfce"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-protect-audit-records.md"
+bytes = 739
+sha256 = "e819796064dbfe636ace49f01c96c16c04c0a7aaf612a7cfee4aee5851b93961"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-reject-vulnerable-versions.md"
+bytes = 940
+sha256 = "7d1ed6a7d27fd70e4db10793336dfaf465fa0df8470ba1ca9a745f09582f088a"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-release-integrity.md"
+bytes = 689
+sha256 = "935c1ee116427f64752e4343ba8172b1e9a5e8c591966bdf7ee1883f32411860"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-safe-deserialization.md"
+bytes = 665
+sha256 = "ab862bb2e4e83cf198c0c087169122be26360395a3e97a90e858d492905419c5"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-secure-configuration.md"
+bytes = 908
+sha256 = "190917f3c1511a40aca3a3f6a65f72e430b725a3ad34a2d193ebfbe822f2f734"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-security-logging.md"
+bytes = 891
+sha256 = "cda2137d4626683a3762e9e71c9aa51baa8670c5b78be5091bdb5ebd46acc5c4"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-session-token-management.md"
+bytes = 1219
+sha256 = "78e3bb96a62f0d2a33bcc3d346503bc00ad387ee69926cd2f9f5b4c74ae200eb"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-ssrf-prevention.md"
+bytes = 696
+sha256 = "5b814dd41917601fd949fe32e025b0e8b11fee1c34a1e811506c064e59e9a34f"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-symlink-resolution.md"
+bytes = 2071
+sha256 = "fec1beb6357dcdcfe6faf5f17f35fe045baa3c4340ff3352495828cd00e36a63"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-threat-model-boundaries.md"
+bytes = 765
+sha256 = "377cd7ec6c5e0edf43103093ed413b330be661417d5c1c9701fd35c528b47911"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-tool-argument-validation.md"
+bytes = 817
+sha256 = "b1803500f22b1da3fb6a1eb77e0660a8431f0f5f9060d58f8a420753fd5f0458"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-untrusted-content.md"
+bytes = 1634
+sha256 = "dd052fc57cec8a82405e2df68149a7346aeb6dd781a0d11f837ca11a4dc0ff1c"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-seci-verify-dependency-exists.md"
+bytes = 843
+sha256 = "7a93b710f859a06b83f920266b6cd080afda5c38a1bdc881891dbadb062cad7b"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secp-data-minimization.md"
+bytes = 913
+sha256 = "bef72daca0f70a0a0f0517fc805db090f0bc7e38e99552e6088d34a63ac5842c"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secp-data-residency-retention.md"
+bytes = 584
+sha256 = "46935d7e78f3371f63dd6012491c2f3b98eed630e8c1dadfcd360145a023c54b"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secp-purpose-limitation.md"
+bytes = 638
+sha256 = "b87293e42be693284e441088b0810b3aec17b5c403ad16bc7b606b49d0e94316"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/security-secp-synthetic-fixture-data.md"
+bytes = 689
+sha256 = "27b27ca584b3f43f111051d861e316ae6f78a64373dcd2cb2197c6da241a7126"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/speed-ci-waits.md"
+bytes = 513
+sha256 = "bb9f3b8e737355cec4f8e48e81ffb645ac04eebf9b6fe4ab867709f781034c10"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-ai-toolchain-register.md"
+bytes = 538
+sha256 = "3e52b6bf3d53bc55ab6231ec441c4e448875315361005d6b3c11a2492deec972"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-assess-advise-discussion-only.md"
+bytes = 624
+sha256 = "10f5369a66ee5cc6b4c7e1d8c0bd0747bada6823d943d0ecfed15aa695d6797e"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-atomic-claim-from-pool.md"
+bytes = 742
+sha256 = "4b797e29b0c95684ed6084d224fb461c9f6581e6e40279b85dfa743c9c42a0fe"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-authorization.md"
+bytes = 399
+sha256 = "0b4b235c936219010fda0629e5820600042dd1649845fcdc40e57468426bb45d"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-change-record.md"
+bytes = 502
+sha256 = "0f1974599cf36ae91ec0d06f303b58115814c59e39862975b21b8b36c90e2592"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-change-tracking-ext.md"
+bytes = 481
+sha256 = "fa3bba508acadc6ca5f710c341e02ba479ab56a8307efe3a1603af62a094e520"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-clarify.md"
+bytes = 485
+sha256 = "06a68c8a599743de685c32c2b3070bfe219e8698b1374b2690393a661a962cd3"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-concurrency-lease.md"
+bytes = 365
+sha256 = "20c201093daf82185da0b45339bfa565acc96a9d81b327580804c7976b99c2ae"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-continue-by-default.md"
+bytes = 10232
+sha256 = "2d26e8dee5c542079bae6930b50ef07d8232094c44dd1b033bbb7514b0b3d28c"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-human-oversight.md"
+bytes = 721
+sha256 = "500ec46b68c02422a357694f908dda4796e32e2d6092056509d94b63c2394c39"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-no-console-diff-dumps.md"
+bytes = 577
+sha256 = "308e6e2db143f234176832620768ea9e5d1b9b6ff8823f41e34fe692e637849d"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-orchestrator-mistakes-register.md"
+bytes = 640
+sha256 = "e65e499ccfb80d2d95aea11ec28e196043f109c66e3a4c9c7881de69f9514b0f"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-reconcile-record-against-reality.md"
+bytes = 888
+sha256 = "bffe77e19fcd63baccbc40d5f8abd92d518ac571f5e337f2c57b4f8d9dd9bbe7"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-records-first.md"
+bytes = 448
+sha256 = "ac5c8cfd3a376953a1ed0de2ad815605a7349e9d8666ae3111e3d70059ad31a7"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-recovery-escalation.md"
+bytes = 408
+sha256 = "8b0ac08aca16a572d07fa1c6a9a65d255be78532c2caed9edd43619819b62777"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-session-close-on-green.md"
+bytes = 394
+sha256 = "888ecba6a01eceddf160c102b1f9434f9ef16f7e18e775dbd9ce1bb5b2ff1e56"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-session-resume-from-handoff.md"
+bytes = 307
+sha256 = "9036dc8e9c4bddec87b50df099ee7b426f0c50cb9651c926375729a6c814d163"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-standing-constraints-persist.md"
+bytes = 970
+sha256 = "29b79900c405646552937f27b434f2d4998e4b14158ddb82fdc43bd454b9c218"
+
+[[vendor.files]]
+path = ".aiqt/core/rules/trust-trust-recovery-ext.md"
+bytes = 614
+sha256 = "ca2a29d56f95091c3f50db083deae2655f01b54d7d44e2686f8d29b45ada76ff"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/00-project-integrity.md"
+bytes = 622
+sha256 = "3cb951f3c0cbccc6a68feb7c6ba56ff0c02c27724c9aa665d7b87624b1c0fb3e"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-citation-from-opened-file.md"
+bytes = 905
+sha256 = "8f10de006546da9103ddb49c6cabaf6497ca18a8ef1c2aef91bfbb258fdea3c2"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-claims-rest-on-observation.md"
+bytes = 675
+sha256 = "81df92a591d35d1caa71e8cd27c352eeaf2037218c10e37f38b77e1513fa03ff"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-completeness-claim-enumerates-its-set.md"
+bytes = 3121
+sha256 = "f1fd587cf0d31974e1905c0bc76f35d2b6c5ad3149550c415874fe740e5fff92"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-corroborate-external-claims.md"
+bytes = 455
+sha256 = "14ecc6a4fa419a3b0b8223c9442b0f9c5ab7c32adeaa4e4a2b1fec1cf26b1fb9"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-count-carries-its-predicate.md"
+bytes = 1745
+sha256 = "0acbd49e4173c33393cb9fd2e31b9e1665e425fd7b5442f7e2ed327daf7445aa"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-disclose-guard-residuals.md"
+bytes = 762
+sha256 = "3b8bbb1a920a8c38d7763f6433eb457139c5dd814926559662dc8ffc0409271e"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-evidence-grounded-completion.md"
+bytes = 4279
+sha256 = "a98b09f42c472d707ac1b7eee98594593d181def80bfebfda57780cd9e9afe87"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-guard-input-soundness.md"
+bytes = 5173
+sha256 = "696b25910d8b7cb8c47949f717464d72032e4e3a897917c5fae89cb927f9253f"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-measured-and-estimated-figures-stay-separate.md"
+bytes = 1155
+sha256 = "c5bb9e32e68286eb65af30ecf46fbfcc9f370e9ca1db4607e7532d8f7e420e2b"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-no-fabrication.md"
+bytes = 450
+sha256 = "45e14b4c516cbe6969867102c239f895e9047794a90231cf6a18b1db489f4a26"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-observe-before-asserting-behaviour.md"
+bytes = 2135
+sha256 = "289035b0a883696a13b6e07eecdee0301a424a003b8c3c3ed8b65b0dcb1e0beb"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-partial-read-is-not-the-whole.md"
+bytes = 1257
+sha256 = "1c8eba842cf43ab8c8f2b8a6e691b967115f6f922cd264209644d3daa055ed1f"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-read-before-characterizing.md"
+bytes = 529
+sha256 = "0f3ab20e561d75181f5e5c573688f78154add9c115e51a2eeaa85aaabc7fffb5"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-reference-capture.md"
+bytes = 553
+sha256 = "16771120832a089c77aa198360d27b1e1cd5e287fdb322ee0ffae42ddae0a3f2"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-reproduce-before-fix.md"
+bytes = 463
+sha256 = "ba9cf2790a14e0b1b754fdd7924bf86b895c25043b9f2ee324579f9f8a568069"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-timestamp-from-clock.md"
+bytes = 632
+sha256 = "4cd20aa307683a46425e4c1e00f0da58ca05248f4a154fd771d6cf38430a1910"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-validate-inference-before-action.md"
+bytes = 268
+sha256 = "2981271ce9624a67f855d224b29fa51021e550b2a650b22c25223f3a70c91d3b"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-ACCUR-verify-fix-in-commit.md"
+bytes = 6416
+sha256 = "f3ceb565910c155b18735a542cf32070241cfa0215acffc37cd88a6689be37ee"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-anything-wrong-fixed-first.md"
+bytes = 541
+sha256 = "7eae45965612b05da9802f2b211a4a58dba305f10b6e80e1514d09508b1d176c"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-attestation-is-harness-owned.md"
+bytes = 566
+sha256 = "dd3eab3381071080c059d31e998280fb3b29d5b07af6b3ea54a9ddbc7c8fa9b4"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-branch-and-merge-on-green.md"
+bytes = 719
+sha256 = "0b6e3cffbdcb82c6d729fe68286c44db290ef6d55f172175b6db6e0edb87f905"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-branch-rooted-on-live-main.md"
+bytes = 1357
+sha256 = "f3197be5d8d73e4ea53880a44c227d390a9b4c08d99f4cc0d00bed8a29026024"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-check-fails-closed-on-unreadable.md"
+bytes = 1363
+sha256 = "77b2e76a348f1468c55988ab1427e04511560c1479e0206aed88416deedacafd"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-commit-identity.md"
+bytes = 504
+sha256 = "04d66e54525d7ed4c8f1e7a1a5e7841e2fa6560430cdee4d2289a109614384d4"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-explicit-binding-over-ambient-context.md"
+bytes = 3452
+sha256 = "42fadd1cf7769a4af1114d91d461114a1859e7fc3aee1fe5feb081e33e38bd79"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-gate-discipline.md"
+bytes = 4665
+sha256 = "9a63652194fa01e678df4ee7043a086709382dbca362ae668691418535ca16c6"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-generated-artefact-source-only.md"
+bytes = 602
+sha256 = "b1426ec6d6697039df495fdf5d5f8d14620bb4aa93ca36ce4d131132e58523e9"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-licence-compatibility.md"
+bytes = 575
+sha256 = "994e4425fa85075bfde2951bbd22c2fffd7e74da95b016ee61df4e462140a5b4"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-no-concealed-failure.md"
+bytes = 505
+sha256 = "ee05fe9dd2edcba872cf7978870fa6eac20ba2578ee5a085293a4a6af18d3407"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-preserve-uncommitted-work.md"
+bytes = 803
+sha256 = "079b701bb284cb830c73014d506e6ba92310483b83f09a6eeb24e4537e4a6cef"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-protected-branch-integrity.md"
+bytes = 602
+sha256 = "59c40e70c51a3915f791927248162ecff2887ec97ed65b428149b3d2c6d327cf"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-required-step-remains-required.md"
+bytes = 1442
+sha256 = "ef4e9c629f937cc69b33eecafe0d1fb53c5ee0b6bc397b5bc16e231f1b27e478"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-rerun-pass-is-still-failure.md"
+bytes = 600
+sha256 = "39ade60ff7a2dfb27108061aa340f8e091118640e71d2c1f3e3bcb8dedeed92b"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-review-in-flight-pins-its-artefact.md"
+bytes = 1121
+sha256 = "66a13ad6f2a36a1362465ed34cdaa342bd53eee2b78d813c92d7fd6f8a2bed79"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-safe-retries.md"
+bytes = 431
+sha256 = "edfecac461bab41a3514c596b291c453fe01f49bd8f5613b95cb2aac98829549"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-separate-task-changes.md"
+bytes = 686
+sha256 = "a2e1df7edebc43fc90bf023efe316a2e3fc0aded3af28cc00936fcd50b513d52"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-stage-then-promote-on-green.md"
+bytes = 796
+sha256 = "63e9d9d79d38c31e27f5720b85ab47c5222cf9f6428da67a3d699c31a42bd20e"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-track-launched-work.md"
+bytes = 1745
+sha256 = "1a6ce97b0599e10e961d0c99689fbaa583b37ea208386216e9cdf46e1ea5ab74"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-validation-gates-apply.md"
+bytes = 474
+sha256 = "dfe15564e51ddab6e19af6995ad8e072229b5ba9d233efad288bf2c91a7aa842"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-INTEG-workers-produce-inert-data.md"
+bytes = 4053
+sha256 = "f792488e0a386d7ff3b93e31bf91dfe543a96175902a780496d892a5454284f9"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-absolute-paths.md"
+bytes = 558
+sha256 = "11fb788e9b4da6deb19b0e2ccde54822a3dd084c9044a94c44acc4d189ad9e3e"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-change-carries-check.md"
+bytes = 2527
+sha256 = "f0d64dd9542cc5c544853576120c7591f52a91d70c6838d609f02cc3cd87eb1f"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-confirm-execution-target.md"
+bytes = 1572
+sha256 = "d5c77943670abf446d40b528e75b2e4226c1ff231c1347ea959dd1d782240f8f"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-defence-in-depth-default.md"
+bytes = 1321
+sha256 = "869083e9ef683c85b8eb380961c656ce727214fa20b1d599c559559904c4e0d6"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-elapsed-aware-timer-restore.md"
+bytes = 1989
+sha256 = "a3e63913a6c51a518b4dcd6d64451eaf08202fa134d1e7ab6af35b0327214ad2"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-findings-are-fixed-not-argued.md"
+bytes = 628
+sha256 = "2422f9568c606f4e9f286c4f5b6c19e842fdee78b5a5e948cf4c71854dded45d"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-goal-fidelity-across-trajectory.md"
+bytes = 928
+sha256 = "57eba929d16870f286470300a85da43683b5d14d71e7335cecda4d10daebc092"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-high-assurance-verification.md"
+bytes = 462
+sha256 = "5f97f7ebd69a8b825747c384fbc0ac5717a3ccfecb86641c672b93afb32b96fa"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-kill-timeout-exceeds-callee-wait.md"
+bytes = 1732
+sha256 = "b5abc8e7aff81715c11ed49241607a5063adbdf933f215609d5060f4b7418756"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-lightweight-verifier-workers.md"
+bytes = 560
+sha256 = "8130dffb7ed200c34a55f877250082ea14036bce473cb6b34fe842cd07217572"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-self-guardrail-from-error.md"
+bytes = 570
+sha256 = "f0bb93048360259f1ddf6e456c7b4a91d5414b649959397d382de14711b0a464"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-smallest-correct-change.md"
+bytes = 351
+sha256 = "52d59eb0d79af9a80aa6c529c197925f19d55c65bf730d32da4057fb547865c7"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-surface-counterproductive-instructions.md"
+bytes = 638
+sha256 = "ed3443fb13e8dd7d19719c83d747153d27cc782ba278831180a817ede477bf4d"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-verifier-delivery-completeness.md"
+bytes = 2329
+sha256 = "53ef601aa90474904622ba69b7f8abf8c412c8f2e0b7b305c45c009ac844ad36"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-QUALI-verifier-diversity.md"
+bytes = 997
+sha256 = "b9d0fa9a991d84fbe673a56208ef0c3f63dbea20425ace2b8ff3d43cf7f4071d"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-ai-toolchain-register.md"
+bytes = 538
+sha256 = "3e52b6bf3d53bc55ab6231ec441c4e448875315361005d6b3c11a2492deec972"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-assess-advise-discussion-only.md"
+bytes = 624
+sha256 = "10f5369a66ee5cc6b4c7e1d8c0bd0747bada6823d943d0ecfed15aa695d6797e"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-change-record.md"
+bytes = 502
+sha256 = "0f1974599cf36ae91ec0d06f303b58115814c59e39862975b21b8b36c90e2592"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-change-tracking-ext.md"
+bytes = 481
+sha256 = "fa3bba508acadc6ca5f710c341e02ba479ab56a8307efe3a1603af62a094e520"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-clarify-before-acting.md"
+bytes = 485
+sha256 = "06a68c8a599743de685c32c2b3070bfe219e8698b1374b2690393a661a962cd3"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-concurrency-lease.md"
+bytes = 365
+sha256 = "20c201093daf82185da0b45339bfa565acc96a9d81b327580804c7976b99c2ae"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-continue-by-default.md"
+bytes = 10232
+sha256 = "2d26e8dee5c542079bae6930b50ef07d8232094c44dd1b033bbb7514b0b3d28c"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-express-authorization-before-execution.md"
+bytes = 399
+sha256 = "0b4b235c936219010fda0629e5820600042dd1649845fcdc40e57468426bb45d"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-human-oversight-and-autonomy-threshold.md"
+bytes = 721
+sha256 = "500ec46b68c02422a357694f908dda4796e32e2d6092056509d94b63c2394c39"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-no-console-diff-dumps.md"
+bytes = 577
+sha256 = "308e6e2db143f234176832620768ea9e5d1b9b6ff8823f41e34fe692e637849d"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-orchestrator-mistakes-register.md"
+bytes = 640
+sha256 = "e65e499ccfb80d2d95aea11ec28e196043f109c66e3a4c9c7881de69f9514b0f"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-reconcile-record-against-reality.md"
+bytes = 888
+sha256 = "bffe77e19fcd63baccbc40d5f8abd92d518ac571f5e337f2c57b4f8d9dd9bbe7"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-records-first.md"
+bytes = 448
+sha256 = "ac5c8cfd3a376953a1ed0de2ad815605a7349e9d8666ae3111e3d70059ad31a7"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-session-close-on-green.md"
+bytes = 394
+sha256 = "888ecba6a01eceddf160c102b1f9434f9ef16f7e18e775dbd9ce1bb5b2ff1e56"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-session-resume-from-handoff.md"
+bytes = 307
+sha256 = "9036dc8e9c4bddec87b50df099ee7b426f0c50cb9651c926375729a6c814d163"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-standing-constraints-persist.md"
+bytes = 970
+sha256 = "29b79900c405646552937f27b434f2d4998e4b14158ddb82fdc43bd454b9c218"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-trust-recovery-escalation.md"
+bytes = 408
+sha256 = "8b0ac08aca16a572d07fa1c6a9a65d255be78532c2caed9edd43619819b62777"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/10-TRUST-trust-recovery-ext.md"
+bytes = 614
+sha256 = "ca2a29d56f95091c3f50db083deae2655f01b54d7d44e2686f8d29b45ada76ff"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/20-PROGR-decision-classification-before-enacting.md"
+bytes = 847
+sha256 = "dae06196008c0bf9f98c4c82961af2943e601b8374abf2717d0fba38ef78f476"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/20-PROGR-repeated-failure-triggers-premise-review.md"
+bytes = 497
+sha256 = "10f3addc005116937671bd2be90da3fde26828f6678226fb131ca4c500dcd7ac"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/30-SPEED-background-work-during-ci-waits.md"
+bytes = 513
+sha256 = "bb9f3b8e737355cec4f8e48e81ffb645ac04eebf9b6fe4ab867709f781034c10"
+
+[[vendor.files]]
+path = ".claude/rules/aiqt/40-COST-cost-tier.md"
+bytes = 340
+sha256 = "bf301122d02132e0d3a9f54988b2dbb645a1d07fee05b6676b9a6d18b888ea78"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECA-resource-bounds.md"
+bytes = 1275
+sha256 = "375447700ebc1747573126543b2b445f30616c29f87a215804a792150632e4b6"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECA-verified-restore-path.md"
+bytes = 946
+sha256 = "efb7cc448342f497f3a73d7a9480976b546d0e596f032ae154cf36de5e9160e0"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECC-data-boundary.md"
+bytes = 720
+sha256 = "8112e14e42ba88c5bad89d16183a7e38395e08a3d030b7062d2ad1527a641c86"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECC-egress-destinations.md"
+bytes = 934
+sha256 = "c1b18d883729b2f1871a3575265763fe5470ed1ebd90080e7bfa8e44e9a7f9f6"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECC-keep-secrets-out.md"
+bytes = 1247
+sha256 = "ed9b700dc61020f26f1fbc08d69823450809a44db0ebd990fe5e32b721dd8a54"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECC-no-cross-context-bleed.md"
+bytes = 727
+sha256 = "4c35d3deddbe05cde0f59ed364610dd0e5b64eab05b02305d25df354ce4d5123"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECC-no-hidden-context-disclosure.md"
+bytes = 776
+sha256 = "f6d9184d603b813bd0856de9290e8d38212720683f28274a78550ca9957fe698"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECC-rotate-leaked-secret.md"
+bytes = 793
+sha256 = "49c9030bb835ac27bac61350f8093ea4737ee69205b1dc17171efe2ff723393f"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-config-is-executable-trust-gate.md"
+bytes = 1249
+sha256 = "d1163da189c678895879cc6048c03a56997cbac9fbd41d54968f50ef7d23714d"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-cryptography.md"
+bytes = 1810
+sha256 = "aecd04a29c4b0132ee3ddbec5b2220312d6fdbba149ea63b42d572f557cdc807"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-dependency-provenance.md"
+bytes = 1825
+sha256 = "3c14a6ea288a902ba213b62ad9cc8b555eb3e107319188d1e02c53fb4a8e71d3"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-fail-closed.md"
+bytes = 1172
+sha256 = "efd8286b499e21e270332b95b2082e229718209c6dee55af595f998d12ccaf80"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-guardrail-config-integrity.md"
+bytes = 952
+sha256 = "5ee165abb675a399e5884653c80b26567b29e08b2419e53470a195dbeb3d4362"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-human-authorization.md"
+bytes = 1063
+sha256 = "f9889b4752d978001803c78822b36af2447df00032a887af538decae4c54b411"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-input-validation.md"
+bytes = 834
+sha256 = "83c0ebf7d7efd8f557a05a10842824dccbf83734dd67978b6ae9329ab59120f0"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-inter-agent-trust.md"
+bytes = 1071
+sha256 = "d0f3ec20a83fe33f723eb0d33356b1f9214a63c7933da78b2b079a82c57fcacb"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-least-privilege-tools.md"
+bytes = 1023
+sha256 = "984745e42aa24a3ff8598be91abcb0e6388d3398eef2c8d3d6112e0eb0acb37c"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-operator-deception.md"
+bytes = 373
+sha256 = "c802446890d45f943fe6a83af57414ef42cb5717beea05c6c9054f27c619e465"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-output-encoding.md"
+bytes = 759
+sha256 = "93572b31a1c8e475ec8ab4802da2975dfc63dfb19e70c49aec25e075162084f4"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-output-handling.md"
+bytes = 1255
+sha256 = "0cad8990877f14074c63093154a447a4a7a0ad0b3f8b04f6006f6f830f27e749"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-pin-referenced-instructions.md"
+bytes = 1370
+sha256 = "e472b7766cb37f523dd6c36bc19134a8267a6e965de76a3c04c894e531b0bd1d"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-poisoning-resistance.md"
+bytes = 1118
+sha256 = "dd5ed3e86c0cb3bfb99005751c887bb8d65f9a3d146f589c54b2b7be67c21562"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-prefer-removing-a-path.md"
+bytes = 1401
+sha256 = "7318a8f5900c32ac72f956831f2aa38fdd207daa9436547852f845263ff0e0a6"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-preview-has-no-side-effects.md"
+bytes = 1629
+sha256 = "3377872cd6ff805bbf69d2178411f8152caa2064b234408c687e1226a710e052"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-prompt-trust-hierarchy.md"
+bytes = 1561
+sha256 = "7029abad5eae7ac2c25f19bf7ac76ca1beb968b5b5029ba3b3e84b12ca48cfce"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-protect-audit-records.md"
+bytes = 739
+sha256 = "e819796064dbfe636ace49f01c96c16c04c0a7aaf612a7cfee4aee5851b93961"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-reject-vulnerable-versions.md"
+bytes = 940
+sha256 = "7d1ed6a7d27fd70e4db10793336dfaf465fa0df8470ba1ca9a745f09582f088a"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-release-integrity.md"
+bytes = 689
+sha256 = "935c1ee116427f64752e4343ba8172b1e9a5e8c591966bdf7ee1883f32411860"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-safe-deserialization.md"
+bytes = 665
+sha256 = "ab862bb2e4e83cf198c0c087169122be26360395a3e97a90e858d492905419c5"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-secure-configuration.md"
+bytes = 908
+sha256 = "190917f3c1511a40aca3a3f6a65f72e430b725a3ad34a2d193ebfbe822f2f734"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-security-logging.md"
+bytes = 891
+sha256 = "cda2137d4626683a3762e9e71c9aa51baa8670c5b78be5091bdb5ebd46acc5c4"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-threat-model-boundaries.md"
+bytes = 765
+sha256 = "377cd7ec6c5e0edf43103093ed413b330be661417d5c1c9701fd35c528b47911"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-tool-argument-validation.md"
+bytes = 817
+sha256 = "b1803500f22b1da3fb6a1eb77e0660a8431f0f5f9060d58f8a420753fd5f0458"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-untrusted-content.md"
+bytes = 1634
+sha256 = "dd052fc57cec8a82405e2df68149a7346aeb6dd781a0d11f837ca11a4dc0ff1c"
+
+[[vendor.files]]
+path = ".claude/rules/security/SECI-verify-dependency-exists.md"
+bytes = 843
+sha256 = "7a93b710f859a06b83f920266b6cd080afda5c38a1bdc881891dbadb062cad7b"
+
+[[vendor.files]]
+path = "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+bytes = 288
+sha256 = "d0a878cceb8a33d2baa4c0f658e1cac39b92fbdccdf859e6bc73eedfb49f2915"
+
+[[vendor.files]]
+path = "plugin/aiqt-guardrails-hooks/hooks/hooks.json"
+bytes = 10725
+sha256 = "ed348e99916ab4c55917dba6f039937233fdac380f4d23ef5c013caf356fc001"
+
+[[vendor.files]]
+path = "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py"
+bytes = 2272236
+sha256 = "b865387e311de3fa505156c89dfdd4f79bf39303293e27a3141c701400d4841a"
+
+[[weakenings]]
+# Security-floor reductions the re-vendor carries, each authorized by the maintainer and
+# pinned by a regression probe. A row that is not authorized blocks merge (gate-discipline).
+id = "W1"
+rule = "trkasy"
+hook = "orch_truncation_guard"
+summary = "an ampersand in a quoted-delimiter heredoc body fed to a shell is lifted by the lexer narrowing (_ORCH_AMP_PLACES), so a backgrounded command in such a body is a silent allow"
+decision = "accept, plus a local compensating hook (maintainer decision OP2; date recorded at finalization)"
+decision-id = "maintainer decision 2026-10-30: accept with a local compensating hook (private record store)"
+compensating-control = "the adopter-owned PreToolUse Bash hook .claude/hooks/shell_heredoc_detach_guard.py, registered in .claude/settings.json and tested by tools/test-shell-heredoc-detach-guard.py (a named step of the Orchestration registry workflow); its disclosed residual, quoted from the hook docstring: RESIDUAL (disclosed; this guard is best-effort and does not cover every way to detach a child): 1. Interpreter recognition is by the written command word only. A shell reached through a variable (such as SHELL), an alias or function, another wrapper (sudo, nohup, nice, timeout, xargs, setsid, ssh, busybox), another shell name (ash, mksh, yash), a subshell group as a later pipeline stage, a group or subshell that carries the here-document, a process substitution, or eval, source or the dot command reading the body is not seen. 2. Detachers that carry no single ampersand (setsid, nohup without one, disown, coproc, a nested bash -c string inside the body) are not seen. 3. The lexer is a best-effort reading of bash, not a guarantee: case patterns inside a command substitution, extended globs, single quotes inside a parameter expansion within double quotes, ANSI-C escapes and arithmetic can be read differently from bash. A misreading can hide an ampersand (a silent allow) or invent one (an over-refusal). 4. Inside a command substitution or backquotes a body ends at a line that starts with the delimiter followed by a closing parenthesis, as bash 5.3 reads it; an older bash reads further lines as body, and an ampersand in those lines is not judged. 5. Over-refusal: a shell-fed here-document is denied whatever the shell arguments, so bash -c with a command string, bash with a script operand, and a here-document on a descriptor other than 0 are denied when the body holds a backgrounding ampersand, although that body is then not read as commands. The remedy is to run the job in the foreground or through the tracked background dispatch. 6. An unreadable hook payload (not JSON, or no command string) is allowed with a note; the vendored trkasy guard denies such a payload. 7. The vendored lexer adds denies only; where it is absent, renamed or refuses a body, coverage rests on this file lexer alone (noted on each such call)."
+probe = "tools/test-shell-heredoc-detach-guard.py"
+status = "accepted"
+
+[[weakenings]]
+id = "W2"
+rule = "cmtidn"
+hook = "commit_identity"
+summary = "commands longer than 128 KiB are judged by _commit_identity_fallback; a command of tens of MiB may outlast the 10-second hook timeout and run with no deny"
+decision = "accept with disclosure, plus a regression probe (maintainer decision OP3; date recorded at finalization)"
+decision-id = "maintainer decision 2026-10-30: accept with a regression probe (private record store)"
+compensating-control = "none mechanical beyond the probe; the root CLAUDE.md attribution rule and the repository identity configuration (.aiqt/config.md) stay in force"
+probe = "tools/test-cmtidn-large-message.py: a git commit command of about 200 KiB whose message carries an AI co-author trailer, once at its start and once past the 128 KiB read limit, is denied by the vendored hook, and controls of the same length with no trailer or a human trailer are allowed; a named step of the Orchestration registry workflow"
+status = "accepted"
+
+[notes]
+decided-points = "OP4: the upstream LICENSE and NOTICE at source-commit are vendored byte for byte as .aiqt/LICENSE and .aiqt/NOTICE, mapped to their upstream paths by [[vendor.relocated]] and verified by the vendor gate. OP5: no CI egress; vendor gate check 7 runs locally against the pack checkout, as a QA-worker and pre-merge step, not in CI"
+in-force = "the hook carries a 128 KiB commit-identity read limit (W2) and refuses to run below Python 3.14 (FLOOR_FAIL_OPEN_MODES exit 0, every other mode exits 2)"
