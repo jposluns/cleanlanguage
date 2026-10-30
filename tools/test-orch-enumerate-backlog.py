@@ -16,40 +16,40 @@ would read as a drained backlog. The real backlog is never read.
 A missing required input (the enumerator or the vendored hook) fails the test rather than skipping
 it, so an absent file can never read as a green run. The HiddenTablePrefix cases prove that a row
 whose "|" is kept off column 0 by an invisible, combining, filler, no-break or blockquote prefix
-fails closed rather than vanishing as prose (findings F1 and G1), that a GFM row with no leading
-pipe and a prose line with a mid-line pipe fail closed too (G1: one rule, any "|" off a column-0
+fails closed rather than vanishing as prose, that a GFM row with no leading
+pipe and a prose line with a mid-line pipe fail closed too (one rule: any "|" off a column-0
 table line), and the class probe runs that rule over every code point of the Basic Multilingual
-Plane. The Isolation case proves the script re-executes itself under python3 -I (finding F7).
+Plane. The Isolation case proves the script re-executes itself under python3 -I.
 
 The PipeFreeRow cases prove that a row which has lost all its pipes, a line with no "|" that opens
 with an item id and an ISO date (after any leading whitespace, blockquote marker or character outside
 printable ASCII), fails closed naming the line rather than vanishing as prose, while ordinary prose,
 a plain lazy continuation line and an HTML comment pass, and that the two-parser loss check refuses
-both dumps (finding R2). The BlockerProperty cases prove that a ref of only Unicode whitespace fails
+both dumps. The BlockerProperty cases prove that a ref of only Unicode whitespace fails
 closed naming the line, and that every exit-0 enumeration over a grid of blocker kinds and edge refs
-and evidence values passes the vendored validate_enumeration (finding R5). An invalid UTF-8 input is
-reported with its line as well as its byte offset (finding R7).
+and evidence values passes the vendored validate_enumeration. An invalid UTF-8 input is
+reported with its line as well as its byte offset.
 
 The InputFileType cases prove that a backlog path that is not a regular file, a FIFO with no writer,
 a symlink to one, a directory, or /dev/null, exits 1 promptly naming the path and the file type
 rather than blocking indefinitely or reading as an empty input, while a regular file, a symlink to
-one, and a file larger than one read chunk still enumerate (finding S3). Each run is bounded by a
+one, and a file larger than one read chunk still enumerate. Each run is bounded by a
 subprocess timeout, so a blocking open fails the test instead of hanging the suite. The SourceProbe
 case is the class probe for that finding: it scans the enumerator source for every reference to an
 opener (open, fdopen, read_text, read_bytes, write_text, write_bytes, called, aliased or imported)
 and requires exactly one, the os.open inside the checked helper, so a new unchecked open fails the
 suite. The EndOfInput cases prove that an input with no backlog table is reported at the line where
-the scan ended (finding S4). The EvidenceBlankness cases prove that an evidence description of only
+the scan ended. The EvidenceBlankness cases prove that an evidence description of only
 Unicode whitespace, such as U+00A0, fails closed naming the line, since the vendored
 validate_enumeration accepts such evidence and the hook classification then treats it as absent
-(aiqt_hooks.py:8165), while a real description enumerates and classifies blocked (round 6 U3). The
+(aiqt_hooks.py:8165), while a real description enumerates and classifies blocked. The
 StripProbe case is the class probe for that finding: it scans the enumerator source for every strip,
 lstrip or rstrip call with an explicit character set and requires each to be in a recorded allowlist
 with its reason, and requires each emitted value among them to carry the bare str.strip() blank test
 the hook applies, so a new narrower blank test fails the suite.
 
-The ErrorPosition cases prove that every failure the enumerator can produce begins with its position
-(round 9 X1): a line of the input, the line where the scan ended, or "before line 1" with the reason
+The ErrorPosition cases prove that every failure the enumerator can produce begins with its position:
+a line of the input, the line where the scan ended, or "before line 1" with the reason
 no line was read, for a missing, unreadable, FIFO, directory, device and invalid UTF-8 input, a
 malformed table, a usage error and a failed re-execution, in both modes. The PositionProbe case is
 the class probe for that finding: it scans the enumerator source for every path that can write a
@@ -69,7 +69,7 @@ each stage of the run (path resolution, reading, parsing, the row digest and the
 both modes, each exit 1 with one positioned stderr line and no traceback, at the position that
 stage had reached. A KeyboardInterrupt injected at each of those stages is reported by the same
 guard with exit 130, in one positioned stderr line with no traceback, both in process and in a
-process that runs main unguarded by the harness (round 15). The remaining residual is a process
+process that runs main unguarded by the harness. The remaining residual is a process
 ended without an exception (a signal other than SIGINT, exec or os._exit), a KeyboardInterrupt
 raised before main starts, and a second KeyboardInterrupt while the guard writes its failure, none
 of which names a position.
@@ -124,8 +124,8 @@ print(json.dumps({"status": status, "detail": detail}))
 """
 
 
-# Prefixes that keep a "|" off column 0 while it stays the first visible character (findings F1 and
-# G1). The G1 entries are outside the classes the F1 fix enumerated: U+034F and U+FE0F are category
+# Prefixes that keep a "|" off column 0 while it stays the first visible character. The first
+# four entries are outside the prefix classes a first fix enumerated: U+034F and U+FE0F are category
 # Mn, and U+3164 and U+FFA0 are blank fillers of category Lo.
 HIDDEN_PREFIXES = [
     ("combining grapheme joiner U+034F", "\u034f"),
@@ -506,7 +506,7 @@ class FailClosed(EnumeratorHarness):
                           needle="not valid UTF-8")
 
     def test_invalid_utf8_names_the_line(self):
-        # Finding R7: the report names the line of the first invalid byte, not only its offset.
+        # The report names the line of the first invalid byte, not only its offset.
         text = table(row("1")).encode("utf-8")
         line = text.count(b"\n") + 1
         r = self.assert_fails(self.write(text + b"bad \xff byte\n"), line=line,
@@ -565,7 +565,7 @@ class FailClosed(EnumeratorHarness):
         self.assert_fails(table(row("1", blocker="human-decision:  ")), line=7, needle="blank ref")
 
     def test_blank_ref_of_only_unicode_whitespace(self):
-        # Finding R5: the hook rejects a ref whose str.strip() is empty (aiqt_hooks.py:7949), so the
+        # The hook rejects a ref whose str.strip() is empty (aiqt_hooks.py:7949), so the
         # enumerator fails closed on it naming the line rather than exit 0 into ENUMERATOR_ERROR.
         for kind in BLOCKER_KINDS:
             for ref in UNICODE_BLANK_REFS:
@@ -632,7 +632,7 @@ class FailClosed(EnumeratorHarness):
 
 
 class HiddenTablePrefix(EnumeratorHarness):
-    """A "|" kept off column 0 by an invisible, no-break or blockquote prefix fails closed (F1).
+    """A "|" kept off column 0 by an invisible, no-break or blockquote prefix fails closed.
 
     Before the fix such a row read as prose: the enumeration exited 0 without the item. In the
     table() fixture the header is line 5 and the rows start at line 7.
@@ -676,14 +676,14 @@ class HiddenTablePrefix(EnumeratorHarness):
 
     def test_gfm_row_without_a_leading_pipe_mid_table_fails_closed(self):
         # GFM accepts a row with no leading pipe, so a renderer shows it as a row of the table;
-        # before G1 the enumerator read it as prose and dropped item 2 silently.
+        # before the fix the enumerator read it as prose and dropped item 2 silently.
         self.assert_fails(table(row("1"), row("2")[1:].lstrip(), row("3")), line=8,
                           needle="does not begin with")
         self.assert_fails(table(row("1"), "2 | 2026-10-01 | open | yes | - | - | Item | Done |",
                                 row("3")), line=8, needle="does not begin with")
 
     def test_prose_with_a_mid_line_bar_fails_closed(self):
-        # Replaces the F1-era test that prose with a "|" after other text passes: under G1 any "|"
+        # Replaces an earlier test that prose with a "|" after other text passes: now any "|"
         # outside a column-0 table line fails closed, because a rule that lets some prefixed bars
         # through has to enumerate which, and any prefix outside the list hides a row. The backlog
         # format keeps every "|" inside a table line, so this costs nothing on a valid backlog.
@@ -725,7 +725,7 @@ class HiddenTablePrefix(EnumeratorHarness):
 
 
 class PipeFreeRow(EnumeratorHarness):
-    """A data row that has lost all its pipes fails closed naming the line (finding R2).
+    """A data row that has lost all its pipes fails closed naming the line.
 
     Before the fix such a line read as prose: the enumeration exited 0 without the item. In the
     table() fixture the header is line 5 and the rows start at line 7, so the probed line is 8.
@@ -827,7 +827,7 @@ class PipeFreeRow(EnumeratorHarness):
 
 
 class BlockerProperty(EnumeratorHarness):
-    """Every exit-0 enumeration over a grid of blockers passes the hook validator (finding R5)."""
+    """Every exit-0 enumeration over a grid of blockers passes the hook validator."""
 
     def cases(self):
         out = []
@@ -876,7 +876,7 @@ class BlockerProperty(EnumeratorHarness):
 
 
 class Isolation(EnumeratorHarness):
-    """Started without -I, the enumerator re-executes itself under python3 -I (finding F7)."""
+    """Started without -I, the enumerator re-executes itself under python3 -I."""
 
     def test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib(self):
         tooldir = self._tmp / "tooldir"
@@ -900,7 +900,7 @@ class Isolation(EnumeratorHarness):
 
 
 class InputFileType(EnumeratorHarness):
-    """The backlog path must be a regular file (finding S3). A FIFO with no writer, a symlink to a
+    """The backlog path must be a regular file. A FIFO with no writer, a symlink to a
     FIFO, a directory and /dev/null each exit 1 within a short timeout, naming the path and the file
     type, in both modes; a regular file and a symlink to one still enumerate."""
 
@@ -1009,7 +1009,7 @@ def opener_call_tokens(source):
 
 
 class SourceProbe(unittest.TestCase):
-    """Class probe for finding S3: every path the enumerator opens goes through _read_regular."""
+    """Class probe: every path the enumerator opens goes through _read_regular."""
 
     def test_every_open_in_the_enumerator_goes_through_the_checked_helper(self):
         if not SCRIPT.exists():
@@ -1026,7 +1026,7 @@ class SourceProbe(unittest.TestCase):
 
 
 class EvidenceBlankness(EnumeratorHarness):
-    # Round 6 U3: the evidence description is non-blank by the str.strip() test the hook applies
+    # The evidence description is non-blank by the str.strip() test the hook applies
     # (aiqt_hooks.py:8165), not by a narrower blank class.
 
     def test_evidence_of_only_unicode_whitespace_fails_closed(self):
@@ -1133,7 +1133,7 @@ def has_bare_blank_test(func_node, name):
 
 
 class StripProbe(unittest.TestCase):
-    # Class probe for round 6 U3: no strip with an explicit character set narrows a blank test the
+    # Class probe for blank evidence: no strip with an explicit character set narrows a blank test the
     # hook makes with str.strip().
 
     def test_every_explicit_strip_is_allowlisted_with_its_reason(self):
@@ -1155,7 +1155,7 @@ class StripProbe(unittest.TestCase):
                                     "{}.strip() the hook applies".format(receiver, func, receiver))
 
 
-# Round 9 X1: a failure message, after the "FAIL: " prefix, begins with its position.
+# A failure message, after the "FAIL: " prefix, begins with its position.
 POSITION_RE = re.compile(r"^orch-enumerate-backlog: FAIL: (line [1-9][0-9]*(?: \(end of input\))?"
                          r"|before line 1 \((?:input unreadable|no input read)\)): \S")
 BEFORE_INPUT = "before line 1 (input unreadable)"
@@ -1172,7 +1172,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
 
 class ErrorPosition(EnumeratorHarness):
-    """Every failure the enumerator can produce names its position (round 9 X1). In the table()
+    """Every failure the enumerator can produce names its position. In the table()
     fixture the header is line 5 and the first row line 7."""
 
     TIMEOUT = 20
@@ -1622,7 +1622,7 @@ def module_constants(source):
             and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Constant)}
 
 
-# The failure-path sites the enumerator held at the round 9 verification fix, so a probe that stops
+# The failure-path sites the enumerator held when these floors were set, so a probe that stops
 # reading a class of them fails rather than passing vacuously.
 POSITION_FLOORS = (("construction", 4), ("_fail call", 2), ("line argument", 29), ("raise", 28),
                    ("standard error write", 2), ("print to a file", 2), ("exit", 3))
@@ -1676,7 +1676,7 @@ POSITION_MUTATIONS = (
 
 
 class PositionProbe(unittest.TestCase):
-    # Class probe for round 9 X1 and its verification round: every path in the enumerator that can
+    # Class probe for the position rule: every path in the enumerator that can
     # write a failure names a documented position. Each BacklogError construction and each _fail
     # message begins with one; _fail relays str(exc) only where exc is bound by an except clause
     # naming BacklogError alone; a line position handed to a helper is never a constant; every raise
@@ -1794,7 +1794,7 @@ class RuntimeGuard(EnumeratorHarness):
     """The top-level guard in main turns any exception that escapes the handling into one positioned
     failure line, exit 1, with no traceback, at the position the run had reached: before line 1
     until the whole input is read, then the end of input. A KeyboardInterrupt gets the same
-    positioned line with exit 130 (round 15)."""
+    positioned line with exit 130."""
 
     TIMEOUT = 20
 
@@ -1897,7 +1897,7 @@ class RuntimeGuard(EnumeratorHarness):
                                     .format(stage))
 
     def test_a_keyboard_interrupt_at_each_stage_exits_130_positioned(self):
-        # Round 15: a KeyboardInterrupt at each stage of either mode is reported by the guard in
+        # A KeyboardInterrupt at each stage of either mode is reported by the guard in
         # main, exit 130, in one positioned line with no traceback and no enumeration on stdout.
         # Each case runs in process and again with main unguarded by the harness, where an
         # escaping interrupt would print the interpreter traceback and end the process by SIGINT.
@@ -1923,7 +1923,7 @@ class RuntimeGuard(EnumeratorHarness):
 
 
 class EndOfInput(EnumeratorHarness):
-    """An input with no backlog table is reported at the line where the scan ended (finding S4)."""
+    """An input with no backlog table is reported at the line where the scan ended."""
 
     def test_no_table_names_the_last_line(self):
         cases = [("# Backlog\n\nNothing here.\n", 3), ("# Backlog\n\nNothing here.", 3),

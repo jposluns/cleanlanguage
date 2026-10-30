@@ -17,10 +17,10 @@ refused case writes nothing. A file that appears after the existence check is ne
 exclusive create refuses it), and a write that fails part way removes its partial output (finding
 L5). A row whose "|" is kept off column 0 by an invisible, combining, filler, no-break or blockquote
 prefix, a GFM row with no leading pipe, and a prose line with a mid-line pipe are each refused by
-both parsers, so the two-parser loss check fails rather than agreeing on the loss (findings F1 and
-G1: one rule, any "|" off a column-0 table line), and a class probe runs that rule in both parsers
+both parsers, so the two-parser loss check fails rather than agreeing on the loss (one rule:
+any "|" off a column-0 table line), and a class probe runs that rule in both parsers
 over every code point of the Basic Multilingual Plane. The Isolation case proves the migration
-re-executes itself under python3 -I (finding G9). A missing required input (either script or the
+re-executes itself under python3 -I. A missing required input (either script or the
 vendored hook) fails the test rather than skipping it.
 
 The PipeFreeRow cases prove that a row which has lost all its pipes (a line with no "|" that opens
@@ -28,22 +28,22 @@ with an item id and a YYYY-MM-DD date once any leading whitespace, blockquote ma
 outside printable ASCII is skipped) is refused naming the line and writes nothing, that plain prose,
 a plain lazy continuation line and an HTML comment are still copied, that the two-parser loss check
 refuses both dumps, and that the two independently written row-shape rules agree on a generated
-corpus of lines (finding R2). An invalid UTF-8 input is refused naming its line as well as its byte
-offset (finding R7).
+corpus of lines. An invalid UTF-8 input is refused naming its line as well as its byte
+offset.
 
 The InputFileType cases prove that an input path that is not a regular file, a FIFO with no writer,
 a symlink to one, a directory, or /dev/null, is refused promptly (exit 1) naming the path and the
 file type, in both modes, and writes no output, rather than blocking indefinitely or converting an
 empty input, while a regular file, a symlink to one, and an input larger than one read chunk still
-convert (finding S3). Each run is bounded by a subprocess timeout, so a blocking open fails the
+convert. Each run is bounded by a subprocess timeout, so a blocking open fails the
 test instead of hanging the suite. The SourceProbe case is the class probe for that finding: it
 scans the migration source for every reference to an opener (open, fdopen, read_text, read_bytes,
 write_text, write_bytes, called, aliased or imported) and accepts only the os.open in the checked
 read helper and the exclusive create of the output, so a new unchecked open fails the suite. The
-no-header refusal names the line where the scan ended (finding S4).
+no-header refusal names the line where the scan ended.
 
-The ErrorPosition cases prove that every refusal the migration can produce begins with its position
-(round 9 X1): a line of the input, the line where the scan ended, the end of input for a refused
+The ErrorPosition cases prove that every refusal the migration can produce begins with its position:
+a line of the input, the line where the scan ended, the end of input for a refused
 output, or "before line 1" with the reason no line was read, for a missing, unreadable, FIFO,
 directory, device and invalid UTF-8 input, a malformed or empty table, every output refusal
 (including an output that resolves to the input once the input is gone after the read), a usage
@@ -67,7 +67,7 @@ reached. A KeyboardInterrupt injected at each of those stages, and inside the ou
 exclusive create, is refused by the same guard with exit 130, in one positioned stderr line with no
 traceback, both in process and in a process that runs main unguarded by the harness, and, where the
 output step had started, the line says what became of the output: written in full and left in
-place, or the partial output removed (round 15). A failure inside the output write after the
+place, or the partial output removed. A failure inside the output write after the
 exclusive create, a RuntimeError or a KeyboardInterrupt, leaves no output file, and the refusal says
 the partial output was removed; when that removal itself fails, the refusal names the file left
 behind and says it must be deleted before any retry; when the removal meets an exception that is
@@ -80,7 +80,7 @@ arrives during that removal, after a write that failed by an OSError or by a Run
 130 refusal still names the output and says the cleanup was interrupted, so the partial output may
 remain and must be checked and deleted before any retry, and the file is left; an interrupt that
 ends only the first removal attempt in the OSError branch is followed by a second attempt, whose
-result the refusal reports (fix round 16, M2). The remaining residual is a
+result the refusal reports. The remaining residual is a
 process ended without an exception (a signal other than SIGINT, exec or os._exit), a
 KeyboardInterrupt raised before main starts, and a second KeyboardInterrupt while the guard writes
 its refusal, none of which names a position.
@@ -141,8 +141,8 @@ print("written")
 sys.exit(3)
 """
 
-# Prefixes that keep a "|" off column 0 while it stays the first visible character (findings F1 and
-# G1). The G1 entries are outside the classes the F1 fix enumerated: U+034F and U+FE0F are category
+# Prefixes that keep a "|" off column 0 while it stays the first visible character. The first
+# four entries are outside the prefix classes a first fix enumerated: U+034F and U+FE0F are category
 # Mn, and U+3164 and U+FFA0 are blank fillers of category Lo.
 HIDDEN_PREFIXES = [
     ("combining grapheme joiner U+034F", "\u034f"),
@@ -205,7 +205,7 @@ print(json.dumps(result))
 """
 
 
-# The message each parser gives for a pipe-free line with the shape of a row (finding R2).
+# The message each parser gives for a pipe-free line with the shape of a row.
 MIGRATE_ROW_ERROR = "opens with an item id and a YYYY-MM-DD date"
 ENUMERATE_ROW_ERROR = "begins with an item id and an ISO date"
 
@@ -489,7 +489,7 @@ class MalformedInput(MigrateHarness):
         self.refuse(old_fixture().encode("utf-8") + b"\xff\n", "not valid UTF-8")
 
     def test_invalid_utf8_names_the_line(self):
-        # Finding R7: the refusal names the line of the first invalid byte, not only its offset.
+        # The refusal names the line of the first invalid byte, not only its offset.
         text = old_fixture().encode("utf-8")
         self.refuse(text + b"bad \xff byte\n", "line {}: input {} is not valid UTF-8 (byte offset {})"
                     .format(text.count(b"\n") + 1, self.src, len(text) + 4))
@@ -547,11 +547,11 @@ class MalformedInput(MigrateHarness):
 
 
 class HiddenTablePrefix(MigrateHarness):
-    """A "|" off column 0 is refused, whatever keeps it there (F1 and G1).
+    """A "|" off column 0 is refused, whatever keeps it there.
 
-    Before F1 the migration copied a prefixed row through as prose and both dumps omitted it, so
-    the digest multisets agreed and the loss check could not see the loss. The F1 fix enumerated
-    prefix classes, so a prefix outside them (G1) still hid the row. In old_fixture() the header is
+    Before the fix the migration copied a prefixed row through as prose and both dumps omitted it, so
+    the digest multisets agreed and the loss check could not see the loss. A first fix enumerated
+    prefix classes, so a prefix outside them still hid the row. In old_fixture() the header is
     line 5 and the rows start at line 7.
     """
 
@@ -608,7 +608,7 @@ class HiddenTablePrefix(MigrateHarness):
 
     def test_gfm_row_without_a_leading_pipe_mid_table_is_refused(self):
         # GFM accepts a row with no leading pipe, so a renderer shows it as a row of the table;
-        # before G1 the migration copied it through as prose and both dumps dropped item 12.
+        # before the fix the migration copied it through as prose and both dumps dropped item 12.
         self.write_src(old_fixture(rows=[OLD_ROWS[0], OLD_ROWS[1][1:].lstrip()] + OLD_ROWS[2:]))
         self.assert_refused(self.py(MIGRATE, self.src, self.dst), "line 8: " + MIGRATE_BAR_ERROR)
         self.assertFalse(os.path.lexists(self.dst))
@@ -635,7 +635,7 @@ class HiddenTablePrefix(MigrateHarness):
                 self.assertIn(ENUMERATE_BAR_ERROR, new.stderr)
 
     def test_prose_with_a_mid_line_bar_is_refused(self):
-        # Replaces the F1-era test that prose with a "|" after other text is copied: under G1 any
+        # Replaces an earlier test that prose with a "|" after other text is copied: now any
         # "|" outside a column-0 table line is refused, because a rule that lets some prefixed bars
         # through has to enumerate which, and any prefix outside the list hides a row. The backlog
         # keeps every "|" inside a table line, so this refuses nothing in a valid backlog.
@@ -697,7 +697,7 @@ class HiddenTablePrefix(MigrateHarness):
 
 
 class PipeFreeRow(MigrateHarness):
-    """A row that has lost all its pipes is refused naming the line (finding R2).
+    """A row that has lost all its pipes is refused naming the line.
 
     Before the fix the migration copied such a line through as prose and both dumps omitted it, so
     the digest multisets agreed and the loss check could not see the loss. In old_fixture() the
@@ -798,7 +798,7 @@ class PipeFreeRow(MigrateHarness):
 
 
 class Isolation(MigrateHarness):
-    """Started without -I, the migration re-executes itself under python3 -I (finding G9)."""
+    """Started without -I, the migration re-executes itself under python3 -I."""
 
     def test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib(self):
         tooldir = self._tmp / "tooldir"
@@ -823,7 +823,7 @@ class Isolation(MigrateHarness):
 
 
 class InputFileType(MigrateHarness):
-    """The input must be a regular file (finding S3). A FIFO with no writer, a symlink to a FIFO, a
+    """The input must be a regular file. A FIFO with no writer, a symlink to a FIFO, a
     directory and /dev/null are each refused within a short timeout, naming the path and the file
     type, in both modes, and no output is written; a regular file and a symlink to one still
     convert."""
@@ -888,7 +888,7 @@ class InputFileType(MigrateHarness):
         self.assertEqual(json.loads(r.stdout)["converted"], 12000)
 
 
-# Round 9 X1: a refusal, after the "FAIL: " prefix, begins with its position.
+# A refusal, after the "FAIL: " prefix, begins with its position.
 POSITION_RE = re.compile(r"^migrate-todo-aei: FAIL: (line [1-9][0-9]*(?: \(end of input"
                          r"(?:, output refused)?\))?|before line 1 \((?:input unreadable|no input "
                          r"read)\)): \S")
@@ -931,7 +931,7 @@ def end_of_input(text):
 
 
 class ErrorPosition(MigrateHarness):
-    """Every refusal the migration can produce names its position (round 9 X1). In old_fixture()
+    """Every refusal the migration can produce names its position. In old_fixture()
     the header is line 5 and the first row line 7."""
 
     TIMEOUT = 20
@@ -1412,7 +1412,7 @@ def module_constants(source):
             and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Constant)}
 
 
-# The refusal-path sites the migration held at the round 9 verification fix, so a probe that stops
+# The refusal-path sites the migration held when these floors were set, so a probe that stops
 # reading a class of them fails rather than passing vacuously.
 POSITION_FLOORS = (("construction", 16), ("_fail call", 3), ("line argument", 6), ("raise", 21),
                    ("standard error write", 2), ("print to a file", 2), ("exit", 3))
@@ -1468,7 +1468,7 @@ POSITION_MUTATIONS = (
 
 
 class PositionProbe(unittest.TestCase):
-    # Class probe for round 9 X1 and its verification round: every path in the migration that can
+    # Class probe for the position rule: every path in the migration that can
     # write a refusal names a documented position. Each MigrationError construction and each _fail
     # message begins with one; _fail relays str(exc) only where exc is bound by an except clause
     # naming MigrationError alone; a line position handed to a helper is never a constant; every
@@ -1658,7 +1658,7 @@ class RuntimeGuard(MigrateHarness):
     refusal line, exit 1, with no traceback, at the position the run had reached: before line 1
     until the whole input is read, then the end of input, and the end of input with the output
     refused once the output step has started. A KeyboardInterrupt gets the same positioned line,
-    with the same account of the output, and exit 130 (round 15)."""
+    with the same account of the output, and exit 130."""
 
     TIMEOUT = 20
 
@@ -1864,7 +1864,7 @@ class RuntimeGuard(MigrateHarness):
                 self.dst.unlink()
 
     def test_an_interrupt_during_the_cleanup_keeps_the_account_of_the_output(self):
-        # Fix round 16 (M2): the write fails, by an OSError or by a RuntimeError, and a
+        # The write fails, by an OSError or by a RuntimeError, and a
         # KeyboardInterrupt then arrives during the removal of the partial output. The output path
         # and the pending status are recorded before the removal is attempted, so the exit 130
         # refusal names the output and says the partial output may remain and must be checked and
@@ -1899,7 +1899,7 @@ class RuntimeGuard(MigrateHarness):
                         self.dst.unlink()
 
     def test_a_keyboard_interrupt_at_each_stage_exits_130_positioned(self):
-        # Round 15: a KeyboardInterrupt at each stage of either mode is refused by the guard in
+        # A KeyboardInterrupt at each stage of either mode is refused by the guard in
         # main, exit 130, in one positioned line with no traceback; once the output step has
         # started the line says what became of the output. Each case runs in process and again
         # with main unguarded by the harness, where an escaping interrupt would print the
@@ -1990,7 +1990,7 @@ def opener_call_tokens(source):
 
 
 class SourceProbe(unittest.TestCase):
-    """Class probe for finding S3: every read of a path in the migration goes through _read_regular,
+    """Class probe: every read of a path in the migration goes through _read_regular,
     and the only other open is the exclusive create of the output."""
 
     def test_every_open_in_the_migration_is_the_checked_helper_or_the_exclusive_create(self):

@@ -151,7 +151,7 @@ STALENESS_KEYS = {"task_hours", "external_hours"}
 # the 24 hour default (aiqt_hooks.py:8274-8279, 8300-8301); the gate rejects it instead.
 STALENESS_HOURS_MAX = 8760
 # The declared keys whose control reads the staleness horizons, so `staleness` is REQUIRED alongside each
-# (round 7): the enumerated-backlog classification (_orch_build_ctx, aiqt_hooks.py:8439-8452, reached only
+# of these: the enumerated-backlog classification (_orch_build_ctx, aiqt_hooks.py:8439-8452, reached only
 # for an enumeration that ran, 8448) and the attestation derivation (aiqt_hooks.py:9595, reached from the
 # resume audit at 9657). Without `staleness` the hook applies 24 hours to both horizons (aiqt_hooks.py:
 # 8297-8301), a horizon nobody declared. A yield roster or a lease alone never reaches either reader.
@@ -163,7 +163,7 @@ ESCAPE_KEYS = {"path"}
 # The record surfaces the hook's resume audit and barrier read (aiqt_hooks.py:9355-9391, 9820-9832).
 RECORD_KEYS = {"findings", "pending_decisions", "handoff"}
 # The lease shape _orch_scope_live and the resume audit read (aiqt_hooks.py:7786-7817, 9392-9409).
-# Both keys are REQUIRED (round 7). With `max_age_hours` absent, _orch_scope_live keeps `fresh = True`
+# Both keys are REQUIRED. With `max_age_hours` absent, _orch_scope_live keeps `fresh = True`
 # (aiqt_hooks.py:7792-7798) and the resume audit raises no stale-lease finding (aiqt_hooks.py:9395-9401),
 # so a lease file left behind by a dead orchestrator keeps scope live forever. The committed registry
 # declares 24.
@@ -174,14 +174,14 @@ LEASE_KEYS = {"path", "max_age_hours"}
 # STALENESS schema's task_hours/external_hours (aiqt_hooks.py:8298-8299), NOT the lease. Capping the
 # committed lease at one year here is stricter than the hook, which is fail-safe for a committed artefact.
 MAX_AGE_HOURS_MAX = 8760
-# POSIX filesystem length limits, applied as a pure commit-time string check to every declared path
-# (codex QA HIGH-2). A component longer than NAME_MAX, or a whole path longer than PATH_MAX, is what the
+# POSIX filesystem length limits, applied as a pure commit-time string check to every declared path.
+# A component longer than NAME_MAX, or a whole path longer than PATH_MAX, is what the
 # kernel rejects with ENAMETOOLONG at runtime. An over-long declared state_dir would, through exactly that
 # ENAMETOOLONG, drive write_scope_guard to a persistent covered-write denial (see _check_declared_path), so
 # it is caught here at author time rather than left to fail closed at every write.
 NAME_MAX = 255   # bytes, a single path component
 PATH_MAX = 4096  # bytes, a whole path
-# Reserve room UNDER state_dir for the machine-state files the hooks WRITE there (codex QA HIGH-1, round 5).
+# Reserve room UNDER state_dir for the machine-state files the hooks WRITE there.
 # _check_declared_path already bounds the state_dir STRING at PATH_MAX, but the hooks then join a basename
 # onto it, so a DERIVED path `<state_dir>/<basename>` can exceed PATH_MAX even when state_dir itself does
 # not. At runtime that overflow raises ENAMETOOLONG in write_scope_guard._load_write_scope's
@@ -216,7 +216,7 @@ def _is_windows_shaped(text):
     # NOT absolute there and is silently joined onto the repository root or the state_dir anchor, and a
     # backslash is an ordinary filename character rather than a separator. The gate rejects both shapes in
     # every declared path, every enumerator argv operand, and the escape path, so a value the gate accepts
-    # resolves the same way in the gate and in the hook (codex QA F6). This closes the parity residual an
+    # resolves the same way in the gate and in the hook. This closes the parity residual an
     # earlier revision disclosed here, at the cost of refusing every Windows spelling outright; the committed
     # store paths are POSIX.
     return "\\" in text or bool(_DRIVE_PREFIX.match(text))
@@ -231,8 +231,8 @@ def _has_unsafe_char(text):
     # orch_resume_barrier, aiqt_hooks.py:9828-9830, a PreToolUse event) the encode to the filesystem
     # encoding raises UnicodeEncodeError. Either crash makes the PreToolUse dispatcher fail closed exit 2
     # (aiqt_hooks.py:10705-10716) -- the one route by which a stage-1 key could reach a blocking outcome.
-    # Rejecting surrogates here closes exactly the route the control-char rejection claims to close
-    # (closes the codex QA HIGH). The gate closes it for the committed file (matching _wrtscp/companion_stores).
+    # Rejecting surrogates here closes exactly the route the control-char rejection claims to close.
+    # The gate closes it for the committed file (matching _wrtscp/companion_stores).
     return any(ord(ch) < 0x20 or ord(ch) == 0x7f or 0xD800 <= ord(ch) <= 0xDFFF for ch in text)
 
 
@@ -242,7 +242,7 @@ def _norm_pathspell(p):
     # normpath PRESERVES a leading exactly-"//" (its value is implementation-defined per POSIX) and already
     # collapses 3+, so the only residual after normpath is a leading "//"; collapsing it makes "/a", "//a",
     # and "///a" all compare equal. Without this, an alias spelling defeats the commonpath containment test
-    # below (norm("//opt/x") != norm("/opt/x")), which is codex QA HIGH-1's bypass.
+    # below (norm("//opt/x") != norm("/opt/x")).
     return re.sub(r"^/{2,}", "/", os.path.normpath(p))
 
 
@@ -253,7 +253,7 @@ def _contains_or_equal(child, parent):
     # or realpath'd values. commonpath raises ValueError only on mixing absolute and relative paths, or (on
     # Windows) paths on different drives; neither applies to two validated absolute POSIX-shaped paths, but
     # if it somehow does, treat it as a collision and fail defensively rather than accept an unproven-safe
-    # path. Shared by the lexical and the resolved-path containment checks (codex QA HIGH-1).
+    # path. Shared by the lexical and the resolved-path containment checks.
     if child == parent:
         return True
     try:
@@ -277,8 +277,8 @@ def _check_declared_path(label, value):
     if _has_unsafe_char(value):
         _fail("`{}` contains a control or surrogate character".format(label))
     # Reject an over-long path: any single component longer than NAME_MAX bytes, or a whole path longer than
-    # PATH_MAX bytes. This is a PURE STRING check (fires in CI, no filesystem access). It closes codex QA
-    # HIGH-2's ENAMETOOLONG case: an over-long declared state_dir drives write_scope_guard._load_write_scope
+    # PATH_MAX bytes. This is a PURE STRING check (fires in CI, no filesystem access). It closes the
+    # ENAMETOOLONG case: an over-long declared state_dir drives write_scope_guard._load_write_scope
     # to a persistent covered-write DENIAL -- lstat(<state_dir>/write-scope.json) raises ENAMETOOLONG, the
     # artifact reader classifies it 'bad', and an armed session then denies every covered write
     # (aiqt_hooks.py:9940-9946, 10015, 10388-10392). Measured in BYTES, not code points, because the kernel
@@ -287,13 +287,13 @@ def _check_declared_path(label, value):
     # PATH_MAX (4096) INCLUDES the terminating NUL, so the longest USABLE pathname is PATH_MAX - 1 (4095)
     # bytes; a 4096-byte path passes a `> PATH_MAX` test but the kernel rejects it with ENAMETOOLONG at
     # runtime (os.stat -> errno 36), which for a lease/state path drives the hook's stat to an OSError and,
-    # with no mode declared, an inactive scope (aiqt_hooks.py:7791,7813) -- so reject `>= PATH_MAX` (codex QA
-    # round 8). NAME_MAX (255) EXCLUDES the NUL, so the component check below correctly stays `> NAME_MAX`.
+    # with no mode declared, an inactive scope (aiqt_hooks.py:7791,7813) -- so reject `>= PATH_MAX`.
+    # NAME_MAX (255) EXCLUDES the NUL, so the component check below correctly stays `> NAME_MAX`.
     if len(value.encode("utf-8", "surrogatepass")) >= PATH_MAX:
         _fail("`{}` is {} bytes; the longest usable path is {} bytes (PATH_MAX {} counts the NUL)".format(
             label, len(value.encode("utf-8", "surrogatepass")), PATH_MAX - 1, PATH_MAX))
-    # Measure each component against NAME_MAX splitting on "/" ONLY, POSIX component semantics (codex QA
-    # HIGH-2, round 6). A backslash never reaches this loop: _is_windows_shaped above rejects it first.
+    # Measure each component against NAME_MAX splitting on "/" ONLY, POSIX component semantics.
+    # A backslash never reaches this loop: _is_windows_shaped above rejects it first.
     for comp in value.split("/"):
         if len(comp.encode("utf-8", "surrogatepass")) > NAME_MAX:
             _fail("`{}` has a path component longer than {} bytes (NAME_MAX)".format(label, NAME_MAX))
@@ -301,7 +301,7 @@ def _check_declared_path(label, value):
 
 def _read_regular_text(path, label):
     # Read a file the gate itself opens (the registry, hooks.json) as UTF-8 text, failing closed unless it
-    # is a regular file (round 4 S3). The open is O_NONBLOCK, so a FIFO with no writer opens at once instead
+    # is a regular file. The open is O_NONBLOCK, so a FIFO with no writer opens at once instead
     # of blocking the gate, and fstat then rejects it, as it rejects a character or block device and a
     # directory, before a single byte is read. A plain open() would block forever on such a FIFO, and a
     # device such as /dev/null would read as empty. The fstat runs on the opened descriptor, so the type
@@ -380,7 +380,7 @@ def validate(path):
         return
     except OSError as exc:
         _fail("cannot stat {}: {}".format(path, exc))
-    # The registry is read through _read_regular_text (round 4 S3): a non-blocking open plus an fstat
+    # The registry is read through _read_regular_text: a non-blocking open plus an fstat
     # S_ISREG check, so a FIFO, a device, or a directory at the registry path fails promptly instead of
     # blocking the gate or reading as empty, and a non-UTF-8 registry is a clean FAIL, not a traceback.
     # Disclosed residual: a declared record, lease, or state path pointing at a FIFO would block the read the hook
@@ -409,7 +409,7 @@ def validate(path):
             _fail("`companion_stores` must be a list, got {}".format(type(stores).__name__))
         for i, entry in enumerate(stores):
             # Route through the shared declared-path helper: same non-empty/absolute/control-and-surrogate
-            # checks as before, now also covered by the NAME_MAX/PATH_MAX over-long check (codex QA HIGH-2).
+            # checks as before, now also covered by the NAME_MAX/PATH_MAX over-long check.
             _check_declared_path("companion_stores[{}]".format(i), entry)
     # Reject any top-level key outside the stage-2 allowlist. A new arming key lands only together with
     # its gate extension, so an unrecognized key is an ahead-of-gate or malformed registry.
@@ -454,7 +454,7 @@ def validate(path):
     # `state_dir`, if present: a declared path.
     if "state_dir" in obj:
         _check_declared_path("state_dir", obj["state_dir"])
-        # Reserve room for the DERIVED machine-state paths (codex QA HIGH-1, round 5). _check_declared_path
+        # Reserve room for the DERIVED machine-state paths. _check_declared_path
         # bounded the state_dir STRING at PATH_MAX, but the hooks join a basename onto it, so a near-limit
         # state_dir makes `<state_dir>/<basename>` overflow PATH_MAX even though state_dir itself did not.
         # At runtime that overflow raises ENAMETOOLONG in lstat(<state_dir>/write-scope.json), the
@@ -463,7 +463,7 @@ def validate(path):
         # in BYTES (surrogatepass matches _check_declared_path, though surrogates are already rejected above).
         _sd_bytes = len(obj["state_dir"].encode("utf-8", "surrogatepass"))
         # `>= PATH_MAX`, not `> PATH_MAX`: the derived path <state_dir>/<basename> must itself be <= PATH_MAX-1
-        # usable bytes (codex QA round 8, same off-by-one class as the whole-path check above).
+        # usable bytes (the same off-by-one class as the whole-path check above).
         if _sd_bytes + 1 + STATE_DERIVED_RESERVE >= PATH_MAX:
             _fail("`state_dir` ({!r}) is {} bytes and leaves no room under PATH_MAX ({}) for the "
                   "machine-state files the hooks derive under it: {} bytes + 1 separator + {} reserved "
@@ -471,12 +471,12 @@ def validate(path):
                   "<state_dir>/write-scope.json would hit ENAMETOOLONG and drive write_scope_guard to a "
                   "persistent covered-write denial".format(
                       obj["state_dir"], _sd_bytes, PATH_MAX, _sd_bytes, STATE_DERIVED_RESERVE))
-        # BEST-EFFORT gate-time type check (codex QA HIGH-2): classify the declared state_dir by what its
+        # BEST-EFFORT gate-time type check: classify the declared state_dir by what its
         # lstat actually reports. write_scope_guard._load_write_scope reads <state_dir>/write-scope.json;
         # when state_dir is a regular file (e.g. "/etc/passwd") or a path THROUGH a regular file (e.g.
         # "/etc/passwd/" or "/etc/passwd/state") that read's lstat raises ENOTDIR, the artifact reader
         # classifies it 'bad', and an armed session then DENIES every covered write persistently
-        # (aiqt_hooks.py:9948-9953, 10015, 10388-10392). Three outcomes, distinguished (round-5 fix; round-4
+        # (aiqt_hooks.py:9948-9953, 10015, 10388-10392). Three outcomes, distinguished (an earlier revision
         # collapsed every OSError to absence and ACCEPTED a known-unusable path):
         #   - FileNotFoundError: GENUINE ABSENCE -> do NOT fail (the not-yet-created residual stays
         #     disclosed; the gate cannot verify a not-yet-created directory).
@@ -536,7 +536,7 @@ def validate(path):
         # (aiqt_hooks.py:7976), so a bare interpreter name would resolve through the session PATH, an
         # ambient binding the registry cannot pin.
         _check_declared_path("enumerator.argv[0]", argv[0])
-        # The gate admits only an isolated Python interpreter running a script (round 3 R4). Without "-I"
+        # The gate admits only an isolated Python interpreter running a script. Without "-I"
         # the interpreter puts the script directory first on sys.path and honours the PYTHON* environment
         # variables, so a file beside the enumerator script could shadow a standard library import and steer
         # the backlog verdict the stop and yield guards act on. Every hook launch in hooks.json carries the
@@ -574,7 +574,7 @@ def validate(path):
         if len(argv) < 3 or not argv[2].endswith(".py") or argv[2].startswith("-"):
             _fail("`enumerator.argv[2]` must be a script path ending in \".py\" (not \"-c\", \"-m\", or "
                   "another interpreter option), got {!r}".format(argv[2] if len(argv) > 2 else None))
-        # The script, argv[2], is pinned to a canonical RELATIVE path (round 4 S5). The hook runs argv with
+        # The script, argv[2], is pinned to a canonical RELATIVE path. The hook runs argv with
         # cwd set to the session repository root (aiqt_hooks.py:7976), the git top level of the session
         # (_orch_root, aiqt_hooks.py:7590-7595), so a relative script names <root>/<script> on whatever host
         # runs the hook. The gate does NOT join the script onto any root for the collision checks: the
@@ -620,7 +620,7 @@ def validate(path):
             if idx == len(script_parts) - 1 and not stat.S_ISREG(st.st_mode):
                 _fail("`enumerator.argv[2]` ({!r}) is present at {!r} but is not a regular file".format(
                     script, cur))
-        # Every operand from argv[3] on (the backlog file) must be ABSOLUTE (round 4 S5) and then joins the
+        # Every operand from argv[3] on (the backlog file) must be ABSOLUTE and then joins the
         # state_dir collision list below, whose declared-path, collision, and containment checks depend only
         # on the absolute strings and the filesystem they name, never on where the checkout sits. A relative
         # operand is rejected rather than joined onto a guessed root. An option-shaped operand such as
@@ -710,8 +710,8 @@ def validate(path):
                     or not (0 < v <= STALENESS_HOURS_MAX):
                 _fail("`staleness.{}` must be a finite number of hours in (0, {}], got {!r}".format(
                     key, STALENESS_HOURS_MAX, v))
-    # `escape`: undeclared, or an object with exactly the key `path` naming a BARE FILE NAME (round 4 S1,
-    # S6). The hook formula (_orch_escape_active, aiqt_hooks.py:7859-7882) takes anchor = realpath(state_dir)
+    # `escape`: undeclared, or an object with exactly the key `path` naming a BARE FILE NAME.
+    # The hook formula (_orch_escape_active, aiqt_hooks.py:7859-7882) takes anchor = realpath(state_dir)
     # (7859), uses the default name ESCAPE-ALLOW-YIELD when no path is declared (7865-7866, the name at
     # 7556), joins a relative path onto the anchor (7864), rejects a ".." component (7867-7868), requires
     # normpath containment under the anchor (7869-7871), and walks every intermediate component with lstat,
@@ -760,14 +760,14 @@ def validate(path):
         if name in HOOK_STATE_FILES:
             _fail("`escape.path` ({!r}) is the name of a file the hooks write in state_dir; the operator "
                   "release sentinel must not collide with machine state".format(name))
-    # Cross-field REQUIREMENT (claude QA HIGH, round 7): a declared `record` or `lease` must be accompanied
+    # Cross-field REQUIREMENT: a declared `record` or `lease` must be accompanied
     # by an explicit `state_dir`. When `state_dir` is OMITTED the hooks do NOT stop using a state dir --
     # _state_dir_from_registry (aiqt_hooks.py:7638-7651) falls back to
     # ${XDG_STATE_HOME:-~/.local/state}/aiqt-guardrails/orch/<repo-key>/, and orch_resume_audit still opens
     # `<state_dir>/resume-barrier.json` with mode "w" there (aiqt_hooks.py:9783-9785). A record/lease path
-    # landing inside that DEFAULT dir is clobbered exactly as the round-3 declared-state_dir collision, but
+    # landing inside that DEFAULT dir is clobbered exactly as in a declared-state_dir collision, but
     # the collision check below runs only `if "state_dir" in obj`, so the default-dir sibling slips through
-    # (claude QA round 7, reproduced gate-exit-0 -> hook clobber of the declared record). Requiring
+    # (reproduced: gate exit 0, then the hook clobbers the declared record). Requiring
     # `state_dir` alongside record/lease closes the whole class at gate time: the location is then validated
     # and collision-checked, and a gate-passing armed registry never falls back to the XDG default.
     # `dispatch_tools` carries tool NAMES, not a path, so it cannot collide and does not trigger this.
@@ -787,7 +787,7 @@ def validate(path):
             _fail("`{}` is declared without `state_dir`: the machine state it drives, or the collision "
                   "check its path needs, would bind to an XDG-default state directory this gate never "
                   "sees; declare `state_dir` explicitly".format(key))
-    # Cross-field collision (codex QA HIGH): a declared record/lease path that lands ON or INSIDE
+    # Cross-field collision: a declared record/lease path that lands ON or INSIDE
     # `state_dir` collides with the machine-state files the hooks write there. orch_resume_audit opens
     # `<state_dir>/resume-barrier.json` with mode "w" UNCONDITIONALLY (aiqt_hooks.py:9775, 9783-9785), so
     # a record/lease path pointing into state_dir would be clobbered by that hook write (destructive, no
@@ -797,7 +797,7 @@ def validate(path):
     # legitimately MAY sit under a companion store; the hazard is a record/lease FILE landing on a
     # machine-state file, not the state directory living under an exempt store.
     if "state_dir" in obj:
-        # Robust against path-spelling ALIASES (codex QA HIGH-1). The round-3 normpath+startswith test was
+        # Robust against path-spelling ALIASES. An earlier normpath+startswith test was
         # bypassed by aliases the two spellings do not share: state_dir "/" + record "/x.json" (norm_state
         # "/" + os.sep = "//", which "/x.json" does not start with), and any leading double-slash spelling
         # (POSIX normpath preserves a leading "//"). _norm_pathspell canonicalizes BOTH sides and collapses
@@ -805,7 +805,7 @@ def validate(path):
         # SIBLING (e.g. /opt/x/orch-state-extra vs state_dir /opt/x/orch-state -> commonpath /opt/x) is
         # still accepted while ON-or-INSIDE is rejected.
         norm_state_dir = _norm_pathspell(obj["state_dir"])
-        # ADDITIONALLY compare RESOLVED paths (codex QA HIGH-1, round 6): an EXISTING symlink alias makes two
+        # ADDITIONALLY compare RESOLVED paths: an EXISTING symlink alias makes two
         # different spellings resolve to the same file, which the lexical check cannot see. os.path.realpath
         # resolves existing symlink components and leaves a non-existent tail intact, so a record/lease path
         # that resolves onto or into the resolved state_dir is caught even when the spellings differ (codex
@@ -851,9 +851,9 @@ def validate(path):
         # hazards (surrogate/control character, NAME_MAX/PATH_MAX length, derived-path reserve, record/lease-
         # vs-state_dir collision) + BEST-EFFORT resolved-path containment (above) + BEST-EFFORT state_dir
         # gate-time directory-type. Its accepted-input soundness is BOUNDED to what commit-time validation can
-        # establish; the maintainer directed this bound after round 6. The residuals below are IRREDUCIBLE
+        # establish; the maintainer directed this bound. The residuals below are IRREDUCIBLE
         # (no commit-time string or stat check can close them). They do NOT all resolve to a fail-safe denial
-        # -- claude QA round 10 corrected an earlier overstatement that each was "a denial or a caught
+        # -- an earlier overstatement held that each was "a denial or a caught
         # collision at runtime, never a bypass". They split by runtime outcome:
         #   FAIL-SAFE DENIALS -- a denial or a caught collision at runtime, never a bypass:
         #   (b) Runtime directory-usability of a NOT-YET-CREATED state_dir: an absent state_dir later created
@@ -865,7 +865,7 @@ def validate(path):
         #       the HOOK's own read at read time (see the FIFO disclosure at the presence check above, in
         #       validate()). git cannot check out a FIFO, so the only exposure is an exotic hand-crafted local
         #       run, never a checked-out tree. The files the gate itself opens, the registry and hooks.json,
-        #       are no longer part of this residual: _read_regular_text refuses a non-regular file (round 4).
+        #       are no longer part of this residual: _read_regular_text refuses a non-regular file.
         #   (e) The enumerator script is inspected in the checkout running the gate (ROOT). The hook runs it
         #       from the session root on the host, a different tree whose content (a symlink planted there
         #       after checkout, for example) the gate cannot see; the pinned relative, canonical, ".."-free
@@ -898,7 +898,7 @@ def validate(path):
     # matcher would be a silent no-op entry. Inside the matcher, "TaskOutput" is inert (the hook routes it to
     # its completion branch at aiqt_hooks.py:9264 before reading the list at 9277) and "Bash" is harmful
     # (aiqt_hooks.py:9279-9280 would then record every foreground Bash call as a dispatch), so both are
-    # rejected (round 2 G5). Under the current matcher, then, no non-empty value is valid: only the empty
+    # rejected. Under the current matcher, then, no non-empty value is valid: only the empty
     # list passes, until the matcher gains a tool name the hook can use. hooks.json is read whenever the key
     # is declared, even for an empty list, so an unreadable hooks.json always fails rather than skipping.
     if "dispatch_tools" in obj:
@@ -922,7 +922,7 @@ def validate(path):
                 _fail("`dispatch_tools[{}]` ({!r}) is not in the orch_dispatch_ledger matcher {} in {}; a "
                       "name outside the matcher never reaches the hook, so the entry would be a silent "
                       "no-op".format(i, entry, sorted(matched), HOOKS_JSON))
-    # --- required parameters of a declared control (round 7) ------------------------------------------
+    # --- required parameters of a declared control ----------------------------------------------------
     # A key that PARAMETERIZES a declared control, rather than arming one, is required whenever that control
     # is declared: its absence leaves the control armed but silently substitutes a hook default. These
     # checks run LAST, after every targeted check, so a fixture that omits a parameter is still rejected by

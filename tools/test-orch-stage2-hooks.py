@@ -39,28 +39,28 @@ plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py at source; cited line n
 per-test comments. The PR1-f doctor tests at the end drive tools/orch_doctor.py the same way. A
 missing required input (the installed hook or the doctor) fails the test rather than skipping it, so
 an absent file can never read as a green run. The doctor tests also prove that a preflight out of
-scope, or for idle out of the roster, runs no enumerator, as the hook runs none there (finding R3),
+scope, or for idle out of the roster, runs no enumerator, as the hook runs none there,
 and that the doctor re-executes itself under python3 -I and exits 2 with a message when that
-re-execution fails (finding R6). The doctor reads the resume barrier only as a regular file: a
+re-execution fails. The doctor reads the resume barrier only as a regular file: a
 barrier that is a FIFO with no writer, a directory, or a symlink to /dev/null is reported as
 cannot-evaluate, exit 2, within a short timeout and naming the path and the file type, and the audit
 is not run, and a class probe scans the doctor source so that every path it opens goes through its
-checked helper (finding S3). Before any hook reader is called, a registry file or a declared read path
+checked helper. Before any hook reader is called, a registry file or a declared read path
 (the mode and lease paths, the record paths, the enumerator operands) that exists and is not a regular
 file, a FIFO, a directory, or a symlink to a FIFO, is reported as cannot-evaluate, exit 2, within a
-short timeout, with no enumerator run and no hook state written (round 5 T1). The writes-nothing test
+short timeout, with no enumerator run and no hook state written. The writes-nothing test
 runs a fresh copy of the doctor and the hook, in a tree that never held a __pycache__, and asserts no
-bytecode file appears anywhere under it (round 5 T3). The fixed hook state files each command opens
+bytecode file appears anywhere under it. The fixed hook state files each command opens
 with a plain blocking open are checked the same way before the reader that opens them: for preflight
 turn-state.json, dispatch-ledger.jsonl, backlog-checkpoint.json and, with attestations declared,
 attestations-validated.json and guard-events.jsonl; for the resume audit guard-events.jsonl,
 escape-spoof.json, the forced-exit files and the attestation snapshot temporary file, and with an
-unreadable registry resume-barrier.json.unused (round 6 U1). Each command checks only what its own
+unreadable registry resume-barrier.json.unused. Each command checks only what its own
 hook call path opens: a FIFO backlog operand, mode record, lease or preview state file does not refuse
 the resume audit, which runs and rewrites the barrier, and a FIFO audit-only record or state file, or
-an out-of-scope preview with a FIFO turn-state.json, does not refuse the preview (round 6 U2).
-Each pre-check site checks its path only when the hook call path reaches the open (round 8 W1
-and W2): the PRECHECK_SITES table lists every _site call in the doctor with its reachability
+an out-of-scope preview with a FIFO turn-state.json, does not refuse the preview.
+Each pre-check site checks its path only when the hook call path reaches the open: the
+PRECHECK_SITES table lists every _site call in the doctor with its reachability
 condition and hook citation, a source probe keeps the table and the doctor in step, and for each
 site with an earlier exit a contrast case puts a FIFO where the hook takes that exit and requires
 that the doctor runs and that the same hook call path completes, beside the case in which the open
@@ -68,7 +68,7 @@ is reached and the doctor refuses. The DoctorScopeMargin cases prove that a leas
 SCOPE_MARGIN seconds of either freshness bound the hook applies, the max_age_hours upper bound and
 the clock-skew lower bound for a future mtime, makes the doctor check both scope opens, the holder
 lease and the mode record, refusing a special file at either; each case goes red with
-SCOPE_MARGIN = 0.0 (round 9 X2). The DoctorEventFields cases prove that the doctor previews every
+SCOPE_MARGIN = 0.0. The DoctorEventFields cases prove that the doctor previews every
 event field that can change the verdict exactly as the hook reads it: a Stop whose stop_hook_active
 is true, a scheduling call whose tool_input stop is true (judged as kind stop), both together, and
 stop_hook_active on a schedule_idle call, which is no loop signal, each compared with the verdict
@@ -79,9 +79,9 @@ is passed to, for every field of the event and of its tool_input that is read, a
 of fields and the lines that read them to equal the reviewed EVENT_FIELDS table, each field either
 modelled by a named doctor input or unpreviewed with a reason; any other use of the event data (a
 computed key, an alias, a pass to an unknown callee) fails it, and it proves that it refuses one
-mutation of each kind (round 15).
+mutation of each kind.
 The DoctorCheckpointWrites cases prove that the doctor previews the hook writes inside the context
-build whose failure changes the verdict, without making them (fix round 16, M1): with an empty
+build whose failure changes the verdict, without making them: with an empty
 backlog, a live lease and no init marker, a directory or a read-only file at
 checkpoint-init.marker.tmp makes the real hook deny the Stop and the scheduling call (the marker
 write fails, aiqt_hooks.py:8424-8428), and the doctor reports the same DENY; a failed checkpoint
@@ -91,10 +91,10 @@ write could decide, is reported as not previewed, exit 2, when it could change t
 previewed when it could not. A FIFO, or a symbolic link to a FIFO, at a temporary path would block
 the hook open for writing, a third outcome that is never verdict-neutral, so it is reported as not
 previewed, exit 2, promptly, even where success and failure of that write would leave the verdict
-unchanged: the marker present, or absent and writable (fix round 17, F1). The DoctorStandInRestore
+unchanged: the marker present, or absent and writable. The DoctorStandInRestore
 cases load the doctor in one process and prove that the two hook functions the preview replaces
 are the original objects again after a normal return, after the not-previewed exception and after a
-KeyboardInterrupt raised inside the stand-in (fix round 17, F2). The DoctorWriteSiteProbe case is
+KeyboardInterrupt raised inside the stand-in. The DoctorWriteSiteProbe case is
 the class probe for that finding: it scans the
 hook source from _orch_build_ctx through every module function it calls for every write (a write
 primitive, an open for writing, an os or shutil call that changes the file system, a write method),
@@ -1062,7 +1062,7 @@ class Doctor(Stage2Harness):
     def _fresh_doctor_root(self):
         """A copy of the doctor in <fresh>/tools beside a copy of the hook at the path the doctor
         derives from its own location, in a directory that has never held a __pycache__, so a bytecode
-        cache the doctor import writes beside the hook is observable (finding T3). Returns (fresh root,
+        cache the doctor import writes beside the hook is observable. Returns (fresh root,
         doctor copy)."""
         fresh = self._tmp / "fresh-root"
         tooldir = fresh / "tools"
@@ -1105,7 +1105,7 @@ class Doctor(Stage2Harness):
         self.assertEqual(self._bytecode_under(fresh), [], "preflight wrote a bytecode cache")
         self.assertEqual(tree_state(self._tmp), before, "preflight changed a file or directory")
 
-    # --- T1: a declared read path that is not a regular file is cannot-evaluate, before any hook reader
+    # --- a declared read path that is not a regular file is cannot-evaluate, before any hook reader
     SPECIAL_TIMEOUT = 30
 
     def _doctor_bounded(self, *args):
@@ -1163,7 +1163,7 @@ class Doctor(Stage2Harness):
     def test_preflight_special_lease_path_is_cannot_evaluate(self):
         # The hook opens the lease only for holder scoping, on a lease that os.stat reaches, that is
         # non-empty and fresh, and with a session id given (aiqt_hooks.py:7791-7808). A FIFO has size 0
-        # and so is never opened (round 8 W2, see DoctorPrecheckSites); the special file the hook does
+        # and so is never opened (see DoctorPrecheckSites); the special file the hook does
         # open here is a non-empty directory.
         reg, marker = self._arm_writing_enumerator()
         reg["lease"]["holder_is_session_id"] = True
@@ -1195,7 +1195,7 @@ class Doctor(Stage2Harness):
         self._assert_special_refused("record.handoff", self._p("session-handoff.md"), "fifo",
                                      "--resume-audit")
 
-    # --- round 6 U1: the fixed hook state files are checked too, per command -----------------------
+    # --- the fixed hook state files are checked too, per command -----------------------
     # The state files _orch_build_ctx opens with a plain blocking open (turn-state.json at
     # aiqt_hooks.py:7745, dispatch-ledger.jsonl at 7998 and 7678, backlog-checkpoint.json at 8365, and
     # with attestations declared attestations-validated.json at 8073 and guard-events.jsonl at 9566).
@@ -1223,7 +1223,7 @@ class Doctor(Stage2Harness):
         return path
 
     def _seed_reach(self, name, command):
-        # Round 8: seed the state the hook needs to reach the open of name. The preview reads
+        # Seed the state the hook needs to reach the open of name. The preview reads
         # guard-events.jsonl only past a snapshot open (aiqt_hooks.py:8073-8076) and a register open
         # (9507-9510); the audit opens the surfaced set and its temporary file only for a forced-exit
         # log that holds rows (9705-9714).
@@ -1256,7 +1256,7 @@ class Doctor(Stage2Harness):
 
     def test_preflight_special_state_file_is_cannot_evaluate(self):
         # Scope is live through the mode line, so the preview reaches _orch_build_ctx, whose readers
-        # would block on each of these (a FIFO turn-state.json made the preview hang before round 6).
+        # would block on each of these (a FIFO turn-state.json made the preview hang before this check).
         for kind in ("stop", "idle"):
             for name in self.PREFLIGHT_STATE_FILES:
                 with self.subTest(kind=kind, name=name):
@@ -1287,7 +1287,7 @@ class Doctor(Stage2Harness):
         self.assertIn("cannot evaluate: the hook state file resume-barrier.json.unused {} is not a "
                       "regular file (it is a FIFO)".format(path), r.stdout)
 
-    # --- round 6 U2: each command checks only what its own hook call path opens --------------------
+    # --- each command checks only what its own hook call path opens --------------------
     def test_fifo_backlog_operand_refuses_preflight_but_not_the_resume_audit(self):
         # The resume probes run no enumerator (aiqt_hooks.py:9351-9413), so the hook audits with a
         # FIFO backlog operand, and so must the doctor; the preview runs the enumerator (7976), so it
@@ -1419,7 +1419,7 @@ class Doctor(Stage2Harness):
         self.assertIn("scope: not live", r.stdout)
         self.assertIn("effective verdict: ALLOW", r.stdout)
 
-    # --- R3: the doctor decides scope first and, out of scope, runs no enumerator ----------------
+    # --- the doctor decides scope first and, out of scope, runs no enumerator ----------------
     def _arm_writing_enumerator(self, **overrides):
         script = self._tmp / "enum_writing.py"
         script.write_text(WRITING_ENUM_FIXTURE, encoding="utf-8")
@@ -1478,7 +1478,7 @@ class Doctor(Stage2Harness):
         self.assertIn("scope: live", r.stdout)
         self.assertEqual(marker.read_text(encoding="utf-8"), "ran\n")
 
-    # --- R6: the doctor re-executes itself isolated, and a failed re-execution exits 2 ------------
+    # --- the doctor re-executes itself isolated, and a failed re-execution exits 2 ------------
     def test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib(self):
         # A copy of the doctor in a tools/ directory beside a copy of the hook at the path the
         # doctor derives from its own location, with a planted json.py next to the copy.
@@ -1540,7 +1540,7 @@ class Doctor(Stage2Harness):
                            env=self._env(), timeout=60)
         self.assertEqual(r.returncode, 2)
 
-    # --- F4: the doctor writes nothing itself; the declared enumerator runs as the hook runs it ---
+    # --- the doctor writes nothing itself; the declared enumerator runs as the hook runs it ---
     def test_preflight_discloses_that_the_declared_enumerator_runs(self):
         self.assertIn("mark.write", WRITING_ENUM_FIXTURE, "precondition: the fixture writes")
         script = self._tmp / "enum_writing.py"
@@ -1559,7 +1559,7 @@ class Doctor(Stage2Harness):
                          "the declared enumerator ran once, and its write is its own")
         self.assertFalse(self.state_dir().exists(), "the doctor wrote nothing under state_dir")
 
-    # --- F5: roster membership exactly as the hook tests it; the quiet claim is not previewed -----
+    # --- roster membership exactly as the hook tests it; the quiet claim is not previewed -----
     def _arm_idle(self, roster):
         self.write_registry(self.stage2(yield_tools=roster))
         self.arm_lease()
@@ -1626,7 +1626,7 @@ class Doctor(Stage2Harness):
                 self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
                 self.assertIn("--tool", r.stderr)
 
-    # --- G4: a Stop DENY whose denial counter cannot be saved fails open in the hook ------------
+    # --- a Stop DENY whose denial counter cannot be saved fails open in the hook ------------
     def _arm_actionable_stop(self):
         self.write_registry(self.stage2())
         self.arm_lease()
@@ -1676,7 +1676,7 @@ class Doctor(Stage2Harness):
         self.assertFalse(self.state_dir().exists(), "the doctor created no state dir")
         self.assertEqual(self.stop().returncode, 2)
 
-    # --- G7: the help text says what preflight writes, and what it runs -------------------------
+    # --- the help text says what preflight writes, and what it runs -------------------------
     def test_help_text_says_the_doctor_writes_nothing_and_the_enumerator_runs(self):
         r = subprocess.run([sys.executable, "-I", str(DOCTOR), "--help"], capture_output=True,
                            text=True, env=self._env(), timeout=60)
@@ -1686,7 +1686,7 @@ class Doctor(Stage2Harness):
         self.assertIn("the declared enumerator runs as the hook runs it", text)
         self.assertNotIn("without writing anything", text)
 
-    # --- F2: the resume audit requires that the hook rewrote the barrier during this run ---------
+    # --- the resume audit requires that the hook rewrote the barrier during this run ---------
     def _read_only_stale_barrier(self, active):
         self.seed_state("resume-barrier.json", {"active": active,
                                                 "findings": ["seeded"] if active else [],
@@ -1729,7 +1729,7 @@ class Doctor(Stage2Harness):
         self.assertFalse(self.state_json("resume-barrier.json")["active"],
                          "precondition: the barrier was rewritten, and reads clear")
 
-    # --- S3: the barrier is read only as a regular file, without blocking -------------------------
+    # --- the barrier is read only as a regular file, without blocking -------------------------
     BARRIER_TIMEOUT = 60
 
     def _audit_bounded(self):
@@ -1775,7 +1775,7 @@ class Doctor(Stage2Harness):
         self.assertTrue(os.path.islink(path), "the audit did not run, so the symlink is untouched")
 
 
-# Round 8 class probe: every pre-check site in tools/orch_doctor.py (each _site call), the condition
+# Class probe: every pre-check site in tools/orch_doctor.py (each _site call), the condition
 # under which the hook call path reaches the open of that path, and the hook lines that decide it. A
 # site with an early exit (True in the second column) has a contrast case below in which the hook
 # takes the earlier exit, so the doctor must NOT refuse a FIFO there, beside the case in which the
@@ -1960,7 +1960,7 @@ print("completed")
 
 
 class DoctorPrecheckSites(Stage2Harness):
-    """Round 8 W1 and W2: the doctor checks a path only when the hook call path reaches its open.
+    """The doctor checks a path only when the hook call path reaches its open.
     Each case method arranges the fixture and returns (path, made, doctor args, hook payload): path
     is where the special file goes; made is None for a FIFO the runner creates, or the type of the
     special file the case made itself; the hook payload drives the real hook in a skip case."""
@@ -2050,7 +2050,7 @@ class DoctorPrecheckSites(Stage2Harness):
         return Path(self._p("operating-mode.md")), None, self.STOP, {}
 
     def case_mode_behind_live_lease(self):
-        # W2: a present, non-empty, fresh lease makes scope live at 7799-7811, before _orch_mode.
+        # A present, non-empty, fresh lease makes scope live at 7799-7811, before _orch_mode.
         self._reg()
         self.arm_lease()
         return Path(self._p("operating-mode.md")), None, self.STOP, {}
@@ -2296,7 +2296,7 @@ class DoctorPrecheckSites(Stage2Harness):
 
 
 class DoctorScopeMargin(Stage2Harness):
-    """Round 9 X2: the hook judges a lease fresh when -_ORCH_CLOCK_SKEW <= age <= max_age_hours *
+    """The hook judges a lease fresh when -_ORCH_CLOCK_SKEW <= age <= max_age_hours *
     3600 (aiqt_hooks.py:7792-7798), and the doctor treats a lease within SCOPE_MARGIN seconds of
     either bound as possibly on either side (orch_doctor.py _lease_fresh_states), so it checks both
     the holder lease open (scope.lease, 7807) and the mode record open (scope.mode, 7817). Each case
@@ -2383,7 +2383,7 @@ class DoctorScopeMargin(Stage2Harness):
 
 
 # =====================================================================================================
-# Round 15: every event field the previewed handlers read is previewed as the hook reads it
+# Every event field the previewed handlers read is previewed as the hook reads it
 # =====================================================================================================
 # (container, field) -> (status, doctor input or reason, the hook lines that read it). "data" is the
 # event payload and "tool_input" its tool_input object; the field "values()" is the read of every
@@ -2500,7 +2500,7 @@ EVENT_FIELD_MUTATIONS = (
 
 
 class DoctorEventFieldProbe(unittest.TestCase):
-    """Round 15 class probe: the hook event fields read on the previewed paths equal the reviewed
+    """Class probe: the hook event fields read on the previewed paths equal the reviewed
     table, each modelled by a doctor input or unpreviewed with a reason."""
 
     def source(self):
@@ -2551,7 +2551,7 @@ class DoctorEventFieldProbe(unittest.TestCase):
 
 
 class DoctorEventFields(Stage2Harness):
-    """Round 15: the doctor previews stop_hook_active and tool_input stop exactly as the hook reads
+    """The doctor previews stop_hook_active and tool_input stop exactly as the hook reads
     them, so its verdict equals that of the real hook on the same state. Each case resets the state
     directory, runs the doctor first (it writes nothing) and then the hook."""
 
@@ -2661,14 +2661,14 @@ class DoctorEventFields(Stage2Harness):
 
 
 class DoctorCheckpointWrites(Stage2Harness):
-    """Fix round 16 (M1): the checkpoint union writes the checkpoint at aiqt_hooks.py:8414 and,
+    """The checkpoint union writes the checkpoint at aiqt_hooks.py:8414 and,
     when that succeeds and no init marker exists (8419), the marker at 8424, whose failure injects
     a cannot-evaluate row (8428). The doctor predicts each outcome without writing, so its verdict
     equals that of the real hook on the same state. Each case arranges a fresh tree per kind, runs
     the doctor first (it writes nothing) and then the hook."""
 
     TIMEOUT = 30
-    # A doctor that refuses a write that could block must do so well inside this bound (F1).
+    # A doctor that refuses a write that could block must do so well inside this bound.
     PROMPT = 15
 
     def setUp(self):
@@ -2820,7 +2820,7 @@ class DoctorCheckpointWrites(Stage2Harness):
                     self.assertNotIn("Traceback", r.stderr)
 
     def test_a_write_that_could_block_the_hook_is_never_verdict_neutral(self):
-        # Fix round 17 (F1): the open for writing of backlog-checkpoint.json.tmp
+        # The open for writing of backlog-checkpoint.json.tmp
         # (aiqt_hooks.py:7720, via 8414) blocks on a FIFO, and on a symbolic link to one, which it
         # follows: a third outcome beside success and failure. With the marker present (the write
         # at 8424 is skipped, 8419) or absent and writable (it would succeed), success and failure of
@@ -2876,7 +2876,7 @@ class DoctorCheckpointWrites(Stage2Harness):
 # (_build_ctx_previewed) in that process, with _atomic_write_outcome wrapped by a spy that records
 # whether both stand-ins are installed when the stand-in write runs and, for the interrupt case,
 # raises KeyboardInterrupt there; then report whether the two hook functions are the original
-# objects again (fix round 17, F2).
+# objects again.
 RESTORE_PROG = """
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("orch_doctor_under_test", sys.argv[1])
@@ -2914,7 +2914,7 @@ print(json.dumps({"status": status, "ended": ended, "seen": seen,
 
 
 class DoctorStandInRestore(Stage2Harness):
-    """Fix round 17 (F2): the preview replaces hook._orch_write_json_atomic and
+    """The preview replaces hook._orch_write_json_atomic and
     hook._orch_guard_event for the context build only, and restores both however the build ends: a
     normal return, the not-previewed exception, or a KeyboardInterrupt raised inside the stand-in."""
 
@@ -2951,7 +2951,7 @@ class DoctorStandInRestore(Stage2Harness):
                 self.assertTrue(out["event_restored"], out)
 
 
-# Fix round 16 (M1): every write the hook makes inside _orch_build_ctx and the module functions it
+# Every write the hook makes inside _orch_build_ctx and the module functions it
 # calls, keyed (function, callee, line). "modelled" is a write whose failure changes the verdict and
 # whose outcome the doctor predicts (_atomic_write_outcome through _build_ctx_previewed); "no
 # verdict effect" is a write whose result no caller on the path reads, with the reason.
@@ -3035,7 +3035,7 @@ WRITE_SITE_MUTATIONS = (
 
 
 class DoctorWriteSiteProbe(unittest.TestCase):
-    """Fix round 16 class probe: the writes the hook makes inside the context build equal the
+    """Class probe: the writes the hook makes inside the context build equal the
     reviewed table, and the doctor replaces exactly the primitives the table names."""
 
     def source(self):
@@ -3098,7 +3098,7 @@ def doctor_precheck_sites(source):
 
 
 class DoctorPrecheckSiteProbe(unittest.TestCase):
-    """Round 8 class probe: the reachability table covers every pre-check site in the doctor, every
+    """Class probe: the reachability table covers every pre-check site in the doctor, every
     checked path reaches _special_path only through _first_special over _site entries, and every
     site has a reach case and, where it has an early exit, a contrast case."""
 
@@ -3179,7 +3179,7 @@ def opener_call_tokens(source):
 
 
 class DoctorSourceProbe(unittest.TestCase):
-    """Class probe for finding S3: every path the doctor itself opens goes through _read_regular."""
+    """Class probe: every path the doctor itself opens goes through _read_regular."""
 
     def test_every_open_in_the_doctor_goes_through_the_checked_helper(self):
         if not DOCTOR.exists():

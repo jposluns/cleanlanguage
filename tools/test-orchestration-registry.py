@@ -89,7 +89,7 @@ STAGE2 = {
 }
 ESCAPE_DECLARED = {"path": "ESCAPE-ALLOW-YIELD"}
 
-# Round 7 class record: every key the gate accepts as OPTIONAL, at any nesting level, classified by what the
+# Class record: every key the gate accepts as OPTIONAL, at any nesting level, classified by what the
 # hook in plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py does when the key is absent. Each entry
 # is (category, required_with, reason):
 #   "b"            absence is a deliberate, meaningful state: an arming key left undeclared arms nothing,
@@ -153,7 +153,7 @@ OPTIONAL_KEY_CLASSIFICATION = {
 
 
 def _with_required_params(payload):
-    """Round 7 fixture isolation: give a dict fixture the parameter keys the gate requires alongside a
+    """Fixture isolation: give a dict fixture the parameter keys the gate requires alongside a
     declared control (lease.max_age_hours with a lease object, staleness with enumerator or attestations)
     when it omits them, so only the rule a reject fixture targets can reject it. The gate checks those
     parameters last, so this changes no verdict a targeted rule reaches first; it keeps a regressed
@@ -222,7 +222,7 @@ def _write(tmpdir, payload) -> Path:
 class RealRegistry(unittest.TestCase):
     def test_committed_registry_is_valid(self):
         # The actual committed registry must always pass; this is the regression guard.
-        # A missing committed registry is a failure, not a skip (round 2 G8): this is the regression guard
+        # A missing committed registry is a failure, not a skip: this is the regression guard
         # on the committed file, so its absence must be visible in the test result.
         if not REAL_REGISTRY.exists():
             self.fail("no committed .aiqt/orchestration.json; the regression guard has nothing to check")
@@ -275,7 +275,7 @@ class Accepts(unittest.TestCase):
         # A record path that is a SIBLING of state_dir (shares a parent but is NOT inside it) is not a
         # collision and must still validate. The containment check compares component-wise (commonpath),
         # so "/opt/x/orch-state-extra/..." must not be read as inside "/opt/x/orch-state" (their commonpath
-        # is /opt/x, not the state_dir). (codex QA HIGH-1)
+        # is /opt/x, not the state_dir).
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {
                 "version": 1, "state_dir": "/opt/x/orch-state",
@@ -283,7 +283,7 @@ class Accepts(unittest.TestCase):
             })), 0)
 
     def test_absent_state_dir_path_accepted(self):
-        # The best-effort non-directory check (codex QA HIGH-2) must NOT fire when the path does not exist:
+        # The best-effort non-directory check must NOT fire when the path does not exist:
         # the gate cannot verify a not-yet-created directory, so an absent state_dir path stays valid.
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {
@@ -297,7 +297,7 @@ class Accepts(unittest.TestCase):
             self.assertEqual(_run(_write(d, {"version": 1, "state_dir": str(sd)})), 0)
 
     def test_symlink_record_resolving_outside_state_dir_accepted(self):
-        # HIGH-1 (codex QA round 6) over-rejection guard: a record path through a symlink that resolves
+        # Over-rejection guard for the resolved-path check: a record path through a symlink that resolves
         # OUTSIDE state_dir must still be ACCEPTED. real dir D is state_dir; a SEPARATE real dir E; sibling
         # symlink L -> E; record.handoff = "<L>/session-handoff.md" resolves to E/session-handoff.md, which
         # is not on or inside D. Both the lexical and the resolved-path checks must accept (exit 0), so the
@@ -316,10 +316,10 @@ class Accepts(unittest.TestCase):
             self.assertEqual(_run(reg), 0)
 
     def test_absent_state_dir_deep_path_accepted(self):
-        # HIGH-2 (codex QA round 5) over-rejection guard: a GENUINELY-ABSENT state_dir (missing leaf AND
+        # Over-rejection guard for the state_dir type check: a GENUINELY-ABSENT state_dir (missing leaf AND
         # missing parent) raises FileNotFoundError on lstat, which is absence -> accept (the not-yet-created
         # residual stays disclosed). Only a NON-FileNotFound OSError (ENOTDIR/ENAMETOOLONG/...) is the
-        # known-unusable case the round-5 classification rejects, so this genuinely-absent path must stay
+        # known-unusable case the classification rejects, so this genuinely-absent path must stay
         # GREEN after that change. RED would signal the classification over-rejects real absence.
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {
@@ -351,7 +351,7 @@ class Accepts(unittest.TestCase):
 
     def test_enumerator_and_yield_tools_without_registers_accepted(self):
         # attestations and mistakes_register are optional: the stop and yield guards arm without them. The
-        # declared enumerator requires staleness (round 7), so both horizons are declared.
+        # declared enumerator requires staleness, so both horizons are declared.
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {
                 "version": 1, "state_dir": "/opt/x/orch-state", "staleness": STAGE2["staleness"],
@@ -359,12 +359,12 @@ class Accepts(unittest.TestCase):
 
 
 class Rejects(unittest.TestCase):
-    # claude QA round 8 (MEDIUM, test-isolation): the round-7 gate rule "a declared record/lease requires
+    # Test isolation: the gate rule "a declared record/lease requires
     # state_dir" rejects ANY record/lease fixture that omits state_dir, regardless of whether the fixture's
     # OWN targeted check fires -- so a regression of that targeted check would go undetected (proven by
     # mutation). For a reject fixture that declares record/lease but no state_dir, inject a DISJOINT (no
     # collision with the fixture's paths) and ABSENT (the gate's lstat type check stays inert) state_dir, so
-    # the round-7 rule is inert here and ONLY the fixture's targeted check can reject it. The two
+    # that rule is inert here and ONLY the fixture's targeted check can reject it. The two
     # test_*_without_state_dir_rejected tests, whose target IS the rule, opt out with add_state_dir=False.
     _ISO_STATE_DIR = "/opt/orch-isolate-sd"
 
@@ -522,12 +522,12 @@ class Rejects(unittest.TestCase):
         self._reject({"version": 1, "dispatch_tools": [123]})
 
     def test_dispatch_tools_outside_matcher(self):
-        # codex QA F3: Workflow is not in the orch_dispatch_ledger PostToolUse matcher ("Bash|TaskOutput",
+        # Workflow is not in the orch_dispatch_ledger PostToolUse matcher ("Bash|TaskOutput",
         # hooks.json:278), so the hook never sees that tool and the entry would be a silent no-op.
         self._reject({"version": 1, "dispatch_tools": ["Workflow"]})
 
     def test_dispatch_tools_bash_rejected(self):
-        # Round 2 G5: "Bash" is inside the matcher, but listing it makes the hook treat every Bash call,
+        # "Bash" is inside the matcher, but listing it makes the hook treat every Bash call,
         # foreground included, as a dispatch and record it (aiqt_hooks.py:9279-9280). The rejection names
         # that hook line, so this cannot pass on some other rule.
         with tempfile.TemporaryDirectory() as d:
@@ -537,7 +537,7 @@ class Rejects(unittest.TestCase):
         self.assertNotIn("Traceback", r.stderr)
 
     def test_dispatch_tools_taskoutput_rejected(self):
-        # Round 2 G5: "TaskOutput" is inside the matcher, but the hook routes it to its completion branch
+        # "TaskOutput" is inside the matcher, but the hook routes it to its completion branch
         # (aiqt_hooks.py:9264) before it reads the list (aiqt_hooks.py:9277), so the entry is inert.
         with tempfile.TemporaryDirectory() as d:
             r = _run_full(_write(d, {"version": 1, "dispatch_tools": ["TaskOutput"]}))
@@ -545,7 +545,7 @@ class Rejects(unittest.TestCase):
         self.assertIn("aiqt_hooks.py:9264", r.stderr)
         self.assertNotIn("Traceback", r.stderr)
 
-    # --- record/lease path colliding with state_dir (codex QA HIGH) ---------------------------------
+    # --- record/lease path colliding with state_dir -------------------------------------------------
     # A declared record/lease path ON or INSIDE state_dir collides with the machine-state files the hooks
     # write there: orch_resume_audit opens <state_dir>/resume-barrier.json with mode "w" unconditionally
     # (aiqt_hooks.py:9775, 9783-9785), so such a path would be clobbered by that hook write. The gate
@@ -564,7 +564,7 @@ class Rejects(unittest.TestCase):
                       "record": {"handoff": "/opt/x/orch-state"}})
 
     def test_record_without_state_dir_rejected(self):
-        # claude QA round 7 HIGH: a declared `record` with NO `state_dir` must be rejected. Without state_dir
+        # A declared `record` with NO `state_dir` must be rejected. Without state_dir
         # the hooks fall back to the XDG-default orch state dir (aiqt_hooks.py:7638-7651) that this gate never
         # sees, and orch_resume_audit clobbers a record path landing inside it. RED before the co-requirement
         # (the gate exited 0 accepting record-without-state_dir).
@@ -573,34 +573,34 @@ class Rejects(unittest.TestCase):
             add_state_dir=False)
 
     def test_lease_without_state_dir_rejected(self):
-        # claude QA round 7 HIGH (sibling): a declared `lease` with NO `state_dir` must be rejected for the
+        # Sibling of the record case: a declared `lease` with NO `state_dir` must be rejected for the
         # same reason -- lease.path can land in the same unseen XDG-default state dir. RED before the fix.
         self._reject({"version": 1, "lease": {"path": "/opt/x/lease.md", "max_age_hours": 24}},
                      add_state_dir=False)
 
-    # --- codex QA round 4: path-spelling ALIASES, over-long paths, non-dir state_dir ----------------
-    # These are RED against the round-3 normpath+startswith collision check (which accepted the aliases)
-    # and against the round-3 path validation (which had no length or state_dir-type check).
+    # --- path-spelling ALIASES, over-long paths, non-dir state_dir ----------------------------------
+    # These are RED against an earlier normpath+startswith collision check (which accepted the aliases)
+    # and against an earlier path validation (which had no length or state_dir-type check).
     def test_state_dir_root_alias_collision_rejected(self):
-        # HIGH-1: state_dir "/" + a record path directly under it. The round-3 check accepted this because
+        # A state_dir "/" + a record path directly under it. That earlier check accepted this because
         # norm_state_dir "/" + os.sep = "//", which "/resume-barrier.json" does not start with. The
         # commonpath check rejects it (commonpath(["/resume-barrier.json","/"]) == "/" == state_dir).
         self._reject({"version": 1, "state_dir": "/",
                       "record": {"handoff": "/resume-barrier.json"}})
 
     def test_double_slash_collision_in_record_rejected(self):
-        # HIGH-1: a leading-double-slash spelling of an inside-state_dir record path. POSIX normpath
-        # PRESERVES a leading "//", so the round-3 startswith missed it; _norm_pathspell collapses it.
+        # A leading-double-slash spelling of an inside-state_dir record path. POSIX normpath
+        # PRESERVES a leading "//", so the earlier startswith missed it; _norm_pathspell collapses it.
         self._reject({"version": 1, "state_dir": "/opt/x/orch-state",
                       "record": {"handoff": "//opt/x/orch-state/resume-barrier.json"}})
 
     def test_double_slash_collision_in_state_dir_rejected(self):
-        # HIGH-1: the double-slash on the state_dir side instead; both spellings must reject.
+        # The double-slash on the state_dir side instead; both spellings must reject.
         self._reject({"version": 1, "state_dir": "//opt/x/orch-state",
                       "lease": {"path": "/opt/x/orch-state/session-state.md"}})
 
     def test_lexical_collision_branch_symlink_out_of_state_dir(self):
-        # change-carries-check for the LEXICAL containment branch (claude QA round 10, mutation survivor).
+        # change-carries-check for the LEXICAL containment branch.
         # Disabling the lexical branch while keeping the realpath branch leaves the other collision fixtures
         # green, because os.path.realpath already normalizes their "//"/".." aliases, so the resolved branch
         # subsumes them. THIS fixture rejects ONLY via the lexical branch: a record path lexically INSIDE
@@ -616,19 +616,19 @@ class Rejects(unittest.TestCase):
             self.assertEqual(_run(_write(reg, payload)), 1)
 
     def test_overlong_state_dir_component_rejected(self):
-        # HIGH-2: a path component over NAME_MAX (255) bytes. At runtime, lstat(<state_dir>/write-scope.json)
+        # A path component over NAME_MAX (255) bytes. At runtime, lstat(<state_dir>/write-scope.json)
         # would raise ENAMETOOLONG, the write-scope reader would classify it 'bad', and an armed session
         # would deny every covered write persistently; the gate rejects the over-long string at author time.
         self._reject({"version": 1, "state_dir": "/opt/" + "a" * 256})
 
     def test_overlong_record_component_rejected(self):
-        # HIGH-2: the same over-long component in a record path.
+        # The same over-long component in a record path.
         self._reject({"version": 1, "record": {"findings": "/opt/" + "a" * 256}})
 
     def test_overlong_component_with_backslash_rejected(self):
-        # HIGH-2 (codex QA round 6): on POSIX a backslash is a VALID filename character, so
-        # "a"*150 + "\\" + "a"*150 is ONE 301-byte POSIX component, over NAME_MAX (255). Round 5 split it AT
-        # the backslash and wrongly accepted it. Since codex QA F6 the Windows-shape rule rejects any
+        # On POSIX a backslash is a VALID filename character, so
+        # "a"*150 + "\\" + "a"*150 is ONE 301-byte POSIX component, over NAME_MAX (255). A split AT
+        # the backslash once wrongly accepted it. Now the Windows-shape rule rejects any
         # backslash before the length checks run, so this fixture now pins that an over-long backslash
         # component can never be accepted by either route.
         comp = "a" * 150 + "\\" + "a" * 150  # 301 bytes, ONE POSIX component
@@ -636,7 +636,7 @@ class Rejects(unittest.TestCase):
         self._reject({"version": 1, "record": {"findings": "/opt/x/" + comp}})
 
     def test_lease_path_at_path_max_rejected(self):
-        # codex QA round 8: PATH_MAX (4096) INCLUDES the NUL, so a path of exactly 4096 bytes is UNUSABLE
+        # PATH_MAX (4096) INCLUDES the NUL, so a path of exactly 4096 bytes is UNUSABLE
         # (os.stat -> ENAMETOOLONG at runtime). The whole-path check must reject >= PATH_MAX, not just
         # > PATH_MAX. Every component is <= NAME_MAX and state_dir is explicit+disjoint, so ONLY the
         # whole-path length check can reject. RED against the `> PATH_MAX` check (exit 0).
@@ -657,7 +657,7 @@ class Rejects(unittest.TestCase):
                                              "lease": {"path": p4095, "max_age_hours": 24}})), 0)
 
     def test_state_dir_existing_non_directory_rejected(self):
-        # HIGH-2 best-effort: a state_dir that EXISTS at gate time as a regular file (the "/etc/passwd"
+        # Best-effort type check: a state_dir that EXISTS at gate time as a regular file (the "/etc/passwd"
         # shape) is rejected. A real temp regular file is created and state_dir points at it. At runtime
         # write_scope_guard._load_write_scope would read <file>/write-scope.json -> ENOTDIR -> 'bad' -> a
         # persistent covered-write denial; the gate catches the gate-time type. RED without the fix.
@@ -666,9 +666,9 @@ class Rejects(unittest.TestCase):
             real_file.write_text("not a directory\n", encoding="utf-8")
             self.assertEqual(_run(_write(d, {"version": 1, "state_dir": str(real_file)})), 1)
 
-    # --- codex QA round 5: derived-path reserve (HIGH-1) and known-unusable state_dir (HIGH-2) -------
+    # --- derived-path reserve and known-unusable state_dir ----------------------------------------------
     def test_state_dir_derived_path_reserve_rejected(self):
-        # HIGH-1: a state_dir WITHIN PATH_MAX whose length leaves no room for the machine-state files the
+        # A state_dir WITHIN PATH_MAX whose length leaves no room for the machine-state files the
         # hooks WRITE under it. Every component is <= NAME_MAX and the whole path <= PATH_MAX, so the
         # per-component and whole-path checks BOTH pass; only the state_dir-specific reserve check rejects.
         # At runtime lstat(<state_dir>/write-scope.json) would raise ENAMETOOLONG, classify the write-scope
@@ -680,9 +680,9 @@ class Rejects(unittest.TestCase):
         self._reject({"version": 1, "state_dir": sd})
 
     def test_state_dir_path_through_regular_file_rejected(self):
-        # HIGH-2: a state_dir whose path runs THROUGH a regular file (the "/etc/passwd/state" shape). lstat
-        # raises ENOTDIR (a NON-FileNotFound OSError), which round-4 SWALLOWED as absence and accepted. The
-        # round-5 classification treats any non-FileNotFound stat fault as known-unusable and rejects, since
+        # A state_dir whose path runs THROUGH a regular file (the "/etc/passwd/state" shape). lstat
+        # raises ENOTDIR (a NON-FileNotFound OSError), which was once SWALLOWED as absence and accepted. The
+        # classification treats any non-FileNotFound stat fault as known-unusable and rejects, since
         # the hook would hit the same ENOTDIR at runtime reading <state_dir>/write-scope.json -> 'bad' -> a
         # persistent covered-write denial. RED without the fix. Hermetic: a real temp regular file stands in
         # for /etc/passwd (verified at source: os.lstat("/etc/passwd/state") raises ENOTDIR).
@@ -693,18 +693,18 @@ class Rejects(unittest.TestCase):
                 "version": 1, "state_dir": str(real_file / "state")})), 1)
 
     def test_state_dir_trailing_slash_on_regular_file_rejected(self):
-        # HIGH-2: the "/etc/passwd/" shape -- a trailing separator on a path that IS a regular file also
-        # makes lstat raise ENOTDIR, not FileNotFoundError, so round-4 swallowed it as absence too. Round-5
-        # rejects it. RED without the fix. (verified at source: os.lstat("/etc/passwd/") raises ENOTDIR.)
+        # The "/etc/passwd/" shape -- a trailing separator on a path that IS a regular file also
+        # makes lstat raise ENOTDIR, not FileNotFoundError, so it was once swallowed as absence too. The
+        # gate rejects it. RED without the fix. (verified at source: os.lstat("/etc/passwd/") raises ENOTDIR.)
         with tempfile.TemporaryDirectory() as d:
             real_file = Path(d) / "passwd"
             real_file.write_text("root:x:0:0:root:/root:/bin/sh\n", encoding="utf-8")
             self.assertEqual(_run(_write(d, {
                 "version": 1, "state_dir": str(real_file) + "/"})), 1)
 
-    # --- codex QA round 6: existing symlink alias defeats the LEXICAL containment check --------------
+    # --- existing symlink alias defeats the LEXICAL containment check --------------------------------
     def test_symlink_alias_record_into_state_dir_rejected(self):
-        # HIGH-1 (codex QA round 6): an EXISTING symlink makes two DIFFERENT spellings resolve to the same
+        # An EXISTING symlink makes two DIFFERENT spellings resolve to the same
         # file, so a record path that LEXICALLY looks like a sibling of state_dir actually resolves ONTO a
         # machine-state file inside it. Hermetic reproduction: real dir D is state_dir; sibling symlink
         # L -> D; record.handoff = "<L>/resume-barrier.json". Lexically norm(L/...) and norm(D) share only
@@ -728,7 +728,7 @@ class Rejects(unittest.TestCase):
     # orch_resume_barrier, aiqt_hooks.py:9828-9830, a PreToolUse event) the encode raises
     # UnicodeEncodeError and the PreToolUse dispatcher fails closed exit 2 (aiqt_hooks.py:10705-10716) --
     # the very route the control-char rejection claims to close. The gate must reject surrogates in every
-    # declared-path surface. (codex QA HIGH)
+    # declared-path surface.
     def test_record_surrogate_path(self):
         self._reject({"version": 1, "record": {"findings": "/opt/x/find" + chr(0xD800) + "ings.md"}})
 
@@ -817,7 +817,7 @@ class Rejects(unittest.TestCase):
         self.assertNotIn("Traceback", r.stderr)
 
     def test_enumerator_python_without_isolation(self):
-        # codex QA F7: a Python argv[0] must be followed by exactly "-I"; a missing flag, a different flag,
+        # A Python argv[0] must be followed by exactly "-I"; a missing flag, a different flag,
         # or no argv[1] at all is rejected. Each fixture is otherwise valid. The interpreters are the test
         # interpreter itself and temporary symlinks to it named python3.12 and python, so every argv[0]
         # resolves on any host and only the isolation rule can reject it.
@@ -832,7 +832,7 @@ class Rejects(unittest.TestCase):
                     self._assert_enum_rejected_by(argv, "is a Python interpreter")
 
     def test_enumerator_symlink_alias_requires_isolation(self):
-        # Round 2 G2, kept under the round 3 R4 allowlist: a symlink alias of the Python interpreter whose
+        # Kept under the interpreter allowlist: a symlink alias of the Python interpreter whose
         # own name is not an interpreter name is judged by what it resolves to. Without "-I" it is
         # rejected; with "-I" it is accepted.
         with tempfile.TemporaryDirectory() as d:
@@ -844,7 +844,7 @@ class Rejects(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_enumerator_launchers_rejected(self):
-        # Round 3 R4: the gate admits only an isolated Python interpreter as argv[0], so a launcher that
+        # The gate admits only an isolated Python interpreter as argv[0], so a launcher that
         # would run Python for it (env, nice, timeout) is rejected by its resolved name, however the Python
         # launch behind it is spelled, including one with no *.py operand, which the withdrawn wrapper-name
         # blocklist admitted. Each launcher is a temporary regular file and a temporary symlink to it under
@@ -865,7 +865,7 @@ class Rejects(unittest.TestCase):
                     self._assert_enum_rejected_by(argv, "is not a Python interpreter")
 
     def test_enumerator_shells_rejected(self):
-        # Round 3 R4: a shell argv[0] runs a script whose own interpreter launch the gate cannot see.
+        # A shell argv[0] runs a script whose own interpreter launch the gate cannot see.
         with tempfile.TemporaryDirectory() as d:
             for name in ("sh", "bash", "dash", "zsh", "ksh"):
                 shell = _make_exe(d, name)
@@ -874,7 +874,7 @@ class Rejects(unittest.TestCase):
                                                   "is not a Python interpreter")
 
     def test_enumerator_renamed_shell_script_rejected(self):
-        # Round 3 R4: a shell script under a neutral name, which could itself start Python unisolated, is
+        # A shell script under a neutral name, which could itself start Python unisolated, is
         # rejected whatever follows it, and so is a script named *.py run directly through its shebang.
         with tempfile.TemporaryDirectory() as d:
             script = Path(d) / "enumerate-backlog"
@@ -889,7 +889,7 @@ class Rejects(unittest.TestCase):
                     self._assert_enum_rejected_by(argv, "is not a Python interpreter")
 
     def test_enumerator_script_operand_required(self):
-        # Round 3 R4: after "-I", argv[2] must be a script path ending in ".py" that is not an option, so
+        # After "-I", argv[2] must be a script path ending in ".py" that is not an option, so
         # "-c", "-m", a further option, a script not named *.py, or no script at all is rejected. The
         # control, the same interpreter running a *.py script, is accepted, so only this rule rejects them.
         cases = ([PY, "-I"],
@@ -906,7 +906,7 @@ class Rejects(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_enumerator_interpreter_name_allowlist(self):
-        # Round 3 R4: the resolved basename of argv[0] must fully match python, python3, or python3.N with
+        # The resolved basename of argv[0] must fully match python, python3, or python3.N with
         # an optional one-letter build suffix. The fixtures are regular files the gate never executes, which
         # also pins the disclosed residual: a file under an allowlisted name is admitted on that name.
         with tempfile.TemporaryDirectory() as d:
@@ -921,7 +921,7 @@ class Rejects(unittest.TestCase):
                     self._assert_enum_rejected_by([exe, "-I", "tools/x.py"], "is not a Python interpreter")
 
     def test_enumerator_unresolvable_argv0_rejected(self):
-        # Round 2 G2: an argv[0] that cannot be resolved (absent, or a dangling symlink) is a
+        # An argv[0] that cannot be resolved (absent, or a dangling symlink) is a
         # cannot-evaluate, so the gate rejects it rather than guess whether it is a Python interpreter.
         with tempfile.TemporaryDirectory() as d:
             dangling = _make_exe(d, "enumerate-runner", os.path.join(d, "missing-target"))
@@ -931,11 +931,11 @@ class Rejects(unittest.TestCase):
                     self._assert_enum_rejected_by(argv, "cannot be resolved")
 
     def test_enumerator_windows_shaped_operands(self):
-        # codex QA F6: the hook runs argv verbatim on POSIX with cwd at the repository root
+        # The hook runs argv verbatim on POSIX with cwd at the repository root
         # (aiqt_hooks.py:7976), so a Windows-shaped operand is a relative POSIX name, not the path it
         # spells. A drive-relative "C:TODO.md" and a backslash relative path are not absolute, so only the
         # Windows-shape rule can reject them. (A drive-absolute operand such as "C:/backlog/TODO.md" was
-        # already rejected before F6: it joins the state_dir collision list, where mixing it with the POSIX
+        # already rejected: it joins the state_dir collision list, where mixing it with the POSIX
         # state_dir makes commonpath raise, which the gate treats as a collision.)
         for argv in (["/usr/bin/python3", "-I", "tools/x.py", "C:TODO.md"],
                      ["/usr/bin/python3", "-I", "tools/x.py", "backlog\\TODO.md"],
@@ -1059,7 +1059,7 @@ class Rejects(unittest.TestCase):
         self._reject_stage2({"staleness": {"task_hours": 24, "lease_hours": 24}})
 
     def test_staleness_huge_integer_rejected_cleanly(self):
-        # Round 5 T4: an integer literal too large for a float made math.isfinite raise OverflowError,
+        # An integer literal too large for a float once made math.isfinite raise OverflowError,
         # an uncaught traceback. Each horizon given such a value is rejected by the range rule, named in
         # the diagnostic, with no traceback; a non-finite float is still rejected by the same rule.
         huge = int("1" + "0" * 400)
@@ -1087,7 +1087,7 @@ class Rejects(unittest.TestCase):
         self.assertNotIn("Traceback", r.stderr)
 
     def test_staleness_partial_or_empty_rejected(self):
-        # Round 4 S2: the hook silently substitutes 24 hours for a missing field (aiqt_hooks.py:8297-8301),
+        # The hook silently substitutes 24 hours for a missing field (aiqt_hooks.py:8297-8301),
         # so a declared staleness object must carry both horizons; {} and either field alone are rejected
         # by the both-fields rule, named in the diagnostic.
         for value in ({}, {"task_hours": 24}, {"external_hours": 72}):
@@ -1127,9 +1127,9 @@ class Rejects(unittest.TestCase):
         self.assertNotIn("Traceback", r.stderr)
 
     def test_escape_multi_component_rejected(self):
-        # Round 4 S1 and S6: the gate pins the sentinel to a bare file name directly in the anchor, so an
+        # The gate pins the sentinel to a bare file name directly in the anchor, so an
         # absolute or multi-component path is rejected by the bare-name rule, whether or not the hook would
-        # contain it (aiqt_hooks.py:7864-7882). The first three were accepted by the round 3 gate.
+        # contain it (aiqt_hooks.py:7864-7882). The first three were accepted by an earlier gate.
         for path in ("operator/ESCAPE-ALLOW-YIELD", "/opt/x/private/orch-state/ESCAPE-ALLOW-YIELD",
                      "sub/../ESCAPE-ALLOW-YIELD", "../ESCAPE-ALLOW-YIELD", "/opt/x/private/ESCAPE-ALLOW-YIELD",
                      "./ESCAPE-ALLOW-YIELD", "ESCAPE-ALLOW-YIELD/"):
@@ -1147,7 +1147,7 @@ class Rejects(unittest.TestCase):
         self._assert_escape_rejected_by("e" * 65, "longer than 64 bytes")
 
     def test_escape_windows_shaped(self):
-        # codex QA F6: the hook joins the escape path onto the anchor with POSIX semantics
+        # The hook joins the escape path onto the anchor with POSIX semantics
         # (aiqt_hooks.py:7863-7864). "C:ESCAPE" joined there is a valid POSIX path under the anchor, so only
         # the Windows-shape rule rejects it.
         for path in ("operator\\ESCAPE-ALLOW-YIELD", "C:ESCAPE-ALLOW-YIELD"):
@@ -1165,12 +1165,12 @@ class Rejects(unittest.TestCase):
         self._reject_stage2({"truth": {"changelog": "changelog.toml", "merged_pr_history": True}})
 
     def test_windows_shaped_declared_paths(self):
-        # codex QA F6: the hook resolves a declared path with POSIX os.path.isabs (aiqt_hooks.py:7631-7635),
+        # The hook resolves a declared path with POSIX os.path.isabs (aiqt_hooks.py:7631-7635),
         # so a Windows spelling on a POSIX host is joined onto the repository root and a backslash is an
         # ordinary filename character. Each STAGE2 fixture replaces one declared path with a value that is
         # absolute to the gate predicate ("C:\\x" and "C:/x" through its Windows branch, a backslash POSIX
         # path through its POSIX branch) and collides with nothing, so only the Windows-shape rule rejects
-        # it. (A drive-letter record, lease, mode, or register path was already rejected before F6 whenever
+        # it. (A drive-letter record, lease, mode, or register path was already rejected whenever
         # a POSIX state_dir is declared, because commonpath raises on the mixed pair and the gate treats
         # that as a collision; the backslash POSIX forms below are the ones that previously passed.)
         cases = [
@@ -1226,7 +1226,7 @@ class Rejects(unittest.TestCase):
             self.assertNotIn("Traceback", r.stderr)
 
     def test_dispatch_tools_with_absent_hooks_json_rejected(self):
-        # codex QA F3: dispatch_tools, even the empty list, is checked against hooks.json, so a missing
+        # dispatch_tools, even the empty list, is checked against hooks.json, so a missing
         # hooks.json is a cannot-evaluate gate failure, never a skip.
         payload = {"version": 1, "dispatch_tools": []}
         with tempfile.TemporaryDirectory() as d:
@@ -1269,7 +1269,7 @@ class Rejects(unittest.TestCase):
                     self.assertIn(needle, r.stderr)
 
 
-# --- the hook state-file set, derived from the hook source (round 2 G3) ------------------------------------
+# --- the hook state-file set, derived from the hook source -------------------------------------------------
 _STATE_EXTS = (".json", ".jsonl", ".marker", ".unused")
 _STATE_DIR_CALLS = frozenset(("_orch_state_dir_for_root", "_state_dir_from_registry"))
 _STATE_DIR_NAMES = frozenset(("sd", "state_dir"))
@@ -1378,7 +1378,7 @@ def _load_gate_module():
 
 
 class EnumeratorOperandShape(unittest.TestCase):
-    # Round 4 S5: the gate no longer joins a relative enumerator operand onto a root it guesses from the
+    # The gate no longer joins a relative enumerator operand onto a root it guesses from the
     # registry location, because the hook joins it onto the HOST session root (aiqt_hooks.py:7976, with
     # _orch_root at 7590-7595), so a gate verdict that depended on where the checkout sits let CI and the
     # host disagree. The script (argv[2]) is pinned to a canonical relative path, inspected only in the
@@ -1398,7 +1398,7 @@ class EnumeratorOperandShape(unittest.TestCase):
         self.assertNotIn("Traceback", r.stderr)
 
     def test_relative_backlog_operand_rejected(self):
-        # Each operand after the script must be absolute. The round 3 gate joined these onto a root and
+        # Each operand after the script must be absolute. An earlier gate joined these onto a root and
         # accepted them when the joined path missed state_dir; an option-shaped operand is rejected too.
         for operand in ("TODO.md", "private/TODO.md", "../orch-state/resume-barrier.json",
                         "--out=/opt/x/private/TODO.md"):
@@ -1463,7 +1463,7 @@ class EnumeratorOperandShape(unittest.TestCase):
         # The same registry, committed at <checkout>/.aiqt/orchestration.json in two checkouts of different
         # depth, gets the same verdict from each checkout gate. The rejected registry names a relative
         # backlog operand that, joined onto the shallow checkout, would land in state_dir but, joined onto
-        # the deep one, would not: the round 3 gate rejected it in one checkout and accepted it in the other.
+        # the deep one, would not: an earlier gate rejected it in one checkout and accepted it in the other.
         hooks = REAL_HOOKS_JSON.read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory() as d:
             base = Path(d)
@@ -1497,7 +1497,7 @@ class EnumeratorOperandShape(unittest.TestCase):
     def test_planned_stage2_value_accepted(self):
         # The planned stage-2 value added to the committed registry is accepted: the enumerator argv with
         # timeout 5, the yield_tools roster, the mode path, both staleness horizons, and the escape
-        # declaration {"path": "ESCAPE-ALLOW-YIELD"} (round 5 T2: the planned value declares escape).
+        # declaration {"path": "ESCAPE-ALLOW-YIELD"} (the planned value declares escape).
         # The test interpreter stands in for argv[0]; the literal /usr/bin/python3 is checked as well
         # wherever this host has it.
         interpreters = [PY] + (["/usr/bin/python3"] if os.path.exists("/usr/bin/python3") else [])
@@ -1518,7 +1518,7 @@ class EnumeratorOperandShape(unittest.TestCase):
 
 
 class SpecialFileInputs(unittest.TestCase):
-    # Round 4 S3: every file the gate itself opens must be a regular file. A FIFO with no writer used to
+    # Every file the gate itself opens must be a regular file. A FIFO with no writer used to
     # block the gate forever, so each run here carries a timeout and a timeout is a failure.
     def _run_bounded(self, gate, reg):
         try:
@@ -1557,7 +1557,7 @@ class SpecialFileInputs(unittest.TestCase):
 
 
 class HookStateFileScan(unittest.TestCase):
-    # Round 2 G3: the escape.path basename rule is only as complete as the gate HOOK_STATE_FILES set, so
+    # The escape.path basename rule is only as complete as the gate HOOK_STATE_FILES set, so
     # the set is derived here from the hook source and must equal both the gate constant and the
     # transcribed list at the top of this file. A state file the hook gains, or one the gate drops, is red.
     def test_scanner_finds_a_new_state_file(self):
@@ -1586,7 +1586,7 @@ class HookStateFileScan(unittest.TestCase):
 
 
 class LaunchIsolation(unittest.TestCase):
-    # codex QA F7: every Python launch of the gate runs isolated (-I), so a file beside a script cannot
+    # Every Python launch of the gate runs isolated (-I), so a file beside a script cannot
     # shadow a standard library import and an ambient PYTHON* variable cannot steer it. These read the
     # sources statically and fail if any launch drops the flag.
     def test_workflow_python_launches_are_isolated(self):
@@ -1616,7 +1616,7 @@ class LaunchIsolation(unittest.TestCase):
 
 
 class RequiredParameterKeys(unittest.TestCase):
-    # Round 7 (MEDIUM, validated): a key that PARAMETERIZES a declared control is required whenever that
+    # A key that PARAMETERIZES a declared control is required whenever that
     # control is declared, because its absence leaves the control armed with a silent hook default.
     def _gate(self, payload):
         with tempfile.TemporaryDirectory() as d:
@@ -1627,7 +1627,7 @@ class RequiredParameterKeys(unittest.TestCase):
     def test_lease_without_max_age_rejected(self):
         # The hook treats a present, non-empty lease with no max_age_hours as fresh forever
         # (aiqt_hooks.py:7792-7798), and the resume audit never reports it stale (aiqt_hooks.py:9395-9401).
-        # RED before round 7: the gate accepted this registry.
+        # RED before the rule: the gate accepted this registry.
         r = self._gate({"version": 1, "state_dir": "/opt/x/orch-state", "lease": {"path": "/opt/x/lease"}})
         self.assertEqual(r.returncode, 1, r.stdout)
         self.assertIn("`lease.max_age_hours` is required", r.stderr)
@@ -1639,7 +1639,7 @@ class RequiredParameterKeys(unittest.TestCase):
 
     def test_staleness_required_with_each_reader(self):
         # Without staleness the hook applies 24 hour horizons nobody declared (aiqt_hooks.py:8297-8301) to
-        # the enumerated-backlog classification and the attestation derivation. RED before round 7: both
+        # the enumerated-backlog classification and the attestation derivation. RED before the rule: both
         # registries without staleness were accepted.
         for key in ("enumerator", "attestations"):
             base = {"version": 1, "state_dir": "/opt/x/orch-state", key: copy.deepcopy(STAGE2[key])}
@@ -1661,7 +1661,7 @@ class RequiredParameterKeys(unittest.TestCase):
 
 
 class OptionalKeyClassProbe(unittest.TestCase):
-    # Round 7 class probe. The optional set is DERIVED from the gate, not from a hand list: the key-set
+    # Class probe. The optional set is DERIVED from the gate, not from a hand list: the key-set
     # constants name every key the gate admits at each level, and running the gate with each key removed
     # shows which removals it accepts. Every key so derived must be classified in OPTIONAL_KEY_CLASSIFICATION
     # with its reason, so a key the gate newly treats as optional is a red test until it is classified.
@@ -1780,7 +1780,7 @@ class OptionalKeyClassProbe(unittest.TestCase):
 
 
 class ConfigDisclosure(unittest.TestCase):
-    # codex QA F8: the adoption config states every exit of the stop decision, including the loop bound
+    # The adoption config states every exit of the stop decision, including the loop bound
     # (aiqt_hooks.py:8192-8195) and the fail-open on an unsaved denial counter (aiqt_hooks.py:8590-8595).
     def test_stop_decision_exits_are_disclosed(self):
         text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
@@ -1789,13 +1789,13 @@ class ConfigDisclosure(unittest.TestCase):
                 self.assertIn(phrase, text)
 
     def test_lease_liveness_states_the_non_empty_condition(self):
-        # Round 2 G10: the lease makes scope live only when its file is non-empty as well as present and
+        # The lease makes scope live only when its file is non-empty as well as present and
         # fresh (aiqt_hooks.py:7799, st.st_size > 0).
         text = " ".join(CONFIG_MD.read_text(encoding="utf-8").split())
         self.assertIn("while the lease file is present, non-empty, and fresh", text)
 
     def test_claude_md_defers_the_orchestrator_hook_account_to_config(self):
-        # Round 2 G6: .claude/CLAUDE.md must not claim that only two orchestrator hooks are armed, since
+        # .claude/CLAUDE.md must not claim that only two orchestrator hooks are armed, since
         # the stop guard also denies on NO_ENUMERATOR while the lease is live (config.md); it points there.
         text = " ".join(CLAUDE_MD.read_text(encoding="utf-8").split())
         self.assertNotIn("arms two of the 10 orchestrator hooks", text)

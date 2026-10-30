@@ -523,7 +523,7 @@ class CorruptedRegistry(HookHarness):
 
     def test_resume_barrier_allows(self):
         # status != "ok" -> _allow(), even with an ACTIVE barrier present (aiqt_hooks.py:9805-9807).
-        # LOAD-BEARING (codex QA round 5, LOW): on a BAD registry _orch_state_dir_for_root falls back to
+        # LOAD-BEARING: on a BAD registry _orch_state_dir_for_root falls back to
         # the XDG default (aiqt_hooks.py:7658-7659 -> _state_dir_from_registry(root, None)), NOT the
         # registry-declared state_dir, so orch_resume_barrier reads its barrier from the XDG default. We
         # ARM the barrier THERE by running orch_resume_audit first, which on a bad registry writes an

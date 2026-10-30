@@ -29,7 +29,7 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          ALLOW_WITH_FINDINGS the hook would give, with the reason. A scheduling DENY
                          stands whether or not the counter is saved (aiqt_hooks.py:8694-8698), so
                          the check applies to stop only.
-                         The checkpoint writes (fix round 16, M1): the checkpoint union
+                         The checkpoint writes: the checkpoint union
                          (_orch_checkpoint_union, aiqt_hooks.py:8335-8431, via :8457) makes the
                          only other hook writes inside _orch_build_ctx and its callees: a guard
                          event at :8410, :8416 and :8425, whose result is ignored; the checkpoint
@@ -98,7 +98,7 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          resolves it (_orch_path, aiqt_hooks.py:7630-7635; the state directory by
                          _orch_state_dir_for_root, :7654-7659), and a path is checked only when
                          the hook call path would reach its open, each earlier exit the hook takes
-                         modelled from its source (round 8 W1 and W2). The registry files come
+                         modelled from its source. The registry files come
                          first (:7606-7626): the machine-local file is always reached, and the
                          committed file only when the lstat of the local file raised
                          FileNotFoundError (:7609-7611), since a present local file returns at
@@ -351,7 +351,7 @@ def _atomic_write_outcome(path):
             return False, ("{} cannot be created in {}, which is not writable (aiqt_hooks.py:7720)"
                            .format(tmp, parent))
     elif stat.S_ISLNK(st.st_mode):
-        # The open follows the link, so its target decides whether the open could block (F1).
+        # The open follows the link, so its target decides whether the open could block.
         try:
             resolved = os.stat(tmp)
         except FileNotFoundError:
@@ -418,7 +418,7 @@ def _build_ctx_previewed(hook, reg, root, kind, data, wake_text):
         what = "checkpoint rewrite" if path == checkpoint else "init-marker write"
         if outcome == BLOCKS:
             # A blocked open is a third outcome beside success and failure: the hook gives no
-            # verdict at all, so it is never verdict-neutral (fix round 17, F1).
+            # verdict at all, so it is never verdict-neutral.
             raise _Unpreviewed("the {} could block the hook open for writing, so the hook could "
                                "give no verdict at all: {}".format(what, reason))
         if outcome is None and path == checkpoint and (
@@ -524,7 +524,7 @@ def _registry_read_paths(hook, root):
     _ORCH_REGISTRY_FILES (7548). A file is opened (7619) only when its lstat succeeds (7609), and
     the loop moves on to the next file only when that lstat raised FileNotFoundError (7610-7611): a
     present file returns at 7617-7626 whatever its content, and an lstat fault returns bad at
-    7612-7617, so no later registry file is reached (round 8 W1)."""
+    7612-7617, so no later registry file is reached."""
     out = []
     for rel in hook._ORCH_REGISTRY_FILES:
         path = os.path.join(root, *rel.split("/"))
@@ -572,7 +572,7 @@ def _lease_fresh_states(hook, lease, st):
 
 def _scope_read_paths(hook, reg, root, session_id):
     """The paths _orch_scope_live(reg, root, session_id) (aiqt_hooks.py:7779-7817) opens with a plain
-    blocking open, each only when the hook reaches that open (round 8 W2):
+    blocking open, each only when the hook reaches that open:
       lease.path  opened at 7806-7808 only when the lease section is a non-empty object (7786-7787),
                   its path resolves (7788-7789), os.stat succeeds (7791), the lease is non-empty and
                   fresh (7792-7799), holder_is_session_id is set (7800) and the session id is a
