@@ -41,6 +41,29 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          writing and is NOT previewed: when the wake text carries a quiet-duration
                          claim (the hook regex _ORCH_QUIET_CLAIM_RE plus the word "quiet"), a verdict
                          other than DENY is reported as unpreviewed, exit 2.
+                         The event fields: the previewed handler (orch_stop_guard through
+                         _orch_stop_family, aiqt_hooks.py:8569-8614, for stop; orch_yield_tool,
+                         :8646-8721, for idle), traced into _orch_root and _orch_build_ctx, reads
+                         these fields of the event, and the doctor passes each exactly as the hook
+                         reads it, from one input (_event_data):
+                           data cwd               :7592         --root
+                           data session_id        :8584, :8662  --session-id
+                           data stop_hook_active  :8482         --stop-hook-active (true only)
+                           data tool_name         :8664         --tool (idle)
+                           data tool_input        :8668         built from the two inputs below
+                           tool_input stop        :8669         --tool-stop (true only, idle)
+                           tool_input values      :8670         --wake-text, as tool_input prompt
+                           tool_input prompt      :8702         not previewed (see below)
+                         The hook tests stop_hook_active and stop with "is True", so an absent
+                         field stands for every other value. With --tool-stop the scheduling call
+                         is judged as kind stop, as the hook judges it (:8669): the loop signal
+                         and the stop counter apply, the quiet-claim check does not (:8681), and
+                         the denial-counter check does not, since a scheduling DENY stands
+                         (:8694-8698). tool_input prompt is read at :8702 only after an allowed
+                         schedule verdict, for the wake-digest write (_orch_register_wake,
+                         :8630-8643); it never changes the verdict, so it needs no input. The test
+                         suite scans the hook source for every event field these paths read and
+                         holds each to a reviewed table, so a new field fails the suite.
                          Before each hook reader is called, the doctor checks every path that
                          reader would open with a plain blocking open, each resolved as the hook
                          resolves it (_orch_path, aiqt_hooks.py:7630-7635; the state directory by
@@ -128,6 +151,11 @@ Options:
                      (_orch_root -> _recovery_toplevel, aiqt_hooks.py:7590-7595).
   --session-id ID    preflight only: the session id used for holder-scoped lease checks
                      (aiqt_hooks.py:7800-7811). Default: none.
+  --stop-hook-active preflight only: preview an event whose stop_hook_active is true, which sets
+                     the loop signal (aiqt_hooks.py:8482) and so, for the stop kind, the loop-bound
+                     release (aiqt_hooks.py:8192-8195). Default: absent.
+  --tool-stop        preflight idle only: preview a scheduling call whose tool_input stop is true,
+                     which the hook judges as kind stop (aiqt_hooks.py:8669). Default: absent.
   --wake-text TEXT   preflight idle only: the text a scheduling call would carry (the hook joins
                      the string values of tool_input, aiqt_hooks.py:8670), used for the wake-hygiene
                      check (aiqt_hooks.py:8476-8478) and to detect a quiet-duration claim that is
@@ -195,7 +223,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(ROOT, "plugin", "aiqt-guardrails-hooks", "hooks", "scripts", "aiqt_hooks.py")
 
 # preflight kind -> the decide_yield kind the hook passes (Stop and TeammateIdle use "stop",
-# aiqt_hooks.py:8621 and :8627; a scheduling call that parks the run uses "schedule_idle", :8669).
+# aiqt_hooks.py:8621 and :8627; a scheduling call that parks the run uses "schedule_idle", :8669,
+# unless its tool_input stop is true, which _preflight derives from the event data as the hook
+# does).
 KINDS = {"stop": "stop", "idle": "schedule_idle"}
 DEFAULT_TOOL = "ScheduleWakeup"
 # The barrier ts must fall inside this run, widened by this much for clock granularity.
@@ -573,10 +603,33 @@ def _print_disposition(disposition):
         print("  {:<16} {:<12} {} {}".format(cls, iid, col3, col4).rstrip())
 
 
-def _preflight(hook, root, kind_name, session_id, wake_text, tool):
-    kind = KINDS[kind_name]
+def _event_data(kind_name, session_id, stop_hook_active, tool, tool_stop, wake_text):
+    """The event payload the previewed handler would receive, built from the doctor inputs, with
+    each field in the form the hook reads it (the event-field table in the module docstring; the
+    class probe in tools/test-orch-stage2-hooks.py keeps it in step with the hook source). cwd is
+    not carried: --root stands for it, resolved as _orch_root resolves data["cwd"]
+    (aiqt_hooks.py:7590-7595). A flag that is off leaves its field absent, which the hook reads
+    exactly as any value other than true (its tests are "is True", aiqt_hooks.py:8482 and 8669)."""
+    data = {}
+    if session_id:
+        data["session_id"] = session_id
+    if stop_hook_active:
+        data["stop_hook_active"] = True
+    if kind_name == "idle":
+        tool_input = {}
+        if wake_text is not None:
+            tool_input["prompt"] = wake_text
+        if tool_stop:
+            tool_input["stop"] = True
+        data["tool_name"] = tool
+        data["tool_input"] = tool_input
+    return data
+
+
+def _preflight(hook, root, kind_name, data):
     status, reg = hook._orch_registry(root)
     print("orch_doctor preflight {}: root {}".format(kind_name, root))
+    print("event data previewed: {}".format(json.dumps(data, sort_keys=True)))
     if status == "absent":
         print("registry: absent; the orchestration suite is inert here, nothing to preview")
         return 2
@@ -586,6 +639,8 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
               "(aiqt_hooks.py:8579-8583); a scheduling call is denied (aiqt_hooks.py:8654-8661)")
         return 2
     print("registry: ok")
+    # The session id exactly as both handlers read it (aiqt_hooks.py:8584 and 8662).
+    session_id = data.get("session_id")
     special = _first_special(_scope_read_paths(hook, reg, root, session_id))
     if special is not None:
         # _orch_scope_live opens these with a plain blocking open (see _scope_read_paths), so a FIFO
@@ -603,7 +658,9 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
         print("effective verdict: ALLOW (out of scope)")
         return 0
     quiet_claim = False
-    if kind == "schedule_idle":
+    kind, wake_text = KINDS[kind_name], None
+    if kind_name == "idle":
+        tool = data.get("tool_name")
         declared = reg.get("yield_tools")
         # Exactly the hook test: allowed unjudged unless yield_tools is a list holding the tool
         # (aiqt_hooks.py:8664-8667).
@@ -621,22 +678,35 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
             print("writes: the doctor itself wrote nothing, and no enumerator ran")
             print("effective verdict: ALLOW (out of the roster)")
             return 0
-        text = wake_text or ""
-        quiet_claim = bool(hook._ORCH_QUIET_CLAIM_RE.search(text)) and "quiet" in text.lower()
-        if quiet_claim:
-            print("quiet-claim check: NOT PREVIEWED; the wake text carries a quiet-duration claim, "
-                  "which the hook judges inline against the measured gap since the last human "
-                  "input before the verdict below (aiqt_hooks.py:8675-8692); it cannot be called "
-                  "without writing a guard event")
+        # Exactly the hook derivation of the kind and the wake text (aiqt_hooks.py:8668-8670).
+        tool_input = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
+        kind = "stop" if tool_input.get("stop") is True else "schedule_idle"
+        wake_text = " ".join(str(v) for v in tool_input.values() if isinstance(v, str))
+        print("judged kind: {}".format(
+            "stop (tool_input stop is true, aiqt_hooks.py:8669)" if kind == "stop"
+            else "schedule_idle (aiqt_hooks.py:8669)"))
+        if kind != "schedule_idle":
+            print("quiet-claim check: not applicable; the hook runs it only for the schedule_idle "
+                  "kind (aiqt_hooks.py:8681)")
         else:
-            print("quiet-claim check: not previewed (aiqt_hooks.py:8675-8692); the wake text "
-                  "carries no quiet-duration claim, so the check does not fire")
+            quiet_claim = (bool(hook._ORCH_QUIET_CLAIM_RE.search(wake_text))
+                           and "quiet" in wake_text.lower())
+            if quiet_claim:
+                print("quiet-claim check: NOT PREVIEWED; the wake text carries a quiet-duration "
+                      "claim, which the hook judges inline against the measured gap since the last "
+                      "human input before the verdict below (aiqt_hooks.py:8675-8692); it cannot "
+                      "be called without writing a guard event")
+            else:
+                print("quiet-claim check: not previewed (aiqt_hooks.py:8675-8692); the wake text "
+                      "carries no quiet-duration claim, so the check does not fire")
     special = _first_special(_ctx_read_paths(hook, reg, root))
     if special is not None:
         # _orch_build_ctx opens these with a plain blocking open (see _ctx_read_paths), so a FIFO
         # there would hang the preview; the context is not built and no enumerator runs.
         return _refuse_special(special)
-    data = {"session_id": session_id} if session_id else {}
+    # The context as each handler builds it: a Stop passes no wake text (aiqt_hooks.py:8586), a
+    # scheduling call the joined tool_input text (:8671); both pass the event data, whose
+    # stop_hook_active sets the loop signal (:8482).
     ctx, _ts, _basis = hook._orch_build_ctx(reg, root, kind, data, wake_text=wake_text,
                                             record_checkpoint=False)
     if ctx["enum_status"] == "ok":
@@ -645,6 +715,8 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
         print("enumeration: {}: {}".format(ctx["enum_status"], ctx["enum_detail"]))
     print("writes: the doctor itself wrote nothing; the registry enumerator ran as the hook runs it "
           "(aiqt_hooks.py:7962-7989), and anything that program writes is its own")
+    print("loop signal: {}".format("set (stop_hook_active is true, aiqt_hooks.py:8482)"
+                                   if ctx["loop_signal"] else "not set"))
     if ctx["escape"]:
         print("escape sentinel: active (an operator release is open)")
     elif ctx.get("escape_spoof"):
@@ -662,7 +734,7 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
     print("judged reason: {}".format(reason))
     print("verdict without the escape sentinel: {}".format(verdict_ne))
     print("reason without the escape sentinel: {}".format(reason_ne))
-    if kind == "stop":
+    if kind_name == "stop":
         blocker = _counter_save_blocker(hook._orch_state_dir_for_root(root))
         if blocker is None:
             print("denial counter: could be saved (an os.access check; the hook saves it on a DENY)")
@@ -676,6 +748,9 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
                       "DENY would not hold. Underlying: {})".format(reason))
                 _print_disposition(disposition)
                 return 1
+    else:
+        print("denial counter: not checked; a scheduling DENY stands whether or not the counter "
+              "is saved (aiqt_hooks.py:8694-8698)")
     if quiet_claim and effective != "DENY":
         # The quiet-claim check runs before decide_yield and may deny; a DENY stands either way.
         print("effective verdict: UNPREVIEWED ({} unless the quiet-claim check denies)"
@@ -805,9 +880,13 @@ def main(argv):
                         help="run the resume audit and rewrite resume-barrier.json")
     parser.add_argument("--root", default=None, help="repository root (default: git top level of cwd)")
     parser.add_argument("--session-id", default=None, help="preflight: session id for holder scoping")
+    parser.add_argument("--stop-hook-active", action="store_true",
+                        help="preflight: preview an event whose stop_hook_active is true")
     parser.add_argument("--wake-text", default=None, help="preflight idle: the wake text to judge")
     parser.add_argument("--tool", default=None,
                         help="preflight idle: the scheduling tool (default {})".format(DEFAULT_TOOL))
+    parser.add_argument("--tool-stop", action="store_true",
+                        help="preflight idle: preview a call whose tool_input stop is true")
     args = parser.parse_args(argv)
     if bool(args.resume_audit) == bool(args.command):
         parser.print_usage(sys.stderr)
@@ -818,6 +897,18 @@ def main(argv):
         parser.print_usage(sys.stderr)
         print("orch_doctor.py: --tool takes a non-empty name and applies only to preflight idle",
               file=sys.stderr)
+        return 2
+    if (args.tool_stop or args.wake_text is not None) \
+            and (args.resume_audit or args.kind != "idle"):
+        # A Stop event carries no tool_input (aiqt_hooks.py:8586 passes no wake text), so an input
+        # the previewed handler never reads is refused rather than silently ignored.
+        parser.print_usage(sys.stderr)
+        print("orch_doctor.py: --tool-stop and --wake-text apply only to preflight idle",
+              file=sys.stderr)
+        return 2
+    if args.stop_hook_active and args.resume_audit:
+        parser.print_usage(sys.stderr)
+        print("orch_doctor.py: --stop-hook-active applies only to preflight", file=sys.stderr)
         return 2
     try:
         hook = _load_hook()
@@ -835,8 +926,10 @@ def main(argv):
         return _refuse_special(special)
     if args.resume_audit:
         return _resume_audit(hook, root)
-    return _preflight(hook, root, args.kind, args.session_id, args.wake_text,
-                      args.tool if args.tool is not None else DEFAULT_TOOL)
+    data = _event_data(args.kind, args.session_id, args.stop_hook_active,
+                       args.tool if args.tool is not None else DEFAULT_TOOL, args.tool_stop,
+                       args.wake_text)
+    return _preflight(hook, root, args.kind, data)
 
 
 if __name__ == "__main__":

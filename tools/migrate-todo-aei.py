@@ -62,12 +62,13 @@ a later step does not mistake a truncated file for a complete conversion. The pa
 only once it is confirmed to name the file this run created (the device and inode read with fstat
 after the create), so a file this run did not create is never removed: a path whose identity was
 never read, or that now names another file, is left in place.
-An OSError is refused with exit 1 there, and any other exception propagates to the runtime guard
-below (or, for a KeyboardInterrupt, ends the run). Either refusal names the output and says, in the
-same words, what became of the partial output: removed, left in place because the path no longer
-names the file this run created, left in place because it could not be confirmed as the file this
-run created and to be checked and deleted before any retry, or NOT removed and to be deleted
-before any retry. Applying the output to the record store is a separate step outside this script.
+An OSError is refused with exit 1 there, and any other exception, a KeyboardInterrupt included,
+propagates to the runtime guard below, which refuses with exit 1, or with exit 130 for a
+KeyboardInterrupt. Each refusal names the output and says, in the same words, what became of the
+partial output: removed, left in place because the path no longer names the file this run created,
+left in place because it could not be confirmed as the file this run created and to be checked and
+deleted before any retry, or NOT removed and to be deleted before any retry. Applying the output to
+the record store is a separate step outside this script.
 
 Usage:
     migrate-todo-aei.py <input> <output>
@@ -76,8 +77,9 @@ Usage:
         Print the id, opened, item and closure cells of every old data row (stripped of the
         surrounding blanks, escapes kept as written) with a sha256 per row, for the loss check.
 Exit 0 on success, 1 on a refused or malformed input or output or an unexpected error, 2 on a
-usage error. An input that is not valid UTF-8 is refused naming the line and the byte offset of the
-first invalid byte.
+usage error, 130 on a KeyboardInterrupt (128 plus SIGINT, the status a shell gives a run ended by
+an interrupt). An input that is not valid UTF-8 is refused naming the line and the byte offset of
+the first invalid byte.
 
 Every refusal begins, after the "migrate-todo-aei: FAIL: " prefix, with its position: "line N" for a
 line of the input, "line N (end of input)" where the scan ended, "line N (end of input, output
@@ -92,17 +94,22 @@ the FileNotFoundError that os.getcwd raises when the working directory is gone) 
 through _fail, exit 1, at the position the run had reached: "before line 1 (no input read)" until
 the whole input has been read, "line N (end of input)" after it, and "line N (end of input, output
 refused)" once the output step has started (a refusal after the output file was written in full
-says so, and the file is left in place). The guard closes stdout before it fails, so the
-interpreter does not report a broken pipe a second time at exit; it does not catch
-KeyboardInterrupt or the SystemExit that _fail raises. The test suite also scans the source for
+says so, and the file is left in place). A KeyboardInterrupt that reaches main is refused by the
+same guard in the same form, one line through _fail at the position the run had reached, with the
+same account of an output written in full or of a partial output, but with exit 130, never exit 1,
+so an interrupted run is not mistaken for a refused input and is not swallowed. The guard closes
+stdout before it fails, so the interpreter does not report a broken pipe a second time at exit; it
+does not catch the SystemExit that _fail raises. The test suite also scans the source for
 every ordinary path that can write a refusal (each MigrationError construction and raise, each
 _fail call, each line position handed to a helper, and each write to standard error or exit) so
 that each keeps its position. Residual (disclosed): that static scan guards ordinary refusal paths
 only; it does not cover deliberately obfuscated routes (a signal or os.kill, exec, a subprocess
 writing to descriptor 2, an attribute name built from strings, a line position passed through a
 local alias, or assert). The runtime guard turns any escaping exception into a positioned refusal,
-so the remaining residual is a process ended without an exception (a signal, exec or os._exit),
-which names no position.
+so the remaining residual is a process ended without an exception (a signal other than SIGINT,
+exec or os._exit), a KeyboardInterrupt raised before main starts (during the re-execution or the
+imports), and a second KeyboardInterrupt while the guard writes its refusal, none of which names a
+position.
 
 The script runs isolated: started without -I, it re-executes itself under python3 -I before it
 imports anything beyond os and sys, so a file planted beside it cannot shadow a standard-library
@@ -394,7 +401,8 @@ def write_output(in_path, out_path, text, reached=None):
         # Any other exception, an Exception that is not an OSError or a BaseException such as
         # KeyboardInterrupt, still removes the partial output under the same-inode condition; the
         # exception then propagates unchanged to the runtime guard in main, which reports the
-        # removal result recorded here.
+        # removal result recorded here in its one positioned line, exit 1 through _unexpected, or
+        # exit 130 through _interrupted for a KeyboardInterrupt.
         if not finished and not removed:
             if fd is not None:
                 try:
@@ -454,17 +462,25 @@ def _discard_stdout():
         pass
 
 
-def _unexpected(exc, reached):
-    """Refuse, exit 1, for an exception that escaped the handling in _run, at the position the
-    run had reached: before line 1 until the whole input was read, then the end of input, and the
-    end of input with the output refused once the output step had started."""
-    _discard_stdout()
-    detail = "unexpected {}: {}".format(type(exc).__name__, " ".join(str(exc).splitlines()))
+def _output_account(detail, reached):
+    """detail, followed by what became of the output when the output step had started: an output
+    written in full is left in place, and a partial output carries the status write_output
+    recorded."""
     if reached["written"] is not None:
         detail += (" (the output {} was written in full before this error and is left in place)"
                    .format(reached["written"]))
     if reached["partial"] is not None:
         detail += "; output {}: {}".format(*reached["partial"])
+    return detail
+
+
+def _unexpected(exc, reached):
+    """Refuse, exit 1, for an exception that escaped the handling in _run, at the position the
+    run had reached: before line 1 until the whole input was read, then the end of input, and the
+    end of input with the output refused once the output step had started."""
+    _discard_stdout()
+    detail = _output_account("unexpected {}: {}".format(
+        type(exc).__name__, " ".join(str(exc).splitlines())), reached)
     if reached["line"] is None:
         _fail("{}: {}".format(NOT_READ, detail))
     if reached["output"]:
@@ -472,13 +488,28 @@ def _unexpected(exc, reached):
     _fail("line {} (end of input): {}".format(reached["line"], detail))
 
 
+def _interrupted(reached):
+    """Refuse, exit 130, for a KeyboardInterrupt that reached main: one line through _fail at the
+    position the run had reached, as _unexpected gives it, with the same account of the output.
+    Exit 130 (128 plus SIGINT) keeps an interrupted run apart from a refused input (exit 1)."""
+    _discard_stdout()
+    detail = _output_account("interrupted (KeyboardInterrupt)", reached)
+    if reached["line"] is None:
+        _fail("{}: {}".format(NOT_READ, detail), 130)
+    if reached["output"]:
+        _fail("line {} (end of input, output refused): {}".format(reached["line"], detail), 130)
+    _fail("line {} (end of input): {}".format(reached["line"], detail), 130)
+
+
 def main(argv):
     """The whole run under one guard: any Exception that escapes _run, from argument handling to
-    the flush of stdout, is a positioned refusal. KeyboardInterrupt and the SystemExit of _fail are
-    not Exception and pass through."""
+    the flush of stdout, is a positioned refusal, exit 1, and a KeyboardInterrupt is a positioned
+    refusal, exit 130, each in one line through _fail. The SystemExit of _fail is not caught."""
     reached = {"line": None, "output": False, "written": None, "partial": None}
     try:
         _run(argv, reached)
+    except KeyboardInterrupt:
+        _interrupted(reached)
     except Exception as exc:
         _unexpected(exc, reached)
     return 0

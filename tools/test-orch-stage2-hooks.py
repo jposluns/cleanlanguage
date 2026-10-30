@@ -68,7 +68,18 @@ is reached and the doctor refuses. The DoctorScopeMargin cases prove that a leas
 SCOPE_MARGIN seconds of either freshness bound the hook applies, the max_age_hours upper bound and
 the clock-skew lower bound for a future mtime, makes the doctor check both scope opens, the holder
 lease and the mode record, refusing a special file at either; each case goes red with
-SCOPE_MARGIN = 0.0 (round 9 X2).
+SCOPE_MARGIN = 0.0 (round 9 X2). The DoctorEventFields cases prove that the doctor previews every
+event field that can change the verdict exactly as the hook reads it: a Stop whose stop_hook_active
+is true, a scheduling call whose tool_input stop is true (judged as kind stop), both together, and
+stop_hook_active on a schedule_idle call, which is no loop signal, each compared with the verdict
+of the real hook on the same state, and a scheduling DENY on the stop kind that stands when the
+denial counter cannot be saved. The DoctorEventFieldProbe case is the class probe for that finding:
+it scans the hook source, from each previewed handler through every module function the event data
+is passed to, for every field of the event and of its tool_input that is read, and requires the set
+of fields and the lines that read them to equal the reviewed EVENT_FIELDS table, each field either
+modelled by a named doctor input or unpreviewed with a reason; any other use of the event data (a
+computed key, an alias, a pass to an unknown callee) fails it, and it proves that it refuses one
+mutation of each kind (round 15).
 """
 
 from __future__ import annotations
@@ -2348,6 +2359,284 @@ class DoctorScopeMargin(Stage2Harness):
 
     def test_near_the_clock_skew_bound_both_scope_opens_are_checked(self):
         self._both_sites("lower")
+
+
+# =====================================================================================================
+# Round 15: every event field the previewed handlers read is previewed as the hook reads it
+# =====================================================================================================
+# (container, field) -> (status, doctor input or reason, the hook lines that read it). "data" is the
+# event payload and "tool_input" its tool_input object; the field "values()" is the read of every
+# value of tool_input. A modelled field names the doctor input that passes it exactly as the hook
+# reads it; an unpreviewed field gives the reason no input is needed. The probe below requires the
+# lines to equal those its scan finds, so the citations are checked, not narrated.
+EVENT_FIELDS = {
+    ("data", "cwd"): ("modelled", "--root", (7592,)),  # _orch_root, via 8573 and 8650
+    ("data", "session_id"): ("modelled", "--session-id", (8584, 8662)),
+    ("data", "stop_hook_active"): ("modelled", "--stop-hook-active", (8482,)),  # via 8586, 8671
+    ("data", "tool_name"): ("modelled", "--tool", (8664,)),
+    ("data", "tool_input"): ("modelled", "--tool-stop and --wake-text", (8668,)),
+    ("tool_input", "stop"): ("modelled", "--tool-stop", (8669,)),
+    ("tool_input", "values()"): ("modelled", "--wake-text", (8670,)),
+    ("tool_input", "prompt"): ("unpreviewed", "read only after an allowed schedule verdict, for the "
+                               "wake-digest write (_orch_register_wake, aiqt_hooks.py:8630-8643); "
+                               "it never changes the verdict", (8702,)),
+}
+# The handlers the doctor previews: preflight stop (Stop) and preflight idle (a scheduling call).
+PREVIEWED_HANDLERS = ("orch_stop_guard", "orch_yield_tool")
+# The event fields whose value is an object the hook reads field by field.
+CONTAINER_FIELDS = ("tool_input",)
+
+
+def event_field_reads(source, handlers=PREVIEWED_HANDLERS):
+    """(reads, unreviewed) over the hook source. reads maps (container, field) to the set of lines
+    that read it, traced from the event parameter of each handler through every module function the
+    event data is passed to, positionally or by keyword; a local assigned from a read of a container
+    field is followed as that container. unreviewed lists (line, text) for every other use of the
+    event data or of a container (a computed key, an alias, a pass to a callee that is not a module
+    function, an iteration), so a field read in a form the scan does not model fails rather than
+    going unseen."""
+    tree = ast.parse(source)
+    funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    def literal_read(node):
+        parent = parents.get(node)
+        if isinstance(parent, ast.Attribute) and parent.value is node:
+            call = parents.get(parent)
+            if isinstance(call, ast.Call) and call.func is parent:
+                first = call.args[0] if call.args else None
+                if parent.attr == "get" and isinstance(first, ast.Constant) \
+                        and isinstance(first.value, str):
+                    return first.value
+                if parent.attr == "values" and not call.args and not call.keywords:
+                    return "values()"
+            return None
+        if isinstance(parent, ast.Subscript) and parent.value is node \
+                and isinstance(parent.slice, ast.Constant) and isinstance(parent.slice.value, str):
+            return parent.slice.value
+        return None
+
+    reads, unreviewed, seen = {}, [], set()
+    work = [(name, funcs[name].args.args[0].arg) for name in handlers]
+    while work:
+        fname, param = work.pop()
+        if (fname, param) in seen:
+            continue
+        seen.add((fname, param))
+        fn = funcs[fname]
+        aliases = {}
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                    and isinstance(node.targets[0], ast.Name):
+                for inner in ast.walk(node.value):
+                    if isinstance(inner, ast.Name) and inner.id == param \
+                            and literal_read(inner) in CONTAINER_FIELDS:
+                        aliases[node.targets[0].id] = literal_read(inner)
+        for node in ast.walk(fn):
+            if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)):
+                continue
+            if node.id == param:
+                container = "data"
+            elif node.id in aliases:
+                container = aliases[node.id]
+            else:
+                continue
+            field = literal_read(node)
+            if field is not None:
+                reads.setdefault((container, field), set()).add(node.lineno)
+                continue
+            parent = parents.get(node)
+            holder = parents.get(parent) if isinstance(parent, ast.keyword) else parent
+            if container == "data" and isinstance(holder, ast.Call) \
+                    and isinstance(holder.func, ast.Name) and holder.func.id in funcs:
+                params = [a.arg for a in funcs[holder.func.id].args.args]
+                if isinstance(parent, ast.keyword) and parent.arg in params:
+                    work.append((holder.func.id, parent.arg))
+                    continue
+                index = next((i for i, a in enumerate(holder.args) if a is node), None)
+                if index is not None and index < len(params):
+                    work.append((holder.func.id, params[index]))
+                    continue
+            unreviewed.append((node.lineno, ast.unparse(parent) if parent is not None else node.id))
+    return reads, unreviewed
+
+
+# One mutation of each kind the probe must refuse, as (name, anchor, replacement) over the hook
+# source: a new data field, a new tool_input field, an alias of the event data, and a computed key.
+CTX_ANCHOR = "    staleness = _orch_validate(\"staleness\", reg.get(\"staleness\"))[1]\n"
+YIELD_ANCHOR = "    kind = \"stop\" if tool_input.get(\"stop\") is True else \"schedule_idle\"\n"
+EVENT_FIELD_MUTATIONS = (
+    ("a new data field read in the context", CTX_ANCHOR,
+     CTX_ANCHOR + "    _probe = data.get(\"transcript_path\")\n", "field"),
+    ("a new tool_input field read", YIELD_ANCHOR,
+     YIELD_ANCHOR + "    _probe = tool_input.get(\"delaySeconds\")\n", "field"),
+    ("an alias of the event data", CTX_ANCHOR, CTX_ANCHOR + "    _probe = data\n", "unreviewed"),
+    ("a computed key", CTX_ANCHOR, CTX_ANCHOR + "    _probe = data[kind]\n", "unreviewed"),
+)
+
+
+class DoctorEventFieldProbe(unittest.TestCase):
+    """Round 15 class probe: the hook event fields read on the previewed paths equal the reviewed
+    table, each modelled by a doctor input or unpreviewed with a reason."""
+
+    def source(self):
+        if not HOOK.exists():
+            self.fail("installed hook not found: {}".format(HOOK))
+        return HOOK.read_text(encoding="utf-8")
+
+    def test_every_event_field_read_on_the_previewed_paths_is_reviewed(self):
+        reads, unreviewed = event_field_reads(self.source())
+        self.assertEqual(unreviewed, [], "an event-data use the probe does not model")
+        self.assertEqual(sorted(reads), sorted(EVENT_FIELDS),
+                         "the event fields the hook reads and the reviewed table differ")
+        for key, (status, detail, lines) in EVENT_FIELDS.items():
+            with self.subTest(field=key):
+                self.assertIn(status, ("modelled", "unpreviewed"))
+                self.assertTrue(detail, "no doctor input or reason")
+                self.assertEqual(reads[key], set(lines), "the cited hook lines are stale")
+
+    def test_every_modelled_input_is_a_doctor_option(self):
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+        r = subprocess.run([sys.executable, "-I", str(DOCTOR), "--help"], capture_output=True,
+                           text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        source = DOCTOR.read_text(encoding="utf-8")
+        for key, (status, detail, _lines) in EVENT_FIELDS.items():
+            if status != "modelled":
+                continue
+            for option in detail.split(" and "):
+                with self.subTest(field=key, option=option):
+                    self.assertIn(option, r.stdout)
+        for _key, (_status, _detail, lines) in EVENT_FIELDS.items():
+            for line in lines:
+                self.assertIn(":{}".format(line), source, "the doctor docstring omits a cited line")
+
+    def test_the_probe_refuses_each_mutation(self):
+        source = self.source()
+        for name, anchor, replacement, kind in EVENT_FIELD_MUTATIONS:
+            with self.subTest(mutation=name):
+                self.assertEqual(source.count(anchor), 1, "the mutation anchor is not unique")
+                reads, unreviewed = event_field_reads(source.replace(anchor, replacement))
+                if kind == "field":
+                    self.assertNotEqual(sorted(reads), sorted(EVENT_FIELDS),
+                                        "the probe missed {}".format(name))
+                    self.assertEqual(unreviewed, [])
+                else:
+                    self.assertNotEqual(unreviewed, [], "the probe accepted {}".format(name))
+
+
+class DoctorEventFields(Stage2Harness):
+    """Round 15: the doctor previews stop_hook_active and tool_input stop exactly as the hook reads
+    them, so its verdict equals that of the real hook on the same state. Each case resets the state
+    directory, runs the doctor first (it writes nothing) and then the hook."""
+
+    def setUp(self):
+        super().setUp()
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+
+    def _arm(self):
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.set_items([item("7", title="Ship the widget")])
+
+    def _reset(self, seed=None):
+        shutil.rmtree(self.state_dir(), ignore_errors=True)
+        if seed is not None:
+            self.seed_state("turn-state.json", seed)
+
+    def _doctor_verdict(self, *args):
+        r = self.run_doctor("preflight", *args)
+        lines = [ln for ln in r.stdout.splitlines() if ln.startswith("effective verdict: ")]
+        self.assertEqual(len(lines), 1, r.stdout + r.stderr)
+        verdict = lines[0][len("effective verdict: "):].split()[0]
+        self.assertEqual(r.returncode, 0 if verdict == "ALLOW" else 1, r.stdout + r.stderr)
+        return verdict, r.stdout
+
+    def _hook_verdict(self, action, payload):
+        r = self.run_hook(action, payload)
+        if action == "orch_stop_guard" and r.returncode == 2:
+            return "DENY"
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = self.stdout_json(r)
+        if out is None:
+            return "ALLOW"
+        if out.get("hookSpecificOutput", {}).get("permissionDecision") == "deny":
+            return "DENY"
+        return "ALLOW_WITH_FINDINGS"
+
+    def _yield_payload(self, tool_input, **extra):
+        payload = {"tool_name": "ScheduleWakeup", "tool_input": tool_input}
+        payload.update(extra)
+        return payload
+
+    def test_the_doctor_verdict_equals_the_hook_verdict_for_each_event_field(self):
+        self._arm()
+        bound = {"stop_denials": 2}
+        cases = (
+            ("a Stop with stop_hook_active true", None, ("stop", "--stop-hook-active"),
+             "orch_stop_guard", {"stop_hook_active": True}, "ALLOW_WITH_FINDINGS"),
+            ("a Stop without it (contrast)", None, ("stop",), "orch_stop_guard", {}, "DENY"),
+            ("a scheduling call with tool_input stop true at the loop bound", bound,
+             ("idle", "--tool-stop", "--wake-text", "end the loop"), "orch_yield_tool",
+             self._yield_payload({"stop": True, "prompt": "end the loop"}), "ALLOW_WITH_FINDINGS"),
+            ("the same call without stop (contrast)", bound,
+             ("idle", "--wake-text", "end the loop"), "orch_yield_tool",
+             self._yield_payload({"prompt": "end the loop"}), "DENY"),
+            ("tool_input stop true with stop_hook_active true", None,
+             ("idle", "--tool-stop", "--stop-hook-active", "--wake-text", "end the loop"),
+             "orch_yield_tool", self._yield_payload({"stop": True, "prompt": "end the loop"},
+                                                    stop_hook_active=True),
+             "ALLOW_WITH_FINDINGS"),
+            ("tool_input stop true below the bound", None,
+             ("idle", "--tool-stop", "--wake-text", "end the loop"), "orch_yield_tool",
+             self._yield_payload({"stop": True, "prompt": "end the loop"}), "DENY"),
+            ("stop_hook_active on a schedule_idle call is no loop signal", None,
+             ("idle", "--stop-hook-active", "--wake-text", "recheck the queue"), "orch_yield_tool",
+             self._yield_payload({"prompt": "recheck the queue"}, stop_hook_active=True), "DENY"),
+        )
+        for name, seed, doctor_args, action, payload, expected in cases:
+            with self.subTest(case=name):
+                self._reset(seed)
+                before = tree_state(self._tmp)
+                verdict, stdout = self._doctor_verdict(*doctor_args)
+                self.assertEqual(tree_state(self._tmp), before, "preflight changed a file")
+                self._reset(seed)
+                self.assertEqual(self._hook_verdict(action, payload), expected,
+                                 "precondition: the hook verdict")
+                self.assertEqual(verdict, expected, stdout)
+                if "--tool-stop" in doctor_args:
+                    self.assertIn("judged kind: stop (tool_input stop is true", stdout)
+                    self.assertIn("quiet-claim check: not applicable", stdout)
+                if "--stop-hook-active" in doctor_args and doctor_args[0] == "stop":
+                    self.assertIn("loop signal: set", stdout)
+
+    def test_a_stop_kind_scheduling_deny_stands_with_an_unsaved_counter(self):
+        # aiqt_hooks.py:8694-8698: the scheduling path ignores a failed counter save, so its DENY
+        # stands on the stop kind too, unlike the Stop event (aiqt_hooks.py:8590-8596).
+        if os.geteuid() == 0:
+            self.skipTest("root writes a mode-0444 file, so the save cannot fail here")
+        self._arm()
+        self.seed_state("turn-state.json", {})
+        os.chmod(self.state_dir() / "turn-state.json", 0o444)
+        verdict, stdout = self._doctor_verdict("idle", "--tool-stop", "--wake-text", "end the loop")
+        self.assertEqual(verdict, "DENY", stdout)
+        self.assertIn("denial counter: not checked; a scheduling DENY stands", stdout)
+        self.assertEqual(self._hook_verdict("orch_yield_tool", self._yield_payload(
+            {"stop": True, "prompt": "end the loop"})), "DENY")
+
+    def test_inputs_outside_their_preflight_kind_are_usage_errors(self):
+        self.write_registry(self.stage2())
+        for args in (("preflight", "stop", "--tool-stop"), ("preflight", "stop", "--wake-text", "x"),
+                     ("--resume-audit", "--tool-stop"), ("--resume-audit", "--stop-hook-active")):
+            with self.subTest(args=args):
+                r = self.run_doctor(*args)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("only to preflight", r.stderr)
 
 
 def doctor_precheck_sites(source):

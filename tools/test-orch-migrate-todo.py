@@ -63,7 +63,11 @@ the primary closure, the top-level guard in main: a closed stdout pipe, a delete
 with a relative path, and a RuntimeError injected in process at each stage of the run (path
 resolution, reading, conversion, the output write, the row digest and the stdout write), in both
 modes, each exit 1 with one positioned stderr line and no traceback, at the position that stage had
-reached, while a KeyboardInterrupt passes through. A failure inside the output write after the
+reached. A KeyboardInterrupt injected at each of those stages, and inside the output write after the
+exclusive create, is refused by the same guard with exit 130, in one positioned stderr line with no
+traceback, both in process and in a process that runs main unguarded by the harness, and, where the
+output step had started, the line says what became of the output: written in full and left in
+place, or the partial output removed (round 15). A failure inside the output write after the
 exclusive create, a RuntimeError or a KeyboardInterrupt, leaves no output file, and the refusal says
 the partial output was removed; when that removal itself fails, the refusal names the file left
 behind and says it must be deleted before any retry; when the removal meets an exception that is
@@ -72,7 +76,9 @@ type and says it must be deleted before any retry; when os.fstat fails after the
 by an OSError or by a RuntimeError, and another file has replaced the output path, that file is
 left untouched and the refusal names the output and says it could not be confirmed as the file
 this run created and must be checked and deleted before any retry. The remaining residual is a
-process ended without an exception (a signal, exec or os._exit), which names no position.
+process ended without an exception (a signal other than SIGINT, exec or os._exit), a
+KeyboardInterrupt raised before main starts, and a second KeyboardInterrupt while the guard writes
+its refusal, none of which names a position.
 """
 
 from __future__ import annotations
@@ -1507,9 +1513,12 @@ os.execv(sys.executable, [sys.executable, "-I"] + sys.argv[2:])
 """
 
 # Runs in a separate python3 -I -B process: load the migration by path, make the stage named by
-# argv[2] raise (a RuntimeError, or a KeyboardInterrupt for the "interrupt" stage; "none" injects
-# nothing), run main on the JSON argument list argv[3] with stdout and stderr captured, and print
-# the exit code, whether a KeyboardInterrupt passed through, and both captured streams.
+# argv[2] raise (a RuntimeError, or a KeyboardInterrupt for a stage named with the "kbi-" prefix;
+# "none" injects nothing), run main on the JSON argument list argv[3] with stdout and stderr
+# captured, and print the exit code, whether a KeyboardInterrupt passed through, and both captured
+# streams. With argv[4] "direct" it instead runs sys.exit(main(...)) with the real stderr and no
+# handler of its own, so an exception that escapes main ends the process as it would end the tool
+# (for a KeyboardInterrupt, the interpreter traceback and a death by SIGINT).
 GUARD_PROG = """
 import importlib.util, io, json, os, sys
 sys.dont_write_bytecode = True
@@ -1517,6 +1526,7 @@ spec = importlib.util.spec_from_file_location("migrate_under_test", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 stage, args = sys.argv[2], json.loads(sys.argv[3])
+direct = len(sys.argv) > 4 and sys.argv[4] == "direct"
 
 
 def boom(*_args, **_kwargs):
@@ -1527,6 +1537,11 @@ def interrupt(*_args, **_kwargs):
     raise KeyboardInterrupt
 
 
+raiser = boom
+if stage.startswith("kbi-"):
+    stage, raiser = stage[len("kbi-"):], interrupt
+
+
 class Sink(io.StringIO):
     def close(self):
         pass
@@ -1534,7 +1549,7 @@ class Sink(io.StringIO):
 
 class Refusing(Sink):
     def write(self, _text):
-        boom()
+        raiser()
 
 
 def refuse_unlink(*_args, **_kwargs):
@@ -1550,10 +1565,9 @@ def boom_then_odd_lstat(*_args, **_kwargs):
     boom()
 
 
-targets = {"path": (mod.os.path, "abspath", boom), "read": (mod, "read_input", boom),
-           "convert": (mod, "convert", boom), "write": (mod, "write_output", boom),
-           "digest": (mod, "row_digest", boom), "interrupt": (mod, "convert", interrupt),
-           "fsync": (mod.os, "fsync", boom), "fsync-interrupt": (mod.os, "fsync", interrupt)}
+targets = {"path": (mod.os.path, "abspath", raiser), "read": (mod, "read_input", raiser),
+           "convert": (mod, "convert", raiser), "write": (mod, "write_output", raiser),
+           "digest": (mod, "row_digest", raiser), "fsync": (mod.os, "fsync", raiser)}
 if stage in targets:
     owner, attr, replacement = targets[stage]
     setattr(owner, attr, replacement)
@@ -1586,6 +1600,10 @@ if stage == "fstat-oserror":
     mod.os.fstat = fstat_then_swap(OSError(5, "Input/output error"))
 if stage == "fstat-runtime":
     mod.os.fstat = fstat_then_swap(RuntimeError("injected at the fstat-runtime stage"))
+if direct:
+    if stage == "stdout":
+        sys.stdout = Refusing()
+    sys.exit(mod.main(args))
 out, err = (Refusing() if stage == "stdout" else Sink()), io.StringIO()
 real = (sys.stdout, sys.stderr)
 sys.stdout, sys.stderr = out, err
@@ -1608,7 +1626,8 @@ class RuntimeGuard(MigrateHarness):
     """The top-level guard in main turns any exception that escapes the handling into one positioned
     refusal line, exit 1, with no traceback, at the position the run had reached: before line 1
     until the whole input is read, then the end of input, and the end of input with the output
-    refused once the output step has started. A KeyboardInterrupt passes through."""
+    refused once the output step has started. A KeyboardInterrupt gets the same positioned line,
+    with the same account of the output, and exit 130 (round 15)."""
 
     TIMEOUT = 20
 
@@ -1649,6 +1668,29 @@ class RuntimeGuard(MigrateHarness):
                            timeout=self.TIMEOUT)
         self.assertEqual(r.returncode, 0, "the stage harness failed: {}".format(r.stderr))
         return json.loads(r.stdout)
+
+    def run_direct(self, script, stage, *args):
+        # main runs under sys.exit with the real stderr and no handler in the harness, so the exit
+        # status and stderr are those the tool itself would give.
+        return subprocess.run([sys.executable, "-I", "-B", "-c", GUARD_PROG, str(script), stage,
+                               json.dumps([str(a) for a in args]), "direct"],
+                              capture_output=True, text=True, timeout=self.TIMEOUT)
+
+    def assert_interrupted(self, code, stderr, position, needle):
+        self.assertEqual(code, 130, "expected exit 130: {!r}".format(stderr))
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("Exception ignored", stderr)
+        lines = stderr.splitlines()
+        self.assertEqual(len(lines), 1, "one failure line: {!r}".format(stderr))
+        match = POSITION_RE.match(lines[0])
+        self.assertIsNotNone(match, "the failure names no position: {!r}".format(lines[0]))
+        self.assertEqual(match.group(1), position, lines[0])
+        self.assertIn(": interrupted (KeyboardInterrupt)", lines[0])
+        if needle is None:
+            self.assertNotIn("; output ", lines[0])
+            self.assertNotIn("written in full", lines[0])
+        else:
+            self.assertIn(needle, lines[0])
 
     def test_a_closed_stdout_pipe(self):
         text = old_fixture()
@@ -1708,7 +1750,8 @@ class RuntimeGuard(MigrateHarness):
     def test_a_failure_during_the_write_leaves_no_output(self):
         # A non-OSError raised inside write_output after the exclusive create (here from os.fsync,
         # after the text is written) removes the partial output and is refused positioned; a
-        # KeyboardInterrupt at the same point also removes it and still propagates.
+        # KeyboardInterrupt at the same point also removes it and is refused positioned, exit 130,
+        # naming the removal.
         text = old_fixture()
         self.write_src(text)
         result = self.run_stage(MIGRATE, "fsync", self.src, self.dst)
@@ -1719,9 +1762,12 @@ class RuntimeGuard(MigrateHarness):
         self.assertIn("; output {}: the partial output was removed".format(
             os.path.abspath(str(self.dst))), result["stderr"])
         self.assertFalse(os.path.lexists(self.dst), "a failed write leaves no partial output")
-        result = self.run_stage(MIGRATE, "fsync-interrupt", self.src, self.dst)
-        self.assertTrue(result["interrupted"], "the guard caught a KeyboardInterrupt")
-        self.assertEqual(result["stderr"], "")
+        result = self.run_stage(MIGRATE, "kbi-fsync", self.src, self.dst)
+        self.assertFalse(result["interrupted"], "a KeyboardInterrupt escaped the guard")
+        self.assertEqual(result["stdout"], "")
+        self.assert_interrupted(result["code"], result["stderr"], end_of_input(text),
+                                "; output {}: the partial output was removed".format(
+                                    os.path.abspath(str(self.dst))))
         self.assertFalse(os.path.lexists(self.dst), "an interrupted write leaves no partial output")
 
     def test_a_failed_removal_after_a_failed_write_names_the_file_left_behind(self):
@@ -1786,12 +1832,47 @@ class RuntimeGuard(MigrateHarness):
                                  "a file this run did not create", "the file swapped in changed")
                 self.dst.unlink()
 
-    def test_a_keyboard_interrupt_is_not_caught(self):
-        self.write_src(old_fixture())
-        result = self.run_stage(MIGRATE, "interrupt", self.src, self.dst)
-        self.assertTrue(result["interrupted"], "the guard caught a KeyboardInterrupt")
-        self.assertEqual(result["stderr"], "")
-        self.assertFalse(os.path.lexists(self.dst))
+    def test_a_keyboard_interrupt_at_each_stage_exits_130_positioned(self):
+        # Round 15: a KeyboardInterrupt at each stage of either mode is refused by the guard in
+        # main, exit 130, in one positioned line with no traceback; once the output step has
+        # started the line says what became of the output. Each case runs in process and again
+        # with main unguarded by the harness, where an escaping interrupt would print the
+        # interpreter traceback and end the process by SIGINT.
+        text = old_fixture()
+        self.write_src(text)
+        refused = end_of_input(text)
+        end = refused.replace(", output refused", "")
+        dst = os.path.abspath(str(self.dst))
+        conv, dump = (self.src, self.dst), ("--dump-old-cells", self.src)
+        removed = "; output {}: the partial output was removed".format(dst)
+        in_full = "(the output {} was written in full before this error and is left in place)" \
+            .format(dst)
+        cases = (("path", conv, NOT_READ, None, False),
+                 ("read", conv, NOT_READ, None, False),
+                 ("convert", conv, end, None, False),
+                 ("write", conv, refused, None, False),
+                 ("fsync", conv, refused, removed, False),
+                 ("stdout", conv, refused, in_full, True),
+                 ("path", dump, NOT_READ, None, False),
+                 ("read", dump, NOT_READ, None, False),
+                 ("convert", dump, end, None, False),
+                 ("digest", dump, end, None, False),
+                 ("stdout", dump, end, None, False))
+        for stage, args, position, needle, written in cases:
+            for runner in ("in process", "direct"):
+                with self.subTest(stage=stage, args=[str(a) for a in args], runner=runner):
+                    if runner == "direct":
+                        r = self.run_direct(MIGRATE, "kbi-" + stage, *args)
+                        code, stdout, stderr = r.returncode, r.stdout, r.stderr
+                    else:
+                        result = self.run_stage(MIGRATE, "kbi-" + stage, *args)
+                        self.assertFalse(result["interrupted"], "a KeyboardInterrupt escaped")
+                        code, stdout, stderr = result["code"], result["stdout"], result["stderr"]
+                    self.assertEqual(stdout, "")
+                    self.assert_interrupted(code, stderr, position, needle)
+                    self.assertEqual(os.path.lexists(self.dst), written)
+                    if written:
+                        self.dst.unlink()
 
 
 # Every name that opens or reads a path; a reference to any of them, called, aliased or imported,

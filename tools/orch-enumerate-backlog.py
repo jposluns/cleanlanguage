@@ -17,17 +17,21 @@ says so rather than naming an invented one. One top-level guard in main covers t
 exception that escapes the handling above (any Exception, including a BrokenPipeError on stdout and
 the FileNotFoundError that os.getcwd raises when the working directory is gone) becomes a failure
 through _fail, exit 1, at the position the run had reached, "before line 1 (no input read)" until
-the whole input has been read and "line N (end of input)" after it. The guard closes stdout before
-it fails, so the interpreter does not report a broken pipe a second time at exit; it does not catch
-KeyboardInterrupt or the SystemExit that _fail raises. The test suite also scans the source for
+the whole input has been read and "line N (end of input)" after it. A KeyboardInterrupt that
+reaches main is reported by the same guard in the same form, one line through _fail at the position
+the run had reached, but with exit 130 (128 plus SIGINT, the status a shell gives a run ended by an
+interrupt), never exit 1, so an interrupted run is not swallowed. The guard closes stdout before it
+fails, so the interpreter does not report a broken pipe a second time at exit; it does not catch the
+SystemExit that _fail raises. The test suite also scans the source for
 every ordinary path that can write a failure (each BacklogError construction and raise, each _fail
 call, each line position handed to a helper, and each write to standard error or exit) so that each
 keeps its position. Residual (disclosed): that static scan guards ordinary failure paths only; it
 does not cover deliberately obfuscated routes (a signal or os.kill, exec, a subprocess writing to
 descriptor 2, an attribute name built from strings, a line position passed through a local alias,
 or assert). The runtime guard turns any escaping exception into a positioned failure, so the
-remaining residual is a process ended without an exception (a signal, exec or os._exit), which
-names no position.
+remaining residual is a process ended without an exception (a signal other than SIGINT, exec or
+os._exit), a KeyboardInterrupt raised before main starts (during the re-execution or the imports),
+and a second KeyboardInterrupt while the guard writes its failure, none of which names a position.
 
 Backlog grammar (a markdown table, parsed strictly):
 
@@ -96,9 +100,9 @@ Usage:
         surrounding blanks, escapes kept as written) with a sha256 per row, for the migration
         loss check. This mode applies the same validation as the enumeration.
 Exit 0 on success, 1 on an unreadable or malformed backlog or an unexpected error, 2 on a usage
-error. A backlog that is not valid UTF-8 is reported with the line and the byte offset of the first
-invalid byte. The backlog path is the only project-specific input; the script carries no store path
-of its own.
+error, 130 on a KeyboardInterrupt. A backlog that is not valid UTF-8 is reported with the line and
+the byte offset of the first invalid byte. The backlog path is the only project-specific input; the
+script carries no store path of its own.
 
 The backlog must be a regular file (a symlink to one is followed). It is opened non-blocking and its
 type is checked with fstat on the open descriptor, so a FIFO with no writer, a directory, a device
@@ -457,13 +461,26 @@ def _unexpected(exc, reached):
     _fail("line {} (end of input): {}".format(reached["line"], detail))
 
 
+def _interrupted(reached):
+    """Fail, exit 130, for a KeyboardInterrupt that reached main: one line through _fail at the
+    position the run had reached, as _unexpected gives it. Exit 130 (128 plus SIGINT) keeps an
+    interrupted run apart from a malformed backlog (exit 1)."""
+    _discard_stdout()
+    detail = "interrupted (KeyboardInterrupt)"
+    if reached["line"] is None:
+        _fail("{}: {}".format(NOT_READ, detail), 130)
+    _fail("line {} (end of input): {}".format(reached["line"], detail), 130)
+
+
 def main(argv):
     """The whole run under one guard: any Exception that escapes _run, from argument handling to
-    the flush of stdout, is a positioned failure. KeyboardInterrupt and the SystemExit of _fail are
-    not Exception and pass through."""
+    the flush of stdout, is a positioned failure, exit 1, and a KeyboardInterrupt is a positioned
+    failure, exit 130, each in one line through _fail. The SystemExit of _fail is not caught."""
     reached = {"line": None}
     try:
         _run(argv, reached)
+    except KeyboardInterrupt:
+        _interrupted(reached)
     except Exception as exc:
         _unexpected(exc, reached)
     return 0

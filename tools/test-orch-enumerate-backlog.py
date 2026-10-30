@@ -67,8 +67,12 @@ The RuntimeGuard cases prove the primary closure, the top-level guard in main: a
 pipe, a deleted working directory with a relative path, and a RuntimeError injected in process at
 each stage of the run (path resolution, reading, parsing, the row digest and the stdout write), in
 both modes, each exit 1 with one positioned stderr line and no traceback, at the position that
-stage had reached, while a KeyboardInterrupt passes through. The remaining residual is a process
-ended without an exception (a signal, exec or os._exit), which names no position.
+stage had reached. A KeyboardInterrupt injected at each of those stages is reported by the same
+guard with exit 130, in one positioned stderr line with no traceback, both in process and in a
+process that runs main unguarded by the harness (round 15). The remaining residual is a process
+ended without an exception (a signal other than SIGINT, exec or os._exit), a KeyboardInterrupt
+raised before main starts, and a second KeyboardInterrupt while the guard writes its failure, none
+of which names a position.
 """
 
 from __future__ import annotations
@@ -1722,9 +1726,12 @@ os.execv(sys.executable, [sys.executable, "-I"] + sys.argv[2:])
 """
 
 # Runs in a separate python3 -I -B process: load the enumerator by path, make the stage named by
-# argv[2] raise (a RuntimeError, or a KeyboardInterrupt for the "interrupt" stage; "none" injects
-# nothing), run main on the JSON argument list argv[3] with stdout and stderr captured, and print
-# the exit code, whether a KeyboardInterrupt passed through, and both captured streams.
+# argv[2] raise (a RuntimeError, or a KeyboardInterrupt for a stage named with the "kbi-" prefix;
+# "none" injects nothing), run main on the JSON argument list argv[3] with stdout and stderr
+# captured, and print the exit code, whether a KeyboardInterrupt passed through, and both captured
+# streams. With argv[4] "direct" it instead runs sys.exit(main(...)) with the real stderr and no
+# handler of its own, so an exception that escapes main ends the process as it would end the tool
+# (for a KeyboardInterrupt, the interpreter traceback and a death by SIGINT).
 GUARD_PROG = """
 import importlib.util, io, json, sys
 sys.dont_write_bytecode = True
@@ -1732,6 +1739,7 @@ spec = importlib.util.spec_from_file_location("enumerator_under_test", sys.argv[
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 stage, args = sys.argv[2], json.loads(sys.argv[3])
+direct = len(sys.argv) > 4 and sys.argv[4] == "direct"
 
 
 def boom(*_args, **_kwargs):
@@ -1742,6 +1750,11 @@ def interrupt(*_args, **_kwargs):
     raise KeyboardInterrupt
 
 
+raiser = boom
+if stage.startswith("kbi-"):
+    stage, raiser = stage[len("kbi-"):], interrupt
+
+
 class Sink(io.StringIO):
     def close(self):
         pass
@@ -1749,15 +1762,18 @@ class Sink(io.StringIO):
 
 class Refusing(Sink):
     def write(self, _text):
-        boom()
+        raiser()
 
 
-targets = {"path": (mod.os.path, "abspath", boom), "read": (mod, "read_backlog", boom),
-           "parse": (mod, "parse_backlog", boom), "digest": (mod, "row_digest", boom),
-           "interrupt": (mod, "parse_backlog", interrupt)}
+targets = {"path": (mod.os.path, "abspath", raiser), "read": (mod, "read_backlog", raiser),
+           "parse": (mod, "parse_backlog", raiser), "digest": (mod, "row_digest", raiser)}
 if stage in targets:
     owner, attr, replacement = targets[stage]
     setattr(owner, attr, replacement)
+if direct:
+    if stage == "stdout":
+        sys.stdout = Refusing()
+    sys.exit(mod.main(args))
 out, err = (Refusing() if stage == "stdout" else Sink()), io.StringIO()
 real = (sys.stdout, sys.stderr)
 sys.stdout, sys.stderr = out, err
@@ -1777,7 +1793,8 @@ print(json.dumps({"code": code, "interrupted": interrupted, "stdout": out.getval
 class RuntimeGuard(EnumeratorHarness):
     """The top-level guard in main turns any exception that escapes the handling into one positioned
     failure line, exit 1, with no traceback, at the position the run had reached: before line 1
-    until the whole input is read, then the end of input. A KeyboardInterrupt passes through."""
+    until the whole input is read, then the end of input. A KeyboardInterrupt gets the same
+    positioned line with exit 130 (round 15)."""
 
     TIMEOUT = 20
 
@@ -1818,6 +1835,24 @@ class RuntimeGuard(EnumeratorHarness):
                            timeout=self.TIMEOUT)
         self.assertEqual(r.returncode, 0, "the stage harness failed: {}".format(r.stderr))
         return json.loads(r.stdout)
+
+    def run_direct(self, script, stage, *args):
+        # main runs under sys.exit with the real stderr and no handler in the harness, so the exit
+        # status and stderr are those the tool itself would give.
+        return subprocess.run([sys.executable, "-I", "-B", "-c", GUARD_PROG, str(script), stage,
+                               json.dumps([str(a) for a in args]), "direct"],
+                              capture_output=True, text=True, timeout=self.TIMEOUT)
+
+    def assert_interrupted(self, code, stderr, position):
+        self.assertEqual(code, 130, "expected exit 130: {!r}".format(stderr))
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("Exception ignored", stderr)
+        lines = stderr.splitlines()
+        self.assertEqual(len(lines), 1, "one failure line: {!r}".format(stderr))
+        match = POSITION_RE.match(lines[0])
+        self.assertIsNotNone(match, "the failure names no position: {!r}".format(lines[0]))
+        self.assertEqual(match.group(1), position, lines[0])
+        self.assertIn(": interrupted (KeyboardInterrupt)", lines[0])
 
     def end_position(self, text):
         lines = text.split("\n")
@@ -1861,10 +1896,30 @@ class RuntimeGuard(EnumeratorHarness):
                                     "unexpected RuntimeError: injected at the {} stage"
                                     .format(stage))
 
-    def test_a_keyboard_interrupt_is_not_caught(self):
-        result = self.run_stage(SCRIPT, "interrupt", self.write(table(row("1"))))
-        self.assertTrue(result["interrupted"], "the guard caught a KeyboardInterrupt")
-        self.assertEqual(result["stderr"], "")
+    def test_a_keyboard_interrupt_at_each_stage_exits_130_positioned(self):
+        # Round 15: a KeyboardInterrupt at each stage of either mode is reported by the guard in
+        # main, exit 130, in one positioned line with no traceback and no enumeration on stdout.
+        # Each case runs in process and again with main unguarded by the harness, where an
+        # escaping interrupt would print the interpreter traceback and end the process by SIGINT.
+        text = table(row("1"))
+        path = self.write(text)
+        end = self.end_position(text)
+        cases = (("path", (), NOT_READ), ("read", (), NOT_READ), ("parse", (), end),
+                 ("stdout", (), end), ("path", ("--dump-cells",), NOT_READ),
+                 ("read", ("--dump-cells",), NOT_READ), ("parse", ("--dump-cells",), end),
+                 ("digest", ("--dump-cells",), end), ("stdout", ("--dump-cells",), end))
+        for stage, mode, position in cases:
+            for runner in ("in process", "direct"):
+                with self.subTest(stage=stage, mode=mode, runner=runner):
+                    if runner == "direct":
+                        r = self.run_direct(SCRIPT, "kbi-" + stage, *mode, path)
+                        code, stdout, stderr = r.returncode, r.stdout, r.stderr
+                    else:
+                        result = self.run_stage(SCRIPT, "kbi-" + stage, *mode, path)
+                        self.assertFalse(result["interrupted"], "a KeyboardInterrupt escaped")
+                        code, stdout, stderr = result["code"], result["stdout"], result["stderr"]
+                    self.assertEqual(stdout, "", "an interrupted enumerator prints no enumeration")
+                    self.assert_interrupted(code, stderr, position)
 
 
 class EndOfInput(EnumeratorHarness):
