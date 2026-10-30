@@ -29,7 +29,8 @@ prose, and its residual is open-ended: a label in any phrasing, synonym or layou
 not list passes, and no list of known gaps can close that set. Completeness over the class of
 review-history labels therefore rests on an independent search of the scanned files, not on this
 lint. The known residual forms are these: a review pass named in words ("the third review"); a
-round number after a colon that a further word follows ("round: 7 decimal places"); a finding id
+round number after a colon that a letter follows, with or without a space between, as in "round:
+7 decimal places", or that a decimal continuation follows, as in "round: 7.5"; a finding id
 of three or more capital letters or of more than two digits; a finding id with a hyphen or a
 letter suffix, such as "the F-1 case" or "the F1a case", anywhere outside parentheses and the
 word "finding"; in prose, a bare id that follows "point " or starts with "PR" (the forms the
@@ -77,10 +78,12 @@ NEAR = r"(?:\W+\w+){0,2}?\W+"
 
 # Matched against every physical line and every joined prose block.
 LABEL_PATTERNS = (
-    # A colon form counts only at a label position, so "round: 7 decimal places" passes.
+    # A colon form passes only when a letter or a decimal continuation follows the number, so
+    # "round: 7 decimal places" and "round: 7.5" pass and any other ending, such as a closing
+    # quote, bracket or mark, is caught.
     ("a review round number", re.compile(
         r"(?i)\brounds?[-\s]*#?[0-9]+\b"
-        r"|\brounds?\s*:\s*#?[0-9]+(?=\s*(?:$|[),;:]|\.(?![0-9])))")),
+        r"|\brounds?\s*:\s*#?[0-9]+(?!\s*[A-Za-z]|\.?[0-9])")),
     ("a fix round", re.compile(r"(?i)\bfix[- ]rounds?\b")),
     ("a QA round", re.compile(r"(?i)\bQA round\b")),
     ("a model-family QA attribution", re.compile(r"(?i)\b(?:codex|claude|gemini) QA\b")),
@@ -293,13 +296,14 @@ class PatternSelfCheck(unittest.TestCase):
     WIDENED = ("as fixed in round: 7", "rounds 7 and 8", "round #7", "the fix-round change",
                "codex caught this", "spotted by gemini", "claude noticed the gap", "gemini confirmed it",
                "High-1: x", "a high-2 case", "(F1a)", "finding F-1", "(F-1)", "round: 7.",
-               "as fixed in round: 7, then", "(round: 7)", "round 7", "round-7")
+               "as fixed in round: 7, then", "(round: 7)", "round 7", "round-7", "round: 7",
+               "round: 7]", "round: 7?", "round: 7!", "**round: 7**")
     PROSE = ("U+3164", "aiqt_hooks.py:8414", "\\x1f", "class T01StopActionable", "sha256",
              "item 28.2 stage 2, PR1-d", "open point P5", "round-trip through json.dumps",
              "Point the command at the QA cycle", "commit d191071", "UTF-8", "line 8:", "the g1 prefix",
              "The PR1-f doctor tests", "HTTP 400", "SHA256", "a codex worker", "the gemini CLI",
              "maintained with Claude", "Claude, Anthropic, OpenAI, Codex, Copilot, or Gemini",
-             "U+FFA0", "U+D800..U+DFFF")
+             "U+FFA0", "U+D800..U+DFFF", "round: 7 decimal places", "round: 7.5")
     CODE = ("closure=\"C1\", opened=\"2026-09-01\"", "[\"2\", \"2026-09-02\", \"Second\", \"C2\"]",
             "[\"PD-7\", \"MR-1\", \"AT-1\", \"CL-1\", 0xFFA0, 0xD800]")
     # Ordinary Python that the hyphen and colon forms must not flag: subtraction, hyphenated
@@ -307,10 +311,25 @@ class PatternSelfCheck(unittest.TestCase):
     ORDINARY_PYTHON = ("value = F-1\n", "value = T-2\n",
                        "# PD-7, MR-1 and PR-1 are register ids.\nx = 1\n",
                        "def f():\n    \"\"\"Read PD-7, MR-1 and PR-1 from the register.\"\"\"\n",
-                       "# Use the F-1 key.\nx = 1\n", "# round: 7 decimal places\nx = 1\n")
+                       "# Use the F-1 key.\nx = 1\n", "# round: 7 decimal places\nx = 1\n",
+                       "# round: 7.5\nx = 1\n",
+                       "def f():\n    \"\"\"Keep round: 7 decimal places.\"\"\"\n",
+                       "\"\"\"Use round: 7.5\"\"\"\nx = 1\n")
     # Labels that must stay caught when they sit in a Python comment.
     COMMENT_LABELS = ("(F-1)", "finding F-1", "round: 7.", "round 7", "rounds 7 and 8",
                       "round #7", "round-7")
+    # Every caught form is checked in each Python placement: a comment, a multi-line function
+    # docstring, a one-line suite docstring in double and in single quotes, and a module
+    # docstring, with the label mid-sentence and at the very end, just before the closing quotes.
+    PLACEMENTS = ("# fixed in {}\nx = 1\n",
+                  "# fixed in {}, so x holds\nx = 1\n",
+                  "def f():\n    \"\"\"Handle x.\n\n    Fixed in {}, so x holds.\n    \"\"\"\n",
+                  "def f():\n    \"\"\"Handle x.\n\n    Fixed in {}\"\"\"\n",
+                  "def f(): \"\"\"Fixed in {}, so x holds.\"\"\"\n",
+                  "def f(): \"\"\"Fixed in {}\"\"\"\n",
+                  "def f(): \x27Fixed in {}\x27\n",
+                  "\"\"\"Handle x.\n\nFixed in {}, so x holds.\n\"\"\"\nx = 1\n",
+                  "\"\"\"Handle x.\n\nFixed in {}\"\"\"\nx = 1\n")
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
@@ -343,6 +362,14 @@ class PatternSelfCheck(unittest.TestCase):
         for text in self.COMMENT_LABELS:
             with self.subTest(text=text):
                 self.assertTrue(scan("x.py", "# fixed in {}\nx = 1\n".format(text)), text)
+
+    def test_every_caught_form_is_caught_in_every_python_placement(self):
+        for placement in self.PLACEMENTS:
+            with self.subTest(placement=placement):
+                self.assertEqual(scan("x.py", placement.format("the change")), [], placement)
+            for text in self.COMMENT_LABELS + self.WIDENED:
+                with self.subTest(placement=placement, text=text):
+                    self.assertTrue(scan("x.py", placement.format(text)), placement.format(text))
 
     def test_bare_id_in_python_prose_is_caught(self):
         self.assertTrue(scan("x.py", "# the L5 case\nx = 1\n"))
