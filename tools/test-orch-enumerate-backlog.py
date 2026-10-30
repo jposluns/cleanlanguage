@@ -2,15 +2,15 @@
 """Tests for tools/orch-enumerate-backlog.py (item 28.2 stage 2, PR1-d).
 
 The enumerator is the registry `enumerator` the orchestration hooks run on every Stop and in-roster
-scheduling call (aiqt_hooks.py:7962-7989). These tests drive the script as a subprocess under
+scheduling call (aiqt_hooks.py:_orch_enumerate). These tests drive the script as a subprocess under
 python3 -I against synthetic fixtures only, and validate every successful enumeration with the hook
-function `validate_enumeration` (aiqt_hooks.py:7904-7959), imported from the vendored hook by path in
+function `validate_enumeration` (aiqt_hooks.py:validate_enumeration), imported from the vendored hook by path in
 a separate python3 -I process, so the contract under test is the one the hook enforces, not a copy of
 it. One test also runs the enumerator through the hook function `_orch_enumerate` with a relative
 script path and cwd = the repo root, as the registry declares it.
 
 Fail-closed cases assert exit 1, an empty stdout, and a stderr that names the offending line, since a
-non-zero exit is ENUMERATOR_ERROR in the hook (aiqt_hooks.py:7979-7981) and an empty enumeration
+non-zero exit is ENUMERATOR_ERROR in the hook (aiqt_hooks.py:_orch_enumerate) and an empty enumeration
 would read as a drained backlog. The real backlog is never read.
 
 A missing required input (the enumerator or the vendored hook) fails the test rather than skipping
@@ -42,7 +42,7 @@ suite. The EndOfInput cases prove that an input with no backlog table is reporte
 the scan ended. The EvidenceBlankness cases prove that an evidence description of only
 Unicode whitespace, such as U+00A0, fails closed naming the line, since the vendored
 validate_enumeration accepts such evidence and the hook classification then treats it as absent
-(aiqt_hooks.py:8165), while a real description enumerates and classifies blocked. The
+(aiqt_hooks.py:classify_backlog), while a real description enumerates and classifies blocked. The
 StripProbe case is the class probe for that finding: it scans the enumerator source for every strip,
 lstrip or rstrip call with an explicit character set and requires each to be in a recorded allowlist
 with its reason, and requires each emitted value among them to carry the bare str.strip() blank test
@@ -211,7 +211,7 @@ for name, text in cases:
 print(json.dumps(results))
 """
 
-# Refs at the edge of blankness: str.strip() (the hook test, aiqt_hooks.py:7949) removes every one
+# Refs at the edge of blankness: str.strip() (the hook test, aiqt_hooks.py:validate_enumeration) removes every one
 # of the Unicode whitespace characters below, while U+200B is not whitespace and is a real ref.
 UNICODE_BLANK_REFS = ["\u00a0", "\u2003", "\u3000", "\u2028", "\x85", "\x0b", "\x0c", "\x1c",
                       "\x1f", "\r", "\u00a0\u2003", " \u00a0\t"]
@@ -226,7 +226,7 @@ BLOCKER_KINDS = ("tracked-task", "human-decision", "external", "foreign-lease", 
 
 # Runs in a separate python3 -I process: import the vendored hook by path and, for each evidence
 # string in the JSON list argv[2], pass one external-blocker item through validate_enumeration and then
-# classify_backlog (aiqt_hooks.py:7904-7959 and 8101-8177), printing the validation error and the
+# classify_backlog (aiqt_hooks.py:validate_enumeration and aiqt_hooks.py:classify_backlog), printing the validation error and the
 # blocked and actionable rows per case.
 HOOK_EVIDENCE_PROG = """
 import importlib.util, json, sys
@@ -565,7 +565,7 @@ class FailClosed(EnumeratorHarness):
         self.assert_fails(table(row("1", blocker="human-decision:  ")), line=7, needle="blank ref")
 
     def test_blank_ref_of_only_unicode_whitespace(self):
-        # The hook rejects a ref whose str.strip() is empty (aiqt_hooks.py:7949), so the
+        # The hook rejects a ref whose str.strip() is empty (aiqt_hooks.py:validate_enumeration), so the
         # enumerator fails closed on it naming the line rather than exit 0 into ENUMERATOR_ERROR.
         for kind in BLOCKER_KINDS:
             for ref in UNICODE_BLANK_REFS:
@@ -1027,7 +1027,7 @@ class SourceProbe(unittest.TestCase):
 
 class EvidenceBlankness(EnumeratorHarness):
     # The evidence description is non-blank by the str.strip() test the hook applies
-    # (aiqt_hooks.py:8165), not by a narrower blank class.
+    # (aiqt_hooks.py:classify_backlog), not by a narrower blank class.
 
     def test_evidence_of_only_unicode_whitespace_fails_closed(self):
         for kind in ("external", "foreign-lease"):
@@ -1076,22 +1076,22 @@ STRIP_ALLOWLIST = {
                     "unescaped-bar end test"),
     ("_parse_blocker", "kind", "strip", " \t"):
         ("refuses", "matched exactly against BLOCKER_KINDS, as the hook matches the kind "
-                    "(aiqt_hooks.py:7948)"),
+                    "(aiqt_hooks.py:validate_enumeration)"),
     ("_parse_blocker", "ref", "strip", " \t"):
         ("emitted", "the blocker ref; its blank test is ref.strip(), the hook test at "
-                    "aiqt_hooks.py:7949"),
+                    "aiqt_hooks.py:validate_enumeration"),
     ("_parse_evidence", "when", "strip", " \t"):
         ("refuses", "parsed by _parse_utc; any other blank makes the time unparseable"),
     ("_parse_evidence", "text", "strip", " \t"):
         ("emitted", "the evidence description; its blank test is text.strip(), the hook test at "
-                    "aiqt_hooks.py:8165"),
+                    "aiqt_hooks.py:classify_backlog"),
     ("parse_backlog", "line", "rstrip", "\r"):
         ("refuses", "matched exactly against EMPTY_MARKER; a line with any other trailing blank is "
                     "not the marker, so an unaffirmed empty backlog still fails"),
     ("parse_backlog", "c", "strip", " \t"):
         ("refuses", "each cell is then matched exactly (header, id, state, granted, the - of the "
                     "blocker and evidence cells), parsed (blocker, evidence), or carried as text the "
-                    "hook never blank-tests (the item title, aiqt_hooks.py:7957)"),
+                    "hook never blank-tests (the item title, aiqt_hooks.py:validate_enumeration)"),
 }
 
 

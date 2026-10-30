@@ -3,11 +3,13 @@ name: Orchestration registry
 # Validate .aiqt/orchestration.json structural integrity. The AIQT orchestration hooks
 # read this file and classify it "ok" only when it is a JSON object whose version is the
 # integer 1. A "bad" registry keeps the write-scope companion exemption empty (writes
-# deny, which is fail-safe), but the scope-gated guards react divergently: orch_stop_guard
-# fails open with a warning, orch_dispatch_ledger silently allows without recording, and
-# orch_yield_tool fails closed (it denies a scheduling call, so a bad registry blocks
-# scheduling even with no lease or mode). This gate rejects a structurally invalid committed
-# registry before it lands, so a corrupt registry cannot reach a session.
+# deny, which is fail-safe), but the guards react divergently: orch_stop_guard fails open
+# with a warning, orch_dispatch_ledger silently allows without recording, orch_ask_guard
+# allows, and orch_yield_tool fails closed (it denies a scheduling call, so a bad registry
+# blocks scheduling even with no lease or mode). review_dispatch_pin reacts most strongly:
+# it withholds every Bash call as UNVERIFIABLE until an operator repairs the registry. This
+# gate rejects a structurally invalid committed registry before it lands, so a corrupt
+# registry cannot reach a session.
 #
 # The stage-2 steps test the project backlog enumerator and the one-shot TODO.md migration
 # script, then drive the real hook with each stage-2 arming key against a contrast without
@@ -15,6 +17,13 @@ name: Orchestration registry
 # that omits one is visible in the step list, not only in the overall colour. A lint step fails
 # when a comment or docstring in these sources names a review round or a finding id instead of
 # stating its reason (tools/test-no-qa-labels.py).
+#
+# The vendor steps verify the vendored AIQT pack against its pin and manifest (checks 1 to 6
+# of tools/check-aiqt-vendor.py) and run that gate's tests, and further steps run the
+# shell heredoc detach guard tests and the commit-identity large-message regression test
+# for the commit identity read limit reduction. Check 7 re-derives each vendored file from
+# the pinned pack checkout, which CI
+# cannot reach, so it runs locally with --upstream and not here.
 #
 # Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
 # beside a script cannot shadow a standard library import and no PYTHON* environment variable
@@ -68,6 +77,26 @@ jobs:
       - name: Run the stage-2 hook behaviour and doctor tests
         shell: bash
         run: python3 -I tools/test-orch-stage2-hooks.py
+
+      - name: Check that every hook citation in the tools names a vendored hook symbol
+        shell: bash
+        run: python3 -I tools/test-hook-citations.py
+
+      - name: Verify the vendored AIQT pack against its pin and manifest (checks 1 to 6)
+        shell: bash
+        run: python3 -I tools/check-aiqt-vendor.py
+
+      - name: Run the AIQT vendor gate tests
+        shell: bash
+        run: python3 -I tools/test-aiqt-vendor.py
+
+      - name: Run the shell heredoc detach guard tests
+        shell: bash
+        run: python3 -I tools/test-shell-heredoc-detach-guard.py
+
+      - name: Run the commit-identity large-message regression test for the read limit reduction
+        shell: bash
+        run: python3 -I tools/test-cmtidn-large-message.py
 
       # Re-run the gate against the committed registry by its explicit path, so this step is RED both on
       # a malformed edit and (via the gate tests above, which assert the arming keys are present) on a

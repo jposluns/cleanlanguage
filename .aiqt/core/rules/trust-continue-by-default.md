@@ -33,8 +33,7 @@ terminal condition that blocks it; the next action meets the human-oversight thr
 authorization that threshold requires, or that authorization is in doubt; a decision reserved to a
 human, not covered by standing authorization and determining the next action, must be answered
 first; or a validation finding reveals a process-integrity or systemic lapse, of which a concrete,
-quotable self-inconsistency is one instance. These triggers are not mutually exclusive; a single
-situation may satisfy more than one, and any one of them suffices.
+quotable self-inconsistency is one instance. Any one trigger suffices, and one situation may satisfy several.
 A systemic-lapse trigger licenses only a recorded wind-down: the lapse is recorded as a fact the
 moment it is confirmed, the work is parked behind the human decision it now awaits or exits through
 the project's bounded, recorded exit, and the maintainer's later confirmation or refutation settles
@@ -121,3 +120,9 @@ continues. A need for fresh or uncluttered context is a continuation mechanism, 
 an isolated-context worker or sub-agent is available and its use is authorized, the assistant
 delegates that work, stays live to collect and integrate the result, and continues rather than
 ending the run; where no such authorized mechanism exists, it continues within its own context.
+
+A floor on activity, such as a target count of concurrent units of work, stays within the resource
+share that the operator or host grants the actor, the work it spawns included, read from that
+authority rather than estimated: the effective floor is the lesser of the floor and what the share
+supports and falls as soon as the share is lowered, and work the share cannot run at once is queued,
+which is continuation, not a stop.

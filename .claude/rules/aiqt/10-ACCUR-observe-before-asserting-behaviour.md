@@ -21,5 +21,12 @@ Either observe the behaviour and quote what you saw, or state the claim as an in
 configuration it rests on and the observation that would confirm it. The same holds for a status a document,
 test, or record asserts about the live system: bind a machine-checkable status to a probe that exercises the
 system, or generate it from an observation, and refresh it before relying on it as current; hand-written
-prose asserting such a status, free to diverge from what the system now does, is not recorded as settled fact. A
-confident assertion of unobserved behaviour is not made.
+prose asserting such a status, free to diverge from what the system now does, is not recorded as settled fact.
+
+A claim that a shared or external resource has failed, or that you are blocked because it has, is a
+behavioural claim about the resource's live state; a symptom seen only in your own dependent work, a killed
+worker or a rejected payload, is not that observation and cannot tell a resource-wide failure from a
+self-caused local condition such as your own footprint or a malformed request. You read the
+resource's own state, the host's available capacity, and your own footprint directly before asserting
+such a failure or reporting it onward; absent that reading the condition resolves to a local error to
+investigate while work continues, never a stop or a resource-wide alarm.

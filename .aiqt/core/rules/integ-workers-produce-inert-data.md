@@ -42,3 +42,18 @@ reference-transaction hook while the snapshot is taken,
 and a clean filter can transform the captured bytes, so the snapshot is not guaranteed byte-exact. The
 exception is limited to recovery snapshots written for the actor's own protection; it is not a general
 licence to mutate repository metadata.
+
+Running code a worker returns is an apply step, not an inspection; this governs the orchestrator running a
+deliverable it receives, not a worker running a candidate in its own scratch, which needs the same
+isolation as a disposable copy. A label, a claimed print-only purpose, or a check the deliverable carries
+does not show that its code changes nothing, so the orchestrator extracts, decodes, and prints a
+deliverable with a reader it wrote or reviewed, never with code the deliverable supplies. That code runs,
+to evaluate it or to produce a candidate, only after a full reading and only in a disposable copy. A
+disposable copy is an exported tree or a clone sharing no object storage (no hard links or alternates),
+outside every live checkout and never a linked worktree of the live repository; it shares nothing writable
+with a live checkout, git metadata included, and has no remote it can push to. The code's working directory
+and every target it names are inside the copy, and no argument, path, or environment value it is given
+names a live checkout; a changed working directory alone is not that isolation. That code's changes reach a
+live checkout only through the orchestrator's own verified apply. This is a rule on what the orchestrator
+runs and where, not OS containment: only the full reading checks a path the code builds at run time or
+configuration it inherits.

@@ -53,8 +53,8 @@ this repository's own skill. See
 
 This repository adopts the **AIQT Guardrails** rule corpus by Jeff Posluns
 (https://aiqt.ai), Apache 2.0, vendored under `.aiqt/` and auto-loaded as the rule
-tree under `rules/aiqt/` and `rules/security/` (107 active rules for this project's
-profile; the full 126-rule corpus is kept as reference under `.aiqt/core/rules/`).
+tree under `rules/aiqt/` and `rules/security/` (113 active rules for this project's
+profile; the full 132-rule corpus is kept as reference under `.aiqt/core/rules/`).
 Provenance and the adopted version are in [`.aiqt/pin.toml`](../.aiqt/pin.toml); the
 licence attribution is in [`NOTICE.md`](../NOTICE.md).
 
@@ -70,11 +70,15 @@ originals; the 3 concrete clauses they drop are restored in
 The AIQT Guardrails **hooks** (mechanical, action-time enforcement, for example
 blocking a `reset --hard` on a dirty tree or an AI commit-author trailer) are enabled
 for dev-time sessions through [`settings.json`](settings.json) and the local
-marketplace at `plugin/`. All 14 core hooks can fire (`gensrc_guard` was armed in PR #156).
+marketplace at `plugin/`. The plugin registers 18 core hooks. The 14 earlier ones can fire
+(`gensrc_guard` was armed in PR #156), and so can `git_stash_ref` and `pgrep_self_match`,
+while `review_dispatch_pin` stays inert without a binding, which the registry gate rejects,
+and `review_workdir_hold`, which needs no binding, stays inert while no review-hold marker
+directory exists under the common git directory.
 `write_scope_guard` keeps its structural cross-repository write denial, now exempting one
 declared companion store (`/opt/cleanlanguage/private`, the record store), while its slice
 confinement stays un-armed. A minimal orchestration registry is declared; what each of the
-10 orchestrator hooks does under it today, including the stop guard denial and the operator
+12 orchestrator hooks does under it today, including the stop guard denial and the operator
 escape that releases it, is described in [`../.aiqt/config.md`](../.aiqt/config.md).
 
 ## Asking the maintainer questions
