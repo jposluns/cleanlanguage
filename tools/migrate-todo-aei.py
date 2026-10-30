@@ -404,19 +404,28 @@ def write_output(in_path, out_path, text, reached=None):
 
 def _remove_partial(out_path, created):
     """Remove the partial output this run created; the path is unlinked only while it is still the
-    file the exclusive create made (same device and inode), so a file swapped in since is kept."""
+    file the exclusive create made (same device and inode), so a file swapped in since is kept.
+    It is total: an Exception that is not an OSError, from the check, the removal or the formatting
+    of a status, returns a status naming its type instead of escaping, so the refusal of the caller
+    always says what became of the partial output. KeyboardInterrupt and SystemExit are not
+    Exception and pass through."""
     try:
-        current = os.lstat(out_path)
-    except OSError as exc:
-        return "the partial output could not be checked ({})".format(exc.strerror or exc)
-    if created is not None and (current.st_dev, current.st_ino) != (created.st_dev, created.st_ino):
-        return "the path no longer names the file this run created, so it was left in place"
-    try:
-        os.unlink(out_path)
-    except OSError as exc:
-        return "the partial output could NOT be removed ({}); delete it before any retry".format(
-            exc.strerror or exc)
-    return "the partial output was removed"
+        try:
+            current = os.lstat(out_path)
+        except OSError as exc:
+            return "the partial output could not be checked ({})".format(exc.strerror or exc)
+        if created is not None and ((current.st_dev, current.st_ino)
+                                    != (created.st_dev, created.st_ino)):
+            return "the path no longer names the file this run created, so it was left in place"
+        try:
+            os.unlink(out_path)
+        except OSError as exc:
+            return "the partial output could NOT be removed ({}); delete it before any retry".format(
+                exc.strerror or exc)
+        return "the partial output was removed"
+    except Exception as exc:
+        return ("the partial output could not be checked or removed (unexpected {}); delete it "
+                "before any retry".format(type(exc).__name__))
 
 
 def row_digest(row):

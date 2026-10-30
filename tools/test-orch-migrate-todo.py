@@ -66,7 +66,9 @@ modes, each exit 1 with one positioned stderr line and no traceback, at the posi
 reached, while a KeyboardInterrupt passes through. A failure inside the output write after the
 exclusive create, a RuntimeError or a KeyboardInterrupt, leaves no output file, and the refusal says
 the partial output was removed; when that removal itself fails, the refusal names the file left
-behind and says it must be deleted before any retry. The remaining residual is a process ended
+behind and says it must be deleted before any retry; when the removal meets an exception that is
+not an OSError (os.lstat raising ValueError), the refusal still names the output and the exception
+type and says it must be deleted before any retry. The remaining residual is a process ended
 without an exception (a signal, exec or os._exit), which names no position.
 """
 
@@ -1536,6 +1538,15 @@ def refuse_unlink(*_args, **_kwargs):
     raise PermissionError(13, "Permission denied")
 
 
+def odd_lstat(*_args, **_kwargs):
+    raise ValueError("injected in os.lstat")
+
+
+def boom_then_odd_lstat(*_args, **_kwargs):
+    mod.os.lstat = odd_lstat
+    boom()
+
+
 targets = {"path": (mod.os.path, "abspath", boom), "read": (mod, "read_input", boom),
            "convert": (mod, "convert", boom), "write": (mod, "write_output", boom),
            "digest": (mod, "row_digest", boom), "interrupt": (mod, "convert", interrupt),
@@ -1546,6 +1557,11 @@ if stage in targets:
 if stage == "fsync-unlink":
     # A RuntimeError at fsync whose removal of the partial output then fails.
     mod.os.fsync, mod.os.unlink = boom, refuse_unlink
+real_lstat = mod.os.lstat
+if stage == "fsync-lstat":
+    # A RuntimeError at fsync whose removal of the partial output then meets a ValueError from
+    # os.lstat, an exception that is not an OSError; lstat is replaced only after the create.
+    mod.os.fsync = boom_then_odd_lstat
 out, err = (Refusing() if stage == "stdout" else Sink()), io.StringIO()
 real = (sys.stdout, sys.stderr)
 sys.stdout, sys.stderr = out, err
@@ -1558,6 +1574,7 @@ except KeyboardInterrupt:
     interrupted = True
 finally:
     sys.stdout, sys.stderr = real
+    mod.os.lstat = real_lstat
 print(json.dumps({"code": code, "interrupted": interrupted, "stdout": out.getvalue(),
                   "stderr": err.getvalue()}))
 """
@@ -1698,6 +1715,23 @@ class RuntimeGuard(MigrateHarness):
                       result["stderr"])
         self.assertNotIn("was removed", result["stderr"])
         self.assertTrue(os.path.lexists(self.dst), "the failed removal left the partial output")
+
+    def test_a_non_oserror_inside_the_removal_still_names_the_file_left_behind(self):
+        # A RuntimeError at os.fsync whose removal of the partial output then meets a ValueError
+        # from os.lstat, not an OSError, leaves the file in place; the positioned refusal still
+        # names it and the exception type, and says it must be deleted before any retry.
+        text = old_fixture()
+        self.write_src(text)
+        result = self.run_stage(MIGRATE, "fsync-lstat", self.src, self.dst)
+        self.assertFalse(result["interrupted"])
+        self.assertEqual(result["stdout"], "")
+        self.assert_guarded(result["code"], result["stderr"], end_of_input(text),
+                            "unexpected RuntimeError: injected at the fsync-lstat stage")
+        self.assertIn("; output {}: the partial output could not be checked or removed "
+                      "(unexpected ValueError); delete it before any retry".format(
+                          os.path.abspath(str(self.dst))), result["stderr"])
+        self.assertNotIn("was removed", result["stderr"])
+        self.assertTrue(os.path.lexists(self.dst), "the failed check left the partial output")
 
     def test_a_keyboard_interrupt_is_not_caught(self):
         self.write_src(old_fixture())
