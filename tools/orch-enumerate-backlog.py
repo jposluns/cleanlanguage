@@ -50,7 +50,14 @@ Backlog grammar (a markdown table, parsed strictly):
   "Z".
 - evidence: "-" or "<ISO-8601 observed time with offset or Z>; <non-blank free text>". It is required
   for an external or foreign-lease blocker and must be "-" for every other row, since the hook reads
-  evidence only for those two kinds (aiqt_hooks.py:8152-8166).
+  evidence only for those two kinds (aiqt_hooks.py:8152-8166). The free text is non-blank by the
+  str.strip() test the hook applies to it (aiqt_hooks.py:8165), so a description of only Unicode
+  whitespace such as U+00A0 is rejected here, naming the line, rather than enumerated as evidence the
+  hook then treats as absent.
+- Every other strip in this script with an explicit character set (" \\t", " \\t\\r" or "\\r")
+  narrows a value that is then matched exactly, parsed, or emitted with its blank test made by
+  str.strip(), so a narrower blank class can only refuse a row, never accept one the hook would read
+  as blank. The test suite scans the source for such strip calls and holds each to a recorded reason.
 - A file with no table line at all is valid only when it carries the single column-0 line
   "<!-- aei: empty backlog -->", which affirms an empty backlog. That marker beside a table, a repeated
   marker, a header with no data row, or a data row with no header is rejected. An input with no table
@@ -252,7 +259,10 @@ def _parse_evidence(cell, blocker, lineno):
     if not sep or _parse_utc(when) is None:
         raise _line_error(lineno, "evidence {!r} does not start with an ISO-8601 observed time with "
                           "an offset, then \";\"".format(cell))
-    if not text:
+    if not text.strip():
+        # The same str.strip() test the hook applies to the evidence (aiqt_hooks.py:8165), so a
+        # description of only Unicode whitespace (U+00A0, U+2003 and the like) fails here, naming the
+        # line, never reaching the hook as evidence it treats as absent.
         raise _line_error(lineno, "evidence has a blank description after the observed time")
     blocker["evidence"] = text
     blocker["observed_at_utc"] = when

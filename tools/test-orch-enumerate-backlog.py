@@ -39,7 +39,14 @@ case is the class probe for that finding: it scans the enumerator source for eve
 opener (open, fdopen, read_text, read_bytes, write_text, write_bytes, called, aliased or imported)
 and requires exactly one, the os.open inside the checked helper, so a new unchecked open fails the
 suite. The EndOfInput cases prove that an input with no backlog table is reported at the line where
-the scan ended (finding S4).
+the scan ended (finding S4). The EvidenceBlankness cases prove that an evidence description of only
+Unicode whitespace, such as U+00A0, fails closed naming the line, since the vendored
+validate_enumeration accepts such evidence and the hook classification then treats it as absent
+(aiqt_hooks.py:8165), while a real description enumerates and classifies blocked (round 6 U3). The
+StripProbe case is the class probe for that finding: it scans the enumerator source for every strip,
+lstrip or rstrip call with an explicit character set and requires each to be in a recorded allowlist
+with its reason, and requires each emitted value among them to carry the bare str.strip() blank test
+the hook applies, so a new narrower blank test fails the suite.
 """
 
 from __future__ import annotations
@@ -188,6 +195,31 @@ EDGE_REFS = (["PD-7", "x", " x ", "a:b:c", "\u200b", "\u00a0x\u00a0", "", " ", "
 EDGE_EVIDENCE = ["-", "2026-10-29T12:00:00Z; seen upstream", "2026-10-29T12:00:00Z;\u00a0",
                  "2026-10-29T12:00:00Z; \u2003note", "\u00a0; text", "2026-10-29T12:00:00Z"]
 BLOCKER_KINDS = ("tracked-task", "human-decision", "external", "foreign-lease", "not-before")
+
+
+# Runs in a separate python3 -I process: import the vendored hook by path and, for each evidence
+# string in the JSON list argv[2], pass one external-blocker item through validate_enumeration and then
+# classify_backlog (aiqt_hooks.py:7904-7959 and 8101-8177), printing the validation error and the
+# blocked and actionable rows per case.
+HOOK_EVIDENCE_PROG = """
+import importlib.util, json, sys
+from datetime import datetime, timezone
+spec = importlib.util.spec_from_file_location("aiqt_hooks_under_test", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+now = datetime.now(timezone.utc).isoformat()
+out = []
+for ev in json.loads(sys.argv[2]):
+    payload = {"version": 1, "generated_at_utc": now, "source": {"locator": "fixture"},
+               "items": [{"id": "1", "title": "An item", "state": "open", "granted": True,
+                          "blocker": {"kind": "external", "ref": "x", "evidence": ev,
+                                      "observed_at_utc": now}}]}
+    items, err = mod.validate_enumeration(payload)
+    classes = mod.classify_backlog(items or [], set(), True, "", {})
+    out.append({"error": err, "blocked": [list(b) for b in classes["blocked"]],
+                "actionable": [list(a) for a in classes["actionable"]]})
+print(json.dumps(out))
+"""
 
 
 def row(iid, state="open", granted="yes", blocker="-", evidence="-", item="An item",
@@ -965,6 +997,136 @@ class SourceProbe(unittest.TestCase):
         names = {n.attr for n in ast.walk(helper) if isinstance(n, ast.Attribute)}
         for needed in ("O_NONBLOCK", "O_CLOEXEC", "fstat", "S_ISREG", "set_blocking"):
             self.assertIn(needed, names, "the checked helper no longer uses {}".format(needed))
+
+
+class EvidenceBlankness(EnumeratorHarness):
+    # Round 6 U3: the evidence description is non-blank by the str.strip() test the hook applies
+    # (aiqt_hooks.py:8165), not by a narrower blank class.
+
+    def test_evidence_of_only_unicode_whitespace_fails_closed(self):
+        for kind in ("external", "foreign-lease"):
+            for blank in UNICODE_BLANK_REFS:
+                with self.subTest(kind=kind, text="".join("U+%04X" % ord(c) for c in blank)):
+                    self.assert_fails(table(row("1", blocker=kind + ":x",
+                                                evidence="2026-10-29T12:00:00Z;" + blank)),
+                                      line=7, needle="blank description")
+
+    def test_the_hook_treats_unicode_whitespace_evidence_as_absent(self):
+        if not HOOK.exists():
+            self.fail("vendored hook not found: {}".format(HOOK))
+        r = subprocess.run([sys.executable, "-I", "-c", HOOK_EVIDENCE_PROG, str(HOOK),
+                            json.dumps(["\u00a0", " \u00a0\u2003 ", "seen upstream"])],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blank, mixed, real = json.loads(r.stdout)
+        for name, res in (("U+00A0", blank), ("mixed Unicode blanks", mixed)):
+            with self.subTest(evidence=name):
+                # The hook accepts the enumeration, then reads the evidence as absent: the item is
+                # actionable, never blocked, so an exit-0 enumeration of it would misstate the row.
+                self.assertIsNone(res["error"])
+                self.assertEqual(res["blocked"], [])
+                self.assertEqual(len(res["actionable"]), 1)
+                self.assertIn("has no fresh (non-future) evidence", res["actionable"][0][2])
+        self.assertIsNone(real["error"])
+        self.assertEqual(real["blocked"], [["1", "external", "x"]], "contrast: real evidence blocks")
+
+    def test_a_real_description_led_by_unicode_whitespace_still_enumerates(self):
+        # Contrast: the bare str.strip() test refuses only a blank description, never real text.
+        out = self.enumerate_ok(table(row("1", blocker="external:x",
+                                          evidence="2026-10-29T12:00:00Z; \u00a0seen upstream")))
+        blocker = out["items"][0]["blocker"]
+        self.assertEqual(blocker["evidence"], "\u00a0seen upstream")
+        self.assertIsNone(self.hook_validate(json.dumps(out))["error"])
+
+
+# Every strip call with an explicit character set in the enumerator, keyed by (enclosing function,
+# receiver, method, characters), with why its blank class may be narrower than str.strip(). A
+# "refuses" entry narrows a value that is then matched exactly or parsed, so a non-ASCII blank left
+# in it makes the row fail closed; an "emitted" entry narrows a value the AEI output carries, so its
+# blank test must be the bare str.strip() the hook applies to that field.
+STRIP_ALLOWLIST = {
+    ("_split_cells", "line", "rstrip", " \t\r"):
+        ("refuses", "trailing blanks after the final bar; any other trailing character fails the "
+                    "unescaped-bar end test"),
+    ("_parse_blocker", "kind", "strip", " \t"):
+        ("refuses", "matched exactly against BLOCKER_KINDS, as the hook matches the kind "
+                    "(aiqt_hooks.py:7948)"),
+    ("_parse_blocker", "ref", "strip", " \t"):
+        ("emitted", "the blocker ref; its blank test is ref.strip(), the hook test at "
+                    "aiqt_hooks.py:7949"),
+    ("_parse_evidence", "when", "strip", " \t"):
+        ("refuses", "parsed by _parse_utc; any other blank makes the time unparseable"),
+    ("_parse_evidence", "text", "strip", " \t"):
+        ("emitted", "the evidence description; its blank test is text.strip(), the hook test at "
+                    "aiqt_hooks.py:8165"),
+    ("parse_backlog", "line", "rstrip", "\r"):
+        ("refuses", "matched exactly against EMPTY_MARKER; a line with any other trailing blank is "
+                    "not the marker, so an unaffirmed empty backlog still fails"),
+    ("parse_backlog", "c", "strip", " \t"):
+        ("refuses", "each cell is then matched exactly (header, id, state, granted, the - of the "
+                    "blocker and evidence cells), parsed (blocker, evidence), or carried as text the "
+                    "hook never blank-tests (the item title, aiqt_hooks.py:7957)"),
+}
+
+
+def explicit_strip_calls(source):
+    # (enclosing function, receiver, method, characters, function node) for every strip, lstrip or
+    # rstrip call that passes an argument, in source order.
+    found = []
+
+    def visit(node, func, func_node):
+        for child in ast.iter_child_nodes(node):
+            inner, inner_node = func, func_node
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner, inner_node = child.name, child
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) \
+                    and child.func.attr in ("strip", "lstrip", "rstrip") \
+                    and (child.args or child.keywords):
+                arg = child.args[0] if child.args else None
+                chars = arg.value if isinstance(arg, ast.Constant) else ast.dump(arg or child)
+                found.append((func, ast.unparse(child.func.value), child.func.attr, chars,
+                              func_node))
+            visit(child, inner, inner_node)
+
+    visit(ast.parse(source), "<module>", None)
+    return found
+
+
+def has_bare_blank_test(func_node, name):
+    # True when func_node holds "not <name>.strip()" with no argument, the hook blank test.
+    for node in ast.walk(func_node):
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not) \
+                and isinstance(node.operand, ast.Call) \
+                and isinstance(node.operand.func, ast.Attribute) \
+                and node.operand.func.attr == "strip" and not node.operand.args \
+                and not node.operand.keywords \
+                and isinstance(node.operand.func.value, ast.Name) \
+                and node.operand.func.value.id == name:
+            return True
+    return False
+
+
+class StripProbe(unittest.TestCase):
+    # Class probe for round 6 U3: no strip with an explicit character set narrows a blank test the
+    # hook makes with str.strip().
+
+    def test_every_explicit_strip_is_allowlisted_with_its_reason(self):
+        if not SCRIPT.exists():
+            self.fail("enumerator not found: {}".format(SCRIPT))
+        calls = explicit_strip_calls(SCRIPT.read_text(encoding="utf-8"))
+        keys = [c[:4] for c in calls]
+        self.assertEqual(len(keys), len(set(keys)), "a strip call is repeated; record it once")
+        self.assertEqual(sorted(keys), sorted(STRIP_ALLOWLIST),
+                         "an explicit-character strip outside the allowlist, or a stale entry")
+        for func, receiver, method, chars, func_node in calls:
+            category, reason = STRIP_ALLOWLIST[(func, receiver, method, chars)]
+            with self.subTest(call="{}: {}.{}({})".format(func, receiver, method, ascii(chars))):
+                self.assertIn(category, ("refuses", "emitted"))
+                self.assertTrue(reason.strip())
+                if category == "emitted":
+                    self.assertTrue(has_bare_blank_test(func_node, receiver),
+                                    "{} in {} is emitted, so its blank test must be the bare "
+                                    "{}.strip() the hook applies".format(receiver, func, receiver))
 
 
 class EndOfInput(EnumeratorHarness):

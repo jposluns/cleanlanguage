@@ -50,7 +50,15 @@ checked helper (finding S3). Before any hook reader is called, a registry file o
 file, a FIFO, a directory, or a symlink to a FIFO, is reported as cannot-evaluate, exit 2, within a
 short timeout, with no enumerator run and no hook state written (round 5 T1). The writes-nothing test
 runs a fresh copy of the doctor and the hook, in a tree that never held a __pycache__, and asserts no
-bytecode file appears anywhere under it (round 5 T3).
+bytecode file appears anywhere under it (round 5 T3). The fixed hook state files each command opens
+with a plain blocking open are checked the same way before the reader that opens them: for preflight
+turn-state.json, dispatch-ledger.jsonl, backlog-checkpoint.json and, with attestations declared,
+attestations-validated.json and guard-events.jsonl; for the resume audit guard-events.jsonl,
+escape-spoof.json, the forced-exit files and the attestation snapshot temporary file, and with an
+unreadable registry resume-barrier.json.unused (round 6 U1). Each command checks only what its own
+hook call path opens: a FIFO backlog operand, mode record, lease or preview state file does not refuse
+the resume audit, which runs and rewrites the barrier, and a FIFO audit-only record or state file, or
+an out-of-scope preview with a FIFO turn-state.json, does not refuse the preview (round 6 U2).
 """
 
 from __future__ import annotations
@@ -1094,7 +1102,7 @@ class Doctor(Stage2Harness):
         self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
         self.assertIn("cannot evaluate: the declared {} {} is not a regular file (it is a {})"
                       .format(label, path, named), r.stdout)
-        self.assertIn("no hook reader was called and no enumerator ran", r.stdout)
+        self.assertIn("the hook reader that opens it was not called and no enumerator ran", r.stdout)
         self.assertNotIn("Traceback", r.stderr)
         self.assertFalse(marker.exists(), "the enumerator ran")
         self.assertFalse(self.state_dir().exists(), "a hook state write happened")
@@ -1131,6 +1139,169 @@ class Doctor(Stage2Harness):
         # (aiqt_hooks.py:9356-9359), so a FIFO there would hang the audit.
         self._assert_special_refused("record.handoff", self._p("session-handoff.md"), "fifo",
                                      "--resume-audit")
+
+    # --- round 6 U1: the fixed hook state files are checked too, per command -----------------------
+    # The state files _orch_build_ctx opens with a plain blocking open (turn-state.json at
+    # aiqt_hooks.py:7745, dispatch-ledger.jsonl at 7998 and 7678, backlog-checkpoint.json at 8365, and
+    # with attestations declared attestations-validated.json at 8073 and guard-events.jsonl at 9566).
+    PREFLIGHT_STATE_FILES = ("turn-state.json", "dispatch-ledger.jsonl", "backlog-checkpoint.json",
+                             "attestations-validated.json", "guard-events.jsonl")
+    # The state files orch_resume_audit opens with a plain blocking open (guard-events.jsonl at 9566 and
+    # 7667, escape-spoof.json at 9748, forced-exit.jsonl at 9705 and 7678, forced-exit-surfaced.json at
+    # 9717, and the temporary files _orch_write_json_atomic opens for writing at 7720, via 9734 and,
+    # with attestations declared, via 9670).
+    AUDIT_STATE_FILES = ("guard-events.jsonl", "escape-spoof.json", "forced-exit.jsonl",
+                         "forced-exit-surfaced.json", "forced-exit-surfaced.json.tmp",
+                         "attestations-validated.json.tmp")
+
+    def _with_attestations(self, reg):
+        # A declared attestations register, absent on disk (an open the hook raises on, never blocks
+        # on): the condition the hook tests before it opens the attestation state files
+        # (aiqt_hooks.py:8068-8070 for the preview, 9638-9640 for the audit).
+        reg["attestations"] = self._p("attestations.jsonl")
+        return reg
+
+    def _make_state_fifo(self, name):
+        self.state_dir().mkdir(parents=True, exist_ok=True)
+        path = self.state_dir() / name
+        os.mkfifo(path)
+        return path
+
+    def _assert_state_special_refused(self, name, *doctor_args):
+        reg, marker = self._arm_writing_enumerator()
+        self.write_registry(self._with_attestations(reg))
+        self.set_items([item("42")])
+        path = self._make_state_fifo(name)
+        before = tree_state(self._tmp)
+        r = self._doctor_bounded(*doctor_args)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("cannot evaluate: the hook state file {} {} is not a regular file (it is a "
+                      "FIFO)".format(name, path), r.stdout)
+        self.assertIn("the hook reader that opens it was not called and no enumerator ran", r.stdout)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertFalse(marker.exists(), "the enumerator ran")
+        self.assertEqual(tree_state(self._tmp), before, "a file or directory changed")
+
+    def test_preflight_special_state_file_is_cannot_evaluate(self):
+        # Scope is live through the mode line, so the preview reaches _orch_build_ctx, whose readers
+        # would block on each of these (a FIFO turn-state.json made the preview hang before round 6).
+        for kind in ("stop", "idle"):
+            for name in self.PREFLIGHT_STATE_FILES:
+                with self.subTest(kind=kind, name=name):
+                    self.tearDown()
+                    self.setUp()
+                    self._assert_state_special_refused(name, "preflight", kind)
+
+    def test_resume_audit_special_state_file_is_cannot_evaluate(self):
+        for name in self.AUDIT_STATE_FILES:
+            with self.subTest(name=name):
+                self.tearDown()
+                self.setUp()
+                self._assert_state_special_refused(name, "--resume-audit")
+
+    def test_resume_audit_on_an_unreadable_registry_checks_its_state_files(self):
+        # On an unreadable registry the hook appends to resume-barrier.json.unused beside the barrier
+        # (aiqt_hooks.py:9777, opened at 7667) under the default state directory (9775).
+        (self.repo / ".aiqt").mkdir(exist_ok=True)
+        (self.repo / ".aiqt" / "orchestration.json").write_text("{", encoding="utf-8")
+        self.assertEqual(self.run_hook("orch_resume_audit", {}).returncode, 0)
+        barriers = self.find_anywhere("resume-barrier.json")
+        self.assertEqual(len(barriers), 1, "precondition: the hook wrote one barrier")
+        path = Path(barriers[0]).parent / "resume-barrier.json.unused"
+        path.unlink()
+        os.mkfifo(path)
+        r = self._doctor_bounded("--resume-audit")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("cannot evaluate: the hook state file resume-barrier.json.unused {} is not a "
+                      "regular file (it is a FIFO)".format(path), r.stdout)
+
+    # --- round 6 U2: each command checks only what its own hook call path opens --------------------
+    def test_fifo_backlog_operand_refuses_preflight_but_not_the_resume_audit(self):
+        # The resume probes run no enumerator (aiqt_hooks.py:9351-9413), so the hook audits with a
+        # FIFO backlog operand, and so must the doctor; the preview runs the enumerator (7976), so it
+        # still refuses.
+        reg, marker = self._arm_writing_enumerator()
+        self.write_registry(reg)
+        self.backlog.unlink()
+        os.mkfifo(self.backlog)
+        r = self._doctor_bounded("--resume-audit")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("cannot evaluate", r.stdout)
+        self.assertIn("barrier: clear", r.stdout)
+        self.assertFalse(self.state_json("resume-barrier.json")["active"])
+        self.assertTrue(self.backlog.is_fifo(), "the audit left the operand alone")
+        self.assertFalse(marker.exists(), "the audit ran the enumerator")
+        p = self._doctor_bounded("preflight", "stop")
+        self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+        self.assertIn("cannot evaluate: the declared enumerator.argv[3] {} is not a regular file "
+                      "(it is a FIFO)".format(self.backlog), p.stdout)
+        self.assertFalse(marker.exists(), "the refused preview ran the enumerator")
+
+    def test_resume_audit_runs_past_paths_only_the_preview_opens(self):
+        # The audit stats the lease only (aiqt_hooks.py:9398) and never opens the mode record or the
+        # preview state files, so a FIFO at any of them leaves the audit to run and rewrite the barrier.
+        cases = [("mode.path", lambda: Path(self._p("operating-mode.md"))),
+                 ("lease.path", lambda: Path(self._p("session-state.md")))]
+        cases += [(name, lambda name=name: self.state_dir() / name)
+                  for name in ("turn-state.json", "dispatch-ledger.jsonl", "backlog-checkpoint.json")]
+        for label, where in cases:
+            with self.subTest(path=label):
+                self.tearDown()
+                self.setUp()
+                self.write_registry(self.stage2())
+                path = where()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path.exists():
+                    path.unlink()
+                os.mkfifo(path)
+                r = self._doctor_bounded("--resume-audit")
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertNotIn("cannot evaluate", r.stdout)
+                self.assertIn("barrier: clear", r.stdout)
+                self.assertTrue(path.is_fifo(), "the audit left the FIFO alone")
+
+    def test_preflight_runs_past_paths_only_the_audit_opens(self):
+        # The preview never opens the handoff or findings records, the mistakes register, or the audit
+        # state files, so a FIFO at any of them leaves the preview to judge (here a DENY on item 42).
+        cases = [("record.handoff", lambda: Path(self._p("session-handoff.md"))),
+                 ("record.findings", lambda: Path(self._p("open-findings.md"))),
+                 ("mistakes_register", lambda: Path(self._p("mistakes.jsonl")))]
+        cases += [(name, lambda name=name: self.state_dir() / name)
+                  for name in ("escape-spoof.json", "forced-exit.jsonl", "forced-exit-surfaced.json",
+                               "resume-barrier.json")]
+        for label, where in cases:
+            for kind in ("stop", "idle"):
+                with self.subTest(path=label, kind=kind):
+                    self.tearDown()
+                    self.setUp()
+                    self.write_registry(self.stage2(mistakes_register=self._p("mistakes.jsonl")))
+                    self.set_items([item("42")])
+                    path = where()
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if path.exists():
+                        path.unlink()
+                    os.mkfifo(path)
+                    r = self._doctor_bounded("preflight", kind)
+                    self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+                    self.assertNotIn("cannot evaluate", r.stdout)
+                    self.assertIn("judged verdict: DENY", r.stdout)
+
+    def test_out_of_scope_preflight_runs_past_a_fifo_turn_state(self):
+        # Out of scope the hook returns before _orch_build_ctx (aiqt_hooks.py:8584-8585 and
+        # 8662-8663), so it never opens turn-state.json, and the preview reports the same ALLOW.
+        reg, marker = self._arm_writing_enumerator()
+        reg.pop("mode")
+        self.write_registry(reg)
+        self.arm_lease(age_seconds=2 * 24 * 3600)
+        self.set_items([item("42")])
+        self._make_state_fifo("turn-state.json")
+        for kind in ("stop", "idle"):
+            with self.subTest(kind=kind):
+                r = self._doctor_bounded("preflight", kind)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertNotIn("cannot evaluate", r.stdout)
+                self.assertIn("effective verdict: ALLOW (out of scope)", r.stdout)
+                self.assertFalse(marker.exists())
 
     def test_special_registry_file_is_cannot_evaluate(self):
         # The hook reads the registry with a plain blocking open (aiqt_hooks.py:7606-7620), the
