@@ -59,6 +59,12 @@ unreadable registry resume-barrier.json.unused (round 6 U1). Each command checks
 hook call path opens: a FIFO backlog operand, mode record, lease or preview state file does not refuse
 the resume audit, which runs and rewrites the barrier, and a FIFO audit-only record or state file, or
 an out-of-scope preview with a FIFO turn-state.json, does not refuse the preview (round 6 U2).
+Each pre-check site checks its path only when the hook call path reaches the open (round 8 W1
+and W2): the PRECHECK_SITES table lists every _site call in the doctor with its reachability
+condition and hook citation, a source probe keeps the table and the doctor in step, and for each
+site with an earlier exit a contrast case puts a FIFO where the hook takes that exit and requires
+that the doctor runs and that the same hook call path completes, beside the case in which the open
+is reached and the doctor refuses.
 """
 
 from __future__ import annotations
@@ -1119,12 +1125,25 @@ class Doctor(Stage2Harness):
                                              "preflight", "stop")
 
     def test_preflight_special_lease_path_is_cannot_evaluate(self):
-        for kind in ("fifo", "directory", "symlink-to-fifo"):
-            with self.subTest(kind=kind):
-                self.tearDown()
-                self.setUp()
-                self._assert_special_refused("lease.path", self._p("session-state.md"), kind,
-                                             "preflight", "stop")
+        # The hook opens the lease only for holder scoping, on a lease that os.stat reaches, that is
+        # non-empty and fresh, and with a session id given (aiqt_hooks.py:7791-7808). A FIFO has size 0
+        # and so is never opened (round 8 W2, see DoctorPrecheckSites); the special file the hook does
+        # open here is a non-empty directory.
+        reg, marker = self._arm_writing_enumerator()
+        reg["lease"]["holder_is_session_id"] = True
+        self.write_registry(reg)
+        self.set_items([item("42")])
+        lease = Path(self._p("session-state.md"))
+        lease.mkdir()
+        (lease / "entry").write_text("held\n", encoding="utf-8")
+        self.assertGreater(os.stat(lease).st_size, 0, "precondition: a non-empty directory")
+        before = tree_state(self._tmp)
+        r = self._doctor_bounded("preflight", "stop", "--session-id", "sess-1")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("cannot evaluate: the declared lease.path {} is not a regular file (it is a "
+                      "directory)".format(lease), r.stdout)
+        self.assertFalse(marker.exists(), "the enumerator ran")
+        self.assertEqual(tree_state(self._tmp), before, "the doctor changed a file or directory")
 
     def test_preflight_idle_special_mode_path_is_cannot_evaluate(self):
         self._assert_special_refused("mode.path", self._p("operating-mode.md"), "fifo",
@@ -1167,10 +1186,27 @@ class Doctor(Stage2Harness):
         os.mkfifo(path)
         return path
 
+    def _seed_reach(self, name, command):
+        # Round 8: seed the state the hook needs to reach the open of name. The preview reads
+        # guard-events.jsonl only past a snapshot open (aiqt_hooks.py:8073-8076) and a register open
+        # (9507-9510); the audit opens the surfaced set and its temporary file only for a forced-exit
+        # log that holds rows (9705-9714).
+        if command == "preflight" and name == "guard-events.jsonl":
+            self.seed_state("attestations-validated.json", {})
+            Path(self._p("attestations.jsonl")).write_text("", encoding="utf-8")
+        if command == "--resume-audit" and name.startswith("forced-exit-surfaced.json"):
+            self.seed_ledger_like("forced-exit.jsonl", [{"key": "k1", "ts": _iso(), "open_ids": ["42"]}])
+
+    def seed_ledger_like(self, name, rows):
+        sd = self.state_dir()
+        sd.mkdir(parents=True, exist_ok=True)
+        (sd / name).write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
     def _assert_state_special_refused(self, name, *doctor_args):
         reg, marker = self._arm_writing_enumerator()
         self.write_registry(self._with_attestations(reg))
         self.set_items([item("42")])
+        self._seed_reach(name, doctor_args[0])
         path = self._make_state_fifo(name)
         before = tree_state(self._tmp)
         r = self._doctor_bounded(*doctor_args)
@@ -1701,6 +1737,581 @@ class Doctor(Stage2Harness):
         os.symlink(os.devnull, path)
         self._assert_barrier_refused("character device")
         self.assertTrue(os.path.islink(path), "the audit did not run, so the symlink is untouched")
+
+
+# Round 8 class probe: every pre-check site in tools/orch_doctor.py (each _site call), the condition
+# under which the hook call path reaches the open of that path, and the hook lines that decide it. A
+# site with an early exit (True in the second column) has a contrast case below in which the hook
+# takes the earlier exit, so the doctor must NOT refuse a FIFO there, beside the case in which the
+# open is reached and the doctor must refuse. Line numbers cite
+# plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py.
+PRECHECK_SITES = {
+    "registry.file": (
+        "both", True,
+        "the machine-local file always; the committed file only when the lstat of the local file "
+        "raised FileNotFoundError (a present local file returns whatever its content, an lstat "
+        "fault returns bad)",
+        "_orch_registry 7606-7626: lstat 7609, next file 7610-7611, fault 7612-7617, open 7619, "
+        "return 7621-7626; order _ORCH_REGISTRY_FILES 7548"),
+    "scope.lease": (
+        "preflight", True,
+        "os.stat succeeds, the lease is non-empty and fresh, holder_is_session_id is set and a "
+        "session id is given",
+        "_orch_scope_live 7786-7811: stat 7791, size and freshness 7792-7799, holder 7800, "
+        "session id 7804-7805, open 7807"),
+    "scope.mode": (
+        "preflight", True,
+        "no earlier return: not a live lease (7799-7811) and not an unstattable holder lease "
+        "(7812-7815)",
+        "_orch_scope_live 7817, _orch_mode open 7771"),
+    "ctx.turn_state": (
+        "preflight", True,
+        "scope live (and for idle the tool in the roster); then always",
+        "orch_stop_guard 8584-8585, orch_yield_tool 8662-8667; _orch_turn_state 7743-7745 via 8441"),
+    "ctx.enumerator_operand": (
+        "preflight", True,
+        "the enumerator runs: an object with a non-empty argv of non-empty strings",
+        "_orch_enumerate 7967-7972, subprocess 7976 via 8447"),
+    "ctx.ledger": (
+        "preflight", True,
+        "the enumerator runs (its success is not modelled)",
+        "_orch_build_ctx 8448-8449, _orch_live_ledger_ids 7998, open 7678"),
+    "ctx.pending_decisions": (
+        "preflight", True,
+        "the enumerator runs and record.pending_decisions is declared",
+        "_orch_build_ctx 8448-8451, _orch_pending_haystack 8040-8045"),
+    "ctx.attestation_snapshot": (
+        "preflight", True,
+        "the enumerator runs and attestations is declared",
+        "_orch_attestation_refs 8068-8074 via 8452"),
+    "ctx.attestations": (
+        "preflight", True,
+        "as the snapshot, and os.stat succeeds on the snapshot (its content is not modelled)",
+        "8073-8076 return on a failed snapshot open; _orch_register_authority 9507 via 8086, "
+        "_orch_chained_rows 9462 via 8093"),
+    "ctx.attestations_anchor": (
+        "preflight", True,
+        "as the register, and os.stat succeeds on the register (git tracking is not modelled)",
+        "9507-9510 hold on a failed register open, returned at 8087-8089; anchor open 9541-9543"),
+    "ctx.guard_events": (
+        "preflight", True,
+        "as the anchor (the guard-events pointer in a register row is not modelled)",
+        "8086-8095, _orch_attestation_derive via 8096, _orch_pointer_resolves 9564-9566, open 7678"),
+    "ctx.checkpoint": (
+        "preflight", True,
+        "the enumerator runs",
+        "_orch_build_ctx 8448 and 8457, _orch_checkpoint_union 8362-8365"),
+    "audit.handoff": (
+        "--resume-audit", False, "record.handoff is declared", "_orch_resume_probes 9356-9360"),
+    "audit.findings": (
+        "--resume-audit", False, "record.findings is declared", "9384-9388, and 9420-9426 via 9410"),
+    "audit.pending_decisions": (
+        "--resume-audit", False, "record.pending_decisions is declared", "9384-9388"),
+    "audit.attestations": (
+        "--resume-audit", False, "attestations is declared",
+        "_orch_validate_attestations 9640, _orch_chained_rows 9462 via 9642, "
+        "_orch_register_authority 9507 via 9643"),
+    "audit.attestations_anchor": (
+        "--resume-audit", True,
+        "attestations is declared and os.stat succeeds on the register (git tracking is not "
+        "modelled)",
+        "9507-9510 hold on a failed register open; anchor open 9541-9543 via 9643"),
+    "audit.snapshot_tmp": (
+        "--resume-audit", True, "attestations is declared",
+        "9640, _orch_write_json_atomic 7719-7720 via 9670"),
+    "audit.mistakes_register": (
+        "--resume-audit", False, "mistakes_register is declared", "9677-9679, open 9462"),
+    "audit.guard_events": (
+        "--resume-audit", False,
+        "always checked: both opens depend on file content (a guard-events pointer, findings to "
+        "record)",
+        "_orch_pointer_resolves 9566 via 9657 and 9689; _orch_guard_event 7667 via 9788-9789"),
+    "audit.escape_spoof": (
+        "--resume-audit", False, "always (lexists, then open)",
+        "_orch_pending_artefact_findings 9747-9748"),
+    "audit.forced_exit": (
+        "--resume-audit", False, "always", "_orch_forced_exit_findings 9704-9705, open 7678"),
+    "audit.forced_exit_surfaced": (
+        "--resume-audit", True,
+        "os.stat succeeds on forced-exit.jsonl and it is not empty (its rows are not modelled)",
+        "7678-7683, no rows return 9713-9714, open 9717"),
+    "audit.forced_exit_surfaced_tmp": (
+        "--resume-audit", True,
+        "as the surfaced set, and its os.stat raises nothing other than FileNotFoundError (fresh "
+        "rows are not modelled)",
+        "9719-9724, _orch_write_json_atomic 7719-7720 via 9734"),
+    "audit_bad.unused": (
+        "--resume-audit", False, "an unreadable registry; then always",
+        "orch_resume_audit 9776-9777, open 7667"),
+    "audit_bad.guard_events": (
+        "--resume-audit", False, "an unreadable registry; then always (the registry is a finding)",
+        "9778, _orch_guard_event 7667 via 9789"),
+}
+
+# (site, expectation, case method of DoctorPrecheckSites). "reach": the hook opens the path, so the
+# doctor must refuse a special file there; "skip": the hook takes an earlier exit, so the doctor must
+# run, and the real hook, run after it, must complete within the timeout with the FIFO in place.
+PRECHECK_CASES = [
+    ("registry.file", "reach", "case_registry_local"),
+    ("registry.file", "reach", "case_registry_committed_without_local"),
+    ("registry.file", "skip", "case_registry_committed_behind_valid_local"),
+    ("scope.lease", "reach", "case_lease_holder_directory"),
+    ("scope.lease", "skip", "case_lease_holder_fifo_is_empty"),
+    ("scope.lease", "skip", "case_lease_holder_without_session_id"),
+    ("scope.mode", "reach", "case_mode_without_lease"),
+    ("scope.mode", "skip", "case_mode_behind_live_lease"),
+    ("scope.mode", "skip", "case_mode_behind_unstattable_holder_lease"),
+    ("ctx.turn_state", "reach", "case_turn_state"),
+    ("ctx.turn_state", "skip", "case_turn_state_out_of_scope"),
+    ("ctx.enumerator_operand", "reach", "case_operand"),
+    ("ctx.enumerator_operand", "skip", "case_operand_argv_cannot_run"),
+    ("ctx.ledger", "reach", "case_ledger"),
+    ("ctx.ledger", "skip", "case_ledger_argv_cannot_run"),
+    ("ctx.pending_decisions", "reach", "case_ctx_pending"),
+    ("ctx.pending_decisions", "skip", "case_ctx_pending_argv_cannot_run"),
+    ("ctx.attestation_snapshot", "reach", "case_snapshot"),
+    ("ctx.attestation_snapshot", "skip", "case_snapshot_argv_cannot_run"),
+    ("ctx.attestation_snapshot", "skip", "case_snapshot_undeclared"),
+    ("ctx.attestations", "reach", "case_ctx_register"),
+    ("ctx.attestations", "skip", "case_ctx_register_without_snapshot"),
+    ("ctx.attestations_anchor", "reach", "case_ctx_anchor"),
+    ("ctx.attestations_anchor", "skip", "case_ctx_anchor_without_register"),
+    ("ctx.guard_events", "reach", "case_ctx_guard_events"),
+    ("ctx.guard_events", "skip", "case_ctx_guard_events_without_register"),
+    ("ctx.checkpoint", "reach", "case_checkpoint"),
+    ("ctx.checkpoint", "skip", "case_checkpoint_argv_cannot_run"),
+    ("audit.handoff", "reach", "case_audit_handoff"),
+    ("audit.findings", "reach", "case_audit_findings"),
+    ("audit.pending_decisions", "reach", "case_audit_pending"),
+    ("audit.attestations", "reach", "case_audit_register"),
+    ("audit.attestations_anchor", "reach", "case_audit_anchor"),
+    ("audit.attestations_anchor", "skip", "case_audit_anchor_without_register"),
+    ("audit.snapshot_tmp", "reach", "case_audit_snapshot_tmp"),
+    ("audit.snapshot_tmp", "skip", "case_audit_snapshot_tmp_undeclared"),
+    ("audit.mistakes_register", "reach", "case_audit_mistakes"),
+    ("audit.guard_events", "reach", "case_audit_guard_events"),
+    ("audit.escape_spoof", "reach", "case_audit_escape_spoof"),
+    ("audit.forced_exit", "reach", "case_audit_forced_exit"),
+    ("audit.forced_exit_surfaced", "reach", "case_audit_surfaced"),
+    ("audit.forced_exit_surfaced", "skip", "case_audit_surfaced_without_log"),
+    ("audit.forced_exit_surfaced", "skip", "case_audit_surfaced_with_empty_log"),
+    ("audit.forced_exit_surfaced_tmp", "reach", "case_audit_surfaced_tmp"),
+    ("audit.forced_exit_surfaced_tmp", "skip", "case_audit_surfaced_tmp_without_log"),
+    ("audit.forced_exit_surfaced_tmp", "skip", "case_audit_surfaced_tmp_behind_unopenable_set"),
+    ("audit_bad.unused", "reach", "case_bad_registry_unused"),
+    ("audit_bad.guard_events", "reach", "case_bad_registry_guard_events"),
+]
+
+
+# Runs in a separate python3 -I process: the hook call path the preflight runs, and nothing else (the
+# registry, the scope test, then _orch_build_ctx in the preview posture, aiqt_hooks.py:8434 and
+# 8349-8351), so a skip case can show that path completes with the FIFO in place. The Stop hook itself
+# also writes a guard event, the denial counter and the checkpoint, which the preview never does.
+PREVIEW_PATH_PROG = """
+import importlib.util, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("aiqt_hooks_preview_path", sys.argv[1])
+hook = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(hook)
+root = hook._recovery_toplevel(sys.argv[2])
+sid = sys.argv[3] or None
+status, reg = hook._orch_registry(root)
+if status == "ok" and hook._orch_scope_live(reg, root, sid):
+    hook._orch_build_ctx(reg, root, "stop", {"session_id": sid} if sid else {},
+                         record_checkpoint=False)
+print("completed")
+"""
+
+
+class DoctorPrecheckSites(Stage2Harness):
+    """Round 8 W1 and W2: the doctor checks a path only when the hook call path reaches its open.
+    Each case method arranges the fixture and returns (path, made, doctor args, hook payload): path
+    is where the special file goes; made is None for a FIFO the runner creates, or the type of the
+    special file the case made itself; the hook payload drives the real hook in a skip case."""
+
+    ROW = [{"key": "k1", "ts": _iso(), "open_ids": ["42"]}]
+
+    SPECIAL_TIMEOUT = Doctor.SPECIAL_TIMEOUT
+    _doctor_bounded = Doctor._doctor_bounded
+
+    def setUp(self):
+        super().setUp()
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+
+    def _reg(self, **overrides):
+        reg = self.stage2(**overrides)
+        self.write_registry(reg)
+        self.set_items([item("42")])
+        return reg
+
+    def _argv_cannot_run(self):
+        # A non-string element: _orch_enumerate returns ENUMERATOR_ERROR unrun (aiqt_hooks.py:7970-7972).
+        return {"argv": [sys.executable, "-I", str(self.enum_script), str(self.backlog), 5],
+                "timeout": 5}
+
+    def _rows_file(self, path, rows):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    def _at(self):
+        return self._p("attestations.jsonl")
+
+    def _sd(self, name):
+        return self.state_dir() / name
+
+    STOP = ("preflight", "stop")
+    AUDIT = ("--resume-audit",)
+
+    # --- registry.file
+    def case_registry_local(self):
+        self._reg()
+        return self.repo / ".aiqt" / "orchestration.local.json", None, self.STOP, {}
+
+    def case_registry_committed_without_local(self):
+        (self.repo / ".aiqt").mkdir(exist_ok=True)
+        return self.repo / ".aiqt" / "orchestration.json", None, self.AUDIT, {}
+
+    def case_registry_committed_behind_valid_local(self):
+        reg = self._reg()
+        (self.repo / ".aiqt" / "orchestration.local.json").write_text(json.dumps(reg),
+                                                                       encoding="utf-8")
+        return self.repo / ".aiqt" / "orchestration.json", None, self.AUDIT, {}
+
+    # --- scope.lease
+    def _holder(self):
+        reg = self.stage2()
+        reg["lease"]["holder_is_session_id"] = True
+        self.write_registry(reg)
+        self.set_items([item("42")])
+
+    def case_lease_holder_directory(self):
+        self._holder()
+        lease = Path(self._p("session-state.md"))
+        lease.mkdir()
+        (lease / "entry").write_text("held\n", encoding="utf-8")
+        self.assertGreater(os.stat(lease).st_size, 0, "precondition: a non-empty directory")
+        return lease, "directory", self.STOP + ("--session-id", "sess-1"), {"session_id": "sess-1"}
+
+    def case_lease_holder_fifo_is_empty(self):
+        # A FIFO has size 0, so the lease is not live (7799) and the hook reads the mode record.
+        self._holder()
+        return (Path(self._p("session-state.md")), None, self.STOP + ("--session-id", "sess-1"),
+                {"session_id": "sess-1"})
+
+    def case_lease_holder_without_session_id(self):
+        # No session id: the hook returns False at 7804-7805 before the open at 7807.
+        self._holder()
+        lease = Path(self._p("session-state.md"))
+        lease.mkdir()
+        (lease / "entry").write_text("held\n", encoding="utf-8")
+        self.assertGreater(os.stat(lease).st_size, 0, "precondition: a non-empty directory")
+        return lease, "directory", self.STOP, {}
+
+    # --- scope.mode
+    def case_mode_without_lease(self):
+        self._reg()
+        return Path(self._p("operating-mode.md")), None, self.STOP, {}
+
+    def case_mode_behind_live_lease(self):
+        # W2: a present, non-empty, fresh lease makes scope live at 7799-7811, before _orch_mode.
+        self._reg()
+        self.arm_lease()
+        return Path(self._p("operating-mode.md")), None, self.STOP, {}
+
+    def case_mode_behind_unstattable_holder_lease(self):
+        # Holder mode with no lease on disk: the hook returns False at 7814-7815, before _orch_mode.
+        self._holder()
+        return Path(self._p("operating-mode.md")), None, self.STOP, {}
+
+    # --- ctx.*
+    def case_turn_state(self):
+        self._reg()
+        return self._sd("turn-state.json"), None, self.STOP, {}
+
+    def case_turn_state_out_of_scope(self):
+        self._reg(drop=("mode",))
+        return self._sd("turn-state.json"), None, self.STOP, {}
+
+    def case_operand(self):
+        self._reg()
+        return self.backlog, None, self.STOP, {}
+
+    def case_operand_argv_cannot_run(self):
+        self._reg(enumerator=self._argv_cannot_run())
+        return self.backlog, None, self.STOP, {}
+
+    def case_ledger(self):
+        self._reg()
+        return self._sd("dispatch-ledger.jsonl"), None, self.STOP, {}
+
+    def case_ledger_argv_cannot_run(self):
+        self._reg(enumerator=self._argv_cannot_run())
+        return self._sd("dispatch-ledger.jsonl"), None, self.STOP, {}
+
+    def case_ctx_pending(self):
+        self._reg()
+        return Path(self._p("pending-decisions.md")), None, self.STOP, {}
+
+    def case_ctx_pending_argv_cannot_run(self):
+        self._reg(enumerator=self._argv_cannot_run())
+        return Path(self._p("pending-decisions.md")), None, self.STOP, {}
+
+    def case_checkpoint(self):
+        self._reg()
+        return self._sd("backlog-checkpoint.json"), None, self.STOP, {}
+
+    def case_checkpoint_argv_cannot_run(self):
+        self._reg(enumerator=self._argv_cannot_run())
+        return self._sd("backlog-checkpoint.json"), None, self.STOP, {}
+
+    def case_snapshot(self):
+        self._reg(attestations=self._at())
+        return self._sd("attestations-validated.json"), None, self.STOP, {}
+
+    def case_snapshot_argv_cannot_run(self):
+        self._reg(attestations=self._at(), enumerator=self._argv_cannot_run())
+        return self._sd("attestations-validated.json"), None, self.STOP, {}
+
+    def case_snapshot_undeclared(self):
+        self._reg()
+        return self._sd("attestations-validated.json"), None, self.STOP, {}
+
+    def case_ctx_register(self):
+        self._reg(attestations=self._at())
+        self.seed_state("attestations-validated.json", {})
+        return Path(self._at()), None, self.STOP, {}
+
+    def case_ctx_register_without_snapshot(self):
+        # No snapshot: the open at 8073 fails and the reader returns at 8075-8076.
+        self._reg(attestations=self._at())
+        return Path(self._at()), None, self.STOP, {}
+
+    def case_ctx_anchor(self):
+        self._reg(attestations=self._at())
+        self.seed_state("attestations-validated.json", {})
+        Path(self._at()).write_text("", encoding="utf-8")
+        return Path(self._at() + ".anchor"), None, self.STOP, {}
+
+    def case_ctx_anchor_without_register(self):
+        # No register: the open at 9507 fails, so the authority holds at 9510 before the anchor.
+        self._reg(attestations=self._at())
+        self.seed_state("attestations-validated.json", {})
+        return Path(self._at() + ".anchor"), None, self.STOP, {}
+
+    def case_ctx_guard_events(self):
+        self._reg(attestations=self._at())
+        self.seed_state("attestations-validated.json", {})
+        Path(self._at()).write_text("", encoding="utf-8")
+        return self._sd("guard-events.jsonl"), None, self.STOP, {}
+
+    def case_ctx_guard_events_without_register(self):
+        self._reg(attestations=self._at())
+        self.seed_state("attestations-validated.json", {})
+        return self._sd("guard-events.jsonl"), None, self.STOP, {}
+
+    # --- audit.*
+    def case_audit_handoff(self):
+        self._reg()
+        return Path(self._p("session-handoff.md")), None, self.AUDIT, {}
+
+    def case_audit_findings(self):
+        self._reg()
+        return Path(self._p("open-findings.md")), None, self.AUDIT, {}
+
+    def case_audit_pending(self):
+        self._reg()
+        return Path(self._p("pending-decisions.md")), None, self.AUDIT, {}
+
+    def case_audit_register(self):
+        self._reg(attestations=self._at())
+        return Path(self._at()), None, self.AUDIT, {}
+
+    def case_audit_anchor(self):
+        self._reg(attestations=self._at())
+        Path(self._at()).write_text("", encoding="utf-8")
+        return Path(self._at() + ".anchor"), None, self.AUDIT, {}
+
+    def case_audit_anchor_without_register(self):
+        self._reg(attestations=self._at())
+        return Path(self._at() + ".anchor"), None, self.AUDIT, {}
+
+    def case_audit_snapshot_tmp(self):
+        self._reg(attestations=self._at())
+        return self._sd("attestations-validated.json.tmp"), None, self.AUDIT, {}
+
+    def case_audit_snapshot_tmp_undeclared(self):
+        self._reg()
+        return self._sd("attestations-validated.json.tmp"), None, self.AUDIT, {}
+
+    def case_audit_mistakes(self):
+        self._reg(mistakes_register=self._p("mistakes.jsonl"))
+        return Path(self._p("mistakes.jsonl")), None, self.AUDIT, {}
+
+    def case_audit_guard_events(self):
+        self._reg()
+        return self._sd("guard-events.jsonl"), None, self.AUDIT, {}
+
+    def case_audit_escape_spoof(self):
+        self._reg()
+        return self._sd("escape-spoof.json"), None, self.AUDIT, {}
+
+    def case_audit_forced_exit(self):
+        self._reg()
+        return self._sd("forced-exit.jsonl"), None, self.AUDIT, {}
+
+    def case_audit_surfaced(self):
+        self._reg()
+        self._rows_file(self._sd("forced-exit.jsonl"), self.ROW)
+        return self._sd("forced-exit-surfaced.json"), None, self.AUDIT, {}
+
+    def case_audit_surfaced_without_log(self):
+        self._reg()
+        return self._sd("forced-exit-surfaced.json"), None, self.AUDIT, {}
+
+    def case_audit_surfaced_with_empty_log(self):
+        self._reg()
+        self._rows_file(self._sd("forced-exit.jsonl"), [])
+        return self._sd("forced-exit-surfaced.json"), None, self.AUDIT, {}
+
+    def case_audit_surfaced_tmp(self):
+        self._reg()
+        self._rows_file(self._sd("forced-exit.jsonl"), self.ROW)
+        return self._sd("forced-exit-surfaced.json.tmp"), None, self.AUDIT, {}
+
+    def case_audit_surfaced_tmp_without_log(self):
+        self._reg()
+        return self._sd("forced-exit-surfaced.json.tmp"), None, self.AUDIT, {}
+
+    def case_audit_surfaced_tmp_behind_unopenable_set(self):
+        # A surfaced set that loops on itself: its open raises ELOOP, not FileNotFoundError, so the
+        # hook returns at 9721-9724 before the rewrite at 9734.
+        self._reg()
+        self._rows_file(self._sd("forced-exit.jsonl"), self.ROW)
+        surfaced = self._sd("forced-exit-surfaced.json")
+        os.symlink(surfaced.name, surfaced)
+        return self._sd("forced-exit-surfaced.json.tmp"), None, self.AUDIT, {}
+
+    def _bad_registry_state(self, name):
+        (self.repo / ".aiqt").mkdir(exist_ok=True)
+        (self.repo / ".aiqt" / "orchestration.json").write_text("{", encoding="utf-8")
+        self.assertEqual(self.run_hook("orch_resume_audit", {}).returncode, 0)
+        barriers = self.find_anywhere("resume-barrier.json")
+        self.assertEqual(len(barriers), 1, "precondition: the hook wrote one barrier")
+        return Path(barriers[0]).parent / name
+
+    def case_bad_registry_unused(self):
+        return self._bad_registry_state("resume-barrier.json.unused"), None, self.AUDIT, {}
+
+    def case_bad_registry_guard_events(self):
+        return self._bad_registry_state("guard-events.jsonl"), None, self.AUDIT, {}
+
+    # --- the runner
+    def _hook_bounded(self, args, payload):
+        # The resume audit runs orch_resume_audit itself, exactly as the doctor does; the preflight
+        # runs the preview call path (PREVIEW_PATH_PROG), the hook functions the doctor calls.
+        if args[0] == "--resume-audit":
+            argv = [sys.executable, "-I", str(HOOK), "orch_resume_audit"]
+            body = json.dumps({"cwd": str(self.repo)})
+        else:
+            argv = [sys.executable, "-I", "-c", PREVIEW_PATH_PROG, str(HOOK), str(self.repo),
+                    payload.get("session_id", "")]
+            body = ""
+        try:
+            h = subprocess.run(argv, input=body, capture_output=True, text=True, env=self._env(),
+                               timeout=self.SPECIAL_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.fail("the hook call path did not exit within {} s: it does reach this open"
+                      .format(self.SPECIAL_TIMEOUT))
+        if args[0] != "--resume-audit":
+            self.assertEqual(h.returncode, 0, h.stdout + h.stderr)
+            self.assertIn("completed", h.stdout)
+        return h
+
+    def _run_case(self, expect, case):
+        path, made, args, payload = getattr(self, case)()
+        path = Path(path)
+        if made is None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.is_symlink() or path.exists():
+                path.unlink()
+            os.mkfifo(path)
+            made = "FIFO"
+        r = self._doctor_bounded(*args)
+        self.assertNotIn("Traceback", r.stderr)
+        if expect == "reach":
+            self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+            self.assertIn("cannot evaluate: the ", r.stdout)
+            self.assertIn("{} is not a regular file (it is a {})".format(path, made), r.stdout)
+            return
+        self.assertNotIn("cannot evaluate", r.stdout)
+        self.assertIn(r.returncode, (0, 1), r.stdout + r.stderr)
+        h = self._hook_bounded(args, payload)
+        self.assertNotIn("Traceback", h.stderr)
+        if made == "FIFO":
+            self.assertTrue(path.is_fifo(), "the FIFO was replaced, so the contrast proves nothing")
+
+    def test_every_case_against_the_doctor_and_the_hook(self):
+        for site, expect, case in PRECHECK_CASES:
+            with self.subTest(site=site, expect=expect, case=case):
+                self.tearDown()
+                self.setUp()
+                self._run_case(expect, case)
+
+
+def doctor_precheck_sites(source):
+    """The site id of every _site call in the doctor source, in order, and every reference to the
+    name _site that is not the callee of a call (so an alias cannot add an unlisted site)."""
+    ids, stray = [], []
+    tree = ast.parse(source)
+    callees = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_site":
+            callees.add(id(node.func))
+            first = node.args[0] if node.args else None
+            ids.append(first.value if isinstance(first, ast.Constant)
+                       and isinstance(first.value, str) else None)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "_site" and id(node) not in callees:
+            stray.append(node.lineno)
+    return ids, stray
+
+
+class DoctorPrecheckSiteProbe(unittest.TestCase):
+    """Round 8 class probe: the reachability table covers every pre-check site in the doctor, every
+    checked path reaches _special_path only through _first_special over _site entries, and every
+    site has a reach case and, where it has an early exit, a contrast case."""
+
+    def test_the_table_covers_every_precheck_site_in_the_doctor(self):
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+        source = DOCTOR.read_text(encoding="utf-8")
+        ids, stray = doctor_precheck_sites(source)
+        self.assertNotIn(None, ids, "a _site call without a literal site id")
+        self.assertEqual(stray, [], "a reference to _site that is not a call")
+        self.assertEqual(sorted(set(ids)), sorted(PRECHECK_SITES),
+                         "the doctor pre-check sites and the reachability table differ")
+        tree = ast.parse(source)
+        callers = set()
+        for func in ast.walk(tree):
+            if isinstance(func, ast.FunctionDef):
+                for node in ast.walk(func):
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                            and node.func.id == "_special_path":
+                        callers.add(func.name)
+        self.assertEqual(callers, {"_first_special"},
+                         "_special_path is called outside _first_special, so a path can bypass _site")
+
+    def test_every_site_has_its_cases(self):
+        for site, (_command, early_exit, _condition, citation) in PRECHECK_SITES.items():
+            with self.subTest(site=site):
+                expects = {e for s, e, _c in PRECHECK_CASES if s == site}
+                self.assertIn("reach", expects, "no case where the hook reaches the open")
+                if early_exit:
+                    self.assertIn("skip", expects, "no contrast case for the early exit")
+                self.assertTrue(citation, "no hook citation")
+        for _site_id, _expect, case in PRECHECK_CASES:
+            self.assertTrue(callable(getattr(DoctorPrecheckSites, case, None)), case)
 
 
 # Every name that opens or reads a path; a reference to any of them, called, aliased or imported,

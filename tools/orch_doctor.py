@@ -44,17 +44,33 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          Before each hook reader is called, the doctor checks every path that
                          reader would open with a plain blocking open, each resolved as the hook
                          resolves it (_orch_path, aiqt_hooks.py:7630-7635; the state directory by
-                         _orch_state_dir_for_root, :7654-7659). The registry files come first
-                         (:7606-7620). Before the scope test (_orch_scope_live, :7779-7817) it
-                         checks lease.path (opened for holder scoping at :7807) and mode.path
-                         (opened at :7771). Before the context is built (_orch_build_ctx,
-                         :8434-8489) it checks what that call opens: turn-state.json (:7745), the
-                         enumerator argv from argv[2] on (run with cwd = the root, :7976),
+                         _orch_state_dir_for_root, :7654-7659), and a path is checked only when
+                         the hook call path would reach its open, each earlier exit the hook takes
+                         modelled from its source (round 8 W1 and W2). The registry files come
+                         first (:7606-7626): the machine-local file is always reached, and the
+                         committed file only when the lstat of the local file raised
+                         FileNotFoundError (:7609-7611), since a present local file returns at
+                         :7617-7626 whatever its content and an lstat fault returns at :7612-7617.
+                         Before the scope test (_orch_scope_live, :7779-7817) it checks lease.path
+                         only when the hook would open the lease for holder scoping (:7807: the
+                         stat at :7791 succeeds, the lease is non-empty and fresh, :7792-7799,
+                         holder_is_session_id is set, :7800, and a session id is given, :7804),
+                         and mode.path (opened at :7771 via :7817) only when no earlier return is
+                         taken (a live lease returns at :7799-7811, an unstattable holder lease at
+                         :7814-7815). Before the context is built (_orch_build_ctx, :8434-8489) it
+                         checks turn-state.json (:7745, via :8441) and then, only when the
+                         enumerator would run (a dict with a non-empty argv of non-empty strings,
+                         :7967-7971), the enumerator argv from argv[2] on (run with cwd = the root,
+                         :7976) and the paths read after a successful enumeration (:8448):
                          dispatch-ledger.jsonl (:7998, opened at :7678), record.pending_decisions
                          (:8044), backlog-checkpoint.json (:8365) and, when attestations is
-                         declared (:8068-8070), attestations-validated.json (:8073), the register
-                         (:9462 and :9507), its <path>.anchor (:9543) and guard-events.jsonl
-                         (:9566). Each is checked with os.stat only, never opened. One that exists
+                         declared (:8068-8070), attestations-validated.json (:8073); the register
+                         (:9507 via :8086, :9462 via :8093) only when os.stat succeeds on that
+                         snapshot (a failed snapshot open returns at :8075-8076), and its
+                         <path>.anchor (:9543) and guard-events.jsonl (:9566) only when os.stat
+                         succeeds on the register too (a failed register open holds at :9510, so
+                         the reader returns at :8087-8089). Each is checked with os.stat only,
+                         never opened. One that exists
                          and is not a regular file (a FIFO, which would block the hook open
                          indefinitely; a directory; a device; or a symlink to one of these) is
                          reported as cannot-evaluate, exit 2, naming the path and its type, and the
@@ -70,15 +86,21 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          aiqt_hooks.py:9351-9413, including the attestation snapshot refresh at
                          :9411), the resume-barrier.json write (:9781-9785), and the findings guard
                          event are exactly those of the hook. The same kind of special-file check
-                         runs first, over the paths the audit opens with a blocking open:
-                         record.handoff (:9359), record.findings (:9387 and :9425),
-                         record.pending_decisions (:9387), when declared the attestations register
-                         (:9462 and :9507) and its <path>.anchor (:9543), mistakes_register (:9679),
-                         and the state files guard-events.jsonl (read at :9566, appended at :7667
-                         through :9789), escape-spoof.json (:9748), forced-exit.jsonl (:9705),
-                         forced-exit-surfaced.json (:9717), forced-exit-surfaced.json.tmp (written
-                         at :7720 through :9734) and, when attestations is declared,
-                         attestations-validated.json.tmp (:7720 through :9670). With an unreadable
+                         runs first, over the paths the audit opens with a blocking open, each
+                         checked only when the audit would reach its open: record.handoff (:9359),
+                         record.findings (:9387 and :9425), record.pending_decisions (:9387), when
+                         declared (:9640) the attestations register (:9462 via :9642, :9507 via
+                         :9643) and, only when os.stat succeeds on the register (a failed register
+                         open holds at :9510), its <path>.anchor (:9543), mistakes_register
+                         (:9679), and the state files guard-events.jsonl (read at :9566, appended
+                         at :7667 through :9789), escape-spoof.json (:9748), forced-exit.jsonl
+                         (:9705), forced-exit-surfaced.json (:9717) only when os.stat succeeds on
+                         forced-exit.jsonl and it is not empty (no rows return at :9713-9714),
+                         forced-exit-surfaced.json.tmp (written at :7720 through :9734) only when
+                         the surfaced file is reached and its stat raises nothing other than
+                         FileNotFoundError (any other open error returns at :9721-9724) and, when
+                         attestations is declared, attestations-validated.json.tmp (:7720 through
+                         :9670). With an unreadable
                          registry the hook opens only resume-barrier.json.unused (:9777) and
                          guard-events.jsonl (:9789). A special file at one of these is reported as
                          cannot-evaluate, exit 2, and the audit is not run. The audit runs no
@@ -136,11 +158,16 @@ the barrier detects a write that did not happen; it cannot tell the hook from an
 rewrites the file inside the same run. The special-file check is a point-in-time os.stat: a path
 replaced by a FIFO between the check and the hook open can still block. It covers, per command, the
 declared paths and the fixed state files that the hook call path opens with a plain blocking open,
-as listed above. It models only the declared-path conditions the hook tests (for example a declared
-attestations register); a path the hook opens only under a further condition (an enumeration that
-succeeds, a snapshot that validates, an untracked register, a guard-events pointer, rows to surface,
-findings to record) is checked whenever the call could reach that open, so the doctor can refuse a
-run in which the hook would not have opened that path. Files read through git (the index, objects
+as listed above. It models every earlier exit that a stat or the registry content decides (an
+absent or unstattable file, a file size, a lease age, a declared key, an enumerator argv that cannot
+run). A condition that only an open or a program run can decide is not modelled, and the path is
+checked whenever the call could reach its open: an enumeration that succeeds, the content of a
+regular snapshot, forced-exit log or surfaced set, whether git tracks the attestations register, a
+guard-events pointer in a register row, and findings for the audit to record. Where one of those
+decides against the open, the doctor can still refuse a run in which the hook would not have opened
+that path. The lease age is read from the clock at the check; a lease within SCOPE_MARGIN seconds of
+a freshness bound is treated as possibly on either side, so both opens that side decides are
+checked. Files read through git (the index, objects
 and configuration) and any file the enumerator opens beyond its argv operands are not checked. The
 tool runs isolated (it re-executes itself under python3 -I when started
 without -I), so a file planted beside it cannot shadow a standard-library import; a failed
@@ -174,6 +201,9 @@ DEFAULT_TOOL = "ScheduleWakeup"
 # The barrier ts must fall inside this run, widened by this much for clock granularity.
 TS_SKEW = datetime.timedelta(seconds=1)
 READ_CHUNK = 1 << 20
+# A lease within this many seconds of a freshness bound is treated as possibly on either side of it
+# when the doctor decides which scope opens the hook reaches (_lease_fresh_states).
+SCOPE_MARGIN = 5.0
 
 
 def _load_hook():
@@ -245,15 +275,49 @@ def _special_path(label, path):
     return "the {} {} is not a regular file (it is a {})".format(label, path, _kind_of(st.st_mode))
 
 
-def _special_registry_file(hook, root):
-    """The first registry file that is present but not a regular file, as a _special_path message, or
-    None. The hook reads each with a plain blocking open (_orch_registry, aiqt_hooks.py:7606-7620, in
-    the order of _ORCH_REGISTRY_FILES)."""
+def _site(site, label, path):
+    """One pre-check entry: site is the fixed id of the pre-check site (the class-probe table in
+    tools/test-orch-stage2-hooks.py lists every id with its reachability condition and hook
+    citation), label names the path in the message, and path is the resolved path or None (skipped,
+    as the hook skips an undeclared path). Every path the doctor checks passes through here."""
+    return (site, label, path)
+
+
+def _stat_fails(path):
+    """True when os.stat raises on path. A path os.stat cannot reach is one the hook open cannot
+    open either (the open resolves the same path, so it raises too), which is how the doctor decides
+    an earlier exit the hook takes on a failed open without opening anything."""
+    try:
+        os.stat(path)
+    except OSError:
+        return True
+    return False
+
+
+def _registry_read_paths(hook, root):
+    """The registry files _orch_registry (aiqt_hooks.py:7606-7626) opens, in the order of
+    _ORCH_REGISTRY_FILES (7548). A file is opened (7619) only when its lstat succeeds (7609), and
+    the loop moves on to the next file only when that lstat raised FileNotFoundError (7610-7611): a
+    present file returns at 7617-7626 whatever its content, and an lstat fault returns bad at
+    7612-7617, so no later registry file is reached (round 8 W1)."""
+    out = []
     for rel in hook._ORCH_REGISTRY_FILES:
-        found = _special_path("registry file", os.path.join(root, *rel.split("/")))
-        if found is not None:
-            return found
-    return None
+        path = os.path.join(root, *rel.split("/"))
+        out.append(_site("registry.file", "registry file", path))
+        try:
+            os.lstat(path)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            pass
+        break
+    return out
+
+
+def _special_registry_file(hook, root):
+    """The first registry file the hook would open that is present but not a regular file, as a
+    _special_path message, or None."""
+    return _first_special(_registry_read_paths(hook, root))
 
 
 def _section(reg, key):
@@ -262,119 +326,231 @@ def _section(reg, key):
     return value if isinstance(value, dict) else {}
 
 
-def _path_entries(hook, root, entries):
-    """(label, path) for each (label, registry value) whose value resolves as the hook resolves a
-    declared path (_orch_path, aiqt_hooks.py:7630-7635: absolute kept, relative joined onto the root,
-    a non-string or empty value skipped)."""
+def _state_path(hook, root, name):
+    """A fixed hook state file under the state directory, resolved exactly as every hook reader
+    resolves it (_orch_state_dir_for_root, aiqt_hooks.py:7654-7659)."""
+    return os.path.join(hook._orch_state_dir_for_root(root), name)
+
+
+def _lease_fresh_states(hook, lease, st):
+    """The freshness values the hook can compute for this lease (aiqt_hooks.py:7792-7798): {True}
+    without a positive max_age_hours, else the value at the clock now and SCOPE_MARGIN seconds later,
+    so a lease that crosses a bound of the window between this check and the hook call is treated as
+    possibly either side (the window is at least _ORCH_CLOCK_SKEW wide, more than the margin, so the
+    two samples cover every value in between)."""
+    max_age = lease.get("max_age_hours")
+    if not (isinstance(max_age, (int, float)) and max_age > 0):
+        return {True}
+    age = hook._orch_now().timestamp() - st.st_mtime
+    return {-hook._ORCH_CLOCK_SKEW <= a <= max_age * 3600 for a in (age, age + SCOPE_MARGIN)}
+
+
+def _scope_read_paths(hook, reg, root, session_id):
+    """The paths _orch_scope_live(reg, root, session_id) (aiqt_hooks.py:7779-7817) opens with a plain
+    blocking open, each only when the hook reaches that open (round 8 W2):
+      lease.path  opened at 7806-7808 only when the lease section is a non-empty object (7786-7787),
+                  its path resolves (7788-7789), os.stat succeeds (7791), the lease is non-empty and
+                  fresh (7792-7799), holder_is_session_id is set (7800) and the session id is a
+                  non-empty string (7804-7805; otherwise the hook returns False unopened).
+      mode.path   opened by _orch_mode at 7770-7772 via 7817 unless the hook returned first: a live
+                  lease returns at 7799-7811, and a lease os.stat cannot reach returns False in
+                  holder mode (7812-7815). A stat that succeeds on a stale or empty lease, or a
+                  failed stat without holder mode, falls through to the mode read.
+    The lease is never opened otherwise (the os.stat at 7791 does not block), so a FIFO there, whose
+    size is 0, is not checked."""
+    lease = reg.get("lease") if isinstance(reg.get("lease"), dict) else None
+    lease_path = hook._orch_path(root, lease.get("path")) if lease else None
+    reach_lease, reach_mode = False, True
+    if lease_path:
+        holder = bool(lease.get("holder_is_session_id"))
+        try:
+            st = os.stat(lease_path)
+        except OSError:
+            reach_mode = not holder
+        else:
+            live = {st.st_size > 0 and fresh for fresh in _lease_fresh_states(hook, lease, st)}
+            reach_lease = (True in live and holder and isinstance(session_id, str)
+                           and bool(session_id))
+            reach_mode = False in live
     out = []
-    for label, value in entries:
-        path = hook._orch_path(root, value)
-        if path:
-            out.append((label, path))
+    if reach_lease:
+        out.append(_site("scope.lease", "declared lease.path", lease_path))
+    if reach_mode:
+        out.append(_site("scope.mode", "declared mode.path",
+                         hook._orch_path(root, _section(reg, "mode").get("path"))))
     return out
 
 
-def _state_entries(hook, root, names):
-    """(label, path) for each fixed hook state file name, under the state directory resolved exactly
-    as every hook reader resolves it (_orch_state_dir_for_root, aiqt_hooks.py:7654-7659)."""
-    sd = hook._orch_state_dir_for_root(root)
-    return [("hook state file " + name, os.path.join(sd, name)) for name in names]
-
-
-def _attestation_entries(at_path):
-    """The declared attestations register and its anchor, opened by _orch_chained_rows
-    (aiqt_hooks.py:9461-9463) and _orch_register_authority (9506-9508; the anchor at 9541-9544)."""
-    return [("declared attestations", at_path), ("declared attestations.anchor", at_path + ".anchor")]
-
-
-def _scope_read_paths(hook, reg, root):
-    """The paths _orch_scope_live (aiqt_hooks.py:7779-7817) opens with a plain blocking open:
-    lease.path (os.stat at 7791, then opened for holder scoping at 7806-7808) and mode.path
-    (_orch_mode, opened at 7770-7772, when the lease is not live)."""
-    return _path_entries(hook, root, [
-        ("declared lease.path", _section(reg, "lease").get("path")),
-        ("declared mode.path", _section(reg, "mode").get("path"))])
+def _enumerator_runs(reg):
+    """True when _orch_enumerate (aiqt_hooks.py:7962-7989) reaches the subprocess at 7976: the
+    enumerator is an object (7967-7968) whose argv is a non-empty list of non-empty strings
+    (7970-7972). Otherwise it returns NO_ENUMERATOR or ENUMERATOR_ERROR unrun, and _orch_build_ctx
+    skips every reader after the enumeration (8448)."""
+    spec = reg.get("enumerator")
+    if not isinstance(spec, dict):
+        return False
+    argv = spec.get("argv")
+    return isinstance(argv, list) and bool(argv) and all(isinstance(a, str) and a for a in argv)
 
 
 def _ctx_read_paths(hook, reg, root):
     """The paths _orch_build_ctx(..., record_checkpoint=False) (aiqt_hooks.py:8434-8489) opens with a
-    plain blocking open, traced through every reader it calls:
-      turn-state.json              _orch_turn_state, lexists then open at 7743-7745 (via 8441)
-      enumerator argv[2] on        opened by the enumerator, run with cwd = the root (7976, via 8447)
+    plain blocking open, traced through every reader it calls, each only when the call reaches it:
+      turn-state.json              _orch_turn_state, lexists then open at 7743-7745 (via 8441), always
+      enumerator argv[2] on        opened by the enumerator, run with cwd = the root (7976, via 8447),
+                                   only when the enumerator runs (_enumerator_runs)
       dispatch-ledger.jsonl        _orch_live_ledger_ids 7998-7999, opened at 7678 (via 8449)
       record.pending_decisions     _orch_pending_haystack, opened at 8043-8045 (via 8451)
-      attestations-validated.json  _orch_attestation_refs, opened at 8072-8074 (via 8452)
-      attestations and its anchor  _orch_register_authority (via 8086) and _orch_chained_rows (via
-                                   8093)
-      guard-events.jsonl           _orch_pointer_resolves 9566, opened at 7678 (via 8096 and 9616)
+      attestations-validated.json  _orch_attestation_refs, opened at 8072-8074 (via 8452), when
+                                   attestations is declared (8068-8070)
+      attestations                 _orch_register_authority 9507 (via 8086) and _orch_chained_rows
+                                   9462 (via 8093), only when os.stat succeeds on the snapshot
+                                   (a failed snapshot open returns at 8075-8076)
+      attestations.anchor          _orch_register_authority 9543, and guard-events.jsonl
+      guard-events.jsonl           (_orch_pointer_resolves 9566, opened at 7678, via 8096 and 9616),
+                                   only when os.stat succeeds on the register too (a failed
+                                   register open holds at 9509-9510, returned at 8087-8089)
       backlog-checkpoint.json      _orch_checkpoint_union, lexists then open at 8362-8365 (via 8457)
-    The attestation entries apply only when attestations is declared, the condition the hook tests
-    first (8068-8070). The further conditions (an enumeration that succeeds, a snapshot that
-    validates, an untracked register, a guard-events pointer) are not modelled, so each path is
-    checked whenever the call could reach its open. Not opened with a blocking open, so not checked:
-    the checkpoint-init marker (lexists only at 8376; record=False skips the writes at 8413-8430) and
-    the escape sentinel (opened non-blocking at 7831-7832, via 8480)."""
-    entries = [("declared record.pending_decisions", _section(reg, "record").get("pending_decisions"))]
+    Every reader after the enumeration runs only on a successful enumeration (8448); the doctor
+    models the part a registry read decides (_enumerator_runs) and checks the rest whenever the
+    enumerator runs, since only running it decides whether it succeeds. Not modelled, so checked
+    conservatively: the snapshot content (8076-8084), whether git tracks the register (9516-9540),
+    and a guard-events pointer in a register row (9564). Not opened with a blocking open, so not
+    checked: the checkpoint-init marker (lexists only at 8376; record=False skips the writes at
+    8413-8430) and the escape sentinel (opened non-blocking at 7831-7832, via 8480)."""
+    out = [_site("ctx.turn_state", "hook state file turn-state.json",
+                 _state_path(hook, root, "turn-state.json"))]
+    if not _enumerator_runs(reg):
+        return out
+    argv = reg["enumerator"]["argv"]
+    out += [_site("ctx.enumerator_operand", "declared enumerator.argv[{}]".format(i),
+                  hook._orch_path(root, arg)) for i, arg in enumerate(argv[2:], 2)]
+    out.append(_site("ctx.ledger", "hook state file dispatch-ledger.jsonl",
+                     _state_path(hook, root, "dispatch-ledger.jsonl")))
+    out.append(_site("ctx.pending_decisions", "declared record.pending_decisions",
+                     hook._orch_path(root, _section(reg, "record").get("pending_decisions"))))
     at_path = hook._orch_path(root, reg.get("attestations"))
     if at_path:
-        entries += _attestation_entries(at_path)
-    argv = _section(reg, "enumerator").get("argv")
-    argv = argv if isinstance(argv, list) else []
-    entries += [("declared enumerator.argv[{}]".format(i), arg) for i, arg in enumerate(argv[2:], 2)]
-    names = ["turn-state.json", "dispatch-ledger.jsonl", "backlog-checkpoint.json"]
-    if at_path:
-        names += ["attestations-validated.json", "guard-events.jsonl"]
-    return _path_entries(hook, root, entries) + _state_entries(hook, root, names)
+        snapshot = _state_path(hook, root, "attestations-validated.json")
+        out.append(_site("ctx.attestation_snapshot", "hook state file attestations-validated.json",
+                         snapshot))
+        if not _stat_fails(snapshot):
+            out.append(_site("ctx.attestations", "declared attestations", at_path))
+            if not _stat_fails(at_path):
+                out.append(_site("ctx.attestations_anchor", "declared attestations.anchor",
+                                 at_path + ".anchor"))
+                out.append(_site("ctx.guard_events", "hook state file guard-events.jsonl",
+                                 _state_path(hook, root, "guard-events.jsonl")))
+    out.append(_site("ctx.checkpoint", "hook state file backlog-checkpoint.json",
+                     _state_path(hook, root, "backlog-checkpoint.json")))
+    return out
+
+
+def _forced_exit_may_have_rows(log):
+    """False when _orch_read_jsonl(forced-exit.jsonl) cannot return a row: os.stat fails, so the
+    open at 7678 raises and returns ([], 0) or (None, 0) (7680-7683), or the file is empty, so
+    there are no lines; either way _orch_forced_exit_findings returns at 9706-9714 before the
+    surfaced set. A non-empty file may still hold no rows, which only reading it decides, so it
+    counts as possibly having rows."""
+    try:
+        return os.stat(log).st_size != 0
+    except OSError:
+        return False
+
+
+def _open_fails_other_than_absent(path):
+    """True when os.stat on path raises an error other than FileNotFoundError: the open at 9717
+    then raises that error too, and _orch_forced_exit_findings returns at 9721-9724 before the
+    surfaced-set rewrite, whereas FileNotFoundError reads as an empty set (9719-9720)."""
+    try:
+        os.stat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return False
 
 
 def _audit_read_paths(hook, reg, root):
     """The paths orch_resume_audit (aiqt_hooks.py:9765-9794) opens with a plain blocking open on a
-    readable registry, traced through _orch_resume_probes (9351-9413) and every reader it calls:
-      record.handoff                  opened at 9358-9360
-      record.findings                 opened at 9386-9388, and at 9424-9426 (via 9410)
-      record.pending_decisions        opened at 9386-9388
-      attestations and its anchor     _orch_chained_rows (via 9642) and _orch_register_authority (via
-                                      9643), when declared (9638-9640)
-      mistakes_register               _orch_chained_rows 9461-9463 (via 9677-9679)
-      guard-events.jsonl              read by _orch_pointer_resolves at 9566 (via 9657 and 9689),
-                                      opened at 7678; appended by _orch_guard_event at 7667 (via 9789)
+    readable registry, traced through _orch_resume_probes (9351-9413) and every reader it calls,
+    each only when the audit reaches it:
+      record.handoff                  opened at 9358-9360, when declared
+      record.findings                 opened at 9386-9388, and at 9424-9426 (via 9410), when declared
+      record.pending_decisions        opened at 9386-9388, when declared
+      attestations                    _orch_chained_rows 9462 (via 9642) and _orch_register_authority
+                                      9507 (via 9643), when declared (9638-9640)
+      attestations.anchor             _orch_register_authority 9543, only when os.stat succeeds on
+                                      the register (a failed register open holds at 9509-9510)
       attestations-validated.json.tmp written by _orch_write_json_atomic at 7719-7720 (via 9670),
                                       when attestations is declared
+      mistakes_register               _orch_chained_rows 9461-9463 (via 9677-9679), when declared
+      guard-events.jsonl              read by _orch_pointer_resolves at 9566 (via 9657 and 9689),
+                                      opened at 7678; appended by _orch_guard_event at 7667 (via
+                                      9789); both depend on file content, so always checked
       escape-spoof.json               lexists then open at 9747-9748 (via 9412)
       forced-exit.jsonl               _orch_forced_exit_findings 9704-9705, opened at 7678
-      forced-exit-surfaced.json       opened at 9716-9717
-      forced-exit-surfaced.json.tmp   written at 7719-7720 (via 9734)
+      forced-exit-surfaced.json       opened at 9716-9717, only when the log may hold rows
+                                      (_forced_exit_may_have_rows; no rows return at 9713-9714)
+      forced-exit-surfaced.json.tmp   written at 7719-7720 (via 9734), only when the surfaced file
+                                      is reached and its open does not fail other than as absent
+                                      (_open_fails_other_than_absent; 9721-9724)
     resume-barrier.json (written at 9783) is read before the audit by _barrier_snapshot, which
     refuses a special file there. The audit runs no enumerator and does not open the lease (os.stat
     only, 9398), the mode record, turn-state.json, dispatch-ledger.jsonl or backlog-checkpoint.json,
-    so none of those is checked here. Conditions beyond a declared path (rows to surface, a
-    guard-events pointer, findings to record) are not modelled."""
+    so none of those is checked here. Not modelled, so checked conservatively: whether git tracks the
+    register (9516-9540), the rows and pointers a register holds (9564, 9657, 9689), the rows the
+    forced-exit log and the surfaced set hold (9706-9733), and whether there are findings to record
+    (9788-9789)."""
     rec = _section(reg, "record")
-    entries = [("declared record.handoff", rec.get("handoff")),
-               ("declared record.findings", rec.get("findings")),
-               ("declared record.pending_decisions", rec.get("pending_decisions"))]
+    out = [_site("audit.handoff", "declared record.handoff", hook._orch_path(root, rec.get("handoff"))),
+           _site("audit.findings", "declared record.findings",
+                 hook._orch_path(root, rec.get("findings"))),
+           _site("audit.pending_decisions", "declared record.pending_decisions",
+                 hook._orch_path(root, rec.get("pending_decisions")))]
     at_path = hook._orch_path(root, reg.get("attestations"))
     if at_path:
-        entries += _attestation_entries(at_path)
-    entries.append(("declared mistakes_register", reg.get("mistakes_register")))
-    names = ["guard-events.jsonl", "escape-spoof.json", "forced-exit.jsonl",
-             "forced-exit-surfaced.json", "forced-exit-surfaced.json.tmp"]
-    if at_path:
-        names.append("attestations-validated.json.tmp")
-    return _path_entries(hook, root, entries) + _state_entries(hook, root, names)
+        out.append(_site("audit.attestations", "declared attestations", at_path))
+        if not _stat_fails(at_path):
+            out.append(_site("audit.attestations_anchor", "declared attestations.anchor",
+                             at_path + ".anchor"))
+        out.append(_site("audit.snapshot_tmp", "hook state file attestations-validated.json.tmp",
+                         _state_path(hook, root, "attestations-validated.json.tmp")))
+    out.append(_site("audit.mistakes_register", "declared mistakes_register",
+                     hook._orch_path(root, reg.get("mistakes_register"))))
+    out.append(_site("audit.guard_events", "hook state file guard-events.jsonl",
+                     _state_path(hook, root, "guard-events.jsonl")))
+    out.append(_site("audit.escape_spoof", "hook state file escape-spoof.json",
+                     _state_path(hook, root, "escape-spoof.json")))
+    log = _state_path(hook, root, "forced-exit.jsonl")
+    out.append(_site("audit.forced_exit", "hook state file forced-exit.jsonl", log))
+    if _forced_exit_may_have_rows(log):
+        surfaced = _state_path(hook, root, "forced-exit-surfaced.json")
+        out.append(_site("audit.forced_exit_surfaced", "hook state file forced-exit-surfaced.json",
+                         surfaced))
+        if not _open_fails_other_than_absent(surfaced):
+            out.append(_site("audit.forced_exit_surfaced_tmp",
+                             "hook state file forced-exit-surfaced.json.tmp", surfaced + ".tmp"))
+    return out
 
 
 def _audit_bad_registry_paths(hook, root):
-    """On an unreadable registry the audit opens only resume-barrier.json.unused (appended at 7667, via
-    9777) and guard-events.jsonl (appended at 7667, via 9789), beside the barrier, under the state
-    directory the hook resolves for that registry (aiqt_hooks.py:9775)."""
-    return _state_entries(hook, root, ["resume-barrier.json.unused", "guard-events.jsonl"])
+    """On an unreadable registry the audit opens only resume-barrier.json.unused (appended at 7667,
+    via 9777) and guard-events.jsonl (appended at 7667, via 9789, since the unreadable registry is
+    itself a finding, 9778), beside the barrier, under the state directory the hook resolves for
+    that registry (aiqt_hooks.py:9775). Both are always reached."""
+    return [_site("audit_bad.unused", "hook state file resume-barrier.json.unused",
+                  _state_path(hook, root, "resume-barrier.json.unused")),
+            _site("audit_bad.guard_events", "hook state file guard-events.jsonl",
+                  _state_path(hook, root, "guard-events.jsonl"))]
 
 
 def _first_special(entries):
-    """The first (label, path) entry that is present but not a regular file, as a _special_path
-    message, or None."""
-    for label, path in entries:
+    """The first _site entry whose path is present but not a regular file, as a _special_path
+    message, or None. An entry with no path (an undeclared key) is skipped."""
+    for _site_id, label, path in entries:
+        if not path:
+            continue
         found = _special_path(label, path)
         if found is not None:
             return found
@@ -410,7 +586,7 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
               "(aiqt_hooks.py:8579-8583); a scheduling call is denied (aiqt_hooks.py:8654-8661)")
         return 2
     print("registry: ok")
-    special = _first_special(_scope_read_paths(hook, reg, root))
+    special = _first_special(_scope_read_paths(hook, reg, root, session_id))
     if special is not None:
         # _orch_scope_live opens these with a plain blocking open (see _scope_read_paths), so a FIFO
         # there would hang the preview; the scope reader is not called.
