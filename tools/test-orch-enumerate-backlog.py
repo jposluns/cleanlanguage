@@ -58,9 +58,17 @@ a helper a line position, each write to standard error (a print, a stream refere
 descriptor write, a module that logs) and each exit. It requires each message to begin with a
 documented position, a relayed str(exc) only where an except clause naming BacklogError alone binds
 exc, and a line position that is never a constant, so a new failure that names none fails the
-suite; it also proves that it refuses one deliberately unpositioned path of each kind. An exception
-that escapes as an interpreter traceback is outside a source scan and names no position (disclosed
-residual).
+suite; it also proves that it refuses one deliberately unpositioned path of each kind, each for
+exactly its own named reason, so a mutation refused only by an unrelated rule fails the suite. That
+static probe is a drift guard for ordinary failure paths only (disclosed residual): it does not
+cover deliberately obfuscated routes (a signal or os.kill, exec, a subprocess writing to descriptor
+2, an attribute name built from strings, a line position passed through a local alias, or assert).
+The RuntimeGuard cases prove the primary closure, the top-level guard in main: a closed stdout
+pipe, a deleted working directory with a relative path, and a RuntimeError injected in process at
+each stage of the run (path resolution, reading, parsing, the row digest and the stdout write), in
+both modes, each exit 1 with one positioned stderr line and no traceback, at the position that
+stage had reached, while a KeyboardInterrupt passes through. The remaining residual is a process
+ended without an exception (a signal, exec or os._exit), which names no position.
 """
 
 from __future__ import annotations
@@ -1616,28 +1624,50 @@ POSITION_FLOORS = (("construction", 4), ("_fail call", 2), ("line argument", 29)
                    ("standard error write", 2), ("print to a file", 2), ("exit", 3))
 RELAY = "    except BacklogError as exc:\n        _fail(str(exc))\n"
 MAIN_ANCHOR = "    path = os.path.abspath(argv[0])\n"
-# One deliberately unpositioned failure path of each kind the probe covers, as (anchor, replacement)
-# over the enumerator source; the probe must refuse every one.
+# The reason the probe gives for each kind of unpositioned failure path, as its message text.
+PRINT_REASON = "a print to a stream other than an accepted standard error sink"
+STDERR_REASON = "a standard error reference outside an accepted positioned print"
+FD_REASON = "an os descriptor write, duplication or abort that can bypass _fail"
+EXIT_REASON = "an exit not through _fail, main or an accepted positioned print"
+FAIL_REASON = ("a _fail message that names no position, or relays an error not caught as "
+               "BacklogError alone")
+REFERENCE_REASON = "a reference to BacklogError other than a construction or an except clause"
+LINE_REASON = "a line position given as a constant, a default or a starred argument"
+RAISE_REASON = "a raise of something other than a positioned BacklogError"
+CONSTRUCTION_REASON = "an error whose message names no documented position"
+IMPORT_REASON = "an import that can write to standard error or exit bypassing _fail"
+# One deliberately unpositioned failure path of each kind the probe covers, as (name, anchor,
+# replacement, reasons) over the enumerator source. The probe must refuse every one for exactly the
+# reasons named, so a mutation refused only by an unrelated rule fails the self-test. A print to
+# standard error is also a reference to sys.stderr, and a handler of two types also references
+# BacklogError inside a tuple, so each of those two carries both reasons.
 POSITION_MUTATIONS = (
     ("a direct print to standard error", MAIN_ANCHOR,
-     "    print(\"cannot start\", file=sys.stderr)\n    sys.exit(1)\n" + MAIN_ANCHOR),
-    ("a write to sys.stderr", MAIN_ANCHOR, "    sys.stderr.write(\"cannot start\")\n" + MAIN_ANCHOR),
-    ("a descriptor write to fd 2", MAIN_ANCHOR, "    os.write(2, b\"cannot start\")\n" + MAIN_ANCHOR),
-    ("an exit with a message", MAIN_ANCHOR, "    sys.exit(\"cannot start\")\n" + MAIN_ANCHOR),
-    ("a bare exit status", MAIN_ANCHOR, "    sys.exit(1)\n" + MAIN_ANCHOR),
+     "    print(\"cannot start\", file=sys.stderr)\n" + MAIN_ANCHOR, (PRINT_REASON, STDERR_REASON)),
+    ("a write to sys.stderr", MAIN_ANCHOR, "    sys.stderr.write(\"cannot start\")\n" + MAIN_ANCHOR,
+     (STDERR_REASON,)),
+    ("a descriptor write to fd 2", MAIN_ANCHOR, "    os.write(2, b\"cannot start\")\n" + MAIN_ANCHOR,
+     (FD_REASON,)),
+    ("an exit with a message", MAIN_ANCHOR, "    sys.exit(\"cannot start\")\n" + MAIN_ANCHOR,
+     (EXIT_REASON,)),
+    ("a bare exit status", MAIN_ANCHOR, "    sys.exit(1)\n" + MAIN_ANCHOR, (EXIT_REASON,)),
     ("an OSError relayed through _fail", RELAY,
-     RELAY + "    except OSError as exc:\n        _fail(str(exc))\n"),
+     RELAY + "    except OSError as exc:\n        _fail(str(exc))\n", (FAIL_REASON,)),
     ("a relay under a handler of two types", RELAY,
-     "    except (BacklogError, OSError) as exc:\n        _fail(str(exc))\n"),
+     "    except (BacklogError, OSError) as exc:\n        _fail(str(exc))\n",
+     (FAIL_REASON, REFERENCE_REASON)),
     ("a relay of a rebound name", RELAY,
-     "    except BacklogError as exc:\n        exc = OSError(\"x\")\n        _fail(str(exc))\n"),
+     "    except BacklogError as exc:\n        exc = OSError(\"x\")\n        _fail(str(exc))\n",
+     (FAIL_REASON,)),
     ("a constant line position", "raise _line_error(lineno, \"table row before the header\")",
-     "raise _line_error(1, \"table row before the header\")"),
-    ("a raise of another type", MAIN_ANCHOR, "    raise ValueError(\"cannot start\")\n" + MAIN_ANCHOR),
+     "raise _line_error(1, \"table row before the header\")", (LINE_REASON,)),
+    ("a raise of another type", MAIN_ANCHOR, "    raise ValueError(\"cannot start\")\n" + MAIN_ANCHOR,
+     (RAISE_REASON,)),
     ("a BacklogError with no position", MAIN_ANCHOR,
-     "    raise BacklogError(\"cannot start\")\n" + MAIN_ANCHOR),
-    ("an unpositioned usage _fail", "_fail(\"{0}: usage: ", "_fail(\"{0} usage: "),
-    ("an import of logging", "import hashlib\n", "import hashlib\nimport logging\n"),
+     "    raise BacklogError(\"cannot start\")\n" + MAIN_ANCHOR, (CONSTRUCTION_REASON,)),
+    ("an unpositioned usage _fail", "_fail(\"{0}: usage: ", "_fail(\"{0} usage: ", (FAIL_REASON,)),
+    ("an import of logging", "import hashlib\n", "import hashlib\nimport logging\n",
+     (IMPORT_REASON,)),
 )
 
 
@@ -1670,12 +1700,171 @@ class PositionProbe(unittest.TestCase):
 
     def test_the_probe_refuses_each_unpositioned_failure_path(self):
         source = self.source()
-        for name, anchor, replacement in POSITION_MUTATIONS:
+        for name, anchor, replacement, reasons in POSITION_MUTATIONS:
             with self.subTest(mutation=name):
                 self.assertEqual(source.count(anchor), 1, "the mutation anchor is not unique")
+                self.assertTrue(reasons, "a mutation names no reason")
                 _counts, bad = position_probe(source.replace(anchor, replacement),
                                               "BacklogError", "orch-enumerate-backlog")
                 self.assertNotEqual(bad, [], "the probe accepted {}".format(name))
+                self.assertEqual(sorted({why for _line, why, _text in bad}), sorted(set(reasons)),
+                                 "the probe refused {} for reasons other than its own: {!r}"
+                                 .format(name, bad))
+
+
+# Runs a tool in a working directory that no longer exists: argv[1] is made the working directory
+# and removed, then the tool argv[2] is executed under python3 -I with the arguments that follow.
+GONE_CWD_PROG = """
+import os, sys
+os.chdir(sys.argv[1])
+os.rmdir(sys.argv[1])
+os.execv(sys.executable, [sys.executable, "-I"] + sys.argv[2:])
+"""
+
+# Runs in a separate python3 -I -B process: load the enumerator by path, make the stage named by
+# argv[2] raise (a RuntimeError, or a KeyboardInterrupt for the "interrupt" stage; "none" injects
+# nothing), run main on the JSON argument list argv[3] with stdout and stderr captured, and print
+# the exit code, whether a KeyboardInterrupt passed through, and both captured streams.
+GUARD_PROG = """
+import importlib.util, io, json, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("enumerator_under_test", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+stage, args = sys.argv[2], json.loads(sys.argv[3])
+
+
+def boom(*_args, **_kwargs):
+    raise RuntimeError("injected at the " + stage + " stage")
+
+
+def interrupt(*_args, **_kwargs):
+    raise KeyboardInterrupt
+
+
+class Sink(io.StringIO):
+    def close(self):
+        pass
+
+
+class Refusing(Sink):
+    def write(self, _text):
+        boom()
+
+
+targets = {"path": (mod.os.path, "abspath", boom), "read": (mod, "read_backlog", boom),
+           "parse": (mod, "parse_backlog", boom), "digest": (mod, "row_digest", boom),
+           "interrupt": (mod, "parse_backlog", interrupt)}
+if stage in targets:
+    owner, attr, replacement = targets[stage]
+    setattr(owner, attr, replacement)
+out, err = (Refusing() if stage == "stdout" else Sink()), io.StringIO()
+real = (sys.stdout, sys.stderr)
+sys.stdout, sys.stderr = out, err
+code, interrupted = None, False
+try:
+    code = mod.main(args)
+except SystemExit as exc:
+    code = exc.code
+except KeyboardInterrupt:
+    interrupted = True
+finally:
+    sys.stdout, sys.stderr = real
+print(json.dumps({"code": code, "interrupted": interrupted, "stdout": out.getvalue(),
+                  "stderr": err.getvalue()}))
+"""
+
+class RuntimeGuard(EnumeratorHarness):
+    """The top-level guard in main turns any exception that escapes the handling into one positioned
+    failure line, exit 1, with no traceback, at the position the run had reached: before line 1
+    until the whole input is read, then the end of input. A KeyboardInterrupt passes through."""
+
+    TIMEOUT = 20
+
+    def assert_guarded(self, code, stderr, position, needle):
+        self.assertEqual(code, 1, "expected exit 1: {!r}".format(stderr))
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("Exception ignored", stderr)
+        lines = stderr.splitlines()
+        self.assertEqual(len(lines), 1, "one failure line: {!r}".format(stderr))
+        match = POSITION_RE.match(lines[0])
+        self.assertIsNotNone(match, "the failure names no position: {!r}".format(lines[0]))
+        self.assertEqual(match.group(1), position, lines[0])
+        self.assertIn(needle, lines[0])
+
+    def run_closed_stdout(self, script, *args):
+        # The reading end of the stdout pipe is closed before the tool starts, so its write to
+        # stdout always meets a pipe with no reader.
+        read_end, write_end = os.pipe()
+        os.close(read_end)
+        try:
+            return subprocess.run([sys.executable, "-I", str(script), *[str(a) for a in args]],
+                                  stdout=write_end, stderr=subprocess.PIPE, text=True,
+                                  timeout=self.TIMEOUT)
+        finally:
+            os.close(write_end)
+
+    def run_in_a_gone_directory(self, script, *args):
+        gone = Path(tempfile.mkdtemp(prefix="gone-", dir=str(self._tmp)))
+        r = subprocess.run([sys.executable, "-I", "-c", GONE_CWD_PROG, str(gone), str(script),
+                            *[str(a) for a in args]], capture_output=True, text=True,
+                           timeout=self.TIMEOUT)
+        self.assertFalse(gone.exists(), "precondition: the working directory is gone")
+        return r
+
+    def run_stage(self, script, stage, *args):
+        r = subprocess.run([sys.executable, "-I", "-B", "-c", GUARD_PROG, str(script), stage,
+                            json.dumps([str(a) for a in args])], capture_output=True, text=True,
+                           timeout=self.TIMEOUT)
+        self.assertEqual(r.returncode, 0, "the stage harness failed: {}".format(r.stderr))
+        return json.loads(r.stdout)
+
+    def end_position(self, text):
+        lines = text.split("\n")
+        last = len(lines) - 1 if len(lines) > 1 and lines[-1] == "" else len(lines)
+        return "line {} (end of input)".format(last)
+
+    def test_a_closed_stdout_pipe(self):
+        text = table(row("1"))
+        path = self.write(text)
+        for args in ((path,), ("--dump-cells", path)):
+            with self.subTest(args=[str(a) for a in args]):
+                r = self.run_closed_stdout(SCRIPT, *args)
+                self.assert_guarded(r.returncode, r.stderr, self.end_position(text),
+                                    "unexpected BrokenPipeError")
+
+    def test_a_deleted_working_directory_with_a_relative_path(self):
+        for args in (("TODO.md",), ("--dump-cells", "TODO.md")):
+            with self.subTest(args=list(args)):
+                r = self.run_in_a_gone_directory(SCRIPT, *args)
+                self.assertEqual(r.stdout, "", "a failing enumerator prints no enumeration")
+                self.assert_guarded(r.returncode, r.stderr, NOT_READ,
+                                    "unexpected FileNotFoundError")
+
+    def test_an_exception_injected_at_each_stage(self):
+        text = table(row("1"))
+        path = self.write(text)
+        end = self.end_position(text)
+        control = self.run_stage(SCRIPT, "none", path)
+        self.assertEqual(control["code"], 0, control["stderr"])
+        self.assertEqual([i["id"] for i in json.loads(control["stdout"])["items"]], ["1"])
+        cases = (("path", (), NOT_READ), ("read", (), NOT_READ), ("parse", (), end),
+                 ("stdout", (), end), ("path", ("--dump-cells",), NOT_READ),
+                 ("read", ("--dump-cells",), NOT_READ), ("parse", ("--dump-cells",), end),
+                 ("digest", ("--dump-cells",), end), ("stdout", ("--dump-cells",), end))
+        for stage, mode, position in cases:
+            with self.subTest(stage=stage, mode=mode):
+                result = self.run_stage(SCRIPT, stage, *mode, path)
+                self.assertFalse(result["interrupted"])
+                self.assertEqual(result["stdout"], "", "a failing enumerator prints no enumeration")
+                self.assert_guarded(result["code"], result["stderr"], position,
+                                    "unexpected RuntimeError: injected at the {} stage"
+                                    .format(stage))
+
+    def test_a_keyboard_interrupt_is_not_caught(self):
+        result = self.run_stage(SCRIPT, "interrupt", self.write(table(row("1"))))
+        self.assertTrue(result["interrupted"], "the guard caught a KeyboardInterrupt")
+        self.assertEqual(result["stderr"], "")
 
 
 class EndOfInput(EnumeratorHarness):

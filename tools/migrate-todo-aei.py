@@ -56,8 +56,11 @@ output below.
 Write safety: the script never writes in place. The output path must be given explicitly, must not
 exist (not even as a dangling symlink), and must not resolve to the input. It is created with
 O_CREAT | O_EXCL and mode 0600, so an existing file is never overwritten. A write that fails part
-way (for example ENOSPC) removes the partial output it created and exits 1, so a failed run never
-leaves a truncated file that a later step could mistake for a complete conversion. Applying the
+way, by an OSError such as ENOSPC or by any other exception (for example a MemoryError while the
+text is encoded, or a KeyboardInterrupt), removes the partial output it created, so a failed run
+never leaves a truncated file that a later step could mistake for a complete conversion; an OSError
+is refused with exit 1 there, and any other exception propagates to the runtime guard below (or,
+for a KeyboardInterrupt, ends the run). Applying the
 output to the record store is a separate step outside this script.
 
 Usage:
@@ -66,8 +69,9 @@ Usage:
     migrate-todo-aei.py --dump-old-cells <input>
         Print the id, opened, item and closure cells of every old data row (stripped of the
         surrounding blanks, escapes kept as written) with a sha256 per row, for the loss check.
-Exit 0 on success, 1 on a refused or malformed input or output, 2 on a usage error. An input that is
-not valid UTF-8 is refused naming the line and the byte offset of the first invalid byte.
+Exit 0 on success, 1 on a refused or malformed input or output or an unexpected error, 2 on a
+usage error. An input that is not valid UTF-8 is refused naming the line and the byte offset of the
+first invalid byte.
 
 Every refusal begins, after the "migrate-todo-aei: FAIL: " prefix, with its position: "line N" for a
 line of the input, "line N (end of input)" where the scan ended, "line N (end of input, output
@@ -75,11 +79,24 @@ refused)" for an output refused after the whole input was read, "before line 1 (
 for an input that cannot be opened or read or is not a regular file, and "before line 1 (no input
 read)" for a usage error, an output path equal to the input path, or a failed re-execution. This
 holds for every refusal the script writes. A refusal that has no line to name says so rather than
-naming an invented one. The test suite scans the source for every path that can write a refusal
-(each MigrationError construction and raise, each _fail call, each line position handed to a
-helper, and each write to standard error or exit) so that each keeps its position. Residual
-(disclosed): an exception that escapes as an interpreter traceback, such as a failed write to
-stdout, is outside that scan and names no position.
+naming an invented one. One top-level guard in main covers the whole run (argument handling,
+path resolution, reading, parsing, writing the output file, and writing and flushing stdout): any
+exception that escapes the handling above (any Exception, including a BrokenPipeError on stdout and
+the FileNotFoundError that os.getcwd raises when the working directory is gone) becomes a refusal
+through _fail, exit 1, at the position the run had reached: "before line 1 (no input read)" until
+the whole input has been read, "line N (end of input)" after it, and "line N (end of input, output
+refused)" once the output step has started (a refusal after the output file was written in full
+says so, and the file is left in place). The guard closes stdout before it fails, so the
+interpreter does not report a broken pipe a second time at exit; it does not catch
+KeyboardInterrupt or the SystemExit that _fail raises. The test suite also scans the source for
+every ordinary path that can write a refusal (each MigrationError construction and raise, each
+_fail call, each line position handed to a helper, and each write to standard error or exit) so
+that each keeps its position. Residual (disclosed): that static scan guards ordinary refusal paths
+only; it does not cover deliberately obfuscated routes (a signal or os.kill, exec, a subprocess
+writing to descriptor 2, an attribute name built from strings, a line position passed through a
+local alias, or assert). The runtime guard turns any escaping exception into a positioned refusal,
+so the remaining residual is a process ended without an exception (a signal, exec or os._exit),
+which names no position.
 
 The script runs isolated: started without -I, it re-executes itself under python3 -I before it
 imports anything beyond os and sys, so a file planted beside it cannot shadow a standard-library
@@ -345,7 +362,7 @@ def write_output(in_path, out_path, text):
     except OSError as exc:
         raise _output_error(text, "cannot create output {}: {}".format(out_path,
                                                                        exc.strerror or exc))
-    created = None
+    created, finished, removed = None, False, False
     try:
         created = os.fstat(fd)
         fh = os.fdopen(fd, "wb")
@@ -354,14 +371,28 @@ def write_output(in_path, out_path, text):
             fh.write(text.encode("utf-8"))
             fh.flush()
             os.fsync(fh.fileno())
+        finished = True
     except OSError as exc:
         if fd is not None:
             try:
                 os.close(fd)
             except OSError:
                 pass
+            fd = None
+        removed = True
         raise _output_error(text, "cannot write output {}: {}; {}".format(
             out_path, exc.strerror or exc, _remove_partial(out_path, created)))
+    finally:
+        # Any other exception, an Exception that is not an OSError or a BaseException such as
+        # KeyboardInterrupt, still removes the partial output under the same-inode condition; the
+        # exception then propagates unchanged to the runtime guard in main.
+        if not finished and not removed:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            _remove_partial(out_path, created)
 
 
 def _remove_partial(out_path, created):
@@ -386,17 +417,64 @@ def row_digest(row):
     return hashlib.sha256(json.dumps(list(row), ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
+def _discard_stdout():
+    """Close stdout before a refusal. A close whose final flush fails still closes the stream, so
+    the interpreter does not flush the pending bytes again at exit and report a broken pipe a second
+    time with an unpositioned message."""
+    stream = sys.stdout
+    if stream is None:
+        return
+    try:
+        stream.close()
+    except (OSError, ValueError):
+        pass
+
+
+def _unexpected(exc, reached):
+    """Refuse, exit 1, for an exception that escaped the handling in _run, at the position the
+    run had reached: before line 1 until the whole input was read, then the end of input, and the
+    end of input with the output refused once the output step had started."""
+    _discard_stdout()
+    detail = "unexpected {}: {}".format(type(exc).__name__, " ".join(str(exc).splitlines()))
+    if reached["written"] is not None:
+        detail += (" (the output {} was written in full before this error and is left in place)"
+                   .format(reached["written"]))
+    if reached["line"] is None:
+        _fail("{}: {}".format(NOT_READ, detail))
+    if reached["output"]:
+        _fail("line {} (end of input, output refused): {}".format(reached["line"], detail))
+    _fail("line {} (end of input): {}".format(reached["line"], detail))
+
+
 def main(argv):
+    """The whole run under one guard: any Exception that escapes _run, from argument handling to
+    the flush of stdout, is a positioned refusal. KeyboardInterrupt and the SystemExit of _fail are
+    not Exception and pass through."""
+    reached = {"line": None, "output": False, "written": None}
+    try:
+        _run(argv, reached)
+    except Exception as exc:
+        _unexpected(exc, reached)
+    return 0
+
+
+def _run(argv, reached):
+    """Convert (or dump) the input named by argv. reached["line"] is set to the end line once the
+    whole input has been read, reached["output"] once the output step starts, and
+    reached["written"] to the output path once it is written in full."""
     if len(argv) == 2 and argv[0] == "--dump-old-cells":
         in_path = os.path.abspath(argv[1])
         try:
-            _text, rows = convert(read_input(in_path))
+            text = read_input(in_path)
+            reached["line"] = _last_line(text.split("\n"))
+            _text, rows = convert(text)
         except MigrationError as exc:
             _fail(str(exc))
         out = {"source": in_path, "count": len(rows),
                "rows": [{"cells": list(r), "sha256": row_digest(r)} for r in rows]}
         sys.stdout.write(json.dumps(out) + "\n")
-        return 0
+        sys.stdout.flush()
+        return
     if len(argv) != 2 or not all(argv) or any(a.startswith("-") for a in argv):
         _fail("{0}: usage: {1}.py <input> <output> | {1}.py --dump-old-cells <input>"
               .format(NOT_READ, PROG), 2)
@@ -405,12 +483,16 @@ def main(argv):
         if in_path == out_path:
             raise MigrationError("{}: output path is the input path (the script never writes in "
                                  "place)".format(NOT_READ))
-        new_text, rows = convert(read_input(in_path))
+        text = read_input(in_path)
+        reached["line"] = _last_line(text.split("\n"))
+        new_text, rows = convert(text)
+        reached["output"] = True
         write_output(in_path, out_path, new_text)
     except MigrationError as exc:
         _fail(str(exc))
+    reached["written"] = out_path
     sys.stdout.write(json.dumps({"input": in_path, "output": out_path, "converted": len(rows)}) + "\n")
-    return 0
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

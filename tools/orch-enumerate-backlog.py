@@ -12,11 +12,22 @@ script writes begins, after the "orch-enumerate-backlog: FAIL: " prefix, with it
 for a line of the input, "line N (end of input)" where the scan ended, "before line 1 (input
 unreadable)" for a backlog that cannot be opened or read or is not a regular file, and "before line
 1 (no input read)" for a usage error or a failed re-execution. A failure that has no line to name
-says so rather than naming an invented one. The test suite scans the source for every path that can
-write a failure (each BacklogError construction and raise, each _fail call, each line position
-handed to a helper, and each write to standard error or exit) so that each keeps its position.
-Residual (disclosed): an exception that escapes as an interpreter traceback, such as a failed write
-to stdout, is outside that scan and names no position.
+says so rather than naming an invented one. One top-level guard in main covers the whole run
+(argument handling, path resolution, reading, parsing, and writing and flushing stdout): any
+exception that escapes the handling above (any Exception, including a BrokenPipeError on stdout and
+the FileNotFoundError that os.getcwd raises when the working directory is gone) becomes a failure
+through _fail, exit 1, at the position the run had reached, "before line 1 (no input read)" until
+the whole input has been read and "line N (end of input)" after it. The guard closes stdout before
+it fails, so the interpreter does not report a broken pipe a second time at exit; it does not catch
+KeyboardInterrupt or the SystemExit that _fail raises. The test suite also scans the source for
+every ordinary path that can write a failure (each BacklogError construction and raise, each _fail
+call, each line position handed to a helper, and each write to standard error or exit) so that each
+keeps its position. Residual (disclosed): that static scan guards ordinary failure paths only; it
+does not cover deliberately obfuscated routes (a signal or os.kill, exec, a subprocess writing to
+descriptor 2, an attribute name built from strings, a line position passed through a local alias,
+or assert). The runtime guard turns any escaping exception into a positioned failure, so the
+remaining residual is a process ended without an exception (a signal, exec or os._exit), which
+names no position.
 
 Backlog grammar (a markdown table, parsed strictly):
 
@@ -84,9 +95,10 @@ Usage:
         Print the id, opened, item and closure cells of every data row (each cell stripped of the
         surrounding blanks, escapes kept as written) with a sha256 per row, for the migration
         loss check. This mode applies the same validation as the enumeration.
-Exit 0 on success, 1 on an unreadable or malformed backlog, 2 on a usage error. A backlog that is
-not valid UTF-8 is reported with the line and the byte offset of the first invalid byte. The
-backlog path is the only project-specific input; the script carries no store path of its own.
+Exit 0 on success, 1 on an unreadable or malformed backlog or an unexpected error, 2 on a usage
+error. A backlog that is not valid UTF-8 is reported with the line and the byte offset of the first
+invalid byte. The backlog path is the only project-specific input; the script carries no store path
+of its own.
 
 The backlog must be a regular file (a symlink to one is followed). It is opened non-blocking and its
 type is checked with fstat on the open descriptor, so a FIFO with no writer, a directory, a device
@@ -414,7 +426,52 @@ def row_digest(row):
     return hashlib.sha256(json.dumps(list(row), ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
+def _end_line(text):
+    """The number of the last line of text, where a scan of the whole input ends; the empty
+    remainder after a final newline is not a line (the count parse_backlog makes)."""
+    if text.endswith("\n"):
+        return max(text.count("\n"), 1)
+    return text.count("\n") + 1
+
+
+def _discard_stdout():
+    """Close stdout before a failure. A close whose final flush fails still closes the stream, so
+    the interpreter does not flush the pending bytes again at exit and report a broken pipe a second
+    time with an unpositioned message."""
+    stream = sys.stdout
+    if stream is None:
+        return
+    try:
+        stream.close()
+    except (OSError, ValueError):
+        pass
+
+
+def _unexpected(exc, reached):
+    """Fail, exit 1, for an exception that escaped the handling in _run, at the position the run
+    had reached: before line 1 until the whole input was read, then the end of input."""
+    _discard_stdout()
+    detail = "unexpected {}: {}".format(type(exc).__name__, " ".join(str(exc).splitlines()))
+    if reached["line"] is None:
+        _fail("{}: {}".format(NOT_READ, detail))
+    _fail("line {} (end of input): {}".format(reached["line"], detail))
+
+
 def main(argv):
+    """The whole run under one guard: any Exception that escapes _run, from argument handling to
+    the flush of stdout, is a positioned failure. KeyboardInterrupt and the SystemExit of _fail are
+    not Exception and pass through."""
+    reached = {"line": None}
+    try:
+        _run(argv, reached)
+    except Exception as exc:
+        _unexpected(exc, reached)
+    return 0
+
+
+def _run(argv, reached):
+    """Enumerate (or dump) the backlog named by argv; reached["line"] is set to the end line once
+    the whole input has been read."""
     dump = False
     if argv and argv[0] == "--dump-cells":
         dump = True
@@ -424,7 +481,9 @@ def main(argv):
               .format(NOT_READ, PROG), 2)
     path = os.path.abspath(argv[0])
     try:
-        items, rows = parse_backlog(read_backlog(path))
+        text = read_backlog(path)
+        reached["line"] = _end_line(text)
+        items, rows = parse_backlog(text)
     except BacklogError as exc:
         _fail(str(exc))
     if dump:
@@ -438,7 +497,7 @@ def main(argv):
                "items": items}
     # ASCII-escaped JSON, so the output does not depend on the stdout encoding of the caller.
     sys.stdout.write(json.dumps(out) + "\n")
-    return 0
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":

@@ -54,8 +54,18 @@ each write to standard error (a print, a stream reference, an os descriptor writ
 logs) and each exit. It requires each message to begin with a documented position, a relayed
 str(exc) only where an except clause naming MigrationError alone binds exc, and a line position
 that is never a constant, so a new refusal that names none fails the suite; it also proves that it
-refuses one deliberately unpositioned path of each kind. An exception that escapes as an
-interpreter traceback is outside a source scan and names no position (disclosed residual).
+refuses one deliberately unpositioned path of each kind, each for exactly its own named reason, so
+a mutation refused only by an unrelated rule fails the suite. That static probe is a drift guard for
+ordinary refusal paths only (disclosed residual): it does not cover deliberately obfuscated routes
+(a signal or os.kill, exec, a subprocess writing to descriptor 2, an attribute name built from
+strings, a line position passed through a local alias, or assert). The RuntimeGuard cases prove
+the primary closure, the top-level guard in main: a closed stdout pipe, a deleted working directory
+with a relative path, and a RuntimeError injected in process at each stage of the run (path
+resolution, reading, conversion, the output write, the row digest and the stdout write), in both
+modes, each exit 1 with one positioned stderr line and no traceback, at the position that stage had
+reached, while a KeyboardInterrupt passes through. A failure inside the output write after the
+exclusive create, a RuntimeError or a KeyboardInterrupt, leaves no output file. The remaining residual is a process ended
+without an exception (a signal, exec or os._exit), which names no position.
 """
 
 from __future__ import annotations
@@ -1391,30 +1401,51 @@ POSITION_FLOORS = (("construction", 16), ("_fail call", 3), ("line argument", 6)
 RELAY = ("        write_output(in_path, out_path, new_text)\n    except MigrationError as exc:\n"
          "        _fail(str(exc))\n")
 MAIN_ANCHOR = "    in_path, out_path = os.path.abspath(argv[0]), os.path.abspath(argv[1])\n"
-# One deliberately unpositioned refusal path of each kind the probe covers, as (anchor,
-# replacement) over the migration source; the probe must refuse every one.
+# The reason the probe gives for each kind of unpositioned refusal path, as its message text.
+PRINT_REASON = "a print to a stream other than an accepted standard error sink"
+STDERR_REASON = "a standard error reference outside an accepted positioned print"
+FD_REASON = "an os descriptor write, duplication or abort that can bypass _fail"
+EXIT_REASON = "an exit not through _fail, main or an accepted positioned print"
+FAIL_REASON = ("a _fail message that names no position, or relays an error not caught as "
+               "MigrationError alone")
+REFERENCE_REASON = "a reference to MigrationError other than a construction or an except clause"
+LINE_REASON = "a line position given as a constant, a default or a starred argument"
+RAISE_REASON = "a raise of something other than a positioned MigrationError"
+CONSTRUCTION_REASON = "an error whose message names no documented position"
+IMPORT_REASON = "an import that can write to standard error or exit bypassing _fail"
+# One deliberately unpositioned refusal path of each kind the probe covers, as (name, anchor,
+# replacement, reasons) over the migration source. The probe must refuse every one for exactly the
+# reasons named, so a mutation refused only by an unrelated rule fails the self-test. A print to
+# standard error is also a reference to sys.stderr, and a handler of two types also references
+# MigrationError inside a tuple, so each of those two carries both reasons.
 POSITION_MUTATIONS = (
     ("a direct print to standard error", MAIN_ANCHOR,
-     "    print(\"cannot start\", file=sys.stderr)\n    sys.exit(1)\n" + MAIN_ANCHOR),
-    ("a write to sys.stderr", MAIN_ANCHOR, "    sys.stderr.write(\"cannot start\")\n" + MAIN_ANCHOR),
-    ("a descriptor write to fd 2", MAIN_ANCHOR, "    os.write(2, b\"cannot start\")\n" + MAIN_ANCHOR),
-    ("an exit with a message", MAIN_ANCHOR, "    sys.exit(\"cannot start\")\n" + MAIN_ANCHOR),
-    ("a bare exit status", MAIN_ANCHOR, "    sys.exit(1)\n" + MAIN_ANCHOR),
+     "    print(\"cannot start\", file=sys.stderr)\n" + MAIN_ANCHOR, (PRINT_REASON, STDERR_REASON)),
+    ("a write to sys.stderr", MAIN_ANCHOR, "    sys.stderr.write(\"cannot start\")\n" + MAIN_ANCHOR,
+     (STDERR_REASON,)),
+    ("a descriptor write to fd 2", MAIN_ANCHOR, "    os.write(2, b\"cannot start\")\n" + MAIN_ANCHOR,
+     (FD_REASON,)),
+    ("an exit with a message", MAIN_ANCHOR, "    sys.exit(\"cannot start\")\n" + MAIN_ANCHOR,
+     (EXIT_REASON,)),
+    ("a bare exit status", MAIN_ANCHOR, "    sys.exit(1)\n" + MAIN_ANCHOR, (EXIT_REASON,)),
     ("an OSError relayed through _fail", RELAY,
-     RELAY + "    except OSError as exc:\n        _fail(str(exc))\n"),
+     RELAY + "    except OSError as exc:\n        _fail(str(exc))\n", (FAIL_REASON,)),
     ("a relay under a handler of two types", RELAY,
-     RELAY.replace("except MigrationError", "except (MigrationError, OSError)")),
+     RELAY.replace("except MigrationError", "except (MigrationError, OSError)"),
+     (FAIL_REASON, REFERENCE_REASON)),
     ("a relay of a rebound name", RELAY,
-     RELAY.replace("        _fail", "        exc = OSError(\"x\")\n        _fail")),
+     RELAY.replace("        _fail", "        exc = OSError(\"x\")\n        _fail"), (FAIL_REASON,)),
     ("a constant line position", "\"line {}: table row before the header\".format(lineno)",
-     "\"line {}: table row before the header\".format(1)"),
+     "\"line {}: table row before the header\".format(1)", (CONSTRUCTION_REASON,)),
     ("a constant output position", "raise _output_error(text, \"output {} resolves to the input\"",
-     "raise _output_error(\"\", \"output {} resolves to the input\""),
-    ("a raise of another type", MAIN_ANCHOR, "    raise ValueError(\"cannot start\")\n" + MAIN_ANCHOR),
+     "raise _output_error(\"\", \"output {} resolves to the input\"", (LINE_REASON,)),
+    ("a raise of another type", MAIN_ANCHOR, "    raise ValueError(\"cannot start\")\n" + MAIN_ANCHOR,
+     (RAISE_REASON,)),
     ("a MigrationError with no position", MAIN_ANCHOR,
-     "    raise MigrationError(\"cannot start\")\n" + MAIN_ANCHOR),
-    ("an unpositioned usage _fail", "_fail(\"{0}: usage: ", "_fail(\"{0} usage: "),
-    ("an import of logging", "import hashlib\n", "import hashlib\nimport logging\n"),
+     "    raise MigrationError(\"cannot start\")\n" + MAIN_ANCHOR, (CONSTRUCTION_REASON,)),
+    ("an unpositioned usage _fail", "_fail(\"{0}: usage: ", "_fail(\"{0} usage: ", (FAIL_REASON,)),
+    ("an import of logging", "import hashlib\n", "import hashlib\nimport logging\n",
+     (IMPORT_REASON,)),
 )
 
 
@@ -1447,12 +1478,205 @@ class PositionProbe(unittest.TestCase):
 
     def test_the_probe_refuses_each_unpositioned_refusal_path(self):
         source = self.source()
-        for name, anchor, replacement in POSITION_MUTATIONS:
+        for name, anchor, replacement, reasons in POSITION_MUTATIONS:
             with self.subTest(mutation=name):
                 self.assertEqual(source.count(anchor), 1, "the mutation anchor is not unique")
+                self.assertTrue(reasons, "a mutation names no reason")
                 _counts, bad = position_probe(source.replace(anchor, replacement),
                                               "MigrationError", "migrate-todo-aei")
                 self.assertNotEqual(bad, [], "the probe accepted {}".format(name))
+                self.assertEqual(sorted({why for _line, why, _text in bad}), sorted(set(reasons)),
+                                 "the probe refused {} for reasons other than its own: {!r}"
+                                 .format(name, bad))
+
+
+# Runs a tool in a working directory that no longer exists: argv[1] is made the working directory
+# and removed, then the tool argv[2] is executed under python3 -I with the arguments that follow.
+GONE_CWD_PROG = """
+import os, sys
+os.chdir(sys.argv[1])
+os.rmdir(sys.argv[1])
+os.execv(sys.executable, [sys.executable, "-I"] + sys.argv[2:])
+"""
+
+# Runs in a separate python3 -I -B process: load the migration by path, make the stage named by
+# argv[2] raise (a RuntimeError, or a KeyboardInterrupt for the "interrupt" stage; "none" injects
+# nothing), run main on the JSON argument list argv[3] with stdout and stderr captured, and print
+# the exit code, whether a KeyboardInterrupt passed through, and both captured streams.
+GUARD_PROG = """
+import importlib.util, io, json, sys
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("migrate_under_test", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+stage, args = sys.argv[2], json.loads(sys.argv[3])
+
+
+def boom(*_args, **_kwargs):
+    raise RuntimeError("injected at the " + stage + " stage")
+
+
+def interrupt(*_args, **_kwargs):
+    raise KeyboardInterrupt
+
+
+class Sink(io.StringIO):
+    def close(self):
+        pass
+
+
+class Refusing(Sink):
+    def write(self, _text):
+        boom()
+
+
+targets = {"path": (mod.os.path, "abspath", boom), "read": (mod, "read_input", boom),
+           "convert": (mod, "convert", boom), "write": (mod, "write_output", boom),
+           "digest": (mod, "row_digest", boom), "interrupt": (mod, "convert", interrupt),
+           "fsync": (mod.os, "fsync", boom), "fsync-interrupt": (mod.os, "fsync", interrupt)}
+if stage in targets:
+    owner, attr, replacement = targets[stage]
+    setattr(owner, attr, replacement)
+out, err = (Refusing() if stage == "stdout" else Sink()), io.StringIO()
+real = (sys.stdout, sys.stderr)
+sys.stdout, sys.stderr = out, err
+code, interrupted = None, False
+try:
+    code = mod.main(args)
+except SystemExit as exc:
+    code = exc.code
+except KeyboardInterrupt:
+    interrupted = True
+finally:
+    sys.stdout, sys.stderr = real
+print(json.dumps({"code": code, "interrupted": interrupted, "stdout": out.getvalue(),
+                  "stderr": err.getvalue()}))
+"""
+
+class RuntimeGuard(MigrateHarness):
+    """The top-level guard in main turns any exception that escapes the handling into one positioned
+    refusal line, exit 1, with no traceback, at the position the run had reached: before line 1
+    until the whole input is read, then the end of input, and the end of input with the output
+    refused once the output step has started. A KeyboardInterrupt passes through."""
+
+    TIMEOUT = 20
+
+    def assert_guarded(self, code, stderr, position, needle):
+        self.assertEqual(code, 1, "expected exit 1: {!r}".format(stderr))
+        self.assertNotIn("Traceback", stderr)
+        self.assertNotIn("Exception ignored", stderr)
+        lines = stderr.splitlines()
+        self.assertEqual(len(lines), 1, "one failure line: {!r}".format(stderr))
+        match = POSITION_RE.match(lines[0])
+        self.assertIsNotNone(match, "the failure names no position: {!r}".format(lines[0]))
+        self.assertEqual(match.group(1), position, lines[0])
+        self.assertIn(needle, lines[0])
+
+    def run_closed_stdout(self, script, *args):
+        # The reading end of the stdout pipe is closed before the tool starts, so its write to
+        # stdout always meets a pipe with no reader.
+        read_end, write_end = os.pipe()
+        os.close(read_end)
+        try:
+            return subprocess.run([sys.executable, "-I", str(script), *[str(a) for a in args]],
+                                  stdout=write_end, stderr=subprocess.PIPE, text=True,
+                                  timeout=self.TIMEOUT)
+        finally:
+            os.close(write_end)
+
+    def run_in_a_gone_directory(self, script, *args):
+        gone = Path(tempfile.mkdtemp(prefix="gone-", dir=str(self._tmp)))
+        r = subprocess.run([sys.executable, "-I", "-c", GONE_CWD_PROG, str(gone), str(script),
+                            *[str(a) for a in args]], capture_output=True, text=True,
+                           timeout=self.TIMEOUT)
+        self.assertFalse(gone.exists(), "precondition: the working directory is gone")
+        return r
+
+    def run_stage(self, script, stage, *args):
+        r = subprocess.run([sys.executable, "-I", "-B", "-c", GUARD_PROG, str(script), stage,
+                            json.dumps([str(a) for a in args])], capture_output=True, text=True,
+                           timeout=self.TIMEOUT)
+        self.assertEqual(r.returncode, 0, "the stage harness failed: {}".format(r.stderr))
+        return json.loads(r.stdout)
+
+    def test_a_closed_stdout_pipe(self):
+        text = old_fixture()
+        self.write_src(text)
+        r = self.run_closed_stdout(MIGRATE, "--dump-old-cells", self.src)
+        self.assert_guarded(r.returncode, r.stderr,
+                            end_of_input(text).replace(", output refused", ""),
+                            "unexpected BrokenPipeError")
+        # In the conversion the summary write fails after the output was written in full, so the
+        # refusal names the output step and says the file is left in place.
+        r = self.run_closed_stdout(MIGRATE, self.src, self.dst)
+        self.assert_guarded(r.returncode, r.stderr, end_of_input(text),
+                            "unexpected BrokenPipeError")
+        self.assertIn("was written in full before this error and is left in place", r.stderr)
+        self.assertTrue(self.dst.exists(), "the output written in full is left in place")
+
+    def test_a_deleted_working_directory_with_a_relative_path(self):
+        for args in (("TODO.md", "TODO.aei.md"), ("--dump-old-cells", "TODO.md")):
+            with self.subTest(args=list(args)):
+                r = self.run_in_a_gone_directory(MIGRATE, *args)
+                self.assertEqual(r.stdout, "")
+                self.assert_guarded(r.returncode, r.stderr, NOT_READ,
+                                    "unexpected FileNotFoundError")
+
+    def test_an_exception_injected_at_each_stage(self):
+        text = old_fixture()
+        self.write_src(text)
+        refused = end_of_input(text)
+        end = refused.replace(", output refused", "")
+        control = self.run_stage(MIGRATE, "none", self.src, self.dst)
+        self.assertEqual(control["code"], 0, control["stderr"])
+        self.assertEqual(json.loads(control["stdout"])["converted"], len(OLD_ROWS))
+        self.dst.unlink()
+        cases = (("path", (self.src, self.dst), NOT_READ, False),
+                 ("read", (self.src, self.dst), NOT_READ, False),
+                 ("convert", (self.src, self.dst), end, False),
+                 ("write", (self.src, self.dst), refused, False),
+                 ("stdout", (self.src, self.dst), refused, True),
+                 ("path", ("--dump-old-cells", self.src), NOT_READ, False),
+                 ("read", ("--dump-old-cells", self.src), NOT_READ, False),
+                 ("convert", ("--dump-old-cells", self.src), end, False),
+                 ("digest", ("--dump-old-cells", self.src), end, False),
+                 ("stdout", ("--dump-old-cells", self.src), end, False))
+        for stage, args, position, written in cases:
+            with self.subTest(stage=stage, args=[str(a) for a in args]):
+                result = self.run_stage(MIGRATE, stage, *args)
+                self.assertFalse(result["interrupted"])
+                self.assertEqual(result["stdout"], "")
+                self.assert_guarded(result["code"], result["stderr"], position,
+                                    "unexpected RuntimeError: injected at the {} stage"
+                                    .format(stage))
+                self.assertEqual(os.path.lexists(self.dst), written)
+                self.assertEqual("was written in full" in result["stderr"], written)
+                if written:
+                    self.dst.unlink()
+
+    def test_a_failure_during_the_write_leaves_no_output(self):
+        # A non-OSError raised inside write_output after the exclusive create (here from os.fsync,
+        # after the text is written) removes the partial output and is refused positioned; a
+        # KeyboardInterrupt at the same point also removes it and still propagates.
+        text = old_fixture()
+        self.write_src(text)
+        result = self.run_stage(MIGRATE, "fsync", self.src, self.dst)
+        self.assertFalse(result["interrupted"])
+        self.assertEqual(result["stdout"], "")
+        self.assert_guarded(result["code"], result["stderr"], end_of_input(text),
+                            "unexpected RuntimeError: injected at the fsync stage")
+        self.assertFalse(os.path.lexists(self.dst), "a failed write leaves no partial output")
+        result = self.run_stage(MIGRATE, "fsync-interrupt", self.src, self.dst)
+        self.assertTrue(result["interrupted"], "the guard caught a KeyboardInterrupt")
+        self.assertEqual(result["stderr"], "")
+        self.assertFalse(os.path.lexists(self.dst), "an interrupted write leaves no partial output")
+
+    def test_a_keyboard_interrupt_is_not_caught(self):
+        self.write_src(old_fixture())
+        result = self.run_stage(MIGRATE, "interrupt", self.src, self.dst)
+        self.assertTrue(result["interrupted"], "the guard caught a KeyboardInterrupt")
+        self.assertEqual(result["stderr"], "")
+        self.assertFalse(os.path.lexists(self.dst))
 
 
 # Every name that opens or reads a path; a reference to any of them, called, aliased or imported,
