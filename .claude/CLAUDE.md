@@ -73,9 +73,9 @@ for dev-time sessions through [`settings.json`](settings.json) and the local
 marketplace at `plugin/`. All 14 core hooks can fire (`gensrc_guard` was armed in PR #156).
 `write_scope_guard` keeps its structural cross-repository write denial, now exempting one
 declared companion store (`/opt/cleanlanguage/private`, the record store), while its slice
-confinement stays un-armed. A minimal orchestration registry arms two of the 10 orchestrator
-hooks (`orch_truncation_guard` and `orch_untracked_wait_loop`); the rest stay inert or
-warn-only pending a fuller registry (see [`../.aiqt/config.md`](../.aiqt/config.md)).
+confinement stays un-armed. A minimal orchestration registry is declared; what each of the
+10 orchestrator hooks does under it today, including the stop guard denial and the operator
+escape that releases it, is described in [`../.aiqt/config.md`](../.aiqt/config.md).
 
 ## Asking the maintainer questions
 

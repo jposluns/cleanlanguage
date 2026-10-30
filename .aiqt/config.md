@@ -60,9 +60,10 @@ identity rather than relying on the scan alone. This repository requires the sam
 its [root `CLAUDE.md`](../CLAUDE.md): the maintainer is the sole author, with no Claude
 co-author or session trailer.
 
-A minimal orchestration registry (`.aiqt/orchestration.json`, version 1) now exists. It
-declares only `companion_stores`, so of the 10 orchestrator hooks it arms just the two that
-gate on the registry's mere presence: `orch_truncation_guard` and `orch_untracked_wait_loop`.
+A minimal orchestration registry (`.aiqt/orchestration.json`, version 1) arms part of the
+orchestrator suite. It declares `companion_stores`, `record`, `lease`, `state_dir`, and an
+empty `dispatch_tools`. Two of the 10 orchestrator hooks deny on the presence of the registry
+alone: `orch_truncation_guard` and `orch_untracked_wait_loop`.
 These deny an untracked background detach (a bare `&`), a truncated background capture (a
 background dispatch piped into `head` or `tail`), and a backgrounded poll loop. They carry
 one disclosed residual that touches a common idiom: the detach scan does not model
@@ -71,14 +72,29 @@ odd number of apostrophes is denied as though it were a detach. Write multi-line
 through the Write or Edit tool (which these Bash guards never see) or through `printf` rather
 than a Bash heredoc when the body carries such characters.
 
-The other eight orchestrator hooks do not fire under this registry, but for different
-reasons, so they are not uniformly scope-gated. Five are scope-gated and stay inert because
-the registry declares no `lease` and no `mode`, so `scope_live` is false: `orch_yield_tool`,
-`orch_dispatch_ledger`, `orch_prompt_stamp`, `orch_stop_guard`, and `orch_teammate_idle`.
-`orch_ask_guard` fires only in `unattended` mode, which is not declared, and otherwise only
-logs a fail-open audit event. `orch_resume_barrier` is not scope-gated at all: it fires only
-once `orch_resume_audit` has armed a `resume-barrier.json`, which has not happened, and
-`orch_resume_audit` itself reads the registry at SessionStart and is warn-only.
+The declared `lease` makes scope live: while the lease file is present, non-empty, and
+fresh, every session whose working directory resolves to this checkout and which can
+reach the lease file
+is in scope, so the scope-gated hooks fire. `orch_dispatch_ledger` records each background
+launch in `dispatch-ledger.jsonl`, and `orch_prompt_stamp` stamps each human prompt in
+`turn-state.json`, both under `state_dir`. `orch_stop_guard` and `orch_teammate_idle` share
+one decision core. With no AEI enumerator declared, a turn-end Stop in scope is denied on
+`NO_ENUMERATOR` unless the operator escape sentinel `ESCAPE-ALLOW-YIELD` in `state_dir`
+releases it; on the maintainer host that sentinel is a root-owned file (observed 2026-10-29),
+and each release is logged as an operator escape event. The denial has two further exits.
+It is bounded: after two denials since the last human prompt (the loop bound), or when the
+Stop event reports that a stop hook is already active, the Stop is allowed with the
+unresolved items reported as findings, and the forced exit is recorded for the next resume
+audit while open work remains or the backlog is not enumerable. An unreadable denial counter
+counts as the bound reached. If the denial counter cannot be saved to `turn-state.json`, the
+guard fails open instead: it allows the Stop with a warning, since an unsaved counter could
+never reach the bound. `orch_yield_tool` is in scope but
+finds no `yield_tools` roster, so it allows every scheduling call as out of roster.
+`orch_ask_guard` denies only in `unattended` mode; no `mode` record is declared, so it allows
+and logs a fail-open audit event. `orch_resume_audit` reads the registry at every
+SessionStart and writes `resume-barrier.json` under `state_dir`, arming the barrier only when
+it finds divergence; while a barrier is armed, `orch_resume_barrier` surfaces a one-time
+warning on a mutation outside the record surfaces and blocks nothing.
 
 One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
 empties, so cross-repository writes deny), but the scope-gated guards do not react to it
@@ -87,7 +103,14 @@ without recording; and `orch_yield_tool` fails closed, denying a scheduling call
 malformed registry blocks scheduling immediately, even with no `lease` or `mode`. To keep a
 corrupt registry from reaching a session, `tools/check-orchestration-registry.py` (run by the
 Orchestration registry workflow) rejects a structurally invalid `.aiqt/orchestration.json`
-before it lands. The follow-up that arms the full suite (a `lease`, a `mode`, and an AEI
-enumerator so the stop and yield guards can judge the backlog, the deferred 28.2 work) relies
-on that gate. A value review flagged three past incidents that `orch_dispatch_ledger`,
+before it lands. Stage 2 of item 28.2, which arms the rest of the suite, is deferred and
+relies on that gate. It is planned as two pull requests. The first extends the gate to
+validate the stage-2 keys (`enumerator`, `yield_tools`, `mode`, `staleness`, `escape`,
+`attestations`, and `mistakes_register`) and adds the AEI backlog enumerator, the backlog
+migration tool, the orchestration doctor, and their tests, with no registry change. The second
+declares those keys, `attestations` and
+`mistakes_register` only if the maintainer adopts them, while the escape sentinel stays in
+place, so the enumerator first runs in shadow; the sentinel is removed only after that shadow
+period and an acknowledged notice to lab_infra. `truth` has no reader in the vendored hook and
+stays rejected. A value review flagged three past incidents that `orch_dispatch_ledger`,
 `orch_truncation_guard`, and `orch_resume_audit` would mechanically prevent.

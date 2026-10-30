@@ -9,6 +9,17 @@ name: Orchestration registry
 # scheduling even with no lease or mode). This gate rejects a structurally invalid committed
 # registry before it lands, so a corrupt registry cannot reach a session.
 #
+# The stage-2 steps test the project backlog enumerator and the one-shot TODO.md migration
+# script, then drive the real hook with each stage-2 arming key against a contrast without
+# that key, together with the project orch_doctor tool. Each is its own named step, so a run
+# that omits one is visible in the step list, not only in the overall colour. A lint step fails
+# when a comment or docstring in these sources names a review round or a finding id instead of
+# stating its reason (tools/test-no-qa-labels.py).
+#
+# Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
+# beside a script cannot shadow a standard library import and no PYTHON* environment variable
+# steers the run. tools/test-orchestration-registry.py checks this file for the flag.
+#
 # This workflow carries no paths filter on purpose. A path-filtered required check never
 # reports on a pull request outside its paths and blocks the merge as forever-pending;
 # running on every pull request keeps this gate promotable to a required check later. The
@@ -32,19 +43,35 @@ jobs:
 
       - name: Validate the orchestration registry
         shell: bash
-        run: python3 tools/check-orchestration-registry.py
+        run: python3 -I tools/check-orchestration-registry.py
 
       - name: Run the orchestration-registry gate tests
         shell: bash
-        run: python3 tools/test-orchestration-registry.py
+        run: python3 -I tools/test-orchestration-registry.py
+
+      - name: Check the orchestration sources for review-history labels
+        shell: bash
+        run: python3 -I tools/test-no-qa-labels.py
 
       - name: Run the stage-1 hook behaviour tests
         shell: bash
-        run: python3 tools/test-orch-stage1-hooks.py
+        run: python3 -I tools/test-orch-stage1-hooks.py
+
+      - name: Run the backlog enumerator tests
+        shell: bash
+        run: python3 -I tools/test-orch-enumerate-backlog.py
+
+      - name: Run the TODO.md migration tests
+        shell: bash
+        run: python3 -I tools/test-orch-migrate-todo.py
+
+      - name: Run the stage-2 hook behaviour and doctor tests
+        shell: bash
+        run: python3 -I tools/test-orch-stage2-hooks.py
 
       # Re-run the gate against the committed registry by its explicit path, so this step is RED both on
       # a malformed edit and (via the gate tests above, which assert the arming keys are present) on a
       # tree that lacks the stage-1 arming change.
       - name: Validate the committed orchestration registry explicitly
         shell: bash
-        run: python3 tools/check-orchestration-registry.py .aiqt/orchestration.json
+        run: python3 -I tools/check-orchestration-registry.py .aiqt/orchestration.json

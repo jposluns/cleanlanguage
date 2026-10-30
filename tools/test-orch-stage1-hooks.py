@@ -74,7 +74,7 @@ class HookHarness(unittest.TestCase):
 
     def setUp(self):
         if not HOOK.exists():
-            self.skipTest("installed hook not found: {}".format(HOOK))
+            self.fail("installed hook not found: {}".format(HOOK))
         self._tmp = Path(tempfile.mkdtemp(prefix="orch-stage1-"))
         self.repo = self._tmp / "repo"
         self.store = self._tmp / "store"
@@ -523,7 +523,7 @@ class CorruptedRegistry(HookHarness):
 
     def test_resume_barrier_allows(self):
         # status != "ok" -> _allow(), even with an ACTIVE barrier present (aiqt_hooks.py:9805-9807).
-        # LOAD-BEARING (codex QA round 5, LOW): on a BAD registry _orch_state_dir_for_root falls back to
+        # LOAD-BEARING: on a BAD registry _orch_state_dir_for_root falls back to
         # the XDG default (aiqt_hooks.py:7658-7659 -> _state_dir_from_registry(root, None)), NOT the
         # registry-declared state_dir, so orch_resume_barrier reads its barrier from the XDG default. We
         # ARM the barrier THERE by running orch_resume_audit first, which on a bad registry writes an
@@ -545,8 +545,8 @@ class CorruptedRegistry(HookHarness):
         self.assertEqual(r.stdout.strip(), "")
 
     def test_stop_guard_fails_open_warn(self):
-        # DURABLE PIN of the fail-OPEN posture at aiqt_hooks.py:8579-8583, refuting the gemini seed's
-        # fail-closed claim: a bad registry warns (exit 0) and blocks NOTHING at the Stop boundary.
+        # DURABLE PIN of the fail-OPEN posture at aiqt_hooks.py:8579-8583, not fail-closed: a
+        # bad registry warns (exit 0) and blocks NOTHING at the Stop boundary.
         self.write_registry(self.TRUNCATED)
         r = self.run_hook("orch_stop_guard", {})
         self.assertEqual(r.returncode, 0, r.stderr)
