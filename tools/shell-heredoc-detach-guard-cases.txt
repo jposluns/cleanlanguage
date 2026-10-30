@@ -1,7 +1,8 @@
 # Cases for tools/test-shell-heredoc-detach-guard.py. Each case starts with a line
 # === <expect> <name>
 # and its command is every following line up to the next such line, newline-terminated.
-# expect: deny (the background deny rule), deny-closed (a fail-closed deny), allow.
+# expect: deny (the shape: a detach, or a bypass found in review), over (a deny that is
+# the disclosed over-refusal: nothing detaches), allow.
 # <TAB> stands for a tab character. Lines starting with # before the first case are comments.
 === deny d01-bash-single-quoted-delimiter
 bash <<'EOF'
@@ -59,15 +60,15 @@ EOF
 === deny d13-no-delimiter-line
 bash <<'EOF'
 sleep 100 &
-=== deny d14-script-operand-over-refusal
+=== deny d14-script-operand
 bash script.sh <<'EOF'
 sleep 100 &
 EOF
-=== deny-closed d15-body-unreadable
+=== deny d15-body-unclosed-quote
 bash <<'EOF'
 echo 'unclosed &
 EOF
-=== deny-closed d16-command-unreadable-with-shell
+=== deny d16-delimiter-unclosed-quote
 bash <<'EOF
 sleep 100 &
 === allow a01-cat-data-apostrophes-ampersands
@@ -100,7 +101,7 @@ bash <<'EOF'
 ls /nonexistent 2>&1
 echo x >&2
 EOF
-=== allow a07-shell-body-quoted-ampersands
+=== over o01-shell-body-quoted-ampersands
 bash <<'EOF'
 echo "a & b" 'c & d' e\&f
 EOF
@@ -114,7 +115,7 @@ bash <<'EOF'
 ls &>/dev/null
 ls |& cat
 EOF
-=== allow a10-shell-body-comment-ampersand
+=== over o02-shell-body-comment-ampersand
 bash <<'EOF'
 echo hi # background with &
 EOF
@@ -122,7 +123,7 @@ EOF
 bash <<EOF
 sleep 100 &
 EOF
-=== allow a12-data-heredoc-inside-shell-body
+=== over o03-data-heredoc-inside-shell-body
 bash <<'EOF'
 cat > f.txt <<'DATA'
 Tom & Jerry
@@ -134,11 +135,11 @@ sleep 1 &
 tee out.txt <<'EOF'
 a & b
 EOF
-=== allow a15-shell-body-case-fallthrough
+=== over o04-shell-body-case-fallthrough
 bash <<'EOF'
 case x in x) echo a ;& y) echo b ;; esac
 EOF
-=== allow a16-script-written-to-file
+=== over o05-script-written-to-file-with-a-shebang
 cat > s.sh <<'EOF'
 #!/bin/bash
 sleep 100 &
@@ -252,7 +253,7 @@ cat <<INNER
 $(sleep 0.1 &)
 INNER
 EOF
-=== deny-closed d33-unquoted-nested-substitution-unreadable
+=== deny d33-unquoted-nested-substitution-unclosed
 bash <<'EOF'
 cat <<INNER
 $(echo &
@@ -263,38 +264,129 @@ cat <<'EOF' |
 sleep 100 &
 EOF
 tee out.txt
-=== allow a20-double-ampersand-newline-then-separate-shell
+=== over o06-double-ampersand-newline-then-separate-shell
 cat <<'EOF' &&
 sleep 100 &
 EOF
 bash -c true
-=== allow a21-unquoted-data-heredoc-plain-ampersands-in-body
+=== over o07-unquoted-data-heredoc-plain-ampersands-in-body
 bash <<'EOF'
 cat > f.txt <<INNER
 Tom & Jerry && more
 INNER
 EOF
-=== allow a22-unquoted-data-heredoc-escaped-substitutions
+=== over o08-unquoted-data-heredoc-escaped-substitutions
 bash <<'EOF'
 cat <<INNER
 \$(sleep 100 &) and \`sleep 100 &\`
 INNER
 EOF
-=== allow a23-unquoted-data-heredoc-substitution-without-background
+=== over o09-unquoted-data-heredoc-substitution-without-background
 bash <<'EOF'
 cat <<INNER
 $(true && echo ok) & data
 INNER
 EOF
-=== allow a24-quoted-nested-data-heredoc-substitution-text
+=== over o10-quoted-nested-data-heredoc-substitution-text
 bash <<'EOF'
 cat <<'INNER'
 $(sleep 100 &)
 INNER
 EOF
-=== allow a25-unquoted-heredoc-fed-to-python-in-body
+=== over o11-unquoted-heredoc-fed-to-python-in-body
 bash <<'EOF'
 python3 - <<INNER
 print(1 & 2)
 INNER
 EOF
+=== deny d34-backslash-newline-inside-nested-delimiter
+bash <<'EOF'
+bash <<IN\
+NER
+sleep 0.1 &
+INNER
+EOF
+=== deny d35-quoted-heredoc-piped-to-while-running-a-shell
+cat <<'EOF' | while read -r line; do bash -c "$line"; done
+sleep 0.1 &
+EOF
+=== deny d36-quoted-heredoc-piped-to-if-running-a-shell
+cat <<'EOF' | if true; then bash; fi
+sleep 0.1 &
+EOF
+=== deny d37-quoted-heredoc-piped-to-case-running-a-shell
+cat <<'EOF' | case x in x) bash ;; esac
+sleep 0.1 &
+EOF
+=== deny d38-quoted-heredoc-piped-to-for-running-a-shell
+cat <<'EOF' | for i in 1; do bash; done
+sleep 0.1 &
+EOF
+=== deny d39-bash-c-with-a-substitution
+bash -c "$(cat <<'EOF'
+sleep 0.1 &
+EOF
+)"
+=== deny d40-echo-substitution-piped-to-bash
+echo "$(cat <<'EOF'
+sleep 0.1 &
+EOF
+)" | bash
+=== deny d41-partly-quoted-delimiter
+bash <<E'OF'
+sleep 0.1 &
+EOF
+=== deny d42-ansi-c-quoted-delimiter
+bash <<$'EOF'
+sleep 0.1 &
+EOF
+=== deny d43-operator-split-by-a-line-continuation
+bash <\
+<'EOF'
+sleep 0.1 &
+EOF
+=== deny d44-shell-name-split-by-quotes
+b""ash <<'EOF'
+sleep 0.1 &
+EOF
+=== deny d45-shell-variable
+SHELL=/bin/bash; $SHELL <<'EOF'
+sleep 0.1 &
+EOF
+=== deny d46-background-right-after-a-redirect-target
+bash <<'EOF'
+sleep 100 >/dev/null&
+EOF
+=== deny d47-triple-ampersand
+bash <<'EOF'
+true &&& sleep 100
+EOF
+=== over o12-data-that-mentions-a-shell
+cat <<'EOF'
+Tom & Jerry use bash
+EOF
+=== allow a26-no-heredoc-ampersand-and-shell-out-of-scope
+sleep 1 & bash -c true
+=== allow a27-command-v-bash-with-a-heredoc-without-ampersand
+command -v bash >/dev/null && cat <<'EOF'
+plain text
+EOF
+=== allow a28-shell-fed-quoted-heredoc-without-ampersand
+bash <<'EOF'
+echo hi; true || false
+EOF
+=== allow a29-ordinary-pipeline
+ls -la | grep x && echo ok
+=== allow a30-ordinary-command-with-redirects
+sort < in.txt &>/dev/null
+=== allow a31-shell-body-append-combined-redirect
+bash <<'EOF'
+echo x &>>/dev/null
+EOF
+=== allow a32-residual-here-string-not-judged
+bash <<< 'sleep 0.1 &'
+=== allow a33-residual-eval-without-shell-name
+eval "$(cat <<'EOF'
+sleep 0.1 &
+EOF
+)"

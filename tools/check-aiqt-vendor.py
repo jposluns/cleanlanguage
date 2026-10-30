@@ -17,9 +17,14 @@ with `git ls-files` (GIT_* environment scrubbed, literal pathspecs). Each check 
   check 1  `[source] source-commit` is 40 lowercase hex characters, `[vendor] source-commit` equals it,
            `[vendored] paths` is a non-empty list of distinct relative paths, each with at least one
            tracked file, and each `[[vendor.relocated]]` entry maps a distinct tracked vendored file to a
-           distinct upstream path that is not itself a tracked vendored file. The pin text carries no
-           draft marker: the word DRAFT or PLACEHOLDER in capitals, anywhere in the file, comments
-           included, fails with its line number, so a draft pin cannot land.
+           distinct upstream path that is not itself a tracked vendored file, and the pair is in the
+           gate allowed set (ALLOWED_RELOCATIONS: `.aiqt/LICENSE` from `LICENSE`, `.aiqt/NOTICE` from
+           `NOTICE`). The pin carries no draft marker: DRAFT, PLACEHOLDER, TBD or TODO in capitals
+           anywhere in the text (comments and keys included) fails with its line number, and any string
+           value that holds one of them as a substring in any case fails with its key, so a draft pin
+           cannot land (a comment in ordinary lower-case prose, such as the draft was finalized, is not a
+           marker). `revendored`, in `[source]` or `[vendor]`, is present in at least one of them, and
+           each present value is an ISO date (YYYY-MM-DD) that is not in the future.
   check 2  every tracked file under the vendored paths, except `.aiqt/release/root.txt` and the manifest
            itself, is a regular file with a manifest `[[sources]]` entry (at its upstream path, for a
            relocated file) whose `bytes` and `sha256` equal the file.
@@ -49,8 +54,10 @@ with `git ls-files` (GIT_* environment scrubbed, literal pathspecs). Each check 
 Relocation. The pack keeps some files at its own root, such as `LICENSE` and `NOTICE`, that the adopter
 vendors under another path, such as `.aiqt/LICENSE`. A `[[vendor.relocated]]` entry in the pin names the
 local `path` and the `upstream` path; the gate then looks the file up in the manifest, and re-derives it in
-check 7, at the upstream path. Every other vendored file keeps its upstream path. An absent list means no
-file is relocated.
+check 7, at the upstream path. The gate allows exactly the pairs in ALLOWED_RELOCATIONS; any other
+relocation, of a hook, a rule or any file under a whole root, fails check 1, and that file is then judged
+at its own path. Every other vendored file keeps its upstream path. An absent list means no file is
+relocated.
 
 Fails closed. An unreadable, unparseable, missing, or non-regular input, a malformed pin or manifest
 field, an empty file list, a manifest without its generated header, or a git enumeration that cannot run
@@ -75,8 +82,8 @@ is a QA-worker and pre-merge step until CI egress to the pack repository is gran
 trusts the pack checkout it is pointed at, and git there reads its own on-disk configuration. Check 4
 counts and hashes the active set but does not re-derive applicability from applies.toml and the profile:
 the exclusion list is adopter-declared, and a wrong exclusion is a review finding, not a gate finding.
-A relocation is adopter-declared in the same way: one that points a local file at the wrong upstream path
-is caught only where the two files differ in content. The gate judges the git index and the working tree at the time it runs: an untracked file under a
+A relocation is limited to the allowed set fixed in this gate, so the pin cannot point another vendored
+file at a different upstream file; a change to that set is a change to this gate, reviewed as code. The gate judges the git index and the working tree at the time it runs: an untracked file under a
 vendored path (for example an extra untracked rule a local session would still load) is outside the
 tracked set and is not judged, a file changed between its read and the verdict is not re-read, and the
 O_NOFOLLOW refusal covers the final path component only, not a symlinked parent directory. Git itself
@@ -100,6 +107,7 @@ if not sys.flags.isolated:
         sys.exit(1)
 
 import argparse
+import datetime
 import hashlib
 import re
 import stat
@@ -135,13 +143,24 @@ REQUIRED_FILES = {
     ".aiqt/core/ownership.toml": ".aiqt/core/ownership.toml",
     ".aiqt/core/order.toml": ".aiqt/core/order.toml",
 }
+# The only relocations the gate accepts: the pack root licence and notice, vendored under .aiqt/. Every
+# other vendored file sits at its own upstream path. Fixed here, never read from the pin.
+ALLOWED_RELOCATIONS = {
+    ".aiqt/LICENSE": "LICENSE",
+    ".aiqt/NOTICE": "NOTICE",
+}
 # Provenance files the manifest does not list: the manifest itself and the release root.
 REQUIRED_META = (".aiqt/manifest.toml", ROOT_TXT_REL)
 # The roots this adopter vendors whole, and the trees of rendered active rules.
 REQUIRED_WHOLE = (".aiqt/core/rules", "plugin/aiqt-guardrails-hooks")
 REQUIRED_ACTIVE_TREES = (".claude/rules/aiqt", ".claude/rules/security")
-# A draft pin: the markers a draft carries until it is finalized (case-sensitive words).
-DRAFT_MARKER = re.compile(r"(?<![A-Za-z0-9_])(DRAFT|PLACEHOLDER)(?![A-Za-z0-9_])")
+# A draft pin: the markers a draft carries until it is finalized. In the raw text (comments included) a
+# marker is the capitalized word as a substring; in a string value it is a substring in any case.
+DRAFT_MARKERS = ("DRAFT", "PLACEHOLDER", "TBD", "TODO")
+DRAFT_MARKER = re.compile("|".join(DRAFT_MARKERS))
+DRAFT_MARKER_ANY_CASE = re.compile("|".join(DRAFT_MARKERS), re.IGNORECASE)
+ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+REVENDORED_TABLES = ("source", "vendor")
 
 
 class InputError(Exception):
@@ -170,6 +189,18 @@ def _valid_rel(value):
 
 def _under(path, prefix):
     return path == prefix or path.startswith(prefix + "/")
+
+
+def _string_values(node, key):
+    """Yield (dotted key, string) for every string value in a parsed TOML document, at any depth."""
+    if isinstance(node, str):
+        yield ".".join(key) or "(root)", node
+    elif isinstance(node, dict):
+        for k, v in node.items():
+            yield from _string_values(v, key + (str(k),))
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            yield from _string_values(v, key + ("[{}]".format(i),))
 
 
 def read_regular(abspath):
@@ -366,11 +397,45 @@ class Gate:
         return (commit if ok else None), tracked
 
     # Check 1, the pin is final.
-    def check_pin_final(self, text):
+    def check_pin_final(self, text, pin):
         for lineno, line in enumerate(text.split("\n"), 1):
             for m in DRAFT_MARKER.finditer(line):
                 self.fail(1, "{}:{}".format(PIN_REL, lineno), "the pin carries the draft marker {}; a pin with "
-                          "a DRAFT marker or a PLACEHOLDER value is not final and cannot land".format(m.group(1)))
+                          "a DRAFT, PLACEHOLDER, TBD or TODO marker is not final and cannot land".format(
+                              m.group(0)))
+        for key, value in _string_values(pin, ()):
+            m = DRAFT_MARKER_ANY_CASE.search(value)
+            if m is not None:
+                self.fail(1, "{} {}".format(PIN_REL, key), "the value holds the draft marker {!r} (matched in "
+                          "any case); a pin with a draft value is not final and cannot land".format(m.group(0)))
+        self.check_revendored(pin)
+
+    # Check 1, the re-vendor date.
+    def check_revendored(self, pin):
+        today = max(datetime.date.today(), datetime.datetime.now(datetime.timezone.utc).date())
+        present = 0
+        for table in REVENDORED_TABLES:
+            body = pin.get(table)
+            if not isinstance(body, dict) or "revendored" not in body:
+                continue
+            present += 1
+            value, where = body["revendored"], "[{}] revendored".format(table)
+            if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
+                date = value
+            elif isinstance(value, str) and ISO_DATE.fullmatch(value):
+                try:
+                    date = datetime.date.fromisoformat(value)
+                except ValueError:
+                    date = None
+            else:
+                date = None
+            if date is None:
+                self.fail(1, PIN_REL, "{} is {!r}, not an ISO date (YYYY-MM-DD)".format(where, value))
+            elif date > today:
+                self.fail(1, PIN_REL, "{} is {}, a date in the future (today is {})".format(
+                    where, date.isoformat(), today.isoformat()))
+        if not present:
+            self.fail(1, PIN_REL, "no revendored date in [source] or [vendor]")
 
     # Check 1, the relocation map.
     def check_relocations(self, pin, tracked):
@@ -393,6 +458,11 @@ class Gate:
                 continue
             if path in mapping:
                 self.fail(1, path, "listed twice in [[vendor.relocated]]")
+                continue
+            if ALLOWED_RELOCATIONS.get(path) != up:
+                self.fail(1, path, "[[vendor.relocated]] maps it to {}, which is not in the allowed relocation "
+                          "set (ALLOWED_RELOCATIONS); every other vendored file sits at its own upstream "
+                          "path".format(up))
                 continue
             if up in targets:
                 self.fail(1, up, "named as the upstream path of two [[vendor.relocated]] entries")
@@ -700,7 +770,7 @@ class Gate:
         if os.path.realpath(top) != os.path.realpath(self.root):
             raise InputError("{}: not the top level of its git work tree ({})".format(self.root, top))
         pin_text, pin = read_toml(os.path.join(self.root, PIN_REL), "the pin")
-        self.check_pin_final(pin_text)
+        self.check_pin_final(pin_text, pin)
         commit, tracked = self.check_source_and_paths(pin)
         if tracked is None:
             self.fail(1, PIN_REL, "checks 2 to 7 cannot be evaluated without a valid [vendored] paths list")

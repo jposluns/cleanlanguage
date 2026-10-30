@@ -3,22 +3,27 @@
 heredoc lifting reduction).
 
 1. Every case in tools/shell-heredoc-detach-guard-cases.txt is sent to the hook as a PreToolUse Bash
-   payload, and the verdict (deny, or allow with or without a note) must match the case.
-2. The second reader the hook loads, the vendored lexer, must be reachable and must read a backgrounding
-   ampersand and not a double ampersand.
-3. The flip: a copy of the hook with its deny rule (the line marked DENY-RULE) removed must turn every
-   deny case red (allowed), while the fail-closed denies still deny. A flip that changes nothing fails.
-4. The bash oracle: every case named in ORACLE_CASES must be present with its expectation, and real bash
-   must agree with it. Each such command is run by bash -c in a fresh directory with its backgrounded
-   command (sleep, a number and an ampersand) replaced by a command that writes a marker to stderr and
-   detaches nothing; the marker must appear exactly for the deny cases, so each deny is a body bash does
-   run as commands (a pipeline continued past a newline, an unquoted nested body whose expansions run,
-   an unquoted nested body fed to a shell) and each allow is one it does not.
+   payload, and the verdict must match the case: deny and over (the disclosed over-refusal) must be
+   denied, allow must be allowed.
+2. The flip: a copy of the hook with its deny rule (the line marked DENY-RULE) replaced by a pass must
+   turn every deny and over case red (allowed). A flip that changes nothing fails.
+3. The oracle self-test: the bash oracle must count a positive control as executed, and must not count a
+   syntax-error body, an echo of the marker command, a run that exits non-zero, or escaped data as
+   executed.
+4. The bash oracle: every case named in ORACLE_CASES must be present with an expectation its kind allows,
+   and real bash must agree with the kind. Each such command is run by bash -c in a fresh directory
+   with its backgrounded sleep (sleep, a number and an ampersand) replaced by ORACLE_COMMAND, which
+   backgrounds true and then writes a computed value, 42, to the file oracle.out, ending with a
+   semicolon so a command that followed the ampersand stays separate. A case counts as
+   executed only when bash exits 0 and that file holds exactly 42: only execution of the redirection
+   creates the file, and the value is computed, so text that bash merely prints (an echoed command or a
+   syntax error) never counts. A runs case must be executed and denied; an inert case must not be
+   executed (its verdict may be an allow or an over-refusal); a residual case must be executed and
+   allowed, which pins a disclosed residual as real.
 
 Exit 0 only when all four hold. Launch with python3 -I. Temporary files go under TMPDIR.
 """
 
-import importlib.util
 import json
 import os
 import shutil
@@ -31,36 +36,64 @@ ROOT = os.path.dirname(TOOLS)
 HOOK_REL = (".claude", "hooks", "shell_heredoc_detach_guard.py")
 HOOK = os.path.join(ROOT, *HOOK_REL)
 CASES = os.path.join(TOOLS, "shell-heredoc-detach-guard-cases.txt")
-VENDORED_REL = ("plugin", "aiqt-guardrails-hooks", "hooks", "scripts", "aiqt_hooks.py")
-VENDORED = os.path.join(ROOT, *VENDORED_REL)
 MARK = "# DENY-RULE"
-EXPECTS = ("deny", "deny-closed", "allow")
-# The cases the bash oracle runs (check 4): the line continuation of a pipeline past a newline, and every
-# here-document nested in a shell-fed body, quoted or not, with its siblings that must stay allowed. An
-# allow case whose body holds no backgrounded command (a21, a23, a25) has nothing for the oracle to run.
+EXPECTS = ("deny", "over", "allow")
+AMP = "\x26"
+APOS = "\x27"
+ORACLE_FILE = "oracle.out"
+ORACLE_VALUE = "42\n"
+ORACLE_COMMAND = "true " + AMP + " echo $((6*7)) >" + ORACLE_FILE + ";"
+SWAPS = ("sleep 0.1 " + AMP, "sleep 100 " + AMP)
+# The cases the bash oracle runs (check 4), by kind: runs (bash executes the backgrounded command, and
+# the hook must deny), inert (bash does not execute it), residual (bash executes it and the hook allows
+# it, as the residual discloses). Shells absent from a plain runner (zsh, ksh) are left out.
 ORACLE_CASES = {
-    "d17-pipe-newline-later-shell": "deny",
-    "d18-pipe-newline-blank-and-comment-lines": "deny",
-    "d19-stderr-pipe-newline": "deny",
-    "d20-pipe-newline-through-later-stages": "deny",
-    "d21-pipe-newline-inside-shell-body": "deny",
-    "d22-unquoted-data-heredoc-substitution-in-body": "deny",
-    "d23-unquoted-data-heredoc-backquote-in-body": "deny",
-    "d24-unquoted-data-heredoc-substitution-inside-literal-quotes": "deny",
-    "d25-unquoted-data-heredoc-parameter-expansion-in-body": "deny",
-    "d26-unquoted-heredoc-fed-to-shell-in-body": "deny",
-    "d27-unquoted-heredoc-piped-to-shell-in-body": "deny",
-    "d28-unquoted-tab-strip-heredoc-fed-to-shell-in-body": "deny",
-    "d29-recursive-quoted-unquoted-quoted": "deny",
-    "d30-unquoted-heredoc-in-substitution-in-body": "deny",
-    "d31-shell-heredoc-in-substitution-of-unquoted-body": "deny",
-    "d32-piped-shell-body-with-unquoted-nested-substitution": "deny",
-    "a19-pipe-newline-to-non-shell": "allow",
-    "a20-double-ampersand-newline-then-separate-shell": "allow",
-    "a22-unquoted-data-heredoc-escaped-substitutions": "allow",
-    "a24-quoted-nested-data-heredoc-substitution-text": "allow",
+    "d01-bash-single-quoted-delimiter": "runs",
+    "d02-sh-double-quoted-delimiter": "runs",
+    "d03-env-bash": "runs",
+    "d04-absolute-bin-bash": "runs",
+    "d05-body-with-several-commands": "runs",
+    "d08-cat-piped-to-bash": "runs",
+    "d10-nested-shell-heredoc-in-body": "runs",
+    "d12-command-wrapper-bash-s": "runs",
+    "d17-pipe-newline-later-shell": "runs",
+    "d18-pipe-newline-blank-and-comment-lines": "runs",
+    "d19-stderr-pipe-newline": "runs",
+    "d20-pipe-newline-through-later-stages": "runs",
+    "d21-pipe-newline-inside-shell-body": "runs",
+    "d22-unquoted-data-heredoc-substitution-in-body": "runs",
+    "d23-unquoted-data-heredoc-backquote-in-body": "runs",
+    "d24-unquoted-data-heredoc-substitution-inside-literal-quotes": "runs",
+    "d25-unquoted-data-heredoc-parameter-expansion-in-body": "runs",
+    "d26-unquoted-heredoc-fed-to-shell-in-body": "runs",
+    "d27-unquoted-heredoc-piped-to-shell-in-body": "runs",
+    "d28-unquoted-tab-strip-heredoc-fed-to-shell-in-body": "runs",
+    "d29-recursive-quoted-unquoted-quoted": "runs",
+    "d30-unquoted-heredoc-in-substitution-in-body": "runs",
+    "d31-shell-heredoc-in-substitution-of-unquoted-body": "runs",
+    "d32-piped-shell-body-with-unquoted-nested-substitution": "runs",
+    "d34-backslash-newline-inside-nested-delimiter": "runs",
+    "d35-quoted-heredoc-piped-to-while-running-a-shell": "runs",
+    "d36-quoted-heredoc-piped-to-if-running-a-shell": "runs",
+    "d37-quoted-heredoc-piped-to-case-running-a-shell": "runs",
+    "d38-quoted-heredoc-piped-to-for-running-a-shell": "runs",
+    "d39-bash-c-with-a-substitution": "runs",
+    "d40-echo-substitution-piped-to-bash": "runs",
+    "d41-partly-quoted-delimiter": "runs",
+    "d42-ansi-c-quoted-delimiter": "runs",
+    "d43-operator-split-by-a-line-continuation": "runs",
+    "d44-shell-name-split-by-quotes": "runs",
+    "d45-shell-variable": "runs",
+    "a02-cat-to-stdout-data": "inert",
+    "a19-pipe-newline-to-non-shell": "inert",
+    "o05-script-written-to-file-with-a-shebang": "inert",
+    "o06-double-ampersand-newline-then-separate-shell": "inert",
+    "o08-unquoted-data-heredoc-escaped-substitutions": "inert",
+    "o10-quoted-nested-data-heredoc-substitution-text": "inert",
+    "a32-residual-here-string-not-judged": "residual",
+    "a33-residual-eval-without-shell-name": "residual",
 }
-ORACLE_MARK = "ORACLE-RAN"
+KIND_EXPECTS = {"runs": ("deny",), "inert": ("allow", "over"), "residual": ("allow",)}
 
 
 def load_cases(path=CASES):
@@ -79,12 +112,15 @@ def load_cases(path=CASES):
                     raise ValueError("text before the first case: " + line)
             else:
                 current[2].append(line)
-    out = []
+    out, names = [], set()
     for expect, name, lines in cases:
         while lines and lines[-1] == "":
             lines.pop()
         if not lines:
             raise ValueError("empty case " + name)
+        if name in names:
+            raise ValueError("duplicate case name " + name)
+        names.add(name)
         out.append((expect, name, "\n".join(lines).replace("<TAB>", "\t") + "\n"))
     if not out:
         raise ValueError("no cases in " + path)
@@ -117,7 +153,7 @@ def run_hook(hook, command, cwd=None):
 
 
 def expected_ok(expect, verdict):
-    if expect in ("deny", "deny-closed"):
+    if expect in ("deny", "over"):
         return verdict == "deny"
     return verdict in ("allow", "allow-note")
 
@@ -127,35 +163,29 @@ def check_cases(hook, cases):
     for expect, name, command in cases:
         verdict = run_hook(hook, command)
         status = "ok" if expected_ok(expect, verdict) else "FAIL"
-        print("{:4} {:12} {:9} {}".format(status, expect, verdict, name))
+        print("{:4} {:6} {:10} {}".format(status, expect, verdict, name))
         if status != "ok":
             failures.append(name)
     return failures
 
 
-def check_vendored_reader():
-    """The hook second reader: the vendored lexer must load and judge a backgrounding ampersand."""
-    if not os.path.isfile(VENDORED):
-        return ["vendored hook module absent at " + VENDORED]
-    sys.dont_write_bytecode = True
-    spec = importlib.util.spec_from_file_location("_shdg_hook_under_test", HOOK)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    func, reason = module.vendored_lexer()
-    if func is None:
-        return ["vendored lexer unavailable: " + reason]
-    amp, notes, failures = module.AMP, [], []
-    if module.vendored_background("sleep 1 " + amp + "\n", notes) is not True:
-        failures.append("vendored reader missed a backgrounding ampersand")
-    if module.vendored_background("true " + amp + amp + " echo ok\n", notes) is not False:
-        failures.append("vendored reader read a double ampersand as a background")
-    if module.vendored_background("case x in x) echo a ;" + amp + " y) echo b ;; esac\n", notes) is not False:
-        failures.append("vendored reader read a case fall-through terminator as a background")
-    if module.vendored_background("(sleep 1) " + amp + "\n", notes) is not True:
-        failures.append("vendored reader missed a backgrounded subshell")
-    if notes:
-        failures.append("vendored reader notes: " + "; ".join(notes))
-    print("{:4} vendored second reader".format("ok" if not failures else "FAIL"))
+def check_payloads(hook):
+    """The disclosed unreadable-payload handling: allowed with a note."""
+    failures = []
+    for label, raw in (("not JSON", "{not json"), ("no command string",
+                       json.dumps({"tool_name": "Bash", "tool_input": {"command": 7}}))):
+        proc = subprocess.run([sys.executable, "-I", hook], input=raw, capture_output=True, text=True,
+                              timeout=60, cwd=ROOT)
+        try:
+            obj = json.loads(proc.stdout)
+        except ValueError:
+            obj = {}
+        message = str(obj.get("systemMessage", ""))
+        ok = (proc.returncode == 0 and "hookSpecificOutput" not in obj
+              and ("could not be read" in message or "no command string" in message))
+        print("{:4} payload {}".format("ok" if ok else "FAIL", label))
+        if not ok:
+            failures.append("unreadable payload ({}) was not allowed with a note".format(label))
     return failures
 
 
@@ -172,86 +202,121 @@ def flipped_hook(workdir):
     os.makedirs(os.path.dirname(target))
     with open(target, "w", encoding="ascii") as handle:
         handle.write("\n".join(lines))
-    if os.path.isfile(VENDORED):
-        vend = os.path.join(workdir, *VENDORED_REL)
-        os.makedirs(os.path.dirname(vend))
-        os.symlink(VENDORED, vend)
     return target
 
 
 def check_flip(cases):
-    """Every deny case must come back allowed from the flipped hook; every deny-closed case still denied."""
-    failures, red = [], 0
+    """Every deny and over case must come back allowed from the flipped hook."""
+    failures, red, total = [], 0, 0
     workdir = tempfile.mkdtemp(prefix="shdg-flip-")
     try:
         hook = flipped_hook(workdir)
         for expect, name, command in cases:
             if expect == "allow":
                 continue
+            total += 1
             verdict = run_hook(hook, command)
-            if expect == "deny":
-                turned_red = verdict in ("allow", "allow-note")
-                red += turned_red
-                print("{:4} flip {:9} {}".format("red" if turned_red else "FAIL", verdict, name))
-                if not turned_red:
-                    failures.append("flip did not turn " + name + " red")
-            elif verdict != "deny":
-                failures.append("flip changed the fail-closed case " + name)
+            turned_red = verdict in ("allow", "allow-note")
+            red += turned_red
+            print("{:4} flip {:10} {}".format("red" if turned_red else "FAIL", verdict, name))
+            if not turned_red:
+                failures.append("flip did not turn " + name + " red")
     finally:
         shutil.rmtree(workdir)
     if red == 0:
         failures.append("the flip turned no deny case red")
-    return failures, red
+    return failures, red, total
 
 
-def check_oracle(cases):
-    """Check 4: each ORACLE_CASES case is present with its expectation, and bash runs its backgrounded
-    command exactly when the case is a deny."""
+def oracle_executed(bash, command):
+    """(executed, detail): executed only when bash exits 0 and the file oracle.out holds exactly 42."""
+    workdir = tempfile.mkdtemp(prefix="shdg-oracle-")
+    try:
+        proc = subprocess.run([bash, "-c", command], capture_output=True, text=True, timeout=30,
+                              cwd=workdir, stdin=subprocess.DEVNULL)
+        path = os.path.join(workdir, ORACLE_FILE)
+        content = None
+        if os.path.isfile(path) and not os.path.islink(path):
+            with open(path, encoding="ascii", errors="replace") as handle:
+                content = handle.read()
+    finally:
+        shutil.rmtree(workdir)
+    executed = proc.returncode == 0 and content == ORACLE_VALUE
+    return executed, "exit {}, {} {!r}".format(proc.returncode, ORACLE_FILE, content)
+
+
+def check_oracle_self(bash):
+    """Check 3: the oracle counts real execution only."""
+    q = APOS
+    probes = (
+        ("positive control", ORACLE_COMMAND + "\n", True),
+        ("syntax-error body (unclosed parenthesis)",
+         "bash <<" + q + "EOF" + q + "\n( " + ORACLE_COMMAND + "\nEOF\n", False),
+        ("syntax-error body (if without then)",
+         "bash <<" + q + "EOF" + q + "\nif " + ORACLE_COMMAND + "\nEOF\n", False),
+        ("the marker command echoed as text", "echo " + q + ORACLE_COMMAND + q + "\n", False),
+        ("the marker command echoed to stderr", "echo " + q + ORACLE_COMMAND + q + " 1>" + AMP + "2\n", False),
+        ("executed, then a non-zero exit", ORACLE_COMMAND + " false\n", False),
+        ("escaped substitution in an unquoted body",
+         "cat <<INNER\n\\$(" + ORACLE_COMMAND + ")\nINNER\n", False),
+    )
+    failures = []
+    for label, command, want in probes:
+        executed, detail = oracle_executed(bash, command)
+        ok = executed == want
+        print("{:4} oracle self-test {:8} {} ({})".format("ok" if ok else "FAIL",
+                                                         "executed" if executed else "inert", label, detail))
+        if not ok:
+            failures.append("oracle self-test: {} counted {}".format(label, "executed" if executed else "inert"))
+    return failures
+
+
+def check_oracle(cases, hook, bash):
+    """Check 4: each ORACLE_CASES case is present with an expectation its kind allows, and bash executes
+    its backgrounded command exactly when its kind says so."""
     failures, by_name = [], {name: (expect, command) for expect, name, command in cases}
-    bash = shutil.which("bash")
-    if bash is None:
-        return ["bash is not on PATH, so the oracle cannot run"]
-    amp = "\x26"
-    marker = "echo {} >/dev/stderr".format(ORACLE_MARK)
-    for name, expect in sorted(ORACLE_CASES.items()):
+    for name, kind in sorted(ORACLE_CASES.items()):
         if name not in by_name:
             failures.append("oracle case missing from the case file: " + name)
             continue
-        if by_name[name][0] != expect:
-            failures.append("oracle case {} expects {}, the case file says {}".format(
-                name, expect, by_name[name][0]))
+        expect, command = by_name[name]
+        if expect not in KIND_EXPECTS[kind]:
+            failures.append("oracle case {} is {} but the case file expects {}".format(name, kind, expect))
             continue
-        command = by_name[name][1]
-        swapped = command.replace("sleep 0.1 " + amp, marker).replace("sleep 100 " + amp, marker)
+        swapped = command
+        for old in SWAPS:
+            swapped = swapped.replace(old, ORACLE_COMMAND)
         if swapped == command:
             failures.append("oracle case {} has no backgrounded sleep to replace".format(name))
             continue
-        workdir = tempfile.mkdtemp(prefix="shdg-oracle-")
-        try:
-            proc = subprocess.run([bash, "-c", swapped], capture_output=True, text=True, timeout=30,
-                                  cwd=workdir, stdin=subprocess.DEVNULL)
-        finally:
-            shutil.rmtree(workdir)
-        ran = ORACLE_MARK in proc.stderr
-        ok = ran == (expect == "deny")
-        print("{:4} oracle {:5} bash {:13} {}".format("ok" if ok else "FAIL", expect,
-                                                      "ran it" if ran else "did not run it", name))
+        executed, detail = oracle_executed(bash, swapped)
+        verdict = run_hook(hook, command)
+        want = kind in ("runs", "residual")
+        ok = executed == want and expected_ok(expect, verdict)
+        print("{:4} oracle {:8} bash {:12} hook {:6} {} ({})".format(
+            "ok" if ok else "FAIL", kind, "executed it" if executed else "did not", verdict, name, detail))
         if not ok:
-            failures.append("bash {} the backgrounded command of {} ({})".format(
-                "ran" if ran else "did not run", name, expect))
+            failures.append("oracle case {} ({}): bash {}, hook {}".format(
+                name, kind, "executed it" if executed else "did not execute it", verdict))
     return failures
 
 
 def main():
     cases = load_cases()
     failures = check_cases(HOOK, cases)
-    failures += check_vendored_reader()
-    flip_failures, red = check_flip(cases)
+    failures += check_payloads(HOOK)
+    flip_failures, red, total = check_flip(cases)
     failures += flip_failures
-    failures += check_oracle(cases)
-    denies = sum(1 for expect, _n, _c in cases if expect == "deny")
-    print("cases {}, deny cases turned red by the flip {} of {}, failures {}".format(
-        len(cases), red, denies, len(failures)))
+    bash = shutil.which("bash")
+    if bash is None:
+        failures.append("bash is not on PATH, so the oracle cannot run")
+    else:
+        failures += check_oracle_self(bash)
+        failures += check_oracle(cases, HOOK, bash)
+    counts = {e: sum(1 for x, _n, _c in cases if x == e) for e in EXPECTS}
+    print("cases {} (deny {}, over {}, allow {}), deny and over cases turned red by the flip {} of {}, "
+          "oracle cases {}, failures {}".format(len(cases), counts["deny"], counts["over"], counts["allow"],
+                                                red, total, len(ORACLE_CASES), len(failures)))
     for failure in failures:
         print("FAILURE: " + failure)
     return 1 if failures else 0

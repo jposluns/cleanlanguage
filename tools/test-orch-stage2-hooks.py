@@ -35,8 +35,11 @@ uid and cannot run here; T11 proves the declared path is the one consulted (spoo
 malformed declaration disables the release, and the honour leg is verified on the host.
 
 Grounding: every hook-behaviour assertion is read from
-plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py at source; cited line numbers are in the
-per-test comments. The PR1-f doctor tests at the end drive tools/orch_doctor.py the same way. A
+plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py at source, and the per-test comments and
+docstrings cite the code each relies on by symbol, never by line number: the file name aiqt_hooks.py, a
+colon and a top-level name of the hook, optionally followed by a backticked clause, which
+tools/test-hook-citations.py resolves against the vendored hook. The PR1-f doctor tests at the end drive
+tools/orch_doctor.py the same way. A
 missing required input (the installed hook or the doctor) fails the test rather than skipping it, so
 an absent file can never read as a green run. The doctor tests also prove that a preflight out of
 scope, or for idle out of the roster, runs no enumerator, as the hook runs none there,

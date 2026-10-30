@@ -16,8 +16,12 @@ file from the pin, as well as altering it, turns the suite red. The fixture carr
 the gate declares (the relocated licence and notice, the four core TOML files, the manifest, the release
 root, the two whole roots and the two active trees); the RequiredSet cases delete each required file or
 root together with every pin entry naming it and expect the gate to fail, and a probe holds the gate
-constants equal to the set listed here. The PinFinal cases put a DRAFT marker or a PLACEHOLDER value in the
-pin and expect check 1 to fail.
+constants equal to the set listed here. The PinFinal cases put a draft marker (DRAFT, PLACEHOLDER, TBD or
+TODO in capitals in a comment, or any of them as a substring in any case in a value) or a malformed, absent
+or future revendored date in the pin and expect check 1 to fail. The Relocation cases also map a vendored
+file outside the allowed set (the hook, a plugin file, a corpus rule, an active rule, a core file) to
+another pinned upstream file carrying its bytes, and expect check 1 to fail where checks 1 to 7 would
+otherwise pass.
 
 Runs offline with the standard library and git; every Python launch is isolated (-I).
 """
@@ -145,7 +149,8 @@ def base_spec():
     files[ROOT_TXT] = (FAKE_ROOT + "\n").encode()
     files["README.md"] = b"Not vendored.\n"
     pin = {
-        "source": {"name": "aiqt-guardrails", "license": "Apache-2.0", "source-commit": FAKE_COMMIT},
+        "source": {"name": "aiqt-guardrails", "license": "Apache-2.0", "source-commit": FAKE_COMMIT,
+                   "revendored": "2026-09-05"},
         "version": {"pack": "9.9.9"},
         "integrity": {"tree-sha256": FAKE_TREE, "root": FAKE_ROOT, "manifest": MANIFEST},
         "vendored": {"paths": list(VENDORED) + sorted(RELOCATED)},
@@ -185,7 +190,8 @@ def build(base, spec):
     pin = json.loads(json.dumps(spec["pin"]))
     if pin.get("vendor", {}).get("files") == "AUTO":
         pin["vendor"]["files"] = [{"path": p, "bytes": len(files[p]), "sha256": sha(files[p])}
-                                  for p in PLUGIN + sorted(set(relocated) | set(CORE_TOML)) if p in files]
+                                  for p in PLUGIN + sorted((set(relocated) | set(CORE_TOML)) - set(PLUGIN))
+                                  if p in files]
     if relocated and isinstance(pin.get("vendor"), dict) and "relocated" not in pin["vendor"]:
         pin["vendor"]["relocated"] = [{"path": p, "upstream": u} for p, u in sorted(relocated.items())]
     if spec["edit"] is not None:
@@ -709,6 +715,47 @@ class Relocation(GateCase):
             spec["upstream_edit"] = lambda f: f.pop("NOTICE")
         self.assertCheckFails(self.spec_run(relocated_and(fn), upstream=True), 7)
 
+    def test_relocation_outside_the_allowed_set_fails(self):
+        # A vendored file replaced by the bytes of another pinned upstream file, relocated onto that file:
+        # the manifest, the pack checkout and the [[vendor.files]] row all agree with the swap, so only the
+        # allowed relocation set refuses it.
+        for path in (PLUGIN[2], PLUGIN[0], ".aiqt/core/rules/alpha.md", ".claude/rules/aiqt/10-ALPHA.md",
+                     ".aiqt/core/order.toml"):
+            with self.subTest(path=path):
+                self.base = Path(tempfile.mkdtemp(prefix="aiqt-vendor-test-"))
+                self.addCleanup(shutil.rmtree, self.base, True)
+                result = self.spec_run(relocate_onto_other_upstream(path), upstream=True)
+                self.assertCheckFails(result, 1)
+                self.assertIn("check 1: {}: [[vendor.relocated]] maps it to".format(path), result.stderr)
+                self.assertIn("not in the allowed relocation set", result.stderr)
+
+    def test_licence_and_notice_swapped_fails(self):
+        def fn(spec):
+            spec["relocated"] = {".aiqt/LICENSE": "NOTICE", ".aiqt/NOTICE": "LICENSE"}
+        result = self.spec_run(fn)
+        self.assertCheckFails(result, 1)
+        self.assertIn("not in the allowed relocation set", result.stderr)
+
+
+def relocate_onto_other_upstream(path):
+    """Replace a vendored file by the bytes of another pinned upstream file and relocate it onto that
+    file, keeping the manifest entry and the pack copy at its own path untouched."""
+    decoy = "pack-only/" + path.replace("/", "-")
+
+    def mutate(spec):
+        original = spec["files"][path]
+        spec["files"][path] = original + b"\n# the bytes of another pinned upstream file\n"
+        spec["relocated"][path] = decoy
+        old = spec["edit"]
+
+        def edit(pin, sources, artifacts):
+            if old is not None:
+                old(pin, sources, artifacts)
+            sources[path] = (len(original), sha(original))
+        spec["edit"] = edit
+        spec["upstream_edit"] = lambda files: files.__setitem__(path, original)
+    return mutate
+
 
 def drop_required(path):
     """Delete a required file together with every pin entry naming it: its [vendored] paths element, its
@@ -730,9 +777,10 @@ class RequiredSet(GateCase):
         for node in ast.parse(GATE.read_text(encoding="utf-8")).body:
             if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
                 name = node.targets[0].id
-                if name in ("REQUIRED_FILES", "REQUIRED_WHOLE", "REQUIRED_ACTIVE_TREES"):
+                if name in ("REQUIRED_FILES", "REQUIRED_WHOLE", "REQUIRED_ACTIVE_TREES", "ALLOWED_RELOCATIONS"):
                     values[name] = ast.literal_eval(node.value)
         self.assertEqual(values.get("REQUIRED_FILES"), REQUIRED_FILES)
+        self.assertEqual(values.get("ALLOWED_RELOCATIONS"), RELOCATED)
         self.assertEqual(tuple(values.get("REQUIRED_WHOLE", ())), REQUIRED_WHOLE)
         self.assertEqual(tuple(values.get("REQUIRED_ACTIVE_TREES", ())), REQUIRED_ACTIVE_TREES)
         self.assertIn("REQUIRED_META = (\".aiqt/manifest.toml\", ROOT_TXT_REL)", GATE.read_text(encoding="utf-8"))
@@ -816,6 +864,61 @@ class PinFinal(GateCase):
     def test_lowercase_words_are_not_markers(self):
         self.assertPasses(self.spec_run(self._with_pin_text(
             lambda t: "# the draft was finalized; no placeholders remain\n" + t)))
+
+    def _fresh(self):
+        self.base = Path(tempfile.mkdtemp(prefix="aiqt-vendor-test-"))
+        self.addCleanup(shutil.rmtree, self.base, True)
+
+    def test_marker_substring_in_a_value_fails_in_any_case(self):
+        for value in ("PLACEHOLDER_MERGE_DATE", "DRAFT2", "TBD", "todo: later", "a Draft sentence",
+                      "see tbd", "x-placeholder-x"):
+            with self.subTest(value=value):
+                self._fresh()
+                result = self.spec_run(edit_pin(lambda pin, v=value: pin["vendor"].__setitem__("verified", v)))
+                self.assertCheckFails(result, 1)
+                self.assertIn("check 1: .aiqt/pin.toml vendor.verified: the value holds the draft marker",
+                              result.stderr)
+
+    def test_capitalized_marker_substring_in_a_comment_fails(self):
+        for comment, marker in (("# TBD before merge", "TBD"), ("# TODO: finalize", "TODO"),
+                                ("# DRAFT2 of the pin", "DRAFT"), ("# a PLACEHOLDER_DATE remains", "PLACEHOLDER")):
+            with self.subTest(comment=comment):
+                self._fresh()
+                result = self.spec_run(self._with_pin_text(lambda t, c=comment: c + "\n" + t))
+                self.assertCheckFails(result, 1)
+                self.assertIn("check 1: .aiqt/pin.toml:1: the pin carries the draft marker " + marker,
+                              result.stderr)
+
+    def test_revendored_must_be_an_iso_date_not_in_the_future(self):
+        import datetime
+        future = (datetime.date.today() + datetime.timedelta(days=400)).isoformat()
+        for value, needle in (("2026-13-01", "not an ISO date"), ("30/10/2026", "not an ISO date"),
+                              ("2026-9-5", "not an ISO date"), ("", "not an ISO date"),
+                              ("2026-09-05T10:00:00", "not an ISO date"), (future, "a date in the future")):
+            with self.subTest(value=value):
+                self._fresh()
+                result = self.spec_run(edit_pin(lambda pin, v=value: pin["source"].__setitem__("revendored", v)))
+                self.assertCheckFails(result, 1)
+                self.assertIn("[source] revendored is", result.stderr)
+                self.assertIn(needle, result.stderr)
+
+    def test_revendored_absent_fails(self):
+        result = self.spec_run(edit_pin(lambda pin: pin["source"].pop("revendored")))
+        self.assertCheckFails(result, 1)
+        self.assertIn("no revendored date in [source] or [vendor]", result.stderr)
+
+    def test_revendored_in_the_vendor_table_is_checked(self):
+        result = self.spec_run(edit_pin(lambda pin: pin["vendor"].__setitem__("revendored", "next week")))
+        self.assertCheckFails(result, 1)
+        self.assertIn("[vendor] revendored is", result.stderr)
+
+    def test_revendored_today_and_as_a_toml_date_pass(self):
+        import datetime
+        self.assertPasses(self.spec_run(edit_pin(
+            lambda pin: pin["source"].__setitem__("revendored", datetime.date.today().isoformat()))))
+        self._fresh()
+        self.assertPasses(self.spec_run(self._with_pin_text(
+            lambda t: t.replace("revendored = \"2026-09-05\"", "revendored = 2026-09-05"))))
 
 
 class FailClosed(GateCase):
@@ -924,7 +1027,8 @@ class Isolation(GateCase):
 
 
 class RealTree(GateCase):
-    # Fails while the pin still carries its DRAFT header and PLACEHOLDER values (check 1), as intended.
+    # Fails while the pin still carries its DRAFT header and PLACEHOLDER values, and its revendored value
+    # is not yet a date (check 1), as intended.
     def test_real_tree_passes(self):
         result = self.run_gate(REPO_ROOT)
         self.assertPasses(result)
