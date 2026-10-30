@@ -29,9 +29,11 @@ prose, and its residual is open-ended: a label in any phrasing, synonym or layou
 not list passes, and no list of known gaps can close that set. Completeness over the class of
 review-history labels therefore rests on an independent search of the scanned files, not on this
 lint. The known residual forms are these: a review pass named in words ("the third review"); a
-round number after a colon that a letter follows, with or without a space between, as in "round:
-7 decimal places", or that a decimal continuation follows, as in "round: 7.5"; a finding id
-of three or more capital letters or of more than two digits; a finding id with a hyphen or a
+round number after a colon that a letter of any script follows on the same physical line, with or
+without a space between, as in "round: 7 decimal places" or a time in microseconds written with
+the micro sign or the Greek mu, or that a decimal continuation follows, as in "round: 7.5"; a
+round number with an ordinal suffix, as in "round 7th"; a finding id of three or more capital
+letters or of more than two digits; a finding id with a hyphen or a
 letter suffix, such as "the F-1 case" or "the F1a case", anywhere outside parentheses and the
 word "finding"; in prose, a bare id that follows "point " or starts with "PR" (the forms the
 plan uses for its open points and pull-request slices), exclusions the code-line bare id pattern
@@ -40,9 +42,13 @@ claude or gemini; a family name more than two words away from its review or cred
 credited by a verb outside REVIEW_WORD; in a Python file, a label split across two lines of a
 string that is not a statement of its own, such as an argument or an assigned value, which is
 matched line by line only; and a bare id in code that does not use one of the letters of the
-code-line bare id pattern. The PatternSelfCheck case pins the forms the patterns are known to
-cover and the ordinary code and prose they must not flag, so a pattern weakened or widened past
-either set fails the suite.
+code-line bare id pattern. The colon form also has known false failures, accepted as low
+severity: a word that follows the number only on the next physical line does not exempt it, so
+such a line fails until the text is reflowed to keep the word on the line of the number, and a
+number that a bracket, a percent sign or an arrow follows is caught. The PatternSelfCheck case
+pins the forms the patterns are known to cover, the ordinary code and prose they must not flag
+and these accepted false failures, so a pattern weakened or widened past any of those sets fails
+the suite.
 """
 import ast
 import bisect
@@ -78,12 +84,12 @@ NEAR = r"(?:\W+\w+){0,2}?\W+"
 
 # Matched against every physical line and every joined prose block.
 LABEL_PATTERNS = (
-    # A colon form passes only when a letter or a decimal continuation follows the number, so
-    # "round: 7 decimal places" and "round: 7.5" pass and any other ending, such as a closing
-    # quote, bracket or mark, is caught.
+    # A colon form passes only when a letter of any script or a decimal continuation follows the
+    # number, so "round: 7 decimal places", a time in microseconds and "round: 7.5" pass and any
+    # other ending, such as a closing quote, bracket or mark, is caught.
     ("a review round number", re.compile(
         r"(?i)\brounds?[-\s]*#?[0-9]+\b"
-        r"|\brounds?\s*:\s*#?[0-9]+(?!\s*[A-Za-z]|\.?[0-9])")),
+        r"|\brounds?\s*:\s*#?[0-9]+(?!\s*[^\W\d_]|\.?[0-9])")),
     ("a fix round", re.compile(r"(?i)\bfix[- ]rounds?\b")),
     ("a QA round", re.compile(r"(?i)\bQA round\b")),
     ("a model-family QA attribution", re.compile(r"(?i)\b(?:codex|claude|gemini) QA\b")),
@@ -303,7 +309,13 @@ class PatternSelfCheck(unittest.TestCase):
              "Point the command at the QA cycle", "commit d191071", "UTF-8", "line 8:", "the g1 prefix",
              "The PR1-f doctor tests", "HTTP 400", "SHA256", "a codex worker", "the gemini CLI",
              "maintained with Claude", "Claude, Anthropic, OpenAI, Codex, Copilot, or Gemini",
-             "U+FFA0", "U+D800..U+DFFF", "round: 7 decimal places", "round: 7.5")
+             "U+FFA0", "U+D800..U+DFFF", "round: 7 decimal places", "round: 7.5",
+             "Time per round: 7\u00b5s", "Time per round: 7 \u03bcs")
+    # Accepted low-severity false failures of the colon form: ordinary text that is caught because
+    # neither a letter nor a decimal continuation follows the number on its own line. They stay
+    # caught, so the trade-off cannot change silently.
+    FALSE_FAILURES = ("round: 7 (default)", "round: 7%", "round: 7 -> 8")
+    FALSE_FAILURE_PYTHON = ("# Keep round: 7\n# decimal places\nx = 1\n",)
     CODE = ("closure=\"C1\", opened=\"2026-09-01\"", "[\"2\", \"2026-09-02\", \"Second\", \"C2\"]",
             "[\"PD-7\", \"MR-1\", \"AT-1\", \"CL-1\", 0xFFA0, 0xD800]")
     # Ordinary Python that the hyphen and colon forms must not flag: subtraction, hyphenated
@@ -318,9 +330,13 @@ class PatternSelfCheck(unittest.TestCase):
     # Labels that must stay caught when they sit in a Python comment.
     COMMENT_LABELS = ("(F-1)", "finding F-1", "round: 7.", "round 7", "rounds 7 and 8",
                       "round #7", "round-7")
-    # Every caught form is checked in each Python placement: a comment, a multi-line function
-    # docstring, a one-line suite docstring in double and in single quotes, and a module
-    # docstring, with the label mid-sentence and at the very end, just before the closing quotes.
+    # Every single-line caught form, in LABELS, COMMENT_LABELS and WIDENED, is checked in each
+    # Python placement: a comment, a multi-line function docstring, a one-line suite docstring in
+    # double and in single quotes, and a module docstring, with the label mid-sentence and at the
+    # very end, just before the closing quotes. A form that holds the quote character of a
+    # placement cannot sit inside its literal, so it is skipped for that placement only, and the
+    # skipped set must be exactly the forms that hold that quote character. The multi-line SPLIT
+    # and SPREAD forms are checked in their own tests below.
     PLACEMENTS = ("# fixed in {}\nx = 1\n",
                   "# fixed in {}, so x holds\nx = 1\n",
                   "def f():\n    \"\"\"Handle x.\n\n    Fixed in {}, so x holds.\n    \"\"\"\n",
@@ -363,13 +379,32 @@ class PatternSelfCheck(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertTrue(scan("x.py", "# fixed in {}\nx = 1\n".format(text)), text)
 
+    def test_accepted_false_failures_stay_caught(self):
+        for text in self.FALSE_FAILURES:
+            with self.subTest(text=text):
+                self.assertTrue(labels_in(text), text)
+        for source in self.FALSE_FAILURE_PYTHON:
+            with self.subTest(source=source):
+                self.assertTrue(scan("x.py", source), source)
+
     def test_every_caught_form_is_caught_in_every_python_placement(self):
+        forms = self.LABELS + self.COMMENT_LABELS + self.WIDENED
         for placement in self.PLACEMENTS:
+            quote = next((q for q in ("\x27", "\x22") if q in placement), None)
             with self.subTest(placement=placement):
                 self.assertEqual(scan("x.py", placement.format("the change")), [], placement)
-            for text in self.COMMENT_LABELS + self.WIDENED:
+            skipped = set()
+            for text in forms:
+                source = placement.format(text)
+                try:
+                    found = scan("x.py", source)
+                except (tokenize.TokenError, SyntaxError):
+                    skipped.add(text)
+                    continue
                 with self.subTest(placement=placement, text=text):
-                    self.assertTrue(scan("x.py", placement.format(text)), placement.format(text))
+                    self.assertTrue(found, source)
+            with self.subTest(placement=placement, skipped=sorted(skipped)):
+                self.assertEqual(skipped, {text for text in forms if quote and quote in text}, placement)
 
     def test_bare_id_in_python_prose_is_caught(self):
         self.assertTrue(scan("x.py", "# the L5 case\nx = 1\n"))
