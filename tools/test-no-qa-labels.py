@@ -8,30 +8,39 @@ later reader and mixes numbering schemes. The text states the reason itself inst
 
 The test scans each file in SCANNED in two ways. Every physical line is matched against
 LABEL_PATTERNS. Every prose block, which in a Python file is a run of comments on consecutive
-lines or a docstring and elsewhere is a paragraph of consecutive non-blank lines, is matched line
-by line against PROSE_PATTERNS as well, and then with its line breaks joined against both sets, so
-a label split across two lines is caught and reported at the line where it starts. PROSE_PATTERNS
-holds the widened bare finding id, which applies to prose only because code legitimately carries
-short identifiers such as the closure value "C1". A match on a line in ALLOWLIST, the reviewed set
-of lines whose match is a cross-reference to a named plan rather than a review label, passes. A
-scanned file that is missing, unreadable or does not tokenize is a failure, never a skip, and an
-allowlist entry that no longer matches a scanned line is a failure too, so the allowlist cannot
-silently go stale.
+lines or a string statement such as a docstring and elsewhere is a paragraph of consecutive
+non-blank lines, is matched line by line against PROSE_PATTERNS as well, and then as one text with
+all its line breaks joined against both sets, so a label spread over any number of lines is caught
+and reported at the line where it starts. Docstrings are found with ast.get_docstring, so the
+docstring of a one-line suite counts too. PROSE_PATTERNS holds the widened bare finding id, which
+applies to prose only because code legitimately carries short identifiers such as the closure
+value "C1". A match on a line in ALLOWLIST, the reviewed set of lines whose match is a
+cross-reference to a named plan rather than a review label, passes. A scanned file that is
+missing, unreadable or does not tokenize and parse is a failure, never a skip, and an allowlist
+entry that no longer matches a scanned line is a failure too, so the allowlist cannot silently go
+stale.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
 one.
 
-Residual: the patterns are a denylist over prose. A label in a form none of them matches passes,
-for example a review pass named in words ("the third review"), a finding id of three or more
-capital letters or of more than two digits, a bare id that follows "point " or starts with "PR"
-(the forms the plan uses for its open points and pull-request slices), a reviewer named other than
-as codex, claude or gemini, or a family name more than two words away from the review word. In a
-Python file a string that is not a docstring is matched line by line only, so a label split across
-two lines of an ordinary string literal passes, and a bare id in code passes unless it uses one of
-the letters of the code-line bare id pattern. The PatternSelfCheck case pins the forms the patterns
-are known to cover, so a weakened pattern fails the suite.
+Residual: this lint is a best-effort guard, not a complete one. Its patterns are a denylist over
+prose, and its residual is open-ended: a label in any phrasing, synonym or layout the patterns do
+not list passes, and no list of known gaps can close that set. Completeness over the class of
+review-history labels therefore rests on an independent search of the scanned files, not on this
+lint. The known residual forms are these: a review pass named in words ("the third review"); a
+finding id of three or more capital letters or of more than two digits, or one with a letter suffix
+outside parentheses and the word "finding"; a bare id that follows "point " or starts with "PR"
+(the forms the plan uses for its open points and pull-request slices); a reviewer named other than
+as codex, claude or gemini; a family name more than two words away from its review or credit word,
+or credited by a verb outside REVIEW_WORD; in a Python file, a label split across two lines of a
+string that is not a statement of its own, such as an argument or an assigned value, which is
+matched line by line only; and a bare id in code that does not use one of the letters of the
+code-line bare id pattern. The PatternSelfCheck case pins the forms the patterns are known to
+cover, so a weakened pattern fails the suite.
 """
+import ast
+import bisect
 import io
 import re
 import sys
@@ -58,27 +67,28 @@ SCANNED = (
 
 FAMILY = r"(?:codex|claude|gemini)"
 REVIEW_WORD = (r"(?:reproduc\w*|found|finds|finding\w*|refut\w*|flag\w*|raised|raises"
+               r"|caught|spotted|spots|noticed|notices|confirmed|confirms"
                r"|seeds?|review\w*|QA|rounds?)")
 NEAR = r"(?:\W+\w+){0,2}?\W+"
 
 # Matched against every physical line and every joined prose block.
 LABEL_PATTERNS = (
-    ("a review round number", re.compile(r"(?i)\bround[- ]?[0-9]+\b")),
-    ("a fix round", re.compile(r"(?i)\bfix round\b")),
+    ("a review round number", re.compile(r"(?i)\brounds?(?:[-:]|\s)*#?[0-9]+\b")),
+    ("a fix round", re.compile(r"(?i)\bfix[- ]rounds?\b")),
     ("a QA round", re.compile(r"(?i)\bQA round\b")),
     ("a model-family QA attribution", re.compile(r"(?i)\b(?:codex|claude|gemini) QA\b")),
     ("a reviewer attribution", re.compile(
         r"(?i)\b" + FAMILY + r"\b" + NEAR + REVIEW_WORD + r"\b"
         r"|\b" + REVIEW_WORD + r"\b" + NEAR + FAMILY + r"\b")),
-    ("a parenthesized finding id", re.compile(r"\([A-Z]{1,2}[0-9]{1,2}(?:[,);:]| and )")),
-    ("a named finding id", re.compile(r"(?i)\bfindings? [A-Z]{1,2}[0-9]{1,2}\b")),
-    ("a severity-numbered finding", re.compile(r"\b(?:CRITICAL|HIGH|MEDIUM|LOW)-[0-9]+\b")),
-    ("a bare finding id", re.compile(r"\b(?:AA|BB|[FGMRSTUWX])[0-9]{1,2}\b")),
+    ("a parenthesized finding id", re.compile(r"\([A-Z]{1,2}-?[0-9]{1,2}[a-z]?(?:[,);:]| and )")),
+    ("a named finding id", re.compile(r"(?i)\bfindings? [A-Z]{1,2}-?[0-9]{1,2}[a-z]?\b")),
+    ("a severity-numbered finding", re.compile(r"(?i)\b(?:CRITICAL|HIGH|MEDIUM|LOW)-[0-9]+\b")),
+    ("a bare finding id", re.compile(r"\b(?:AA|BB|[FGMRSTUWX])-?[0-9]{1,2}\b")),
 )
 
 # Matched against prose only: comments and docstrings in a Python file, every line elsewhere.
 PROSE_PATTERNS = (
-    ("a bare finding id in prose", re.compile(r"(?<!point )\b(?!PR[0-9])[A-Z]{1,2}[0-9]{1,2}\b")),
+    ("a bare finding id in prose", re.compile(r"(?<!point )\b(?!PR[0-9])[A-Z]{1,2}-?[0-9]{1,2}\b")),
 )
 
 ALL_PATTERNS = LABEL_PATTERNS + PROSE_PATTERNS
@@ -113,8 +123,7 @@ ALLOWLIST = {
 }
 
 QUOTE_OPEN = re.compile(r"(?is)^[a-z]*(\"\"\"|\x27\x27\x27|\"|\x27)")
-SKIPPED = (tokenize.NL, tokenize.COMMENT)
-LOGICAL_START = (tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.ENCODING)
+DOCSTRING_OWNERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
 
 
 def labels_in(line, patterns=ALL_PATTERNS):
@@ -127,16 +136,33 @@ def read_text(path):
     return Path(path).read_text(encoding="utf-8")
 
 
-def python_blocks(text):
-    """The prose blocks of Python source: comment runs on consecutive lines, and docstrings.
+def string_statements(tree):
+    """The string-literal expression statements of a parsed module, in source order.
 
-    Each block is a list of (line number, text) segments. A source that does not tokenize raises.
+    Every docstring is found with ast.get_docstring on each module, class and function, wherever
+    it sits, so the docstring of a one-line suite is included; every other statement that is a
+    string literal alone is included as well.
+    """
+    found = {}
+    for node in ast.walk(tree):
+        if isinstance(node, DOCSTRING_OWNERS) and ast.get_docstring(node, clean=False) is not None:
+            value = node.body[0].value
+            found[(value.lineno, value.col_offset)] = value
+        elif (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+              and isinstance(node.value.value, str)):
+            found[(node.value.lineno, node.value.col_offset)] = node.value
+    return [found[key] for key in sorted(found)]
+
+
+def python_blocks(text):
+    """The prose blocks of Python source: comment runs on consecutive lines, and string statements.
+
+    Each block is a list of (line number, text) segments, and a string statement starts at the
+    line where its literal starts. A source that does not tokenize or parse raises.
     """
     blocks = []
     run = []
-    tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
-    significant = [tok for tok in tokens if tok.type not in SKIPPED]
-    for tok in tokens:
+    for tok in tokenize.generate_tokens(io.StringIO(text).readline):
         if tok.type == tokenize.COMMENT:
             row = tok.start[0]
             if run and run[-1][0] != row - 1:
@@ -145,19 +171,13 @@ def python_blocks(text):
             run.append((row, tok.string.lstrip("#").strip()))
     if run:
         blocks.append(run)
-    for index, tok in enumerate(significant):
-        if tok.type != tokenize.STRING:
-            continue
-        before = significant[index - 1].type if index else None
-        after = significant[index + 1].type if index + 1 < len(significant) else None
-        if before not in LOGICAL_START + (None,) or after not in (tokenize.NEWLINE, tokenize.ENDMARKER):
-            continue
-        opening = QUOTE_OPEN.match(tok.string)
+    for value in string_statements(ast.parse(text)):
+        literal = ast.get_source_segment(text, value)
+        opening = QUOTE_OPEN.match(literal or "")
         if opening is None:
             continue
-        body = tok.string[len(opening.group(0)):len(tok.string) - len(opening.group(1))]
-        row = tok.start[0]
-        blocks.append([(row + offset, part.strip()) for offset, part in enumerate(body.split("\n"))])
+        body = literal[len(opening.group(0)):len(literal) - len(opening.group(1))]
+        blocks.append([(value.lineno + offset, part.strip()) for offset, part in enumerate(body.split("\n"))])
     return blocks
 
 
@@ -179,24 +199,29 @@ def paragraph_blocks(lines):
 def split_hits(block):
     """(line number, pattern name, matched text) for each match that crosses a line break.
 
-    A match is reported at the segment where it starts. Each break is searched with a window of
-    the three segments from there, and from every start position, so an earlier match on the same
-    line cannot hide a later one that crosses the break.
+    The whole block is joined with single spaces and searched as one text, from every start
+    position, so a label spread over any number of lines is caught and an earlier match cannot
+    hide a later one. A match is reported at the segment where it starts.
     """
+    starts = []
+    offset = 0
+    for _, text in block:
+        starts.append(offset)
+        offset += len(text) + 1
+    joined = " ".join(text for _, text in block)
     hits = []
-    for index in range(len(block) - 1):
-        window = " ".join(text for _, text in block[index:index + 3])
-        boundary = len(block[index][1])
-        for name, pattern in ALL_PATTERNS:
-            position = 0
-            while position <= boundary:
-                match = pattern.search(window, position)
-                if match is None or match.start() >= boundary:
-                    break
-                if match.end() > boundary:
-                    hits.append((block[index][0], name, match.group(0)))
-                    break
-                position = match.start() + 1
+    for name, pattern in ALL_PATTERNS:
+        position = 0
+        while True:
+            match = pattern.search(joined, position)
+            if match is None:
+                break
+            first = bisect.bisect_right(starts, match.start()) - 1
+            last = bisect.bisect_right(starts, match.end()) - 1
+            hit = (block[first][0], name, match.group(0))
+            if last > first and hit not in hits:
+                hits.append(hit)
+            position = match.start() + 1
     return hits
 
 
@@ -254,20 +279,29 @@ class PatternSelfCheck(unittest.TestCase):
               "(L5)", "(H3: x)", "(Q2; x)", "finding L5", "the L5 fix", "(codex reproduced: x)",
               "refuting the gemini seed\x27s claim", "flagged by codex", "the claude review",
               "gemini found that", "a codex finding", "raised in the gemini round")
+    # Forms added when the guard was widened: round numbers with a colon, a plural or a number
+    # sign, a hyphenated fix round, the credit verbs, a severity id in any case, and a hyphenated
+    # or letter-suffixed finding id.
+    WIDENED = ("as fixed in round: 7", "rounds 7 and 8", "round #7", "the fix-round change",
+               "codex caught this", "spotted by gemini", "claude noticed the gap", "gemini confirmed it",
+               "High-1: x", "a high-2 case", "the F-1 case", "(F1a)", "finding F-1")
     PROSE = ("U+3164", "aiqt_hooks.py:8414", "\\x1f", "class T01StopActionable", "sha256",
              "item 28.2 stage 2, PR1-d", "open point P5", "round-trip through json.dumps",
              "Point the command at the QA cycle", "commit d191071", "UTF-8", "line 8:", "the g1 prefix",
              "The PR1-f doctor tests", "HTTP 400", "SHA256", "a codex worker", "the gemini CLI",
-             "maintained with Claude", "Claude, Anthropic, OpenAI, Codex, Copilot, or Gemini")
-    CODE = ("closure=\"C1\", opened=\"2026-09-01\"", "[\"2\", \"2026-09-02\", \"Second\", \"C2\"]")
+             "maintained with Claude", "Claude, Anthropic, OpenAI, Codex, Copilot, or Gemini",
+             "U+FFA0", "U+D800..U+DFFF")
+    CODE = ("closure=\"C1\", opened=\"2026-09-01\"", "[\"2\", \"2026-09-02\", \"Second\", \"C2\"]",
+            "[\"PD-7\", \"MR-1\", \"AT-1\", \"CL-1\", 0xFFA0, 0xD800]")
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
              ("as fixed in round", "7 of review"),
              ("as fixed in (fix", "round 16, M1)"))
+    SPREAD = ("codex", "independently", "also", "reproduced this failure.")
 
     def test_every_known_label_form_is_caught(self):
-        for text in self.LABELS:
+        for text in self.LABELS + self.WIDENED:
             with self.subTest(text=text):
                 self.assertTrue(labels_in(text), text)
 
@@ -286,6 +320,14 @@ class PatternSelfCheck(unittest.TestCase):
         self.assertTrue(scan("x.py", "# the L5 case\nx = 1\n"))
         self.assertTrue(scan("x.py", "def f():\n    \"\"\"Handle the\n    L5 case.\"\"\"\n"))
 
+    def test_docstring_of_a_one_line_suite_is_caught_at_its_start(self):
+        for source in ("x = 1\n\ndef f(): \"\"\"Handle the L5 finding.\"\"\"\n",
+                       "x = 1\n\nasync def f(): \"\"\"Handle the L5 finding.\"\"\"\n",
+                       "x = 1\n\nclass C: \"\"\"Handle the L5 finding.\"\"\"\n"):
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                self.assertTrue(any(hit.startswith("x.py:3: ") for hit in found), found)
+
     def test_a_label_split_across_lines_is_caught_at_its_start(self):
         for first, second in self.SPLIT:
             for rel, text in (("x.py", "# {}\n# {}\n".format(first, second)),
@@ -294,6 +336,14 @@ class PatternSelfCheck(unittest.TestCase):
                 with self.subTest(rel=rel, text=text):
                     found = scan(rel, text)
                     self.assertTrue(any(hit.startswith(rel + ":1: ") for hit in found), found)
+
+    def test_a_label_spread_over_more_than_three_lines_is_caught_at_its_start(self):
+        for rel, text in (("x.py", "".join("# {}\n".format(part) for part in self.SPREAD)),
+                          ("x.py", "\"\"\"" + "\n".join(self.SPREAD) + "\n\"\"\"\n"),
+                          ("x.md", "".join("{}\n".format(part) for part in self.SPREAD))):
+            with self.subTest(rel=rel, text=text):
+                found = scan(rel, text)
+                self.assertTrue(any(hit.startswith(rel + ":1: ") for hit in found), found)
 
     def test_an_untokenizable_python_file_fails(self):
         with self.assertRaises((tokenize.TokenError, SyntaxError)):
