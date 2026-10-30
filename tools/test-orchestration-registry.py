@@ -187,17 +187,6 @@ class Accepts(unittest.TestCase):
             self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state",
                                              "escape": {"path": "operator/ESCAPE-ALLOW-YIELD"}})), 0)
 
-    def test_enumerator_non_python_interpreter_accepted(self):
-        # The "-I" requirement applies only to a Python interpreter. A resolvable executable that is
-        # neither a Python interpreter nor a wrapper (env or a shell), running no *.py operand, is accepted.
-        # The executable is a temporary regular file, so the fixture does not depend on the host.
-        with tempfile.TemporaryDirectory() as d:
-            runner = _make_exe(d, "enumerate-backlog")
-            self.assertEqual(_run(_write(d, {
-                "version": 1, "state_dir": "/opt/x/orch-state",
-                "enumerator": {"argv": [runner, "tools/enumerate.awk", "/opt/x/private/TODO.md"],
-                               "timeout": 5}})), 0)
-
     def test_record_sibling_of_state_dir_accepted(self):
         # A record path that is a SIBLING of state_dir (shares a parent but is NOT inside it) is not a
         # collision and must still validate. The containment check compares component-wise (commonpath),
@@ -748,8 +737,9 @@ class Rejects(unittest.TestCase):
                     self._assert_enum_rejected_by(argv, "is a Python interpreter")
 
     def test_enumerator_symlink_alias_requires_isolation(self):
-        # Round 2 G2: a symlink alias of the Python interpreter whose own name does not start with
-        # "python" is judged by what it resolves to. Without "-I" it is rejected; with "-I" it is accepted.
+        # Round 2 G2, kept under the round 3 R4 allowlist: a symlink alias of the Python interpreter whose
+        # own name is not an interpreter name is judged by what it resolves to. Without "-I" it is
+        # rejected; with "-I" it is accepted.
         with tempfile.TemporaryDirectory() as d:
             alias = _make_exe(d, "enumerate-runner", os.path.realpath(PY))
             self.assertFalse(os.path.basename(alias).startswith("python"))
@@ -758,41 +748,82 @@ class Rejects(unittest.TestCase):
             r = self._run_stage2_enum([alias, "-I", "tools/x.py", "/opt/x/private/TODO.md"])
             self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_enumerator_env_wrapper_rejected(self):
-        # Round 2 G2: ["<env>", "python3", ...] runs python3 through the session PATH, so the gate cannot
-        # see whether it is isolated; env is rejected as argv[0] by its declared name and by its resolved
-        # name (a symlink alias of env). The real /usr/bin/env is checked too where the host has it.
+    def test_enumerator_launchers_rejected(self):
+        # Round 3 R4: the gate admits only an isolated Python interpreter as argv[0], so a launcher that
+        # would run Python for it (env, nice, timeout) is rejected by its resolved name, however the Python
+        # launch behind it is spelled, including one with no *.py operand, which the withdrawn wrapper-name
+        # blocklist admitted. Each launcher is a temporary regular file and a temporary symlink to it under
+        # a neutral name; the real host binaries are checked too where the host has them.
         with tempfile.TemporaryDirectory() as d:
-            env = _make_exe(d, "env")
-            alias = _make_exe(d, "enumerate-runner", env)
-            cases = [[env, "python3", "-I", "tools/x.py"], [alias, "python3", "-I", "tools/x.py"]]
-            if os.path.exists("/usr/bin/env"):
-                cases.append(["/usr/bin/env", "python3", "-I", "tools/x.py"])
+            cases = []
+            for name in ("env", "nice", "timeout"):
+                exe = _make_exe(d, name)
+                alias = _make_exe(d, "runner-" + name, exe)
+                cases.append([exe, PY, "-I", "tools/x.py"])
+                cases.append([alias, PY, "tools/enumerate"])
+                host = os.path.join("/usr/bin", name)
+                if os.path.exists(host):
+                    cases.append([host, PY, "tools/enumerate"])
+            cases.append([os.path.join(d, "timeout"), "5", PY, "tools/enumerate"])
             for argv in cases:
                 with self.subTest(argv=argv):
-                    self._assert_enum_rejected_by(argv, "interpreter wrapper")
+                    self._assert_enum_rejected_by(argv, "is not a Python interpreter")
 
-    def test_enumerator_shell_wrapper_rejected(self):
-        # Round 2 G2: a shell argv[0] runs a script whose own interpreter launch the gate cannot see.
+    def test_enumerator_shells_rejected(self):
+        # Round 3 R4: a shell argv[0] runs a script whose own interpreter launch the gate cannot see.
         with tempfile.TemporaryDirectory() as d:
             for name in ("sh", "bash", "dash", "zsh", "ksh"):
                 shell = _make_exe(d, name)
                 with self.subTest(shell=name):
                     self._assert_enum_rejected_by([shell, "tools/enumerate.sh", "/opt/x/private/TODO.md"],
-                                                  "interpreter wrapper")
+                                                  "is not a Python interpreter")
 
-    def test_enumerator_py_operand_behind_non_python_rejected(self):
-        # Round 2 G2: a *.py element behind a non-Python argv[0], or argv[0] itself a *.py script run
-        # through its shebang, would run Python without "-I". The control is the same non-Python argv[0]
-        # with no *.py element, which is accepted, so only the *.py rule rejects the two fixtures.
+    def test_enumerator_renamed_shell_script_rejected(self):
+        # Round 3 R4: a shell script under a neutral name, which could itself start Python unisolated, is
+        # rejected whatever follows it, and so is a script named *.py run directly through its shebang.
         with tempfile.TemporaryDirectory() as d:
-            runner = _make_exe(d, "enumerate-runner")
-            script = _make_exe(d, "enumerate.py")
-            self._assert_enum_rejected_by([runner, "tools/x.py", "/opt/x/private/TODO.md"],
-                                          "is a Python script")
-            self._assert_enum_rejected_by([script, "/opt/x/private/TODO.md"], "is a Python script")
-            r = self._run_stage2_enum([runner, "tools/enumerate.awk", "/opt/x/private/TODO.md"])
-            self.assertEqual(r.returncode, 0, r.stderr)
+            script = Path(d) / "enumerate-backlog"
+            script.write_text("#!/bin/sh\nexec python3 tools/orch-enumerate-backlog.py\n", encoding="utf-8")
+            script.chmod(0o755)
+            shebang_py = _make_exe(d, "enumerate.py")
+            for argv in ([str(script)],
+                         [str(script), "-I", "tools/x.py"],
+                         [str(script), "/opt/x/private/TODO.md"],
+                         [shebang_py, "/opt/x/private/TODO.md"]):
+                with self.subTest(argv=argv):
+                    self._assert_enum_rejected_by(argv, "is not a Python interpreter")
+
+    def test_enumerator_script_operand_required(self):
+        # Round 3 R4: after "-I", argv[2] must be a script path ending in ".py" that is not an option, so
+        # "-c", "-m", a further option, a script not named *.py, or no script at all is rejected. The
+        # control, the same interpreter running a *.py script, is accepted, so only this rule rejects them.
+        cases = ([PY, "-I"],
+                 [PY, "-I", "-c", "print(1)"],
+                 [PY, "-I", "-m", "json.tool"],
+                 [PY, "-I", "-mtools.py"],
+                 [PY, "-I", "-E", "tools/x.py"],
+                 [PY, "-I", "tools/enumerate"],
+                 [PY, "-I", "tools/enumerate.pyc"])
+        for argv in cases:
+            with self.subTest(argv=argv):
+                self._assert_enum_rejected_by(argv, "must be a script path ending in")
+        r = self._run_stage2_enum([PY, "-I", "tools/x.py", "/opt/x/private/TODO.md"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_enumerator_interpreter_name_allowlist(self):
+        # Round 3 R4: the resolved basename of argv[0] must fully match python, python3, or python3.N with
+        # an optional one-letter build suffix. The fixtures are regular files the gate never executes, which
+        # also pins the disclosed residual: a file under an allowlisted name is admitted on that name.
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("python", "python3", "python3.12", "python3.13t"):
+                exe = _make_exe(d, name)
+                with self.subTest(accepted=name):
+                    r = self._run_stage2_enum([exe, "-I", "tools/x.py", "/opt/x/private/TODO.md"])
+                    self.assertEqual(r.returncode, 0, r.stderr)
+            for name in ("pypy3", "python2.7", "python3-config", "ipython3", "python3.12.sh", "pythonw"):
+                exe = _make_exe(d, name)
+                with self.subTest(rejected=name):
+                    self._assert_enum_rejected_by([exe, "-I", "tools/x.py"], "is not a Python interpreter")
 
     def test_enumerator_unresolvable_argv0_rejected(self):
         # Round 2 G2: an argv[0] that cannot be resolved (absent, or a dangling symlink) is a
@@ -1202,6 +1233,81 @@ def _load_gate_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+class EnumeratorRelativeOperands(unittest.TestCase):
+    # Round 3 R1: the hook runs the enumerator argv with cwd at the repository root (aiqt_hooks.py:7976),
+    # the parent of the .aiqt directory holding the registry (aiqt_hooks.py:7548, 7590-7594, 7606-7607), so
+    # a relative operand names a path under that root and faces the same state_dir collision checks as an
+    # absolute one. Each fixture writes the registry at <repo>/.aiqt/orchestration.json in a temporary
+    # tree, so the gate derives <repo> as the root.
+
+    def _run_in_repo(self, tree, payload):
+        repo = Path(tree) / "repo"
+        (repo / ".aiqt").mkdir(parents=True, exist_ok=True)
+        reg = repo / ".aiqt" / "orchestration.json"
+        reg.write_text(json.dumps(payload), encoding="utf-8")
+        return _run_full(reg)
+
+    @staticmethod
+    def _payload(state_dir, operands):
+        return {"version": 1, "state_dir": str(state_dir),
+                "enumerator": {"argv": [PY, "-I", "tools/orch-enumerate-backlog.py"] + list(operands),
+                               "timeout": 5}}
+
+    def test_relative_operand_reaching_state_file_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d) / "repo"
+            outside = Path(d) / "orch-state"
+            outside.mkdir()
+            repo.mkdir()
+            os.symlink(str(outside), str(repo / "state-link"))
+            cases = [
+                (repo / "state", ["state/resume-barrier.json"]),
+                (repo / "state", ["./state/../state/turn-state.json"]),
+                (outside, ["../orch-state/resume-barrier.json"]),
+                (outside, ["state-link/resume-barrier.json"]),
+            ]
+            for state_dir, operands in cases:
+                with self.subTest(state_dir=str(state_dir), operands=operands):
+                    r = self._run_in_repo(d, self._payload(state_dir, operands))
+                    self.assertEqual(r.returncode, 1, r.stdout)
+                    self.assertIn("joined onto the repository root", r.stderr)
+                    self.assertIn("state_dir", r.stderr)
+                    self.assertNotIn("Traceback", r.stderr)
+                # Control: the same operands with state_dir elsewhere are accepted, so only the collision
+                # of the root-joined operand with state_dir rejects the fixture above.
+                with self.subTest(control=operands):
+                    r = self._run_in_repo(d, self._payload(Path(d) / "elsewhere", operands))
+                    self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_registry_outside_aiqt_uses_gate_root(self):
+        # A registry checked from a path outside any .aiqt directory joins a relative operand onto the
+        # checkout the gate runs from. The state_dir is an absent path under that checkout, so nothing is
+        # written there; the operand reaching it is rejected.
+        name = "orch-state-r1-fixture-absent"
+        state_dir = REPO_ROOT / name
+        self.assertFalse(os.path.lexists(str(state_dir)))
+        with tempfile.TemporaryDirectory() as d:
+            r = _run_full(_write(d, self._payload(state_dir, [name + "/resume-barrier.json"])))
+            self.assertEqual(r.returncode, 1, r.stdout)
+            self.assertIn("joined onto the repository root", r.stderr)
+            self.assertNotIn("Traceback", r.stderr)
+
+    def test_planned_stage2_argv_accepted(self):
+        # The planned stage-2 enumerator argv, with the test interpreter standing in for the python3 of the
+        # host, added to the committed registry, is accepted.
+        planned = [PY, "-I", "tools/orch-enumerate-backlog.py", "/opt/cleanlanguage/private/TODO.md"]
+        payload = json.loads(REAL_REGISTRY.read_text(encoding="utf-8"))
+        payload["enumerator"] = {"argv": planned, "timeout": 5}
+        with tempfile.TemporaryDirectory() as d:
+            r = self._run_in_repo(d, payload)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        # The temporary-directory equivalent: the same shape with every store path under a temporary tree.
+        with tempfile.TemporaryDirectory() as d:
+            payload = self._payload(Path(d) / "orch-state", [str(Path(d) / "private" / "TODO.md")])
+            r = self._run_in_repo(d, payload)
+            self.assertEqual(r.returncode, 0, r.stderr)
 
 
 class HookStateFileScan(unittest.TestCase):

@@ -20,6 +20,15 @@ fails closed rather than vanishing as prose (findings F1 and G1), that a GFM row
 pipe and a prose line with a mid-line pipe fail closed too (G1: one rule, any "|" off a column-0
 table line), and the class probe runs that rule over every code point of the Basic Multilingual
 Plane. The Isolation case proves the script re-executes itself under python3 -I (finding F7).
+
+The PipeFreeRow cases prove that a row which has lost all its pipes, a line with no "|" that opens
+with an item id and an ISO date (after any leading whitespace, blockquote marker or character outside
+printable ASCII), fails closed naming the line rather than vanishing as prose, while ordinary prose,
+a plain lazy continuation line and an HTML comment pass, and that the two-parser loss check refuses
+both dumps (finding R2). The BlockerProperty cases prove that a ref of only Unicode whitespace fails
+closed naming the line, and that every exit-0 enumeration over a grid of blocker kinds and edge refs
+and evidence values passes the vendored validate_enumeration (finding R5). An invalid UTF-8 input is
+reported with its line as well as its byte offset (finding R7).
 """
 
 from __future__ import annotations
@@ -38,6 +47,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 SCRIPT = HERE / "orch-enumerate-backlog.py"
+MIGRATE = HERE / "migrate-todo-aei.py"
 HOOK = REPO_ROOT / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "scripts" / "aiqt_hooks.py"
 
 HEADER = "| # | Opened | State | Granted | Blocker | Evidence | Item | Closure evidence required |"
@@ -113,6 +123,57 @@ for cp in range(0x10000):
     escaped.append("U+%04X" % cp)
 print(json.dumps({"probed": probed, "escaped": escaped}))
 """
+
+
+# Runs in a separate python3 -I -B process with bytecode writing off: load the enumerator and the
+# vendored hook by path, then for each (name, backlog text) case in the JSON file argv[3] write the
+# text to argv[4], run the enumerator main on it with stdout and stderr captured, and pass every
+# exit-0 stdout through the hook validate_enumeration. Prints one result per case.
+PROPERTY_PROG = """
+import contextlib, importlib.util, io, json, sys
+sys.dont_write_bytecode = True
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+enum = load("enumerator_under_test", sys.argv[1])
+hook = load("aiqt_hooks_under_test", sys.argv[2])
+with open(sys.argv[3], encoding="utf-8") as fh:
+    cases = json.load(fh)
+results = []
+for name, text in cases:
+    with open(sys.argv[4], "w", encoding="utf-8", newline="") as fh:
+        fh.write(text)
+    out, err = io.StringIO(), io.StringIO()
+    code = 0
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = enum.main([sys.argv[4]])
+        except SystemExit as exc:
+            code = exc.code
+    verdict = None
+    if code == 0:
+        items, error = hook.validate_enumeration(json.loads(out.getvalue()))
+        verdict = error
+    results.append({"name": name, "code": code, "stdout": out.getvalue(), "stderr": err.getvalue(),
+                    "hook_error": verdict})
+print(json.dumps(results))
+"""
+
+# Refs at the edge of blankness: str.strip() (the hook test, aiqt_hooks.py:7949) removes every one
+# of the Unicode whitespace characters below, while U+200B is not whitespace and is a real ref.
+UNICODE_BLANK_REFS = ["\u00a0", "\u2003", "\u3000", "\u2028", "\x85", "\x0b", "\x0c", "\x1c",
+                      "\x1f", "\r", "\u00a0\u2003", " \u00a0\t"]
+EDGE_REFS = (["PD-7", "x", " x ", "a:b:c", "\u200b", "\u00a0x\u00a0", "", " ", "\t", "-",
+              "2099-01-01T00:00:00Z", "2099-01-01T00:00:00+05:30", " 2099-01-01T00:00:00Z ",
+              "\u00a02099-01-01T00:00:00Z", "2099-01-01T00:00:00Z\u2003", "2099-01-01T00:00:00"]
+             + UNICODE_BLANK_REFS)
+EDGE_EVIDENCE = ["-", "2026-10-29T12:00:00Z; seen upstream", "2026-10-29T12:00:00Z;\u00a0",
+                 "2026-10-29T12:00:00Z; \u2003note", "\u00a0; text", "2026-10-29T12:00:00Z"]
+BLOCKER_KINDS = ("tracked-task", "human-decision", "external", "foreign-lease", "not-before")
 
 
 def row(iid, state="open", granted="yes", blocker="-", evidence="-", item="An item",
@@ -371,6 +432,16 @@ class FailClosed(EnumeratorHarness):
         self.assert_fails(self.write(table(row("1")).encode("utf-8") + b"\xff\xfe\n"),
                           needle="not valid UTF-8")
 
+    def test_invalid_utf8_names_the_line(self):
+        # Finding R7: the report names the line of the first invalid byte, not only its offset.
+        text = table(row("1")).encode("utf-8")
+        line = text.count(b"\n") + 1
+        r = self.assert_fails(self.write(text + b"bad \xff byte\n"), needle="not valid UTF-8")
+        self.assertIn("line {}, byte offset {}".format(line, len(text) + 4), r.stderr)
+        r = self.assert_fails(self.write(b"# Backlog\n\nbad \xc3 here\n" + text),
+                              needle="not valid UTF-8")
+        self.assertIn("line 3, byte offset 15", r.stderr)
+
     def test_missing_header(self):
         self.assert_fails("# Backlog\n\n" + row("1") + "\n", line=3, needle="before the header")
 
@@ -420,6 +491,15 @@ class FailClosed(EnumeratorHarness):
 
     def test_blank_ref(self):
         self.assert_fails(table(row("1", blocker="human-decision:  ")), line=7, needle="blank ref")
+
+    def test_blank_ref_of_only_unicode_whitespace(self):
+        # Finding R5: the hook rejects a ref whose str.strip() is empty (aiqt_hooks.py:7949), so the
+        # enumerator fails closed on it naming the line rather than exit 0 into ENUMERATOR_ERROR.
+        for kind in BLOCKER_KINDS:
+            for ref in UNICODE_BLANK_REFS:
+                with self.subTest(kind=kind, ref="".join("U+%04X" % ord(c) for c in ref)):
+                    self.assert_fails(table(row("1", blocker=kind + ":" + ref)), line=7,
+                                      needle="blank ref")
 
     def test_unparseable_not_before(self):
         self.assert_fails(table(row("1", blocker="not-before:next week")), line=7,
@@ -570,6 +650,157 @@ class HiddenTablePrefix(EnumeratorHarness):
             with self.subTest(cp="U+%04X" % cp):
                 self.assert_fails(head + chr(cp) + row("9") + tail, line=8,
                                   needle="does not begin with")
+
+
+class PipeFreeRow(EnumeratorHarness):
+    """A data row that has lost all its pipes fails closed naming the line (finding R2).
+
+    Before the fix such a line read as prose: the enumeration exited 0 without the item. In the
+    table() fixture the header is line 5 and the rows start at line 7, so the probed line is 8.
+    """
+
+    NEEDLE = "begins with an item id and an ISO date"
+    ROW_SHAPED = [
+        ("pipe-free row", "2 2026-10-01 open yes - - Some item text Done"),
+        ("pipe-free row with leading spaces", "   2 2026-10-01 open yes - - Some item text Done"),
+        ("pipe-free row with only stray spaces", " 2  2026-10-01  open  yes  -  -  Item  Done "),
+        ("tab separated", "2\t2026-10-01\topen\tyes\t-\t-\tItem\tDone"),
+        ("dotted id", "28.2 2026-10-01 open yes - - Stage 2 Done"),
+        ("dotted id then a dot", "28.2.2026-10-01 open yes - - Stage 2 Done"),
+        ("comma separator", "27, 2026-10-01, open, yes, -, -, Item, Done"),
+        ("blockquote marker", "> 2 2026-10-01 open yes - - Item Done"),
+        ("nested blockquote", "> > 2 2026-10-01 Item"),
+        ("no-break space lead", "\u00a02 2026-10-01 Item"),
+        ("zero-width space lead", "\u200b2 2026-10-01 Item"),
+        ("byte order mark lead", "\ufeff2 2026-10-01 Item"),
+        ("hangul filler lead", "\u3164 2 2026-10-01 Item"),
+        ("no-break space separator", "2\u00a02026-10-01 Item"),
+        ("crlf ending", "2 2026-10-01 Item\r"),
+        ("id and date only", "2 2026-10-01"),
+    ]
+    PROSE = [
+        "Item 27 was opened on 2026-10-01.",
+        "2026-10-01: a dated note.",
+        "# 2026 plans",
+        "Version 2 ships soon.",
+        "See item 27 and item 28.2 for the detail.",
+        "27 items remain.",
+        "<!-- reviewed 2026-10-01 -->",
+        "<!-- 27 2026-10-01 parked -->",
+        "",
+        "   ",
+        "> A quoted line.",
+    ]
+
+    def test_pipe_free_row_fails_closed(self):
+        for name, line in self.ROW_SHAPED:
+            with self.subTest(case=name):
+                self.assert_fails(table(row("1"), line, row("3")), line=8, needle=self.NEEDLE)
+
+    def test_pipe_free_row_fails_the_cell_dump(self):
+        for name, line in self.ROW_SHAPED[:3]:
+            with self.subTest(case=name):
+                r = self.run_enum("--dump-cells", self.write(table(row("1"), line, row("3"))))
+                self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertEqual(r.stdout, "")
+                self.assertIn("line 8:", r.stderr)
+                self.assertIn(self.NEEDLE, r.stderr)
+
+    def test_lazy_continuation_with_the_row_shape_fails_closed(self):
+        # GFM reads a non-blank line directly after a row as a lazy continuation of the table; one
+        # that opens with an id and a date is a row whose pipes were lost.
+        self.assert_fails(table(row("1"), row("2"), "3 2026-10-02 continued as a row"), line=9,
+                          needle=self.NEEDLE)
+
+    def test_lazy_continuation_of_plain_prose_passes(self):
+        out = self.enumerate_ok(table(row("1"), "continued as plain prose, with no id or date",
+                                      row("2")))
+        self.assertEqual([it["id"] for it in out["items"]], ["1", "2"])
+
+    def test_html_comment_directly_after_a_row_passes(self):
+        for comment in ("<!-- reviewed 2026-10-01 -->", "<!-- note -->",
+                        "<!-- 27 2026-10-01 parked -->"):
+            with self.subTest(comment=comment):
+                out = self.enumerate_ok(table(row("1"), comment, row("2")))
+                self.assertEqual([it["id"] for it in out["items"]], ["1", "2"])
+
+    def test_ordinary_prose_passes(self):
+        text = table(row("1"), prose_before=("# Backlog", "") + tuple(self.PROSE) + ("",),
+                     prose_after=("",) + tuple(self.PROSE))
+        out = self.enumerate_ok(text)
+        self.assertEqual([it["id"] for it in out["items"]], ["1"])
+
+    def test_two_parser_loss_check_refuses_both_dumps(self):
+        # Without the rule both dumps would omit the row and agree on the loss; with it, each
+        # parser refuses its dump naming the line.
+        if not MIGRATE.exists():
+            self.fail("migration not found: {}".format(MIGRATE))
+        old = "\n".join(["# Backlog", "", "| # | Opened | Item | Closure evidence required |",
+                         "|---|---|---|---|", "| 1 | 2026-09-01 | First | Merged |",
+                         "2 2026-10-01 Lost its pipes Merged", "| 3 | 2026-10-02 | Third | Merged |",
+                         ""])
+        for name, line in self.ROW_SHAPED[:2]:
+            with self.subTest(case=name):
+                src = self.write(old.replace("2 2026-10-01 Lost its pipes Merged", line),
+                                 name="old.md")
+                m = subprocess.run([sys.executable, "-I", str(MIGRATE), "--dump-old-cells",
+                                    str(src)], capture_output=True, text=True)
+                self.assertEqual(m.returncode, 1, m.stderr)
+                self.assertEqual(m.stdout, "")
+                self.assertIn("line 6: ", m.stderr)
+                r = self.run_enum("--dump-cells", self.write(table(row("1"), line, row("3"))))
+                self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertEqual(r.stdout, "")
+                self.assertIn("line 8: ", r.stderr)
+
+
+class BlockerProperty(EnumeratorHarness):
+    """Every exit-0 enumeration over a grid of blockers passes the hook validator (finding R5)."""
+
+    def cases(self):
+        out = []
+        for kind in BLOCKER_KINDS:
+            for ref in EDGE_REFS:
+                for evidence in EDGE_EVIDENCE:
+                    name = "{}:{} / {}".format(kind, ascii(ref), ascii(evidence))
+                    out.append((name, table(row("1", blocker=kind + ":" + ref, evidence=evidence))))
+        for evidence in EDGE_EVIDENCE:
+            out.append(("no blocker / " + ascii(evidence), table(row("1", evidence=evidence))))
+        return out
+
+    def test_every_exit_zero_output_passes_validate_enumeration(self):
+        if not HOOK.exists():
+            self.fail("vendored hook not found: {}".format(HOOK))
+        cases = self.cases()
+        case_file = self._tmp / "cases.json"
+        case_file.write_text(json.dumps(cases), encoding="utf-8")
+        r = subprocess.run([sys.executable, "-I", "-B", "-c", PROPERTY_PROG, str(SCRIPT), str(HOOK),
+                            str(case_file), str(self._tmp / "case.md")],
+                           capture_output=True, text=True, timeout=300)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        results = json.loads(r.stdout)
+        self.assertEqual(len(results), len(cases))
+        passed = {kind: 0 for kind in BLOCKER_KINDS}
+        for res in results:
+            with self.subTest(case=res["name"]):
+                if res["code"] == 0:
+                    self.assertIsNone(res["hook_error"], "exit 0 but the hook rejects the output")
+                    for kind in BLOCKER_KINDS:
+                        if res["name"].startswith(kind + ":"):
+                            passed[kind] += 1
+                else:
+                    self.assertEqual(res["code"], 1)
+                    self.assertEqual(res["stdout"], "", "a failing enumerator prints nothing")
+                    self.assertIn("line 7:", res["stderr"])
+        # Non-vacuous: every kind has accepted cases, so the property was exercised on each.
+        for kind, count in passed.items():
+            self.assertGreater(count, 0, "no exit-0 case for {}".format(kind))
+        # The CLI path agrees with the in-process run on a sample of the grid.
+        by_name = {res["name"]: res for res in results}
+        for name, text in cases[::37]:
+            with self.subTest(cli=name):
+                cli = self.run_enum(self.write(text))
+                self.assertEqual(cli.returncode, by_name[name]["code"], cli.stderr)
 
 
 class Isolation(EnumeratorHarness):

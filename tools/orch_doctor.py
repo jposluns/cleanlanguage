@@ -7,6 +7,13 @@ symbols absent from the hook vendored here, so this repository carries its own. 
 VENDORED hook by path and reuses its functions, so it never reimplements a decision:
 
   preflight [stop|idle]  Preview what a Stop (stop) or a scheduling call (idle) would decide now. It
+                         follows the hook order exactly: registry, then scope (aiqt_hooks.py:8584-8585
+                         for a Stop, :8662-8663 for a scheduling call), then for idle the roster test
+                         (:8664-8667), and only then the context and the enumeration (:8586, :8671).
+                         Out of scope, or for idle out of the roster, it reports the ALLOW the hook
+                         gives there WITHOUT building the context or running the enumerator, since
+                         the hook does neither, and an enumerator the preview ran could change what
+                         a later Stop decides. In scope it
                          calls _orch_build_ctx(reg, root, kind, {}, record_checkpoint=False)
                          (aiqt_hooks.py:8434; the preview posture of the checkpoint union,
                          aiqt_hooks.py:8349-8351) and decide_yield (aiqt_hooks.py:8180), then prints
@@ -79,7 +86,8 @@ direction. The enumerator is a program the registry declares; whatever it writes
 control of this tool. The quiet-duration check is not previewed (see above). The rewrite check on
 the barrier detects a write that did not happen; it cannot tell the hook from another writer that
 rewrites the file inside the same run. The tool runs isolated (it re-executes itself under python3 -I when started
-without -I), so a file planted beside it cannot shadow a standard-library import.
+without -I), so a file planted beside it cannot shadow a standard-library import; a failed
+re-execution exits 2 with a message.
 """
 import os
 import sys
@@ -87,7 +95,11 @@ import sys
 if not sys.flags.isolated:
     # Isolated mode keeps this script directory and the environment off the import path, so a file
     # written beside the script cannot shadow a standard-library module (SECI config rule).
-    os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
+    try:
+        os.execv(sys.executable, [sys.executable, "-I", os.path.abspath(__file__)] + sys.argv[1:])
+    except OSError as exc:
+        print("orch_doctor.py: cannot re-execute under python3 -I: {}".format(exc), file=sys.stderr)
+        sys.exit(2)
 
 import argparse
 import datetime
@@ -185,7 +197,14 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
     scope_live = hook._orch_scope_live(reg, root, session_id)
     print("scope: {}".format("live" if scope_live else
                              "not live (the hook allows without judging)"))
-    in_roster = True
+    if not scope_live:
+        # The hook returns here, before the context is built or the enumerator runs
+        # (aiqt_hooks.py:8584-8585 for a Stop, :8662-8663 for a scheduling call), so neither does
+        # the preview: an enumerator run here could change what a later Stop decides.
+        print("enumeration: not run (out of scope, the hook allows before it enumerates)")
+        print("writes: the doctor itself wrote nothing, and no enumerator ran")
+        print("effective verdict: ALLOW (out of scope)")
+        return 0
     quiet_claim = False
     if kind == "schedule_idle":
         declared = reg.get("yield_tools")
@@ -199,6 +218,12 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
         print("tool {}: {}".format(tool, "in the roster, judged" if in_roster else
                                    "not in the roster; the hook allows it unjudged "
                                    "(aiqt_hooks.py:8664-8667)"))
+        if not in_roster:
+            # The hook returns here too, before the context or the enumeration (aiqt_hooks.py:8667).
+            print("enumeration: not run (out of the roster, the hook allows before it enumerates)")
+            print("writes: the doctor itself wrote nothing, and no enumerator ran")
+            print("effective verdict: ALLOW (out of the roster)")
+            return 0
         text = wake_text or ""
         quiet_claim = bool(hook._ORCH_QUIET_CLAIM_RE.search(text)) and "quiet" in text.lower()
         if quiet_claim:
@@ -229,13 +254,13 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
     no_escape = dict(ctx)
     no_escape["escape"] = False
     verdict_ne, reason_ne, _disp_ne = hook.decide_yield(no_escape)
-    judged = scope_live and in_roster
-    effective = verdict if judged else "ALLOW"
+    # Scope and roster were settled above, so every verdict that reaches this point is judged.
+    effective = verdict
     print("judged verdict: {}".format(verdict))
     print("judged reason: {}".format(reason))
     print("verdict without the escape sentinel: {}".format(verdict_ne))
     print("reason without the escape sentinel: {}".format(reason_ne))
-    if judged and kind == "stop":
+    if kind == "stop":
         blocker = _counter_save_blocker(hook._orch_state_dir_for_root(root))
         if blocker is None:
             print("denial counter: could be saved (an os.access check; the hook saves it on a DENY)")
@@ -249,7 +274,7 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
                       "DENY would not hold. Underlying: {})".format(reason))
                 _print_disposition(disposition)
                 return 1
-    if judged and quiet_claim and effective != "DENY":
+    if quiet_claim and effective != "DENY":
         # The quiet-claim check runs before decide_yield and may deny; a DENY stands either way.
         print("effective verdict: UNPREVIEWED ({} unless the quiet-claim check denies)"
               .format(effective))

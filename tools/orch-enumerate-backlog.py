@@ -22,6 +22,18 @@ Backlog grammar (a markdown table, parsed strictly):
   prose. The backlog format keeps every "|" inside a column-0 table line, so prose never carries
   one. The message names each character before the first "|" that is not printable ASCII by its
   code point.
+- A line with no "|" at all that has the shape of a data row's first two cells is rejected naming
+  the line: once its leading run of whitespace, blockquote markers (">") and characters outside
+  printable ASCII is skipped, it begins with an item id (^[0-9]+(\\.[0-9]+)*), then one or more
+  whitespace or ASCII punctuation characters, then an ISO date (YYYY-MM-DD). This is a row that
+  has lost all its pipes, which would otherwise read as prose and drop out of the enumeration;
+  the backlog interleaves rows with blank lines, prose and HTML comments, so the table structure
+  alone cannot tell such a line apart. Ordinary prose, a heading, a list item and an HTML comment
+  do not have that shape and pass. Residual (disclosed): a row that has lost its pipes and also
+  its id or date shape, or whose first cells are led by printable ASCII such as "- " or "<!--",
+  cannot be told from prose and is not caught here; the hook anti-shrinkage checkpoint covers
+  only ids that an earlier enumeration listed, so an id never enumerated before has no second
+  line of defence.
 - The table line whose first cell is "#" is the header; its cells must equal the header above exactly,
   and only one header may appear. A row (separator or data) before the header is rejected.
 - A separator row (every cell made of dashes and colons, with at least one dash) is skipped.
@@ -31,8 +43,11 @@ Backlog grammar (a markdown table, parsed strictly):
 - id: matches ^[0-9]+(\\.[0-9]+)*$ and is unique.
 - state: open, closed or proposed. granted: yes or no.
 - blocker: "-" or "<kind>:<ref>", split at the FIRST colon (a not-before ref contains colons). kind
-  is one of tracked-task, human-decision, external, foreign-lease, not-before; ref is non-blank. A
-  not-before ref must parse as an ISO-8601 time with an explicit UTC offset or "Z".
+  is one of tracked-task, human-decision, external, foreign-lease, not-before; ref is non-blank by
+  the str.strip() test the hook applies (aiqt_hooks.py:7949), so a ref of only Unicode whitespace
+  such as U+00A0 or U+2003 is rejected here, naming the line, rather than by the hook as
+  ENUMERATOR_ERROR. A not-before ref must parse as an ISO-8601 time with an explicit UTC offset or
+  "Z".
 - evidence: "-" or "<ISO-8601 observed time with offset or Z>; <non-blank free text>". It is required
   for an external or foreign-lease blocker and must be "-" for every other row, since the hook reads
   evidence only for those two kinds (aiqt_hooks.py:8152-8166).
@@ -51,8 +66,9 @@ Usage:
         Print the id, opened, item and closure cells of every data row (each cell stripped of the
         surrounding blanks, escapes kept as written) with a sha256 per row, for the migration
         loss check. This mode applies the same validation as the enumeration.
-Exit 0 on success, 1 on an unreadable or malformed backlog, 2 on a usage error. The backlog path is
-the only project-specific input; the script carries no store path of its own.
+Exit 0 on success, 1 on an unreadable or malformed backlog, 2 on a usage error. A backlog that is
+not valid UTF-8 is reported with the line and the byte offset of the first invalid byte. The
+backlog path is the only project-specific input; the script carries no store path of its own.
 
 The script runs isolated: started without -I, it re-executes itself under python3 -I before it
 imports anything beyond os and sys, so a file planted beside it cannot shadow a standard-library
@@ -83,6 +99,11 @@ NCELLS = len(HEADER)
 EMPTY_MARKER = "<!-- aei: empty backlog -->"
 ID_RE = re.compile(r"^[0-9]+(\.[0-9]+)*$")
 SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
+# A pipe-free line with the shape of a data row's first two cells: a leading run of whitespace, ">"
+# and characters outside printable ASCII (the class [^!-=?-~]), an item id, one or more whitespace or
+# ASCII punctuation characters, then an ISO date.
+PIPE_FREE_ROW_RE = re.compile(r"[^!-=?-~]*[0-9]+(?:\.[0-9]+)*(?:\s|[!-/:-@\[-`{-~])+"
+                              r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 # Mirrors _ORCH_STATES and _ORCH_BLOCKER_KINDS (aiqt_hooks.py:7549-7551).
 STATES = ("open", "closed", "proposed")
 GRANTED = {"yes": True, "no": False}
@@ -132,6 +153,18 @@ def _off_column_bar_error(line, lineno):
                        "prose".format(", ".join(names)))
 
 
+def _pipe_free_row_error(line, lineno):
+    """The BacklogError for a line with no "|" that begins, after its leading run of whitespace,
+    blockquote markers and non-printable-ASCII characters, with an item id and an ISO date: a data
+    row that has lost all its pipes. None for every other line, so prose and comments pass."""
+    if "|" in line or not PIPE_FREE_ROW_RE.match(line):
+        return None
+    return _line_error(lineno, "a line without \"|\" begins with an item id and an ISO date, the "
+                       "first two cells of a data row that has lost its pipes; a table row must "
+                       "begin with \"|\" at column 0, so this row is refused rather than lost as "
+                       "prose")
+
+
 def _split_cells(line, lineno):
     """Split a table line into its raw cell segments (blanks kept). The line begins with "|"."""
     body = line.rstrip(" \t\r")
@@ -179,8 +212,11 @@ def _parse_blocker(cell, lineno):
         raise _line_error(lineno, "blocker {!r} is neither \"-\" nor \"<kind>:<ref>\"".format(cell))
     if kind not in BLOCKER_KINDS:
         raise _line_error(lineno, "unknown blocker kind {!r}".format(kind))
-    if not ref:
-        raise _line_error(lineno, "blocker {} has a blank ref".format(kind))
+    if not ref.strip():
+        # The same str.strip() test the hook applies (aiqt_hooks.py:7949), so a ref of only Unicode
+        # whitespace (U+00A0, U+2003 and the like) fails here, naming the line, never in the hook.
+        raise _line_error(lineno, "blocker {} has a blank ref (empty or only whitespace)"
+                          .format(kind))
     if kind == "not-before" and _parse_utc(ref) is None:
         raise _line_error(lineno, "not-before ref {!r} is not an ISO-8601 time with an offset"
                           .format(ref))
@@ -221,7 +257,7 @@ def parse_backlog(text):
             markers.append(lineno)
             continue
         if not line.startswith("|"):
-            error = _off_column_bar_error(line, lineno)
+            error = _off_column_bar_error(line, lineno) or _pipe_free_row_error(line, lineno)
             if error is not None:
                 raise error
             continue
@@ -288,7 +324,8 @@ def read_backlog(path):
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise BacklogError("backlog {} is not valid UTF-8 (byte offset {})".format(path, exc.start))
+        raise BacklogError("backlog {} is not valid UTF-8 (line {}, byte offset {})".format(
+            path, data.count(b"\n", 0, exc.start) + 1, exc.start))
 
 
 def row_digest(row):

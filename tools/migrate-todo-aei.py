@@ -22,6 +22,18 @@ the loss check can compare two parsers rather than one parser with itself:
   loss-check dumps would agree on the loss. This is a single rule rather than a list of prefix
   classes; the backlog keeps every "|" inside a column-0 table line. The message names, by code
   point, each character before the first "|" that is not printable ASCII;
+- a line that holds no "|" but reads as the first two cells of a data row is rejected naming the
+  line: skipping its leading characters that are whitespace, ">" (a blockquote marker) or outside
+  printable ASCII, it starts with an item id (digits with optional dotted parts, such as 27 or
+  28.2), then at least one whitespace or ASCII punctuation character, then a date written
+  YYYY-MM-DD. Such a line is a row that has lost all its pipes; copied through as prose, it would
+  vanish from both loss-check dumps alike, and since the backlog mixes rows with blank lines, prose
+  and HTML comments inside one table span, the structure alone cannot single it out. Prose,
+  headings, list items and HTML comments do not start that way and are copied as before. Residual
+  (disclosed): a row that has lost its pipes and also its id or date shape, or whose cells follow
+  printable ASCII such as "- " or "<!--", cannot be told from prose and is copied through; the
+  hook anti-shrinkage checkpoint covers only ids that an earlier enumeration listed, so it is no
+  backstop for an id that was never enumerated;
 - cells are split on "|" not preceded by a backslash, and the line must end with an unescaped "|";
 - the header is the table line whose first cell is "#" and must equal the old header exactly; an
   input that already carries the new header is refused as already migrated;
@@ -43,7 +55,8 @@ Usage:
     migrate-todo-aei.py --dump-old-cells <input>
         Print the id, opened, item and closure cells of every old data row (stripped of the
         surrounding blanks, escapes kept as written) with a sha256 per row, for the loss check.
-Exit 0 on success, 1 on a refused or malformed input or output, 2 on a usage error.
+Exit 0 on success, 1 on a refused or malformed input or output, 2 on a usage error. An input that is
+not valid UTF-8 is refused naming the line and the byte offset of the first invalid byte.
 
 The script runs isolated: started without -I, it re-executes itself under python3 -I before it
 imports anything beyond os and sys, so a file planted beside it cannot shadow a standard-library
@@ -65,6 +78,7 @@ if not sys.flags.isolated:
 import hashlib
 import json
 import re
+import string
 
 PROG = "migrate-todo-aei"
 OLD_HEADER = ["#", "Opened", "Item", "Closure evidence required"]
@@ -109,6 +123,38 @@ def _misplaced_bar(line):
     return "{} character(s) of printable ASCII {!r}".format(len(lead), lead[:40])
 
 
+def _ascii_digits(text):
+    return bool(text) and all("0" <= ch <= "9" for ch in text)
+
+
+def _starts_like_a_row(line):
+    """True when a line without "|" opens with an item id and a YYYY-MM-DD date, the first two
+    cells of a row that has lost its pipes. Leading whitespace, ">" and characters outside
+    printable ASCII are skipped first; every candidate id end is tried, so a dotted id such as 28.2
+    directly followed by ".2026-10-01" is still seen."""
+    n = len(line)
+    start = 0
+    while start < n and (line[start].isspace() or line[start] == ">"
+                         or not "!" <= line[start] <= "~"):
+        start += 1
+    stop = start
+    while stop < n and (line[stop] == "." or "0" <= line[stop] <= "9"):
+        stop += 1
+    for end in range(start + 1, stop + 1):
+        if not ID_RE.match(line[start:end]):
+            continue
+        pos = end
+        while pos < n and (line[pos].isspace() or line[pos] in string.punctuation):
+            pos += 1
+        if pos == end:
+            continue
+        date = line[pos:pos + 10]
+        if (len(date) == 10 and date[4] == "-" and date[7] == "-" and _ascii_digits(date[:4])
+                and _ascii_digits(date[5:7]) and _ascii_digits(date[8:])):
+            return True
+    return False
+
+
 def _segments(line, lineno):
     """(segments, tail) for a table line: the raw cell segments and the text after the closing bar."""
     content = line[:-1] if line.endswith("\r") else line
@@ -139,6 +185,11 @@ def convert(text):
                                      "must begin with \"|\" at column 0 and no other line may "
                                      "contain \"|\", so no row is copied through as prose"
                                      .format(lineno, misplaced))
+            if _starts_like_a_row(line):
+                raise MigrationError("line {}: no \"|\" on this line, but it opens with an item "
+                                     "id and a YYYY-MM-DD date like a data row whose pipes were "
+                                     "lost; it is refused rather than copied through as prose"
+                                     .format(lineno))
             out.append(line)
             continue
         segments, tail = _segments(line, lineno)
@@ -187,7 +238,9 @@ def read_input(path):
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise MigrationError("input {} is not valid UTF-8 (byte offset {})".format(path, exc.start))
+        line = data[:exc.start].count(b"\n") + 1
+        raise MigrationError("input {} is not valid UTF-8 (line {}, byte offset {})"
+                             .format(path, line, exc.start))
 
 
 def write_output(in_path, out_path, text):

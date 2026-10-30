@@ -38,7 +38,10 @@ Grounding: every hook-behaviour assertion is read from
 plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py at source; cited line numbers are in the
 per-test comments. The PR1-f doctor tests at the end drive tools/orch_doctor.py the same way. A
 missing required input (the installed hook or the doctor) fails the test rather than skipping it, so
-an absent file can never read as a green run.
+an absent file can never read as a green run. The doctor tests also prove that a preflight out of
+scope, or for idle out of the roster, runs no enumerator, as the hook runs none there (finding R3),
+and that the doctor re-executes itself under python3 -I and exits 2 with a message when that
+re-execution fails (finding R6).
 """
 
 from __future__ import annotations
@@ -104,6 +107,15 @@ def stale_writer(data):
 
 hook.orch_resume_audit = stale_writer
 sys.exit(doctor._resume_audit(hook, root))
+"""
+
+# Runs WITHOUT -I, so the doctor takes its re-execution branch, with sys.executable pointed at a path
+# that does not exist: os.execv then raises OSError, which the doctor reports and exits 2 on.
+FAILED_REEXEC_PROG = """
+import runpy, sys
+sys.executable = sys.argv[2]
+sys.argv = [sys.argv[1], "--help"]
+runpy.run_path(sys.argv[0], run_name="__main__")
 """
 
 
@@ -1021,6 +1033,104 @@ class Doctor(Stage2Harness):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("scope: not live", r.stdout)
         self.assertIn("effective verdict: ALLOW", r.stdout)
+
+    # --- R3: the doctor decides scope first and, out of scope, runs no enumerator ----------------
+    def _arm_writing_enumerator(self, **overrides):
+        script = self._tmp / "enum_writing.py"
+        script.write_text(WRITING_ENUM_FIXTURE, encoding="utf-8")
+        marker = self._tmp / "enumerator-ran.txt"
+        reg = self.stage2(enumerator={
+            "argv": [sys.executable, "-I", str(script), str(self.backlog), str(marker)],
+            "timeout": 5}, **overrides)
+        return reg, marker
+
+    def test_preflight_out_of_scope_runs_no_enumerator(self):
+        # The Stop hook returns before it enumerates when scope is not live (aiqt_hooks.py:8584-8585),
+        # and so does the scheduling hook (aiqt_hooks.py:8662-8663); a preview that ran the
+        # enumerator there could change what a later Stop decides.
+        reg, marker = self._arm_writing_enumerator()
+        reg.pop("mode")
+        self.write_registry(reg)
+        self.arm_lease(age_seconds=2 * 24 * 3600)
+        self.set_items([item("42")])
+        # Precondition: out of scope the hook allows both calls and runs no enumerator.
+        self.assertEqual(self.stop().returncode, 0)
+        self.assertEqual(self.schedule().stdout.strip(), "")
+        self.assertFalse(marker.exists(), "precondition: the hook runs no enumerator out of scope")
+        for kind in ("stop", "idle"):
+            with self.subTest(kind=kind):
+                r = self.run_doctor("preflight", kind)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("scope: not live", r.stdout)
+                self.assertIn("enumeration: not run", r.stdout)
+                self.assertIn("effective verdict: ALLOW", r.stdout)
+                self.assertFalse(marker.exists(), "an out-of-scope preflight ran the enumerator")
+
+    def test_preflight_idle_out_of_the_roster_runs_no_enumerator(self):
+        # The scheduling hook returns before it enumerates for a tool outside the roster
+        # (aiqt_hooks.py:8664-8667).
+        reg, marker = self._arm_writing_enumerator(yield_tools=["CronCreate"])
+        self.write_registry(reg)
+        self.arm_lease()
+        self.set_items([item("42")])
+        # Precondition: the hook allows the call unjudged and runs no enumerator.
+        self.assertEqual(self.schedule(tool="ScheduleWakeup").stdout.strip(), "")
+        self.assertFalse(marker.exists(), "precondition: the hook runs no enumerator out of roster")
+        r = self.run_doctor("preflight", "idle")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("tool ScheduleWakeup: not in the roster", r.stdout)
+        self.assertIn("enumeration: not run", r.stdout)
+        self.assertIn("effective verdict: ALLOW", r.stdout)
+        self.assertFalse(marker.exists(), "an out-of-roster preflight ran the enumerator")
+
+    def test_preflight_in_scope_runs_the_enumerator_contrast(self):
+        reg, marker = self._arm_writing_enumerator()
+        self.write_registry(reg)
+        self.arm_lease()
+        self.set_items([item("42")])
+        r = self.run_doctor("preflight", "stop")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("scope: live", r.stdout)
+        self.assertEqual(marker.read_text(encoding="utf-8"), "ran\n")
+
+    # --- R6: the doctor re-executes itself isolated, and a failed re-execution exits 2 ------------
+    def test_reexecutes_isolated_so_a_planted_module_cannot_shadow_the_stdlib(self):
+        # A copy of the doctor in a tools/ directory beside a copy of the hook at the path the
+        # doctor derives from its own location, with a planted json.py next to the copy.
+        fake = self._tmp / "fake-root"
+        tooldir = fake / "tools"
+        hookdir = fake / HOOK.relative_to(REPO_ROOT).parent
+        tooldir.mkdir(parents=True)
+        hookdir.mkdir(parents=True)
+        shutil.copyfile(HOOK, hookdir / HOOK.name)
+        copy = tooldir / DOCTOR.name
+        shutil.copyfile(DOCTOR, copy)
+        (tooldir / "json.py").write_text("raise SystemExit(97)\n", encoding="utf-8")
+        (tooldir / "probe.py").write_text("import json\n", encoding="utf-8")
+        env = self._env()
+        env.pop("PYTHONSAFEPATH", None)
+        probe = subprocess.run([sys.executable, str(tooldir / "probe.py")], capture_output=True,
+                               text=True, env=env, timeout=60)
+        self.assertEqual(probe.returncode, 97, "precondition: the planted module shadows json")
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.set_items([item("1", state="closed")])
+        r = subprocess.run([sys.executable, str(copy), "preflight", "stop", "--root", str(self.repo)],
+                           capture_output=True, text=True, env=env, timeout=120)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("effective verdict: ALLOW", r.stdout)
+
+    def test_a_failed_reexecution_exits_2_with_a_message(self):
+        missing = self._tmp / "no-such-python"
+        self.assertFalse(missing.exists(), "precondition: the interpreter path is absent")
+        env = self._env()
+        env.pop("PYTHONSAFEPATH", None)
+        r = subprocess.run([sys.executable, "-c", FAILED_REEXEC_PROG, str(DOCTOR), str(missing)],
+                           capture_output=True, text=True, env=env, cwd=str(self._tmp), timeout=60)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("orch_doctor.py: cannot re-execute under python3 -I", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertEqual(r.stdout, "")
 
     def test_resume_audit_clean_clears_the_barrier(self):
         self.write_registry(self.stage2())

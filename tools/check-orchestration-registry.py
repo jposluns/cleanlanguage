@@ -85,10 +85,12 @@ HOOK_STATE_FILES = frozenset(
     + _ATOMIC_STATE_FILES + tuple(name + ".tmp" for name in _ATOMIC_STATE_FILES))
 # A Windows drive-letter prefix, as in "C:", "C:x", "C:/x", or "C:\x".
 _DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
-# Interpreter wrappers an enumerator argv[0] must not name, judged on both the declared and the resolved
-# basename: `env` runs its first operand through the session PATH, and a shell runs a script whose own
-# interpreter launch the gate cannot see, so either would let a Python enumerator run without "-I".
-ENUM_WRAPPER_NAMES = frozenset(("env", "sh", "bash", "dash", "zsh", "ksh"))
+# The resolved basenames an enumerator argv[0] may carry: a Python interpreter named python, python3, or
+# python3.N with an optional one-letter build suffix (python3.13t, for example), matched in full. The gate
+# admits only an isolated Python interpreter running a script (see the enumerator check in validate()), so
+# this is an allowlist: every other resolved name, a launcher such as env, nice, or timeout, a shell, or a
+# renamed script, is rejected rather than listed.
+ENUM_PYTHON_NAME = re.compile(r"python(?:3(?:\.[0-9]+[a-z]?)?)?")
 # The dispatch_tools names the orch_dispatch_ledger matcher routes to the hook but that the hook cannot use
 # as list entries, each with the hook line that makes it so (see the dispatch_tools check in validate()).
 DISPATCH_TOOLS_FORBIDDEN = {
@@ -447,7 +449,7 @@ def validate(path):
     # aiqt_hooks.py:8300-8301; a non-string or empty escape path disables the release with no record,
     # aiqt_hooks.py:7861-7862; a roster name outside the matcher is never judged, aiqt_hooks.py:8665-8667),
     # the gate rejects the value at author time so neither outcome reaches a session.
-    enum_paths = []  # absolute enumerator operands, collision-checked against state_dir below
+    enum_paths = []  # enumerator operands from argv[2] on, root-joined when relative, collision-checked below
     if "enumerator" in obj:
         spec = obj["enumerator"]
         if not isinstance(spec, dict):
@@ -473,56 +475,70 @@ def validate(path):
                       "prefix); the hook runs it on POSIX, where it is not the path it spells".format(i, arg))
         # argv[0] must be absolute: the hook runs argv with no shell and cwd set to the repository root
         # (aiqt_hooks.py:7976), so a bare interpreter name would resolve through the session PATH, an
-        # ambient binding the registry cannot pin. Every later operand that is an absolute path (the
-        # backlog file) is validated as a declared path and joins the state_dir collision list.
+        # ambient binding the registry cannot pin.
         _check_declared_path("enumerator.argv[0]", argv[0])
-        # A Python interpreter must run isolated: argv[1] must be exactly "-I". Without it the interpreter
-        # puts the script directory first on sys.path and honours the PYTHON* environment variables, so a
-        # file beside the enumerator script could shadow a standard library import and steer the backlog
-        # verdict the stop and yield guards act on. Every hook launch in hooks.json carries the same "-I"
-        # (for example hooks.json:282-287). argv[0] is judged by what it RESOLVES to as well as by its
-        # spelling (round 2 G2): a symlink alias whose own name does not start with "python", or a wrapper
-        # such as ["/usr/bin/env", "python3", ...], would otherwise pass without "-I". The rule:
+        # The gate admits only an isolated Python interpreter running a script (round 3 R4). Without "-I"
+        # the interpreter puts the script directory first on sys.path and honours the PYTHON* environment
+        # variables, so a file beside the enumerator script could shadow a standard library import and steer
+        # the backlog verdict the stop and yield guards act on. Every hook launch in hooks.json carries the
+        # same "-I" (for example hooks.json:282-287). The rule is an allowlist, so no launcher outside it
+        # (env, nice, timeout, a shell, a renamed script, or any other executable) is admitted:
         #   - argv[0] is resolved with os.path.realpath(strict=True); one that cannot be resolved (absent, a
         #     dangling link, a link loop, or unreadable) is a cannot-evaluate and fails closed;
-        #   - a declared or resolved basename in ENUM_WRAPPER_NAMES (env or a shell) is rejected outright;
-        #   - a declared or resolved basename starting with "python" (python, python3, python3.N, and their
-        #     suffixed builds) is a Python interpreter, and argv[1] must be exactly "-I";
-        #   - when argv[0] is not a Python interpreter, no argv element, argv[0] included, may end in ".py",
-        #     since a Python script behind a non-Python launcher (or run directly through its shebang) would
-        #     run without "-I".
-        # Disclosed residual: a non-Python executable that itself launches Python unisolated (a compiled
-        # launcher, a script in another language that spawns Python, or a Python interpreter installed under
-        # a name that does not start with "python", such as pypy3, running a script not named *.py) is not
-        # detectable by this gate, which sees only argv. Resolution is also judged at gate time, on the
-        # machine running the gate; the hook resolves argv[0] again when it runs it (aiqt_hooks.py:7976).
+        #   - the RESOLVED basename must fully match ENUM_PYTHON_NAME (python, python3, or python3.N with an
+        #     optional one-letter build suffix); the declared spelling is not consulted, so a symlink alias
+        #     is judged by its target;
+        #   - argv[1] must be exactly "-I";
+        #   - argv[2] must be a script path ending in ".py" that does not start with "-", so neither "-c",
+        #     nor "-m", nor any further interpreter option can take the place of the script.
+        # Disclosed residual: a Python interpreter installed under a name outside the allowlist (pypy3, for
+        # example) is rejected, not admitted; a non-Python executable installed under an allowlisted name is
+        # admitted on that name, because the gate judges the resolved name and never executes argv[0]; and a
+        # script that itself spawns an unisolated child process is not inspected. Resolution is judged at
+        # gate time, on the machine running the gate; the hook resolves argv[0] again when it runs it
+        # (aiqt_hooks.py:7976).
         try:
             real_argv0 = os.path.realpath(argv[0], strict=True)
         except (OSError, ValueError) as exc:
             _fail("`enumerator.argv[0]` ({!r}) cannot be resolved at gate time ({}); whether it is a Python "
                   "interpreter that needs \"-I\" cannot be evaluated, so it is rejected".format(argv[0], exc))
-        argv0_names = {os.path.basename(argv[0]), os.path.basename(real_argv0)}
-        wrappers = sorted(name for name in argv0_names if name in ENUM_WRAPPER_NAMES)
-        if wrappers:
-            _fail("`enumerator.argv[0]` ({!r}, resolving to {!r}) is an interpreter wrapper ({}); it would "
-                  "run its operand without the gate seeing whether that is an isolated Python launch, so "
-                  "name the interpreter itself as argv[0]".format(argv[0], real_argv0, ", ".join(wrappers)))
-        argv0_is_python = any(name.startswith("python") for name in argv0_names)
-        if argv0_is_python and (len(argv) < 2 or argv[1] != "-I"):
+        if not ENUM_PYTHON_NAME.fullmatch(os.path.basename(real_argv0)):
+            _fail("`enumerator.argv[0]` ({!r}) resolves to {!r}, which is not a Python interpreter (python, "
+                  "python3, or python3.N); the gate admits only an isolated Python interpreter running a "
+                  "script, so a wrapper, a shell, or any other launcher is rejected".format(
+                      argv[0], real_argv0))
+        if len(argv) < 2 or argv[1] != "-I":
             _fail("`enumerator.argv[0]` ({!r}, resolving to {!r}) is a Python interpreter, so "
                   "`enumerator.argv[1]` must be exactly \"-I\" (isolated mode), got {!r}".format(
                       argv[0], real_argv0, argv[1] if len(argv) > 1 else None))
-        if not argv0_is_python:
-            for i, arg in enumerate(argv):
-                if arg.endswith(".py"):
-                    _fail("`enumerator.argv[{}]` ({!r}) is a Python script, but `enumerator.argv[0]` ({!r}, "
-                          "resolving to {!r}) is not a Python interpreter, so the script would run without "
-                          "\"-I\"; name the Python interpreter as argv[0] with argv[1] \"-I\"".format(
-                              i, arg, argv[0], real_argv0))
-        for i in range(1, len(argv)):
+        if len(argv) < 3 or not argv[2].endswith(".py") or argv[2].startswith("-"):
+            _fail("`enumerator.argv[2]` must be a script path ending in \".py\" (not \"-c\", \"-m\", or "
+                  "another interpreter option), got {!r}".format(argv[2] if len(argv) > 2 else None))
+        # Every operand from argv[2] on (the script and the backlog file) joins the state_dir collision list
+        # (round 3 R1). The hook runs argv with cwd set to the repository root (aiqt_hooks.py:7976); that
+        # root is the git top level of the session (_orch_root, aiqt_hooks.py:7590-7594), and the registry
+        # the hook reads is <root>/.aiqt/orchestration.json or its .local.json sibling (_ORCH_REGISTRY_FILES
+        # and _orch_registry, aiqt_hooks.py:7548, 7606-7607). A relative operand therefore names
+        # <root>/<operand>, so the gate joins it onto that root before the same declared-path, collision,
+        # and containment checks an absolute operand gets. Without the join, an operand such as
+        # "../orch-state/resume-barrier.json" would reach a state file that orch_resume_audit truncates
+        # (aiqt_hooks.py:9775, 9783-9785) unseen. The gate takes the root as the parent of the .aiqt
+        # directory holding the registry; a registry checked from a path outside any .aiqt directory (a
+        # fixture or an ad hoc copy, which no hook reads from there) uses the checkout this gate runs from
+        # (ROOT). The Windows-shape check above already ran on every operand. Disclosed residual: an operand
+        # is judged as a whole path, so a path embedded in an option (such as "--out=<path>") is not
+        # extracted or checked.
+        reg_dir = os.path.dirname(os.path.abspath(path))
+        enum_root = os.path.dirname(reg_dir) if os.path.basename(reg_dir) == ".aiqt" else ROOT
+        for i in range(2, len(argv)):
+            label = "enumerator.argv[{}]".format(i)
             if _is_absolute(argv[i]):
-                _check_declared_path("enumerator.argv[{}]".format(i), argv[i])
-                enum_paths.append(("enumerator.argv[{}]".format(i), argv[i]))
+                operand = argv[i]
+            else:
+                label += " joined onto the repository root"
+                operand = os.path.join(enum_root, argv[i])
+            _check_declared_path(label, operand)
+            enum_paths.append((label, operand))
         if "timeout" not in spec:
             _fail("`enumerator.timeout` is required: the hook substitutes 60 seconds for a missing value "
                   "(aiqt_hooks.py:7974), which overruns the 10 second hook budget")
@@ -682,8 +698,8 @@ def validate(path):
             declared.append(("lease.path", obj["lease"]["path"]))
         # Stage 2 adds the declared files the hooks read or write outside state_dir to the same list: the
         # mode record, the attestation register and its <path>.anchor authority (aiqt_hooks.py:9541), the
-        # mistakes register, and every absolute enumerator operand (the backlog file). All are validated
-        # strings by this point.
+        # mistakes register, and every enumerator operand from argv[2] on (the script and the backlog file),
+        # a relative one already joined onto the repository root. All are validated strings by this point.
         if isinstance(obj.get("mode"), dict) and "path" in obj["mode"]:
             declared.append(("mode.path", obj["mode"]["path"]))
         if "attestations" in obj:

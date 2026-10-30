@@ -22,6 +22,14 @@ G1: one rule, any "|" off a column-0 table line), and a class probe runs that ru
 over every code point of the Basic Multilingual Plane. The Isolation case proves the migration
 re-executes itself under python3 -I (finding G9). A missing required input (either script or the
 vendored hook) fails the test rather than skipping it.
+
+The PipeFreeRow cases prove that a row which has lost all its pipes (a line with no "|" that opens
+with an item id and a YYYY-MM-DD date once any leading whitespace, blockquote marker or character
+outside printable ASCII is skipped) is refused naming the line and writes nothing, that plain prose,
+a plain lazy continuation line and an HTML comment are still copied, that the two-parser loss check
+refuses both dumps, and that the two independently written row-shape rules agree on a generated
+corpus of lines (finding R2). An invalid UTF-8 input is refused naming its line as well as its byte
+offset (finding R7).
 """
 
 from __future__ import annotations
@@ -135,6 +143,43 @@ for cp in range(0x10000):
             if str(exc).startswith("line 8: ") and needles[key] in str(exc):
                 continue
         result[key].append("U+%04X" % cp)
+print(json.dumps(result))
+"""
+
+
+# The message each parser gives for a pipe-free line with the shape of a row (finding R2).
+MIGRATE_ROW_ERROR = "opens with an item id and a YYYY-MM-DD date"
+ENUMERATE_ROW_ERROR = "begins with an item id and an ISO date"
+
+# Runs in a separate python3 -I -B process: load both scripts by path and, for every line built from
+# the lead, id, separator, date and tail pieces in the JSON argv[3], compare the migration predicate
+# _starts_like_a_row with the enumerator rule _pipe_free_row_error. Prints the lines on which they
+# disagree and the count of lines each one flags.
+AGREEMENT_PROG = """
+import importlib.util, itertools, json, sys
+sys.dont_write_bytecode = True
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+mig = load("migrate_under_test", sys.argv[1])
+enum = load("enumerator_under_test", sys.argv[2])
+pieces = json.loads(sys.argv[3])
+result = {"lines": 0, "migrate": 0, "enumerate": 0, "disagree": []}
+for parts in itertools.product(*pieces):
+    line = "".join(parts)
+    if "|" in line or "\\n" in line:
+        continue
+    result["lines"] += 1
+    m = mig._starts_like_a_row(line)
+    e = enum._pipe_free_row_error(line, 1) is not None
+    result["migrate"] += m
+    result["enumerate"] += e
+    if m != e:
+        result["disagree"].append(line)
 print(json.dumps(result))
 """
 
@@ -384,6 +429,13 @@ class MalformedInput(MigrateHarness):
     def test_invalid_utf8(self):
         self.refuse(old_fixture().encode("utf-8") + b"\xff\n", "not valid UTF-8")
 
+    def test_invalid_utf8_names_the_line(self):
+        # Finding R7: the refusal names the line of the first invalid byte, not only its offset.
+        text = old_fixture().encode("utf-8")
+        self.refuse(text + b"bad \xff byte\n", "line {}, byte offset {}".format(
+            text.count(b"\n") + 1, len(text) + 4))
+        self.refuse(b"# Backlog\n\nbad \xc3 here\n" + text, "line 3, byte offset 15")
+
     def test_already_migrated(self):
         text = "\n".join([NEW_HEADER, "|---|---|---|---|---|---|---|---|",
                           "| 1 | d | open | yes | - | - | i | c |"]) + "\n"
@@ -575,6 +627,107 @@ class HiddenTablePrefix(MigrateHarness):
                 new = self.py(ENUMERATE, "--dump-cells", carried)
                 self.assertEqual(new.returncode, 1, new.stderr)
                 self.assertIn("line 8: ", new.stderr)
+
+
+class PipeFreeRow(MigrateHarness):
+    """A row that has lost all its pipes is refused naming the line (finding R2).
+
+    Before the fix the migration copied such a line through as prose and both dumps omitted it, so
+    the digest multisets agreed and the loss check could not see the loss. In old_fixture() the
+    header is line 5 and the rows start at line 7, so the probed line is 8.
+    """
+
+    ROW_SHAPED = [
+        ("pipe-free row", "12 2026-09-14 Pipe inside an item Checklist item ticked"),
+        ("pipe-free row with leading spaces", "   12 2026-09-14 Pipe inside an item Ticked"),
+        ("pipe-free row with only stray spaces", " 12  2026-09-14  Item  Ticked "),
+        ("tab separated", "12\t2026-09-14\tItem\tTicked"),
+        ("dotted id", "28.2 2026-10-01 Stage 2 arming"),
+        ("dotted id then a dot", "28.2.2026-10-01 Stage 2 arming"),
+        ("blockquote marker", "> 12 2026-09-14 Item"),
+        ("no-break space lead", "\u00a012 2026-09-14 Item"),
+        ("zero-width space lead", "\u200b12 2026-09-14 Item"),
+        ("hangul filler lead", "\u3164 12 2026-09-14 Item"),
+        ("id and date only", "12 2026-09-14"),
+    ]
+
+    def clear_dst(self):
+        if os.path.lexists(self.dst):
+            os.unlink(self.dst)
+
+    def test_pipe_free_row_is_refused_and_writes_nothing(self):
+        for name, line in self.ROW_SHAPED:
+            with self.subTest(case=name):
+                self.clear_dst()
+                self.write_src(old_fixture(rows=[OLD_ROWS[0], line] + OLD_ROWS[2:]))
+                self.assert_refused(self.py(MIGRATE, self.src, self.dst),
+                                    "line 8: no \"|\" on this line, but it " + MIGRATE_ROW_ERROR)
+                self.assertFalse(os.path.lexists(self.dst), "a refused migration writes nothing")
+
+    def test_lazy_continuation_with_the_row_shape_is_refused(self):
+        # GFM reads a non-blank line directly after a row as a lazy continuation of the table.
+        self.write_src(old_fixture(rows=OLD_ROWS[:2] + ["3 2026-10-02 continued as a row"]))
+        self.assert_refused(self.py(MIGRATE, self.src, self.dst), "line 9: ")
+        self.assertFalse(os.path.lexists(self.dst))
+
+    def test_lazy_continuation_of_plain_prose_is_copied(self):
+        rows = OLD_ROWS[:2] + ["continued as plain prose, with no id or date"] + OLD_ROWS[2:]
+        src = old_fixture(rows=rows)
+        summary = self.migrate_ok(src)
+        self.assertEqual(summary["converted"], len(OLD_ROWS))
+        self.assertEqual(non_table_lines(src), non_table_lines(self.dst.read_text(encoding="utf-8")))
+
+    def test_html_comment_directly_after_a_row_is_copied(self):
+        for comment in ("<!-- reviewed 2026-10-01 -->", "<!-- note -->",
+                        "<!-- 27 2026-10-01 parked -->"):
+            with self.subTest(comment=comment):
+                self.clear_dst()
+                src = old_fixture(rows=OLD_ROWS[:1] + [comment] + OLD_ROWS[1:])
+                summary = self.migrate_ok(src)
+                self.assertEqual(summary["converted"], len(OLD_ROWS))
+                self.assertIn(comment, self.dst.read_text(encoding="utf-8").split("\n"))
+
+    def test_two_parser_loss_check_refuses_both_dumps(self):
+        for name, line in self.ROW_SHAPED:
+            with self.subTest(case=name):
+                self.clear_dst()
+                # The old file with the pipe-free row: the migration parser refuses its dump.
+                self.write_src(old_fixture(rows=[OLD_ROWS[0], line] + OLD_ROWS[2:]))
+                old = self.py(MIGRATE, "--dump-old-cells", self.src)
+                self.assert_refused(old, "line 8: ")
+                self.assertIn(MIGRATE_ROW_ERROR, old.stderr)
+                # The new file a parser without the rule would write (the line copied through as
+                # prose): the enumerator parser refuses its dump, so no two counts can agree.
+                carried = self._tmp / "carried.md"
+                carried.write_text("\n".join([
+                    NEW_HEADER, "|---|---|---|---|---|---|---|---|",
+                    "| 1 | 2026-09-01 | open | yes | - | - | Ship the release notes | Merged |",
+                    line, ""]), encoding="utf-8")
+                new = self.py(ENUMERATE, "--dump-cells", carried)
+                self.assertEqual(new.returncode, 1, new.stderr)
+                self.assertEqual(new.stdout, "")
+                self.assertIn("line 4: ", new.stderr)
+                self.assertIn(ENUMERATE_ROW_ERROR, new.stderr)
+
+    def test_the_two_row_shape_rules_agree_on_a_generated_corpus(self):
+        pieces = [
+            ["", " ", "\t", "> ", ">", "> > ", "\u00a0", "\u200b", "\ufeff", "\u3164", "\u2003",
+             "- ", "# ", "<!-- ", "x", "("],
+            ["2", "27", "28.2", "1.2.3", "28.", "2a", "", "07"],
+            [" ", "  ", "\t", ", ", ".", "-", ": ", "\u00a0", "", "x", " x "],
+            ["2026-10-01", "2026-1-01", "26-10-01", "2026/10/01", "2026-10-0", "abcd-ef-gh",
+             "\u0662\u0660\u0662\u0666-10-01"],
+            ["", " Item text", "\r", "x", " -->"],
+        ]
+        r = subprocess.run([sys.executable, "-I", "-B", "-c", AGREEMENT_PROG, str(MIGRATE),
+                            str(ENUMERATE), json.dumps(pieces)],
+                           capture_output=True, text=True, timeout=300)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        res = json.loads(r.stdout)
+        self.assertEqual(res["disagree"], [], "lines the two row-shape rules judge differently")
+        # Non-vacuous: the corpus holds both row-shaped lines and lines that are not.
+        self.assertGreater(res["migrate"], 0)
+        self.assertLess(res["migrate"], res["lines"])
 
 
 class Isolation(MigrateHarness):
