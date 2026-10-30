@@ -41,12 +41,18 @@ missing required input (the installed hook or the doctor) fails the test rather 
 an absent file can never read as a green run. The doctor tests also prove that a preflight out of
 scope, or for idle out of the roster, runs no enumerator, as the hook runs none there (finding R3),
 and that the doctor re-executes itself under python3 -I and exits 2 with a message when that
-re-execution fails (finding R6).
+re-execution fails (finding R6). The doctor reads the resume barrier only as a regular file: a
+barrier that is a FIFO with no writer, a directory, or a symlink to /dev/null is reported as
+cannot-evaluate, exit 2, within a short timeout and naming the path and the file type, and the audit
+is not run, and a class probe scans the doctor source so that every path it opens goes through its
+checked helper (finding S3).
 """
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -54,6 +60,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tokenize
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1343,6 +1350,112 @@ class Doctor(Stage2Harness):
         self.assertIn("is not from this audit run", r.stdout)
         self.assertFalse(self.state_json("resume-barrier.json")["active"],
                          "precondition: the barrier was rewritten, and reads clear")
+
+    # --- S3: the barrier is read only as a regular file, without blocking -------------------------
+    BARRIER_TIMEOUT = 60
+
+    def _audit_bounded(self):
+        try:
+            return subprocess.run([sys.executable, "-I", str(DOCTOR), "--resume-audit", "--root",
+                                   str(self.repo)], capture_output=True, text=True, env=self._env(),
+                                  timeout=self.BARRIER_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.fail("the doctor did not exit within {} s: the barrier open blocked"
+                      .format(self.BARRIER_TIMEOUT))
+
+    def _assert_barrier_refused(self, kind):
+        r = self._audit_bounded()
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("barrier: cannot be recorded before the audit", r.stdout)
+        self.assertIn("{} is not a regular file (it is a {})".format(
+            self.state_dir() / "resume-barrier.json", kind), r.stdout)
+        return r
+
+    def _barrier_path(self):
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.state_dir().mkdir(parents=True, exist_ok=True)
+        return self.state_dir() / "resume-barrier.json"
+
+    def test_resume_audit_fifo_barrier_fails_closed_promptly(self):
+        path = self._barrier_path()
+        os.mkfifo(path)
+        self._assert_barrier_refused("FIFO")
+        self.assertFalse(os.path.isfile(path), "the audit did not run, so nothing replaced the FIFO")
+
+    def test_resume_audit_directory_barrier_fails_closed(self):
+        path = self._barrier_path()
+        path.mkdir()
+        self._assert_barrier_refused("directory")
+
+    def test_resume_audit_dev_null_barrier_fails_closed(self):
+        if not os.path.exists(os.devnull):
+            self.fail("{} is absent, so the device case cannot run".format(os.devnull))
+        path = self._barrier_path()
+        os.symlink(os.devnull, path)
+        self._assert_barrier_refused("character device")
+        self.assertTrue(os.path.islink(path), "the audit did not run, so the symlink is untouched")
+
+
+# Every name that opens or reads a path; a reference to any of them, called, aliased or imported,
+# counts, so a bare alias such as "f = os.open" cannot slip past the probe.
+OPENERS = ("open", "fdopen", "read_text", "read_bytes", "write_text", "write_bytes")
+
+
+def opener_references(source):
+    """(enclosing function, dotted name) for every reference to an opener in source, in order."""
+    found = []
+
+    def dotted(node):
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return dotted(node.value) + "." + node.attr
+        return "?"
+
+    def visit(node, func):
+        for child in ast.iter_child_nodes(node):
+            inner = func
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner = child.name
+            if isinstance(child, ast.Name) and child.id in OPENERS:
+                found.append((func, child.id))
+            elif isinstance(child, ast.Attribute) and child.attr in OPENERS:
+                found.append((func, dotted(child)))
+            elif isinstance(child, ast.alias) and child.name.split(".")[-1] in OPENERS:
+                found.append((func, "import " + child.name))
+            visit(child, inner)
+
+    visit(ast.parse(source), "<module>")
+    return found
+
+
+def opener_call_tokens(source):
+    """The number of opener names followed by "(" in the code tokens (strings and comments are not
+    code), an independent count of the textual open( calls."""
+    toks = [t for t in tokenize.generate_tokens(io.StringIO(source).readline)
+            if t.type not in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT,
+                              tokenize.DEDENT)]
+    return sum(1 for a, b in zip(toks, toks[1:])
+               if a.type == tokenize.NAME and a.string in OPENERS
+               and b.type == tokenize.OP and b.string == "(")
+
+
+class DoctorSourceProbe(unittest.TestCase):
+    """Class probe for finding S3: every path the doctor itself opens goes through _read_regular."""
+
+    def test_every_open_in_the_doctor_goes_through_the_checked_helper(self):
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+        source = DOCTOR.read_text(encoding="utf-8")
+        self.assertEqual(opener_references(source), [("_read_regular", "os.open")],
+                         "an open outside the checked helper _read_regular")
+        self.assertEqual(opener_call_tokens(source), 1, "a textual open( call outside the helper")
+        helper = next(node for node in ast.walk(ast.parse(source))
+                      if isinstance(node, ast.FunctionDef) and node.name == "_read_regular")
+        names = {n.attr for n in ast.walk(helper) if isinstance(n, ast.Attribute)}
+        for needed in ("O_NONBLOCK", "O_CLOEXEC", "fstat", "S_ISREG", "set_blocking"):
+            self.assertIn(needed, names, "the checked helper no longer uses {}".format(needed))
 
 
 if __name__ == "__main__":

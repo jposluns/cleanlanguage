@@ -29,17 +29,31 @@ both dumps (finding R2). The BlockerProperty cases prove that a ref of only Unic
 closed naming the line, and that every exit-0 enumeration over a grid of blocker kinds and edge refs
 and evidence values passes the vendored validate_enumeration (finding R5). An invalid UTF-8 input is
 reported with its line as well as its byte offset (finding R7).
+
+The InputFileType cases prove that a backlog path that is not a regular file, a FIFO with no writer,
+a symlink to one, a directory, or /dev/null, exits 1 promptly naming the path and the file type
+rather than blocking indefinitely or reading as an empty input, while a regular file, a symlink to
+one, and a file larger than one read chunk still enumerate (finding S3). Each run is bounded by a
+subprocess timeout, so a blocking open fails the test instead of hanging the suite. The SourceProbe
+case is the class probe for that finding: it scans the enumerator source for every reference to an
+opener (open, fdopen, read_text, read_bytes, write_text, write_bytes, called, aliased or imported)
+and requires exactly one, the os.open inside the checked helper, so a new unchecked open fails the
+suite. The EndOfInput cases prove that an input with no backlog table is reported at the line where
+the scan ended (finding S4).
 """
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
+import tokenize
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -419,7 +433,7 @@ class FailClosed(EnumeratorHarness):
         self.assert_fails(self._tmp / "absent.md", needle="cannot read backlog")
 
     def test_directory_operand(self):
-        self.assert_fails(self._tmp, needle="cannot read backlog")
+        self.assert_fails(self._tmp, needle="is not a regular file (it is a directory)")
 
     def test_unreadable_file(self):
         if os.geteuid() == 0:
@@ -825,6 +839,143 @@ class Isolation(EnumeratorHarness):
                            env=env)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual([it["id"] for it in json.loads(r.stdout)["items"]], ["1"])
+
+
+class InputFileType(EnumeratorHarness):
+    """The backlog path must be a regular file (finding S3). A FIFO with no writer, a symlink to a
+    FIFO, a directory and /dev/null each exit 1 within a short timeout, naming the path and the file
+    type, in both modes; a regular file and a symlink to one still enumerate."""
+
+    TIMEOUT = 20
+
+    def run_bounded(self, *args):
+        try:
+            return subprocess.run([sys.executable, "-I", str(SCRIPT), *[str(a) for a in args]],
+                                  capture_output=True, text=True, timeout=self.TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.fail("the enumerator did not exit within {} s for {!r}: the open blocked"
+                      .format(self.TIMEOUT, [str(a) for a in args]))
+
+    def assert_type_refused(self, path, kind):
+        for args in ((path,), ("--dump-cells", path)):
+            with self.subTest(args=[str(a) for a in args]):
+                r = self.run_bounded(*args)
+                self.assertEqual(r.returncode, 1, "expected exit 1: {}".format(r.stderr))
+                self.assertEqual(r.stdout, "", "a failing enumerator prints no enumeration")
+                self.assertIn("backlog {} is not a regular file (it is a {})".format(
+                    os.path.abspath(str(path)), kind), r.stderr)
+
+    def test_fifo_with_no_writer_fails_closed_promptly(self):
+        fifo = self._tmp / "TODO.fifo"
+        os.mkfifo(fifo)
+        self.assert_type_refused(fifo, "FIFO")
+
+    def test_symlink_to_a_fifo_fails_closed_promptly(self):
+        fifo = self._tmp / "TODO.fifo"
+        os.mkfifo(fifo)
+        link = self._tmp / "TODO.md"
+        os.symlink(fifo, link)
+        self.assert_type_refused(link, "FIFO")
+
+    def test_directory_fails_closed(self):
+        directory = self._tmp / "TODO.d"
+        directory.mkdir()
+        self.assert_type_refused(directory, "directory")
+
+    def test_dev_null_fails_closed(self):
+        if not os.path.exists(os.devnull):
+            self.fail("{} is absent, so the device case cannot run".format(os.devnull))
+        self.assert_type_refused(Path(os.devnull), "character device")
+
+    def test_regular_file_and_a_symlink_to_one_still_enumerate(self):
+        path = self.write(table(row("1"), row("2")))
+        link = self._tmp / "link.md"
+        os.symlink(path, link)
+        for target in (path, link):
+            with self.subTest(path=str(target)):
+                r = self.run_bounded(target)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual([it["id"] for it in json.loads(r.stdout)["items"]], ["1", "2"])
+
+    def test_a_file_larger_than_one_read_chunk_is_read_to_its_end(self):
+        rows = [row(str(n), item="x" * 120) for n in range(1, 12001)]
+        path = self.write(table(*rows))
+        self.assertGreater(path.stat().st_size, 1 << 20, "precondition: more than one read chunk")
+        r = self.run_bounded(path)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(json.loads(r.stdout)["items"]), 12000)
+
+
+# Every name that opens or reads a path; a reference to any of them, called, aliased or imported,
+# counts, so a bare alias such as "f = os.open" cannot slip past the probe.
+OPENERS = ("open", "fdopen", "read_text", "read_bytes", "write_text", "write_bytes")
+
+
+def opener_references(source):
+    """(enclosing function, dotted name) for every reference to an opener in source, in order."""
+    found = []
+
+    def dotted(node):
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return dotted(node.value) + "." + node.attr
+        return "?"
+
+    def visit(node, func):
+        for child in ast.iter_child_nodes(node):
+            inner = func
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner = child.name
+            if isinstance(child, ast.Name) and child.id in OPENERS:
+                found.append((func, child.id))
+            elif isinstance(child, ast.Attribute) and child.attr in OPENERS:
+                found.append((func, dotted(child)))
+            elif isinstance(child, ast.alias) and child.name.split(".")[-1] in OPENERS:
+                found.append((func, "import " + child.name))
+            visit(child, inner)
+
+    visit(ast.parse(source), "<module>")
+    return found
+
+
+def opener_call_tokens(source):
+    """The number of opener names followed by "(" in the code tokens (strings and comments are not
+    code), an independent count of the textual open( calls."""
+    toks = [t for t in tokenize.generate_tokens(io.StringIO(source).readline)
+            if t.type not in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT,
+                              tokenize.DEDENT)]
+    return sum(1 for a, b in zip(toks, toks[1:])
+               if a.type == tokenize.NAME and a.string in OPENERS
+               and b.type == tokenize.OP and b.string == "(")
+
+
+class SourceProbe(unittest.TestCase):
+    """Class probe for finding S3: every path the enumerator opens goes through _read_regular."""
+
+    def test_every_open_in_the_enumerator_goes_through_the_checked_helper(self):
+        if not SCRIPT.exists():
+            self.fail("enumerator not found: {}".format(SCRIPT))
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertEqual(opener_references(source), [("_read_regular", "os.open")],
+                         "an open outside the checked helper _read_regular")
+        self.assertEqual(opener_call_tokens(source), 1, "a textual open( call outside the helper")
+        helper = next(node for node in ast.walk(ast.parse(source))
+                      if isinstance(node, ast.FunctionDef) and node.name == "_read_regular")
+        names = {n.attr for n in ast.walk(helper) if isinstance(n, ast.Attribute)}
+        for needed in ("O_NONBLOCK", "O_CLOEXEC", "fstat", "S_ISREG", "set_blocking"):
+            self.assertIn(needed, names, "the checked helper no longer uses {}".format(needed))
+
+
+class EndOfInput(EnumeratorHarness):
+    """An input with no backlog table is reported at the line where the scan ended (finding S4)."""
+
+    def test_no_table_names_the_last_line(self):
+        cases = [("# Backlog\n\nNothing here.\n", 3), ("# Backlog\n\nNothing here.", 3),
+                 ("", 1), ("one line\n", 1), ("a\n\n\n", 3)]
+        for text, line in cases:
+            with self.subTest(text=text):
+                self.assert_fails(text, needle="line {} (end of input): no backlog table".format(line))
 
 
 if __name__ == "__main__":

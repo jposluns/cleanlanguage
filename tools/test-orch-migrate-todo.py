@@ -30,11 +30,24 @@ a plain lazy continuation line and an HTML comment are still copied, that the tw
 refuses both dumps, and that the two independently written row-shape rules agree on a generated
 corpus of lines (finding R2). An invalid UTF-8 input is refused naming its line as well as its byte
 offset (finding R7).
+
+The InputFileType cases prove that an input path that is not a regular file, a FIFO with no writer,
+a symlink to one, a directory, or /dev/null, is refused promptly (exit 1) naming the path and the
+file type, in both modes, and writes no output, rather than blocking indefinitely or converting an
+empty input, while a regular file, a symlink to one, and an input larger than one read chunk still
+convert (finding S3). Each run is bounded by a subprocess timeout, so a blocking open fails the
+test instead of hanging the suite. The SourceProbe case is the class probe for that finding: it
+scans the migration source for every reference to an opener (open, fdopen, read_text, read_bytes,
+write_text, write_bytes, called, aliased or imported) and accepts only the os.open in the checked
+read helper and the exclusive create of the output, so a new unchecked open fails the suite. The
+no-header refusal names the line where the scan ended (finding S4).
 """
 
 from __future__ import annotations
 
+import ast
 import collections
+import io
 import json
 import os
 import resource
@@ -44,6 +57,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tokenize
 import unittest
 from pathlib import Path
 
@@ -448,6 +462,13 @@ class MalformedInput(MigrateHarness):
     def test_no_header(self):
         self.refuse("# Backlog\n\nNo table.\n", "no 4-column header")
 
+    def test_no_header_names_the_last_line(self):
+        cases = [("# Backlog\n\nNo table.\n", 3), ("# Backlog\n\nNo table.", 3), ("", 1),
+                 ("one line\n", 1), ("a\n\n\n", 3)]
+        for text, line in cases:
+            with self.subTest(text=text):
+                self.refuse(text, "line {} (end of input): no 4-column header".format(line))
+
     def test_row_before_header(self):
         self.refuse("| 1 | a | b | c |\n" + OLD_HEADER + "\n", "line 1: table row before the header")
 
@@ -753,6 +774,142 @@ class Isolation(MigrateHarness):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["converted"], len(OLD_ROWS))
         self.assertTrue(self.dst.exists())
+
+
+class InputFileType(MigrateHarness):
+    """The input must be a regular file (finding S3). A FIFO with no writer, a symlink to a FIFO, a
+    directory and /dev/null are each refused within a short timeout, naming the path and the file
+    type, in both modes, and no output is written; a regular file and a symlink to one still
+    convert."""
+
+    TIMEOUT = 20
+
+    def run_bounded(self, *args):
+        try:
+            return subprocess.run([sys.executable, "-I", str(MIGRATE), *[str(a) for a in args]],
+                                  capture_output=True, text=True, timeout=self.TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.fail("the migration did not exit within {} s for {!r}: the open blocked"
+                      .format(self.TIMEOUT, [str(a) for a in args]))
+
+    def assert_type_refused(self, path, kind):
+        for args in ((path, self.dst), ("--dump-old-cells", path)):
+            with self.subTest(args=[str(a) for a in args]):
+                r = self.run_bounded(*args)
+                self.assert_refused(r, "input {} is not a regular file (it is a {})".format(
+                    os.path.abspath(str(path)), kind))
+                self.assertFalse(os.path.lexists(self.dst), "a refused migration writes nothing")
+
+    def test_fifo_with_no_writer_is_refused_promptly(self):
+        fifo = self._tmp / "TODO.fifo"
+        os.mkfifo(fifo)
+        self.assert_type_refused(fifo, "FIFO")
+
+    def test_symlink_to_a_fifo_is_refused_promptly(self):
+        fifo = self._tmp / "TODO.fifo"
+        os.mkfifo(fifo)
+        os.symlink(fifo, self.src)
+        self.assert_type_refused(self.src, "FIFO")
+
+    def test_directory_is_refused(self):
+        directory = self._tmp / "TODO.d"
+        directory.mkdir()
+        self.assert_type_refused(directory, "directory")
+
+    def test_dev_null_is_refused(self):
+        if not os.path.exists(os.devnull):
+            self.fail("{} is absent, so the device case cannot run".format(os.devnull))
+        self.assert_type_refused(Path(os.devnull), "character device")
+
+    def test_regular_file_and_a_symlink_to_one_still_convert(self):
+        self.write_src(old_fixture())
+        link = self._tmp / "link.md"
+        os.symlink(self.src, link)
+        for source in (self.src, link):
+            with self.subTest(path=str(source)):
+                if os.path.lexists(self.dst):
+                    os.unlink(self.dst)
+                r = self.run_bounded(source, self.dst)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertEqual(json.loads(r.stdout)["converted"], len(OLD_ROWS))
+
+    def test_an_input_larger_than_one_read_chunk_is_read_to_its_end(self):
+        rows = ["| {} | 2026-09-01 | {} | Done |".format(n, "x" * 120) for n in range(1, 12001)]
+        self.write_src(old_fixture(rows=rows))
+        self.assertGreater(self.src.stat().st_size, 1 << 20, "precondition: more than one chunk")
+        r = self.run_bounded(self.src, self.dst)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["converted"], 12000)
+
+
+# Every name that opens or reads a path; a reference to any of them, called, aliased or imported,
+# counts, so a bare alias such as "f = os.open" cannot slip past the probe.
+OPENERS = ("open", "fdopen", "read_text", "read_bytes", "write_text", "write_bytes")
+# The only references the migration may hold: the checked read helper, and the exclusive create of
+# the output with the file object over its descriptor.
+ALLOWED_OPENERS = [("_read_regular", "os.open"), ("write_output", "os.open"),
+                   ("write_output", "os.fdopen")]
+
+
+def opener_references(source):
+    """(enclosing function, dotted name) for every reference to an opener in source, in order."""
+    found = []
+
+    def dotted(node):
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            return dotted(node.value) + "." + node.attr
+        return "?"
+
+    def visit(node, func):
+        for child in ast.iter_child_nodes(node):
+            inner = func
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner = child.name
+            if isinstance(child, ast.Name) and child.id in OPENERS:
+                found.append((func, child.id))
+            elif isinstance(child, ast.Attribute) and child.attr in OPENERS:
+                found.append((func, dotted(child)))
+            elif isinstance(child, ast.alias) and child.name.split(".")[-1] in OPENERS:
+                found.append((func, "import " + child.name))
+            visit(child, inner)
+
+    visit(ast.parse(source), "<module>")
+    return found
+
+
+def opener_call_tokens(source):
+    """The number of opener names followed by "(" in the code tokens (strings and comments are not
+    code), an independent count of the textual open( calls."""
+    toks = [t for t in tokenize.generate_tokens(io.StringIO(source).readline)
+            if t.type not in (tokenize.COMMENT, tokenize.NL, tokenize.NEWLINE, tokenize.INDENT,
+                              tokenize.DEDENT)]
+    return sum(1 for a, b in zip(toks, toks[1:])
+               if a.type == tokenize.NAME and a.string in OPENERS
+               and b.type == tokenize.OP and b.string == "(")
+
+
+class SourceProbe(unittest.TestCase):
+    """Class probe for finding S3: every read of a path in the migration goes through _read_regular,
+    and the only other open is the exclusive create of the output."""
+
+    def test_every_open_in_the_migration_is_the_checked_helper_or_the_exclusive_create(self):
+        if not MIGRATE.exists():
+            self.fail("migration not found: {}".format(MIGRATE))
+        source = MIGRATE.read_text(encoding="utf-8")
+        self.assertEqual(opener_references(source), ALLOWED_OPENERS,
+                         "an open outside the checked helper and the exclusive output create")
+        self.assertEqual(opener_call_tokens(source), len(ALLOWED_OPENERS),
+                         "a textual open( call outside the allowed sites")
+        tree = ast.parse(source)
+        funcs = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+        helper = {n.attr for n in ast.walk(funcs["_read_regular"]) if isinstance(n, ast.Attribute)}
+        for needed in ("O_NONBLOCK", "O_CLOEXEC", "fstat", "S_ISREG", "set_blocking"):
+            self.assertIn(needed, helper, "the checked helper no longer uses {}".format(needed))
+        writer = {n.attr for n in ast.walk(funcs["write_output"]) if isinstance(n, ast.Attribute)}
+        for needed in ("O_WRONLY", "O_CREAT", "O_EXCL"):
+            self.assertIn(needed, writer, "the output create no longer uses {}".format(needed))
 
 
 if __name__ == "__main__":

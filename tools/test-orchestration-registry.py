@@ -68,9 +68,10 @@ STAGE1 = {
     "dispatch_tools": [],
 }
 
-# The full stage-2 registry: STAGE1 plus every stage-2 arming key, in the shape the plan proposes. Like
+# The full stage-2 registry: STAGE1 plus the stage-2 arming keys, in the shape the plan proposes. Like
 # STAGE1 its paths are illustrative absolutes; the yield_tools roster is checked against the real
-# hooks.json of this checkout.
+# hooks.json of this checkout. `escape` is left undeclared, as planned, so the hook uses its default
+# sentinel name (aiqt_hooks.py:7865-7866); ESCAPE_DECLARED is the one declared shape the gate admits.
 STAGE2 = {
     **STAGE1,
     "enumerator": {
@@ -80,10 +81,10 @@ STAGE2 = {
     "yield_tools": ["ScheduleWakeup", "CronCreate"],
     "mode": {"path": "/opt/x/private/operating-mode.md"},
     "staleness": {"task_hours": 24, "external_hours": 72},
-    "escape": {"path": "ESCAPE-ALLOW-YIELD"},
     "attestations": "/opt/x/private/attestations.jsonl",
     "mistakes_register": "/opt/x/private/mistakes-register.jsonl",
 }
+ESCAPE_DECLARED = {"path": "ESCAPE-ALLOW-YIELD"}
 
 
 def _run_full(path) -> subprocess.CompletedProcess:
@@ -109,6 +110,21 @@ def _make_exe(directory, name, target=None) -> str:
     else:
         os.symlink(target, str(p))
     return str(p)
+
+
+def _gate_copy(tree, hooks_json=None) -> Path:
+    """Copy the gate to <tree>/tools, so its ROOT (and so its HOOKS_JSON and the checkout it inspects for
+    the enumerator script) is <tree>. When `hooks_json` is given it is written at the plugin path under
+    <tree>; otherwise none exists. Return the copied gate path."""
+    tools_dir = Path(tree) / "tools"
+    tools_dir.mkdir(parents=True, exist_ok=True)
+    gate = tools_dir / "check-orchestration-registry.py"
+    shutil.copyfile(VALIDATOR, gate)
+    if hooks_json is not None:
+        hp = Path(tree) / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "hooks.json"
+        hp.parent.mkdir(parents=True, exist_ok=True)
+        hp.write_text(hooks_json, encoding="utf-8")
+    return gate
 
 
 def _write(tmpdir, payload) -> Path:
@@ -180,12 +196,6 @@ class Accepts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {"version": 1, "dispatch_tools": []})), 0)
 
-    def test_escape_in_subdirectory_accepted(self):
-        # A relative escape path in a subdirectory of the anchor, with no ".." and a non-state basename,
-        # stays valid; the hook-state basename rule does not over-reject it.
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state",
-                                             "escape": {"path": "operator/ESCAPE-ALLOW-YIELD"}})), 0)
 
     def test_record_sibling_of_state_dir_accepted(self):
         # A record path that is a SIBLING of state_dir (shares a parent but is NOT inside it) is not a
@@ -248,16 +258,21 @@ class Accepts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, STAGE2)), 0)
 
-    def test_escape_relative_accepted(self):
-        # A relative escape path joins onto the resolved state_dir, as the hook does (aiqt_hooks.py:7864).
+    def test_escape_undeclared_accepted(self):
+        # The planned shape: no `escape` key, so the hook uses its default name (aiqt_hooks.py:7865-7866).
+        self.assertNotIn("escape", STAGE2)
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state",
-                                             "escape": {"path": "ESCAPE-ALLOW-YIELD"}})), 0)
+            self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state"})), 0)
 
-    def test_escape_absolute_under_state_dir_accepted(self):
+    def test_escape_bare_names_accepted(self):
+        # A bare file name joins directly onto the anchor (aiqt_hooks.py:7864), so it is admitted, the
+        # default name included, on its own and in the full stage-2 fixture.
+        for name in ("ESCAPE-ALLOW-YIELD", "operator-release", ".escape", "e" * 64):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as d:
+                self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state",
+                                                 "escape": {"path": name}})), 0)
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state",
-                                             "escape": {"path": "/opt/x/orch-state/ESCAPE-ALLOW-YIELD"}})), 0)
+            self.assertEqual(_run(_write(d, {**STAGE2, "escape": ESCAPE_DECLARED})), 0)
 
     def test_enumerator_and_yield_tools_without_registers_accepted(self):
         # attestations and mistakes_register are optional: the stop and yield guards arm without them.
@@ -880,8 +895,9 @@ class Rejects(unittest.TestCase):
     def test_other_stage2_keys_without_state_dir(self):
         # The same requirement for every other STATE_DIR_REQUIRED_BY key, each otherwise valid.
         for key in ("yield_tools", "mode", "escape", "attestations", "mistakes_register"):
+            value = ESCAPE_DECLARED if key == "escape" else STAGE2[key]
             with self.subTest(key=key):
-                self._reject_clean({"version": 1, key: STAGE2[key]}, add_state_dir=False)
+                self._reject_clean({"version": 1, key: value}, add_state_dir=False)
 
     def test_yield_tools_not_a_list(self):
         # The string case is also caught by the matcher check (each character is no tool name); the
@@ -962,6 +978,20 @@ class Rejects(unittest.TestCase):
     def test_staleness_unknown_subkey(self):
         self._reject_stage2({"staleness": {"task_hours": 24, "lease_hours": 24}})
 
+    def test_staleness_partial_or_empty_rejected(self):
+        # Round 4 S2: the hook silently substitutes 24 hours for a missing field (aiqt_hooks.py:8297-8301),
+        # so a declared staleness object must carry both horizons; {} and either field alone are rejected
+        # by the both-fields rule, named in the diagnostic.
+        for value in ({}, {"task_hours": 24}, {"external_hours": 72}):
+            with self.subTest(value=value):
+                payload = copy.deepcopy(STAGE2)
+                payload["staleness"] = value
+                with tempfile.TemporaryDirectory() as d:
+                    r = _run_full(_write(d, payload))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("must declare both", r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+
     def test_escape_not_an_object(self):
         # The string case is also caught by the subkey check; the list holding "path" only by the object
         # type check.
@@ -979,21 +1009,34 @@ class Rejects(unittest.TestCase):
     def test_escape_non_string(self):
         self._reject_stage2({"escape": {"path": 5}})
 
-    def test_escape_dotdot(self):
-        self._reject_stage2({"escape": {"path": "../ESCAPE-ALLOW-YIELD"}})
+    def _assert_escape_rejected_by(self, path, needle):
+        payload = copy.deepcopy(STAGE2)
+        payload["escape"] = {"path": path}
+        with tempfile.TemporaryDirectory() as d:
+            r = _run_full(_write(d, payload))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(needle, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
 
-    def test_escape_dotdot_inside_anchor(self):
-        # The case above is also caught by containment. Here the ".." stays inside the anchor
-        # (normpath gives <state_dir>/ESCAPE-ALLOW-YIELD), so only the ".." rule rejects it, as the hook
-        # does on the raw path (aiqt_hooks.py:7867-7868).
-        self._reject_stage2({"escape": {"path": "sub/../ESCAPE-ALLOW-YIELD"}})
+    def test_escape_multi_component_rejected(self):
+        # Round 4 S1 and S6: the gate pins the sentinel to a bare file name directly in the anchor, so an
+        # absolute or multi-component path is rejected by the bare-name rule, whether or not the hook would
+        # contain it (aiqt_hooks.py:7864-7882). The first three were accepted by the round 3 gate.
+        for path in ("operator/ESCAPE-ALLOW-YIELD", "/opt/x/private/orch-state/ESCAPE-ALLOW-YIELD",
+                     "sub/../ESCAPE-ALLOW-YIELD", "../ESCAPE-ALLOW-YIELD", "/opt/x/private/ESCAPE-ALLOW-YIELD",
+                     "./ESCAPE-ALLOW-YIELD", "ESCAPE-ALLOW-YIELD/"):
+            with self.subTest(path=path):
+                self._assert_escape_rejected_by(path, "must be a bare file name with no")
 
     def test_escape_hook_state_basename(self):
-        # The escape sentinel must not share a basename with a file the hooks write in state_dir.
+        # The escape sentinel must not share a name with a file the hooks write in state_dir.
         for name in HOOK_STATE_FILES:
-            for path in (name, "operator/" + name, "/opt/x/private/orch-state/" + name):
-                with self.subTest(path=path):
-                    self._reject_stage2({"escape": {"path": path}})
+            with self.subTest(name=name):
+                self._assert_escape_rejected_by(name, "must not collide with machine state")
+
+    def test_escape_overlong_name_rejected(self):
+        # A bare name longer than the 64-byte state_dir reserve could overflow PATH_MAX under state_dir.
+        self._assert_escape_rejected_by("e" * 65, "longer than 64 bytes")
 
     def test_escape_windows_shaped(self):
         # codex QA F6: the hook joins the escape path onto the anchor with POSIX semantics
@@ -1003,12 +1046,11 @@ class Rejects(unittest.TestCase):
             with self.subTest(path=path):
                 self._reject_stage2({"escape": {"path": path}})
 
-    def test_escape_absolute_outside_state_dir(self):
-        self._reject_stage2({"escape": {"path": "/opt/x/private/ESCAPE-ALLOW-YIELD"}})
-
-    def test_escape_onto_state_dir(self):
-        # "." resolves onto the anchor directory itself, which can never be the regular-file sentinel.
-        self._reject_stage2({"escape": {"path": "."}})
+    def test_escape_onto_or_above_state_dir(self):
+        # "." names the anchor directory itself and ".." leaves it; neither is the regular-file sentinel.
+        for path in (".", ".."):
+            with self.subTest(path=path):
+                self._assert_escape_rejected_by(path, "must be a bare file name, not")
 
     def test_truth_present(self):
         # `truth` has no reader in the vendored hook, so it stays outside the allowlist.
@@ -1043,16 +1085,8 @@ class Rejects(unittest.TestCase):
 
     # --- hooks.json as a guard input: unreadable or malformed fails, never skips ------------------------
     def _run_gate_copy(self, tree, payload, hooks_json=None):
-        # Run a copy of the gate from <tree>/tools, so its ROOT (and so its HOOKS_JSON) is <tree>. When
-        # `hooks_json` is given it is written at the plugin path under <tree>; otherwise none exists.
-        tools_dir = Path(tree) / "tools"
-        tools_dir.mkdir(exist_ok=True)
-        gate = tools_dir / "check-orchestration-registry.py"
-        shutil.copyfile(VALIDATOR, gate)
-        if hooks_json is not None:
-            hp = Path(tree) / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "hooks.json"
-            hp.parent.mkdir(parents=True, exist_ok=True)
-            hp.write_text(hooks_json, encoding="utf-8")
+        # Run a copy of the gate from <tree>/tools (see _gate_copy), against a registry written in <tree>.
+        gate = _gate_copy(tree, hooks_json)
         reg = _write(tree, payload)
         return subprocess.run([sys.executable, "-I", str(gate), str(reg)], capture_output=True, text=True)
 
@@ -1235,79 +1269,181 @@ def _load_gate_module():
     return module
 
 
-class EnumeratorRelativeOperands(unittest.TestCase):
-    # Round 3 R1: the hook runs the enumerator argv with cwd at the repository root (aiqt_hooks.py:7976),
-    # the parent of the .aiqt directory holding the registry (aiqt_hooks.py:7548, 7590-7594, 7606-7607), so
-    # a relative operand names a path under that root and faces the same state_dir collision checks as an
-    # absolute one. Each fixture writes the registry at <repo>/.aiqt/orchestration.json in a temporary
-    # tree, so the gate derives <repo> as the root.
-
-    def _run_in_repo(self, tree, payload):
-        repo = Path(tree) / "repo"
-        (repo / ".aiqt").mkdir(parents=True, exist_ok=True)
-        reg = repo / ".aiqt" / "orchestration.json"
-        reg.write_text(json.dumps(payload), encoding="utf-8")
-        return _run_full(reg)
+class EnumeratorOperandShape(unittest.TestCase):
+    # Round 4 S5: the gate no longer joins a relative enumerator operand onto a root it guesses from the
+    # registry location, because the hook joins it onto the HOST session root (aiqt_hooks.py:7976, with
+    # _orch_root at 7590-7595), so a gate verdict that depended on where the checkout sits let CI and the
+    # host disagree. The script (argv[2]) is pinned to a canonical relative path, inspected only in the
+    # checkout content, and every later operand must be absolute.
+    ENUM_SCRIPT = REPO_ROOT / "tools" / "orch-enumerate-backlog.py"
 
     @staticmethod
-    def _payload(state_dir, operands):
+    def _enum_payload(state_dir, argv_tail):
         return {"version": 1, "state_dir": str(state_dir),
-                "enumerator": {"argv": [PY, "-I", "tools/orch-enumerate-backlog.py"] + list(operands),
-                               "timeout": 5}}
+                "enumerator": {"argv": [PY, "-I"] + list(argv_tail), "timeout": 5}}
 
-    def test_relative_operand_reaching_state_file_rejected(self):
+    def _assert_rejected_by(self, payload, needle):
         with tempfile.TemporaryDirectory() as d:
-            repo = Path(d) / "repo"
-            outside = Path(d) / "orch-state"
-            outside.mkdir()
-            repo.mkdir()
-            os.symlink(str(outside), str(repo / "state-link"))
-            cases = [
-                (repo / "state", ["state/resume-barrier.json"]),
-                (repo / "state", ["./state/../state/turn-state.json"]),
-                (outside, ["../orch-state/resume-barrier.json"]),
-                (outside, ["state-link/resume-barrier.json"]),
-            ]
-            for state_dir, operands in cases:
-                with self.subTest(state_dir=str(state_dir), operands=operands):
-                    r = self._run_in_repo(d, self._payload(state_dir, operands))
-                    self.assertEqual(r.returncode, 1, r.stdout)
-                    self.assertIn("joined onto the repository root", r.stderr)
-                    self.assertIn("state_dir", r.stderr)
+            r = _run_full(_write(d, payload))
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn(needle, r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_relative_backlog_operand_rejected(self):
+        # Each operand after the script must be absolute. The round 3 gate joined these onto a root and
+        # accepted them when the joined path missed state_dir; an option-shaped operand is rejected too.
+        for operand in ("TODO.md", "private/TODO.md", "../orch-state/resume-barrier.json",
+                        "--out=/opt/x/private/TODO.md"):
+            with self.subTest(operand=operand):
+                self._assert_rejected_by(
+                    self._enum_payload("/opt/x/orch-state", ["tools/x.py", operand]),
+                    "must be an absolute path")
+
+    def test_script_shape_rejected(self):
+        # The script must be relative, free of "..", and canonical. Each case names the rule it hits.
+        cases = (("/opt/x/tools/x.py", "must be a path relative to the repository root"),
+                 ("../tools/x.py", "component; the script must stay inside"),
+                 ("tools/../x.py", "component; the script must stay inside"),
+                 ("./tools/x.py", "is not in canonical form"),
+                 ("tools//x.py", "is not in canonical form"),
+                 ("tools/./x.py", "is not in canonical form"))
+        for script, needle in cases:
+            with self.subTest(script=script):
+                self._assert_rejected_by(self._enum_payload("/opt/x/orch-state", [script]), needle)
+
+    def test_script_inspected_in_checkout(self):
+        # In the checkout running the gate, a present script must be a regular file reached through no
+        # symlinked component; an absent one is accepted. Each case runs a gate copy whose ROOT is a fresh
+        # temporary tree, so only the tree content differs between cases.
+        payload = self._enum_payload("/opt/x/orch-state", ["tools/enum/x.py", "/opt/x/private/TODO.md"])
+
+        def regular(tree):
+            (tree / "tools" / "enum").mkdir(parents=True)
+            (tree / "tools" / "enum" / "x.py").write_text("print(1)\n", encoding="utf-8")
+
+        def link_leaf(tree):
+            (tree / "tools" / "enum").mkdir(parents=True)
+            (tree / "real.py").write_text("print(1)\n", encoding="utf-8")
+            os.symlink(str(tree / "real.py"), str(tree / "tools" / "enum" / "x.py"))
+
+        def link_dir(tree):
+            (tree / "elsewhere").mkdir()
+            (tree / "elsewhere" / "x.py").write_text("print(1)\n", encoding="utf-8")
+            (tree / "tools").mkdir(parents=True, exist_ok=True)
+            os.symlink(str(tree / "elsewhere"), str(tree / "tools" / "enum"))
+
+        def directory(tree):
+            (tree / "tools" / "enum" / "x.py").mkdir(parents=True)
+
+        cases = ((None, 0, None), (regular, 0, None), (link_leaf, 1, "reaches a symlink"),
+                 (link_dir, 1, "reaches a symlink"), (directory, 1, "is not a regular file"))
+        for build, code, needle in cases:
+            with self.subTest(case=build.__name__ if build else "absent"), tempfile.TemporaryDirectory() as d:
+                tree = Path(d) / "checkout"
+                tree.mkdir()
+                if build:
+                    build(tree)
+                gate = _gate_copy(tree)
+                reg = _write(d, payload)
+                r = subprocess.run([sys.executable, "-I", str(gate), str(reg)], capture_output=True, text=True)
+                self.assertEqual(r.returncode, code, r.stderr)
+                if needle:
+                    self.assertIn(needle, r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+
+    def test_same_verdict_at_two_checkout_depths(self):
+        # The same registry, committed at <checkout>/.aiqt/orchestration.json in two checkouts of different
+        # depth, gets the same verdict from each checkout gate. The rejected registry names a relative
+        # backlog operand that, joined onto the shallow checkout, would land in state_dir but, joined onto
+        # the deep one, would not: the round 3 gate rejected it in one checkout and accepted it in the other.
+        hooks = REAL_HOOKS_JSON.read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as d:
+            base = Path(d)
+            shallow = base / "a"
+            deep = base / "a" / "b" / "c"
+            state_dir = base / "orch-state"
+            registries = {
+                "relative-operand": (self._enum_payload(state_dir, [
+                    "tools/orch-enumerate-backlog.py", "../orch-state/resume-barrier.json"]), 1),
+                "planned-shape": ({**self._enum_payload(state_dir, [
+                    "tools/orch-enumerate-backlog.py", str(base / "private" / "TODO.md")]),
+                    "yield_tools": ["ScheduleWakeup", "CronCreate"],
+                    "staleness": {"task_hours": 24, "external_hours": 72}}, 0),
+            }
+            for name, (payload, expected) in registries.items():
+                codes = []
+                for checkout in (shallow, deep):
+                    gate = _gate_copy(checkout, hooks)
+                    shutil.copyfile(self.ENUM_SCRIPT, checkout / "tools" / "orch-enumerate-backlog.py")
+                    reg = checkout / ".aiqt" / "orchestration.json"
+                    reg.parent.mkdir(parents=True, exist_ok=True)
+                    reg.write_text(json.dumps(payload), encoding="utf-8")
+                    r = subprocess.run([sys.executable, "-I", str(gate), str(reg)],
+                                       capture_output=True, text=True)
                     self.assertNotIn("Traceback", r.stderr)
-                # Control: the same operands with state_dir elsewhere are accepted, so only the collision
-                # of the root-joined operand with state_dir rejects the fixture above.
-                with self.subTest(control=operands):
-                    r = self._run_in_repo(d, self._payload(Path(d) / "elsewhere", operands))
-                    self.assertEqual(r.returncode, 0, r.stderr)
+                    codes.append(r.returncode)
+                with self.subTest(registry=name):
+                    self.assertEqual(codes[0], codes[1], "the verdict depends on the checkout depth")
+                    self.assertEqual(codes[0], expected)
 
-    def test_registry_outside_aiqt_uses_gate_root(self):
-        # A registry checked from a path outside any .aiqt directory joins a relative operand onto the
-        # checkout the gate runs from. The state_dir is an absent path under that checkout, so nothing is
-        # written there; the operand reaching it is rejected.
-        name = "orch-state-r1-fixture-absent"
-        state_dir = REPO_ROOT / name
-        self.assertFalse(os.path.lexists(str(state_dir)))
-        with tempfile.TemporaryDirectory() as d:
-            r = _run_full(_write(d, self._payload(state_dir, [name + "/resume-barrier.json"])))
-            self.assertEqual(r.returncode, 1, r.stdout)
-            self.assertIn("joined onto the repository root", r.stderr)
-            self.assertNotIn("Traceback", r.stderr)
+    def test_planned_stage2_value_accepted(self):
+        # The planned stage-2 value added to the committed registry is accepted: the enumerator argv with
+        # timeout 5, the yield_tools roster, the mode path, both staleness horizons, and escape undeclared.
+        # The test interpreter stands in for argv[0]; the literal /usr/bin/python3 is checked as well
+        # wherever this host has it.
+        interpreters = [PY] + (["/usr/bin/python3"] if os.path.exists("/usr/bin/python3") else [])
+        for interp in interpreters:
+            payload = json.loads(REAL_REGISTRY.read_text(encoding="utf-8"))
+            payload.update({
+                "enumerator": {"argv": [interp, "-I", "tools/orch-enumerate-backlog.py",
+                                        "/opt/cleanlanguage/private/TODO.md"], "timeout": 5},
+                "yield_tools": ["ScheduleWakeup", "CronCreate"],
+                "mode": {"path": "/opt/cleanlanguage/private/operating-mode.md"},
+                "staleness": {"task_hours": 24, "external_hours": 72},
+            })
+            self.assertNotIn("escape", payload)
+            with self.subTest(interpreter=interp), tempfile.TemporaryDirectory() as d:
+                r = _run_full(_write(d, payload))
+                self.assertEqual(r.returncode, 0, r.stderr)
 
-    def test_planned_stage2_argv_accepted(self):
-        # The planned stage-2 enumerator argv, with the test interpreter standing in for the python3 of the
-        # host, added to the committed registry, is accepted.
-        planned = [PY, "-I", "tools/orch-enumerate-backlog.py", "/opt/cleanlanguage/private/TODO.md"]
-        payload = json.loads(REAL_REGISTRY.read_text(encoding="utf-8"))
-        payload["enumerator"] = {"argv": planned, "timeout": 5}
+
+class SpecialFileInputs(unittest.TestCase):
+    # Round 4 S3: every file the gate itself opens must be a regular file. A FIFO with no writer used to
+    # block the gate forever, so each run here carries a timeout and a timeout is a failure.
+    def _run_bounded(self, gate, reg):
+        try:
+            return subprocess.run([sys.executable, "-I", str(gate), str(reg)], capture_output=True, text=True,
+                                  timeout=20)
+        except subprocess.TimeoutExpired:
+            self.fail("the gate blocked on a special file instead of failing promptly")
+
+    def _assert_refused(self, r):
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("is not a regular file", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_fifo_registry_fails_promptly(self):
         with tempfile.TemporaryDirectory() as d:
-            r = self._run_in_repo(d, payload)
-            self.assertEqual(r.returncode, 0, r.stderr)
-        # The temporary-directory equivalent: the same shape with every store path under a temporary tree.
+            fifo = Path(d) / "orchestration.json"
+            os.mkfifo(str(fifo))
+            self._assert_refused(self._run_bounded(VALIDATOR, fifo))
+
+    def test_directory_and_device_registry_refused(self):
         with tempfile.TemporaryDirectory() as d:
-            payload = self._payload(Path(d) / "orch-state", [str(Path(d) / "private" / "TODO.md")])
-            r = self._run_in_repo(d, payload)
-            self.assertEqual(r.returncode, 0, r.stderr)
+            directory = Path(d) / "orchestration.json"
+            directory.mkdir()
+            self._assert_refused(self._run_bounded(VALIDATOR, directory))
+        if os.path.exists("/dev/null"):
+            self._assert_refused(self._run_bounded(VALIDATOR, "/dev/null"))
+
+    def test_fifo_hooks_json_fails_promptly(self):
+        payload = {"version": 1, "state_dir": "/opt/x/orch-state", "yield_tools": ["ScheduleWakeup"]}
+        with tempfile.TemporaryDirectory() as d:
+            gate = _gate_copy(d)
+            hp = Path(d) / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "hooks.json"
+            hp.parent.mkdir(parents=True)
+            os.mkfifo(str(hp))
+            self._assert_refused(self._run_bounded(gate, _write(d, payload)))
 
 
 class HookStateFileScan(unittest.TestCase):

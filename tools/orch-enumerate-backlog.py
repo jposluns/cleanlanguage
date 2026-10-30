@@ -53,7 +53,9 @@ Backlog grammar (a markdown table, parsed strictly):
   evidence only for those two kinds (aiqt_hooks.py:8152-8166).
 - A file with no table line at all is valid only when it carries the single column-0 line
   "<!-- aei: empty backlog -->", which affirms an empty backlog. That marker beside a table, a repeated
-  marker, a header with no data row, or a data row with no header is rejected.
+  marker, a header with no data row, or a data row with no header is rejected. An input with no table
+  and no marker is reported at the line where the scan ended, as "line N (end of input)", N being the
+  last line of the input (the empty remainder after a final newline is not counted).
 
 The item title is the first 120 characters of the item cell, with "\\|" read as "|". Whether a blocker
 actually blocks (a fresh observation, a pending decision at a row-id position, a live ledger row, a
@@ -69,6 +71,13 @@ Usage:
 Exit 0 on success, 1 on an unreadable or malformed backlog, 2 on a usage error. A backlog that is
 not valid UTF-8 is reported with the line and the byte offset of the first invalid byte. The
 backlog path is the only project-specific input; the script carries no store path of its own.
+
+The backlog must be a regular file (a symlink to one is followed). It is opened non-blocking and its
+type is checked with fstat on the open descriptor, so a FIFO with no writer, a directory, a device
+such as /dev/null, or any other file that is not regular exits 1 naming the path and the file type,
+instead of blocking indefinitely or reading as an empty input. Every read of a path in this script
+goes through that one checked helper (_read_regular), and the test suite scans the source to keep
+it so.
 
 The script runs isolated: started without -I, it re-executes itself under python3 -I before it
 imports anything beyond os and sys, so a file planted beside it cannot shadow a standard-library
@@ -90,6 +99,7 @@ if not sys.flags.isolated:
 import hashlib
 import json
 import re
+import stat
 from datetime import datetime, timezone
 
 PROG = "orch-enumerate-backlog"
@@ -110,6 +120,11 @@ GRANTED = {"yes": True, "no": False}
 BLOCKER_KINDS = ("tracked-task", "human-decision", "external", "foreign-lease", "not-before")
 EVIDENCE_KINDS = ("external", "foreign-lease")
 TITLE_MAX = 120
+# File types other than regular, named in the refusal for a backlog path that is not a regular file.
+FILE_TYPES = ((stat.S_ISDIR, "directory"), (stat.S_ISCHR, "character device"),
+              (stat.S_ISBLK, "block device"), (stat.S_ISFIFO, "FIFO"), (stat.S_ISSOCK, "socket"),
+              (stat.S_ISLNK, "symbolic link"))
+READ_CHUNK = 1 << 20
 
 
 class BacklogError(Exception):
@@ -304,23 +319,58 @@ def parse_backlog(text):
         if table_seen:
             raise _line_error(markers[0], "empty-backlog marker beside a table")
         return [], []
+    # The last line the scan read; the empty remainder after a final newline is not a line.
+    end_line = len(lines) - 1 if len(lines) > 1 and lines[-1] == "" else len(lines)
     if not table_seen:
-        raise BacklogError("no backlog table and no \"{}\" marker (an empty backlog must be "
-                           "affirmed)".format(EMPTY_MARKER))
+        raise BacklogError("line {} (end of input): no backlog table and no \"{}\" marker (an "
+                           "empty backlog must be affirmed)".format(end_line, EMPTY_MARKER))
     if header_line is None:
-        raise BacklogError("no header row")
+        # Defensive: a table line before the header already fails above, so this is not reached.
+        raise BacklogError("line {} (end of input): no header row".format(end_line))
     if not items:
         raise _line_error(header_line, "header with no data row")
     return items, rows
 
 
-def read_backlog(path):
-    """Read the backlog as strict UTF-8; every read failure is a BacklogError, never an empty file."""
+def _file_type(mode):
+    """The name of the file type of an st_mode that is not a regular file."""
+    for test, name in FILE_TYPES:
+        if test(mode):
+            return name
+    return "file of unknown type (st_mode {:o})".format(stat.S_IFMT(mode))
+
+
+def _read_regular(path):
+    """The bytes of path, which must be a regular file; every other outcome is a BacklogError.
+    The open is non-blocking, so a FIFO with no writer cannot hang the read, and the type is checked
+    with fstat on the open descriptor, so the file checked is the file read. Blocking mode is then
+    restored and the descriptor is read to its end. This is the only place the script opens a path."""
     try:
-        with open(path, "rb") as fh:
-            data = fh.read()
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError as exc:
         raise BacklogError("cannot read backlog {}: {}".format(path, exc.strerror or exc))
+    try:
+        mode = os.fstat(fd).st_mode
+        if not stat.S_ISREG(mode):
+            raise BacklogError("backlog {} is not a regular file (it is a {}); only a regular file "
+                               "is read".format(path, _file_type(mode)))
+        os.set_blocking(fd, True)
+        chunks = []
+        while True:
+            chunk = os.read(fd, READ_CHUNK)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks)
+    except OSError as exc:
+        raise BacklogError("cannot read backlog {}: {}".format(path, exc.strerror or exc))
+    finally:
+        os.close(fd)
+
+
+def read_backlog(path):
+    """Read the backlog as strict UTF-8; every read failure is a BacklogError, never an empty file."""
+    data = _read_regular(path)
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as exc:

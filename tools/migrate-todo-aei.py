@@ -39,8 +39,18 @@ the loss check can compare two parsers rather than one parser with itself:
   input that already carries the new header is refused as already migrated;
 - a separator row has 4 cells of dashes and colons; every other table line is a data row of exactly
   4 cells with an id matching ^[0-9]+(\\.[0-9]+)*$, unique, after the header;
-- one header only, and at least one data row (an empty table is refused, never converted).
+- one header only, and at least one data row (an empty table is refused, never converted). An input
+  with no header is refused at the line where the scan ended, as "line N (end of input)", N being
+  the last line of the input (the empty remainder after a final newline is not counted).
 The whole input is parsed before anything is written, so a malformed input writes nothing.
+
+Read safety: the input must be a regular file (a symlink to one is followed). It is opened
+non-blocking and its type is checked with fstat on the open descriptor, so a FIFO with no writer, a
+directory, a device such as /dev/null, or any other file that is not regular is refused (exit 1)
+naming the path and the file type, instead of blocking indefinitely or converting an empty input.
+Every read of a path in this script goes through that one checked helper (_read_regular), and the
+test suite scans the source to keep it so; the only other open is the exclusive create of the
+output below.
 
 Write safety: the script never writes in place. The output path must be given explicitly, must not
 exist (not even as a dangling symlink), and must not resolve to the input. It is created with
@@ -78,6 +88,7 @@ if not sys.flags.isolated:
 import hashlib
 import json
 import re
+import stat
 import string
 
 PROG = "migrate-todo-aei"
@@ -90,6 +101,7 @@ DASH_RE = re.compile(r"^:?-+:?$")
 NEW_DATA_CELLS = (" open ", " yes ", " - ", " - ")
 NEW_HEADER_CELLS = (" State ", " Granted ", " Blocker ", " Evidence ")
 NEW_SEPARATOR_CELLS = (" --- ", " --- ", " --- ", " --- ")
+READ_CHUNK = 1 << 20
 
 
 class MigrationError(Exception):
@@ -177,7 +189,8 @@ def convert(text):
     """(new_text, rows) for the old-shape backlog text; rows are the stripped 4-cell tuples."""
     out, rows, seen = [], [], {}
     header_at = None
-    for lineno, line in enumerate(text.split("\n"), start=1):
+    lines = text.split("\n")
+    for lineno, line in enumerate(lines, start=1):
         if not line.startswith("|"):
             misplaced = _misplaced_bar(line)
             if misplaced is not None:
@@ -223,18 +236,54 @@ def convert(text):
         rows.append(tuple(cells))
         out.append(_row(segments, NEW_DATA_CELLS, tail))
     if header_at is None:
-        raise MigrationError("no 4-column header row")
+        # Name the last line read; the empty remainder after a final newline is not a line.
+        end_line = len(lines) - 1 if len(lines) > 1 and lines[-1] == "" else len(lines)
+        raise MigrationError("line {} (end of input): no 4-column header row, so no backlog table"
+                             .format(end_line))
     if not rows:
         raise MigrationError("the table has no data row (an empty table is not converted)")
     return "\n".join(out), rows
 
 
-def read_input(path):
+def _type_name(mode):
+    """A name for the file type of an st_mode that is not a regular file."""
+    for test, name in ((stat.S_ISDIR, "directory"), (stat.S_ISCHR, "character device"),
+                       (stat.S_ISBLK, "block device"), (stat.S_ISFIFO, "FIFO"),
+                       (stat.S_ISSOCK, "socket"), (stat.S_ISLNK, "symbolic link")):
+        if test(mode):
+            return name
+    return "file of unknown type (st_mode {:o})".format(stat.S_IFMT(mode))
+
+
+def _read_regular(path):
+    """The bytes of path, refused with a MigrationError unless it is a regular file. The open does
+    not block, so a FIFO with no writer cannot hang the run; fstat checks the type of the open
+    descriptor itself, so the checked file is the read file. The descriptor is then switched back to
+    blocking mode and read until end of file. No other function opens a path for reading."""
     try:
-        with open(path, "rb") as fh:
-            data = fh.read()
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
     except OSError as exc:
         raise MigrationError("cannot read input {}: {}".format(path, exc.strerror or exc))
+    try:
+        mode = os.fstat(fd).st_mode
+        if not stat.S_ISREG(mode):
+            raise MigrationError("input {} is not a regular file (it is a {}); only a regular file "
+                                 "is converted".format(path, _type_name(mode)))
+        os.set_blocking(fd, True)
+        parts = []
+        chunk = os.read(fd, READ_CHUNK)
+        while chunk:
+            parts.append(chunk)
+            chunk = os.read(fd, READ_CHUNK)
+        return b"".join(parts)
+    except OSError as exc:
+        raise MigrationError("cannot read input {}: {}".format(path, exc.strerror or exc))
+    finally:
+        os.close(fd)
+
+
+def read_input(path):
+    data = _read_regular(path)
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as exc:

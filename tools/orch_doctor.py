@@ -52,7 +52,14 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          must have changed and its ts must fall within this run. A barrier the hook
                          could not rewrite (for example a read-only file) is reported as unverified,
                          exit 2, never as the stale state it still holds. Otherwise it reports the
-                         observed rewritten state, never the return value of the call.
+                         observed rewritten state, never the return value of the call. The barrier
+                         is read only as a regular file: it is opened non-blocking and its type is
+                         checked with fstat on the open descriptor, so a FIFO (which would block a
+                         plain open indefinitely), a directory or a device at that path is reported
+                         as cannot-evaluate, exit 2, naming the path and the file type, and before
+                         the audit that means the audit is not run. This is the only path the
+                         doctor itself opens (_read_regular); the test suite scans the source to
+                         keep it so.
 
 Options:
   --root DIR         The repository whose registry is read. Default: the git top level of the
@@ -105,6 +112,7 @@ import argparse
 import datetime
 import importlib.util
 import json
+import stat
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(ROOT, "plugin", "aiqt-guardrails-hooks", "hooks", "scripts", "aiqt_hooks.py")
@@ -115,6 +123,7 @@ KINDS = {"stop": "stop", "idle": "schedule_idle"}
 DEFAULT_TOOL = "ScheduleWakeup"
 # The barrier ts must fall inside this run, widened by this much for clock granularity.
 TS_SKEW = datetime.timedelta(seconds=1)
+READ_CHUNK = 1 << 20
 
 
 def _load_hook():
@@ -285,15 +294,47 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
     return 0 if effective == "ALLOW" else 1
 
 
+def _kind_of(mode):
+    """The file type of an st_mode that is not a regular file, for the cannot-evaluate message."""
+    for test, name in ((stat.S_ISDIR, "directory"), (stat.S_ISCHR, "character device"),
+                       (stat.S_ISBLK, "block device"), (stat.S_ISFIFO, "FIFO"),
+                       (stat.S_ISSOCK, "socket"), (stat.S_ISLNK, "symbolic link")):
+        if test(mode):
+            return name
+    return "file of unknown type (st_mode {:o})".format(stat.S_IFMT(mode))
+
+
+def _read_regular(path):
+    """(stat result, bytes) of path, read only when it is a regular file. The open is non-blocking,
+    so a FIFO with no writer cannot hang the doctor, and fstat checks the open descriptor, so the
+    stat and the bytes describe the same file. An absent path raises FileNotFoundError; a path that
+    is not a regular file raises OSError naming the path and its type."""
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError("{} is not a regular file (it is a {})".format(path, _kind_of(st.st_mode)))
+        os.set_blocking(fd, True)
+        chunks = []
+        while True:
+            chunk = os.read(fd, READ_CHUNK)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return st, b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
 def _barrier_snapshot(path):
     """(mtime_ns, content bytes) of the barrier, None when it is absent; OSError on any other
-    failure, which the caller reports as cannot-evaluate."""
+    failure, including a barrier that is not a regular file, which the caller reports as
+    cannot-evaluate."""
     try:
-        st = os.stat(path)
+        st, data = _read_regular(path)
     except FileNotFoundError:
         return None
-    with open(path, "rb") as fh:
-        return (st.st_mtime_ns, fh.read())
+    return (st.st_mtime_ns, data)
 
 
 def _resume_audit(hook, root):
