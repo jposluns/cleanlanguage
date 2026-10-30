@@ -86,9 +86,16 @@ backlog, a live lease and no init marker, a directory or a read-only file at
 checkpoint-init.marker.tmp makes the real hook deny the Stop and the scheduling call (the marker
 write fails, aiqt_hooks.py:8424-8428), and the doctor reports the same DENY; a failed checkpoint
 rewrite skips the marker write and a present marker is not rewritten, so the hook allows and so
-does the doctor; and a symbolic link or a FIFO at a temporary path, whose outcome only the write
-could decide, is reported as not previewed, exit 2, when it could change the verdict, and previewed
-when it could not. The DoctorWriteSiteProbe case is the class probe for that finding: it scans the
+does the doctor; and a symbolic link to a regular file at a temporary path, whose outcome only the
+write could decide, is reported as not previewed, exit 2, when it could change the verdict, and
+previewed when it could not. A FIFO, or a symbolic link to a FIFO, at a temporary path would block
+the hook open for writing, a third outcome that is never verdict-neutral, so it is reported as not
+previewed, exit 2, promptly, even where success and failure of that write would leave the verdict
+unchanged: the marker present, or absent and writable (fix round 17, F1). The DoctorStandInRestore
+cases load the doctor in one process and prove that the two hook functions the preview replaces
+are the original objects again after a normal return, after the not-previewed exception and after a
+KeyboardInterrupt raised inside the stand-in (fix round 17, F2). The DoctorWriteSiteProbe case is
+the class probe for that finding: it scans the
 hook source from _orch_build_ctx through every module function it calls for every write (a write
 primitive, an open for writing, an os or shutil call that changes the file system, a write method),
 requires the set of sites to equal the reviewed WRITE_SITES table, each modelled by the doctor or of
@@ -2661,6 +2668,8 @@ class DoctorCheckpointWrites(Stage2Harness):
     the doctor first (it writes nothing) and then the hook."""
 
     TIMEOUT = 30
+    # A doctor that refuses a write that could block must do so well inside this bound (F1).
+    PROMPT = 15
 
     def setUp(self):
         super().setUp()
@@ -2674,16 +2683,17 @@ class DoctorCheckpointWrites(Stage2Harness):
         self.set_items([])
         self.state_dir().mkdir(parents=True, exist_ok=True)
 
-    def _doctor(self, kind):
+    def _doctor(self, kind, timeout=None):
         args = ["preflight", kind]
         if kind == "idle":
             args += ["--wake-text", "recheck the work queue"]
+        timeout = self.TIMEOUT if timeout is None else timeout
         try:
             return subprocess.run([sys.executable, "-I", str(DOCTOR), *args, "--root", str(self.repo)],
                                   capture_output=True, text=True, env=self._env(),
-                                  timeout=self.TIMEOUT)
+                                  timeout=timeout)
         except subprocess.TimeoutExpired:
-            self.fail("the doctor did not exit within {} s".format(self.TIMEOUT))
+            self.fail("the doctor did not exit within {} s".format(timeout))
 
     def _hook(self, kind):
         r = self.stop() if kind == "stop" else self.schedule()
@@ -2778,8 +2788,8 @@ class DoctorCheckpointWrites(Stage2Harness):
         # A FIFO at the marker temporary path would block the hook open for writing, and a symbolic
         # link would be followed; neither can be decided without writing, and the marker write
         # decides the verdict, so the doctor exits 2 promptly and writes nothing. The same holds for
-        # an undecided checkpoint rewrite when the marker write would fail. The hook is not run on a
-        # FIFO, which would block it.
+        # a FIFO at the checkpoint temporary path when the marker write would fail. The hook is not
+        # run on a FIFO, which would block it.
         def fifo_marker():
             os.mkfifo(self.state_dir() / "checkpoint-init.marker.tmp")
 
@@ -2791,10 +2801,12 @@ class DoctorCheckpointWrites(Stage2Harness):
         def fifo_checkpoint():
             os.mkfifo(self.state_dir() / "backlog-checkpoint.json.tmp")
             (self.state_dir() / "checkpoint-init.marker.tmp").mkdir()
-        cases = (("a FIFO at the marker temporary path", fifo_marker, "init-marker write"),
+        cases = (("a FIFO at the marker temporary path", fifo_marker,
+                  "init-marker write could block the hook open for writing"),
                  ("a symbolic link at the marker temporary path", symlink_marker,
-                  "init-marker write"),
-                 ("a FIFO at the checkpoint temporary path", fifo_checkpoint, "checkpoint rewrite"))
+                  "init-marker write could change the verdict"),
+                 ("a FIFO at the checkpoint temporary path", fifo_checkpoint,
+                  "checkpoint rewrite could block the hook open for writing"))
         for name, arrange, what in cases:
             for kind in ("stop", "idle"):
                 with self.subTest(case=name, kind=kind):
@@ -2803,10 +2815,140 @@ class DoctorCheckpointWrites(Stage2Harness):
                     r = self._doctor(kind)
                     self.assertEqual(tree_state(self._tmp), before, "preflight changed a file")
                     self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
-                    self.assertIn("hook write: NOT PREVIEWED; the {} could change the verdict"
-                                  .format(what), r.stdout)
+                    self.assertIn("hook write: NOT PREVIEWED; the {}".format(what), r.stdout)
                     self.assertIn("effective verdict: UNPREVIEWED", r.stdout)
                     self.assertNotIn("Traceback", r.stderr)
+
+    def test_a_write_that_could_block_the_hook_is_never_verdict_neutral(self):
+        # Fix round 17 (F1): the open for writing of backlog-checkpoint.json.tmp
+        # (aiqt_hooks.py:7720, via 8414) blocks on a FIFO, and on a symbolic link to one, which it
+        # follows: a third outcome beside success and failure. With the marker present (the write
+        # at 8424 is skipped, 8419) or absent and writable (it would succeed), success and failure of
+        # the rewrite would leave the verdict unchanged, but a blocked hook gives no verdict at all,
+        # so the doctor exits 2 promptly and writes nothing. The hook is not run, since it would
+        # block.
+        def fifo_tmp():
+            os.mkfifo(self.state_dir() / "backlog-checkpoint.json.tmp")
+
+        def symlink_to_fifo_tmp():
+            target = self._tmp / "elsewhere.fifo"
+            os.mkfifo(target)
+            os.symlink(target, self.state_dir() / "backlog-checkpoint.json.tmp")
+
+        def marker_present():
+            self.seed_state("backlog-checkpoint.json", {"version": 1, "ts": _iso(), "ids": {}})
+            self.seed_state("checkpoint-init.marker", {"version": 1, "ts": _iso()})
+
+        def marker_absent_writable():
+            pass
+        tmps = (("a FIFO", fifo_tmp, "is a FIFO"),
+                ("a symbolic link to a FIFO", symlink_to_fifo_tmp, "is a symbolic link to a FIFO"))
+        markers = (("marker present", marker_present, True),
+                   ("marker absent and writable", marker_absent_writable, False))
+        for tmp_name, make_tmp, reason in tmps:
+            for marker_name, make_marker, present in markers:
+                for kind in ("stop", "idle"):
+                    with self.subTest(tmp=tmp_name, marker=marker_name, kind=kind):
+                        self._fresh(lambda: (make_marker(), make_tmp()))
+                        sd = self.state_dir()
+                        self.assertEqual((sd / "checkpoint-init.marker").exists(), present,
+                                         "precondition: the marker")
+                        if not present:
+                            self.assertTrue(os.access(sd, os.W_OK | os.X_OK),
+                                            "precondition: the marker write would succeed")
+                            self.assertFalse(os.path.lexists(sd / "checkpoint-init.marker.tmp"))
+                        before = tree_state(self._tmp)
+                        start = time.monotonic()
+                        r = self._doctor(kind, timeout=self.PROMPT)
+                        elapsed = time.monotonic() - start
+                        self.assertEqual(tree_state(self._tmp), before, "preflight changed a file")
+                        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                        self.assertLess(elapsed, self.PROMPT)
+                        self.assertIn("hook write: NOT PREVIEWED; the checkpoint rewrite could "
+                                      "block the hook open for writing", r.stdout)
+                        self.assertIn("backlog-checkpoint.json.tmp {}".format(reason), r.stdout)
+                        self.assertIn("effective verdict: UNPREVIEWED", r.stdout)
+                        self.assertNotIn("either outcome leaves the verdict unchanged", r.stdout)
+                        self.assertNotIn("Traceback", r.stderr)
+
+
+# Runs in a separate python3 -I process: load the doctor by path and call its preview path
+# (_build_ctx_previewed) in that process, with _atomic_write_outcome wrapped by a spy that records
+# whether both stand-ins are installed when the stand-in write runs and, for the interrupt case,
+# raises KeyboardInterrupt there; then report whether the two hook functions are the original
+# objects again (fix round 17, F2).
+RESTORE_PROG = """
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("orch_doctor_under_test", sys.argv[1])
+doctor = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(doctor)
+hook = doctor._load_hook()
+root = hook._recovery_toplevel(sys.argv[2])
+case = sys.argv[3]
+status, reg = hook._orch_registry(root)
+orig_write, orig_event = hook._orch_write_json_atomic, hook._orch_guard_event
+real_outcome = doctor._atomic_write_outcome
+seen = []
+
+
+def spy(path):
+    seen.append(hook._orch_write_json_atomic is not orig_write
+                and hook._orch_guard_event is not orig_event)
+    if case == "interrupt":
+        raise KeyboardInterrupt
+    return real_outcome(path)
+
+
+doctor._atomic_write_outcome = spy
+try:
+    doctor._build_ctx_previewed(hook, reg, root, "stop", {}, None)
+    ended = "returned"
+except doctor._Unpreviewed:
+    ended = "unpreviewed"
+except KeyboardInterrupt:
+    ended = "interrupted"
+print(json.dumps({"status": status, "ended": ended, "seen": seen,
+                  "write_restored": hook._orch_write_json_atomic is orig_write,
+                  "event_restored": hook._orch_guard_event is orig_event}))
+"""
+
+
+class DoctorStandInRestore(Stage2Harness):
+    """Fix round 17 (F2): the preview replaces hook._orch_write_json_atomic and
+    hook._orch_guard_event for the context build only, and restores both however the build ends: a
+    normal return, the not-previewed exception, or a KeyboardInterrupt raised inside the stand-in."""
+
+    def _run(self, case):
+        r = subprocess.run([sys.executable, "-I", "-c", RESTORE_PROG, str(DOCTOR), str(self.repo),
+                            case], capture_output=True, text=True, env=self._env(), timeout=60)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_the_stand_ins_are_restored_however_the_preview_ends(self):
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+
+        def fifo_marker_tmp():
+            os.mkfifo(self.state_dir() / "checkpoint-init.marker.tmp")
+        cases = (("normal", None, "returned"), ("unpreviewed", fifo_marker_tmp, "unpreviewed"),
+                 ("interrupt", None, "interrupted"))
+        for case, arrange, ended in cases:
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                self.write_registry(self.stage2())
+                self.arm_lease()
+                self.set_items([])
+                self.state_dir().mkdir(parents=True, exist_ok=True)
+                if arrange is not None:
+                    arrange()
+                out = self._run(case)
+                self.assertEqual(out["status"], "ok", out)
+                self.assertEqual(out["ended"], ended, out)
+                self.assertTrue(out["seen"], "the stand-in write was never reached: {}".format(out))
+                self.assertTrue(all(out["seen"]), "a stand-in was not installed: {}".format(out))
+                self.assertTrue(out["write_restored"], out)
+                self.assertTrue(out["event_restored"], out)
 
 
 # Fix round 16 (M1): every write the hook makes inside _orch_build_ctx and the module functions it

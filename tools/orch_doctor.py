@@ -45,12 +45,17 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          so the hook itself decides whether the marker write is reached and what it
                          injects; the stand-in for _orch_guard_event writes nothing and reports
                          success, since no caller on this path reads its result. The predicted
-                         outcome of each write is printed. A write that only writing could decide,
-                         a symbolic link, a FIFO or another special file at the temporary path
-                         (which the open would follow, block on, or write through), is reported as
-                         not previewed, exit 2, whenever its outcome could change the verdict, and
-                         a write to any other path, which this preview does not model, is reported
-                         the same way. The doctor itself WRITES NOTHING: no
+                         outcome of each write is printed. A write whose open for writing could
+                         block (a FIFO, a device or a socket at the temporary path, a symbolic link
+                         there whose target is one of these or cannot be examined, or a temporary
+                         path that cannot be examined) is reported as not previewed, exit 2,
+                         whatever its other outcomes would decide, since a blocked hook gives no
+                         verdict at all. A write that only writing could decide
+                         but that cannot block, a symbolic link at the temporary path to a regular
+                         file, a directory or an absent path (which the open would follow), is
+                         reported as not previewed, exit 2, whenever its outcome could change the
+                         verdict, and a write to any other path, which this preview does not model,
+                         is reported the same way. The doctor itself WRITES NOTHING: no
                          checkpoint, no init marker, no guard event, no turn-state, no spoof record,
                          and no bytecode cache. It does run the enumerator the registry declares,
                          exactly as the hook runs it (_orch_enumerate, aiqt_hooks.py:7962-7989: the
@@ -193,7 +198,8 @@ Exit status:
                  an absent or unreadable registry, a registry file or a path the preview would
                  open (see above) that exists and is not a regular file, an idle verdict that
                  hangs on the quiet-claim check, which is not previewed, or a checkpoint write
-                 whose outcome could change the verdict and cannot be decided without writing.
+                 whose open for writing could block, or whose outcome could change the verdict
+                 and cannot be decided without writing.
   --resume-audit 0 when the barrier this audit rewrote reads active false, 1 when it reads active
                  true, 2 on a usage error, an unresolvable root, an absent registry, a registry
                  file or a path the audit would open (see above) that exists and is not a regular
@@ -207,7 +213,9 @@ read-only mounts for the real uid, and it cannot foresee a full disk, a quota, a
 writer, or an effective uid that differs from the real one, so its answer can be wrong in either
 direction. The checkpoint-write prediction (_atomic_write_outcome) is the same kind of
 approximation: it cannot foresee a full disk, a quota, a sticky directory owned by another user, a
-race with another writer, or an effective uid that differs from the real one. The enumerator is a
+race with another writer, or an effective uid that differs from the real one; and like the
+special-file check it is a point-in-time lstat and stat, so a temporary path replaced by a FIFO
+between the prediction and the hook open can still block the hook. The enumerator is a
 program the registry declares; whatever it writes is outside the
 control of this tool. The quiet-duration check is not previewed (see above). The rewrite check on
 the barrier detects a write that did not happen; it cannot tell the hook from another writer that
@@ -292,18 +300,26 @@ class _Unpreviewed(Exception):
     writing; the preview reports it as not previewed, exit 2."""
 
 
+# The third outcome of _atomic_write_outcome: the open for writing could block the hook.
+BLOCKS = "blocks"
+
+
 def _atomic_write_outcome(path):
     """(outcome, reason) for _orch_write_json_atomic(path, obj) (aiqt_hooks.py:7712-7725), decided
     with lstat, stat and os.access only, so nothing is written. outcome is True when the write would
-    succeed, False when it would fail (reason says why), and None when only the write itself could
-    decide (reason says why). It follows the three steps of the hook: os.makedirs of the parent
-    (7718), which fails when the parent, or the nearest existing ancestor of an absent parent, is not
-    a directory or cannot be written; the open for writing of path + ".tmp" (7720), which fails on a
-    directory there, on a regular file that is not writable, or when it must create the file in a
-    directory that cannot be written, and which could follow, block on or write through a symbolic
-    link, a FIFO or another special file there (undecided); and os.replace (7722), which fails when
-    the directory cannot be written or path is a directory. os.access is an approximation (see
-    Residuals)."""
+    succeed, False when it would fail (reason says why), None when only the write itself could
+    decide between those two (reason says why), and BLOCKS when the open for writing could block
+    (reason says why), a third outcome that is never verdict-neutral, since a blocked hook gives no
+    verdict at all. It follows the three steps of the hook: os.makedirs of the parent (7718), which
+    fails when the parent, or the nearest existing ancestor of an absent parent, is not a directory
+    or cannot be written; the open for writing of path + ".tmp" (7720), which fails on a directory
+    there, on a regular file that is not writable, or when it must create the file in a directory
+    that cannot be written, which follows a symbolic link to a regular file, a directory or an absent
+    path there (undecided), and which could block on a FIFO, a device or a socket there, on a
+    symbolic link whose target is one of these or cannot be examined, or on a temporary path that
+    lstat cannot examine (BLOCKS: anything not classified as regular or absent); and os.replace
+    (7722), which fails when the directory cannot be written or path is a directory, and which opens
+    nothing, so path itself cannot block. os.access is an approximation (see Residuals)."""
     parent = os.path.dirname(path)
     tmp = path + ".tmp"
     if os.path.lexists(parent) and not os.path.isdir(parent):
@@ -327,20 +343,38 @@ def _atomic_write_outcome(path):
     except FileNotFoundError:
         st = None
     except OSError as exc:
-        return None, "{} cannot be examined ({})".format(tmp, exc)
+        return BLOCKS, ("{} cannot be examined ({}), so it is not known to be a regular file or "
+                        "absent, and the open for writing at aiqt_hooks.py:7720 could block on it"
+                        .format(tmp, exc))
     if st is None:
         if not writable:
             return False, ("{} cannot be created in {}, which is not writable (aiqt_hooks.py:7720)"
                            .format(tmp, parent))
     elif stat.S_ISLNK(st.st_mode):
-        return None, ("{} is a symbolic link, which the open for writing at aiqt_hooks.py:7720 "
-                      "would follow".format(tmp))
+        # The open follows the link, so its target decides whether the open could block (F1).
+        try:
+            resolved = os.stat(tmp)
+        except FileNotFoundError:
+            resolved = None
+        except OSError as exc:
+            return BLOCKS, ("{} is a symbolic link whose target cannot be examined ({}), and the "
+                            "open for writing at aiqt_hooks.py:7720, which follows it, could block"
+                            .format(tmp, exc))
+        if resolved is not None and not (stat.S_ISREG(resolved.st_mode)
+                                         or stat.S_ISDIR(resolved.st_mode)):
+            return BLOCKS, ("{} is a symbolic link to a {}, which the open for writing at "
+                            "aiqt_hooks.py:7720 follows and could block on"
+                            .format(tmp, _kind_of(resolved.st_mode)))
+        return None, ("{} is a symbolic link to {}, which the open for writing at aiqt_hooks.py:7720 "
+                      "would follow".format(tmp, "an absent path" if resolved is None
+                                            else "a " + ("regular file" if stat.S_ISREG(
+                                                resolved.st_mode) else "directory")))
     elif stat.S_ISDIR(st.st_mode):
         return False, ("{} is a directory, so the open for writing raises (aiqt_hooks.py:7720)"
                        .format(tmp))
     elif not stat.S_ISREG(st.st_mode):
-        return None, ("{} is a {}, which the open for writing at aiqt_hooks.py:7720 could block on "
-                      "or write through".format(tmp, _kind_of(st.st_mode)))
+        return BLOCKS, ("{} is a {}, which the open for writing at aiqt_hooks.py:7720 could block on"
+                        .format(tmp, _kind_of(st.st_mode)))
     elif not os.access(tmp, os.W_OK):
         return False, "{} is not writable (aiqt_hooks.py:7720)".format(tmp)
     if not writable:
@@ -365,10 +399,12 @@ def _build_ctx_previewed(hook, reg, root, kind, data, wake_text):
     stand-in write returns the outcome _atomic_write_outcome predicts for the checkpoint rewrite
     (aiqt_hooks.py:8414) and the init-marker write (8424), so the hook code itself decides whether
     the marker write is reached (8419) and whether it injects the cannot-evaluate row (8428); notes
-    lists the predicted writes. Raises _Unpreviewed for a write the preview does not model, or for
-    an undecided write whose outcome could change the verdict: an undecided checkpoint rewrite is
-    accepted only when the marker exists or its write would succeed, since either outcome of the
-    rewrite then injects nothing, and an undecided marker write is never accepted."""
+    lists the predicted writes. Raises _Unpreviewed for a write the preview does not model, for a
+    write whose open for writing could block (BLOCKS), whatever its other outcomes would decide,
+    since a blocked hook gives no verdict, or for an undecided write whose outcome could change the
+    verdict: an undecided checkpoint rewrite, which cannot block, is accepted only when the marker
+    exists or its write would succeed, since either outcome of the rewrite then injects nothing,
+    and an undecided marker write is never accepted."""
     sd = hook._orch_state_dir_for_root(root)
     checkpoint = os.path.join(sd, "backlog-checkpoint.json")
     marker = os.path.join(sd, "checkpoint-init.marker")
@@ -379,6 +415,12 @@ def _build_ctx_previewed(hook, reg, root, kind, data, wake_text):
             raise _Unpreviewed("the hook would write {}, a write this preview does not model"
                                .format(path))
         outcome, reason = _atomic_write_outcome(path)
+        what = "checkpoint rewrite" if path == checkpoint else "init-marker write"
+        if outcome == BLOCKS:
+            # A blocked open is a third outcome beside success and failure: the hook gives no
+            # verdict at all, so it is never verdict-neutral (fix round 17, F1).
+            raise _Unpreviewed("the {} could block the hook open for writing, so the hook could "
+                               "give no verdict at all: {}".format(what, reason))
         if outcome is None and path == checkpoint and (
                 os.path.lexists(marker) or _atomic_write_outcome(marker)[0] is True):
             # Either outcome leaves the verdict unchanged: with a marker present the write at 8424
@@ -387,7 +429,6 @@ def _build_ctx_previewed(hook, reg, root, kind, data, wake_text):
                          "leaves the verdict unchanged".format(reason))
             return True
         if outcome is None:
-            what = "checkpoint rewrite" if path == checkpoint else "init-marker write"
             raise _Unpreviewed("the {} could change the verdict and cannot be decided without "
                                "writing: {}".format(what, reason))
         if path == checkpoint:
