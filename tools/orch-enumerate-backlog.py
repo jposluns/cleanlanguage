@@ -7,12 +7,16 @@ validate its stdout with `validate_enumeration` (aiqt_hooks.py:7904-7959). A non
 stdout, or an invalid enumeration is ENUMERATOR_ERROR, which denies the Stop and the scheduling call.
 This script therefore fails CLOSED: every unreadable input and every malformed row exits 1 naming its
 position, and it never prints an empty or partial enumeration in place of an error (an empty backlog
-must be affirmed in the file, never inferred from the absence of rows). Every failure message begins,
-after the "orch-enumerate-backlog: FAIL: " prefix, with its position: "line N" for a line of the
-input, "line N (end of input)" where the scan ended, "before line 1 (input unreadable)" for a backlog
-that cannot be opened or read or is not a regular file, and "before line 1 (no input read)" for a
-usage error or a failed re-execution. A failure that has no line to name says so rather than naming
-an invented one, and the test suite scans the source so that every failure message keeps its position.
+must be affirmed in the file, never inferred from the absence of rows). Every failure message the
+script writes begins, after the "orch-enumerate-backlog: FAIL: " prefix, with its position: "line N"
+for a line of the input, "line N (end of input)" where the scan ended, "before line 1 (input
+unreadable)" for a backlog that cannot be opened or read or is not a regular file, and "before line
+1 (no input read)" for a usage error or a failed re-execution. A failure that has no line to name
+says so rather than naming an invented one. The test suite scans the source for every path that can
+write a failure (each BacklogError construction and raise, each _fail call, each line position
+handed to a helper, and each write to standard error or exit) so that each keeps its position.
+Residual (disclosed): an exception that escapes as an interpreter traceback, such as a failed write
+to stdout, is outside that scan and names no position.
 
 Backlog grammar (a markdown table, parsed strictly):
 

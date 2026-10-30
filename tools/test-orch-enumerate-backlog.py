@@ -52,9 +52,15 @@ The ErrorPosition cases prove that every failure the enumerator can produce begi
 (round 9 X1): a line of the input, the line where the scan ended, or "before line 1" with the reason
 no line was read, for a missing, unreadable, FIFO, directory, device and invalid UTF-8 input, a
 malformed table, a usage error and a failed re-execution, in both modes. The PositionProbe case is
-the class probe for that finding: it scans the enumerator source for every BacklogError construction
-and every _fail call and requires each message to begin with a position, so a new failure that names
-none fails the suite.
+the class probe for that finding: it scans the enumerator source for every path that can write a
+failure, each BacklogError construction, reference and raise, each _fail call, each call that hands
+a helper a line position, each write to standard error (a print, a stream reference, an os
+descriptor write, a module that logs) and each exit. It requires each message to begin with a
+documented position, a relayed str(exc) only where an except clause naming BacklogError alone binds
+exc, and a line position that is never a constant, so a new failure that names none fails the
+suite; it also proves that it refuses one deliberately unpositioned path of each kind. An exception
+that escapes as an interpreter traceback is outside a source scan and names no position (disclosed
+residual).
 """
 
 from __future__ import annotations
@@ -1245,41 +1251,357 @@ class ErrorPosition(EnumeratorHarness):
         self.assert_position(r, NOT_READ)
 
 
-def _names_a_position(arg, error_name):
-    # True when a message argument begins with a position: a template starting "line {}" or
-    # "before line 1", or "{}: " (or "{0}: ") formatted with BEFORE_INPUT or NOT_READ first; for
-    # _fail, also str(exc), which relays an error whose construction this probe checks.
-    if error_name == "_fail" and isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) \
-            and arg.func.id == "str" and len(arg.args) == 1 \
-            and isinstance(arg.args[0], ast.Name) and arg.args[0].id == "exc":
-        return True
-    template, first = None, None
+# The documented positions as message templates, "{}" standing for the line number: the positions
+# of POSITION_RE, each followed by ": ".
+TEMPLATE_POSITION_RE = re.compile(r"^(?:line \{\}(?: \(end of input\))?|before line 1 \((?:input "
+                                  r"unreadable|no input read)\)): ")
+BEFORE_LINE_RE = re.compile(r"^before line 1 \((?:input unreadable|no input read)\): ")
+# Every other way a message can reach standard error or end the process, each refused wherever it
+# appears: a reference to a standard error stream other than the accepted sinks, a descriptor write,
+# duplication or abort from os, a module that writes to standard error, and an exit builtin.
+STDERR_NAMES = ("stderr", "__stderr__")
+OS_FD_WRITERS = ("write", "writev", "pwrite", "pwritev", "sendfile", "dup", "dup2", "_exit",
+                 "abort")
+STDERR_MODULES = ("logging", "warnings", "traceback", "faulthandler", "pdb", "cgitb")
+EXIT_BUILTINS = ("exit", "quit", "SystemExit")
+FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+
+
+def _parents(tree):
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+    return parents
+
+
+def _scope(node, parents):
+    # The nearest enclosing function of node, or None at module level.
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, FUNCTION_NODES):
+            return node
+    return None
+
+
+def _is_constant(node):
+    # A constant expression: a literal, or an expression built from literals only.
+    return not any(isinstance(n, ast.Name) for n in ast.walk(node))
+
+
+def _template(arg):
+    # (template, format arguments) for a str constant or a .format() call on one, else (None, None).
     if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-        template = arg.value
-    elif isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) \
+        return arg.value, []
+    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) \
             and arg.func.attr == "format" and isinstance(arg.func.value, ast.Constant) \
             and isinstance(arg.func.value.value, str):
-        template = arg.func.value.value
-        first = arg.args[0] if arg.args else None
+        return arg.func.value.value, list(arg.args)
+    return None, None
+
+
+def _template_names_a_position(arg):
+    # True when a message begins with a documented position: a "line {}" template whose line
+    # argument is not a constant, a template that begins with a "before line 1" position, or "{}: "
+    # (or "{0}: ") formatted with BEFORE_INPUT or NOT_READ first.
+    template, args = _template(arg)
     if template is None:
         return False
-    if template.startswith(("line {}", "before line 1")):
-        return True
-    return template.startswith(("{}: ", "{0}: ")) and isinstance(first, ast.Name) \
-        and first.id in ("BEFORE_INPUT", "NOT_READ")
+    if template.startswith(("{}: ", "{0}: ")):
+        return bool(args) and isinstance(args[0], ast.Name) \
+            and args[0].id in ("BEFORE_INPUT", "NOT_READ")
+    if not TEMPLATE_POSITION_RE.match(template):
+        return False
+    if template.startswith("line {}"):
+        return bool(args) and not isinstance(args[0], ast.Starred) and not _is_constant(args[0])
+    return True
 
 
-def position_probe(source, error_name):
-    """(checked, violations) over every call of error_name or _fail in source: checked is the
-    number of calls, violations the (line, source) of each whose message names no position."""
-    checked, bad = 0, []
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
-                and node.func.id in (error_name, "_fail"):
-            checked += 1
-            if not _names_a_position(node.args[0] if node.args else None, node.func.id):
-                bad.append((node.lineno, ast.unparse(node)))
-    return checked, bad
+def _relays_the_tool_error(arg, call, parents, error_name):
+    # True for _fail(str(name)) where name is bound by the nearest enclosing except clause that
+    # binds it, that clause names error_name and no other type, and its body never rebinds name.
+    if not (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id == "str"
+            and len(arg.args) == 1 and not arg.keywords and isinstance(arg.args[0], ast.Name)):
+        return False
+    name = arg.args[0].id
+    node = call
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, FUNCTION_NODES + (ast.ClassDef,)):
+            return False
+        if isinstance(node, ast.ExceptHandler) and node.name == name:
+            if not (isinstance(node.type, ast.Name) and node.type.id == error_name):
+                return False
+            for stmt in node.body:
+                for inner in ast.walk(stmt):
+                    if isinstance(inner, ast.Name) and inner.id == name \
+                            and not isinstance(inner.ctx, ast.Load):
+                        return False
+                    if isinstance(inner, ast.ExceptHandler) and inner.name == name:
+                        return False
+            return True
+    return False
+
+
+def _module_functions(tree):
+    return [n for n in tree.body if isinstance(n, ast.FunctionDef)]
+
+
+def error_factories(tree, error_name):
+    # (factories, strict): the module functions every return of which gives None or a call of
+    # error_name or of another factory, at least one giving a call; strict are those that never
+    # give None, so raising their result always raises the error.
+    found, strict, changed = set(), set(), True
+    while changed:
+        changed = False
+        for fn in _module_functions(tree):
+            if fn.name in found:
+                continue
+            makes, only, none = False, True, False
+            for ret in (n for n in ast.walk(fn) if isinstance(n, ast.Return)):
+                value = ret.value
+                if value is None or (isinstance(value, ast.Constant) and value.value is None):
+                    none = True
+                elif isinstance(value, ast.Call) and isinstance(value.func, ast.Name) \
+                        and (value.func.id == error_name or value.func.id in found):
+                    makes = True
+                    if value.func.id != error_name and value.func.id not in strict:
+                        none = True
+                else:
+                    only = False
+            if makes and only:
+                found.add(fn.name)
+                if not none:
+                    strict.add(fn.name)
+                changed = True
+    return found, strict
+
+
+def position_parameters(tree, error_name):
+    # {function: [(index, parameter)]}: the parameters of each module function that supply the line
+    # of a "line {}" position, directly in an error_name construction or through a call of another
+    # function at one of its own position parameters.
+    out, changed = {}, True
+    functions = _module_functions(tree)
+    while changed:
+        changed = False
+        for fn in functions:
+            params = [a.arg for a in fn.args.args]
+            sources = []
+            for call in (n for n in ast.walk(fn) if isinstance(n, ast.Call)
+                         and isinstance(n.func, ast.Name)):
+                if call.func.id == error_name:
+                    template, args = _template(call.args[0] if call.args else None)
+                    if template is not None and template.startswith("line {}") and args:
+                        sources.append(args[0])
+                for index, param in out.get(call.func.id, []):
+                    if index < len(call.args):
+                        sources.append(call.args[index])
+                    sources.extend(k.value for k in call.keywords if k.arg == param)
+            used = {n.id for source in sources for n in ast.walk(source) if isinstance(n, ast.Name)}
+            for index, param in enumerate(params):
+                if param in used and (index, param) not in out.get(fn.name, []):
+                    out.setdefault(fn.name, []).append((index, param))
+                    changed = True
+    return out
+
+
+def _line_arguments_ok(call, slots):
+    # Every position parameter of the called function receives a non-constant expression, given
+    # positionally or by keyword, never through a starred argument or a default.
+    if any(isinstance(a, ast.Starred) for a in call.args) \
+            or any(k.arg is None for k in call.keywords):
+        return False
+    for index, param in slots:
+        if index < len(call.args):
+            value = call.args[index]
+        else:
+            values = [k.value for k in call.keywords if k.arg == param]
+            if not values:
+                return False
+            value = values[0]
+        if _is_constant(value):
+            return False
+    return True
+
+
+def _makes_the_error(value, error_name, makers):
+    if isinstance(value, ast.BoolOp) and isinstance(value.op, ast.Or):
+        return all(_makes_the_error(v, error_name, makers) for v in value.values)
+    return isinstance(value, ast.Call) and isinstance(value.func, ast.Name) \
+        and (value.func.id == error_name or value.func.id in makers)
+
+
+def _raises_the_error(node, parents, error_name, factories, strict):
+    # A raise of an error_name construction or a strict factory call, or of a local name every
+    # binding of which, in the same function, is an assignment of a factory call or an "or" of them.
+    exc = node.exc
+    if exc is None:
+        return False
+    if isinstance(exc, ast.Call):
+        return _makes_the_error(exc, error_name, strict)
+    if not isinstance(exc, ast.Name):
+        return False
+    scope = _scope(node, parents)
+    if scope is None:
+        return False
+    bindings = [n for n in ast.walk(scope) if isinstance(n, ast.Name) and n.id == exc.id
+                and not isinstance(n.ctx, ast.Load)]
+    return bool(bindings) and all(
+        isinstance(parents.get(b), ast.Assign) and len(parents[b].targets) == 1
+        and parents[b].targets[0] is b
+        and _makes_the_error(parents[b].value, error_name, factories) for b in bindings)
+
+
+def _is_sys(node, attr):
+    return isinstance(node, ast.Attribute) and node.attr == attr \
+        and isinstance(node.value, ast.Name) and node.value.id == "sys"
+
+
+def _accepted_stderr_print(call, parents, prog):
+    # The two accepted writes to standard error: the print in _fail, "{}: FAIL: {}" formatted with
+    # PROG and its message parameter, and a print whose message is "<prog>: FAIL: " then a
+    # "before line 1" position (the failed re-execution, which runs before _fail is defined).
+    if not (isinstance(call.func, ast.Name) and call.func.id == "print" and len(call.args) == 1
+            and [k.arg for k in call.keywords] == ["file"]
+            and _is_sys(call.keywords[0].value, "stderr")):
+        return False
+    template, args = _template(call.args[0])
+    if template is None:
+        return False
+    scope = _scope(call, parents)
+    if isinstance(scope, ast.FunctionDef) and scope.name == "_fail":
+        params = [a.arg for a in scope.args.args]
+        return template == "{}: FAIL: {}" and len(args) == 2 and bool(params) \
+            and all(isinstance(a, ast.Name) for a in args) \
+            and [a.id for a in args] == ["PROG", params[0]]
+    prefix = prog + ": FAIL: "
+    return template.startswith(prefix) and bool(BEFORE_LINE_RE.match(template[len(prefix):]))
+
+
+def _follows_an_accepted_print(call, parents, prog):
+    # True when the statement holding call directly follows, in the same body, a statement that is
+    # an accepted print to standard error.
+    stmt = parents.get(call)
+    holder = parents.get(stmt)
+    if not isinstance(stmt, ast.Expr) or holder is None:
+        return False
+    for _name, body in ast.iter_fields(holder):
+        if isinstance(body, list) and stmt in body:
+            index = body.index(stmt)
+            if index == 0:
+                return False
+            before = body[index - 1]
+            return isinstance(before, ast.Expr) and isinstance(before.value, ast.Call) \
+                and _accepted_stderr_print(before.value, parents, prog)
+    return False
+
+
+def _accepted_exit(call, parents, tree, prog):
+    # The accepted exits: sys.exit(code) in _fail, sys.exit(main(...)) at module level where every
+    # return of main is 0 (each failure goes through _fail), and sys.exit(<non-zero int>) directly
+    # after an accepted print to standard error.
+    if len(call.args) != 1 or call.keywords:
+        return False
+    arg = call.args[0]
+    scope = _scope(call, parents)
+    if isinstance(scope, ast.FunctionDef) and scope.name == "_fail":
+        params = [a.arg for a in scope.args.args]
+        return len(params) == 2 and isinstance(arg, ast.Name) and arg.id == params[1]
+    if scope is None and isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) \
+            and arg.func.id == "main":
+        mains = [fn for fn in _module_functions(tree) if fn.name == "main"]
+        returns = [n for fn in mains for n in ast.walk(fn) if isinstance(n, ast.Return)]
+        return len(mains) == 1 and bool(returns) and all(
+            isinstance(r.value, ast.Constant) and r.value.value == 0 for r in returns)
+    return isinstance(arg, ast.Constant) and type(arg.value) is int and arg.value != 0 \
+        and _follows_an_accepted_print(call, parents, prog)
+
+
+def position_probe(source, error_name, prog):
+    # (counts, violations) over every path in source that can write a failure: each error_name
+    # construction and reference, raise, _fail call, call that supplies a line position, write to
+    # standard error and exit. violations are (line, reason, source) for each that names no
+    # documented position or is not an accepted sink.
+    tree = ast.parse(source)
+    parents = _parents(tree)
+    factories, strict = error_factories(tree, error_name)
+    positions = position_parameters(tree, error_name)
+    counts, bad = {}, []
+
+    def tally(kind, node, ok, why):
+        counts[kind] = counts.get(kind, 0) + 1
+        if not ok:
+            bad.append((node.lineno, why, ast.unparse(node)))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            name = node.func.id
+            if name == error_name:
+                tally("construction", node, len(node.args) == 1 and not node.keywords
+                      and _template_names_a_position(node.args[0]),
+                      "an error whose message names no documented position")
+            if name == "_fail":
+                arg = node.args[0] if node.args else None
+                code_ok = not node.keywords and (len(node.args) == 1 or (
+                    len(node.args) == 2 and isinstance(node.args[1], ast.Constant)
+                    and type(node.args[1].value) is int and node.args[1].value != 0))
+                tally("_fail call", node, code_ok and (
+                    _template_names_a_position(arg)
+                    or _relays_the_tool_error(arg, node, parents, error_name)),
+                    "a _fail message that names no position, or relays an error not caught as "
+                    "{} alone".format(error_name))
+            if name in positions:
+                tally("line argument", node, _line_arguments_ok(node, positions[name]),
+                      "a line position given as a constant, a default or a starred argument")
+            if name == "print" and any(k.arg == "file" for k in node.keywords):
+                tally("print to a file", node, _accepted_stderr_print(node, parents, prog),
+                      "a print to a stream other than an accepted standard error sink")
+        elif isinstance(node, ast.Name) and node.id == error_name \
+                and not isinstance(parents.get(node), ast.ExceptHandler) \
+                and not (isinstance(parents.get(node), ast.Call)
+                         and parents[node].func is node):
+            tally("error reference", node, False,
+                  "a reference to {} other than a construction or an except clause"
+                  .format(error_name))
+        elif isinstance(node, ast.Raise):
+            tally("raise", node, _raises_the_error(node, parents, error_name, factories, strict),
+                  "a raise of something other than a positioned {}".format(error_name))
+        elif isinstance(node, ast.Attribute) and node.attr in STDERR_NAMES:
+            holder = parents.get(node)
+            call = parents.get(holder)
+            tally("standard error write", node, _is_sys(node, "stderr")
+                  and isinstance(holder, ast.keyword) and holder.arg == "file"
+                  and isinstance(call, ast.Call)
+                  and _accepted_stderr_print(call, parents, prog),
+                  "a standard error reference outside an accepted positioned print")
+        elif _is_sys(node, "exit"):
+            call = parents.get(node)
+            tally("exit", node, isinstance(call, ast.Call) and call.func is node
+                  and _accepted_exit(call, parents, tree, prog),
+                  "an exit not through _fail, main or an accepted positioned print")
+        elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) \
+                and node.value.id == "os" and node.attr in OS_FD_WRITERS:
+            tally("descriptor write", node, False,
+                  "an os descriptor write, duplication or abort that can bypass _fail")
+        elif isinstance(node, ast.Name) and node.id in STDERR_NAMES + EXIT_BUILTINS:
+            tally("standard error write", node, False,
+                  "a bare standard error stream or exit builtin")
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and node.value in STDERR_NAMES:
+            tally("standard error write", node, False,
+                  "a standard error stream named by a string (a getattr route)")
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            modules = [a.name for a in node.names] if isinstance(node, ast.Import) \
+                else [node.module or ""]
+            names = [] if isinstance(node, ast.Import) else [a.name for a in node.names]
+            tally("import", node, not any(m.split(".")[0] in STDERR_MODULES for m in modules)
+                  and not (isinstance(node, ast.ImportFrom) and node.module == "sys"
+                           and any(n in STDERR_NAMES + ("exit", "*") for n in names))
+                  and not (isinstance(node, ast.ImportFrom) and node.module == "os"
+                           and any(n in OS_FD_WRITERS + ("*",) for n in names)),
+                  "an import that can write to standard error or exit bypassing _fail")
+    return counts, bad
 
 
 def module_constants(source):
@@ -1288,24 +1610,72 @@ def module_constants(source):
             and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Constant)}
 
 
-class PositionProbe(unittest.TestCase):
-    # Class probe for round 9 X1: every BacklogError construction and every _fail call in the
-    # enumerator begins its message with a position.
+# The failure-path sites the enumerator held at the round 9 verification fix, so a probe that stops
+# reading a class of them fails rather than passing vacuously.
+POSITION_FLOORS = (("construction", 4), ("_fail call", 2), ("line argument", 29), ("raise", 28),
+                   ("standard error write", 2), ("print to a file", 2), ("exit", 3))
+RELAY = "    except BacklogError as exc:\n        _fail(str(exc))\n"
+MAIN_ANCHOR = "    path = os.path.abspath(argv[0])\n"
+# One deliberately unpositioned failure path of each kind the probe covers, as (anchor, replacement)
+# over the enumerator source; the probe must refuse every one.
+POSITION_MUTATIONS = (
+    ("a direct print to standard error", MAIN_ANCHOR,
+     "    print(\"cannot start\", file=sys.stderr)\n    sys.exit(1)\n" + MAIN_ANCHOR),
+    ("a write to sys.stderr", MAIN_ANCHOR, "    sys.stderr.write(\"cannot start\")\n" + MAIN_ANCHOR),
+    ("a descriptor write to fd 2", MAIN_ANCHOR, "    os.write(2, b\"cannot start\")\n" + MAIN_ANCHOR),
+    ("an exit with a message", MAIN_ANCHOR, "    sys.exit(\"cannot start\")\n" + MAIN_ANCHOR),
+    ("a bare exit status", MAIN_ANCHOR, "    sys.exit(1)\n" + MAIN_ANCHOR),
+    ("an OSError relayed through _fail", RELAY,
+     RELAY + "    except OSError as exc:\n        _fail(str(exc))\n"),
+    ("a relay under a handler of two types", RELAY,
+     "    except (BacklogError, OSError) as exc:\n        _fail(str(exc))\n"),
+    ("a relay of a rebound name", RELAY,
+     "    except BacklogError as exc:\n        exc = OSError(\"x\")\n        _fail(str(exc))\n"),
+    ("a constant line position", "raise _line_error(lineno, \"table row before the header\")",
+     "raise _line_error(1, \"table row before the header\")"),
+    ("a raise of another type", MAIN_ANCHOR, "    raise ValueError(\"cannot start\")\n" + MAIN_ANCHOR),
+    ("a BacklogError with no position", MAIN_ANCHOR,
+     "    raise BacklogError(\"cannot start\")\n" + MAIN_ANCHOR),
+    ("an unpositioned usage _fail", "_fail(\"{0}: usage: ", "_fail(\"{0} usage: "),
+    ("an import of logging", "import hashlib\n", "import hashlib\nimport logging\n"),
+)
 
-    def test_every_failure_message_in_the_enumerator_names_a_position(self):
+
+class PositionProbe(unittest.TestCase):
+    # Class probe for round 9 X1 and its verification round: every path in the enumerator that can
+    # write a failure names a documented position. Each BacklogError construction and each _fail
+    # message begins with one; _fail relays str(exc) only where exc is bound by an except clause
+    # naming BacklogError alone; a line position handed to a helper is never a constant; every raise
+    # raises a positioned BacklogError; and the only writes to standard error and exits are the
+    # _fail sink, the positioned re-execution failure and the exit with the status of main.
+
+    def source(self):
         if not SCRIPT.exists():
             self.fail("enumerator not found: {}".format(SCRIPT))
-        source = SCRIPT.read_text(encoding="utf-8")
-        checked, bad = position_probe(source, "BacklogError")
-        # 6 at round 9: _line_error, _input_error, the two end-of-input errors, the usage _fail and
-        # the _fail that relays a BacklogError. Every line-numbered failure goes through _line_error.
-        self.assertGreaterEqual(checked, 6, "the probe found fewer failure sites than the "
-                                "enumerator held at round 9, so it is not reading them")
-        self.assertEqual(bad, [], "a failure message that names no position")
+        return SCRIPT.read_text(encoding="utf-8")
+
+    def test_every_failure_message_in_the_enumerator_names_a_position(self):
+        source = self.source()
+        counts, bad = position_probe(source, "BacklogError", "orch-enumerate-backlog")
+        self.assertEqual(bad, [], "a failure path that names no position or bypasses _fail")
+        for kind, floor in POSITION_FLOORS:
+            self.assertGreaterEqual(counts.get(kind, 0), floor, "the probe found fewer {} sites "
+                                    "than the enumerator held, so it is not reading them"
+                                    .format(kind))
         constants = module_constants(source)
+        self.assertEqual(constants.get("PROG"), "orch-enumerate-backlog")
         self.assertEqual(constants.get("BEFORE_INPUT"), BEFORE_INPUT)
         self.assertEqual(constants.get("NOT_READ"), NOT_READ)
         self.assertIn("FAIL: before line 1 (no input read): cannot re-execute", source)
+
+    def test_the_probe_refuses_each_unpositioned_failure_path(self):
+        source = self.source()
+        for name, anchor, replacement in POSITION_MUTATIONS:
+            with self.subTest(mutation=name):
+                self.assertEqual(source.count(anchor), 1, "the mutation anchor is not unique")
+                _counts, bad = position_probe(source.replace(anchor, replacement),
+                                              "BacklogError", "orch-enumerate-backlog")
+                self.assertNotEqual(bad, [], "the probe accepted {}".format(name))
 
 
 class EndOfInput(EnumeratorHarness):

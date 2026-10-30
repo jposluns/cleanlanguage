@@ -73,9 +73,13 @@ Every refusal begins, after the "migrate-todo-aei: FAIL: " prefix, with its posi
 line of the input, "line N (end of input)" where the scan ended, "line N (end of input, output
 refused)" for an output refused after the whole input was read, "before line 1 (input unreadable)"
 for an input that cannot be opened or read or is not a regular file, and "before line 1 (no input
-read)" for a usage error, an output path equal to the input path, or a failed re-execution. A
-refusal that has no line to name says so rather than naming an invented one, and the test suite
-scans the source so that every refusal keeps its position.
+read)" for a usage error, an output path equal to the input path, or a failed re-execution. This
+holds for every refusal the script writes. A refusal that has no line to name says so rather than
+naming an invented one. The test suite scans the source for every path that can write a refusal
+(each MigrationError construction and raise, each _fail call, each line position handed to a
+helper, and each write to standard error or exit) so that each keeps its position. Residual
+(disclosed): an exception that escapes as an interpreter traceback, such as a failed write to
+stdout, is outside that scan and names no position.
 
 The script runs isolated: started without -I, it re-executes itself under python3 -I before it
 imports anything beyond os and sys, so a file planted beside it cannot shadow a standard-library
