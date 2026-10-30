@@ -18,7 +18,8 @@ root, the two whole roots and the two active trees); the RequiredSet cases delet
 root together with every pin entry naming it and expect the gate to fail, and a probe holds the gate
 constants equal to the set listed here. The PinFinal cases put a draft marker (DRAFT, PLACEHOLDER, TBD or
 TODO in capitals in a comment, or any of them as a substring in any case in a value) or a malformed, absent
-or future revendored date in the pin and expect check 1 to fail. The Relocation cases also map a vendored
+or future revendored date, one before the source date or the adoption date, or a missing or malformed source
+date or adoption date in the pin and expect check 1 to fail. The Relocation cases also map a vendored
 file outside the allowed set (the hook, a plugin file, a corpus rule, an active rule, a core file) to
 another pinned upstream file carrying its bytes, and expect check 1 to fail where checks 1 to 7 would
 otherwise pass.
@@ -150,6 +151,7 @@ def base_spec():
     files["README.md"] = b"Not vendored.\n"
     pin = {
         "source": {"name": "aiqt-guardrails", "license": "Apache-2.0", "source-commit": FAKE_COMMIT,
+                   "source-date": "2026-09-01T12:00:00+00:00", "adopted": "2026-09-02",
                    "revendored": "2026-09-05"},
         "version": {"pack": "9.9.9"},
         "integrity": {"tree-sha256": FAKE_TREE, "root": FAKE_ROOT, "manifest": MANIFEST},
@@ -911,6 +913,49 @@ class PinFinal(GateCase):
         result = self.spec_run(edit_pin(lambda pin: pin["vendor"].__setitem__("revendored", "next week")))
         self.assertCheckFails(result, 1)
         self.assertIn("[vendor] revendored is", result.stderr)
+
+    def test_revendored_before_the_source_date_fails(self):
+        for table in ("source", "vendor"):
+            with self.subTest(table=table):
+                self._fresh()
+                result = self.spec_run(edit_pin(
+                    lambda pin, tb=table: pin[tb].__setitem__("revendored", "2026-08-31")))
+                self.assertCheckFails(result, 1)
+                self.assertIn("[{}] revendored is 2026-08-31, before the [source] source-date 2026-09-01".format(
+                    table), result.stderr)
+
+    def test_revendored_before_the_adopted_date_fails(self):
+        def edit(pin):
+            pin["source"]["adopted"] = "2026-09-04"
+            pin["source"]["revendored"] = "2026-09-03"
+        result = self.spec_run(edit_pin(edit))
+        self.assertCheckFails(result, 1)
+        self.assertIn("[source] revendored is 2026-09-03, before the [source] adopted date 2026-09-04",
+                      result.stderr)
+
+    def test_missing_or_malformed_source_date_fails(self):
+        for value in (None, "yesterday", "2026-09-01", "2026-02-30T10:00:00+00:00", 7):
+            with self.subTest(value=value):
+                self._fresh()
+                if value is None:
+                    result = self.spec_run(edit_pin(lambda pin: pin["source"].pop("source-date")))
+                else:
+                    result = self.spec_run(edit_pin(
+                        lambda pin, v=value: pin["source"].__setitem__("source-date", v)))
+                self.assertCheckFails(result, 1)
+                self.assertIn("[source] source-date is", result.stderr)
+
+    def test_malformed_adopted_date_fails(self):
+        result = self.spec_run(edit_pin(lambda pin: pin["source"].__setitem__("adopted", "early September")))
+        self.assertCheckFails(result, 1)
+        self.assertIn("[source] adopted is", result.stderr)
+
+    def test_revendored_on_the_source_day_in_either_zone_passes(self):
+        for stamp in ("2026-09-05T23:30:00-04:00", "2026-09-06T05:00:00+10:00", "2026-09-05T00:00:00"):
+            with self.subTest(stamp=stamp):
+                self._fresh()
+                self.assertPasses(self.spec_run(edit_pin(
+                    lambda pin, s=stamp: pin["source"].__setitem__("source-date", s))))
 
     def test_revendored_today_and_as_a_toml_date_pass(self):
         import datetime

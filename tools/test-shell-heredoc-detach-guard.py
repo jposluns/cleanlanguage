@@ -9,23 +9,34 @@ heredoc lifting reduction).
    turn every deny and over case red (allowed). A flip that changes nothing fails.
 3. The oracle self-test: the bash oracle must count a positive control as executed, and must not count a
    syntax-error body, an echo of the marker command, a run that exits non-zero, or escaped data as
-   executed.
+   executed. The swap must replace only an exact, delimited background token: a sleep whose ampersand is
+   part of an ampersand-greater-than redirection or a double ampersand is left alone, so such a case
+   counts as inert, and a swap that would touch any other ampersand is refused.
 4. The bash oracle: every case named in ORACLE_CASES must be present with an expectation its kind allows,
    and real bash must agree with the kind. Each such command is run by bash -c in a fresh directory
-   with its backgrounded sleep (sleep, a number and an ampersand) replaced by ORACLE_COMMAND, which
-   backgrounds true and then writes a computed value, 42, to the file oracle.out, ending with a
-   semicolon so a command that followed the ampersand stays separate. A case counts as
-   executed only when bash exits 0 and that file holds exactly 42: only execution of the redirection
-   creates the file, and the value is computed, so text that bash merely prints (an echoed command or a
-   syntax error) never counts. A runs case must be executed and denied; an inert case must not be
-   executed (its verdict may be an allow or an over-refusal); a residual case must be executed and
-   allowed, which pins a disclosed residual as real.
+   with its backgrounded sleep replaced by ORACLE_COMMAND, which backgrounds true and then writes a
+   computed value, 42, to the file oracle.out, ending with a semicolon so a command that followed the
+   ampersand stays separate. The backgrounded sleep is SWAP_TARGET: sleep 0.1 or sleep 100, a space and
+   an ampersand, standing at the start of the text or after a blank, an opening parenthesis, a backquote,
+   a semicolon, a pipe or a quote, and followed by the end of the text, a blank, a closing parenthesis, a
+   backquote, a backslash or a quote, so the ampersand of a redirection or of a double ampersand is never taken for
+   it. A case
+   counts as executed only when bash exits 0 and that file holds exactly 42: only execution of the
+   redirection creates the file, and the value is computed, so text that bash merely prints (an echoed
+   command or a syntax error) never counts. A runs case must be executed and denied; an inert case must
+   not be executed (its verdict may be an allow or an over-refusal); a residual case must be executed
+   and allowed, which pins a disclosed residual as real.
+5. The fail-closed exit: a deny, and an internal error, must end with exit status 2 even when stdout,
+   stderr or both are closed, or stdout is a pipe nobody reads (a broken pipe). The internal error is
+   forced by loading the hook as a module and replacing its decide, or its main, with a function that
+   raises.
 
-Exit 0 only when all four hold. Launch with python3 -I. Temporary files go under TMPDIR.
+Exit 0 only when all five hold. Launch with python3 -I. Temporary files go under TMPDIR.
 """
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -43,7 +54,9 @@ APOS = "\x27"
 ORACLE_FILE = "oracle.out"
 ORACLE_VALUE = "42\n"
 ORACLE_COMMAND = "true " + AMP + " echo $((6*7)) >" + ORACLE_FILE + ";"
-SWAPS = ("sleep 0.1 " + AMP, "sleep 100 " + AMP)
+# The exact background token the oracle replaces; see check 4 in the docstring.
+SWAP_TARGET = re.compile(r"(?<![^\s(`;|\"" + APOS + r"])sleep (?:0\.1|100) " + AMP + r"(?![^\s)`\\\"" + APOS
+                         + r"])")
 # The cases the bash oracle runs (check 4), by kind: runs (bash executes the backgrounded command, and
 # the hook must deny), inert (bash does not execute it), residual (bash executes it and the hook allows
 # it, as the residual discloses). Shells absent from a plain runner (zsh, ksh) are left out.
@@ -84,6 +97,9 @@ ORACLE_CASES = {
     "d43-operator-split-by-a-line-continuation": "runs",
     "d44-shell-name-split-by-quotes": "runs",
     "d45-shell-variable": "runs",
+    "d51-delimiter-word-starting-with-a-substitution": "runs",
+    "d52-delimiter-word-starting-with-a-parameter-expansion": "runs",
+    "d53-env-split-string-glued-shell-name": "runs",
     "a02-cat-to-stdout-data": "inert",
     "a19-pipe-newline-to-non-shell": "inert",
     "o05-script-written-to-file-with-a-shebang": "inert",
@@ -92,6 +108,7 @@ ORACLE_CASES = {
     "o10-quoted-nested-data-heredoc-substitution-text": "inert",
     "a32-residual-here-string-not-judged": "residual",
     "a33-residual-eval-without-shell-name": "residual",
+    "a34-residual-sh-glued-to-a-letter": "residual",
 }
 KIND_EXPECTS = {"runs": ("deny",), "inert": ("allow", "over"), "residual": ("allow",)}
 
@@ -245,8 +262,21 @@ def oracle_executed(bash, command):
     return executed, "exit {}, {} {!r}".format(proc.returncode, ORACLE_FILE, content)
 
 
+def oracle_swap(command):
+    """(swapped, count): every SWAP_TARGET token replaced by ORACLE_COMMAND. Raises ValueError when the swap
+    would touch an ampersand other than the one that ends each token."""
+    for m in SWAP_TARGET.finditer(command):
+        if command[m.end():m.end() + 1] in (AMP, ">", "|"):
+            raise ValueError("the swap target at offset {} is part of an operator".format(m.start()))
+    pieces = SWAP_TARGET.split(command)
+    count = len(pieces) - 1
+    if sum(piece.count(AMP) for piece in pieces) != command.count(AMP) - count:
+        raise ValueError("the swap would remove an ampersand outside its targets")
+    return ORACLE_COMMAND.join(pieces), count
+
+
 def check_oracle_self(bash):
-    """Check 3: the oracle counts real execution only."""
+    """Check 3: the oracle counts real execution only, and the swap replaces only an exact token."""
     q = APOS
     probes = (
         ("positive control", ORACLE_COMMAND + "\n", True),
@@ -268,6 +298,28 @@ def check_oracle_self(bash):
                                                          "executed" if executed else "inert", label, detail))
         if not ok:
             failures.append("oracle self-test: {} counted {}".format(label, "executed" if executed else "inert"))
+    swaps = (
+        ("an ampersand-greater-than redirection after a sleep",
+         "bash <<" + q + "EOF" + q + "\nsleep 0.1 " + AMP + ">/dev/null\nEOF\n", 0, False),
+        ("an append ampersand-greater-than redirection after a sleep",
+         "sleep 0.1 " + AMP + ">>/dev/null\n", 0, False),
+        ("a double ampersand after a sleep", "sleep 0.1 " + AMP + AMP + " true\n", 0, False),
+        ("a backgrounded sleep in a substitution", "x=$(sleep 0.1 " + AMP + ")\n", 1, True),
+        ("a backgrounded sleep at the end of a line", "sleep 100 " + AMP + "\n", 1, True),
+    )
+    for label, command, want_count, want in swaps:
+        try:
+            swapped, count = oracle_swap(command)
+        except ValueError as exc:
+            failures.append("oracle swap self-test: {} refused: {}".format(label, exc))
+            continue
+        executed, detail = oracle_executed(bash, swapped)
+        ok = count == want_count and executed == want
+        print("{:4} oracle swap self-test {} token(s) {:8} {} ({})".format(
+            "ok" if ok else "FAIL", count, "executed" if executed else "inert", label, detail))
+        if not ok:
+            failures.append("oracle swap self-test: {} swapped {} token(s) and counted {}".format(
+                label, count, "executed" if executed else "inert"))
     return failures
 
 
@@ -283,10 +335,12 @@ def check_oracle(cases, hook, bash):
         if expect not in KIND_EXPECTS[kind]:
             failures.append("oracle case {} is {} but the case file expects {}".format(name, kind, expect))
             continue
-        swapped = command
-        for old in SWAPS:
-            swapped = swapped.replace(old, ORACLE_COMMAND)
-        if swapped == command:
+        try:
+            swapped, count = oracle_swap(command)
+        except ValueError as exc:
+            failures.append("oracle case {}: {}".format(name, exc))
+            continue
+        if count == 0:
             failures.append("oracle case {} has no backgrounded sleep to replace".format(name))
             continue
         executed, detail = oracle_executed(bash, swapped)
@@ -301,10 +355,66 @@ def check_oracle(cases, hook, bash):
     return failures
 
 
+# Loads the hook as a module, replaces one of its functions with one that raises, and runs it, so the
+# internal-error path is reached without editing the hook file.
+FORCED_ERROR_RUNNER = (
+    "import importlib.util, sys\n"
+    "spec = importlib.util.spec_from_file_location(\"hook_under_test\", sys.argv[1])\n"
+    "module = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(module)\n"
+    "def boom(*args):\n"
+    "    raise RuntimeError(\"forced\")\n"
+    "setattr(module, sys.argv[2], boom)\n"
+    "module.run()\n")
+
+
+def _closing(fds):
+    def close():
+        for fd in fds:
+            os.close(fd)
+    return close
+
+
+def check_fail_closed_exit(hook):
+    """Check 5: a deny and an internal error exit 2 whatever state stdout and stderr are in."""
+    q = APOS
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {
+        "command": "bash <<" + q + "EOF" + q + "\nsleep 100 " + AMP + "\nEOF\n"}}).encode("ascii")
+    launches = (("a deny", [sys.executable, "-I", hook]),
+                ("an internal error in decide", [sys.executable, "-I", "-c", FORCED_ERROR_RUNNER, hook, "decide"]),
+                ("an internal error in main", [sys.executable, "-I", "-c", FORCED_ERROR_RUNNER, hook, "main"]))
+    failures = []
+    for what, argv in launches:
+        for streams, fds in (("open", ()), ("stdout closed", (1,)), ("stderr closed", (2,)),
+                             ("stdout and stderr closed", (1, 2)), ("stdout a broken pipe", None)):
+            kwargs = {"input": payload, "timeout": 60, "cwd": ROOT}
+            read_end = write_end = None
+            if fds is None:
+                read_end, write_end = os.pipe()
+                os.close(read_end)
+                kwargs.update(stdout=write_end, stderr=subprocess.DEVNULL)
+            elif fds:
+                kwargs.update(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=_closing(fds))
+            else:
+                kwargs.update(capture_output=True)
+            try:
+                proc = subprocess.run(argv, **kwargs)
+            finally:
+                if write_end is not None:
+                    os.close(write_end)
+            ok = proc.returncode == 2
+            print("{:4} fail-closed exit {} for {} with {}".format("ok" if ok else "FAIL", proc.returncode, what,
+                                                                    streams))
+            if not ok:
+                failures.append("{} with {} exited {}, not 2".format(what, streams, proc.returncode))
+    return failures
+
+
 def main():
     cases = load_cases()
     failures = check_cases(HOOK, cases)
     failures += check_payloads(HOOK)
+    failures += check_fail_closed_exit(HOOK)
     flip_failures, red, total = check_flip(cases)
     failures += flip_failures
     bash = shutil.which("bash")

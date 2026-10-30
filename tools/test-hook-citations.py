@@ -34,30 +34,50 @@ digit or an underscore follows it, so a number that ends a sentence (the open at
 A shorter hook line number, of 1 to 5 digits or a range, is a finding too wherever its position makes it a
 hook citation (SHORT_CITATION): led by a bare colon that is not attached to a name, a closing bracket, a
 regex group, a path or another colon (the converted form _deny at :195-201), or followed by a colon (a
-file:line:col location such as ":1: " is not one), except that a colon-led number followed by a colon
-is a finding when the same comment or string line names the hook before it (COLON_PAIR with
-HOOK_CONTEXT: aiqt_hooks.py, or the word hook or hooks, as in the hook reads it at :195:), so grep-style
-output with no hook wording stays clear; after the words hook line or aiqt_hooks.py line, or
-their plural; or right after a hook anchor and its literal, separated only by spaces, commas or an
-opening parenthesis and optionally the word at, line or lines. The last two positions are also read
-across the whole file (SPREAD_CITATION), so any run of blanks, a comment line wrap (a newline, then a
-hash) or a string-literal wrap (a closing quote, a newline, an opening quote) may stand between the
+file:line:col location such as :1: is not one), except that a colon-led number followed by a colon is a
+finding when a hook file name stands right before it, separated by at least one blank, comma or closing
+parenthesis (COLON_PAIR, as in the hook file name, a blank and :195:), so grep-style output and prose
+such as the hook fires: see step :2: below stay clear; after the words hook line or aiqt_hooks.py line,
+or their plural; or right after a hook anchor and its literal, separated only by spaces, commas or an
+opening parenthesis and optionally the word at, line or lines, a sentence-final full stop allowed after
+the number. The last two positions are also read across the whole file (SPREAD_CITATION), so any run of
+blanks, a newline inside a triple-quoted string, a comment line wrap (a newline, then a hash) or two
+string literals joined on one line or across a newline (double or single quoted) may stand between the
 words, the anchor, the word at or line, and the number; the number must still sit in a comment or a
-string. The allowlist fails closed: an unreadable
+string. The same wrap (WRAP) may stand between a prefix or an anchor and a numeric suffix, so a numeric
+citation wrapped onto the next comment line or into the next string literal is still a finding, and a
+hooks.json mode anchor followed by a numeric suffix is a finding as for an aiqt_hooks.py anchor.
+
+A hook name near a line number is a finding (NEAR_CITATION). The comment and string text of the file is
+read with all code masked, so the span never crosses code but may cross comment line wraps, adjacent
+string literals and triple-quoted newlines. Within 40 characters after a hook name, the word line or
+lines, an L glued to the number, or the word at before a colon-led number, then the number, is a
+finding, as is the reverse order: line or lines and the number, then of or in, optionally the, and the
+hook name. The hook names are the file names aiqt_hooks.py and hooks.json, which are judged in every
+Python file under tools/ that names either, and the word hook or hooks, which is judged only in a file
+that cites the hook. This catches, for example, the file name followed by a hash and L and the number,
+the file name followed by a parenthesized line and the number, line and the number of the file name,
+the hook at line and the number, and an anchor followed by a dash or a semicolon and line and the
+number. The allowlist fails closed: an unreadable
 or malformed file, an entry without a reason, a duplicate entry, or an entry that no longer matches any
 number in its file is a finding.
 
 The check fails closed. An unreadable, non-UTF-8, unparseable, or empty hook; an unreadable or
 malformed hooks.json, or one that registers no mode; a tools tree that cannot be listed or holds no file;
-a file that cannot be read or decoded; and a symbolic link or other non-regular entry under tools/ are
-each a finding that names the path, never a clean pass.
+a file that cannot be read or decoded, or a Python file that names a hook file and cannot be tokenized;
+and a symbolic link or other non-regular entry under tools/ are each a finding that names the path, never
+a clean pass.
 
-Residual, disclosed: a bare hook line number of 1 to 3 digits outside those citation positions (for
-example the hook reads it at 195, with no colon, anchor or hook-line wording before it), one in code
-rather than a comment or a string, one in a file that never cites the hook or is not a Python file, and any number an allowlist
-entry names for its file (the entry covers every occurrence of that number in that file) are not caught.
-Nor does the check judge whether an anchor names the symbol a sentence means, only that the symbol and
-any quoted literal exist.
+Residual, disclosed: this is a best-effort guard over prose, not a complete one. Not caught: a hook line
+number of 1 to 3 digits outside those citation positions (for example the hook reads it at 195, with
+no colon, anchor, line word or L before it); a hook name and a line number more than 40 characters
+apart, or with code between them; a number in code rather than a comment or a string; any form that
+rests on the word hook or hooks in a file that never cites the hook, and every form in a file that names
+neither hook file; a file that is not a Python file; a number spelled in words; and any number an
+allowlist entry names for its file (the entry covers every occurrence of that number in that file). Nor
+does the check judge whether an anchor names the symbol a sentence means, only that the symbol and any
+quoted literal exist. NEAR_CITATION can also over-fire on prose that puts the word hook near a line
+number that is not a hook line; such a number is listed in the allowlist with its reason.
 
 Run with python3 -I. Options --hook, --hooks-json, --tools and --allowlist point the real-tree test at
 another hook, registration file, tools tree or allowlist (for example an upstream hook extracted for a re-vendor); remaining
@@ -87,8 +107,11 @@ PREFIX = re.compile(r"(aiqt_hooks\.py|hooks\.json):")
 HOOK_ANCHOR = re.compile(r"aiqt_hooks\.py:(" + IDENT + r")(?![A-Za-z0-9_])(?: `([^`\n]+)`)?")
 JSON_ANCHOR = re.compile(r"hooks\.json:(" + IDENT + r")(?![A-Za-z0-9_])")
 BARE_PREFIX = re.compile(r"\"[ \t]*[,)]")
-ANCHOR_SUFFIX = re.compile(r"[:#@.]L?[0-9]")
-NUMERIC = re.compile(r"(?:\"[ \t]*\n[ \t]*\"|[ \t]*\n[ \t]*#[ \t]*)?[0-9]")
+# A wrap between a prefix or an anchor and what follows it: two string literals joined on one line or
+# across a newline, a comment line wrap, or a newline inside a triple-quoted string.
+WRAP = r"(?:[\"'][ \t]*\n?[ \t]*[\"']|[ \t]*\n[ \t]*#?[ \t]*)"
+ANCHOR_SUFFIX = re.compile(WRAP + r"?[:#@.]L?[0-9]")
+NUMERIC = re.compile(WRAP + r"?[0-9]")
 HOOK_PREFIX = re.compile(r"aiqt_hooks\.py:")
 BARE_NUMBER = re.compile(r"(?<![0-9A-Za-z_.+:/-])[0-9]{4,5}(?:-[0-9]{1,5})?(?![0-9A-Za-z_-]|\.[0-9A-Za-z_])")
 NUM = r"[0-9]{1,5}(?:-[0-9]{1,5})?"
@@ -96,16 +119,37 @@ SHORT_CITATION = re.compile(
     r"(?<![0-9A-Za-z_.)\]}/:?-]):(?P<colon>" + NUM + r")(?![0-9A-Za-z_:])"
     r"|(?i:\b(?:hook|aiqt_hooks\.py) lines? )(?P<words>" + NUM + r")(?![0-9A-Za-z_])"
     r"|aiqt_hooks\.py:" + IDENT + r"(?: `[^`\n]+`)?[ ,(]+(?:at |lines? )?(?P<anchor>" + NUM
-    + r")(?![0-9A-Za-z_.])")
-# A gap a citation may span: a blank, a comment line wrap, or a string-literal line wrap.
-GAP = r"(?:[ \t]|\n[ \t]*#|\"[ \t]*\n[ \t]*\")"
+    + r")(?![0-9A-Za-z_]|\.[0-9A-Za-z_])")
+# A gap a citation may span: a blank, a newline (inside a triple-quoted string), a comment line wrap, or
+# two string literals joined on one line or across a newline.
+GAP = r"(?:[ \t\n]|\n[ \t]*#|[\"'][ \t]*\n?[ \t]*[\"'])"
 SPREAD_CITATION = re.compile(
     r"(?i:\b(?:hook|aiqt_hooks\.py)" + GAP + r"+lines?)" + GAP + r"+(?P<words>" + NUM + r")(?![0-9A-Za-z_])"
     r"|aiqt_hooks\.py:" + IDENT + r"(?: `[^`\n]+`)?(?:[,(]|" + GAP + r")+(?:(?:at|lines?)" + GAP
-    + r"+)?(?P<anchor>" + NUM + r")(?![0-9A-Za-z_.])")
-# A colon-led number that a colon follows, a citation only where its line names the hook before it.
-COLON_PAIR = re.compile(r"(?<![0-9A-Za-z_.)\]}/:?-]):(?P<num>" + NUM + r"):")
-HOOK_CONTEXT = re.compile(r"aiqt_hooks\.py|\bhooks?\b", re.IGNORECASE)
+    + r"+)?(?P<anchor>" + NUM + r")(?![0-9A-Za-z_]|\.[0-9A-Za-z_])")
+# A colon-led number that a colon follows, a citation only right after a hook file name.
+COLON_PAIR = re.compile(r"(?:aiqt_hooks\.py|hooks\.json)[ \t),]+:(?P<num>" + NUM + r"):")
+# NEAR_CITATION: a hook name and a line number within a short span of comment and string text (the
+# MASK character stands for code, which the span never crosses). The reference to the line is the
+# word line or lines, an L glued to the number, or the word at before a colon-led number; the reverse
+# order, line and the number, then of or in and the hook name, counts too.
+MASK = "\x00"
+NEAR_END = r"(?![0-9A-Za-z_]|\.[0-9A-Za-z_])"
+NEAR_SEP = r"[ \t\n:,#\"'(]{0,12}"
+LINE_REF = r"(?:(?i:\blines?\b)|(?<![A-Za-z0-9_])L(?=[0-9])|(?i:\bat)(?=[ \t]+:))"
+
+
+def _near(name):
+    return re.compile(
+        name + r"[^" + MASK + r"]{0,40}?" + LINE_REF + NEAR_SEP + r"(?P<num>" + NUM + r")" + NEAR_END
+        + r"|(?i:\blines?\b)" + NEAR_SEP + r"(?P<back>" + NUM + r")" + NEAR_END
+        + r"[ \t\n,#\"')]{0,6}(?i:of|in)[ \t\n#\"']+(?i:the[ \t\n#\"']+)?" + name)
+
+
+HOOK_FILE = r"(?:aiqt_hooks\.py|hooks\.json)"
+NEAR_FILE = _near(HOOK_FILE)
+NEAR_WORD = _near(r"(?:aiqt_hooks\.py|hooks\.json|(?i:\bhooks?\b))")
+HOOK_FILE_NAME = re.compile(HOOK_FILE)
 ALLOW_NUMBER = re.compile(NUM)
 TEXT_TOKENS = {tokenize.COMMENT, tokenize.STRING}
 for _name in ("FSTRING_MIDDLE", "TSTRING_MIDDLE"):
@@ -192,9 +236,21 @@ def load_allowlist(path):
     return table
 
 
-def bare_numbers(text):
+def masked(text, spans):
+    # The text with every character outside the comment and string spans, other than blanks and
+    # newlines, replaced by MASK, so a NEAR_CITATION span cannot cross code.
+    keep = [False] * len(text)
+    for lo, hi in spans:
+        for i in range(lo, hi):
+            keep[i] = True
+    return "".join(c if keep[i] or c in " \t\n" else MASK for i, c in enumerate(text))
+
+
+def bare_numbers(text, cites=True):
     # Yield (offset, number) for each candidate bare number in a comment or string token, skipping the
     # backticked literal of an anchor. Raises tokenize.TokenError or SyntaxError on untokenizable text.
+    # With cites False (a file that names a hook file but never cites the hook) only NEAR_FILE and the
+    # COLON_PAIR rule, which rest on a hook file name, are applied.
     skip = [a.span(2) for a in HOOK_ANCHOR.finditer(text) if a.group(2) is not None]
     starts = [0]
     for line in text.splitlines(keepends=True):
@@ -205,6 +261,13 @@ def bare_numbers(text):
             continue
         base = starts[tok.start[0] - 1] + tok.start[1]
         spans.append((base, base + len(tok.string)))
+        for m in COLON_PAIR.finditer(tok.string):
+            off = base + m.start("num")
+            if off not in seen and not any(lo <= off < hi for lo, hi in skip):
+                seen.add(off)
+                yield off, m.group("num")
+        if not cites:
+            continue
         for m in BARE_NUMBER.finditer(tok.string):
             off = base + m.start()
             if not any(lo <= off < hi for lo, hi in skip):
@@ -216,14 +279,15 @@ def bare_numbers(text):
             if off not in seen and not any(lo <= off < hi for lo, hi in skip):
                 seen.add(off)
                 yield off, m.group(group)
-        for m in COLON_PAIR.finditer(tok.string):
-            line_start = tok.string.rfind("\n", 0, m.start()) + 1
-            if not HOOK_CONTEXT.search(tok.string, line_start, m.start()):
-                continue
-            off = base + m.start("num")
-            if off not in seen and not any(lo <= off < hi for lo, hi in skip):
-                seen.add(off)
-                yield off, m.group("num")
+    view = masked(text, spans)
+    for m in (NEAR_WORD if cites else NEAR_FILE).finditer(view):
+        group = "num" if m.group("num") is not None else "back"
+        off = m.start(group)
+        if off not in seen and not any(lo <= off < hi for lo, hi in skip):
+            seen.add(off)
+            yield off, m.group(group)
+    if not cites:
+        return
     for m in SPREAD_CITATION.finditer(text):
         group = "words" if m.group("words") is not None else "anchor"
         off = m.start(group)
@@ -324,6 +388,10 @@ def check(tools_dir, hook_path, hooks_json_path, allowlist_path=None):
                 a = JSON_ANCHOR.match(text, m.start())
                 if a:
                     stats["json_anchors"] += 1
+                    if ANCHOR_SUFFIX.match(text, a.end()):
+                        findings.append("{}: numeric suffix {!r} after the anchor {}; cite the mode "
+                                        "only".format(where, text[a.end():a.end() + 8].split("\n")[0],
+                                                      a.group(1)))
                     if modes is not None and a.group(1) not in modes:
                         findings.append("{}: {} is not a mode hooks.json registers".format(where, a.group(1)))
                     continue
@@ -334,12 +402,14 @@ def check(tools_dir, hook_path, hooks_json_path, allowlist_path=None):
             else:
                 findings.append("{}: {} citation without a symbol: {!r}".format(
                     where, m.group(1), text[m.start():m.end() + 20]))
-        if not path.endswith(".py") or not HOOK_PREFIX.search(text):
+        if not path.endswith(".py") or not HOOK_FILE_NAME.search(text):
             continue
+        cites = HOOK_PREFIX.search(text) is not None
         rel = "tools/" + os.path.relpath(path, tools_dir).replace(os.sep, "/")
-        stats["bare_checked_files"] += 1
+        stats["bare_checked_files"] += cites
+        stats["near_checked_files"] = stats.get("near_checked_files", 0) + 1
         try:
-            found = list(bare_numbers(text))
+            found = list(bare_numbers(text, cites))
         except (tokenize.TokenError, SyntaxError) as err:
             findings.append("{}: cannot evaluate: cannot tokenize: {}".format(path, err))
             continue
@@ -348,7 +418,7 @@ def check(tools_dir, hook_path, hooks_json_path, allowlist_path=None):
                 used.add((rel, number))
                 stats["allowlisted"] += 1
                 continue
-            findings.append("{}:{}: bare hook line number {} in a file that cites the hook; cite a symbol, "
+            findings.append("{}:{}: bare hook line number {} in a comment or a string of a file that names the hook; cite a symbol, "
                             "or list it in the allowlist with its reason".format(
                                 path, text.count("\n", 0, off) + 1, number))
     if allow is not None:
@@ -650,6 +720,77 @@ class BareNumberFlips(FixtureBase):
         os.remove(self.allow)
         findings, _ = self._run(GOOD)
         self.assertTrue(any("cannot evaluate the allowlist" in f for f in findings), findings)
+
+
+
+PN = "aiqt_hooks" + ".py"
+JN = "hooks" + ".json"
+SQ = "\x27"
+
+
+class NearCitationFlips(FixtureBase):
+    # Each listed form of a numeric hook citation is red: a finding names the number 195, or reports a
+    # numeric citation after the prefix.
+    FORMS = (
+        ("file name, a hash and L", "# see " + PN + "#L195\n"),
+        ("file name, a blank and L", "# see " + PN + " L195\n"),
+        ("file name and a parenthesized line", "# see " + PN + " (line 195)\n"),
+        ("file name, a comma and line", "# see " + PN + ", line 195\n"),
+        ("line and the number of the file name", "# see line 195 of " + PN + "\n"),
+        ("the hook at line", "# the hook at line 195 reads it\n"),
+        ("hooks line", "# the hooks line 195 reads it\n"),
+        ("an anchor suffix wrapped onto the next comment line", "# see " + P + "alpha\n# #L195 for it\n"),
+        ("an anchor, a dash and line", "# " + P + "alpha - line 195\n"),
+        ("an anchor, a semicolon and line", "# " + P + "alpha; line 195\n"),
+        ("a hooks.json mode with a numeric suffix", "# " + J + "alpha_mode:195\n"),
+        ("an anchor at the number and a full stop", "# " + P + "alpha at 195.\n"),
+        ("adjacent double-quoted literals, words", "x = (\"see the hook \" \"at line 195\")\n"),
+        ("adjacent double-quoted literals, prefix", "x = (\"" + P + "\" \"195\")\n"),
+        ("adjacent single-quoted literals, words", "x = (" + SQ + "see the hook " + SQ + " " + SQ + "at line 195"
+         + SQ + ")\n"),
+        ("adjacent single-quoted literals across a newline, anchor", "x = (" + SQ + P + "alpha at" + SQ + "\n     "
+         + SQ + " 195 here" + SQ + ")\n"),
+        ("adjacent single-quoted literals, prefix", "x = (" + SQ + P + SQ + " " + SQ + "195" + SQ + ")\n"),
+        ("a triple-quoted string, words", "x = \"\"\"see the hook\n    at line 195\n\"\"\"\n"),
+        ("a triple-quoted string, anchor", "x = \"\"\"see " + P + "alpha at\n    195 here\n\"\"\"\n"),
+        ("a triple-quoted string, prefix", "x = \"\"\"see " + P + "\n    195 here\n\"\"\"\n"),
+        ("a hook file name, a blank and a colon pair", "# " + PN + " :195: the reader\n"),
+    )
+
+    def test_each_listed_form_is_red(self):
+        for label, text in self.FORMS:
+            with self.subTest(form=label):
+                findings, _ = self._run(GOOD + text)
+                self.assertTrue(findings, label)
+                self.assertTrue(any("195" in f or "numeric" in f for f in findings), findings)
+
+    def test_file_name_forms_are_red_in_a_file_that_never_cites_the_hook(self):
+        for text in ("# see " + PN + "#L195\n", "x = \"line 195 of " + JN + "\"\n"):
+            with self.subTest(text=text):
+                findings, _ = self._run(text)
+                self.assertEqual(len(findings), 1, findings)
+                self.assertIn("bare hook line number 195", findings[0])
+
+    def test_word_forms_are_out_of_scope_in_a_file_that_never_cites_the_hook(self):
+        findings, _ = self._run("# names " + PN + " only\n" + "#\n" * 30 + "# the hook at line 195 reads it\n")
+        self.assertEqual(findings, [])
+
+    def test_hook_word_and_step_colon_pair_is_not_red(self):
+        findings, _ = self._run(GOOD + "# the hook fires: see step :2: below\n")
+        self.assertEqual(findings, [])
+
+    def test_span_does_not_cross_code(self):
+        findings, _ = self._run(GOOD + "x = hook_table(\"the hook\", 3)\ny = \"line 8\"\n")
+        self.assertEqual(findings, [])
+
+    def test_hook_name_far_from_the_number_is_not_red(self):
+        findings, _ = self._run(GOOD + "# the hook " + "x" * 50 + " line 8\n")
+        self.assertEqual(findings, [])
+
+    def test_untokenizable_file_naming_a_hook_file_fails_closed(self):
+        findings, _ = self._run("x = \"" + PN + "\n")
+        self.assertEqual(len(findings), 1, findings)
+        self.assertIn("cannot tokenize", findings[0])
 
 
 def main():

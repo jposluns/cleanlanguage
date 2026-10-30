@@ -4,6 +4,14 @@
 # expect: deny (the shape: a detach, or a bypass found in review), over (a deny that is
 # the disclosed over-refusal: nothing detaches), allow.
 # <TAB> stands for a tab character. Lines starting with # before the first case are comments.
+# Five cases keep their a-prefixed names but expect over: they were allow cases until test 2
+# of the hook became any ampersand character, operators included, and each is pinned as the
+# disclosed over-refusal, for this reason:
+#   a05-shell-body-double-ampersand: a double ampersand is an ampersand character (test 2).
+#   a06-shell-body-descriptor-redirections: an ampersand redirection holds an ampersand character (test 2).
+#   a09-shell-body-combined-redirect-and-stderr-pipe: the combined redirection and the stderr pipe hold ampersand characters (test 2).
+#   a27-command-v-bash-with-a-heredoc-without-ampersand: the double ampersand that chains the command is an ampersand character (test 2).
+#   a31-shell-body-append-combined-redirect: the append form of the combined redirection holds an ampersand character (test 2).
 === deny d01-bash-single-quoted-delimiter
 bash <<'EOF'
 sleep 100 &
@@ -92,11 +100,11 @@ git commit -m "$(cat <<'EOF'
 Tom & Jerry's fix
 EOF
 )"
-=== allow a05-shell-body-double-ampersand
+=== over a05-shell-body-double-ampersand
 bash <<'EOF'
 true && echo ok
 EOF
-=== allow a06-shell-body-descriptor-redirections
+=== over a06-shell-body-descriptor-redirections
 bash <<'EOF'
 ls /nonexistent 2>&1
 echo x >&2
@@ -110,7 +118,7 @@ python3 - <<'EOF'
 import os
 print("it's" + " & ")
 EOF
-=== allow a09-shell-body-combined-redirect-and-stderr-pipe
+=== over a09-shell-body-combined-redirect-and-stderr-pipe
 bash <<'EOF'
 ls &>/dev/null
 ls |& cat
@@ -367,7 +375,7 @@ Tom & Jerry use bash
 EOF
 === allow a26-no-heredoc-ampersand-and-shell-out-of-scope
 sleep 1 & bash -c true
-=== allow a27-command-v-bash-with-a-heredoc-without-ampersand
+=== over a27-command-v-bash-with-a-heredoc-without-ampersand
 command -v bash >/dev/null && cat <<'EOF'
 plain text
 EOF
@@ -379,7 +387,7 @@ EOF
 ls -la | grep x && echo ok
 === allow a30-ordinary-command-with-redirects
 sort < in.txt &>/dev/null
-=== allow a31-shell-body-append-combined-redirect
+=== over a31-shell-body-append-combined-redirect
 bash <<'EOF'
 echo x &>>/dev/null
 EOF
@@ -390,3 +398,54 @@ eval "$(cat <<'EOF'
 sleep 0.1 &
 EOF
 )"
+=== deny d48-escaped-ampersand-before-a-background-ampersand
+bash <<'EOF'
+true \&& sleep 100
+EOF
+=== deny d49-escaped-greater-than-before-a-background-ampersand
+bash <<'EOF'
+true \>& sleep 100
+EOF
+=== deny d50-escaped-pipe-before-a-background-ampersand
+bash <<'EOF'
+true \|& sleep 100
+EOF
+=== deny d51-delimiter-word-starting-with-a-substitution
+bash <<$(x)'EOF'
+sleep 0.1 &
+$(x)EOF
+=== deny d52-delimiter-word-starting-with-a-parameter-expansion
+bash <<${x:-a b}'EOF'
+sleep 0.1 &
+${x:-a b}EOF
+=== deny d53-env-split-string-glued-shell-name
+env -Sbash <<'EOF'
+sleep 0.1 &
+EOF
+=== deny d54-shell-name-with-a-version-suffix
+ksh93 <<'EOF'
+sleep 100 &
+EOF
+=== deny d55-sh-with-a-digit-suffix
+sh5 <<'EOF'
+sleep 100 &
+EOF
+=== over o13-redirection-ampersand-only-with-a-shell-body
+bash <<'EOF'
+sleep 100 &>/dev/null
+EOF
+=== over o14-shell-name-inside-a-longer-word
+cat > dashboard.txt <<'EOF'
+Tom & Jerry
+EOF
+=== over o15-left-shift-and-a-quote-on-the-line
+echo $((1<<2)) 'x' && bash -c true
+=== allow a34-residual-sh-glued-to-a-letter
+env -Ssh <<'EOF'
+sleep 0.1 &
+EOF
+=== allow a35-quote-only-on-a-later-line
+bash <<EOF
+sleep 100 &
+echo 'x'
+EOF

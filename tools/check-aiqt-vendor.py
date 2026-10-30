@@ -24,7 +24,11 @@ with `git ls-files` (GIT_* environment scrubbed, literal pathspecs). Each check 
            value that holds one of them as a substring in any case fails with its key, so a draft pin
            cannot land (a comment in ordinary lower-case prose, such as the draft was finalized, is not a
            marker). `revendored`, in `[source]` or `[vendor]`, is present in at least one of them, and
-           each present value is an ISO date (YYYY-MM-DD) that is not in the future.
+           each present value is an ISO date (YYYY-MM-DD) that is not in the future, not before the
+           date `[source] source-date` records (an ISO date and time, whose calendar date is taken as
+           the earlier of its date in its own offset and its date in UTC, so a re-vendor date written
+           in either zone passes), and not before `[source] adopted` when the pin records it. A missing
+           or malformed `[source] source-date`, or a malformed `[source] adopted`, fails.
   check 2  every tracked file under the vendored paths, except `.aiqt/release/root.txt` and the manifest
            itself, is a regular file with a manifest `[[sources]]` entry (at its upstream path, for a
            relocated file) whose `bytes` and `sha256` equal the file.
@@ -189,6 +193,18 @@ def _valid_rel(value):
 
 def _under(path, prefix):
     return path == prefix or path.startswith(prefix + "/")
+
+
+def _iso_date(value):
+    # A TOML date, or a YYYY-MM-DD string naming a real date; else None.
+    if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
+        return value
+    if isinstance(value, str) and ISO_DATE.fullmatch(value):
+        try:
+            return datetime.date.fromisoformat(value)
+        except ValueError:
+            return None
+    return None
 
 
 def _string_values(node, key):
@@ -410,9 +426,41 @@ class Gate:
                           "any case); a pin with a draft value is not final and cannot land".format(m.group(0)))
         self.check_revendored(pin)
 
+    # Check 1, the dates revendored may not precede: the source date and, when recorded, the adoption date.
+    def revendored_floors(self, pin):
+        floors = []
+        source = pin.get("source")
+        source = source if isinstance(source, dict) else {}
+        raw = source.get("source-date")
+        stamp = None
+        if isinstance(raw, datetime.datetime):
+            stamp = raw
+        elif isinstance(raw, str) and ISO_DATE.match(raw) and len(raw) > 10:
+            try:
+                stamp = datetime.datetime.fromisoformat(raw)
+            except ValueError:
+                stamp = None
+        if stamp is None:
+            self.fail(1, PIN_REL, "[source] source-date is {!r}, not an ISO date and time, so revendored cannot "
+                      "be checked against the source date".format(raw))
+        else:
+            day = stamp.date()
+            if stamp.tzinfo is not None:
+                day = min(day, stamp.astimezone(datetime.timezone.utc).date())
+            floors.append((day, "the [source] source-date"))
+        if "adopted" in source:
+            day = _iso_date(source["adopted"])
+            if day is None:
+                self.fail(1, PIN_REL, "[source] adopted is {!r}, not an ISO date (YYYY-MM-DD)".format(
+                    source["adopted"]))
+            else:
+                floors.append((day, "the [source] adopted date"))
+        return floors
+
     # Check 1, the re-vendor date.
     def check_revendored(self, pin):
         today = max(datetime.date.today(), datetime.datetime.now(datetime.timezone.utc).date())
+        floors = self.revendored_floors(pin)
         present = 0
         for table in REVENDORED_TABLES:
             body = pin.get(table)
@@ -420,20 +468,17 @@ class Gate:
                 continue
             present += 1
             value, where = body["revendored"], "[{}] revendored".format(table)
-            if isinstance(value, datetime.date) and not isinstance(value, datetime.datetime):
-                date = value
-            elif isinstance(value, str) and ISO_DATE.fullmatch(value):
-                try:
-                    date = datetime.date.fromisoformat(value)
-                except ValueError:
-                    date = None
-            else:
-                date = None
+            date = _iso_date(value)
             if date is None:
                 self.fail(1, PIN_REL, "{} is {!r}, not an ISO date (YYYY-MM-DD)".format(where, value))
-            elif date > today:
+                continue
+            if date > today:
                 self.fail(1, PIN_REL, "{} is {}, a date in the future (today is {})".format(
                     where, date.isoformat(), today.isoformat()))
+            for floor, label in floors:
+                if date < floor:
+                    self.fail(1, PIN_REL, "{} is {}, before {} {}".format(
+                        where, date.isoformat(), label, floor.isoformat()))
         if not present:
             self.fail(1, PIN_REL, "no revendored date in [source] or [vendor]")
 

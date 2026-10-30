@@ -26,8 +26,11 @@ undeclared surface, would flip the two-key assertion. That dual run is the chang
 behaviourally identical to omitting it, so a two-key contrast on it would prove nothing.)
 
 Grounding: every hook-behaviour assertion below is read from
-plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py at source; the cited line numbers are in the
-per-test comments. Dispatch-action names are the HANDLERS keys (aiqt_hooks.py:HANDLERS), passed as
+plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py at source, and the per-test comments and
+docstrings cite the code each relies on by symbol, never by line number: the file name aiqt_hooks.py, a
+colon and a top-level name of the hook, optionally followed by a backticked clause, which
+tools/test-hook-citations.py resolves against the vendored hook.
+Dispatch-action names are the HANDLERS keys (aiqt_hooks.py:HANDLERS), passed as
 the single argv (main(sys.argv[1:]), aiqt_hooks.py:main). The repo root is the git top level of
 data["cwd"] (_orch_root -> _recovery_toplevel, aiqt_hooks.py:_orch_root, aiqt_hooks.py:_recovery_toplevel), and scope goes live only
 when the declared lease file is present, non-empty and fresh (_orch_scope_live, aiqt_hooks.py:_orch_scope_live).

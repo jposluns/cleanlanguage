@@ -134,19 +134,60 @@ shell, so `bash <<'EOF'` with `sleep 30 &` in its body detaches a child with no 
 the vendored guard. The maintainer accepted the heredoc lifting reduction with a compensating
 control (the heredoc compensating hook decision):
 the adopter-owned PreToolUse Bash hook `.claude/hooks/shell_heredoc_detach_guard.py`, outside
-every vendored path and registered in `.claude/settings.json`, denies a quoted-delimiter
-here-document fed to `sh`, `bash`, `dash`, `zsh`, or `ksh` whose body holds a backgrounding
-`&`. The shell may be the command that carries the here-document or a later stage of its
-pipeline, a pipeline continued past a newline after a pipe included. Inside such a body every
-nested here-document is judged too, quoted or not: an unquoted one for a backgrounding `&` in
-its command substitutions, and one fed to a shell as commands, recursively. A top-level
-here-document under an unquoted delimiter is left to the vendored guard, which reads it. The
-disclosed residual is listed in full, in nine items, in the hook docstring. It includes a shell
-reached through a variable, an alias, or a wrapper such as `sudo` or `nohup`, and a detacher
-that carries no single `&` (`setsid`, `disown`, a nested `bash -c` string), which are not
-seen; text that an expansion in a nested unquoted body prints and a shell then runs, which is
-not read; and an unreadable hook payload, which the hook allows with a note while the vendored
-guard denies it.
+every vendored path and registered in `.claude/settings.json`, reads the command as text,
+without parsing the shell, and denies it when three text tests all hold: a here-document
+operator with a quote or a backslash after it on its physical line, an ampersand character
+anywhere in the text (operators included), and a shell name anywhere in the text. A deny,
+and an internal error, exit with status 2. The cost is over-refusal: a command chained with
+`&&`, or carrying an ampersand redirection, that also holds a quoted here-document and a
+shell name is denied although nothing detaches. The remedy is to split the command, so that
+the here-document and the ampersand sit in separate calls, or to avoid the here-document. The
+rule, its cost and its what-still-passes list, quoted from the hook docstring:
+
+```text
+The rule. This hook does not parse bash. It reads the command as text and denies it when all three of
+these tests hold:
+  1. a here-document operator, two less-than signs that no third less-than sign adjoins (so a
+     here-string is not one), stands on a physical line that holds a quote (an apostrophe or a double
+     quote) or a backslash anywhere after that operator;
+  2. an ampersand character stands anywhere in the text, operators included: a double ampersand, an
+     ampersand redirection and the stderr pipe all count;
+  3. a shell name stands anywhere in the text: bash, dash, zsh or ksh as a substring of any word
+     (case-sensitive, so ksh93 and mksh count), or sh as a word bounded on each side by a character
+     that is not a letter or a digit, or by the edge of the text, with an optional digit suffix (sh5),
+     or the variable SHELL or BASH expanded.
+Each test reads the command both as written and with every backslash-newline pair removed, as bash
+removes a line continuation, and test 3 also reads it with every quote and backslash removed, so a name
+split by quotes or by a backslash still counts. The three need not be related: the operator, the
+ampersand and the shell name may sit anywhere in the command.
+
+RESIDUAL (disclosed; a coarse best-effort rule, not complete coverage):
+  Cost, over-refusal. A command that holds the three is denied even when nothing detaches. This covers
+  every command chained with a double ampersand, or carrying an ampersand redirection (such as 2>&1,
+  &> or >&2) or the stderr pipe, that also holds a quoted here-document and a shell name; an
+  ampersand that is only data, quoted, escaped, in a comment, in a case fall-through terminator or in an
+  input duplication; a quote or a backslash after the operator that is not part of the delimiter, and two
+  less-than signs that are no here-document operator at all (a left shift); and a shell name inside a
+  longer word (dashboard, .bashrc, a file name ending in .sh), as an argument, in a shebang line or in
+  prose. The remedy is to split the command, so that the here-document and the ampersand sit in separate
+  calls, or to avoid the here-document (write the body to a file first, or pass it some other way); a
+  job meant to run in the background goes through the tracked background dispatch (run_in_background).
+  What still passes:
+  1. A shell reached without its name in the text: through a variable other than SHELL or BASH, an
+     alias or a function, a name built by an expansion or by ANSI-C quoting, sh glued to a letter or a
+     digit before it (env -Ssh) or to a letter after it (shx), a name written in another case, another
+     interpreter (ash, yash, posh, a renamed shell binary), a script file run directly, or eval, source
+     or the dot command reading the body.
+  2. A detacher with no ampersand character in the text: setsid, nohup, disown, coproc, at, a terminal
+     multiplexer, or an ampersand built by an expansion (such as printf with an octal escape) and then
+     run through eval or a nested shell.
+  3. A command with no here-document operator followed on its line by a quote or a backslash: an
+     unquoted delimiter, a here-string, a pipe from echo or printf, or a script file. This hook does not
+     judge them; they are left to the vendored trkasy guard, and this hook does not establish which of
+     them that guard catches.
+  4. An unreadable hook payload (not JSON, or no command string) is allowed with a note; the vendored
+     trkasy guard denies such a payload.
+```
 
 The two new orchestrator hooks, `orch_lease_heartbeat_post` and `orch_lease_heartbeat_stop`,
 never block and stay silent while the `lease` declares no `heartbeat` block, which the
