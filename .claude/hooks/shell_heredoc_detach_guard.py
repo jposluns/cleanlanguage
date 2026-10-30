@@ -14,18 +14,25 @@ or double quotes or behind a backslash, with the plain or the tab-stripping oper
 interpreter, where the body holds a backgrounding ampersand. The here-document is fed to a shell when the
 command that carries it, or a later stage of the same pipeline, has as its command word sh, bash, dash, zsh
 or ksh, with or without a directory path, after any leading assignments and reserved words and after the
-wrappers env (with its options and assignments, and the words of env -S), command and exec. A backgrounding
-ampersand is a single ampersand that ends a command: not one of a double ampersand, not one inside a
-redirection operator (descriptor duplication such as 2 to 1, or the combined stdout and stderr
-redirections), not the stderr pipe, not a case fall-through terminator, and not one inside quotes, a
-comment, or the body of a further here-document that the body feeds to a command other than a shell. A
-body that holds no ampersand character at all is never parsed. A further here-document inside the body
-that is itself fed to a shell is judged the same way, recursively.
+wrappers env (with its options and assignments, and the words of env -S), command and exec. A pipeline goes
+on past a newline that follows a pipe or the stderr pipe, as bash reads it, so a shell named on a later
+line, after the body and any blank or comment lines, is a later stage of the same pipeline (a newline
+after a double ampersand or a double bar likewise continues the command list, not the pipeline). A
+backgrounding ampersand is a single ampersand that ends a command: not one of a double ampersand, not one
+inside a redirection operator (descriptor duplication such as 2 to 1, or the combined stdout and stderr
+redirections), not the stderr pipe, not a case fall-through terminator, and not one inside quotes or a
+comment. Every further here-document inside such a body is judged as well, whatever its delimiter and at
+any depth: the body of one under an unquoted delimiter is read for its expansions (command substitutions,
+backquotes, and the substitutions inside parameter expansions), which the shell running the outer body
+performs wherever that here-document is fed and whatever quotes stand around them in its body; and the
+body of one fed to a shell, quoted or not, is read as commands, with its own further here-documents
+judged the same way, recursively. An ampersand in the body of a quoted further here-document fed to a
+command other than a shell is data. A body that holds no ampersand character at all is never parsed.
 
 Two readers judge a body, and either one finding a backgrounding ampersand denies: this file's own small
 lexer (Scanner, below), and the vendored hook's shared lexer, _lex_command in
 plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py, loaded by path with bytecode writing off, and
-only when a shell-fed quoted body holds an ampersand. That lexer is a private function of the vendored
+only when a body read as commands holds an ampersand. That lexer is a private function of the vendored
 module, so a re-vendor can rename or change it; the hook then notes that the second reader was unavailable
 and decides on its own reading, and the test suite fails until the import is repaired. The vendored lexer
 refuses some bodies (an unquoted here-document, a here-string, a process substitution); the hook then
@@ -34,12 +41,14 @@ decides on its own reading and notes the refusal.
 What it allows. Every other command, silently: every here-document fed to anything but a shell (cat, tee,
 python, git commit -F -, the commit-message form that wraps cat in a command substitution), whatever
 quotes or ampersands its body holds; a shell-fed here-document whose body holds only double ampersands,
-redirections or quoted ampersands; and a here-document under an unquoted delimiter (outside this hook;
-the vendored guard reads such a body as code and denies a bare ampersand in it).
+redirections or quoted ampersands; and a top-level here-document under an unquoted delimiter, one that
+no quoted shell-fed body holds (outside this hook; the vendored guard reads such a body and denies a bare
+ampersand in it or in its command substitutions).
 
 Fail-closed posture. When this hook cannot read a command or a body, it denies only where the targeted
-shape may be present: the body of a shell-fed quoted here-document that holds an ampersand and that its
-own lexer cannot read, or nests deeper than the bound; or a whole command it cannot read (or that is
+shape may be present: the body of a shell-fed quoted here-document that holds an ampersand where its
+own lexer cannot read that body or a here-document body nested in it, or the nesting runs deeper than
+the bound; or a whole command it cannot read (or that is
 longer than the size bound, or that raises an internal error) that holds a here-document operator, an
 ampersand and a shell name as a word. Everywhere else it allows, with a note when the command held a
 here-document operator.
@@ -65,8 +74,15 @@ RESIDUAL (disclosed; this guard is best-effort and does not cover every way to d
      commands. The remedy is to run the job in the foreground or through the tracked background dispatch.
   6. An unreadable hook payload (not JSON, or no command string) is allowed with a note; the vendored
      trkasy guard denies such a payload.
-  7. The vendored lexer adds denies only; where it is absent, renamed or refuses a body, coverage rests on
-     this file lexer alone (noted on each such call).
+  7. The vendored lexer adds denies only, and reads only bodies read as commands; where it is absent,
+     renamed or refuses a body (it refuses every body that holds an unquoted here-document), coverage
+     rests on this file lexer alone (noted on each such call). The expansions of an unquoted body are read
+     by this file lexer alone.
+  8. Text an expansion produces is not read: when an unquoted here-document body inside a shell-fed body
+     is itself fed to a shell, a command substitution or parameter expansion in it can print text (a
+     backgrounding ampersand among it) that the shell then runs as commands, and that text is not judged.
+  9. A top-level here-document under an unquoted delimiter, outside every quoted shell-fed body, is not
+     judged by this hook; it rests on the vendored trkasy guard, which reads such a body.
 
 Launch with python3 -I. Plain ASCII, standard library only.
 """
@@ -122,11 +138,12 @@ class Command(object):
 
 class _State(object):
     """The parse state of one command list: the command being read, its pipeline, and the word in hand."""
-    __slots__ = ("cmd", "pipeline", "word", "opaque", "target")
+    __slots__ = ("cmd", "pipeline", "word", "opaque", "target", "cont")
 
     def __init__(self):
         self.cmd, self.pipeline = Command(), []
         self.word, self.opaque, self.target = None, False, False
+        self.cont = False  # the last separator was a pipe, a double bar or a double ampersand
 
     def add(self, text):
         if self.word is None:
@@ -169,7 +186,10 @@ class Scanner(object):
                 self.i += 1
             elif c == "\n":
                 self.end_word(st)
-                self.end_command(st, "\n")
+                if not (st.cont and not st.cmd.words and not st.cmd.heredocs):
+                    # a newline right after a pipe, a double bar or a double ampersand continues the
+                    # pipeline or the list, as bash reads it; any other newline ends the command
+                    self.end_command(st, "\n")
                 self.i += 1
                 self.read_bodies()
             elif c == "#" and st.word is None:
@@ -251,6 +271,32 @@ class Scanner(object):
         self.end_word(st)
         self.end_command(st, "")
 
+    def scan_expansions(self):
+        """Read the text as the body of an unquoted here-document, as bash expands it: a backslash escapes
+        only a dollar sign, a backquote, a backslash or a newline; a dollar sign starts a parameter,
+        command or arithmetic expansion; a backquote starts a command substitution; quotes and every other
+        character are literal. The command substitutions are read as command lists (amps, pipelines and
+        here-documents, whose bodies come from the lines that follow, as bash reads them)."""
+        s, st = self.s, _State()
+        while self.i < self.n:
+            c = s[self.i]
+            if c == "\\":
+                nxt = s[self.i + 1:self.i + 2]
+                self.i += 2 if nxt and nxt in ("$", BQ, "\\", "\n") else 1
+            elif c == "$":
+                self.read_dollar(st, self.base_nest, True)
+            elif c == BQ:
+                self.read_backquote()
+            elif c == "\n":
+                self.i += 1
+                self.read_bodies()
+            else:
+                self.i += 1
+        for hd in self.pending:  # an operator with no line after it: an empty, unterminated body
+            hd.body, hd.terminated = "", False
+        self.pending = []
+        return self
+
     def end_word(self, st):
         if st.word is None:
             return
@@ -263,6 +309,7 @@ class Scanner(object):
 
     def end_command(self, st, sep):
         st.target = False
+        st.cont = sep in ("|", "||", AMP + AMP)
         if st.cmd.words or st.cmd.heredocs:
             st.pipeline.append(st.cmd)
         st.cmd = Command()
@@ -346,6 +393,7 @@ class Scanner(object):
     # -- words -----------------------------------------------------------------------------------------
     def read_angle(self, st, nest):
         s, i = self.s, self.i
+        st.cont = False
         if st.word is not None and not st.opaque and FD_WORD.fullmatch("".join(st.word)):
             st.word = None  # an fd number or {name} written against the operator belongs to the redirect
         self.end_word(st)
@@ -536,13 +584,12 @@ def shell_word(cmd):
     return None
 
 
-def shell_fed_heredocs(scanner):
-    """Each (shell name, Heredoc) where a quoted-delimiter here-document is fed to a shell: the command that
-    carries it, or a later stage of its pipeline, runs a shell."""
+def heredoc_consumers(scanner):
+    """Each (shell name or None, Heredoc) for every here-document the scanner read, quoted or not: the shell
+    name when the command that carries it, or a later stage of its pipeline, runs a shell, else None."""
     for pipeline in scanner.pipelines:
         for k, cmd in enumerate(pipeline):
-            quoted = [hd for hd in cmd.heredocs if hd.quoted]
-            if not quoted:
+            if not cmd.heredocs:
                 continue
             consumer = shell_word(cmd)
             if consumer is None:
@@ -550,9 +597,16 @@ def shell_fed_heredocs(scanner):
                     consumer = shell_word(later)
                     if consumer is not None:
                         break
-            if consumer is not None:
-                for hd in quoted:
-                    yield consumer, hd
+            for hd in cmd.heredocs:
+                yield consumer, hd
+
+
+def shell_fed_heredocs(scanner):
+    """Each (shell name, Heredoc) where a quoted-delimiter here-document of the command is fed to a shell.
+    A top-level body under an unquoted delimiter is left to the vendored guard (residual 9)."""
+    for consumer, hd in heredoc_consumers(scanner):
+        if consumer is not None and hd.quoted:
+            yield consumer, hd
 
 
 _VENDORED = []  # memo: [function or None, reason]
@@ -616,24 +670,52 @@ def vendored_background(body, notes):
     return False
 
 
+def judge_scanned(inner, depth, notes):
+    """(verdict, why) over a scanned text that a shell runs: a backgrounding ampersand in the text itself,
+    or one in any here-document it carries. Every here-document counts, quoted or not: the expansions of
+    an unquoted body run wherever that here-document is fed, and a body fed to a shell runs as commands."""
+    if inner.amps:
+        return "background", "this hook lexer"
+    for consumer, hd in heredoc_consumers(inner):
+        if not hd.quoted:
+            verdict, why = judge_expansions(hd.body, depth + 1, notes)
+            if verdict != "clean":
+                return verdict, why
+        if consumer is not None:
+            verdict, why = judge_body(hd.body, depth + 1, notes)
+            if verdict != "clean":
+                return verdict, why
+    return "clean", ""
+
+
 def judge_body(body, depth, notes):
-    """(background, reader), (error, why) or (clean, empty) for the body of a shell-fed quoted
-    here-document."""
+    """(background, reader), (error, why) or (clean, empty) for a here-document body a shell runs as
+    commands."""
     if AMP not in body:
         return "clean", ""
     try:
         inner = Scanner(body, depth + 1).run()
     except ParseError as exc:
         return "error", str(exc)
-    if inner.amps:
-        return "background", "this hook lexer"
-    for _consumer, hd in shell_fed_heredocs(inner):
-        verdict, why = judge_body(hd.body, depth + 1, notes)
-        if verdict != "clean":
-            return verdict, why
+    verdict, why = judge_scanned(inner, depth, notes)
+    if verdict != "clean":
+        return verdict, why
     if vendored_background(body, notes):
         return "background", "the vendored lexer"
     return "clean", ""
+
+
+def judge_expansions(body, depth, notes):
+    """(background, reader), (error, why) or (clean, empty) for the expansions of an unquoted here-document
+    body inside a text a shell runs: its command substitutions, backquotes and the substitutions inside its
+    parameter expansions run wherever the here-document is fed."""
+    if AMP not in body:
+        return "clean", ""
+    try:
+        inner = Scanner(body, depth + 1).scan_expansions()
+    except ParseError as exc:
+        return "error", str(exc)
+    return judge_scanned(inner, depth, notes)
 
 
 def may_be_target(command):

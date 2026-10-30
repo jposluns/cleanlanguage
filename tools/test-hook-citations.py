@@ -27,16 +27,24 @@ and the number are listed in tools/hook-citation-allowlist.json with the reason 
 number inside the backticked literal of an anchor, a number in code, a digit run attached to letters, a
 dot, a colon, a slash, a hyphen or a plus sign (so U+3164, 1.5, 2026-10-30 and T1:639 are not numbers
 here) is not a candidate, except that a dot after the number counts as attached only when a letter, a
-digit or an underscore follows it, so a number that ends a sentence (the open at 7807.) is a finding. The allowlist fails closed: an unreadable or malformed file, an entry without a
-reason, a duplicate entry, or an entry that no longer matches any number in its file is a finding.
+digit or an underscore follows it, so a number that ends a sentence (the open at 7807.) is a finding.
+A shorter hook line number, of 1 to 5 digits or a range, is a finding too wherever its position makes it a
+hook citation (SHORT_CITATION): led by a bare colon that is not attached to a name, a closing bracket, a
+regex group, a path or another colon (the converted form _deny at :195-201), or followed by a colon (a
+file:line:col location such as ":1: " is not one); after the words hook line or aiqt_hooks.py line, or
+their plural; or right after a hook anchor and its literal, separated only by spaces, commas or an
+opening parenthesis and optionally the word at, line or lines. The allowlist fails closed: an unreadable
+or malformed file, an entry without a reason, a duplicate entry, or an entry that no longer matches any
+number in its file is a finding.
 
 The check fails closed. An unreadable, non-UTF-8, unparseable, or empty hook; an unreadable or
 malformed hooks.json, or one that registers no mode; a tools tree that cannot be listed or holds no file;
 a file that cannot be read or decoded; and a symbolic link or other non-regular entry under tools/ are
 each a finding that names the path, never a clean pass.
 
-Residual, disclosed: a bare hook line number of 1 to 3 digits, one in code rather than a comment or a
-string, one in a file that never cites the hook or is not a Python file, and any number an allowlist
+Residual, disclosed: a bare hook line number of 1 to 3 digits outside those citation positions (for
+example the hook reads it at 195, with no colon, anchor or hook-line wording before it), one in code
+rather than a comment or a string, one in a file that never cites the hook or is not a Python file, and any number an allowlist
 entry names for its file (the entry covers every occurrence of that number in that file) are not caught.
 Nor does the check judge whether an anchor names the symbol a sentence means, only that the symbol and
 any quoted literal exist.
@@ -72,7 +80,13 @@ BARE_PREFIX = re.compile(r"\"[ \t]*[,)]")
 NUMERIC = re.compile(r"(?:\"[ \t]*\n[ \t]*\"|[ \t]*\n[ \t]*#[ \t]*)?[0-9]")
 HOOK_PREFIX = re.compile(r"aiqt_hooks\.py:")
 BARE_NUMBER = re.compile(r"(?<![0-9A-Za-z_.+:/-])[0-9]{4,5}(?:-[0-9]{1,5})?(?![0-9A-Za-z_-]|\.[0-9A-Za-z_])")
-ALLOW_NUMBER = re.compile(r"[0-9]{4,5}(?:-[0-9]{1,5})?")
+NUM = r"[0-9]{1,5}(?:-[0-9]{1,5})?"
+SHORT_CITATION = re.compile(
+    r"(?<![0-9A-Za-z_.)\]}/:?-]):(?P<colon>" + NUM + r")(?![0-9A-Za-z_:])"
+    r"|(?i:\b(?:hook|aiqt_hooks\.py) lines? )(?P<words>" + NUM + r")(?![0-9A-Za-z_])"
+    r"|aiqt_hooks\.py:" + IDENT + r"(?: `[^`\n]+`)?[ ,(]+(?:at |lines? )?(?P<anchor>" + NUM
+    + r")(?![0-9A-Za-z_.])")
+ALLOW_NUMBER = re.compile(NUM)
 TEXT_TOKENS = {tokenize.COMMENT, tokenize.STRING}
 for _name in ("FSTRING_MIDDLE", "TSTRING_MIDDLE"):
     if hasattr(tokenize, _name):
@@ -169,10 +183,18 @@ def bare_numbers(text):
         if tok.type not in TEXT_TOKENS:
             continue
         base = starts[tok.start[0] - 1] + tok.start[1]
+        seen = set()
         for m in BARE_NUMBER.finditer(tok.string):
             off = base + m.start()
             if not any(lo <= off < hi for lo, hi in skip):
+                seen.add(off)
                 yield off, m.group(0)
+        for m in SHORT_CITATION.finditer(tok.string):
+            group = next(g for g in ("colon", "words", "anchor") if m.group(g) is not None)
+            off = base + m.start(group)
+            if off not in seen and not any(lo <= off < hi for lo, hi in skip):
+                seen.add(off)
+                yield off, m.group(group)
 
 
 def _tree_files(tools_dir, findings):
@@ -473,6 +495,29 @@ class BareNumberFlips(FixtureBase):
 
     def test_table_column_is_red(self):
         self._red("#   turn-state.json   7753-7756 (the writer)\n", "bare hook line number 7753-7756")
+
+    def test_short_colon_led_citation_is_red(self):
+        self._red("# (" + P + "alpha, _deny at :195-201).\n", "bare hook line number 195-201")
+
+    def test_short_number_after_hook_line_is_red(self):
+        self._red("# see hook line 42 for it\n", "bare hook line number 42")
+
+    def test_short_number_after_an_anchor_is_red(self):
+        self._red("# " + P + "alpha at 195\n", "bare hook line number 195")
+
+    def test_short_number_after_an_anchor_literal_is_red(self):
+        self._red("x = \"" + P + "alpha `beta gamma` (line 7)\"\n", "bare hook line number 7")
+
+    def test_short_numbers_outside_a_citation_position_are_not_red(self):
+        findings, _ = self._run(GOOD + "# line 8, T1:639, a 3:1 ratio, (?:3), cap at 16 bytes, [x]:5\n"
+                                       "y = \"path:1: message\"\n")
+        self.assertEqual(findings, [])
+
+    def test_short_allowlisted_number_is_clean(self):
+        self._allow([{"file": "tools/t.py", "number": "195", "reason": "a fixture line, not a hook line"}])
+        findings, stats = self._run(GOOD + "# the fixture row at :195\n")
+        self.assertEqual(findings, [])
+        self.assertEqual(stats["allowlisted"], 1)
 
     def test_number_in_code_is_not_a_candidate(self):
         findings, _ = self._run(GOOD + "x = 12345\n")

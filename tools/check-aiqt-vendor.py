@@ -5,8 +5,11 @@ The repository vendors part of the AIQT Guardrails pack: the rule corpus, the re
 the hooks plugin, and provenance metadata. This gate checks that the vendored files on disk agree with
 the vendored manifest, and that the manifest agrees with the adopter-written pin. It reads the vendored
 file set and every expected hash from `.aiqt/pin.toml` and from the manifest that pin names (normally
-`.aiqt/manifest.toml`); it hard-codes no rule name, no file list, and no hash, so it does not depend on
-which rules the project adopts.
+`.aiqt/manifest.toml`); it hard-codes no rule name and no hash, so it does not depend on which rules the
+project adopts. The one file list it holds is the required set (REQUIRED_FILES, REQUIRED_META,
+REQUIRED_WHOLE and REQUIRED_ACTIVE_TREES below): the vendored files and roots this adopter needs, fixed
+in the gate rather than read from the pin, so a pin that drops a required file together with every entry
+naming it still fails.
 
 The vendored file set is every git-tracked file under the pin `[vendored] paths`, read from the index
 with `git ls-files` (GIT_* environment scrubbed, literal pathspecs). Each check names the path it fails on:
@@ -14,22 +17,30 @@ with `git ls-files` (GIT_* environment scrubbed, literal pathspecs). Each check 
   check 1  `[source] source-commit` is 40 lowercase hex characters, `[vendor] source-commit` equals it,
            `[vendored] paths` is a non-empty list of distinct relative paths, each with at least one
            tracked file, and each `[[vendor.relocated]]` entry maps a distinct tracked vendored file to a
-           distinct upstream path that is not itself a tracked vendored file.
+           distinct upstream path that is not itself a tracked vendored file. The pin text carries no
+           draft marker: the word DRAFT or PLACEHOLDER in capitals, anywhere in the file, comments
+           included, fails with its line number, so a draft pin cannot land.
   check 2  every tracked file under the vendored paths, except `.aiqt/release/root.txt` and the manifest
            itself, is a regular file with a manifest `[[sources]]` entry (at its upstream path, for a
            relocated file) whose `bytes` and `sha256` equal the file.
   check 3  every manifest `[[sources]]` entry under a path the pin declares adopted whole
-           (`[vendor] whole`) is a tracked regular file on disk.
+           (`[vendor] whole`) is a tracked regular file on disk; and the required set holds: `[vendor]
+           whole` names every REQUIRED_WHOLE root, every REQUIRED_META file is tracked, and every
+           REQUIRED_FILES file is a tracked regular file on disk, vendored from its declared upstream
+           path (the pin relocation must agree), with a manifest `[[sources]]` entry at that upstream
+           path and a `[[vendor.files]]` row.
   check 4  every tracked file under the active rule trees (`[active-rules] trees`) equals its manifest
            `[[artifacts]]` sha256; their count equals `[active-rules] active`; and the corpus rules (the
            `.md` files under `[active-rules] corpus`, identified by their `corpus-id` front matter) absent
            from the active trees are exactly the `[active-rules] excluded-ids` list, which has
-           `[active-rules] excluded` members.
+           `[active-rules] excluded` members; `[active-rules] trees` names every
+           REQUIRED_ACTIVE_TREES tree, and each holds a tracked file.
   check 5  the manifest header `tree-sha256` equals `[integrity] tree-sha256`, and
            `.aiqt/release/root.txt` holds exactly `[integrity] root`.
   check 6  the `[vendor]` block is well formed, each of its `[[vendor.files]]` entries names a tracked
-           vendored file whose manifest `[[sources]]` entry carries the same `bytes` and `sha256`, and a
-           file relocated from the upstream `LICENSE` hashes to `[vendor] license-sha256`.
+           vendored file whose manifest `[[sources]]` entry carries the same `bytes` and `sha256`, at
+           least one vendored file is relocated from the upstream `LICENSE`, and every such file hashes to
+           `[vendor] license-sha256`.
   check 7  optional, with `--upstream DIR`: every tracked vendored file is re-derived from
            `git -C DIR cat-file blob SHA:path` (SHA is the pinned source-commit, and path is the upstream
            path for a relocated file) and compared byte for byte, and LICENSE at SHA hashes to
@@ -51,7 +62,14 @@ cannot shadow a standard-library import. It needs Python 3.11 or later (tomllib)
 
 Disclosed residual. This gate proves internal consistency only: the files against a manifest that is
 itself vendored, and the manifest against a pin that the adopter writes. An actor who rewrites a file, its
-manifest entry, and the pin together passes checks 1 to 6. Only check 7 (run locally against the pack
+manifest entry, and the pin together passes checks 1 to 6. What an adopter-written pin can still hide
+from checks 1 to 6, given the required set: a file under a required whole root deleted together with its
+manifest `[[sources]]` entry (the edited manifest differs from the pack, which check 7 catches); a
+rendered active rule deleted together with a matching `[active-rules] excluded-ids` entry and count; a
+vendored file outside the required set added by a later re-vendor and not yet added to it, deleted with
+its pin entries; and any change to the required set itself, which is a change to this gate, reviewed as
+code. The required set covers every `[vendored] paths` entry of this adopter that is not under a required
+whole root or a required active tree. Only check 7 (run locally against the pack
 checkout) or an upstream release signature closes that, and CI cannot reach the pack checkout, so check 7
 is a QA-worker and pre-merge step until CI egress to the pack repository is granted. Check 7 in turn
 trusts the pack checkout it is pointed at, and git there reads its own on-disk configuration. Check 4
@@ -107,6 +125,23 @@ OPEN_FLAGS = (os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getat
               | getattr(os, "O_CLOEXEC", 0))
 # Regular-file index modes. A symlink (120000) or a gitlink (160000) under a vendored path is refused.
 REGULAR_MODES = ("100644", "100755")
+# The required set: what this adopter vendors outside the whole roots, each file with the upstream path it
+# is vendored from (its own path unless the pack keeps it at its root). Fixed here, never read from the pin.
+REQUIRED_FILES = {
+    ".aiqt/LICENSE": "LICENSE",
+    ".aiqt/NOTICE": "NOTICE",
+    ".aiqt/core/applies.toml": ".aiqt/core/applies.toml",
+    ".aiqt/core/applicability.toml": ".aiqt/core/applicability.toml",
+    ".aiqt/core/ownership.toml": ".aiqt/core/ownership.toml",
+    ".aiqt/core/order.toml": ".aiqt/core/order.toml",
+}
+# Provenance files the manifest does not list: the manifest itself and the release root.
+REQUIRED_META = (".aiqt/manifest.toml", ROOT_TXT_REL)
+# The roots this adopter vendors whole, and the trees of rendered active rules.
+REQUIRED_WHOLE = (".aiqt/core/rules", "plugin/aiqt-guardrails-hooks")
+REQUIRED_ACTIVE_TREES = (".claude/rules/aiqt", ".claude/rules/security")
+# A draft pin: the markers a draft carries until it is finalized (case-sensitive words).
+DRAFT_MARKER = re.compile(r"(?<![A-Za-z0-9_])(DRAFT|PLACEHOLDER)(?![A-Za-z0-9_])")
 
 
 class InputError(Exception):
@@ -330,6 +365,13 @@ class Gate:
             tracked.update(entries)
         return (commit if ok else None), tracked
 
+    # Check 1, the pin is final.
+    def check_pin_final(self, text):
+        for lineno, line in enumerate(text.split("\n"), 1):
+            for m in DRAFT_MARKER.finditer(line):
+                self.fail(1, "{}:{}".format(PIN_REL, lineno), "the pin carries the draft marker {}; a pin with "
+                          "a DRAFT marker or a PLACEHOLDER value is not final and cannot land".format(m.group(1)))
+
     # Check 1, the relocation map.
     def check_relocations(self, pin, tracked):
         """Return {local path: upstream path} from [[vendor.relocated]], failing check 1 on an entry that is
@@ -417,6 +459,41 @@ class Gate:
                 if not stat.S_ISREG(st.st_mode):
                     self.fail(3, path, "manifest [[sources]] entry is not a regular file on disk")
 
+    # Check 3, the required set.
+    def check_required_set(self, pin, tracked, sources):
+        vendor = pin.get("vendor") if isinstance(pin.get("vendor"), dict) else {}
+        whole = _get(vendor, "whole", "relpaths") or []
+        for prefix in REQUIRED_WHOLE:
+            if prefix not in whole:
+                self.fail(3, prefix, "a required adopted-whole root (REQUIRED_WHOLE) that [vendor] whole does "
+                          "not name")
+        for path in REQUIRED_META:
+            if path not in tracked:
+                self.fail(3, path, "a required vendored file (REQUIRED_META) that is not tracked under "
+                          "[vendored] paths")
+        rows = vendor.get("files")
+        listed = {e.get("path") for e in rows if isinstance(e, dict)} if isinstance(rows, list) else set()
+        for path, upstream in sorted(REQUIRED_FILES.items()):
+            if path not in tracked:
+                self.fail(3, path, "a required vendored file (REQUIRED_FILES) that is not tracked under "
+                          "[vendored] paths")
+                continue
+            try:
+                st = os.lstat(os.path.join(self.root, path))
+            except OSError as exc:
+                self.fail(3, path, "a required vendored file absent on disk: {}".format(exc))
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                self.fail(3, path, "a required vendored file that is not a regular file on disk")
+            if self.upstream_path(path) != upstream:
+                self.fail(3, path, "required to be vendored from the upstream {}, but the pin maps it to {}"
+                          .format(upstream, self.upstream_path(path)))
+            if upstream not in sources:
+                self.fail(3, path, "a required vendored file with no manifest [[sources]] entry at {}"
+                          .format(upstream))
+            if path not in listed:
+                self.fail(3, path, "a required vendored file with no [[vendor.files]] row")
+
     # Check 4.
     def check_active_rules(self, pin, tracked, artifacts, vendored):
         table = pin.get("active-rules")
@@ -444,6 +521,12 @@ class Gate:
             if not any(_under(prefix, v) for v in vendored):
                 self.fail(4, prefix, "[active-rules] names a path outside [vendored] paths")
                 return
+        for tree in REQUIRED_ACTIVE_TREES:
+            if tree not in trees:
+                self.fail(4, tree, "a required active rule tree (REQUIRED_ACTIVE_TREES) that [active-rules] "
+                          "trees does not name")
+            elif not any(_under(p, tree) for p in tracked):
+                self.fail(4, tree, "a required active rule tree with no tracked file")
         corpus_ids = {}
         corpus_files = sorted(p for p in tracked if _under(p, corpus) and p.endswith(".md"))
         if not corpus_files:
@@ -563,6 +646,9 @@ class Gate:
             elif entry != (size, digest):
                 self.fail(6, path, "[[vendor.files]] records {} bytes, sha256 {}; the manifest records {} "
                           "bytes, sha256 {}".format(size, digest, entry[0], entry[1]))
+        if not any(up == "LICENSE" for up in self.relocated.values()):
+            self.fail(6, PIN_REL, "no vendored file is relocated from the upstream LICENSE, so [vendor] "
+                      "license-sha256 is compared with no vendored file")
         for path in sorted(p for p, up in self.relocated.items() if up == "LICENSE"):
             if not isinstance(lic, str) or not HEX64.fullmatch(lic):
                 continue  # already a check 6 failure above
@@ -613,7 +699,8 @@ class Gate:
         top = top.decode("utf-8", "replace").strip()
         if os.path.realpath(top) != os.path.realpath(self.root):
             raise InputError("{}: not the top level of its git work tree ({})".format(self.root, top))
-        _, pin = read_toml(os.path.join(self.root, PIN_REL), "the pin")
+        pin_text, pin = read_toml(os.path.join(self.root, PIN_REL), "the pin")
+        self.check_pin_final(pin_text)
         commit, tracked = self.check_source_and_paths(pin)
         if tracked is None:
             self.fail(1, PIN_REL, "checks 2 to 7 cannot be evaluated without a valid [vendored] paths list")
@@ -628,6 +715,7 @@ class Gate:
         vendored = pin["vendored"]["paths"]
         self.check_files_match_manifest(tracked, sources, manifest_rel)
         self.check_whole_paths_present(pin, tracked, sources, vendored)
+        self.check_required_set(pin, tracked, sources)
         self.check_active_rules(pin, tracked, artifacts, vendored)
         self.check_integrity(pin, manifest_tree)
         self.check_vendor_block(pin, tracked, sources)

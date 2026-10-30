@@ -150,3 +150,151 @@ EOF
 === allow a18-unreadable-without-shell-name
 cat <<'EOF
 Tom & Jerry
+=== deny d17-pipe-newline-later-shell
+cat <<'EOF' |
+sleep 0.1 &
+EOF
+bash
+=== deny d18-pipe-newline-blank-and-comment-lines
+cat <<'EOF' | # feed the shell below
+sleep 0.1 &
+EOF
+
+# the consumer
+bash
+=== deny d19-stderr-pipe-newline
+cat <<'EOF' |&
+sleep 0.1 &
+EOF
+bash
+=== deny d20-pipe-newline-through-later-stages
+cat <<'EOF' |
+sleep 0.1 &
+EOF
+tee copy.txt |
+env sh
+=== deny d21-pipe-newline-inside-shell-body
+bash <<'OUTER'
+cat <<'INNER' |
+sleep 0.1 &
+INNER
+sh
+OUTER
+=== deny d22-unquoted-data-heredoc-substitution-in-body
+bash <<'EOF'
+cat <<INNER
+$(sleep 0.1 &)
+INNER
+EOF
+=== deny d23-unquoted-data-heredoc-backquote-in-body
+bash <<'EOF'
+cat <<INNER
+`sleep 0.1 &`
+INNER
+EOF
+=== deny d24-unquoted-data-heredoc-substitution-inside-literal-quotes
+bash <<'EOF'
+cat > f.txt <<INNER
+'$(sleep 0.1 &)' "$(sleep 0.1 &)"
+INNER
+EOF
+=== deny d25-unquoted-data-heredoc-parameter-expansion-in-body
+bash <<'EOF'
+cat <<INNER
+${x:-$(sleep 0.1 &)}
+INNER
+EOF
+=== deny d26-unquoted-heredoc-fed-to-shell-in-body
+bash <<'EOF'
+bash <<INNER
+sleep 0.1 &
+INNER
+EOF
+=== deny d27-unquoted-heredoc-piped-to-shell-in-body
+bash <<'EOF'
+cat <<INNER | bash
+sleep 0.1 &
+INNER
+EOF
+=== deny d28-unquoted-tab-strip-heredoc-fed-to-shell-in-body
+bash <<'EOF'
+sh <<-INNER
+<TAB>sleep 0.1 &
+<TAB>INNER
+EOF
+=== deny d29-recursive-quoted-unquoted-quoted
+bash <<'A'
+bash <<B
+bash <<'C'
+sleep 0.1 &
+C
+B
+A
+=== deny d30-unquoted-heredoc-in-substitution-in-body
+bash <<'EOF'
+x=$(cat <<INNER
+$(sleep 0.1 &)
+INNER
+)
+EOF
+=== deny d31-shell-heredoc-in-substitution-of-unquoted-body
+bash <<'EOF'
+cat <<INNER
+$(bash <<'DEEP'
+sleep 0.1 &
+DEEP
+)
+INNER
+EOF
+=== deny d32-piped-shell-body-with-unquoted-nested-substitution
+cat <<'EOF' | bash
+cat <<INNER
+$(sleep 0.1 &)
+INNER
+EOF
+=== deny-closed d33-unquoted-nested-substitution-unreadable
+bash <<'EOF'
+cat <<INNER
+$(echo &
+INNER
+EOF
+=== allow a19-pipe-newline-to-non-shell
+cat <<'EOF' |
+sleep 100 &
+EOF
+tee out.txt
+=== allow a20-double-ampersand-newline-then-separate-shell
+cat <<'EOF' &&
+sleep 100 &
+EOF
+bash -c true
+=== allow a21-unquoted-data-heredoc-plain-ampersands-in-body
+bash <<'EOF'
+cat > f.txt <<INNER
+Tom & Jerry && more
+INNER
+EOF
+=== allow a22-unquoted-data-heredoc-escaped-substitutions
+bash <<'EOF'
+cat <<INNER
+\$(sleep 100 &) and \`sleep 100 &\`
+INNER
+EOF
+=== allow a23-unquoted-data-heredoc-substitution-without-background
+bash <<'EOF'
+cat <<INNER
+$(true && echo ok) & data
+INNER
+EOF
+=== allow a24-quoted-nested-data-heredoc-substitution-text
+bash <<'EOF'
+cat <<'INNER'
+$(sleep 100 &)
+INNER
+EOF
+=== allow a25-unquoted-heredoc-fed-to-python-in-body
+bash <<'EOF'
+python3 - <<INNER
+print(1 & 2)
+INNER
+EOF

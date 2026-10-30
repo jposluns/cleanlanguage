@@ -72,7 +72,9 @@ blocking a `reset --hard` on a dirty tree or an AI commit-author trailer) are en
 for dev-time sessions through [`settings.json`](settings.json) and the local
 marketplace at `plugin/`. The plugin registers 18 core hooks. The 14 earlier ones can fire
 (`gensrc_guard` was armed in PR #156), and so can `git_stash_ref` and `pgrep_self_match`,
-while `review_dispatch_pin` and `review_workdir_hold` stay inert without a binding.
+while `review_dispatch_pin` stays inert without a binding, which the registry gate rejects,
+and `review_workdir_hold`, which needs no binding, stays inert while no review-hold marker
+directory exists under the common git directory.
 `write_scope_guard` keeps its structural cross-repository write denial, now exempting one
 declared companion store (`/opt/cleanlanguage/private`, the record store), while its slice
 confinement stays un-armed. A minimal orchestration registry is declared; what each of the

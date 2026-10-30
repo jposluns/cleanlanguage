@@ -102,6 +102,16 @@ primitive, an open for writing, an os or shutil call that changes the file syste
 requires the set of sites to equal the reviewed WRITE_SITES table, each modelled by the doctor or of
 no verdict effect with a reason, requires the doctor to replace exactly the primitives the table
 names, and proves that it refuses one added write of each kind.
+The DoctorBlockingWrites cases run the REAL hook beside the doctor on the writes the judged handler makes
+with a plain blocking open: guard-events.jsonl, which every judged verdict appends to, a clean ALLOW
+included, and escape-spoof.json and forced-exit.jsonl where the handler reaches them. With a FIFO at the
+path the real hook blocks and the doctor reports cannot-evaluate; without it both complete and agree. The
+DoctorCreatedStateDir cases run the doctor and the real hook under the same umask with the state directory
+absent, in a store cleared of any default ACL: under umask 0o777 the denial counter cannot be saved and both
+report the fail-open allow, under umask 0o022 both deny, and a default ACL whose owner entry lacks write
+replaces the umask. The LinkedStateFiles cases pin the post-gate aliasing residual of the registry gate: a
+record hard-linked at the resume barrier keeps its content, and one hard-linked at guard-events.jsonl is
+appended to.
 """
 
 from __future__ import annotations
@@ -1927,8 +1937,21 @@ PRECHECK_SITES = {
         "aiqt_hooks.py:_orch_chained_rows `with open(path,` via aiqt_hooks.py:_orch_attestation_refs `rows, _detail = _orch_chained_rows(at_path,`"),
     "ctx.guard_events": (
         "preflight", True,
-        "as the anchor (the guard-events pointer in a register row is not modelled)",
-        "aiqt_hooks.py:_orch_attestation_refs `astatus, aseq, adigest = _orch_register_authority(root,`, _orch_attestation_derive via aiqt_hooks.py:_orch_attestation_refs `refs, _unsub, _findings = _orch_attestation_derive(reg,`, aiqt_hooks.py:_orch_pointer_resolves `if pointer.startswith(`, open aiqt_hooks.py:_orch_read_jsonl `with open(path,`"),
+        "scope live (and for idle the tool in the roster); then always: every judged verdict appends a "
+        "guard-events row (the read inside the build, past the snapshot and the register, is covered too)",
+        "aiqt_hooks.py:_orch_stop_family `_orch_guard_event(root, event_name, verdict.lower(), reason)`, aiqt_hooks.py:orch_yield_tool `_orch_guard_event(root,`, "
+        "append aiqt_hooks.py:_orch_append_jsonl `with open(path,`; read aiqt_hooks.py:_orch_pointer_resolves `rows, _bad = _orch_read_jsonl(os.path.join(sd,`"),
+    "verdict.escape_spoof": (
+        "preflight", True,
+        "the context records an ignored escape sentinel",
+        "aiqt_hooks.py:_orch_stop_family `spoof_warn = (_orch_record_escape_spoof(root, ctx[`, aiqt_hooks.py:_orch_record_escape_spoof `ok_file = _orch_write_json(`, "
+        "open aiqt_hooks.py:_orch_write_json `with open(path,`"),
+    "verdict.forced_exit": (
+        "preflight", True,
+        "an ALLOW_WITH_FINDINGS released by the loop bound, the loop signal or the schedule cap past "
+        "open work",
+        "aiqt_hooks.py:_orch_stop_family `extra = _orch_record_forced_exit(root, event_name, ctx, reason)`, aiqt_hooks.py:_orch_record_forced_exit `ok_file = _orch_append_jsonl(`, "
+        "append aiqt_hooks.py:_orch_append_jsonl `with open(path,`"),
     "ctx.checkpoint": (
         "preflight", True,
         "the enumerator runs",
@@ -1985,7 +2008,13 @@ PRECHECK_CASES = [
     ("ctx.attestations", "reach", "case_ctx_register"),
     ("ctx.attestations", "skip", "case_ctx_register_without_snapshot"),
     ("ctx.guard_events", "reach", "case_ctx_guard_events"),
-    ("ctx.guard_events", "skip", "case_ctx_guard_events_without_register"),
+    ("ctx.guard_events", "reach", "case_ctx_guard_events_without_register"),
+    ("ctx.guard_events", "reach", "case_ctx_guard_events_undeclared"),
+    ("ctx.guard_events", "skip", "case_ctx_guard_events_out_of_scope"),
+    ("verdict.escape_spoof", "reach", "case_verdict_escape_spoof"),
+    ("verdict.escape_spoof", "skip", "case_verdict_escape_spoof_without_sentinel"),
+    ("verdict.forced_exit", "reach", "case_verdict_forced_exit"),
+    ("verdict.forced_exit", "skip", "case_verdict_forced_exit_without_loop_signal"),
     ("ctx.checkpoint", "reach", "case_checkpoint"),
     ("ctx.checkpoint", "skip", "case_checkpoint_argv_cannot_run"),
     ("audit.handoff", "reach", "case_audit_handoff"),
@@ -2203,9 +2232,40 @@ class DoctorPrecheckSites(Stage2Harness):
         return self._sd("guard-events.jsonl"), None, self.STOP, {}
 
     def case_ctx_guard_events_without_register(self):
+        # No register: the read inside the build is not reached, but the append after the verdict is.
         self._reg(attestations=self._at())
         self.seed_state("attestations-validated.json", {})
         return self._sd("guard-events.jsonl"), None, self.STOP, {}
+
+    def case_ctx_guard_events_undeclared(self):
+        self._reg()
+        return self._sd("guard-events.jsonl"), None, self.STOP, {}
+
+    def case_ctx_guard_events_out_of_scope(self):
+        self._reg(drop=("mode",))
+        return self._sd("guard-events.jsonl"), None, self.STOP, {}
+
+    # --- verdict.*: the writes after the verdict
+    def case_verdict_escape_spoof(self):
+        # A self-owned sentinel at the declared escape path is ignored and spoof-recorded, as the escape tests above show.
+        self._reg()
+        self.self_owned_sentinel("ESCAPE-ALLOW-YIELD")
+        return self._sd("escape-spoof.json"), None, self.STOP, {}
+
+    def case_verdict_escape_spoof_without_sentinel(self):
+        self._reg()
+        return self._sd("escape-spoof.json"), None, self.STOP, {}
+
+    def case_verdict_forced_exit(self):
+        # stop_hook_active sets the loop signal, so the open item 42 is released with findings and the
+        # exit is recorded as forced (aiqt_hooks.py:_orch_record_forced_exit).
+        self._reg()
+        return (self._sd("forced-exit.jsonl"), None, self.STOP + ("--stop-hook-active",),
+                {"stop_hook_active": True})
+
+    def case_verdict_forced_exit_without_loop_signal(self):
+        self._reg()
+        return self._sd("forced-exit.jsonl"), None, self.STOP, {}
 
     # --- audit.*
     def case_audit_handoff(self):
@@ -2350,6 +2410,221 @@ class DoctorPrecheckSites(Stage2Harness):
                 self.tearDown()
                 self.setUp()
                 self._run_case("nonblock", case)
+
+
+class DoctorBlockingWrites(Stage2Harness):
+    """The judged handler appends a guard-events row on every verdict, a clean ALLOW included
+    (aiqt_hooks.py:_orch_stop_family `_orch_guard_event(root, event_name, verdict.lower(), reason)`,
+    aiqt_hooks.py:orch_yield_tool `_orch_guard_event(root, "yield-tool", verdict.lower(), reason)`), with a
+    plain blocking open (aiqt_hooks.py:_orch_append_jsonl `with open(path,`), and writes escape-spoof.json
+    and forced-exit.jsonl the same way when it reaches them. Each case runs the REAL hook on the same state
+    as the doctor: with a FIFO at the path the hook blocks (it does not exit within HOOK_TIMEOUT) and the
+    doctor reports cannot-evaluate, exit 2, naming the path; without the FIFO both complete, and the
+    doctor reports the verdict the hook gives."""
+
+    HOOK_TIMEOUT = 8
+    SPECIAL_TIMEOUT = Doctor.SPECIAL_TIMEOUT
+    _doctor_bounded = Doctor._doctor_bounded
+
+    def setUp(self):
+        super().setUp()
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+
+    def _real_hook_blocks(self, action, payload):
+        payload = dict(payload)
+        payload.setdefault("cwd", str(self.repo))
+        try:
+            subprocess.run([sys.executable, "-I", str(HOOK), action], input=json.dumps(payload),
+                           capture_output=True, text=True, env=self._env(), timeout=self.HOOK_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return True
+        return False
+
+    def _fifo(self, name):
+        self.state_dir().mkdir(parents=True, exist_ok=True)
+        path = self.state_dir() / name
+        os.mkfifo(path)
+        return path
+
+    def _clean(self):
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.set_items([item("1", state="closed")])
+
+    def test_clean_allow_without_a_fifo_agrees(self):
+        self._clean()
+        for kind in ("stop", "idle"):
+            with self.subTest(kind=kind):
+                r = self._doctor_bounded("preflight", kind)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertIn("effective verdict: ALLOW", r.stdout)
+        self.assertEqual(self.stop().returncode, 0)
+        self.assertEqual(self.schedule().returncode, 0)
+
+    def test_fifo_guard_events_blocks_a_clean_allow_and_the_doctor_refuses(self):
+        self._clean()
+        path = self._fifo("guard-events.jsonl")
+        for kind, action, payload in (("stop", "orch_stop_guard", {}),
+                                      ("idle", "orch_yield_tool",
+                                       {"tool_name": "ScheduleWakeup",
+                                        "tool_input": {"prompt": "recheck", "delaySeconds": 60}})):
+            with self.subTest(kind=kind):
+                r = self._doctor_bounded("preflight", kind)
+                self.assertNotIn("Traceback", r.stderr)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("cannot evaluate: the hook state file guard-events.jsonl {} is not a regular "
+                              "file (it is a FIFO)".format(path), r.stdout)
+                self.assertNotIn("effective verdict: ALLOW", r.stdout)
+                self.assertTrue(self._real_hook_blocks(action, payload),
+                                "the real hook completed, so the FIFO is not reached")
+                self.assertTrue(path.is_fifo())
+
+    def test_fifo_escape_spoof_blocks_and_the_doctor_refuses_after_the_verdict(self):
+        self._clean()
+        self.self_owned_sentinel("ESCAPE-ALLOW-YIELD")
+        path = self._fifo("escape-spoof.json")
+        r = self._doctor_bounded("preflight", "stop")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("cannot evaluate: the hook state file escape-spoof.json {} is not a regular file (it "
+                      "is a FIFO); the hook would open it with a blocking open after its verdict".format(path),
+                      r.stdout)
+        self.assertTrue(self._real_hook_blocks("orch_stop_guard", {}))
+
+    def test_fifo_forced_exit_blocks_and_the_doctor_refuses_after_the_verdict(self):
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.set_items([item("42")])
+        path = self._fifo("forced-exit.jsonl")
+        r = self._doctor_bounded("preflight", "stop", "--stop-hook-active")
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("judged verdict: ALLOW_WITH_FINDINGS", r.stdout)
+        self.assertIn("cannot evaluate: the hook state file forced-exit.jsonl {} is not a regular file (it "
+                      "is a FIFO); the hook would open it with a blocking open after its verdict".format(path),
+                      r.stdout)
+        self.assertTrue(self._real_hook_blocks("orch_stop_guard", {"stop_hook_active": True}))
+        # Contrast: without the loop signal the verdict is a DENY, no forced exit is recorded, and the hook
+        # completes with the FIFO in place.
+        r = self._doctor_bounded("preflight", "stop")
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("effective verdict: DENY", r.stdout)
+        self.assertFalse(self._real_hook_blocks("orch_stop_guard", {}))
+        self.assertTrue(path.is_fifo())
+
+
+class LinkedStateFiles(Stage2Harness):
+    """The disclosed post-gate aliasing residual of tools/check-orchestration-registry.py, case (d), pinned
+    against the real hook. A record file hard-linked at the resume barrier keeps its content: the barrier
+    write replaces the directory entry (aiqt_hooks.py:_orch_barrier_write `os.replace(tmp, path)`), so the
+    link is replaced. A record file hard-linked at guard-events.jsonl is appended to, since that append
+    opens the path in place (aiqt_hooks.py:_orch_append_jsonl `with open(path,`)."""
+
+    def _record(self):
+        record = Path(self._p("open-findings.md"))
+        record.write_text("the record\n", encoding="utf-8")
+        self.state_dir().mkdir(parents=True, exist_ok=True)
+        return record
+
+    def test_hard_link_at_the_barrier_is_replaced_not_clobbered(self):
+        self.write_registry(self.stage2())
+        record = self._record()
+        barrier = self.state_dir() / "resume-barrier.json"
+        os.link(record, barrier)
+        self.assertEqual(self.run_hook("orch_resume_audit", {}).returncode, 0)
+        self.assertEqual(record.read_text(encoding="utf-8"), "the record\n")
+        self.assertNotEqual(os.stat(record).st_ino, os.stat(barrier).st_ino, "the link was not replaced")
+        self.assertIn("active", json.loads(barrier.read_text(encoding="utf-8")))
+
+    def test_hard_link_at_guard_events_is_appended_to(self):
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.set_items([item("1", state="closed")])
+        record = self._record()
+        os.link(record, self.state_dir() / "guard-events.jsonl")
+        self.assertEqual(self.stop().returncode, 0)
+        text = record.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("the record\n") and len(text) > len("the record\n"),
+                        "the guard-events append did not reach the linked record")
+
+
+# The default ACL in its extended-attribute form: version 2, then (tag, permission, id) entries for the
+# owner, the owning group and others, each r-x, so a directory created under it lacks owner write.
+_ACL_NO_OWNER_WRITE = (b"\x02\x00\x00\x00"
+                       + b"\x01\x00\x05\x00\xff\xff\xff\xff"
+                       + b"\x04\x00\x05\x00\xff\xff\xff\xff"
+                       + b"\x20\x00\x05\x00\xff\xff\xff\xff")
+_ACL_DEFAULT = "system.posix_acl_default"
+
+
+class DoctorCreatedStateDir(Stage2Harness):
+    """For a state directory that does not exist, the hook creates it with os.makedirs, whose directories
+    get mode 0o777 less the process umask, or, under an ancestor with a default ACL, the owner entry of
+    that ACL in place of the umask. The doctor and the REAL hook run in subprocesses under the same umask,
+    with the state directory absent each time. The store (the nearest existing ancestor) is first cleared
+    of any default ACL it inherited from the host temporary directory, since a default ACL masks the
+    umask (the host TMPDIR of this repository carries one). Under umask 0o777 the hook cannot save the
+    denial counter and fails open with findings, and the doctor must predict exactly that; under umask
+    0o022 both reach the DENY. Under a default ACL whose owner entry lacks write, the same holds even with
+    umask 0o022."""
+
+    SPECIAL_TIMEOUT = Doctor.SPECIAL_TIMEOUT
+
+    def setUp(self):
+        super().setUp()
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+        if _ACL_DEFAULT in os.listxattr(self.store):
+            os.removexattr(self.store, _ACL_DEFAULT)
+        self.assertNotIn(_ACL_DEFAULT, os.listxattr(self.store), "precondition: no default ACL on the store")
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.set_items([item("42")])
+
+    def _under(self, mask, argv, stdin=""):
+        return subprocess.run(argv, input=stdin, capture_output=True, text=True, env=self._env(),
+                              timeout=self.SPECIAL_TIMEOUT, preexec_fn=lambda: os.umask(mask))
+
+    def _reset_state_dir(self):
+        sd = self.state_dir()
+        if sd.exists():
+            for dirpath, _dirs, _files in os.walk(sd):
+                os.chmod(dirpath, 0o755)
+            shutil.rmtree(sd)
+        self.assertFalse(sd.exists())
+
+    def _pair(self, mask):
+        self._reset_state_dir()
+        d = self._under(mask, [sys.executable, "-I", str(DOCTOR), "preflight", "stop", "--root", str(self.repo)])
+        self.assertNotIn("Traceback", d.stderr)
+        self.assertFalse(self.state_dir().exists(), "the doctor created the state directory")
+        h = self._under(mask, [sys.executable, "-I", str(HOOK), "orch_stop_guard"],
+                        json.dumps({"cwd": str(self.repo)}))
+        self.assertNotIn("Traceback", h.stderr)
+        return d, h
+
+    def test_umask_0777_fails_the_counter_save_in_the_hook_and_the_doctor(self):
+        d, h = self._pair(0o777)
+        self.assertEqual(h.returncode, 0, h.stdout + h.stderr)
+        self.assertIn("the denial counter could not be persisted", h.stdout)
+        self.assertIn("effective verdict: ALLOW_WITH_FINDINGS", d.stdout)
+        self.assertIn("denial counter: could NOT be saved", d.stdout)
+        self.assertIn("the process umask 0o777", d.stdout)
+        self.assertIn("checkpoint rewrite (aiqt_hooks.py:_orch_checkpoint_union): would FAIL", d.stdout)
+
+    def test_umask_0022_contrast_denies_in_the_hook_and_the_doctor(self):
+        d, h = self._pair(0o022)
+        self.assertEqual(h.returncode, 2, h.stdout + h.stderr)
+        self.assertIn("effective verdict: DENY", d.stdout)
+        self.assertIn("denial counter: could be saved", d.stdout)
+
+    def test_default_acl_without_owner_write_replaces_the_umask(self):
+        os.setxattr(self.store, _ACL_DEFAULT, _ACL_NO_OWNER_WRITE)
+        self.assertIn(_ACL_DEFAULT, os.listxattr(self.store))
+        d, h = self._pair(0o022)
+        self.assertEqual(h.returncode, 0, h.stdout + h.stderr)
+        self.assertIn("the denial counter could not be persisted", h.stdout)
+        self.assertIn("effective verdict: ALLOW_WITH_FINDINGS", d.stdout)
+        self.assertIn("the default ACL of {}".format(self.store), d.stdout)
 
 
 class DoctorScopeMargin(Stage2Harness):

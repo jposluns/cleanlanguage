@@ -75,9 +75,12 @@ match the shell running it: `pgrep`, `pkill`, or `pidwait` with `-f`, or `ps` pi
 program given a pattern, unless the pattern is written as the bracket idiom (`[j]ob7`).
 `git_stash_ref` allows a bare `git stash pop` or `git stash apply` with a note that it acts on
 the top of the stash stack, and allows a named stash silently. `review_dispatch_pin` is inert
-without a `review_dispatch` binding in a well-formed registry, and `review_workdir_hold` is
-inert while no review-hold marker directory exists. The registry gate rejects a
-`review_dispatch` key, so neither review hook arms in this repository.
+without a `review_dispatch` binding in a well-formed registry, and the registry gate rejects a
+`review_dispatch` key, so it cannot arm in this repository. `review_workdir_hold` needs no
+binding and no registry key: it reads the review-hold marker files a dispatcher writes under the
+common git directory (`aiqt/review-holds/` there), and it is inert only while no such marker
+directory exists. No tool in this repository writes one, so it stays inert here until a
+dispatcher writes a marker, and then it holds the marked worktree.
 
 The hook script requires Python 3.14 or later. Under an older `python3`, the eight hooks on
 events that must not block (`diff_wall_stop`, `orch_dispatch_ledger`, the two lease heartbeat
@@ -133,10 +136,16 @@ control (the heredoc compensating hook decision):
 the adopter-owned PreToolUse Bash hook `.claude/hooks/shell_heredoc_detach_guard.py`, outside
 every vendored path and registered in `.claude/settings.json`, denies a quoted-delimiter
 here-document fed to `sh`, `bash`, `dash`, `zsh`, or `ksh` whose body holds a backgrounding
-`&`. Its disclosed residual is listed in full in the hook docstring. It includes a shell
+`&`. The shell may be the command that carries the here-document or a later stage of its
+pipeline, a pipeline continued past a newline after a pipe included. Inside such a body every
+nested here-document is judged too, quoted or not: an unquoted one for a backgrounding `&` in
+its command substitutions, and one fed to a shell as commands, recursively. A top-level
+here-document under an unquoted delimiter is left to the vendored guard, which reads it. The
+disclosed residual is listed in full, in nine items, in the hook docstring. It includes a shell
 reached through a variable, an alias, or a wrapper such as `sudo` or `nohup`, and a detacher
 that carries no single `&` (`setsid`, `disown`, a nested `bash -c` string), which are not
-seen, and an unreadable hook payload, which the hook allows with a note while the vendored
+seen; text that an expansion in a nested unquoted body prints and a shell then runs, which is
+not read; and an unreadable hook payload, which the hook allows with a note while the vendored
 guard denies it.
 
 The two new orchestrator hooks, `orch_lease_heartbeat_post` and `orch_lease_heartbeat_stop`,

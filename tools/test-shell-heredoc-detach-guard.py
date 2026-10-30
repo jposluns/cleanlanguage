@@ -8,8 +8,14 @@ heredoc lifting reduction).
    ampersand and not a double ampersand.
 3. The flip: a copy of the hook with its deny rule (the line marked DENY-RULE) removed must turn every
    deny case red (allowed), while the fail-closed denies still deny. A flip that changes nothing fails.
+4. The bash oracle: every case named in ORACLE_CASES must be present with its expectation, and real bash
+   must agree with it. Each such command is run by bash -c in a fresh directory with its backgrounded
+   command (sleep, a number and an ampersand) replaced by a command that writes a marker to stderr and
+   detaches nothing; the marker must appear exactly for the deny cases, so each deny is a body bash does
+   run as commands (a pipeline continued past a newline, an unquoted nested body whose expansions run,
+   an unquoted nested body fed to a shell) and each allow is one it does not.
 
-Exit 0 only when all three hold. Launch with python3 -I. Temporary files go under TMPDIR.
+Exit 0 only when all four hold. Launch with python3 -I. Temporary files go under TMPDIR.
 """
 
 import importlib.util
@@ -29,6 +35,32 @@ VENDORED_REL = ("plugin", "aiqt-guardrails-hooks", "hooks", "scripts", "aiqt_hoo
 VENDORED = os.path.join(ROOT, *VENDORED_REL)
 MARK = "# DENY-RULE"
 EXPECTS = ("deny", "deny-closed", "allow")
+# The cases the bash oracle runs (check 4): the line continuation of a pipeline past a newline, and every
+# here-document nested in a shell-fed body, quoted or not, with its siblings that must stay allowed. An
+# allow case whose body holds no backgrounded command (a21, a23, a25) has nothing for the oracle to run.
+ORACLE_CASES = {
+    "d17-pipe-newline-later-shell": "deny",
+    "d18-pipe-newline-blank-and-comment-lines": "deny",
+    "d19-stderr-pipe-newline": "deny",
+    "d20-pipe-newline-through-later-stages": "deny",
+    "d21-pipe-newline-inside-shell-body": "deny",
+    "d22-unquoted-data-heredoc-substitution-in-body": "deny",
+    "d23-unquoted-data-heredoc-backquote-in-body": "deny",
+    "d24-unquoted-data-heredoc-substitution-inside-literal-quotes": "deny",
+    "d25-unquoted-data-heredoc-parameter-expansion-in-body": "deny",
+    "d26-unquoted-heredoc-fed-to-shell-in-body": "deny",
+    "d27-unquoted-heredoc-piped-to-shell-in-body": "deny",
+    "d28-unquoted-tab-strip-heredoc-fed-to-shell-in-body": "deny",
+    "d29-recursive-quoted-unquoted-quoted": "deny",
+    "d30-unquoted-heredoc-in-substitution-in-body": "deny",
+    "d31-shell-heredoc-in-substitution-of-unquoted-body": "deny",
+    "d32-piped-shell-body-with-unquoted-nested-substitution": "deny",
+    "a19-pipe-newline-to-non-shell": "allow",
+    "a20-double-ampersand-newline-then-separate-shell": "allow",
+    "a22-unquoted-data-heredoc-escaped-substitutions": "allow",
+    "a24-quoted-nested-data-heredoc-substitution-text": "allow",
+}
+ORACLE_MARK = "ORACLE-RAN"
 
 
 def load_cases(path=CASES):
@@ -172,12 +204,51 @@ def check_flip(cases):
     return failures, red
 
 
+def check_oracle(cases):
+    """Check 4: each ORACLE_CASES case is present with its expectation, and bash runs its backgrounded
+    command exactly when the case is a deny."""
+    failures, by_name = [], {name: (expect, command) for expect, name, command in cases}
+    bash = shutil.which("bash")
+    if bash is None:
+        return ["bash is not on PATH, so the oracle cannot run"]
+    amp = "\x26"
+    marker = "echo {} >/dev/stderr".format(ORACLE_MARK)
+    for name, expect in sorted(ORACLE_CASES.items()):
+        if name not in by_name:
+            failures.append("oracle case missing from the case file: " + name)
+            continue
+        if by_name[name][0] != expect:
+            failures.append("oracle case {} expects {}, the case file says {}".format(
+                name, expect, by_name[name][0]))
+            continue
+        command = by_name[name][1]
+        swapped = command.replace("sleep 0.1 " + amp, marker).replace("sleep 100 " + amp, marker)
+        if swapped == command:
+            failures.append("oracle case {} has no backgrounded sleep to replace".format(name))
+            continue
+        workdir = tempfile.mkdtemp(prefix="shdg-oracle-")
+        try:
+            proc = subprocess.run([bash, "-c", swapped], capture_output=True, text=True, timeout=30,
+                                  cwd=workdir, stdin=subprocess.DEVNULL)
+        finally:
+            shutil.rmtree(workdir)
+        ran = ORACLE_MARK in proc.stderr
+        ok = ran == (expect == "deny")
+        print("{:4} oracle {:5} bash {:13} {}".format("ok" if ok else "FAIL", expect,
+                                                      "ran it" if ran else "did not run it", name))
+        if not ok:
+            failures.append("bash {} the backgrounded command of {} ({})".format(
+                "ran" if ran else "did not run", name, expect))
+    return failures
+
+
 def main():
     cases = load_cases()
     failures = check_cases(HOOK, cases)
     failures += check_vendored_reader()
     flip_failures, red = check_flip(cases)
     failures += flip_failures
+    failures += check_oracle(cases)
     denies = sum(1 for expect, _n, _c in cases if expect == "deny")
     print("cases {}, deny cases turned red by the flip {} of {}, failures {}".format(
         len(cases), red, denies, len(failures)))

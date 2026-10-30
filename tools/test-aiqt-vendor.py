@@ -12,7 +12,12 @@ gate marker
 check still fails. The RealTree class runs the gate against this checkout and expects green; it needs
 the pin to carry the `[vendor]` block and the `[active-rules]` keys the gate reads, and checks that this
 checkout vendors the upstream LICENSE and NOTICE unaltered (the vendored licence decision), so dropping either
-file from the pin, as well as altering it, turns the suite red.
+file from the pin, as well as altering it, turns the suite red. The fixture carries the whole required set
+the gate declares (the relocated licence and notice, the four core TOML files, the manifest, the release
+root, the two whole roots and the two active trees); the RequiredSet cases delete each required file or
+root together with every pin entry naming it and expect the gate to fail, and a probe holds the gate
+constants equal to the set listed here. The PinFinal cases put a DRAFT marker or a PLACEHOLDER value in the
+pin and expect check 1 to fail.
 
 Runs offline with the standard library and git; every Python launch is isolated (-I).
 """
@@ -41,8 +46,16 @@ FAKE_ROOT = "sha256:" + "c" * 64
 LICENSE = b"Apache License\nVersion 2.0, January 2004\nfixture text\n"
 NOTICE = b"AIQT Guardrails\nfixture notice text\n"
 RELOCATED = {".aiqt/LICENSE": "LICENSE", ".aiqt/NOTICE": "NOTICE"}
-VENDORED = [".aiqt/core/rules", ".aiqt/core/applies.toml", ".aiqt/core/order.toml", MANIFEST, ROOT_TXT,
-            "plugin/aiqt-guardrails-hooks", ".claude/rules/aiqt", ".claude/rules/security"]
+CORE_TOML = [".aiqt/core/applies.toml", ".aiqt/core/applicability.toml", ".aiqt/core/ownership.toml",
+             ".aiqt/core/order.toml"]
+VENDORED = [".aiqt/core/rules"] + CORE_TOML + [MANIFEST, ROOT_TXT, "plugin/aiqt-guardrails-hooks",
+                                               ".claude/rules/aiqt", ".claude/rules/security"]
+# The required set the gate declares (REQUIRED_FILES, REQUIRED_META, REQUIRED_WHOLE, REQUIRED_ACTIVE_TREES),
+# restated so that a gate edit that shrinks it fails RequiredSet.test_gate_declares_the_required_set.
+REQUIRED_FILES = dict(RELOCATED, **{p: p for p in CORE_TOML})
+REQUIRED_META = (MANIFEST, ROOT_TXT)
+REQUIRED_WHOLE = (".aiqt/core/rules", "plugin/aiqt-guardrails-hooks")
+REQUIRED_ACTIVE_TREES = (".claude/rules/aiqt", ".claude/rules/security")
 PLUGIN = ["plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json",
           "plugin/aiqt-guardrails-hooks/hooks/hooks.json",
           "plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py"]
@@ -119,7 +132,11 @@ def base_spec():
     for cid in ("alpha", "beta", "gamma", "delta"):
         files[".aiqt/core/rules/{}.md".format(cid)] = rule(cid)
     files[".aiqt/core/applies.toml"] = b"[applies]\nalpha = \"always\"\n"
+    files[".aiqt/core/applicability.toml"] = b"[applicability]\nprofile = \"fixture\"\n"
+    files[".aiqt/core/ownership.toml"] = b"[ownership]\nalpha = \"pack\"\n"
     files[".aiqt/core/order.toml"] = b"order = [\"alpha\", \"beta\", \"gamma\", \"delta\"]\n"
+    files[".aiqt/LICENSE"] = LICENSE
+    files[".aiqt/NOTICE"] = NOTICE
     files[PLUGIN[0]] = b"{\"name\": \"aiqt-guardrails-hooks\", \"version\": \"0.4.0\"}\n"
     files[PLUGIN[1]] = b"{\"hooks\": {}}\n"
     files[PLUGIN[2]] = b"import sys\nsys.exit(0)\n"
@@ -131,7 +148,7 @@ def base_spec():
         "source": {"name": "aiqt-guardrails", "license": "Apache-2.0", "source-commit": FAKE_COMMIT},
         "version": {"pack": "9.9.9"},
         "integrity": {"tree-sha256": FAKE_TREE, "root": FAKE_ROOT, "manifest": MANIFEST},
-        "vendored": {"paths": list(VENDORED)},
+        "vendored": {"paths": list(VENDORED) + sorted(RELOCATED)},
         "active-rules": {"active": 3, "excluded": 1, "excluded-ids": ["delta"], "corpus": ".aiqt/core/rules",
                          "trees": [".claude/rules/aiqt", ".claude/rules/security"]},
         "vendor": {"source-commit": FAKE_COMMIT, "source-date": "2026-10-30T03:03:04-04:00",
@@ -140,7 +157,7 @@ def base_spec():
     }
     return {"files": files, "pin": pin, "header": HEADER, "tree": FAKE_TREE, "edit": None, "disk": None,
             "upstream": False, "upstream_edit": None, "extra_artifacts": {EXCLUDED_RENDER: sha(rule("delta"))},
-            "relocated": {}}
+            "relocated": dict(RELOCATED)}
 
 
 def _write(root, rel, data):
@@ -168,7 +185,7 @@ def build(base, spec):
     pin = json.loads(json.dumps(spec["pin"]))
     if pin.get("vendor", {}).get("files") == "AUTO":
         pin["vendor"]["files"] = [{"path": p, "bytes": len(files[p]), "sha256": sha(files[p])}
-                                  for p in PLUGIN + sorted(relocated) if p in files]
+                                  for p in PLUGIN + sorted(set(relocated) | set(CORE_TOML)) if p in files]
     if relocated and isinstance(pin.get("vendor"), dict) and "relocated" not in pin["vendor"]:
         pin["vendor"]["relocated"] = [{"path": p, "upstream": u} for p, u in sorted(relocated.items())]
     if spec["edit"] is not None:
@@ -602,7 +619,10 @@ class Check7(GateCase):
 
 
 def relocate(spec):
-    # The pack licence and notice, vendored under .aiqt/ and mapped to the pack root.
+    # The pack licence and notice, vendored under .aiqt/ and mapped to the pack root. The base fixture
+    # already carries them, as the required set demands, so this is a no-op there.
+    if spec["relocated"] == RELOCATED:
+        return
     spec["files"][".aiqt/LICENSE"] = LICENSE
     spec["files"][".aiqt/NOTICE"] = NOTICE
     spec["pin"]["vendored"]["paths"] += sorted(RELOCATED)
@@ -688,6 +708,114 @@ class Relocation(GateCase):
         def fn(spec):
             spec["upstream_edit"] = lambda f: f.pop("NOTICE")
         self.assertCheckFails(self.spec_run(relocated_and(fn), upstream=True), 7)
+
+
+def drop_required(path):
+    """Delete a required file together with every pin entry naming it: its [vendored] paths element, its
+    [[vendor.relocated]] row, and its [[vendor.files]] row (derived from the files), and so its manifest
+    [[sources]] entry too (the fixture manifest is derived from the files)."""
+    def mutate(spec):
+        spec["files"].pop(path, None)
+        spec["relocated"].pop(path, None)
+        paths = spec["pin"]["vendored"]["paths"]
+        if path in paths:
+            paths.remove(path)
+    return mutate
+
+
+class RequiredSet(GateCase):
+    def test_gate_declares_the_required_set(self):
+        import ast
+        values = {}
+        for node in ast.parse(GATE.read_text(encoding="utf-8")).body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                name = node.targets[0].id
+                if name in ("REQUIRED_FILES", "REQUIRED_WHOLE", "REQUIRED_ACTIVE_TREES"):
+                    values[name] = ast.literal_eval(node.value)
+        self.assertEqual(values.get("REQUIRED_FILES"), REQUIRED_FILES)
+        self.assertEqual(tuple(values.get("REQUIRED_WHOLE", ())), REQUIRED_WHOLE)
+        self.assertEqual(tuple(values.get("REQUIRED_ACTIVE_TREES", ())), REQUIRED_ACTIVE_TREES)
+        self.assertIn("REQUIRED_META = (\".aiqt/manifest.toml\", ROOT_TXT_REL)", GATE.read_text(encoding="utf-8"))
+
+    def test_each_required_file_deleted_with_its_pin_entries_fails(self):
+        for path in sorted(REQUIRED_FILES):
+            with self.subTest(path=path):
+                # a fresh build directory per subtest, so a failed subtest leaves nothing behind
+                self.base = Path(tempfile.mkdtemp(prefix="aiqt-vendor-test-"))
+                self.addCleanup(shutil.rmtree, self.base, True)
+                result = self.spec_run(drop_required(path))
+                self.assertCheckFails(result, 3)
+                self.assertIn("check 3: {}: a required vendored file".format(path), result.stderr)
+                if REQUIRED_FILES[path] == "LICENSE":
+                    self.assertCheckFails(result, 6)
+                    self.assertIn("no vendored file is relocated from the upstream LICENSE", result.stderr)
+
+    def test_licence_dropped_leaves_a_zero_digest_unmatched(self):
+        def fn(spec):
+            drop_required(".aiqt/LICENSE")(spec)
+            spec["pin"]["vendor"]["license-sha256"] = "0" * 64
+        result = self.spec_run(fn)
+        self.assertCheckFails(result, 6)
+
+    def test_required_file_relocated_elsewhere_fails(self):
+        def fn(pin):
+            pin["vendor"]["relocated"] = [r for r in pin["vendor"]["relocated"] if r["path"] != ".aiqt/NOTICE"]
+            pin["vendor"]["relocated"].append({"path": ".aiqt/NOTICE", "upstream": "NOTICE.md"})
+        def mutate(spec):
+            edit_pin(fn)(spec)
+        result = self.spec_run(mutate)
+        self.assertCheckFails(result, 3)
+        self.assertIn("required to be vendored from the upstream NOTICE", result.stderr)
+
+    def test_required_meta_deleted_with_its_pin_entry_fails(self):
+        def fn(spec):
+            spec["files"].pop(ROOT_TXT)
+            spec["pin"]["vendored"]["paths"].remove(ROOT_TXT)
+        result = self.spec_run(fn)
+        self.assertCheckFails(result, 3)
+        self.assertIn("check 3: {}: a required vendored file (REQUIRED_META)".format(ROOT_TXT), result.stderr)
+
+    def test_required_whole_root_dropped_from_whole_fails(self):
+        result = self.spec_run(edit_pin(lambda pin: pin["vendor"]["whole"].remove("plugin/aiqt-guardrails-hooks")))
+        self.assertCheckFails(result, 3)
+        self.assertIn("check 3: plugin/aiqt-guardrails-hooks: a required adopted-whole root", result.stderr)
+
+    def test_required_active_tree_deleted_with_its_pin_entries_fails(self):
+        def fn(spec):
+            for path in [p for p in spec["files"] if p.startswith(".claude/rules/security/")]:
+                spec["files"].pop(path)
+            spec["pin"]["vendored"]["paths"].remove(".claude/rules/security")
+            ar = spec["pin"]["active-rules"]
+            ar["trees"].remove(".claude/rules/security")
+            ar["active"], ar["excluded"], ar["excluded-ids"] = 2, 2, ["delta", "gamma"]
+        result = self.spec_run(fn)
+        self.assertCheckFails(result, 4)
+        self.assertIn("check 4: .claude/rules/security: a required active rule tree", result.stderr)
+
+    def test_intact_required_set_passes(self):
+        self.assertPasses(self.spec_run())
+
+
+class PinFinal(GateCase):
+    def _with_pin_text(self, transform):
+        def disk(root):
+            p = root / ".aiqt/pin.toml"
+            p.write_text(transform(p.read_text(encoding="utf-8")), encoding="utf-8")
+        return on_disk(disk)
+
+    def test_draft_marker_in_a_comment_fails(self):
+        result = self.spec_run(self._with_pin_text(lambda t: "# DRAFT, not yet final.\n" + t))
+        self.assertCheckFails(result, 1)
+        self.assertIn("check 1: .aiqt/pin.toml:1: the pin carries the draft marker DRAFT", result.stderr)
+
+    def test_placeholder_value_fails(self):
+        result = self.spec_run(edit_pin(lambda pin: pin["vendor"].__setitem__("verified", "PLACEHOLDER: later")))
+        self.assertCheckFails(result, 1)
+        self.assertIn("the pin carries the draft marker PLACEHOLDER", result.stderr)
+
+    def test_lowercase_words_are_not_markers(self):
+        self.assertPasses(self.spec_run(self._with_pin_text(
+            lambda t: "# the draft was finalized; no placeholders remain\n" + t)))
 
 
 class FailClosed(GateCase):
@@ -796,6 +924,7 @@ class Isolation(GateCase):
 
 
 class RealTree(GateCase):
+    # Fails while the pin still carries its DRAFT header and PLACEHOLDER values (check 1), as intended.
     def test_real_tree_passes(self):
         result = self.run_gate(REPO_ROOT)
         self.assertPasses(result)

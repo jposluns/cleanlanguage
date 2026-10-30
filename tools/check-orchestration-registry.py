@@ -898,13 +898,18 @@ def validate(path):
         #   (a) FUTURE symlink swap: a symlink created or retargeted AFTER this gate runs. The resolved-path
         #       check above resolves symlinks at COMMIT time only; a later swap is not observable here, and a
         #       record/lease path later aliased onto a machine-state file is clobbered by the hook write.
-        #   (d) HARD LINK (or a symlink planted at a derived state path, e.g. the barrier name) between a
+        #   (d) HARD LINK (or a symlink planted at a derived state path, e.g. guard-events.jsonl) between a
         #       record/lease file and a machine-state file the hooks write. os.path.realpath resolves symlinks
         #       but NOT hard links, the JSON cannot express a link, and the colliding derived file (e.g.
-        #       <state_dir>/resume-barrier.json) does not exist at gate time, so no commit-time comparison can
-        #       see it. orch_resume_audit's barrier write is a direct truncating open(barrier, "w") with NO
-        #       S_ISREG guard (aiqt_hooks.py:orch_resume_audit, unlike the shared _wrtscp_read_json_artifact reader), so an
-        #       aliased record file is SILENTLY CLOBBERED, not denied. Precondition: write+search access to
+        #       <state_dir>/guard-events.jsonl) does not exist at gate time, so no commit-time comparison can
+        #       see it. The state files the hooks open in place follow such a link: the JSONL appends
+        #       (aiqt_hooks.py:_orch_append_jsonl `with open(path, "a", encoding="utf-8") as fh:`, guard-events.jsonl
+        #       and forced-exit.jsonl among them) and the escape-spoof record (aiqt_hooks.py:_orch_write_json
+        #       `with open(path, "w", encoding="utf-8") as fh:`), so an aliased record file is SILENTLY APPENDED TO
+        #       OR CLOBBERED, not denied. The resume barrier is not among them: orch_resume_audit writes it
+        #       through aiqt_hooks.py:_orch_barrier_write `os.replace(tmp, path)`, which replaces the directory
+        #       entry at the barrier path, so a link there is replaced and the linked record keeps its content.
+        #       Precondition: write+search access to
         #       state_dir (and, under fs.protected_hardlinks, to the record file) -- already store-defeating.
         # The Windows-spelling parity residual an earlier revision disclosed here is closed: every declared
         # path, every enumerator argv operand, and the escape path reject a backslash or a drive-letter
