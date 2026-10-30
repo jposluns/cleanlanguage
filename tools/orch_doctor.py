@@ -14,9 +14,11 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          gives there WITHOUT building the context or running the enumerator, since
                          the hook does neither, and an enumerator the preview ran could change what
                          a later Stop decides. In scope it
-                         calls _orch_build_ctx(reg, root, kind, {}, record_checkpoint=False)
-                         (aiqt_hooks.py:8434; the preview posture of the checkpoint union,
-                         aiqt_hooks.py:8349-8351) and decide_yield (aiqt_hooks.py:8180), then prints
+                         calls _orch_build_ctx(reg, root, kind, data, record_checkpoint=True)
+                         (aiqt_hooks.py:8434), the posture of the hook itself, with the two write
+                         primitives that call reaches replaced, for that call only, by stand-ins
+                         that write nothing (the checkpoint writes, below), and decide_yield
+                         (aiqt_hooks.py:8180), then prints
                          the verdict, the reason, the disposition table, and the verdict with the
                          escape sentinel forced off, so the operator sees what the Stop would do
                          without the sentinel. A Stop DENY holds only when the hook can save the
@@ -26,7 +28,29 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          save could succeed, and when it could not it reports the fail-open
                          ALLOW_WITH_FINDINGS the hook would give, with the reason. A scheduling DENY
                          stands whether or not the counter is saved (aiqt_hooks.py:8694-8698), so
-                         the check applies to stop only. The doctor itself WRITES NOTHING: no
+                         the check applies to stop only.
+                         The checkpoint writes (fix round 16, M1): the checkpoint union
+                         (_orch_checkpoint_union, aiqt_hooks.py:8335-8431, via :8457) makes the
+                         only other hook writes inside _orch_build_ctx and its callees: a guard
+                         event at :8410, :8416 and :8425, whose result is ignored; the checkpoint
+                         rewrite at :8414, whose failure changes no verdict by itself but skips the
+                         marker write; and, only when that rewrite succeeds and no init marker
+                         exists (:8419), the init-marker write at :8424, whose failure injects a
+                         cannot-evaluate row (:8428), so that a Stop the hook would otherwise allow
+                         is denied. Both writes go through _orch_write_json_atomic
+                         (aiqt_hooks.py:7712-7725: os.makedirs of the state directory at :7718, an
+                         open for writing of <path>.tmp at :7720, os.replace at :7722). Its
+                         stand-in decides each outcome with lstat, stat and os.access only
+                         (_atomic_write_outcome), without writing, and returns it to the hook code,
+                         so the hook itself decides whether the marker write is reached and what it
+                         injects; the stand-in for _orch_guard_event writes nothing and reports
+                         success, since no caller on this path reads its result. The predicted
+                         outcome of each write is printed. A write that only writing could decide,
+                         a symbolic link, a FIFO or another special file at the temporary path
+                         (which the open would follow, block on, or write through), is reported as
+                         not previewed, exit 2, whenever its outcome could change the verdict, and
+                         a write to any other path, which this preview does not model, is reported
+                         the same way. The doctor itself WRITES NOTHING: no
                          checkpoint, no init marker, no guard event, no turn-state, no spoof record,
                          and no bytecode cache. It does run the enumerator the registry declares,
                          exactly as the hook runs it (_orch_enumerate, aiqt_hooks.py:7962-7989: the
@@ -167,8 +191,9 @@ Exit status:
   preflight      0 when the effective verdict is ALLOW (including out of scope or out of roster),
                  1 when it is DENY or ALLOW_WITH_FINDINGS, 2 on a usage error, an unresolvable root,
                  an absent or unreadable registry, a registry file or a path the preview would
-                 open (see above) that exists and is not a regular file, or an idle verdict that
-                 hangs on the quiet-claim check, which is not previewed.
+                 open (see above) that exists and is not a regular file, an idle verdict that
+                 hangs on the quiet-claim check, which is not previewed, or a checkpoint write
+                 whose outcome could change the verdict and cannot be decided without writing.
   --resume-audit 0 when the barrier this audit rewrote reads active false, 1 when it reads active
                  true, 2 on a usage error, an unresolvable root, an absent registry, a registry
                  file or a path the audit would open (see above) that exists and is not a regular
@@ -180,7 +205,10 @@ ledger, the pending-decisions record, the sentinel, or the clock can change what
 decides. The counter-save check is an approximation: os.access tests the permission bits, ACLs and
 read-only mounts for the real uid, and it cannot foresee a full disk, a quota, a race with another
 writer, or an effective uid that differs from the real one, so its answer can be wrong in either
-direction. The enumerator is a program the registry declares; whatever it writes is outside the
+direction. The checkpoint-write prediction (_atomic_write_outcome) is the same kind of
+approximation: it cannot foresee a full disk, a quota, a sticky directory owned by another user, a
+race with another writer, or an effective uid that differs from the real one. The enumerator is a
+program the registry declares; whatever it writes is outside the
 control of this tool. The quiet-duration check is not previewed (see above). The rewrite check on
 the barrier detects a write that did not happen; it cannot tell the hook from another writer that
 rewrites the file inside the same run. The special-file check is a point-in-time os.stat: a path
@@ -257,6 +285,132 @@ def _resolve_root(hook, root_arg):
     if not os.path.isdir(start):
         return None
     return hook._recovery_toplevel(os.path.abspath(start))
+
+
+class _Unpreviewed(Exception):
+    """A hook write whose outcome could change the verdict and that cannot be decided without
+    writing; the preview reports it as not previewed, exit 2."""
+
+
+def _atomic_write_outcome(path):
+    """(outcome, reason) for _orch_write_json_atomic(path, obj) (aiqt_hooks.py:7712-7725), decided
+    with lstat, stat and os.access only, so nothing is written. outcome is True when the write would
+    succeed, False when it would fail (reason says why), and None when only the write itself could
+    decide (reason says why). It follows the three steps of the hook: os.makedirs of the parent
+    (7718), which fails when the parent, or the nearest existing ancestor of an absent parent, is not
+    a directory or cannot be written; the open for writing of path + ".tmp" (7720), which fails on a
+    directory there, on a regular file that is not writable, or when it must create the file in a
+    directory that cannot be written, and which could follow, block on or write through a symbolic
+    link, a FIFO or another special file there (undecided); and os.replace (7722), which fails when
+    the directory cannot be written or path is a directory. os.access is an approximation (see
+    Residuals)."""
+    parent = os.path.dirname(path)
+    tmp = path + ".tmp"
+    if os.path.lexists(parent) and not os.path.isdir(parent):
+        return False, ("{} exists but is not a directory, so os.makedirs raises (aiqt_hooks.py:7718)"
+                       .format(parent))
+    if not os.path.isdir(parent):
+        # os.makedirs would create it under the nearest existing ancestor, and then the temporary
+        # file and the rename land in a new empty directory this process created.
+        ancestor = os.path.dirname(parent)
+        while ancestor and not os.path.lexists(ancestor) and ancestor != os.path.dirname(ancestor):
+            ancestor = os.path.dirname(ancestor)
+        if not os.path.isdir(ancestor) or not os.access(ancestor, os.W_OK | os.X_OK):
+            return False, ("{} is absent and cannot be created under {} (aiqt_hooks.py:7718)"
+                           .format(parent, ancestor))
+        return True, None
+    if not os.access(parent, os.X_OK):
+        return False, "{} is not searchable (aiqt_hooks.py:7720)".format(parent)
+    writable = os.access(parent, os.W_OK)
+    try:
+        st = os.lstat(tmp)
+    except FileNotFoundError:
+        st = None
+    except OSError as exc:
+        return None, "{} cannot be examined ({})".format(tmp, exc)
+    if st is None:
+        if not writable:
+            return False, ("{} cannot be created in {}, which is not writable (aiqt_hooks.py:7720)"
+                           .format(tmp, parent))
+    elif stat.S_ISLNK(st.st_mode):
+        return None, ("{} is a symbolic link, which the open for writing at aiqt_hooks.py:7720 "
+                      "would follow".format(tmp))
+    elif stat.S_ISDIR(st.st_mode):
+        return False, ("{} is a directory, so the open for writing raises (aiqt_hooks.py:7720)"
+                       .format(tmp))
+    elif not stat.S_ISREG(st.st_mode):
+        return None, ("{} is a {}, which the open for writing at aiqt_hooks.py:7720 could block on "
+                      "or write through".format(tmp, _kind_of(st.st_mode)))
+    elif not os.access(tmp, os.W_OK):
+        return False, "{} is not writable (aiqt_hooks.py:7720)".format(tmp)
+    if not writable:
+        return False, ("{} is not writable, so the rename at aiqt_hooks.py:7722 raises"
+                       .format(parent))
+    try:
+        target = os.lstat(path)
+    except FileNotFoundError:
+        target = None
+    except OSError as exc:
+        return None, "{} cannot be examined ({})".format(path, exc)
+    if target is not None and stat.S_ISDIR(target.st_mode):
+        return False, ("{} is a directory, so the rename over it raises (aiqt_hooks.py:7722)"
+                       .format(path))
+    return True, None
+
+
+def _build_ctx_previewed(hook, reg, root, kind, data, wake_text):
+    """(ctx, notes): the context exactly as the hook builds it, _orch_build_ctx with
+    record_checkpoint=True (aiqt_hooks.py:8434), with hook._orch_write_json_atomic and
+    hook._orch_guard_event replaced for this call only by stand-ins that write nothing. The
+    stand-in write returns the outcome _atomic_write_outcome predicts for the checkpoint rewrite
+    (aiqt_hooks.py:8414) and the init-marker write (8424), so the hook code itself decides whether
+    the marker write is reached (8419) and whether it injects the cannot-evaluate row (8428); notes
+    lists the predicted writes. Raises _Unpreviewed for a write the preview does not model, or for
+    an undecided write whose outcome could change the verdict: an undecided checkpoint rewrite is
+    accepted only when the marker exists or its write would succeed, since either outcome of the
+    rewrite then injects nothing, and an undecided marker write is never accepted."""
+    sd = hook._orch_state_dir_for_root(root)
+    checkpoint = os.path.join(sd, "backlog-checkpoint.json")
+    marker = os.path.join(sd, "checkpoint-init.marker")
+    notes = []
+
+    def write(path, _obj):
+        if path not in (checkpoint, marker):
+            raise _Unpreviewed("the hook would write {}, a write this preview does not model"
+                               .format(path))
+        outcome, reason = _atomic_write_outcome(path)
+        if outcome is None and path == checkpoint and (
+                os.path.lexists(marker) or _atomic_write_outcome(marker)[0] is True):
+            # Either outcome leaves the verdict unchanged: with a marker present the write at 8424
+            # is skipped, and with a marker write that would succeed nothing is injected.
+            notes.append("checkpoint rewrite (aiqt_hooks.py:8414): undecided ({}); either outcome "
+                         "leaves the verdict unchanged".format(reason))
+            return True
+        if outcome is None:
+            what = "checkpoint rewrite" if path == checkpoint else "init-marker write"
+            raise _Unpreviewed("the {} could change the verdict and cannot be decided without "
+                               "writing: {}".format(what, reason))
+        if path == checkpoint:
+            notes.append("checkpoint rewrite (aiqt_hooks.py:8414): {}".format(
+                "would succeed" if outcome else "would FAIL ({}); the hook then skips the "
+                "init-marker write (aiqt_hooks.py:8419)".format(reason)))
+        else:
+            notes.append("init-marker write (aiqt_hooks.py:8424): {}".format(
+                "would succeed" if outcome else "would FAIL ({}); the hook then injects a "
+                "cannot-evaluate row (aiqt_hooks.py:8428)".format(reason)))
+        return outcome
+
+    def event(*_args, **_kwargs):
+        return True
+
+    saved = (hook._orch_write_json_atomic, hook._orch_guard_event)
+    hook._orch_write_json_atomic, hook._orch_guard_event = write, event
+    try:
+        ctx, _ts, _basis = hook._orch_build_ctx(reg, root, kind, data, wake_text=wake_text,
+                                                record_checkpoint=True)
+    finally:
+        hook._orch_write_json_atomic, hook._orch_guard_event = saved
+    return ctx, notes
 
 
 def _counter_save_blocker(state_dir):
@@ -424,8 +578,8 @@ def _enumerator_runs(reg):
 
 
 def _ctx_read_paths(hook, reg, root):
-    """The paths _orch_build_ctx(..., record_checkpoint=False) (aiqt_hooks.py:8434-8489) opens with a
-    plain blocking open, traced through every reader it calls, each only when the call reaches it:
+    """The paths _orch_build_ctx (aiqt_hooks.py:8434-8489) opens with a plain blocking open for
+    reading, traced through every reader it calls, each only when the call reaches it:
       turn-state.json              _orch_turn_state, lexists then open at 7743-7745 (via 8441), always
       enumerator argv[2] on        opened by the enumerator, run with cwd = the root (7976, via 8447),
                                    only when the enumerator runs (_enumerator_runs)
@@ -445,9 +599,10 @@ def _ctx_read_paths(hook, reg, root):
     models the part a registry read decides (_enumerator_runs) and checks the rest whenever the
     enumerator runs, since only running it decides whether it succeeds. Not modelled, so checked
     conservatively: the snapshot content (8076-8084), whether git tracks the register (9516-9540),
-    and a guard-events pointer in a register row (9564). Not opened with a blocking open, so not
-    checked: the checkpoint-init marker (lexists only at 8376; record=False skips the writes at
-    8413-8430) and the escape sentinel (opened non-blocking at 7831-7832, via 8480)."""
+    and a guard-events pointer in a register row (9564). Not opened for reading with a blocking open,
+    so not checked here: the checkpoint-init marker (lexists only at 8376 and 8419) and the escape
+    sentinel (opened non-blocking at 7831-7832, via 8480). The writes at 8413-8430 are modelled by
+    _build_ctx_previewed and _atomic_write_outcome instead."""
     out = [_site("ctx.turn_state", "hook state file turn-state.json",
                  _state_path(hook, root, "turn-state.json"))]
     if not _enumerator_runs(reg):
@@ -707,14 +862,29 @@ def _preflight(hook, root, kind_name, data):
     # The context as each handler builds it: a Stop passes no wake text (aiqt_hooks.py:8586), a
     # scheduling call the joined tool_input text (:8671); both pass the event data, whose
     # stop_hook_active sets the loop signal (:8482).
-    ctx, _ts, _basis = hook._orch_build_ctx(reg, root, kind, data, wake_text=wake_text,
-                                            record_checkpoint=False)
+    try:
+        ctx, notes = _build_ctx_previewed(hook, reg, root, kind, data, wake_text)
+    except _Unpreviewed as exc:
+        print("writes: the doctor itself wrote nothing; the registry enumerator ran as the hook runs "
+              "it (aiqt_hooks.py:7962-7989), and anything that program writes is its own")
+        print("hook write: NOT PREVIEWED; {}".format(exc))
+        print("effective verdict: UNPREVIEWED (the verdict depends on a hook write that cannot be "
+              "decided without writing)")
+        return 2
     if ctx["enum_status"] == "ok":
         print("enumeration: ok")
     else:
         print("enumeration: {}: {}".format(ctx["enum_status"], ctx["enum_detail"]))
     print("writes: the doctor itself wrote nothing; the registry enumerator ran as the hook runs it "
           "(aiqt_hooks.py:7962-7989), and anything that program writes is its own")
+    if ctx["enum_status"] != "ok":
+        print("checkpoint writes: none; the hook reaches the checkpoint union only after a "
+              "successful enumeration (aiqt_hooks.py:8448)")
+    for note in notes:
+        print("predicted hook write, not made: {}".format(note))
+    if ctx["enum_status"] == "ok" and not any(n.startswith("init-marker") for n in notes):
+        print("predicted hook write, not made: init-marker write (aiqt_hooks.py:8424): not "
+              "reached (the marker exists, or the checkpoint rewrite would fail)")
     print("loop signal: {}".format("set (stop_hook_active is true, aiqt_hooks.py:8482)"
                                    if ctx["loop_signal"] else "not set"))
     if ctx["escape"]:

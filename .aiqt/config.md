@@ -106,8 +106,9 @@ Orchestration registry workflow) rejects a structurally invalid `.aiqt/orchestra
 before it lands. Stage 2 of item 28.2, which arms the rest of the suite, is deferred and
 relies on that gate. It is planned as two pull requests. The first extends the gate to
 validate the stage-2 keys (`enumerator`, `yield_tools`, `mode`, `staleness`, `escape`,
-`attestations`, and `mistakes_register`) and adds the AEI backlog enumerator and its tests,
-with no registry change. The second declares those keys, `attestations` and
+`attestations`, and `mistakes_register`) and adds the AEI backlog enumerator, the backlog
+migration tool, the orchestration doctor, and their tests, with no registry change. The second
+declares those keys, `attestations` and
 `mistakes_register` only if the maintainer adopts them, while the escape sentinel stays in
 place, so the enumerator first runs in shadow; the sentinel is removed only after that shadow
 period and an acknowledged notice to lab_infra. `truth` has no reader in the vendored hook and

@@ -75,7 +75,12 @@ not an OSError (os.lstat raising ValueError), the refusal still names the output
 type and says it must be deleted before any retry; when os.fstat fails after the exclusive create,
 by an OSError or by a RuntimeError, and another file has replaced the output path, that file is
 left untouched and the refusal names the output and says it could not be confirmed as the file
-this run created and must be checked and deleted before any retry. The remaining residual is a
+this run created and must be checked and deleted before any retry. When a KeyboardInterrupt
+arrives during that removal, after a write that failed by an OSError or by a RuntimeError, the exit
+130 refusal still names the output and says the cleanup was interrupted, so the partial output may
+remain and must be checked and deleted before any retry, and the file is left; an interrupt that
+ends only the first removal attempt in the OSError branch is followed by a second attempt, whose
+result the refusal reports (fix round 16, M2). The remaining residual is a
 process ended without an exception (a signal other than SIGINT, exec or os._exit), a
 KeyboardInterrupt raised before main starts, and a second KeyboardInterrupt while the guard writes
 its refusal, none of which names a position.
@@ -1565,6 +1570,25 @@ def boom_then_odd_lstat(*_args, **_kwargs):
     boom()
 
 
+def interrupt_lstat(*_args, **_kwargs):
+    raise KeyboardInterrupt
+
+
+def interrupt_lstat_once(*_args, **_kwargs):
+    mod.os.lstat = real_lstat
+    raise KeyboardInterrupt
+
+
+def cleanup_interrupt(first, lstat):
+    # The write fails at os.fsync (first, an OSError or a RuntimeError), and os.lstat, the first
+    # call of the removal of the partial output, then raises a KeyboardInterrupt (lstat is
+    # replaced only after the create, so the existence check before it is real).
+    def fake(*_args, **_kwargs):
+        mod.os.lstat = lstat
+        raise first
+    return fake
+
+
 targets = {"path": (mod.os.path, "abspath", raiser), "read": (mod, "read_input", raiser),
            "convert": (mod, "convert", raiser), "write": (mod, "write_output", raiser),
            "digest": (mod, "row_digest", raiser), "fsync": (mod.os, "fsync", raiser)}
@@ -1579,6 +1603,13 @@ if stage == "fsync-lstat":
     # A RuntimeError at fsync whose removal of the partial output then meets a ValueError from
     # os.lstat, an exception that is not an OSError; lstat is replaced only after the create.
     mod.os.fsync = boom_then_odd_lstat
+if stage == "fsync-oserror-kbi-lstat":
+    mod.os.fsync = cleanup_interrupt(OSError(28, "No space left on device"), interrupt_lstat)
+if stage == "fsync-oserror-kbi-lstat-once":
+    mod.os.fsync = cleanup_interrupt(OSError(28, "No space left on device"), interrupt_lstat_once)
+if stage == "fsync-kbi-lstat":
+    mod.os.fsync = cleanup_interrupt(RuntimeError("injected at the fsync-kbi-lstat stage"),
+                                     interrupt_lstat)
 real_fstat = mod.os.fstat
 
 
@@ -1831,6 +1862,41 @@ class RuntimeGuard(MigrateHarness):
                 self.assertEqual(self.dst.read_text(encoding="utf-8"),
                                  "a file this run did not create", "the file swapped in changed")
                 self.dst.unlink()
+
+    def test_an_interrupt_during_the_cleanup_keeps_the_account_of_the_output(self):
+        # Fix round 16 (M2): the write fails, by an OSError or by a RuntimeError, and a
+        # KeyboardInterrupt then arrives during the removal of the partial output. The output path
+        # and the pending status are recorded before the removal is attempted, so the exit 130
+        # refusal names the output and says the partial output may remain and must be checked and
+        # deleted before any retry; an interrupt that ends only the first attempt in the OSError
+        # branch leaves the second attempt in the finally block to remove the output and say so.
+        text = old_fixture()
+        self.write_src(text)
+        dst = os.path.abspath(str(self.dst))
+        pending = ("; output {}: the cleanup was interrupted, so the partial output may remain; "
+                   "check it and delete it before any retry".format(dst))
+        removed = "; output {}: the partial output was removed".format(dst)
+        cases = (("fsync-oserror-kbi-lstat", pending, True),
+                 ("fsync-kbi-lstat", pending, True),
+                 ("fsync-oserror-kbi-lstat-once", removed, False))
+        for stage, needle, left in cases:
+            for runner in ("in process", "direct"):
+                with self.subTest(stage=stage, runner=runner):
+                    if os.path.lexists(self.dst):
+                        self.dst.unlink()  # an earlier failed subtest may have left its output
+                    if runner == "direct":
+                        r = self.run_direct(MIGRATE, stage, self.src, self.dst)
+                        code, stdout, stderr = r.returncode, r.stdout, r.stderr
+                    else:
+                        result = self.run_stage(MIGRATE, stage, self.src, self.dst)
+                        self.assertFalse(result["interrupted"], "a KeyboardInterrupt escaped")
+                        code, stdout, stderr = result["code"], result["stdout"], result["stderr"]
+                    self.assertEqual(stdout, "")
+                    self.assert_interrupted(code, stderr, end_of_input(text), needle)
+                    self.assertEqual(os.path.lexists(self.dst), left, stderr)
+                    if left:
+                        self.assertNotIn("was removed", stderr)
+                        self.dst.unlink()
 
     def test_a_keyboard_interrupt_at_each_stage_exits_130_positioned(self):
         # Round 15: a KeyboardInterrupt at each stage of either mode is refused by the guard in

@@ -8,8 +8,9 @@ Each old data row becomes a new row with state "open", granted "yes", blocker "-
 granted "yes" is the conservative default: "no" would route the row to the proposed bucket, which
 never blocks a Stop (aiqt_hooks.py:8118-8120), so a row is demoted only by a recorded decision. The
 id, opened, item and closure cell segments are copied byte for byte, including their surrounding
-blanks and any "\\|" escape, and so is any text after the closing bar. The header and the separator
-row gain the four new columns. Every line that is not a table line is copied byte for byte, line
+blanks and any "\\|" escape, and so are the blanks and carriage return after the closing bar,
+which is the only text allowed there. The header and the separator row gain the four new
+columns. Every line that is not a table line is copied byte for byte, line
 endings included. Blocker annotation is a separate, reviewed step after this mechanical pass.
 
 The old table is parsed with a parser of its own, independent of tools/orch-enumerate-backlog.py, so
@@ -67,7 +68,11 @@ propagates to the runtime guard below, which refuses with exit 1, or with exit 1
 KeyboardInterrupt. Each refusal names the output and says, in the same words, what became of the
 partial output: removed, left in place because the path no longer names the file this run created,
 left in place because it could not be confirmed as the file this run created and to be checked and
-deleted before any retry, or NOT removed and to be deleted before any retry. Applying the output to
+deleted before any retry, or NOT removed and to be deleted before any retry. The output and a
+pending status (the cleanup was interrupted, so the partial output may remain, to be checked and
+deleted before any retry) are recorded before the removal is attempted, and the final status
+replaces them only once the removal returns, so a KeyboardInterrupt during the cleanup is refused
+with that account. Applying the output to
 the record store is a separate step outside this script.
 
 Usage:
@@ -365,8 +370,13 @@ def read_input(path):
 def write_output(in_path, out_path, text, reached=None):
     """Create out_path exclusively; refuse an existing path or one that resolves to the input. Every
     refusal is positioned at the end of input, since the whole input was read before the output.
-    When an exception other than an OSError interrupts the write, reached["partial"] (if reached is
-    given) records the output path and what became of the partial output, for the runtime guard."""
+    Once the write fails, reached["partial"] (if reached is given) records the output path and,
+    before the removal of the partial output is attempted, the pending status CLEANUP_PENDING, which
+    _remove_recorded replaces with the final status only after the removal returns, so a
+    KeyboardInterrupt at any point of the cleanup leaves an accurate account for the runtime guard.
+    The cleanup counts as done only once a removal attempt has returned; an interrupt that ends the
+    attempt in the OSError branch reaches the finally block, which attempts the removal again under
+    the same record."""
     if os.path.lexists(out_path):
         raise _output_error(text, "output {} already exists (it is never overwritten)"
                             .format(out_path))
@@ -377,7 +387,7 @@ def write_output(in_path, out_path, text, reached=None):
     except OSError as exc:
         raise _output_error(text, "cannot create output {}: {}".format(out_path,
                                                                        exc.strerror or exc))
-    created, finished, removed = None, False, False
+    created, finished, cleaned = None, False, False
     try:
         created = os.fstat(fd)
         fh = os.fdopen(fd, "wb")
@@ -394,24 +404,45 @@ def write_output(in_path, out_path, text, reached=None):
             except OSError:
                 pass
             fd = None
-        removed = True
+        status = _remove_recorded(out_path, created, reached)
+        cleaned = True
         raise _output_error(text, "cannot write output {}: {}; {}".format(
-            out_path, exc.strerror or exc, _remove_partial(out_path, created)))
+            out_path, exc.strerror or exc, status))
     finally:
         # Any other exception, an Exception that is not an OSError or a BaseException such as
         # KeyboardInterrupt, still removes the partial output under the same-inode condition; the
         # exception then propagates unchanged to the runtime guard in main, which reports the
         # removal result recorded here in its one positioned line, exit 1 through _unexpected, or
-        # exit 130 through _interrupted for a KeyboardInterrupt.
-        if not finished and not removed:
+        # exit 130 through _interrupted for a KeyboardInterrupt. cleaned is set only after a
+        # removal attempt has returned, so an interrupt during the cleanup in the OSError branch
+        # also arrives here, and the pending status recorded before each attempt stands until an
+        # attempt returns.
+        if not finished and not cleaned:
             if fd is not None:
                 try:
                     os.close(fd)
                 except OSError:
                     pass
-            status = _remove_partial(out_path, created)
-            if reached is not None:
-                reached["partial"] = (out_path, status)
+            _remove_recorded(out_path, created, reached)
+
+
+# The account of a partial output while its removal is under way: recorded before the removal is
+# attempted, so it stands when a KeyboardInterrupt ends the attempt before it returns.
+CLEANUP_PENDING = ("the cleanup was interrupted, so the partial output may remain; check it and "
+                   "delete it before any retry")
+
+
+def _remove_recorded(out_path, created, reached):
+    """Remove the partial output through _remove_partial, with the account kept in reached: the
+    output path and CLEANUP_PENDING are recorded BEFORE the removal is attempted, and replaced by
+    the status it returns only after it returns. A KeyboardInterrupt or other BaseException raised
+    during the attempt passes through with the pending account in place. Returns the status."""
+    if reached is not None:
+        reached["partial"] = (out_path, CLEANUP_PENDING)
+    status = _remove_partial(out_path, created)
+    if reached is not None:
+        reached["partial"] = (out_path, status)
+    return status
 
 
 def _remove_partial(out_path, created):

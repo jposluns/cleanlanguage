@@ -80,6 +80,20 @@ of fields and the lines that read them to equal the reviewed EVENT_FIELDS table,
 modelled by a named doctor input or unpreviewed with a reason; any other use of the event data (a
 computed key, an alias, a pass to an unknown callee) fails it, and it proves that it refuses one
 mutation of each kind (round 15).
+The DoctorCheckpointWrites cases prove that the doctor previews the hook writes inside the context
+build whose failure changes the verdict, without making them (fix round 16, M1): with an empty
+backlog, a live lease and no init marker, a directory or a read-only file at
+checkpoint-init.marker.tmp makes the real hook deny the Stop and the scheduling call (the marker
+write fails, aiqt_hooks.py:8424-8428), and the doctor reports the same DENY; a failed checkpoint
+rewrite skips the marker write and a present marker is not rewritten, so the hook allows and so
+does the doctor; and a symbolic link or a FIFO at a temporary path, whose outcome only the write
+could decide, is reported as not previewed, exit 2, when it could change the verdict, and previewed
+when it could not. The DoctorWriteSiteProbe case is the class probe for that finding: it scans the
+hook source from _orch_build_ctx through every module function it calls for every write (a write
+primitive, an open for writing, an os or shutil call that changes the file system, a write method),
+requires the set of sites to equal the reviewed WRITE_SITES table, each modelled by the doctor or of
+no verdict effect with a reason, requires the doctor to replace exactly the primitives the table
+names, and proves that it refuses one added write of each kind.
 """
 
 from __future__ import annotations
@@ -2637,6 +2651,290 @@ class DoctorEventFields(Stage2Harness):
                 r = self.run_doctor(*args)
                 self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
                 self.assertIn("only to preflight", r.stderr)
+
+
+class DoctorCheckpointWrites(Stage2Harness):
+    """Fix round 16 (M1): the checkpoint union writes the checkpoint at aiqt_hooks.py:8414 and,
+    when that succeeds and no init marker exists (8419), the marker at 8424, whose failure injects
+    a cannot-evaluate row (8428). The doctor predicts each outcome without writing, so its verdict
+    equals that of the real hook on the same state. Each case arranges a fresh tree per kind, runs
+    the doctor first (it writes nothing) and then the hook."""
+
+    TIMEOUT = 30
+
+    def setUp(self):
+        super().setUp()
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+
+    def _base(self):
+        # A live lease, an empty backlog and no init marker: the hook allows unless a write fails.
+        self.write_registry(self.stage2())
+        self.arm_lease()
+        self.set_items([])
+        self.state_dir().mkdir(parents=True, exist_ok=True)
+
+    def _doctor(self, kind):
+        args = ["preflight", kind]
+        if kind == "idle":
+            args += ["--wake-text", "recheck the work queue"]
+        try:
+            return subprocess.run([sys.executable, "-I", str(DOCTOR), *args, "--root", str(self.repo)],
+                                  capture_output=True, text=True, env=self._env(),
+                                  timeout=self.TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.fail("the doctor did not exit within {} s".format(self.TIMEOUT))
+
+    def _hook(self, kind):
+        r = self.stop() if kind == "stop" else self.schedule()
+        if kind == "stop" and r.returncode == 2:
+            return "DENY", r
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = self.stdout_json(r)
+        if out is None:
+            return "ALLOW", r
+        if out.get("hookSpecificOutput", {}).get("permissionDecision") == "deny":
+            return "DENY", r
+        return "ALLOW_WITH_FINDINGS", r
+
+    def _fresh(self, arrange):
+        self.tearDown()
+        self.setUp()
+        self._base()
+        arrange()
+
+    def _assert_agrees(self, arrange, expected, *needles):
+        for kind in ("stop", "idle"):
+            with self.subTest(kind=kind):
+                self._fresh(arrange)
+                before = tree_state(self._tmp)
+                r = self._doctor(kind)
+                self.assertEqual(tree_state(self._tmp), before, "preflight changed a file")
+                lines = [ln for ln in r.stdout.splitlines() if ln.startswith("effective verdict: ")]
+                self.assertEqual(len(lines), 1, r.stdout + r.stderr)
+                verdict = lines[0][len("effective verdict: "):].split()[0]
+                self.assertEqual(r.returncode, 0 if verdict == "ALLOW" else 1, r.stdout + r.stderr)
+                hook_verdict, h = self._hook(kind)
+                self.assertEqual(hook_verdict, expected,
+                                 "precondition: the hook verdict ({})".format(h.stdout + h.stderr))
+                self.assertEqual(verdict, expected, r.stdout)
+                for needle in needles:
+                    self.assertIn(needle, r.stdout)
+
+    def _marker_events(self):
+        rows = self.read_jsonl("guard-events.jsonl") or []
+        return [row for row in rows if row.get("kind") == "checkpoint-marker-unwritable"]
+
+    def test_a_directory_at_the_marker_temporary_path_denies_as_the_hook_does(self):
+        # The observed case: the hook rewrites the checkpoint, finds no marker, and cannot open
+        # checkpoint-init.marker.tmp for writing, so it injects a cannot-evaluate row and denies.
+        self._assert_agrees(lambda: (self.state_dir() / "checkpoint-init.marker.tmp").mkdir(),
+                            "DENY", "init-marker write (aiqt_hooks.py:8424): would FAIL (",
+                            "checkpoint-init.marker.tmp is a directory, so the open for writing "
+                            "raises", "checkpoint-init marker unwritable")
+        self.assertEqual(len(self._marker_events()), 1, "the hook recorded the failed marker write")
+        self.assertFalse((self.state_dir() / "checkpoint-init.marker").exists())
+
+    def test_a_read_only_marker_temporary_file_denies_as_the_hook_does(self):
+        if os.geteuid() == 0:
+            self.skipTest("root writes a mode-0444 file, so the marker write cannot fail here")
+        def arrange():
+            tmp = self.state_dir() / "checkpoint-init.marker.tmp"
+            tmp.write_text("", encoding="utf-8")
+            os.chmod(tmp, 0o444)
+        self._assert_agrees(arrange, "DENY", "init-marker write (aiqt_hooks.py:8424): would FAIL (",
+                            "checkpoint-init.marker.tmp is not writable")
+
+    def test_a_failed_checkpoint_rewrite_skips_the_marker_write_as_the_hook_does(self):
+        # Contrast: the checkpoint rewrite fails first, so the hook never reaches the marker write
+        # (aiqt_hooks.py:8414-8419) and allows, though the marker write would fail too.
+        def arrange():
+            (self.state_dir() / "backlog-checkpoint.json.tmp").mkdir()
+            (self.state_dir() / "checkpoint-init.marker.tmp").mkdir()
+        self._assert_agrees(arrange, "ALLOW",
+                            "checkpoint rewrite (aiqt_hooks.py:8414): would FAIL",
+                            "init-marker write (aiqt_hooks.py:8424): not reached")
+
+    def test_a_present_marker_is_not_rewritten_as_the_hook_does(self):
+        # Contrast: with a checkpoint and a marker present, the hook skips the marker write (8419),
+        # so a directory at its temporary path changes nothing.
+        def arrange():
+            self.seed_state("backlog-checkpoint.json", {"version": 1, "ts": _iso(), "ids": {}})
+            self.seed_state("checkpoint-init.marker", {"version": 1, "ts": _iso()})
+            (self.state_dir() / "checkpoint-init.marker.tmp").mkdir()
+        self._assert_agrees(arrange, "ALLOW", "init-marker write (aiqt_hooks.py:8424): not reached")
+
+    def test_a_symlinked_checkpoint_temporary_path_with_no_verdict_effect_is_previewed(self):
+        # The checkpoint rewrite through a symbolic link is undecided, but with the marker write
+        # predicted to succeed neither outcome injects anything, so the preview stands.
+        def arrange():
+            target = self._tmp / "elsewhere.json"
+            target.write_text("", encoding="utf-8")
+            os.symlink(target, self.state_dir() / "backlog-checkpoint.json.tmp")
+        self._assert_agrees(arrange, "ALLOW", "checkpoint rewrite (aiqt_hooks.py:8414): undecided",
+                            "either outcome leaves the verdict unchanged")
+
+    def test_an_undecidable_write_that_could_change_the_verdict_is_not_previewed(self):
+        # A FIFO at the marker temporary path would block the hook open for writing, and a symbolic
+        # link would be followed; neither can be decided without writing, and the marker write
+        # decides the verdict, so the doctor exits 2 promptly and writes nothing. The same holds for
+        # an undecided checkpoint rewrite when the marker write would fail. The hook is not run on a
+        # FIFO, which would block it.
+        def fifo_marker():
+            os.mkfifo(self.state_dir() / "checkpoint-init.marker.tmp")
+
+        def symlink_marker():
+            target = self._tmp / "elsewhere.json"
+            target.write_text("", encoding="utf-8")
+            os.symlink(target, self.state_dir() / "checkpoint-init.marker.tmp")
+
+        def fifo_checkpoint():
+            os.mkfifo(self.state_dir() / "backlog-checkpoint.json.tmp")
+            (self.state_dir() / "checkpoint-init.marker.tmp").mkdir()
+        cases = (("a FIFO at the marker temporary path", fifo_marker, "init-marker write"),
+                 ("a symbolic link at the marker temporary path", symlink_marker,
+                  "init-marker write"),
+                 ("a FIFO at the checkpoint temporary path", fifo_checkpoint, "checkpoint rewrite"))
+        for name, arrange, what in cases:
+            for kind in ("stop", "idle"):
+                with self.subTest(case=name, kind=kind):
+                    self._fresh(arrange)
+                    before = tree_state(self._tmp)
+                    r = self._doctor(kind)
+                    self.assertEqual(tree_state(self._tmp), before, "preflight changed a file")
+                    self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                    self.assertIn("hook write: NOT PREVIEWED; the {} could change the verdict"
+                                  .format(what), r.stdout)
+                    self.assertIn("effective verdict: UNPREVIEWED", r.stdout)
+                    self.assertNotIn("Traceback", r.stderr)
+
+
+# Fix round 16 (M1): every write the hook makes inside _orch_build_ctx and the module functions it
+# calls, keyed (function, callee, line). "modelled" is a write whose failure changes the verdict and
+# whose outcome the doctor predicts (_atomic_write_outcome through _build_ctx_previewed); "no
+# verdict effect" is a write whose result no caller on the path reads, with the reason.
+WRITE_SITES = {
+    ("_orch_checkpoint_union", "_orch_guard_event", 8410): (
+        "no verdict effect", "the checkpoint-bound event; its result is not read"),
+    ("_orch_checkpoint_union", "_orch_write_json_atomic", 8414): (
+        "modelled", "the checkpoint rewrite; a failure skips the init-marker write (8419)"),
+    ("_orch_checkpoint_union", "_orch_guard_event", 8416): (
+        "no verdict effect", "the checkpoint-unwritable event; its result is not read"),
+    ("_orch_checkpoint_union", "_orch_write_json_atomic", 8424): (
+        "modelled", "the init-marker write; a failure injects a cannot-evaluate row (8428)"),
+    ("_orch_checkpoint_union", "_orch_guard_event", 8425): (
+        "no verdict effect", "the checkpoint-marker-unwritable event; its result is not read"),
+}
+# The hook helpers that write, each a leaf of the scan (its own body is the write).
+WRITE_PRIMITIVES = ("_orch_write_json_atomic", "_orch_write_json", "_orch_append_jsonl",
+                    "_orch_save_turn_state", "_orch_guard_event", "_orch_record_denial",
+                    "_orch_record_escape_spoof", "_orch_record_forced_exit", "_orch_register_wake")
+# os and shutil calls that change the file system, and write methods on any object.
+FS_WRITERS = ("replace", "rename", "renames", "remove", "unlink", "makedirs", "mkdir", "rmdir",
+              "removedirs", "truncate", "symlink", "link", "chmod", "chown", "utime", "mkfifo",
+              "mknod", "rmtree", "copyfile", "copy", "copy2", "copytree", "move")
+WRITE_METHODS = ("write", "writelines", "write_text", "write_bytes", "truncate")
+WRITE_FLAGS = ("O_WRONLY", "O_RDWR", "O_CREAT", "O_TRUNC", "O_APPEND")
+
+
+def ctx_write_sites(source, start="_orch_build_ctx"):
+    """The set of (function, callee, line) for every write reached from start through the module
+    functions it calls: a call of a write primitive (not followed further), an open whose mode is
+    not a literal read mode, an os.open with a write flag, an os or shutil call in FS_WRITERS, and a
+    call of a write method."""
+    tree = ast.parse(source)
+    funcs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    sites, seen, work = set(), set(), [start]
+    while work:
+        name = work.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        for node in ast.walk(funcs[name]):
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            if isinstance(f, ast.Name):
+                if f.id in WRITE_PRIMITIVES:
+                    sites.add((name, f.id, node.lineno))
+                elif f.id == "open":
+                    mode = node.args[1] if len(node.args) > 1 else next(
+                        (k.value for k in node.keywords if k.arg == "mode"), None)
+                    if not (mode is None or (isinstance(mode, ast.Constant)
+                                             and mode.value in ("r", "rb", "rt"))):
+                        sites.add((name, "open", node.lineno))
+                elif f.id in funcs:
+                    work.append(f.id)
+            elif isinstance(f, ast.Attribute):
+                owner = f.value.id if isinstance(f.value, ast.Name) else None
+                if owner in ("os", "shutil") and f.attr in FS_WRITERS:
+                    sites.add((name, owner + "." + f.attr, node.lineno))
+                elif owner == "os" and f.attr == "open":
+                    flags = {n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)}
+                    if flags.intersection(WRITE_FLAGS):
+                        sites.add((name, "os.open", node.lineno))
+                elif f.attr in WRITE_METHODS:
+                    sites.add((name, "." + f.attr, node.lineno))
+    return sites
+
+
+# One added write of each kind the probe must see, as (name, anchor, replacement) over the hook
+# source: a write primitive, a raw file-system call and a write method, each in a reader.
+LEDGER_ANCHOR = "    schema_bad = 0\n"
+PENDING_ANCHOR = "    declared = _orch_path(root, rec.get(\"pending_decisions\"))\n"
+WRITE_SITE_MUTATIONS = (
+    ("a write primitive in the pending-decisions reader", PENDING_ANCHOR,
+     PENDING_ANCHOR + "    _orch_write_json(declared, {})\n"),
+    ("a raw os.replace in the ledger reader", LEDGER_ANCHOR,
+     LEDGER_ANCHOR + "    os.replace(root, root)\n"),
+    ("a write method in the ledger reader", LEDGER_ANCHOR,
+     LEDGER_ANCHOR + "    sys.stderr.write(root)\n"),
+)
+
+
+class DoctorWriteSiteProbe(unittest.TestCase):
+    """Fix round 16 class probe: the writes the hook makes inside the context build equal the
+    reviewed table, and the doctor replaces exactly the primitives the table names."""
+
+    def source(self):
+        if not HOOK.exists():
+            self.fail("installed hook not found: {}".format(HOOK))
+        return HOOK.read_text(encoding="utf-8")
+
+    def test_every_write_in_the_context_build_is_reviewed(self):
+        sites = ctx_write_sites(self.source())
+        self.assertEqual(sorted(sites), sorted(WRITE_SITES),
+                         "the writes the hook makes in the context build and the table differ")
+        for key, (status, reason) in WRITE_SITES.items():
+            with self.subTest(site=key):
+                self.assertIn(status, ("modelled", "no verdict effect"))
+                self.assertTrue(reason)
+
+    def test_the_doctor_replaces_exactly_the_reviewed_primitives(self):
+        if not DOCTOR.exists():
+            self.fail("doctor not found: {}".format(DOCTOR))
+        source = DOCTOR.read_text(encoding="utf-8")
+        replaced = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    for leaf in (target.elts if isinstance(target, ast.Tuple) else [target]):
+                        if isinstance(leaf, ast.Attribute) and isinstance(leaf.value, ast.Name) \
+                                and leaf.value.id == "hook":
+                            replaced.add(leaf.attr)
+        self.assertEqual(replaced, {callee for _f, callee, _l in WRITE_SITES},
+                         "the doctor replaces other hook functions than the reviewed writes")
+        for _func, _callee, line in WRITE_SITES:
+            self.assertIn(":{}".format(line), source, "the doctor docstring omits a cited line")
+
+    def test_the_probe_refuses_each_added_write(self):
+        source = self.source()
+        for name, anchor, replacement in WRITE_SITE_MUTATIONS:
+            with self.subTest(mutation=name):
+                self.assertEqual(source.count(anchor), 1, "the mutation anchor is not unique")
+                sites = ctx_write_sites(source.replace(anchor, replacement))
+                self.assertNotEqual(sorted(sites), sorted(WRITE_SITES),
+                                    "the probe missed {}".format(name))
 
 
 def doctor_precheck_sites(source):
