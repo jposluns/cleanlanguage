@@ -29,15 +29,19 @@ prose, and its residual is open-ended: a label in any phrasing, synonym or layou
 not list passes, and no list of known gaps can close that set. Completeness over the class of
 review-history labels therefore rests on an independent search of the scanned files, not on this
 lint. The known residual forms are these: a review pass named in words ("the third review"); a
-finding id of three or more capital letters or of more than two digits, or one with a letter suffix
-outside parentheses and the word "finding"; a bare id that follows "point " or starts with "PR"
-(the forms the plan uses for its open points and pull-request slices); a reviewer named other than
-as codex, claude or gemini; a family name more than two words away from its review or credit word,
-or credited by a verb outside REVIEW_WORD; in a Python file, a label split across two lines of a
+round number after a colon that a further word follows ("round: 7 decimal places"); a finding id
+of three or more capital letters or of more than two digits; a finding id with a hyphen or a
+letter suffix, such as "the F-1 case" or "the F1a case", anywhere outside parentheses and the
+word "finding"; in prose, a bare id that follows "point " or starts with "PR" (the forms the
+plan uses for its open points and pull-request slices), exclusions the code-line bare id pattern
+does not make, so "point F1" is still caught on any line; a reviewer named other than as codex,
+claude or gemini; a family name more than two words away from its review or credit word, or
+credited by a verb outside REVIEW_WORD; in a Python file, a label split across two lines of a
 string that is not a statement of its own, such as an argument or an assigned value, which is
 matched line by line only; and a bare id in code that does not use one of the letters of the
 code-line bare id pattern. The PatternSelfCheck case pins the forms the patterns are known to
-cover, so a weakened pattern fails the suite.
+cover and the ordinary code and prose they must not flag, so a pattern weakened or widened past
+either set fails the suite.
 """
 import ast
 import bisect
@@ -73,7 +77,10 @@ NEAR = r"(?:\W+\w+){0,2}?\W+"
 
 # Matched against every physical line and every joined prose block.
 LABEL_PATTERNS = (
-    ("a review round number", re.compile(r"(?i)\brounds?(?:[-:]|\s)*#?[0-9]+\b")),
+    # A colon form counts only at a label position, so "round: 7 decimal places" passes.
+    ("a review round number", re.compile(
+        r"(?i)\brounds?[-\s]*#?[0-9]+\b"
+        r"|\brounds?\s*:\s*#?[0-9]+(?=\s*(?:$|[),;:]|\.(?![0-9])))")),
     ("a fix round", re.compile(r"(?i)\bfix[- ]rounds?\b")),
     ("a QA round", re.compile(r"(?i)\bQA round\b")),
     ("a model-family QA attribution", re.compile(r"(?i)\b(?:codex|claude|gemini) QA\b")),
@@ -83,12 +90,12 @@ LABEL_PATTERNS = (
     ("a parenthesized finding id", re.compile(r"\([A-Z]{1,2}-?[0-9]{1,2}[a-z]?(?:[,);:]| and )")),
     ("a named finding id", re.compile(r"(?i)\bfindings? [A-Z]{1,2}-?[0-9]{1,2}[a-z]?\b")),
     ("a severity-numbered finding", re.compile(r"(?i)\b(?:CRITICAL|HIGH|MEDIUM|LOW)-[0-9]+\b")),
-    ("a bare finding id", re.compile(r"\b(?:AA|BB|[FGMRSTUWX])-?[0-9]{1,2}\b")),
+    ("a bare finding id", re.compile(r"\b(?:AA|BB|[FGMRSTUWX])[0-9]{1,2}\b")),
 )
 
 # Matched against prose only: comments and docstrings in a Python file, every line elsewhere.
 PROSE_PATTERNS = (
-    ("a bare finding id in prose", re.compile(r"(?<!point )\b(?!PR[0-9])[A-Z]{1,2}-?[0-9]{1,2}\b")),
+    ("a bare finding id in prose", re.compile(r"(?<!point )\b(?!PR[0-9])[A-Z]{1,2}[0-9]{1,2}\b")),
 )
 
 ALL_PATTERNS = LABEL_PATTERNS + PROSE_PATTERNS
@@ -279,12 +286,14 @@ class PatternSelfCheck(unittest.TestCase):
               "(L5)", "(H3: x)", "(Q2; x)", "finding L5", "the L5 fix", "(codex reproduced: x)",
               "refuting the gemini seed\x27s claim", "flagged by codex", "the claude review",
               "gemini found that", "a codex finding", "raised in the gemini round")
-    # Forms added when the guard was widened: round numbers with a colon, a plural or a number
-    # sign, a hyphenated fix round, the credit verbs, a severity id in any case, and a hyphenated
-    # or letter-suffixed finding id.
+    # Forms added when the guard was widened: round numbers with a colon at a label position, a
+    # plural, a number sign or a hyphen, a hyphenated fix round, the credit verbs, a severity id in
+    # any case, a hyphenated finding id in parentheses or after the word finding, and a
+    # letter-suffixed finding id.
     WIDENED = ("as fixed in round: 7", "rounds 7 and 8", "round #7", "the fix-round change",
                "codex caught this", "spotted by gemini", "claude noticed the gap", "gemini confirmed it",
-               "High-1: x", "a high-2 case", "the F-1 case", "(F1a)", "finding F-1")
+               "High-1: x", "a high-2 case", "(F1a)", "finding F-1", "(F-1)", "round: 7.",
+               "as fixed in round: 7, then", "(round: 7)", "round 7", "round-7")
     PROSE = ("U+3164", "aiqt_hooks.py:8414", "\\x1f", "class T01StopActionable", "sha256",
              "item 28.2 stage 2, PR1-d", "open point P5", "round-trip through json.dumps",
              "Point the command at the QA cycle", "commit d191071", "UTF-8", "line 8:", "the g1 prefix",
@@ -293,6 +302,15 @@ class PatternSelfCheck(unittest.TestCase):
              "U+FFA0", "U+D800..U+DFFF")
     CODE = ("closure=\"C1\", opened=\"2026-09-01\"", "[\"2\", \"2026-09-02\", \"Second\", \"C2\"]",
             "[\"PD-7\", \"MR-1\", \"AT-1\", \"CL-1\", 0xFFA0, 0xD800]")
+    # Ordinary Python that the hyphen and colon forms must not flag: subtraction, hyphenated
+    # register ids in a comment or a docstring, a hyphenated key name, and a colon round count.
+    ORDINARY_PYTHON = ("value = F-1\n", "value = T-2\n",
+                       "# PD-7, MR-1 and PR-1 are register ids.\nx = 1\n",
+                       "def f():\n    \"\"\"Read PD-7, MR-1 and PR-1 from the register.\"\"\"\n",
+                       "# Use the F-1 key.\nx = 1\n", "# round: 7 decimal places\nx = 1\n")
+    # Labels that must stay caught when they sit in a Python comment.
+    COMMENT_LABELS = ("(F-1)", "finding F-1", "round: 7.", "round 7", "rounds 7 and 8",
+                      "round #7", "round-7")
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
@@ -315,6 +333,16 @@ class PatternSelfCheck(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(labels_in(text, LABEL_PATTERNS), [], text)
                 self.assertEqual(scan("x.py", "value = f({})\n".format(text)), [], text)
+
+    def test_ordinary_python_is_not_caught(self):
+        for source in self.ORDINARY_PYTHON:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), [], source)
+
+    def test_labels_in_a_python_comment_are_caught(self):
+        for text in self.COMMENT_LABELS:
+            with self.subTest(text=text):
+                self.assertTrue(scan("x.py", "# fixed in {}\nx = 1\n".format(text)), text)
 
     def test_bare_id_in_python_prose_is_caught(self):
         self.assertTrue(scan("x.py", "# the L5 case\nx = 1\n"))
