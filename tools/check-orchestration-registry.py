@@ -38,8 +38,14 @@ declares and rejects every other shape, even one the hook would act on safely. I
 the enumerator script (argv[2]) is a canonical relative path ending in ".py", and every later
 operand is absolute, so no verdict depends on where the checkout sits; `escape` is either
 undeclared (the hook then uses its default sentinel name) or names a bare file name directly
-in the state_dir anchor; and `staleness`, when declared, carries both horizons explicitly. A
-shape outside these pins lands only together with the gate change that admits it.
+in the state_dir anchor; `staleness`, when declared, carries both horizons explicitly, and it is
+declared whenever `enumerator` or `attestations` is; and a declared `lease` carries its
+`max_age_hours` horizon explicitly. The last two close silent defaults: without them the hook
+applies 24 hour staleness horizons nobody declared, or treats a present lease as fresh forever.
+Every key the gate still accepts as optional is classified, with the hook behaviour its absence
+selects, in OPTIONAL_KEY_CLASSIFICATION in tools/test-orchestration-registry.py, which derives the
+optional set from this gate and fails on a key the table does not classify. A shape outside these
+pins lands only together with the gate change that admits it.
 
 Every file the gate itself opens (the registry and hooks.json) is opened non-blocking and must
 be a regular file, so a FIFO, a device, or a directory at either path fails promptly rather
@@ -144,9 +150,23 @@ STALENESS_KEYS = {"task_hours", "external_hours"}
 # Mirrors _ORCH_MAX_HORIZON_HOURS (aiqt_hooks.py:8265). The hook turns a value outside (0, 8760] into
 # the 24 hour default (aiqt_hooks.py:8274-8279, 8300-8301); the gate rejects it instead.
 STALENESS_HOURS_MAX = 8760
+# The declared keys whose control reads the staleness horizons, so `staleness` is REQUIRED alongside each
+# (round 7): the enumerated-backlog classification (_orch_build_ctx, aiqt_hooks.py:8439-8452, reached only
+# for an enumeration that ran, 8448) and the attestation derivation (aiqt_hooks.py:9595, reached from the
+# resume audit at 9657). Without `staleness` the hook applies 24 hours to both horizons (aiqt_hooks.py:
+# 8297-8301), a horizon nobody declared. A yield roster or a lease alone never reaches either reader.
+STALENESS_REQUIRED_BY = ("enumerator", "attestations")
+# The keys a declared `mode` or `escape` object may carry (the readers are aiqt_hooks.py:7766-7767 and
+# 7860); `path` is required in each.
+MODE_KEYS = {"path"}
+ESCAPE_KEYS = {"path"}
 # The record surfaces the hook's resume audit and barrier read (aiqt_hooks.py:9355-9391, 9820-9832).
 RECORD_KEYS = {"findings", "pending_decisions", "handoff"}
 # The lease shape _orch_scope_live and the resume audit read (aiqt_hooks.py:7786-7817, 9392-9409).
+# Both keys are REQUIRED (round 7). With `max_age_hours` absent, _orch_scope_live keeps `fresh = True`
+# (aiqt_hooks.py:7792-7798) and the resume audit raises no stale-lease finding (aiqt_hooks.py:9395-9401),
+# so a lease file left behind by a dead orchestrator keeps scope live forever. The committed registry
+# declares 24.
 LEASE_KEYS = {"path", "max_age_hours"}
 # A gate-side sanity bound on `lease.max_age_hours`, STRICTER than the hook. The hook's lease-freshness
 # read (aiqt_hooks.py:7793-7798) checks only `max_age_hours > 0` and applies NO upper bound to it (the
@@ -411,7 +431,8 @@ def validate(path):
         for key in sorted(record):
             _check_declared_path("record.{}".format(key), record[key])
     # `lease`, if present: an object whose keys are a subset of LEASE_KEYS; `path` is REQUIRED and a
-    # declared path; `max_age_hours` is optional but, when present, a non-bool int or float in (0, 8760].
+    # declared path; `max_age_hours` is REQUIRED too (its presence is checked at the end of validate(), after
+    # every targeted check) and is a non-bool int or float in (0, 8760].
     if "lease" in obj:
         lease = obj["lease"]
         if not isinstance(lease, dict):
@@ -651,7 +672,7 @@ def validate(path):
         mode = obj["mode"]
         if not isinstance(mode, dict):
             _fail("`mode` must be a JSON object, got {}".format(type(mode).__name__))
-        extra = set(mode) - {"path"}
+        extra = set(mode) - MODE_KEYS
         if extra:
             _fail("`mode` has unknown key(s) {}".format(sorted(extra)))
         if "path" not in mode:
@@ -706,7 +727,7 @@ def validate(path):
         esc = obj["escape"]
         if not isinstance(esc, dict):
             _fail("`escape` must be a JSON object, got {}".format(type(esc).__name__))
-        extra = set(esc) - {"path"}
+        extra = set(esc) - ESCAPE_KEYS
         if extra:
             _fail("`escape` has unknown key(s) {}".format(sorted(extra)))
         if "path" not in esc:
@@ -901,6 +922,25 @@ def validate(path):
                 _fail("`dispatch_tools[{}]` ({!r}) is not in the orch_dispatch_ledger matcher {} in {}; a "
                       "name outside the matcher never reaches the hook, so the entry would be a silent "
                       "no-op".format(i, entry, sorted(matched), HOOKS_JSON))
+    # --- required parameters of a declared control (round 7) ------------------------------------------
+    # A key that PARAMETERIZES a declared control, rather than arming one, is required whenever that control
+    # is declared: its absence leaves the control armed but silently substitutes a hook default. These
+    # checks run LAST, after every targeted check, so a fixture that omits a parameter is still rejected by
+    # the rule it targets, never only by these.
+    #   lease.max_age_hours: see LEASE_KEYS above (aiqt_hooks.py:7792-7798, 9395-9401).
+    #   staleness: see STALENESS_REQUIRED_BY above (aiqt_hooks.py:8297-8301).
+    # Every key the gate still accepts as optional is classified in OPTIONAL_KEY_CLASSIFICATION in
+    # tools/test-orchestration-registry.py, which derives the optional set from this gate.
+    if isinstance(obj.get("lease"), dict) and "max_age_hours" not in obj["lease"]:
+        _fail("`lease.max_age_hours` is required: without it the hook treats a present, non-empty lease as "
+              "fresh forever (aiqt_hooks.py:7792-7798) and the resume audit never reports it stale "
+              "(aiqt_hooks.py:9395-9401), so a lease left by a dead orchestrator keeps scope live; the "
+              "committed registry declares 24")
+    for key in STALENESS_REQUIRED_BY:
+        if key in obj and "staleness" not in obj:
+            _fail("`{}` is declared without `staleness`: the hook then applies 24 hour task and external "
+                  "horizons nobody declared (aiqt_hooks.py:8297-8301); declare both horizons "
+                  "explicitly".format(key))
     summary = "version 1"
     if "companion_stores" in obj:
         summary += ", {} companion store(s)".format(len(obj["companion_stores"]))

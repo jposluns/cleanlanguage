@@ -12,8 +12,10 @@ check itself.
 from __future__ import annotations
 
 import ast
+import contextlib
 import copy
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -86,6 +88,85 @@ STAGE2 = {
     "mistakes_register": "/opt/x/private/mistakes-register.jsonl",
 }
 ESCAPE_DECLARED = {"path": "ESCAPE-ALLOW-YIELD"}
+
+# Round 7 class record: every key the gate accepts as OPTIONAL, at any nesting level, classified by what the
+# hook in plugin/aiqt-guardrails-hooks/hooks/scripts/aiqt_hooks.py does when the key is absent. Each entry
+# is (category, required_with, reason):
+#   "b"            absence is a deliberate, meaningful state: an arming key left undeclared arms nothing,
+#                  or the hook falls back to the stricter or the visibly fail-closed outcome;
+#   "conditional"  absence is meaningful only while none of `required_with` is declared; alongside any of
+#                  them the hook would silently default (category a), so the gate requires the key there.
+# A key whose absence silently defaults a control the project relies on, whenever its parent is declared
+# (category a), is not listed: the gate requires it (lease.max_age_hours, enumerator.argv,
+# enumerator.timeout, staleness.task_hours, staleness.external_hours, mode.path, escape.path, lease.path).
+# OptionalKeyClassProbe derives the optional set from the gate and requires it to equal this table, so a key
+# the gate newly treats as optional is a red test until it is classified here.
+# Not listed because the gate rejects it outright (LEASE_KEYS): lease.holder_is_session_id. Its absence keeps
+# the default holder model (aiqt_hooks.py:7800, 7814), an open maintainer decision.
+OPTIONAL_KEY_CLASSIFICATION = {
+    "companion_stores": ("b", (), "absent, _wrtscp_companion_stores returns no store (aiqt_hooks.py:"
+                         "10166-10168), so no cross-repository exemption is granted: the stricter state"),
+    "record": ("b", (), "an arming key: absent, the resume audit runs no record probe (aiqt_hooks.py:9355, "
+               "9420-9423) and the barrier allowlist keeps only state_dir and the registry files "
+               "(aiqt_hooks.py:9820-9827)"),
+    "lease": ("b", (), "an arming key: absent, scope is live only through a mode record (aiqt_hooks.py:"
+              "7786-7787, 7817) and the resume audit runs no lease probe (aiqt_hooks.py:9392-9393)"),
+    "state_dir": ("conditional",
+                  ("record", "lease", "enumerator", "yield_tools", "mode", "escape", "attestations",
+                   "mistakes_register"),
+                  "absent, the hooks use the per-user XDG default (aiqt_hooks.py:7647-7651), which this gate "
+                  "never sees; harmless only while no declared path or control writes or reads there"),
+    "dispatch_tools": ("b", (), "absent, the hook reads an empty list (aiqt_hooks.py:9277-9278), the one "
+                       "value the gate admits, so only a run_in_background Bash call is a dispatch (9279)"),
+    "enumerator": ("b", (), "an arming key: absent, _orch_enumerate returns NO_ENUMERATOR (aiqt_hooks.py:"
+                   "7966-7968) and an in-scope Stop is denied on it (aiqt_hooks.py:8196-8213), the stage-1 "
+                   "state .aiqt/config.md documents"),
+    "yield_tools": ("b", (), "an arming key: absent, orch_yield_tool allows every scheduling call as out of "
+                    "roster (aiqt_hooks.py:8665-8667), as .aiqt/config.md documents"),
+    "mode": ("b", (), "an arming key: absent, _orch_mode returns None (aiqt_hooks.py:7766-7769), scope rests "
+             "on the lease alone (7817), and orch_ask_guard allows with a fail-open audit event "
+             "(aiqt_hooks.py:8736-8739), as .aiqt/config.md documents"),
+    "attestations": ("b", (), "absent, _orch_attestation_refs returns None (aiqt_hooks.py:8068-8070), which "
+                     "keeps the free-text blocker evidence path unchanged (aiqt_hooks.py:8106-8107); adoption "
+                     "is an open maintainer decision (.aiqt/config.md)"),
+    "mistakes_register": ("b", (), "absent, the resume audit runs no mistakes-register chain check "
+                          "(aiqt_hooks.py:9677-9678); adoption is an open maintainer decision "
+                          "(.aiqt/config.md)"),
+    "staleness": ("conditional", ("enumerator", "attestations"),
+                  "absent, the hook applies 24 hours to both horizons (aiqt_hooks.py:8297-8301); harmless "
+                  "only while neither reader is declared: the enumerated-backlog classification "
+                  "(aiqt_hooks.py:8439-8452) and the attestation derivation (aiqt_hooks.py:9595, 9657)"),
+    "escape": ("b", (), "absent, the hook uses its default sentinel name in the state_dir anchor "
+               "(aiqt_hooks.py:7865-7866, the name ESCAPE-ALLOW-YIELD at 7556)"),
+    "record.findings": ("b", (), "an arming key for its probes: absent, the resume audit skips the findings "
+                        "readability probe and the in-hook merge_pending drift probe (aiqt_hooks.py:"
+                        "9383-9391, 9420-9423); tools/check_record_drift.py stays the authoritative drift "
+                        "gate (9418-9419)"),
+    "record.pending_decisions": ("b", (), "absent, _orch_pending_haystack returns None (aiqt_hooks.py:"
+                                 "8039-8042) and a human-decision item is held as cannot-evaluate "
+                                 "(aiqt_hooks.py:8139), which denies a stop: fail-closed and visible, not a "
+                                 "silent default"),
+    "record.handoff": ("b", (), "an arming key for its probes: absent, the resume audit skips the handoff "
+                       "branch and gate-marker probes (aiqt_hooks.py:9356-9382) and the barrier allowlist "
+                       "omits it (aiqt_hooks.py:9822-9825), the stricter direction"),
+}
+
+
+def _with_required_params(payload):
+    """Round 7 fixture isolation: give a dict fixture the parameter keys the gate requires alongside a
+    declared control (lease.max_age_hours with a lease object, staleness with enumerator or attestations)
+    when it omits them, so only the rule a reject fixture targets can reject it. The gate checks those
+    parameters last, so this changes no verdict a targeted rule reaches first; it keeps a regressed
+    targeted rule from hiding behind a parameter rejection."""
+    if not isinstance(payload, dict):
+        return payload
+    payload = dict(payload)
+    lease = payload.get("lease")
+    if isinstance(lease, dict) and "max_age_hours" not in lease:
+        payload["lease"] = {**lease, "max_age_hours": 24}
+    if "staleness" not in payload and any(key in payload for key in ("enumerator", "attestations")):
+        payload["staleness"] = dict(STAGE2["staleness"])
+    return payload
 
 
 def _run_full(path) -> subprocess.CompletedProcess:
@@ -184,14 +265,6 @@ class Accepts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, STAGE1)), 0)
 
-    def test_lease_without_max_age(self):
-        # max_age_hours is optional: a lease with only a path is valid. state_dir is declared because a
-        # declared lease now requires it (claude QA round 7 co-requirement); this test isolates max_age
-        # optionality, not the state_dir requirement.
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(_run(_write(d, {"version": 1, "lease": {"path": "/opt/x/lease"},
-                                             "state_dir": "/opt/x/orch-state"})), 0)
-
     def test_dispatch_tools_empty_list_accepted(self):
         # The committed shape: an empty list stays valid (it still requires a readable hooks.json).
         with tempfile.TemporaryDirectory() as d:
@@ -277,10 +350,11 @@ class Accepts(unittest.TestCase):
             self.assertEqual(_run(_write(d, {**STAGE2, "escape": ESCAPE_DECLARED})), 0)
 
     def test_enumerator_and_yield_tools_without_registers_accepted(self):
-        # attestations and mistakes_register are optional: the stop and yield guards arm without them.
+        # attestations and mistakes_register are optional: the stop and yield guards arm without them. The
+        # declared enumerator requires staleness (round 7), so both horizons are declared.
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {
-                "version": 1, "state_dir": "/opt/x/orch-state",
+                "version": 1, "state_dir": "/opt/x/orch-state", "staleness": STAGE2["staleness"],
                 "enumerator": STAGE2["enumerator"], "yield_tools": STAGE2["yield_tools"]})), 0)
 
 
@@ -294,7 +368,9 @@ class Rejects(unittest.TestCase):
     # test_*_without_state_dir_rejected tests, whose target IS the rule, opt out with add_state_dir=False.
     _ISO_STATE_DIR = "/opt/orch-isolate-sd"
 
-    def _reject(self, payload, add_state_dir=True):
+    def _reject(self, payload, add_state_dir=True, add_params=True):
+        if add_params:
+            payload = _with_required_params(payload)
         if (add_state_dir and isinstance(payload, dict)
                 and ("record" in payload or "lease" in payload) and "state_dir" not in payload):
             payload = {**payload, "state_dir": self._ISO_STATE_DIR}
@@ -568,7 +644,7 @@ class Rejects(unittest.TestCase):
         p4096 = base + "a" * (4096 - len(base.encode()))
         self.assertEqual(len(p4096.encode()), 4096, "fixture must be exactly PATH_MAX bytes")
         self._reject({"version": 1, "state_dir": "/opt/orch-isolate-sd",
-                      "lease": {"path": p4096}})
+                      "lease": {"path": p4096, "max_age_hours": 24}})
 
     def test_lease_path_one_below_path_max_accepted(self):
         # The true maximum usable path is PATH_MAX - 1 (4095) bytes; it must still be ACCEPTED (not
@@ -578,7 +654,7 @@ class Rejects(unittest.TestCase):
         self.assertEqual(len(p4095.encode()), 4095)
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/orch-isolate-sd",
-                                             "lease": {"path": p4095}})), 0)
+                                             "lease": {"path": p4095, "max_age_hours": 24}})), 0)
 
     def test_state_dir_existing_non_directory_rejected(self):
         # HIGH-2 best-effort: a state_dir that EXISTS at gate time as a regular file (the "/etc/passwd"
@@ -676,8 +752,10 @@ class Rejects(unittest.TestCase):
     # use the stricter _reject_clean, so a traceback from later code can never stand in for the rule.
     _DROP = object()
 
-    def _reject_clean(self, payload, add_state_dir=True):
+    def _reject_clean(self, payload, add_state_dir=True, add_params=True):
         # Stricter than _reject: exit 1 with a clean FAIL diagnostic and no traceback.
+        if add_params:
+            payload = _with_required_params(payload)
         if (add_state_dir and isinstance(payload, dict)
                 and ("record" in payload or "lease" in payload) and "state_dir" not in payload):
             payload = {**payload, "state_dir": self._ISO_STATE_DIR}
@@ -1309,7 +1387,7 @@ class EnumeratorOperandShape(unittest.TestCase):
 
     @staticmethod
     def _enum_payload(state_dir, argv_tail):
-        return {"version": 1, "state_dir": str(state_dir),
+        return {"version": 1, "state_dir": str(state_dir), "staleness": dict(STAGE2["staleness"]),
                 "enumerator": {"argv": [PY, "-I"] + list(argv_tail), "timeout": 5}}
 
     def _assert_rejected_by(self, payload, needle):
@@ -1535,6 +1613,170 @@ class LaunchIsolation(unittest.TestCase):
                 second = node.elts[1] if len(node.elts) > 1 else None
                 self.assertTrue(isinstance(second, ast.Constant) and second.value == "-I",
                                 "line {} launches Python without -I".format(node.lineno))
+
+
+class RequiredParameterKeys(unittest.TestCase):
+    # Round 7 (MEDIUM, validated): a key that PARAMETERIZES a declared control is required whenever that
+    # control is declared, because its absence leaves the control armed with a silent hook default.
+    def _gate(self, payload):
+        with tempfile.TemporaryDirectory() as d:
+            r = _run_full(_write(d, payload))
+        self.assertNotIn("Traceback", r.stderr)
+        return r
+
+    def test_lease_without_max_age_rejected(self):
+        # The hook treats a present, non-empty lease with no max_age_hours as fresh forever
+        # (aiqt_hooks.py:7792-7798), and the resume audit never reports it stale (aiqt_hooks.py:9395-9401).
+        # RED before round 7: the gate accepted this registry.
+        r = self._gate({"version": 1, "state_dir": "/opt/x/orch-state", "lease": {"path": "/opt/x/lease"}})
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("`lease.max_age_hours` is required", r.stderr)
+
+    def test_lease_with_max_age_accepted(self):
+        r = self._gate({"version": 1, "state_dir": "/opt/x/orch-state",
+                        "lease": {"path": "/opt/x/lease", "max_age_hours": 24}})
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_staleness_required_with_each_reader(self):
+        # Without staleness the hook applies 24 hour horizons nobody declared (aiqt_hooks.py:8297-8301) to
+        # the enumerated-backlog classification and the attestation derivation. RED before round 7: both
+        # registries without staleness were accepted.
+        for key in ("enumerator", "attestations"):
+            base = {"version": 1, "state_dir": "/opt/x/orch-state", key: copy.deepcopy(STAGE2[key])}
+            with self.subTest(key=key):
+                r = self._gate(base)
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("declared without `staleness`", r.stderr)
+                r = self._gate({**base, "staleness": dict(STAGE2["staleness"])})
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_staleness_not_required_without_a_reader(self):
+        # A yield roster, a mode record, or a lease alone never reaches a staleness reader, so staleness
+        # stays optional there (the boundary OptionalKeyClassProbe also derives).
+        for key in ("yield_tools", "mode", "lease"):
+            with self.subTest(key=key):
+                r = self._gate({"version": 1, "state_dir": "/opt/x/orch-state",
+                                key: copy.deepcopy(STAGE2[key])})
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class OptionalKeyClassProbe(unittest.TestCase):
+    # Round 7 class probe. The optional set is DERIVED from the gate, not from a hand list: the key-set
+    # constants name every key the gate admits at each level, and running the gate with each key removed
+    # shows which removals it accepts. Every key so derived must be classified in OPTIONAL_KEY_CLASSIFICATION
+    # with its reason, so a key the gate newly treats as optional is a red test until it is classified.
+    KEY_SET_CONSTANTS = {"ALLOWED_KEYS": "", "RECORD_KEYS": "record", "LEASE_KEYS": "lease",
+                         "ENUMERATOR_KEYS": "enumerator", "STALENESS_KEYS": "staleness",
+                         "MODE_KEYS": "mode", "ESCAPE_KEYS": "escape"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.gate = _load_gate_module()
+        cls.full = copy.deepcopy(STAGE2)
+        cls.full["escape"] = dict(ESCAPE_DECLARED)
+        cls.key_sets = {parent: frozenset(getattr(cls.gate, name))
+                        for name, parent in cls.KEY_SET_CONSTANTS.items()}
+
+    def _accepts(self, payload):
+        # Run the gate in process: True on a pass, False on a clean FAIL exit; anything else is an error.
+        out, err = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as d:
+            path = str(_write(d, payload))
+            try:
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    self.gate.validate(path)
+            except SystemExit as exc:
+                self.assertEqual(exc.code, 1, err.getvalue())
+                self.assertIn("FAIL", err.getvalue())
+                return False
+        self.assertIn("OK", out.getvalue())
+        return True
+
+    def _value(self, key):
+        return copy.deepcopy(self.full[key])
+
+    def test_key_set_constants_are_mapped(self):
+        # Every key-set constant the gate defines is mapped to the level it governs, so a level the gate
+        # starts to admit cannot escape the probe.
+        found = {name for name, value in vars(self.gate).items()
+                 if name.endswith("_KEYS") and isinstance(value, (set, frozenset))}
+        self.assertEqual(found, set(self.KEY_SET_CONSTANTS))
+
+    def test_full_fixture_covers_every_admitted_key(self):
+        # The probe removes keys from a registry that declares every admitted key, and the gate accepts it.
+        self.assertEqual(set(self.full), set(self.key_sets[""]))
+        self.assertEqual({k for k, v in self.full.items() if isinstance(v, dict)},
+                         {parent for parent in self.key_sets if parent})
+        for parent, keys in self.key_sets.items():
+            if parent:
+                with self.subTest(parent=parent):
+                    self.assertEqual(set(self.full[parent]), set(keys))
+        self.assertTrue(self._accepts(self.full))
+
+    def _derive_optional(self):
+        optional = set()
+        # Top level: the version-only registry omits every other admitted key and is accepted, so each of
+        # them is optional somewhere; version is not, since no registry without it is accepted.
+        self.assertTrue(self._accepts({"version": 1}))
+        self.assertFalse(self._accepts({k: v for k, v in self._full_copy().items() if k != "version"}))
+        optional.update(k for k in self.key_sets[""] if k != "version")
+        # Nested: a key is optional when removing it from its object is accepted, in the full registry or
+        # in a minimal registry that declares only that object plus the state_dir and staleness the
+        # cross-field rules need.
+        for parent, keys in self.key_sets.items():
+            if not parent:
+                continue
+            for key in sorted(keys):
+                obj = {k: v for k, v in self._value(parent).items() if k != key}
+                in_full = {**self._full_copy(), parent: obj}
+                minimal = {"version": 1, "state_dir": self.full["state_dir"], parent: copy.deepcopy(obj)}
+                if parent != "staleness":
+                    minimal["staleness"] = self._value("staleness")
+                if self._accepts(in_full) or self._accepts(minimal):
+                    optional.add("{}.{}".format(parent, key))
+        return optional
+
+    def _full_copy(self):
+        return copy.deepcopy(self.full)
+
+    def test_every_optional_key_is_classified(self):
+        derived = self._derive_optional()
+        recorded = set(OPTIONAL_KEY_CLASSIFICATION)
+        self.assertEqual(derived, recorded, "unclassified optional key(s) {}; table entries the gate now "
+                         "requires {}".format(sorted(derived - recorded), sorted(recorded - derived)))
+        for key, (category, required_with, reason) in OPTIONAL_KEY_CLASSIFICATION.items():
+            with self.subTest(key=key):
+                self.assertIn(category, ("b", "conditional"))
+                self.assertIn("aiqt_hooks.py:", reason)
+                self.assertEqual(bool(required_with), category == "conditional")
+                if "." in key:
+                    self.assertEqual(category, "b")
+
+    def test_category_matches_the_full_registry(self):
+        # A category-b top-level key may be dropped from the full registry; a conditional one may not,
+        # because the full registry declares the keys that require it.
+        for key, (category, _required_with, _reason) in OPTIONAL_KEY_CLASSIFICATION.items():
+            if "." in key:
+                continue
+            with self.subTest(key=key):
+                dropped = {k: v for k, v in self._full_copy().items() if k != key}
+                self.assertEqual(self._accepts(dropped), category == "b")
+
+    def test_conditional_keys_are_required_exactly_with_their_readers(self):
+        # For each conditional key and every other top-level key, a registry declaring that other key (plus
+        # the remaining conditional keys, so their own rules stay inert) without the conditional key is
+        # rejected exactly when the other key is recorded as requiring it, and accepted once it is added.
+        conditional = [k for k, v in OPTIONAL_KEY_CLASSIFICATION.items() if v[0] == "conditional"]
+        for key in conditional:
+            required_with = set(OPTIONAL_KEY_CLASSIFICATION[key][1])
+            for other in sorted(self.key_sets[""] - {"version", key}):
+                payload = {"version": 1, other: self._value(other)}
+                for c in conditional:
+                    if c not in (key, other):
+                        payload[c] = self._value(c)
+                with self.subTest(key=key, declared=other):
+                    self.assertEqual(self._accepts(payload), other not in required_with)
+                    self.assertTrue(self._accepts({**payload, key: self._value(key)}))
 
 
 class ConfigDisclosure(unittest.TestCase):
