@@ -62,7 +62,7 @@ co-author or session trailer.
 
 A minimal orchestration registry (`.aiqt/orchestration.json`, version 1) arms part of the
 orchestrator suite. It declares `companion_stores`, `record`, `lease`, `state_dir`, and an
-empty `dispatch_tools`. Two of the 10 orchestrator hooks gate on the presence of the registry
+empty `dispatch_tools`. Two of the 10 orchestrator hooks deny on the presence of the registry
 alone: `orch_truncation_guard` and `orch_untracked_wait_loop`.
 These deny an untracked background detach (a bare `&`), a truncated background capture (a
 background dispatch piped into `head` or `tail`), and a backgrounded poll loop. They carry

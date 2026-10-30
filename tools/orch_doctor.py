@@ -41,12 +41,29 @@ VENDORED hook by path and reuses its functions, so it never reimplements a decis
                          writing and is NOT previewed: when the wake text carries a quiet-duration
                          claim (the hook regex _ORCH_QUIET_CLAIM_RE plus the word "quiet"), a verdict
                          other than DENY is reported as unpreviewed, exit 2.
+                         Before any hook reader is called, the doctor checks every path the hook
+                         would open with a plain blocking open: the registry files (aiqt_hooks.py:
+                         7606-7620) and every path the registry declares for the hook to read
+                         (record.findings, record.pending_decisions, record.handoff, lease.path,
+                         mode.path, attestations and its .anchor, mistakes_register, and the
+                         enumerator argv from argv[2] on), each resolved as the hook resolves it
+                         (_orch_path, aiqt_hooks.py:7630-7635). Each is checked with os.stat only,
+                         never opened. One that exists and is not a regular file (a FIFO, which
+                         would block the hook open indefinitely, for example the mode read at
+                         aiqt_hooks.py:7771; a directory; a device; or a symlink to one of these) is
+                         reported as cannot-evaluate, exit 2, naming the path and its type, and no
+                         hook reader is called and no enumerator runs. An absent path is left to the
+                         hook, whose open raises rather than blocks.
 
   --resume-audit         Run the resume audit on demand. It delegates to orch_resume_audit in the
                          vendored hook (aiqt_hooks.py:9765-9794), so the probes (_orch_resume_probes,
                          aiqt_hooks.py:9351-9413, including the attestation snapshot refresh at
                          :9411), the resume-barrier.json write (:9781-9785), and the findings guard
-                         event are exactly those of the hook. The hook swallows a failed barrier
+                         event are exactly those of the hook. The same special-file check as for
+                         preflight runs first, so a FIFO at a declared record path (which the probes
+                         open with a blocking read, aiqt_hooks.py:9356-9359 and 9384-9387) is
+                         reported as cannot-evaluate, exit 2, and the audit is not run. The hook
+                         swallows a failed barrier
                          write (aiqt_hooks.py:9786-9787), so the doctor records the barrier mtime and
                          content BEFORE the audit and requires that the audit rewrote it: the file
                          must have changed and its ts must fall within this run. A barrier the hook
@@ -77,10 +94,12 @@ Options:
 Exit status:
   preflight      0 when the effective verdict is ALLOW (including out of scope or out of roster),
                  1 when it is DENY or ALLOW_WITH_FINDINGS, 2 on a usage error, an unresolvable root,
-                 an absent or unreadable registry, or an idle verdict that hangs on the quiet-claim
-                 check, which is not previewed.
+                 an absent or unreadable registry, a registry file or declared read path that exists
+                 and is not a regular file, or an idle verdict that hangs on the quiet-claim check,
+                 which is not previewed.
   --resume-audit 0 when the barrier this audit rewrote reads active false, 1 when it reads active
-                 true, 2 on a usage error, an unresolvable root, an absent registry, a barrier that
+                 true, 2 on a usage error, an unresolvable root, an absent registry, a registry
+                 file or declared read path that exists and is not a regular file, a barrier that
                  cannot be recorded before or read back after the audit, or a barrier that this
                  audit did not rewrite (unchanged, or a ts outside this run).
 
@@ -92,7 +111,10 @@ writer, or an effective uid that differs from the real one, so its answer can be
 direction. The enumerator is a program the registry declares; whatever it writes is outside the
 control of this tool. The quiet-duration check is not previewed (see above). The rewrite check on
 the barrier detects a write that did not happen; it cannot tell the hook from another writer that
-rewrites the file inside the same run. The tool runs isolated (it re-executes itself under python3 -I when started
+rewrites the file inside the same run. The special-file check is a point-in-time os.stat: a path
+replaced by a FIFO between the check and the hook open can still block, and the files the hook reads
+under the state directory (for example turn-state.json and dispatch-ledger.jsonl) are not declared
+by the registry and are not checked. The tool runs isolated (it re-executes itself under python3 -I when started
 without -I), so a file planted beside it cannot shadow a standard-library import; a failed
 re-execution exits 2 with a message.
 """
@@ -181,6 +203,85 @@ def _counter_save_blocker(state_dir):
     return None
 
 
+def _special_path(label, path):
+    """None when path is absent, unreachable by os.stat, or a regular file, else a message naming it
+    and its type. It uses os.stat only, never an open, so a FIFO cannot block the check itself;
+    os.stat follows a symlink, as the hook open would, so a symlink to a FIFO reports the FIFO. An
+    absent or unreachable path is left to the hook, whose open raises rather than blocks."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    if stat.S_ISREG(st.st_mode):
+        return None
+    return "the {} {} is not a regular file (it is a {})".format(label, path, _kind_of(st.st_mode))
+
+
+def _special_registry_file(hook, root):
+    """The first registry file that is present but not a regular file, as a _special_path message, or
+    None. The hook reads each with a plain blocking open (_orch_registry, aiqt_hooks.py:7606-7620, in
+    the order of _ORCH_REGISTRY_FILES)."""
+    for rel in hook._ORCH_REGISTRY_FILES:
+        found = _special_path("registry file", os.path.join(root, *rel.split("/")))
+        if found is not None:
+            return found
+    return None
+
+
+def _declared_read_paths(hook, reg, root):
+    """(label, path) for every path the registry declares for the hook to read, each resolved exactly
+    as the hook resolves it (_orch_path, aiqt_hooks.py:7630-7635: absolute kept, relative joined onto
+    the root, a non-string or empty value skipped). The hook opens these with a plain blocking open:
+    record.handoff, record.findings and record.pending_decisions (aiqt_hooks.py:9356-9359, 9384-9387,
+    9421-9425 and 8040-8044), lease.path (os.stat, then for holder scoping an open,
+    aiqt_hooks.py:7788-7807), mode.path (aiqt_hooks.py:7766-7771), attestations and its <path>.anchor
+    (aiqt_hooks.py:8068, 9506-9507 and 9541-9543), and mistakes_register (aiqt_hooks.py:9677-9679,
+    read by _orch_chained_rows at 9462). The enumerator script and its backlog operands, argv[2]
+    onwards, are opened by the enumerator, which the hook runs with cwd = the root
+    (aiqt_hooks.py:7976), so a relative operand resolves the same way."""
+    out = []
+
+    def add(label, value):
+        path = hook._orch_path(root, value)
+        if path:
+            out.append((label, path))
+
+    rec = reg.get("record") if isinstance(reg.get("record"), dict) else {}
+    for key in ("findings", "pending_decisions", "handoff"):
+        add("record.{}".format(key), rec.get(key))
+    lease = reg.get("lease") if isinstance(reg.get("lease"), dict) else {}
+    add("lease.path", lease.get("path"))
+    mode = reg.get("mode") if isinstance(reg.get("mode"), dict) else {}
+    add("mode.path", mode.get("path"))
+    attestations = reg.get("attestations")
+    add("attestations", attestations)
+    if isinstance(attestations, str) and attestations:
+        add("attestations.anchor", attestations + ".anchor")
+    add("mistakes_register", reg.get("mistakes_register"))
+    spec = reg.get("enumerator") if isinstance(reg.get("enumerator"), dict) else {}
+    argv = spec.get("argv") if isinstance(spec.get("argv"), list) else []
+    for i, arg in enumerate(argv[2:], 2):
+        add("enumerator.argv[{}]".format(i), arg)
+    return out
+
+
+def _special_declared_path(hook, reg, root):
+    """The first declared read path that is present but not a regular file, as a _special_path
+    message, or None."""
+    for label, path in _declared_read_paths(hook, reg, root):
+        found = _special_path("declared " + label, path)
+        if found is not None:
+            return found
+    return None
+
+
+def _refuse_special(found):
+    """Report a special file at a path the hook would open, as cannot-evaluate, exit 2."""
+    print("cannot evaluate: {}; the hook would open it with a blocking read, so no hook reader was "
+          "called and no enumerator ran".format(found))
+    return 2
+
+
 def _print_disposition(disposition):
     if not disposition:
         print("disposition: (empty)")
@@ -203,6 +304,11 @@ def _preflight(hook, root, kind_name, session_id, wake_text, tool):
               "(aiqt_hooks.py:8579-8583); a scheduling call is denied (aiqt_hooks.py:8654-8661)")
         return 2
     print("registry: ok")
+    special = _special_declared_path(hook, reg, root)
+    if special is not None:
+        # The hook reads the declared paths with a plain blocking open (see _declared_read_paths), so
+        # a FIFO there would hang the preview; no hook reader is called at all.
+        return _refuse_special(special)
     scope_live = hook._orch_scope_live(reg, root, session_id)
     print("scope: {}".format("live" if scope_live else
                              "not live (the hook allows without judging)"))
@@ -338,11 +444,17 @@ def _barrier_snapshot(path):
 
 
 def _resume_audit(hook, root):
-    status, _reg = hook._orch_registry(root)
+    status, reg = hook._orch_registry(root)
     print("orch_doctor resume-audit: root {}".format(root))
     if status == "absent":
         print("registry: absent; the orchestration suite is inert here, nothing to audit")
         return 2
+    if status == "ok":
+        special = _special_declared_path(hook, reg, root)
+        if special is not None:
+            # The audit probes open the declared record paths with a plain blocking open
+            # (aiqt_hooks.py:9356-9359, 9384-9387), so the audit is not run.
+            return _refuse_special(special)
     barrier_path = os.path.join(hook._orch_state_dir_for_root(root), "resume-barrier.json")
     try:
         before = _barrier_snapshot(barrier_path)
@@ -428,6 +540,10 @@ def main(argv):
         print("orch_doctor.py: cannot resolve a git top level from {}".format(
             args.root if args.root is not None else os.getcwd()), file=sys.stderr)
         return 2
+    special = _special_registry_file(hook, root)
+    if special is not None:
+        print("orch_doctor.py: root {}".format(root))
+        return _refuse_special(special)
     if args.resume_audit:
         return _resume_audit(hook, root)
     return _preflight(hook, root, args.kind, args.session_id, args.wake_text,

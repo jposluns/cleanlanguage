@@ -45,7 +45,12 @@ re-execution fails (finding R6). The doctor reads the resume barrier only as a r
 barrier that is a FIFO with no writer, a directory, or a symlink to /dev/null is reported as
 cannot-evaluate, exit 2, within a short timeout and naming the path and the file type, and the audit
 is not run, and a class probe scans the doctor source so that every path it opens goes through its
-checked helper (finding S3).
+checked helper (finding S3). Before any hook reader is called, a registry file or a declared read path
+(the mode and lease paths, the record paths, the enumerator operands) that exists and is not a regular
+file, a FIFO, a directory, or a symlink to a FIFO, is reported as cannot-evaluate, exit 2, within a
+short timeout, with no enumerator run and no hook state written (round 5 T1). The writes-nothing test
+runs a fresh copy of the doctor and the hook, in a tree that never held a __pycache__, and asserts no
+bytecode file appears anywhere under it (round 5 T3).
 """
 
 from __future__ import annotations
@@ -1004,24 +1009,154 @@ class Doctor(Stage2Harness):
         if not DOCTOR.exists():
             self.fail("doctor not found: {}".format(DOCTOR))
 
+    def _fresh_doctor_root(self):
+        """A copy of the doctor in <fresh>/tools beside a copy of the hook at the path the doctor
+        derives from its own location, in a directory that has never held a __pycache__, so a bytecode
+        cache the doctor import writes beside the hook is observable (finding T3). Returns (fresh root,
+        doctor copy)."""
+        fresh = self._tmp / "fresh-root"
+        tooldir = fresh / "tools"
+        hookdir = fresh / HOOK.relative_to(REPO_ROOT).parent
+        tooldir.mkdir(parents=True)
+        hookdir.mkdir(parents=True)
+        shutil.copyfile(HOOK, hookdir / HOOK.name)
+        copy = tooldir / DOCTOR.name
+        shutil.copyfile(DOCTOR, copy)
+        return fresh, copy
+
+    @staticmethod
+    def _bytecode_under(path):
+        return sorted(os.path.join(d, f) for d, _dirs, files in os.walk(path)
+                      for f in files if f.endswith((".pyc", ".pyo")))
+
     def test_preflight_writes_nothing(self):
+        # The doctor runs from a fresh copy whose tree has never held a __pycache__, so an import of the
+        # hook that wrote bytecode (sys.dont_write_bytecode unset in _load_hook) shows as a new .pyc
+        # file anywhere under it, and as a change in the tree state.
+        fresh, copy = self._fresh_doctor_root()
+        self.assertEqual(self._bytecode_under(fresh), [], "precondition: no bytecode in the fresh tree")
+        self.assertFalse(any(Path(d).name == "__pycache__" for d, _s, _f in os.walk(fresh)),
+                         "precondition: no __pycache__ in the fresh tree")
         self.write_registry(self.stage2())
         self.arm_lease()
         self.set_items([item("9")])
         self.assertEqual(self.stop().returncode, 2)  # a real window: checkpoint, marker, turn-state
         self.set_items([])  # item 9 now vanishes without a receipt
-        pycache = HOOK.parent / "__pycache__"
-        pycache_before = pycache.exists()
         before = tree_state(self._tmp)
         for kind in ("stop", "idle"):
             with self.subTest(kind=kind):
-                r = self.run_doctor("preflight", kind)
+                r = subprocess.run([sys.executable, "-I", str(copy), "preflight", kind,
+                                    "--root", str(self.repo)],
+                                   capture_output=True, text=True, env=self._env(), timeout=120)
                 self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
                 self.assertIn("judged verdict: DENY", r.stdout)
                 self.assertIn("verdict without the escape sentinel: DENY", r.stdout)
                 self.assertIn("vanished from the enumeration without a close receipt", r.stdout)
+        self.assertEqual(self._bytecode_under(fresh), [], "preflight wrote a bytecode cache")
         self.assertEqual(tree_state(self._tmp), before, "preflight changed a file or directory")
-        self.assertEqual(pycache.exists(), pycache_before, "preflight wrote a bytecode cache")
+
+    # --- T1: a declared read path that is not a regular file is cannot-evaluate, before any hook reader
+    SPECIAL_TIMEOUT = 30
+
+    def _doctor_bounded(self, *args):
+        try:
+            return subprocess.run([sys.executable, "-I", str(DOCTOR), *args, "--root", str(self.repo)],
+                                  capture_output=True, text=True, env=self._env(),
+                                  timeout=self.SPECIAL_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            self.fail("the doctor did not exit within {} s: a hook reader blocked on a special file"
+                      .format(self.SPECIAL_TIMEOUT))
+
+    def _make_special(self, path, kind):
+        """Replace path with a FIFO, a directory, or a symlink to a FIFO; return the type the doctor
+        must name (os.stat follows the symlink, as the hook open would)."""
+        path = Path(path)
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        if kind == "fifo":
+            os.mkfifo(path)
+            return "FIFO"
+        if kind == "directory":
+            path.mkdir()
+            return "directory"
+        target = self._tmp / "fifo-target"
+        os.mkfifo(target)
+        os.symlink(target, path)
+        return "FIFO"
+
+    def _assert_special_refused(self, label, path, kind, *doctor_args):
+        reg, marker = self._arm_writing_enumerator()
+        self.write_registry(reg)
+        self.set_items([item("42")])
+        named = self._make_special(path, kind)
+        before = tree_state(self._tmp)
+        r = self._doctor_bounded(*doctor_args)
+        self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+        self.assertIn("cannot evaluate: the declared {} {} is not a regular file (it is a {})"
+                      .format(label, path, named), r.stdout)
+        self.assertIn("no hook reader was called and no enumerator ran", r.stdout)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertFalse(marker.exists(), "the enumerator ran")
+        self.assertFalse(self.state_dir().exists(), "a hook state write happened")
+        self.assertEqual(tree_state(self._tmp), before, "the doctor changed a file or directory")
+
+    def test_preflight_special_mode_path_is_cannot_evaluate(self):
+        # No lease, so scope falls through to the mode read, a plain blocking open
+        # (aiqt_hooks.py:7817 and 7771): a FIFO there would hang the doctor.
+        for kind in ("fifo", "directory", "symlink-to-fifo"):
+            with self.subTest(kind=kind):
+                self.tearDown()
+                self.setUp()
+                self._assert_special_refused("mode.path", self._p("operating-mode.md"), kind,
+                                             "preflight", "stop")
+
+    def test_preflight_special_lease_path_is_cannot_evaluate(self):
+        for kind in ("fifo", "directory", "symlink-to-fifo"):
+            with self.subTest(kind=kind):
+                self.tearDown()
+                self.setUp()
+                self._assert_special_refused("lease.path", self._p("session-state.md"), kind,
+                                             "preflight", "stop")
+
+    def test_preflight_idle_special_mode_path_is_cannot_evaluate(self):
+        self._assert_special_refused("mode.path", self._p("operating-mode.md"), "fifo",
+                                     "preflight", "idle")
+
+    def test_preflight_special_backlog_operand_is_cannot_evaluate(self):
+        self._assert_special_refused("enumerator.argv[3]", str(self.backlog), "fifo",
+                                     "preflight", "stop")
+
+    def test_resume_audit_special_handoff_is_cannot_evaluate(self):
+        # The resume probes open the declared handoff with a plain blocking open
+        # (aiqt_hooks.py:9356-9359), so a FIFO there would hang the audit.
+        self._assert_special_refused("record.handoff", self._p("session-handoff.md"), "fifo",
+                                     "--resume-audit")
+
+    def test_special_registry_file_is_cannot_evaluate(self):
+        # The hook reads the registry with a plain blocking open (aiqt_hooks.py:7606-7620), the
+        # machine-local file first (aiqt_hooks.py:7548).
+        self.write_registry(self.stage2())
+        local = self.repo / ".aiqt" / "orchestration.local.json"
+        os.mkfifo(local)
+        for args in (("preflight", "stop"), ("--resume-audit",)):
+            with self.subTest(args=args):
+                r = self._doctor_bounded(*args)
+                self.assertEqual(r.returncode, 2, r.stdout + r.stderr)
+                self.assertIn("cannot evaluate: the registry file {} is not a regular file (it is a "
+                              "FIFO)".format(local), r.stdout)
+                self.assertFalse(self.state_dir().exists(), "a hook state write happened")
+
+    def test_absent_declared_paths_are_left_to_the_hook(self):
+        # Contrast: absent mode, lease, and record paths are not special files, so the doctor reaches
+        # the hook readers and reports the out-of-scope ALLOW the hook gives.
+        self.write_registry(self.stage2())
+        for name in ("operating-mode.md", "session-handoff.md", "open-findings.md",
+                     "pending-decisions.md"):
+            Path(self._p(name)).unlink()
+        r = self._doctor_bounded("preflight", "stop")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("scope: not live", r.stdout)
+        self.assertNotIn("cannot evaluate", r.stdout)
 
     def test_preflight_does_not_create_the_state_dir(self):
         self.write_registry(self.stage2())

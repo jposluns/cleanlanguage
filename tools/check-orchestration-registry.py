@@ -667,7 +667,9 @@ def validate(path):
         _check_declared_path("attestations.anchor", obj["attestations"] + ".anchor")
     # `staleness`: an object with exactly the keys in STALENESS_KEYS, each a non-bool finite number in
     # (0, STALENESS_HOURS_MAX]. This mirrors _v_finite_pos (aiqt_hooks.py:8274-8279) but rejects where the
-    # hook would silently default to 24 hours.
+    # hook would silently default to 24 hours. Only a float is passed to math.isfinite: an int is always
+    # finite, and math.isfinite raises OverflowError on an int too large for a float (a JSON integer
+    # literal of a few hundred digits), so an int is judged by the exact integer range comparison alone.
     if "staleness" in obj:
         staleness = obj["staleness"]
         if not isinstance(staleness, dict):
@@ -682,7 +684,8 @@ def validate(path):
                   "or empty object would arm a horizon nobody declared".format(sorted(missing)))
         for key in sorted(staleness):
             v = staleness[key]
-            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) \
+            if isinstance(v, bool) or not isinstance(v, (int, float)) \
+                    or (isinstance(v, float) and not math.isfinite(v)) \
                     or not (0 < v <= STALENESS_HOURS_MAX):
                 _fail("`staleness.{}` must be a finite number of hours in (0, {}], got {!r}".format(
                     key, STALENESS_HOURS_MAX, v))

@@ -70,8 +70,9 @@ STAGE1 = {
 
 # The full stage-2 registry: STAGE1 plus the stage-2 arming keys, in the shape the plan proposes. Like
 # STAGE1 its paths are illustrative absolutes; the yield_tools roster is checked against the real
-# hooks.json of this checkout. `escape` is left undeclared, as planned, so the hook uses its default
-# sentinel name (aiqt_hooks.py:7865-7866); ESCAPE_DECLARED is the one declared shape the gate admits.
+# hooks.json of this checkout. `escape` is left undeclared here, so the hook uses its default sentinel
+# name (aiqt_hooks.py:7865-7866); ESCAPE_DECLARED is the one declared shape the gate admits, and the
+# planned stage-2 value declares it (test_planned_stage2_value_accepted).
 STAGE2 = {
     **STAGE1,
     "enumerator": {
@@ -259,7 +260,8 @@ class Accepts(unittest.TestCase):
             self.assertEqual(_run(_write(d, STAGE2)), 0)
 
     def test_escape_undeclared_accepted(self):
-        # The planned shape: no `escape` key, so the hook uses its default name (aiqt_hooks.py:7865-7866).
+        # An escape-undeclared registry: no `escape` key, so the hook uses its default name
+        # (aiqt_hooks.py:7865-7866).
         self.assertNotIn("escape", STAGE2)
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(_run(_write(d, {"version": 1, "state_dir": "/opt/x/orch-state"})), 0)
@@ -978,6 +980,34 @@ class Rejects(unittest.TestCase):
     def test_staleness_unknown_subkey(self):
         self._reject_stage2({"staleness": {"task_hours": 24, "lease_hours": 24}})
 
+    def test_staleness_huge_integer_rejected_cleanly(self):
+        # Round 5 T4: an integer literal too large for a float made math.isfinite raise OverflowError,
+        # an uncaught traceback. Each horizon given such a value is rejected by the range rule, named in
+        # the diagnostic, with no traceback; a non-finite float is still rejected by the same rule.
+        huge = int("1" + "0" * 400)
+        cases = [{"task_hours": huge, "external_hours": 72}, {"task_hours": 24, "external_hours": huge},
+                 {"task_hours": -huge, "external_hours": 72}]
+        for value in cases:
+            with self.subTest(value={k: (v if abs(v) < 10 ** 6 else "huge") for k, v in value.items()}):
+                payload = copy.deepcopy(STAGE2)
+                payload["staleness"] = value
+                with tempfile.TemporaryDirectory() as d:
+                    r = _run_full(_write(d, payload))
+                self.assertEqual(r.returncode, 1, r.stdout)
+                self.assertIn("must be a finite number of hours", r.stderr)
+                self.assertNotIn("Traceback", r.stderr)
+                self.assertNotIn("OverflowError", r.stderr)
+        with tempfile.TemporaryDirectory() as d:
+            reg = Path(d) / "orchestration.json"
+            text = json.dumps(STAGE2).replace(
+                '"task_hours": 24', '"task_hours": Infinity')
+            self.assertIn("Infinity", text, "precondition: the fixture carries a non-finite horizon")
+            reg.write_text(text, encoding="utf-8")
+            r = _run_full(reg)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertIn("must be a finite number of hours", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
     def test_staleness_partial_or_empty_rejected(self):
         # Round 4 S2: the hook silently substitutes 24 hours for a missing field (aiqt_hooks.py:8297-8301),
         # so a declared staleness object must carry both horizons; {} and either field alone are rejected
@@ -1365,7 +1395,7 @@ class EnumeratorOperandShape(unittest.TestCase):
             registries = {
                 "relative-operand": (self._enum_payload(state_dir, [
                     "tools/orch-enumerate-backlog.py", "../orch-state/resume-barrier.json"]), 1),
-                "planned-shape": ({**self._enum_payload(state_dir, [
+                "absolute-operand": ({**self._enum_payload(state_dir, [
                     "tools/orch-enumerate-backlog.py", str(base / "private" / "TODO.md")]),
                     "yield_tools": ["ScheduleWakeup", "CronCreate"],
                     "staleness": {"task_hours": 24, "external_hours": 72}}, 0),
@@ -1388,7 +1418,8 @@ class EnumeratorOperandShape(unittest.TestCase):
 
     def test_planned_stage2_value_accepted(self):
         # The planned stage-2 value added to the committed registry is accepted: the enumerator argv with
-        # timeout 5, the yield_tools roster, the mode path, both staleness horizons, and escape undeclared.
+        # timeout 5, the yield_tools roster, the mode path, both staleness horizons, and the escape
+        # declaration {"path": "ESCAPE-ALLOW-YIELD"} (round 5 T2: the planned value declares escape).
         # The test interpreter stands in for argv[0]; the literal /usr/bin/python3 is checked as well
         # wherever this host has it.
         interpreters = [PY] + (["/usr/bin/python3"] if os.path.exists("/usr/bin/python3") else [])
@@ -1400,8 +1431,9 @@ class EnumeratorOperandShape(unittest.TestCase):
                 "yield_tools": ["ScheduleWakeup", "CronCreate"],
                 "mode": {"path": "/opt/cleanlanguage/private/operating-mode.md"},
                 "staleness": {"task_hours": 24, "external_hours": 72},
+                "escape": ESCAPE_DECLARED,
             })
-            self.assertNotIn("escape", payload)
+            self.assertEqual(payload["escape"], {"path": "ESCAPE-ALLOW-YIELD"})
             with self.subTest(interpreter=interp), tempfile.TemporaryDirectory() as d:
                 r = _run_full(_write(d, payload))
                 self.assertEqual(r.returncode, 0, r.stderr)
