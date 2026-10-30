@@ -60,8 +60,10 @@ way, by an OSError such as ENOSPC or by any other exception (for example a Memor
 text is encoded, or a KeyboardInterrupt), removes the partial output it created, so a failed run
 never leaves a truncated file that a later step could mistake for a complete conversion; an OSError
 is refused with exit 1 there, and any other exception propagates to the runtime guard below (or,
-for a KeyboardInterrupt, ends the run). Applying the
-output to the record store is a separate step outside this script.
+for a KeyboardInterrupt, ends the run). Either refusal names the output and says, in the same
+words, what became of the partial output: removed, left in place because the path no longer names
+the file this run created, or NOT removed and to be deleted before any retry. Applying the output
+to the record store is a separate step outside this script.
 
 Usage:
     migrate-todo-aei.py <input> <output>
@@ -349,9 +351,11 @@ def read_input(path):
                              .format(line, path, exc.start))
 
 
-def write_output(in_path, out_path, text):
+def write_output(in_path, out_path, text, reached=None):
     """Create out_path exclusively; refuse an existing path or one that resolves to the input. Every
-    refusal is positioned at the end of input, since the whole input was read before the output."""
+    refusal is positioned at the end of input, since the whole input was read before the output.
+    When an exception other than an OSError interrupts the write, reached["partial"] (if reached is
+    given) records the output path and what became of the partial output, for the runtime guard."""
     if os.path.lexists(out_path):
         raise _output_error(text, "output {} already exists (it is never overwritten)"
                             .format(out_path))
@@ -385,14 +389,17 @@ def write_output(in_path, out_path, text):
     finally:
         # Any other exception, an Exception that is not an OSError or a BaseException such as
         # KeyboardInterrupt, still removes the partial output under the same-inode condition; the
-        # exception then propagates unchanged to the runtime guard in main.
+        # exception then propagates unchanged to the runtime guard in main, which reports the
+        # removal result recorded here.
         if not finished and not removed:
             if fd is not None:
                 try:
                     os.close(fd)
                 except OSError:
                     pass
-            _remove_partial(out_path, created)
+            status = _remove_partial(out_path, created)
+            if reached is not None:
+                reached["partial"] = (out_path, status)
 
 
 def _remove_partial(out_path, created):
@@ -439,6 +446,8 @@ def _unexpected(exc, reached):
     if reached["written"] is not None:
         detail += (" (the output {} was written in full before this error and is left in place)"
                    .format(reached["written"]))
+    if reached["partial"] is not None:
+        detail += "; output {}: {}".format(*reached["partial"])
     if reached["line"] is None:
         _fail("{}: {}".format(NOT_READ, detail))
     if reached["output"]:
@@ -450,7 +459,7 @@ def main(argv):
     """The whole run under one guard: any Exception that escapes _run, from argument handling to
     the flush of stdout, is a positioned refusal. KeyboardInterrupt and the SystemExit of _fail are
     not Exception and pass through."""
-    reached = {"line": None, "output": False, "written": None}
+    reached = {"line": None, "output": False, "written": None, "partial": None}
     try:
         _run(argv, reached)
     except Exception as exc:
@@ -460,8 +469,9 @@ def main(argv):
 
 def _run(argv, reached):
     """Convert (or dump) the input named by argv. reached["line"] is set to the end line once the
-    whole input has been read, reached["output"] once the output step starts, and
-    reached["written"] to the output path once it is written in full."""
+    whole input has been read, reached["output"] once the output step starts,
+    reached["written"] to the output path once it is written in full, and reached["partial"] by
+    write_output when an interrupted write left a partial output to remove."""
     if len(argv) == 2 and argv[0] == "--dump-old-cells":
         in_path = os.path.abspath(argv[1])
         try:
@@ -487,7 +497,7 @@ def _run(argv, reached):
         reached["line"] = _last_line(text.split("\n"))
         new_text, rows = convert(text)
         reached["output"] = True
-        write_output(in_path, out_path, new_text)
+        write_output(in_path, out_path, new_text, reached)
     except MigrationError as exc:
         _fail(str(exc))
     reached["written"] = out_path

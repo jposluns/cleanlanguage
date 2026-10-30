@@ -64,7 +64,9 @@ with a relative path, and a RuntimeError injected in process at each stage of th
 resolution, reading, conversion, the output write, the row digest and the stdout write), in both
 modes, each exit 1 with one positioned stderr line and no traceback, at the position that stage had
 reached, while a KeyboardInterrupt passes through. A failure inside the output write after the
-exclusive create, a RuntimeError or a KeyboardInterrupt, leaves no output file. The remaining residual is a process ended
+exclusive create, a RuntimeError or a KeyboardInterrupt, leaves no output file, and the refusal says
+the partial output was removed; when that removal itself fails, the refusal names the file left
+behind and says it must be deleted before any retry. The remaining residual is a process ended
 without an exception (a signal, exec or os._exit), which names no position.
 """
 
@@ -1398,8 +1400,8 @@ def module_constants(source):
 # reading a class of them fails rather than passing vacuously.
 POSITION_FLOORS = (("construction", 16), ("_fail call", 3), ("line argument", 6), ("raise", 21),
                    ("standard error write", 2), ("print to a file", 2), ("exit", 3))
-RELAY = ("        write_output(in_path, out_path, new_text)\n    except MigrationError as exc:\n"
-         "        _fail(str(exc))\n")
+RELAY = ("        write_output(in_path, out_path, new_text, reached)\n"
+         "    except MigrationError as exc:\n        _fail(str(exc))\n")
 MAIN_ANCHOR = "    in_path, out_path = os.path.abspath(argv[0]), os.path.abspath(argv[1])\n"
 # The reason the probe gives for each kind of unpositioned refusal path, as its message text.
 PRINT_REASON = "a print to a stream other than an accepted standard error sink"
@@ -1530,6 +1532,10 @@ class Refusing(Sink):
         boom()
 
 
+def refuse_unlink(*_args, **_kwargs):
+    raise PermissionError(13, "Permission denied")
+
+
 targets = {"path": (mod.os.path, "abspath", boom), "read": (mod, "read_input", boom),
            "convert": (mod, "convert", boom), "write": (mod, "write_output", boom),
            "digest": (mod, "row_digest", boom), "interrupt": (mod, "convert", interrupt),
@@ -1537,6 +1543,9 @@ targets = {"path": (mod.os.path, "abspath", boom), "read": (mod, "read_input", b
 if stage in targets:
     owner, attr, replacement = targets[stage]
     setattr(owner, attr, replacement)
+if stage == "fsync-unlink":
+    # A RuntimeError at fsync whose removal of the partial output then fails.
+    mod.os.fsync, mod.os.unlink = boom, refuse_unlink
 out, err = (Refusing() if stage == "stdout" else Sink()), io.StringIO()
 real = (sys.stdout, sys.stderr)
 sys.stdout, sys.stderr = out, err
@@ -1665,11 +1674,30 @@ class RuntimeGuard(MigrateHarness):
         self.assertEqual(result["stdout"], "")
         self.assert_guarded(result["code"], result["stderr"], end_of_input(text),
                             "unexpected RuntimeError: injected at the fsync stage")
+        self.assertIn("; output {}: the partial output was removed".format(
+            os.path.abspath(str(self.dst))), result["stderr"])
         self.assertFalse(os.path.lexists(self.dst), "a failed write leaves no partial output")
         result = self.run_stage(MIGRATE, "fsync-interrupt", self.src, self.dst)
         self.assertTrue(result["interrupted"], "the guard caught a KeyboardInterrupt")
         self.assertEqual(result["stderr"], "")
         self.assertFalse(os.path.lexists(self.dst), "an interrupted write leaves no partial output")
+
+    def test_a_failed_removal_after_a_failed_write_names_the_file_left_behind(self):
+        # A RuntimeError at os.fsync whose removal of the partial output then fails (os.unlink
+        # raises PermissionError) leaves the file in place; the positioned refusal names it and
+        # says, in the words of the OSError path, that it must be deleted before any retry.
+        text = old_fixture()
+        self.write_src(text)
+        result = self.run_stage(MIGRATE, "fsync-unlink", self.src, self.dst)
+        self.assertFalse(result["interrupted"])
+        self.assertEqual(result["stdout"], "")
+        self.assert_guarded(result["code"], result["stderr"], end_of_input(text),
+                            "unexpected RuntimeError: injected at the fsync-unlink stage")
+        self.assertIn("; output {}: the partial output could NOT be removed (Permission denied); "
+                      "delete it before any retry".format(os.path.abspath(str(self.dst))),
+                      result["stderr"])
+        self.assertNotIn("was removed", result["stderr"])
+        self.assertTrue(os.path.lexists(self.dst), "the failed removal left the partial output")
 
     def test_a_keyboard_interrupt_is_not_caught(self):
         self.write_src(old_fixture())
