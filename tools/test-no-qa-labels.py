@@ -7,18 +7,33 @@ a model family with a finding, such as "codex reproduced" or "the gemini seed", 
 later reader and mixes numbering schemes. The text states the reason itself instead.
 
 The test scans each file in SCANNED in two ways. Every physical line is matched against
-LABEL_PATTERNS. Every prose block, which in a Python file is a run of comments on consecutive
-lines or a string statement such as a docstring and elsewhere is a paragraph of consecutive
-non-blank lines, is matched line by line against PROSE_PATTERNS as well, and then as one text with
-all its line breaks joined against both sets, so a label spread over any number of lines is caught
-and reported at the line where it starts. Docstrings are found with ast.get_docstring, so the
-docstring of a one-line suite counts too. PROSE_PATTERNS holds the widened bare finding id, which
-applies to prose only because code legitimately carries short identifiers such as the closure
-value "C1". A match on a line in ALLOWLIST, the reviewed set of lines whose match is a
-cross-reference to a named plan rather than a review label, passes. A scanned file that is
-missing, unreadable or does not tokenize and parse is a failure, never a skip, and an allowlist
-entry that no longer matches a scanned line is a failure too, so the allowlist cannot silently go
-stale.
+LABEL_PATTERNS. Every prose block is matched against both sets. A prose block is, in a Python
+file, a run of comments on consecutive lines or a string statement such as a docstring, and
+elsewhere a paragraph of consecutive non-blank lines. A comment run or a paragraph is matched line
+by line and then as one text with all its line breaks joined, so a label spread over any number of
+lines is caught and reported at the line where it starts. A string statement is matched once, as a
+whole, on its decoded value as Python builds it, and each match is reported at the physical line
+where it starts, so a label spread over its lines is caught there too, while a value that Python
+reads as exempt or as a longer word or id is not split into lines or parts that would read
+otherwise. Docstrings are found with ast.get_docstring, so the docstring of a one-line suite counts
+too, and a string statement may be a plain, f-string, template string or bytes literal. Its prose
+is read from the parsed literal, never cut from the source: the decoded text of a plain or bytes
+literal, and only the top-level literal text of an f-string or template string, whose replacement
+fields, with any format spec or nested literal, are code and each read as one space. Each part of
+an implicitly concatenated literal is read from its own delimiter, with its own prefix, and joined
+to the next part as Python joins them, with nothing between, and a backslash that ends a line of a
+part joins the next line with nothing between; a line break inside one part, written or escaped,
+is the newline it is, with the space around it stripped. Every pattern but the round number
+pattern reads a line break, in a string value or between the lines of a comment run or paragraph,
+as one space; the round number pattern keeps it, so a letter exempts a colon round number only on
+the line of the number. Before Python 3.12 the tokenizer does not separate the
+fields of an f-string, so an f-string statement fails the scan there. PROSE_PATTERNS holds the
+widened bare finding id, which applies to prose only because code legitimately carries short
+identifiers such as the closure value "C1". A match on a line in ALLOWLIST, the reviewed set of
+lines whose match is a cross-reference to a named plan rather than a review label, passes. A
+scanned file that is missing, unreadable or does not tokenize and parse is a failure, never a
+skip, and an allowlist entry that no longer matches a scanned line is a failure too, so the
+allowlist cannot silently go stale.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
@@ -31,7 +46,8 @@ review-history labels therefore rests on an independent search of the scanned fi
 lint. The known residual forms are these: a review pass named in words ("the third review"); a
 round number, in the plain form or the colon form, that one rule exempts, because a letter of any
 script, any character of Unicode category L, follows it, directly in the plain form, as in "round
-7th" or "round 7a", and on the same physical line with or without a space between in the colon
+7th" or "round 7a", and on the same line with or without a space between, a line being a physical
+line of a comment or paragraph and a line of the decoded value of a string statement, in the colon
 form, as in the text "round: 7 decimal places" or a time in microseconds written with the micro
 sign or the Greek mu, or because a decimal continuation follows it, as in "round 7.5" or "round:
 7.5"; a round number written in decimal digits other than the ASCII digits 0 to 9, such as
@@ -43,12 +59,16 @@ pull-request slices), exclusions the code-line bare id pattern does not make, so
 still caught on any line; a reviewer named other than as codex, claude or gemini; a family name
 more than two words away from its review or credit word, or credited by a verb outside REVIEW_WORD;
 in a Python file, a label split across two lines of a string that is not a statement of its own,
-such as an argument or an assigned value, which is matched line by line only; and a bare id in code
-that does not use one of the letters of the code-line bare id pattern. Both round number forms also
-have false failures, accepted as low severity: a round number that the rule above does not exempt
+such as an argument or an assigned value, which is matched line by line only; in an f-string or
+template string statement, a label inside a replacement field or its format spec, which is code
+and so is matched only line by line against LABEL_PATTERNS, never against PROSE_PATTERNS or
+across a line break, and a label that a replacement field interrupts, whose place reads as one
+space; and a bare id in code that does not use one of the letters of the code-line bare id
+pattern. Both round number forms also have false failures, accepted as low severity: a round
+number that the rule above does not exempt
 is caught in either form, even in ordinary text, whatever follows it, including the end of the
 text. Examples, not a complete list: in the colon form, a word that follows the number only on the
-next physical line does not exempt it, so such a line fails until the text is reflowed to keep the
+next line in the sense above does not exempt it, so such a line fails until reflowed to keep the
 word on the line of the number; in the plain form, a word after a space does not exempt it; in
 either form, a number that a bracket, a percent sign, an arrow, an underscore or a numeric
 character that is not a letter, such as superscript two, a vulgar fraction or a Roman numeral sign,
@@ -56,7 +76,10 @@ follows is caught; and in a Python file, where both forms are matched against ev
 of code as well as of prose, ordinary arithmetic and identifiers in code, such as the lines
 "x = rounds - 1", "x = rounds-1" and "round2 = 3", are caught. Code lines stay matched because a
 label in a string literal that is not a statement of its own, such as an assertion message, would
-otherwise pass. The PatternSelfCheck case pins the forms the patterns are known to cover, a letter
+otherwise pass. A further accepted false failure: in an f-string or template string statement, the
+one space that stands for a replacement field can complete a label in the decoded text, so the text
+"fix", a field and the text "round" written together read as a fix round and are caught. The
+PatternSelfCheck case pins the forms the patterns are known to cover, a letter
 of each Unicode letter category that exempts either form, the ordinary code and prose they must
 not flag, these accepted false failures, a second round number match of each form in one searched
 text, the earlier match when both forms match one searched text and, for each Python placement,
@@ -66,13 +89,17 @@ suite.
 """
 import ast
 import bisect
+import contextlib
 import io
 import re
 import sys
+import tempfile
 import tokenize
 import unicodedata
 import unittest
+import warnings
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -103,21 +130,21 @@ class RoundNumberPattern:
 
     One rule decides the plain form, as in "round 7", and the colon form, as in "round: 7": a round
     number passes only when a letter of any script, a character whose Unicode category starts with
-    L, follows it, directly in the plain form and after any spaces on the same physical line in the
-    colon form, or when a decimal continuation follows it. So "round 7th", "round 7a", "round 7.5",
-    "round: 7 decimal places", a time in microseconds and "round: 7.5" pass. Any other ending, or
-    the end of the text, is caught: in the plain form a space before a word, in the colon form a
-    line break before a word, and in either form a closing quote, a bracket, a mark, an underscore
-    or a numeric character that is not a letter (superscript two, a vulgar fraction or a Roman
-    numeral sign). The re module has no letter class, and its word boundary counts those numeric
-    characters and the underscore as word characters, so the letter test is made in code, and
-    search returns a match the way re.Pattern.search does. split_hits searches a joined prose block
-    for this pattern with its line breaks kept, so a letter on the next physical line never exempts
-    the colon form.
+    L, follows it, directly in the plain form and after any spaces on the same line of the searched
+    text in the colon form, or when a decimal continuation follows it. So "round 7th", "round 7a",
+    "round 7.5", "round: 7 decimal places", a time in microseconds and "round: 7.5" pass. Any
+    other ending, or the end of the text, is caught: in the plain form a space before a word, in
+    the colon form a line break before a word, and in either form a closing quote, a bracket, a
+    mark, an underscore or a numeric character that is not a letter (superscript two, a vulgar
+    fraction or a Roman numeral sign). The re module has no letter class, and its word boundary
+    counts those numeric characters and the underscore as word characters, so the letter test is
+    made in code, and search returns a match the way re.Pattern.search does. Prose is searched for
+    this pattern with its line breaks kept, so a letter on the next line never exempts the colon
+    form.
 
     The matches of both forms are found once for each text searched and kept, so the run of
-    searches split_hits makes over one joined block, one from every start position, costs time
-    linear in the block instead of a rescan of every remaining exempt match for each match.
+    searches made over one joined block or string value, one from every start position, costs time
+    linear in the text instead of a rescan of every remaining exempt match for each match.
     A kept match is the match a search from any position up to its start would return: the re
     module tests a word boundary against the whole text, not only from the search position, and
     every match of either form starts where the word round starts and holds no other such start,
@@ -172,7 +199,8 @@ class RoundNumberPattern:
         return min(found, key=lambda match: match.start()) if found else None
 
 
-# Matched against every physical line and every joined prose block.
+# Matched against every physical line, every line and joined text of a comment run or paragraph,
+# and the whole value of every string statement.
 LABEL_PATTERNS = (
     # Each form is exempt only before a letter or a decimal continuation; see the class.
     ("a review round number", RoundNumberPattern()),
@@ -238,58 +266,215 @@ def read_text(path):
     return Path(path).read_text(encoding="utf-8")
 
 
+# An f-string, and a template string where this Python parses one, is a node of its own kind.
+FORMATTED_LITERALS = (ast.JoinedStr,) + ((ast.TemplateStr,) if hasattr(ast, "TemplateStr") else ())
+
+
+def token_types(*names):
+    """The token types among names that the tokenizer of this Python defines."""
+    return {getattr(tokenize, name) for name in names if hasattr(tokenize, name)}
+
+
+# From Python 3.12 the tokenizer splits an f-string, and from 3.14 a template string, into a start,
+# its literal text, the tokens of its fields and an end; before 3.12 an f-string is one STRING token.
+FORMATTED_STARTS = token_types("FSTRING_START", "TSTRING_START")
+FORMATTED_MIDDLES = token_types("FSTRING_MIDDLE", "TSTRING_MIDDLE")
+FORMATTED_ENDS = token_types("FSTRING_END", "TSTRING_END")
+
+
+def opening_of(literal):
+    """The prefix and the delimiter that open the source text of a string literal."""
+    opening = QUOTE_OPEN.match(literal)
+    return opening.group(0)[:-len(opening.group(1))], opening.group(1)
+
+
+def decoded(raw, prefix):
+    """The text of raw, one physical line of the body of a literal that prefix opens, as Python reads it.
+
+    A raw literal keeps its text as written. Any other has its escapes decoded, and a backslash
+    that ends the line, which joins the line to the next, is dropped. A bytes literal is read as
+    Latin-1, one character for each byte. An escape that does not decode raises, so the scan fails.
+    """
+    prefix = prefix.lower()
+    if "r" in prefix:
+        return raw
+    quoted = []
+    at = 0
+    while at < len(raw):
+        if raw[at] == "\\":
+            quoted.append(raw[at:at + 2] if at + 1 < len(raw) else "")
+            at += 2
+        else:
+            quoted.append("\\\"" if raw[at] == "\"" else raw[at])
+            at += 1
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        value = ast.literal_eval(("b" if "b" in prefix else "") + "\"" + "".join(quoted) + "\"")
+    return value.decode("latin-1") if isinstance(value, bytes) else value
+
+
+def literal_pieces(tokens):
+    """(line number, text, breaks) for each piece of literal text in the tokens of a string statement.
+
+    The tokens are those of one statement that is a string literal alone, so each part of an
+    implicitly concatenated literal is read from its own delimiter, with its own prefix. A plain or
+    bytes literal gives its decoded text. An f-string or template string gives only its top-level
+    literal text: each of its replacement fields, with any conversion, format spec or nested
+    literal in it, is code and stands as one space at the line where the field opens. A part that
+    spans lines gives one piece for each of its physical lines. breaks is true for a piece that
+    follows a line break inside the same part, which the parsed text holds, and false for a piece
+    that Python joins directly to the one before it: the first piece of a part, a replacement
+    field, the literal text after a field, and a line after a backslash that joins it to the line
+    before. Before Python 3.12 an f-string is one STRING token whose fields the tokenizer does not
+    separate, so it raises ValueError rather than be read with its fields as prose.
+    """
+    pieces = []
+    depths = []
+    prefix = ""
+
+    def joins_next(line):
+        """Whether line, in a literal that prefix opens, ends with a backslash that joins the next."""
+        return "r" not in prefix.lower() and (len(line) - len(line.rstrip("\\"))) % 2 == 1
+
+    def add(row, raw):
+        lines = raw.split("\n")
+        for offset, part in enumerate(lines):
+            breaks = offset > 0 and not joins_next(lines[offset - 1])
+            pieces.append((row + offset, decoded(part, prefix), breaks))
+
+    for tok in tokens:
+        if tok.type in FORMATTED_STARTS:
+            if not depths:
+                prefix = opening_of(tok.string)[0]
+            depths.append(0)
+        elif tok.type in FORMATTED_ENDS:
+            depths.pop()
+        elif tok.type in FORMATTED_MIDDLES:
+            if depths == [0]:
+                add(tok.start[0], tok.string)
+        elif tok.type == tokenize.OP and depths and tok.string in ("{", "}"):
+            if tok.string == "{":
+                if depths == [0]:
+                    pieces.append((tok.start[0], " ", False))
+                depths[-1] += 1
+            else:
+                depths[-1] -= 1
+        elif tok.type == tokenize.STRING and not depths:
+            prefix, delimiter = opening_of(tok.string)
+            if not set(prefix.lower()).isdisjoint("ft"):
+                raise ValueError("this Python does not separate the fields of an f-string: " + tok.string)
+            add(tok.start[0], tok.string[len(prefix) + len(delimiter):len(tok.string) - len(delimiter)])
+    return pieces
+
+
+def char_column(lines, lineno, offset):
+    """The character column in line lineno of lines at the UTF-8 byte offset that ast gives."""
+    return len(lines[lineno - 1].encode("utf-8")[:offset].decode("utf-8"))
+
+
+def is_string_literal(value):
+    """Whether value is a string literal of any kind: plain, bytes, f-string or template string."""
+    return (isinstance(value, FORMATTED_LITERALS)
+            or (isinstance(value, ast.Constant) and isinstance(value.value, (str, bytes))))
+
+
 def string_statements(tree):
     """The string-literal expression statements of a parsed module, in source order.
 
     Every docstring is found with ast.get_docstring on each module, class and function, wherever
     it sits, so the docstring of a one-line suite is included; every other statement that is a
-    string literal alone is included as well.
+    string literal alone, of any kind that is_string_literal names, is included as well, so a
+    docstring-style f-string, template string or bytes statement is prose too.
     """
     found = {}
     for node in ast.walk(tree):
         if isinstance(node, DOCSTRING_OWNERS) and ast.get_docstring(node, clean=False) is not None:
             value = node.body[0].value
             found[(value.lineno, value.col_offset)] = value
-        elif (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
-              and isinstance(node.value.value, str)):
+        elif isinstance(node, ast.Expr) and is_string_literal(node.value):
             found[(node.value.lineno, node.value.col_offset)] = node.value
     return [found[key] for key in sorted(found)]
+
+
+LINE_BREAK = re.compile(r"[^\S\n]*\n[^\S\n]*")
+
+
+def statement_value(pieces):
+    """The decoded value of a string statement, and the physical line of each of its characters.
+
+    pieces are the literal pieces of the statement, as literal_pieces reads them. They are joined
+    as Python joins them, with nothing between, and a piece that follows a line break inside its
+    part is put after a newline at the line of the piece. Each newline of the value, from a line
+    break in the source or from an escape, keeps its own line and loses the space around it, so the
+    indentation of a docstring does not hide a label split across two of its lines. Returns the
+    value and a list that holds the line number of each of its characters.
+    """
+    chars = []
+    rows = []
+    for row, part, breaks in pieces:
+        if breaks:
+            chars.append("\n")
+            rows.append(row)
+        chars.extend(part)
+        rows.extend([row] * len(part))
+    value = "".join(chars)
+    text = []
+    lines = []
+    at = 0
+    for gap in LINE_BREAK.finditer(value):
+        text.append(value[at:gap.start()] + "\n")
+        lines.extend(rows[at:gap.start()] + [rows[value.index("\n", gap.start())]])
+        at = gap.end()
+    text.append(value[at:])
+    lines.extend(rows[at:])
+    return "".join(text), lines
 
 
 def python_blocks(text):
     """The prose blocks of Python source: comment runs on consecutive lines, and string statements.
 
-    Each block is a list of (line number, text) segments, and a string statement starts at the
-    line where its literal starts. A source that does not tokenize or parse raises.
+    Returns the comment runs, each a list of (line number, text, joiner) segments joined by one
+    space, as paragraph_blocks gives a paragraph, and the string statements, each as the value and
+    line numbers that statement_value gives for the pieces that literal_pieces reads from the
+    tokens of the statement. A source that does not tokenize or parse raises.
     """
+    tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
     blocks = []
     run = []
-    for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+    for tok in tokens:
         if tok.type == tokenize.COMMENT:
             row = tok.start[0]
             if run and run[-1][0] != row - 1:
                 blocks.append(run)
                 run = []
-            run.append((row, tok.string.lstrip("#").strip()))
+            run.append((row, tok.string.lstrip("#").strip(), " "))
     if run:
         blocks.append(run)
+    lines = text.split("\n")
+    starts = [tok.start for tok in tokens]
+    values = []
     for value in string_statements(ast.parse(text)):
-        literal = ast.get_source_segment(text, value)
-        opening = QUOTE_OPEN.match(literal or "")
-        if opening is None:
-            continue
-        body = literal[len(opening.group(0)):len(literal) - len(opening.group(1))]
-        blocks.append([(value.lineno + offset, part.strip()) for offset, part in enumerate(body.split("\n"))])
-    return blocks
+        begin = (value.lineno, char_column(lines, value.lineno, value.col_offset))
+        end = (value.end_lineno, char_column(lines, value.end_lineno, value.end_col_offset))
+        at = bisect.bisect_left(starts, begin)
+        statement = []
+        while at < len(tokens) and tokens[at].start < end:
+            statement.append(tokens[at])
+            at += 1
+        values.append(statement_value(literal_pieces(statement)))
+    return blocks, values
 
 
 def paragraph_blocks(lines):
-    """The prose blocks of a non-Python file: paragraphs of consecutive non-blank lines."""
+    """The prose blocks of a non-Python file: paragraphs of consecutive non-blank lines.
+
+    Each block is a list of (line number, text, joiner) segments, joined by one space.
+    """
     blocks = []
     run = []
     for number, line in enumerate(lines, 1):
         if line.strip():
-            run.append((number, re.sub(r"^\s*#*\s*", "", line).rstrip()))
+            run.append((number, re.sub(r"^\s*#*\s*", "", line).rstrip(), " "))
         elif run:
             blocks.append(run)
             run = []
@@ -298,59 +483,121 @@ def paragraph_blocks(lines):
     return blocks
 
 
-def split_hits(block):
-    """(line number, pattern name, matched text) for each match that crosses a line break.
+def block_text(block, glue):
+    """The segments of block joined as one text, with the offsets that place each segment in it.
 
-    The whole block is joined with single spaces and searched as one text, from every start
-    position, so a label spread over any number of lines is caught and an earlier match cannot hide
-    a later one. The round number pattern searches the block joined with line breaks instead, so a
-    letter exempts its colon form only on the line of the number. A match is reported at the
-    segment where it starts, with any line break in its text shown as a space.
+    glue maps the joiner of each segment after the first to the separator put before it. Returns
+    the text, the offset where the text of each segment starts and the offset where its separator
+    starts.
     """
+    parts = []
     starts = []
+    begins = []
     offset = 0
-    for _, text in block:
+    for index, (_, text, joiner) in enumerate(block):
+        separator = glue(joiner) if index else ""
+        begins.append(offset)
+        offset += len(separator)
         starts.append(offset)
-        offset += len(text) + 1
-    joined = " ".join(text for _, text in block)
-    lined = "\n".join(text for _, text in block)
+        parts.append(separator + text)
+        offset += len(text)
+    return "".join(parts), starts, begins
+
+
+def every_match(pattern, text):
+    """Each match of pattern in text, searched from every start position.
+
+    A search from each position after the start of the last match means an earlier match cannot
+    hide a later one.
+    """
+    position = 0
+    while True:
+        match = pattern.search(text, position)
+        if match is None:
+            return
+        yield match
+        position = match.start() + 1
+
+
+def split_hits(block):
+    """(line number, pattern name, matched text) for each match in a block that crosses a line break.
+
+    The block is a comment run or a paragraph. It is joined by one space between its lines and
+    searched as one text, from every start position, so a label spread over any number of lines is
+    caught and an earlier match cannot hide a later one. The round number pattern searches the
+    block with a line break in place of each joining space instead, so a letter exempts its colon
+    form only on the physical line of the number. A match is reported at the segment where it
+    starts, with any line break in its text shown as a space; it crosses a line break when its last
+    character lies in a later segment or in the separator before one.
+    """
+    joined = block_text(block, lambda joiner: joiner)
+    lined = block_text(block, lambda joiner: "\n")
     hits = []
     for name, pattern in ALL_PATTERNS:
-        searched = lined if isinstance(pattern, RoundNumberPattern) else joined
-        position = 0
-        while True:
-            match = pattern.search(searched, position)
-            if match is None:
-                break
+        searched, starts, begins = lined if isinstance(pattern, RoundNumberPattern) else joined
+        for match in every_match(pattern, searched):
             first = bisect.bisect_right(starts, match.start()) - 1
-            last = bisect.bisect_right(starts, match.end()) - 1
+            last = bisect.bisect_right(begins, match.end() - 1) - 1
             hit = (block[first][0], name, match.group(0).replace("\n", " "))
             if last > first and hit not in hits:
                 hits.append(hit)
-            position = match.start() + 1
+    return hits
+
+
+def value_hits(value, lines):
+    """(line number, pattern name, matched text, crosses) for each match in a string value.
+
+    value and lines are what statement_value gives for one string statement. The value is searched
+    once as a whole for each pattern, from every start position: by the round number pattern with
+    its newlines kept, so a letter exempts the colon form only on the line of the number, and by
+    every other pattern with each newline read as one space. A match is reported at the physical
+    line where it starts, with any newline in its text shown as a space, and crosses is true when
+    its last character lies on a later physical line.
+    """
+    spaced = value.replace("\n", " ")
+    hits = []
+    for name, pattern in ALL_PATTERNS:
+        searched = value if isinstance(pattern, RoundNumberPattern) else spaced
+        for match in every_match(pattern, searched):
+            first = lines[match.start()]
+            hit = (first, name, match.group(0).replace("\n", " "), lines[match.end() - 1] > first)
+            if hit not in hits:
+                hits.append(hit)
     return hits
 
 
 def scan(rel, text, allowlist=()):
-    """Every unreviewed label in text, as report lines naming rel and the starting line number."""
+    """Every unreviewed label in text, as report lines naming rel and the starting line number.
+
+    A match that lies on one physical line is reported with the names of every pattern that
+    matches there and the text of the line, which ALLOWLIST can pass; a match that crosses a line
+    break is reported on its own at the line where it starts.
+    """
     lines = text.split("\n")
     allowed = set(allowlist)
-    blocks = python_blocks(text) if rel.endswith(".py") else paragraph_blocks(lines)
+    blocks, values = python_blocks(text) if rel.endswith(".py") else (paragraph_blocks(lines), [])
     names_at = {}
     for number, line in enumerate(lines, 1):
         names_at.setdefault(number, []).extend(labels_in(line, LABEL_PATTERNS))
+    across = []
     for block in blocks:
-        for number, segment in block:
-            for name in labels_in(segment, PROSE_PATTERNS):
+        for number, segment, _ in block:
+            for name in labels_in(segment):
                 if name not in names_at[number]:
                     names_at[number].append(name)
+        across.extend(split_hits(block))
+    for value, rows in values:
+        for number, name, matched, crosses in value_hits(value, rows):
+            if crosses:
+                across.append((number, name, matched))
+            elif name not in names_at[number]:
+                names_at[number].append(name)
     found = []
     for number, names in sorted(names_at.items()):
         if names and lines[number - 1] not in allowed:
             found.append("{}:{}: {}: {}".format(rel, number, ", ".join(names), lines[number - 1].strip()))
-    for block in blocks:
-        for number, name, matched in split_hits(block):
-            found.append("{}:{}: {} across a line break: {}".format(rel, number, name, matched))
+    for number, name, matched in across:
+        found.append("{}:{}: {} across a line break: {}".format(rel, number, name, matched))
     return found
 
 
@@ -420,7 +667,9 @@ class PatternSelfCheck(unittest.TestCase):
     # Roman numeral eight). They stay caught, so the trade-off cannot change silently.
     FALSE_FAILURES = ("round: 7 (default)", "round: 7%", "round: 7 -> 8",
                       "round: 7\u00b2", "Area per round: 7 \u00bd", "round: 7\u2167")
-    FALSE_FAILURE_PYTHON = ("# Keep round: 7\n# decimal places\nx = 1\n",)
+    # The one space that stands for a replacement field can complete a label in the decoded text of
+    # an f-string statement, an accepted low-severity false failure that stays caught.
+    FALSE_FAILURE_PYTHON = ("# Keep round: 7\n# decimal places\nx = 1\n", "x = 1\nf\"the fix{x}round case\"\n")
     # Accepted low-severity false failures in Python code, which is matched line by line as prose
     # is: ordinary arithmetic and an identifier that the plain form catches. They stay caught, so
     # code matching cannot be confined to prose silently.
@@ -466,15 +715,16 @@ class PatternSelfCheck(unittest.TestCase):
     # Forms that hold a double quote, checked in every placement: one with the quote inside the
     # text, which sits in every placement, and one that ends with the quote, which ends a
     # triple-quoted literal early only where it sits just before the closing quotes. The skips are
-    # pinned literally in PLACEMENTS order and must match the skip derived from the delimiter of
-    # each placement alone.
+    # pinned literally in PLACEMENTS order and must match expected_skip, which skips a form only
+    # when the delimiter of the placement shows it ends the literal early and the source that
+    # results does not tokenize and parse.
     DOUBLE_QUOTE_FORMS = ("the \"round 7\" case", "\"round 7\"")
     DOUBLE_QUOTE_SKIPS = ((), (), (), ("\"round 7\"",), (), ("\"round 7\"",), (), (), ("\"round 7\"",))
     # Forms that hold a backslash-escaped quote, checked in every placement: an escaped single
     # quote and an escaped double quote at the end of the text, which never end a literal, and a
     # single quote after an escaped backslash, which ends a single-quoted literal early. The skips
-    # are pinned literally in PLACEMENTS order and must match the escape-aware skip derived from
-    # the delimiter of each placement alone.
+    # are pinned literally in PLACEMENTS order and must match expected_skip, whose early closure
+    # test reads backslash escapes as the tokenizer does, joined with the parse of the source.
     ESCAPED_FORMS = ("refuting the gemini seed\\\x27s claim", "the \\\"round 7\\\"",
                      "refuting the gemini seed\\\\\x27s claim")
     ESCAPED_SKIPS = ((), (), (), (), (), (), ("refuting the gemini seed\\\\\x27s claim",), (), ())
@@ -488,6 +738,92 @@ class PatternSelfCheck(unittest.TestCase):
     ADJACENT_EARLY = ((), (), (), ("\"\"round 7\"\"",), (), ("\"\"round 7\"\"",),
                       ("\x27\x27round 7\x27\x27",), (), ("\"\"round 7\"\"",))
     ADJACENT_SKIPS = ((), (), (), (), (), (), (), (), ())
+    # Direct checks of the skip oracle, one row per rule it applies: (placement index, text, ends
+    # the literal early, parses, skips). An escaped quote never ends the literal and a quote after
+    # an escaped backslash does; a backslash before the closing quotes escapes the first of them
+    # and leaves the literal unterminated, which counts as early; an early closure that leaves
+    # adjacent literals that parse is no skip; and a source that fails to parse with no early
+    # closure, in a comment or through a malformed escape in a docstring, is no skip either.
+    ORACLE_CASES = ((6, "the change", False, True, False),
+                    (6, "refuting the gemini seed\\\x27s claim", False, True, False),
+                    (6, "refuting the gemini seed\\\\\x27s claim", True, False, True),
+                    (3, "the \\\"round 7\\\"", False, True, False),
+                    (3, "\"round 7\"", True, False, True),
+                    (3, "\"\"round 7\"\"", True, True, False),
+                    (5, "round 7\\", True, False, True),
+                    (0, "round 7\n)", False, False, False),
+                    (2, "round 7 \\N", False, False, False))
+    # String statements of every literal kind, each with a label: an f-string, a bytes literal, a
+    # raw bytes literal, an f-string with a replacement field, and a label split over two lines of
+    # an f-string. Each is a prose block, so the label is caught at the line where it starts.
+    LITERAL_KIND_STATEMENTS = ("x = 1\nf\"\"\"the L5 case\"\"\"\n", "x = 1\nb\"\"\"the L5 case\"\"\"\n",
+                               "x = 1\nrb\x27the L5 case\x27\n", "x = 1\nF\"the {x} L5 case\"\n",
+                               "x = 1\nf\"\"\"from the gemini\nseed claim\"\"\"\n")
+    # The same literal kinds in ordinary code, an assigned value and a call argument, which are not
+    # statements of their own, so their short identifiers are not caught.
+    LITERAL_KIND_CODE = ("value = f\"C1 {x}\"\n", "value = b\"C1\"\n", "value = rb\x27C1\x27\n",
+                         "print(f\"the {x} C1 case\")\n")
+    # The prose of a string statement is its parsed literal text: implicitly concatenated literals
+    # whose delimiters differ in length, with a label at the end of the last part, and an escape
+    # that decodes to a label. Each is caught at the line where it starts.
+    PARSED_TEXT_STATEMENTS = ("x = 1\n\"\"\"the case\"\"\" \"and the L5\"\n",
+                              "x = 1\nb\"\"\"the case\"\"\" b\x27and the L5\x27\n",
+                              "x = 1\nf\"\"\"the {x} case\"\"\" \"and the L5\"\n",
+                              "x = 1\n\"the L\\x35 case\"\n")
+    # The replacement fields, conversions and format specs of an f-string statement are code, not
+    # prose, so a short identifier in them is not caught, while a label in the literal text of the
+    # same statement is caught at its own physical line, and at no other line.
+    FIELD_CODE_STATEMENTS = ("x = 1\nf\"the {C1} case\"\n", "x = 1\nf\"the {L5!r:>{C1}} case\"\n",
+                             "x = 1\nf\"the {x:L5} case\"\n",
+                             "x = 1\nf\"\"\"the {f\x27{L5}\x27} case\nand {C1}\"\"\"\n",
+                             "x = 1\nf\"{f\x27C1 {x}\x27} ok\"\n")
+    FIELD_TEXT_LABELS = (("x = 1\nf\"the {C1} L5 case\"\n", 2),
+                         ("x = 1\nf\"\"\"the {C1}\ncase L5\"\"\"\n", 3))
+    # Expression statements that start with a literal but are not a literal alone: a percent
+    # format, a join and method calls. They are code, so their short identifiers are not caught.
+    LITERAL_LED_CODE = ("\"the C1 case %s\" % x\n", "\" C1 \".join(x)\n", "\"the C1 case\".upper()\n",
+                        "f\"the {x} C1 case\".strip()\n")
+    # Decoded prose is matched against every pattern in its decoded form, so a label that only an
+    # escape spells is caught at its own physical line: (source, line, pattern name).
+    DECODED_LABELS = (("x = 1\n\"fixed in round \\x37\"\n", 2, "a review round number"),
+                      ("x = 1\n\"the fix\\x20round\"\n", 2, "a fix round"),
+                      ("x = 1\nb\"the codex\\x20QA pass\"\n", 2, "a model-family QA attribution"),
+                      ("x = 1\nf\"\"\"the {x} case\nfixed in round \\x37\"\"\"\n", 3, "a review round number"))
+    # The parts of one string statement join as Python joins them, with nothing between: a label
+    # that two parts on consecutive lines split is caught at the line where it starts, and words
+    # that only an inserted space would join into a label are not caught.
+    CONCATENATED_LABELS = ("x = 1\n(f\"the L\"\n f\"5 case\")\n", "x = 1\n\"the L\" \\\n\"5 case\"\n",
+                           "x = 1\n(\"from the gem\"\n \"ini seed claim\")\n",
+                           "x = 1\n(\"fixed in round\"\n \"s 7 and 8\")\n")
+    CONCATENATED_CLEAN = ("x = 1\n(\"the fix\"\n \"round trip\")\n", "x = 1\n(f\"a codex\"\n f\"reviewed {x}\")\n")
+    # A raw f-string statement reads its literal text raw, from the prefix of its own start token: a
+    # label in its literal text is caught, and backslashes that would not decode, or would decode
+    # to a label, in a statement with no label are neither caught nor an error.
+    RAW_FSTRING_LABELS = ("x = 1\nrf\"the L5 {x} \\d case\"\n", "x = 1\nFR\x27the {x} L5\x27\n")
+    RAW_FSTRING_CLEAN = ("x = 1\nrf\"C:\\x\\u {x} \\N done\"\n", "x = 1\nrf\"the L\\x35 {x} case\"\n")
+    # The prose of a string statement is matched once, as a whole, on its decoded value as Python
+    # builds it, never part by part and never with a line break between parts that the value
+    # lacks: parts that spell the exempt round number "round7th" over three lines, a bare id after
+    # the word point in the next part, and a longer id that two parts split, are not caught.
+    VALUE_CLEAN = ("x = 1\n(\"fixed in round\"\n \"7\"\n \"th of the plan\")\n",
+                   "x = 1\n(\"the open point \"\n \"C1 case\")\n",
+                   "x = 1\n(\"the C1\"\n \"00 case\")\n")
+    # A line break in the value of a string statement is read as Python reads it: an escaped newline
+    # is a line break, read as one space, a backslash that ends a line of one part joins the next
+    # line with nothing between, in a plain and in a triple-quoted literal, and the indentation
+    # around a line break of a docstring is stripped. Each label is caught at the line where it
+    # starts: (source, line, pattern name).
+    VALUE_LABELS = (("x = 1\n\"the fix\\nround case\"\n", 2, "a fix round"),
+                    ("x = 1\n\"the finding\\nL5 case\"\n", 2, "a named finding id"),
+                    ("x = 1\n\"the L\\\n5 case\"\n", 2, "a bare finding id in prose"),
+                    ("x = 1\n\"\"\"the L\\\n5 case\"\"\"\n", 2, "a bare finding id in prose"),
+                    ("def f():\n    \"\"\"Handle the fix\n    round case.\"\"\"\n", 2, "a fix round"))
+    # The colon form is exempt only before a letter on the line of the number in the value: a
+    # letter that the next part puts on that line exempts it, and a letter after a line break, an
+    # escaped one here, does not. (source, the exact report.)
+    VALUE_COLON = (("x = 1\n(\"fixed in round:\"\n \"7 decimal places\")\n", []),
+                   ("x = 1\n(\"fixed in round:\"\n \"7\\nof review\")\n",
+                    ["x.py:2: a review round number across a line break: round:7"]))
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
@@ -678,6 +1014,134 @@ class PatternSelfCheck(unittest.TestCase):
                                   if self.ends_literal_early(placement, text)}, set(early), placement)
         self.check_skips_against_the_oracle(self.ADJACENT_FORMS, self.ADJACENT_SKIPS)
 
+    def test_the_skip_oracle_judges_each_rule_directly(self):
+        for index, text, early, parsed, skips in self.ORACLE_CASES:
+            placement = self.PLACEMENTS[index]
+            with self.subTest(placement=placement, text=text):
+                self.assertEqual(self.ends_literal_early(placement, text), early, text)
+                self.assertEqual(self.parses(placement.format(text)), parsed, text)
+                self.assertEqual(self.expected_skip(placement, text), skips, text)
+
+    def test_a_string_statement_of_every_literal_kind_is_a_prose_block(self):
+        for source in self.LITERAL_KIND_STATEMENTS:
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                self.assertTrue(any(hit.startswith("x.py:2: ") for hit in found), found)
+        for source in self.LITERAL_KIND_CODE:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), [], source)
+
+    def test_a_template_string_statement_is_a_prose_block(self):
+        if not hasattr(ast, "TemplateStr"):
+            self.skipTest("this Python parses no template string")
+        found = scan("x.py", "x = 1\nt\"\"\"the L5 case\"\"\"\n")
+        self.assertTrue(any(hit.startswith("x.py:2: ") for hit in found), found)
+        self.assertEqual(scan("x.py", "x = 1\nt\"the {C1:L5} case\"\n"), [])
+
+    def test_the_prose_of_a_string_statement_is_its_parsed_literal_text(self):
+        for source in self.PARSED_TEXT_STATEMENTS:
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                self.assertTrue(any(hit.startswith("x.py:2: ") for hit in found), found)
+
+    def test_the_fields_of_an_f_string_statement_are_code_not_prose(self):
+        for source in self.FIELD_CODE_STATEMENTS:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), [], source)
+        for source, line in self.FIELD_TEXT_LABELS:
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                at = "x.py:{}: ".format(line)
+                self.assertTrue(any(hit.startswith(at) for hit in found), found)
+                self.assertEqual([hit for hit in found if not hit.startswith(at)], [], found)
+
+    def test_an_expression_statement_led_by_a_literal_is_code(self):
+        for source in self.LITERAL_LED_CODE:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), [], source)
+
+    def test_decoded_prose_is_matched_against_every_pattern(self):
+        for source, line, name in self.DECODED_LABELS:
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                at = "x.py:{}: {}".format(line, name)
+                self.assertTrue(any(hit.startswith(at) for hit in found), found)
+
+    def test_the_parts_of_a_string_statement_join_with_nothing_between(self):
+        for source in self.CONCATENATED_LABELS:
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                self.assertTrue(any(hit.startswith("x.py:2: ") for hit in found), found)
+        for source in self.CONCATENATED_CLEAN:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), [], source)
+
+    def test_a_raw_f_string_statement_is_read_raw(self):
+        for source in self.RAW_FSTRING_LABELS:
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                self.assertTrue(any(hit.startswith("x.py:2: ") for hit in found), found)
+        for source in self.RAW_FSTRING_CLEAN:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), [], source)
+
+    def test_the_value_of_a_string_statement_is_matched_as_a_whole(self):
+        for source in self.VALUE_CLEAN:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), [], source)
+
+    def test_a_line_break_in_a_string_value_is_read_as_python_reads_it(self):
+        for source, line, name in self.VALUE_LABELS:
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                at = "x.py:{}: {}".format(line, name)
+                self.assertTrue(any(hit.startswith(at) for hit in found), found)
+
+    def test_a_letter_exempts_the_colon_form_only_on_its_line_of_the_value(self):
+        for source, expected in self.VALUE_COLON:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), expected, source)
+
+    def test_a_bytes_literal_decodes_with_its_prefix(self):
+        self.assertEqual(decoded("the L\\u0035 case", "b"), "the L\\u0035 case")
+        self.assertEqual(decoded("the L\\u0035 case", "rb"), "the L\\u0035 case")
+        self.assertEqual(decoded("the L\\u0035 case", ""), "the L5 case")
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.assertEqual(scan("x.py", "x = 1\nb\"the L\\u0035 case\"\n"), [])
+            self.assertTrue(scan("x.py", "x = 1\n\"the L\\u0035 case\"\n"))
+
+    def test_probe_reports_an_f_string_it_cannot_separate_as_unreadable(self):
+        message = "this Python does not separate the fields of an f-string"
+
+        def unseparated(tokens):
+            raise ValueError(message)
+
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "statement.py"
+            path.write_text("\"\"\"Clean.\"\"\"\n", encoding="utf-8")
+            try:
+                rel = path.resolve().relative_to(ROOT).as_posix()
+            except ValueError:
+                rel = path.as_posix()
+            clean = io.StringIO()
+            with contextlib.redirect_stdout(clean):
+                self.assertEqual(probe([str(path)]), 0)
+            self.assertEqual(clean.getvalue().splitlines(), ["probe: 0 hit(s)"])
+            output = io.StringIO()
+            with mock.patch.object(sys.modules[__name__], "literal_pieces", unseparated):
+                with contextlib.redirect_stdout(output):
+                    status = probe([str(path)])
+        self.assertEqual(output.getvalue().splitlines(),
+                         ["{}: unreadable: {}".format(rel, message), "probe: 1 hit(s)"])
+        self.assertEqual(status, 1)
+
+    def test_an_f_string_token_that_hides_its_fields_fails(self):
+        text = "f\"the {C1} case\""
+        token = tokenize.TokenInfo(tokenize.STRING, text, (1, 0), (1, len(text)), text)
+        with self.assertRaises(ValueError):
+            literal_pieces([token])
+
     def test_bare_id_in_python_prose_is_caught(self):
         self.assertTrue(scan("x.py", "# the L5 case\nx = 1\n"))
         self.assertTrue(scan("x.py", "def f():\n    \"\"\"Handle the\n    L5 case.\"\"\"\n"))
@@ -759,7 +1223,12 @@ class PatternSelfCheck(unittest.TestCase):
 
 
 def probe(paths):
-    """Scan every file under paths with the lint and print each hit. Returns the exit status."""
+    """Scan every file under paths with the lint and print each hit and each unreadable file.
+
+    A file that cannot be read, decoded, tokenized, parsed or, before Python 3.12, separated into
+    the fields of an f-string statement is printed as unreadable and counts as a hit. Returns the
+    exit status.
+    """
     hits = []
     for given in paths:
         root = Path(given)
@@ -773,7 +1242,7 @@ def probe(paths):
                 rel = path.as_posix()
             try:
                 hits.extend(scan(rel, read_text(path), ALLOWLIST.get(rel, ())))
-            except (OSError, UnicodeDecodeError, tokenize.TokenError, SyntaxError) as error:
+            except (OSError, UnicodeDecodeError, tokenize.TokenError, SyntaxError, ValueError) as error:
                 hits.append("{}: unreadable: {}".format(rel, error))
     for hit in hits:
         print(hit)
