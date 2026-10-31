@@ -13,13 +13,18 @@ non-blank lines, is matched line by line against PROSE_PATTERNS as well, and the
 all its line breaks joined against both sets, so a label spread over any number of lines is caught
 and reported at the line where it starts. Docstrings are found with ast.get_docstring, so the
 docstring of a one-line suite counts too, and a string statement may be a plain, f-string,
-template string or bytes literal. PROSE_PATTERNS holds the widened bare finding id, which
-applies to prose only because code legitimately carries short identifiers such as the closure
-value "C1". A match on a line in ALLOWLIST, the reviewed set of lines whose match is a
-cross-reference to a named plan rather than a review label, passes. A scanned file that is
-missing, unreadable or does not tokenize and parse is a failure, never a skip, and an allowlist
-entry that no longer matches a scanned line is a failure too, so the allowlist cannot silently go
-stale.
+template string or bytes literal. Its prose is read from the parsed literal, never cut from the
+source: the decoded text of a plain or bytes literal, and only the literal text of an f-string or
+template string, whose replacement fields, with any format spec, are code and each read as one
+space. Each part of an implicitly concatenated literal is read from its own delimiter, and each
+physical line keeps its own line number. Before Python 3.12 the tokenizer does not separate the
+fields of an f-string, so an f-string statement fails the scan there. PROSE_PATTERNS holds the
+widened bare finding id, which applies to prose only because code legitimately carries short
+identifiers such as the closure value "C1". A match on a line in ALLOWLIST, the reviewed set of
+lines whose match is a cross-reference to a named plan rather than a review label, passes. A
+scanned file that is missing, unreadable or does not tokenize and parse is a failure, never a
+skip, and an allowlist entry that no longer matches a scanned line is a failure too, so the
+allowlist cannot silently go stale.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
@@ -44,9 +49,13 @@ pull-request slices), exclusions the code-line bare id pattern does not make, so
 still caught on any line; a reviewer named other than as codex, claude or gemini; a family name
 more than two words away from its review or credit word, or credited by a verb outside REVIEW_WORD;
 in a Python file, a label split across two lines of a string that is not a statement of its own,
-such as an argument or an assigned value, which is matched line by line only; and a bare id in code
-that does not use one of the letters of the code-line bare id pattern. Both round number forms also
-have false failures, accepted as low severity: a round number that the rule above does not exempt
+such as an argument or an assigned value, which is matched line by line only; in an f-string or
+template string statement, a label inside a replacement field or its format spec, which is code
+and so is matched only line by line against LABEL_PATTERNS, never against PROSE_PATTERNS or
+across a line break, and a label that a replacement field interrupts, whose place reads as one
+space; and a bare id in code that does not use one of the letters of the code-line bare id
+pattern. Both round number forms also have false failures, accepted as low severity: a round
+number that the rule above does not exempt
 is caught in either form, even in ordinary text, whatever follows it, including the end of the
 text. Examples, not a complete list: in the colon form, a word that follows the number only on the
 next physical line does not exempt it, so such a line fails until the text is reflowed to keep the
@@ -73,6 +82,7 @@ import sys
 import tokenize
 import unicodedata
 import unittest
+import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -243,6 +253,99 @@ def read_text(path):
 FORMATTED_LITERALS = (ast.JoinedStr,) + ((ast.TemplateStr,) if hasattr(ast, "TemplateStr") else ())
 
 
+def token_types(*names):
+    """The token types among names that the tokenizer of this Python defines."""
+    return {getattr(tokenize, name) for name in names if hasattr(tokenize, name)}
+
+
+# From Python 3.12 the tokenizer splits an f-string, and from 3.14 a template string, into a start,
+# its literal text, the tokens of its fields and an end; before 3.12 an f-string is one STRING token.
+FORMATTED_STARTS = token_types("FSTRING_START", "TSTRING_START")
+FORMATTED_MIDDLES = token_types("FSTRING_MIDDLE", "TSTRING_MIDDLE")
+FORMATTED_ENDS = token_types("FSTRING_END", "TSTRING_END")
+
+
+def opening_of(literal):
+    """The prefix and the delimiter that open the source text of a string literal."""
+    opening = QUOTE_OPEN.match(literal)
+    return opening.group(0)[:-len(opening.group(1))], opening.group(1)
+
+
+def decoded(raw, prefix):
+    """The text of raw, one physical line of the body of a literal that prefix opens, as Python reads it.
+
+    A raw literal keeps its text as written. Any other has its escapes decoded, and a backslash
+    that ends the line, which joins the line to the next, is dropped. A bytes literal is read as
+    Latin-1, one character for each byte. An escape that does not decode raises, so the scan fails.
+    """
+    prefix = prefix.lower()
+    if "r" in prefix:
+        return raw
+    quoted = []
+    at = 0
+    while at < len(raw):
+        if raw[at] == "\\":
+            quoted.append(raw[at:at + 2] if at + 1 < len(raw) else "")
+            at += 2
+        else:
+            quoted.append("\\\"" if raw[at] == "\"" else raw[at])
+            at += 1
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        value = ast.literal_eval(("b" if "b" in prefix else "") + "\"" + "".join(quoted) + "\"")
+    return value.decode("latin-1") if isinstance(value, bytes) else value
+
+
+def literal_pieces(tokens):
+    """(line number, text) for each physical line of literal text in the tokens of a string statement.
+
+    The tokens are those of one statement that is a string literal alone, so each part of an
+    implicitly concatenated literal is read from its own delimiter. A plain or bytes literal gives
+    its decoded text. An f-string or template string gives only its literal text: each of its
+    replacement fields, with any conversion, format spec or nested literal in it, is code and
+    stands as one space at the line where the field opens. A part that spans lines gives one piece
+    for each of its physical lines. Before Python 3.12 an f-string is one STRING token whose fields
+    the tokenizer does not separate, so it raises ValueError rather than be read with its fields
+    as prose.
+    """
+    pieces = []
+    depths = []
+    prefix = ""
+
+    def add(row, raw):
+        for offset, part in enumerate(raw.split("\n")):
+            pieces.append((row + offset, decoded(part, prefix)))
+
+    for tok in tokens:
+        if tok.type in FORMATTED_STARTS:
+            if not depths:
+                prefix = opening_of(tok.string)[0]
+            depths.append(0)
+        elif tok.type in FORMATTED_ENDS:
+            depths.pop()
+        elif tok.type in FORMATTED_MIDDLES:
+            if depths == [0]:
+                add(tok.start[0], tok.string)
+        elif tok.type == tokenize.OP and depths and tok.string in ("{", "}"):
+            if tok.string == "{":
+                if depths == [0]:
+                    pieces.append((tok.start[0], " "))
+                depths[-1] += 1
+            else:
+                depths[-1] -= 1
+        elif tok.type == tokenize.STRING and not depths:
+            prefix, delimiter = opening_of(tok.string)
+            if not set(prefix.lower()).isdisjoint("ft"):
+                raise ValueError("this Python does not separate the fields of an f-string: " + tok.string)
+            add(tok.start[0], tok.string[len(prefix) + len(delimiter):len(tok.string) - len(delimiter)])
+    return pieces
+
+
+def char_column(lines, lineno, offset):
+    """The character column in line lineno of lines at the UTF-8 byte offset that ast gives."""
+    return len(lines[lineno - 1].encode("utf-8")[:offset].decode("utf-8"))
+
+
 def is_string_literal(value):
     """Whether value is a string literal of any kind: plain, bytes, f-string or template string."""
     return (isinstance(value, FORMATTED_LITERALS)
@@ -270,12 +373,15 @@ def string_statements(tree):
 def python_blocks(text):
     """The prose blocks of Python source: comment runs on consecutive lines, and string statements.
 
-    Each block is a list of (line number, text) segments, and a string statement starts at the
-    line where its literal starts. A source that does not tokenize or parse raises.
+    Each block is a list of (line number, text) segments. A string statement gives one segment for
+    each physical line that holds its literal text, as literal_pieces reads it from the tokens of
+    the statement, with the pieces of one line joined. A source that does not tokenize or parse
+    raises.
     """
+    tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
     blocks = []
     run = []
-    for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+    for tok in tokens:
         if tok.type == tokenize.COMMENT:
             row = tok.start[0]
             if run and run[-1][0] != row - 1:
@@ -284,13 +390,20 @@ def python_blocks(text):
             run.append((row, tok.string.lstrip("#").strip()))
     if run:
         blocks.append(run)
+    lines = text.split("\n")
+    starts = [tok.start for tok in tokens]
     for value in string_statements(ast.parse(text)):
-        literal = ast.get_source_segment(text, value)
-        opening = QUOTE_OPEN.match(literal or "")
-        if opening is None:
-            continue
-        body = literal[len(opening.group(0)):len(literal) - len(opening.group(1))]
-        blocks.append([(value.lineno + offset, part.strip()) for offset, part in enumerate(body.split("\n"))])
+        begin = (value.lineno, char_column(lines, value.lineno, value.col_offset))
+        end = (value.end_lineno, char_column(lines, value.end_lineno, value.end_col_offset))
+        at = bisect.bisect_left(starts, begin)
+        statement = []
+        while at < len(tokens) and tokens[at].start < end:
+            statement.append(tokens[at])
+            at += 1
+        joined = {}
+        for row, part in literal_pieces(statement):
+            joined[row] = joined.get(row, "") + part
+        blocks.append([(row, joined[row].strip()) for row in sorted(joined)])
     return blocks
 
 
@@ -525,6 +638,25 @@ class PatternSelfCheck(unittest.TestCase):
     # statements of their own, so their short identifiers are not caught.
     LITERAL_KIND_CODE = ("value = f\"C1 {x}\"\n", "value = b\"C1\"\n", "value = rb\x27C1\x27\n",
                          "print(f\"the {x} C1 case\")\n")
+    # The prose of a string statement is its parsed literal text: implicitly concatenated literals
+    # whose delimiters differ in length, with a label at the end of the last part, and an escape
+    # that decodes to a label. Each is caught at the line where it starts.
+    PARSED_TEXT_STATEMENTS = ("x = 1\n\"\"\"the case\"\"\" \"and the L5\"\n",
+                              "x = 1\nb\"\"\"the case\"\"\" b\x27and the L5\x27\n",
+                              "x = 1\nf\"\"\"the {x} case\"\"\" \"and the L5\"\n",
+                              "x = 1\n\"the L\\x35 case\"\n")
+    # The replacement fields, conversions and format specs of an f-string statement are code, not
+    # prose, so a short identifier in them is not caught, while a label in the literal text of the
+    # same statement is caught at its own physical line, and at no other line.
+    FIELD_CODE_STATEMENTS = ("x = 1\nf\"the {C1} case\"\n", "x = 1\nf\"the {L5!r:>{C1}} case\"\n",
+                             "x = 1\nf\"the {x:L5} case\"\n",
+                             "x = 1\nf\"\"\"the {f\x27{L5}\x27} case\nand {C1}\"\"\"\n")
+    FIELD_TEXT_LABELS = (("x = 1\nf\"the {C1} L5 case\"\n", 2),
+                         ("x = 1\nf\"\"\"the {C1}\ncase L5\"\"\"\n", 3))
+    # Expression statements that start with a literal but are not a literal alone: a percent
+    # format, a join and method calls. They are code, so their short identifiers are not caught.
+    LITERAL_LED_CODE = ("\"the C1 case %s\" % x\n", "\" C1 \".join(x)\n", "\"the C1 case\".upper()\n",
+                        "f\"the {x} C1 case\".strip()\n")
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
@@ -737,6 +869,35 @@ class PatternSelfCheck(unittest.TestCase):
             self.skipTest("this Python parses no template string")
         found = scan("x.py", "x = 1\nt\"\"\"the L5 case\"\"\"\n")
         self.assertTrue(any(hit.startswith("x.py:2: ") for hit in found), found)
+        self.assertEqual(scan("x.py", "x = 1\nt\"the {C1:L5} case\"\n"), [])
+
+    def test_the_prose_of_a_string_statement_is_its_parsed_literal_text(self):
+        for source in self.PARSED_TEXT_STATEMENTS:
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                self.assertTrue(any(hit.startswith("x.py:2: ") for hit in found), found)
+
+    def test_the_fields_of_an_f_string_statement_are_code_not_prose(self):
+        for source in self.FIELD_CODE_STATEMENTS:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), [], source)
+        for source, line in self.FIELD_TEXT_LABELS:
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                at = "x.py:{}: ".format(line)
+                self.assertTrue(any(hit.startswith(at) for hit in found), found)
+                self.assertEqual([hit for hit in found if not hit.startswith(at)], [], found)
+
+    def test_an_expression_statement_led_by_a_literal_is_code(self):
+        for source in self.LITERAL_LED_CODE:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), [], source)
+
+    def test_an_f_string_token_that_hides_its_fields_fails(self):
+        text = "f\"the {C1} case\""
+        token = tokenize.TokenInfo(tokenize.STRING, text, (1, 0), (1, len(text)), text)
+        with self.assertRaises(ValueError):
+            literal_pieces([token])
 
     def test_bare_id_in_python_prose_is_caught(self):
         self.assertTrue(scan("x.py", "# the L5 case\nx = 1\n"))
