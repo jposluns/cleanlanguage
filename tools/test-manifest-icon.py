@@ -433,6 +433,39 @@ class ManifestIconTest(unittest.TestCase):
         with mock.patch.object(gate.json, "loads", side_effect=RecursionError):
             self.expect_exit(3, "could not be decoded")
 
+    def test_manifest_duplicate_icon_key_fails(self):
+        # json.loads keeps the last value, so without the refusal the first icon,
+        # which names a missing file, would never be examined and the gate would
+        # pass on the second. The escaped form decodes to the same key.
+        for key in ("\"icon\"", "\"\\u0069con\""):
+            with self.subTest(key=key):
+                (self.root / CLAUDE).write_text(
+                    "{\"name\": \"cleanlanguage\", \"icon\": \"./assets/missing.png\", "
+                    + key
+                    + ": \"./assets/CL_icon.png\"}",
+                    encoding="utf-8",
+                )
+                err = self.expect_exit(1, CLAUDE + " has a duplicate key " + repr("icon"))
+                self.assertEqual(
+                    err,
+                    "check-manifest-icon: " + CLAUDE + " has a duplicate key "
+                    + repr("icon") + " in a JSON object; only one value per key can be "
+                    "examined\n",
+                )
+
+    def test_marketplace_plugin_entry_duplicate_key_fails(self):
+        # The refusal reaches every object, not only the top level.
+        (self.root / MARKET).write_text(
+            "{\"name\": \"m\", \"plugins\": [{\"name\": \"a\", \"name\": \"cleanlanguage\"}]}",
+            encoding="utf-8",
+        )
+        self.expect_exit(1, MARKET + " has a duplicate key " + repr("name"))
+
+    def test_same_key_in_separate_objects_passes(self):
+        # A key repeated across distinct objects is not a duplicate.
+        self.write_json(MARKET, {"name": "m", "plugins": [{"name": "a"}, {"name": "b"}]})
+        self.expect_pass()
+
     # Manifest paths (M2): no symlink anywhere, regular file, opened without following.
 
     def test_manifest_symlink_file_fails(self):
@@ -1365,21 +1398,58 @@ class ManifestIconTest(unittest.TestCase):
         self.assertTrue(err.startswith(f"check-manifest-icon: {CLAUDE} field icon: "), err)
 
 
+QUOTES = "\"" + chr(39)
+
+
+def parse_push_paths(text: str) -> list[str]:
+    """Return the entries of the push paths block of a workflow, without a YAML parser.
+
+    The block runs from the "    paths:" line after "  push:" to the next key at
+    indentation 4 or less. Inside it, a blank line or a comment line is skipped and
+    every other line must be a list entry, else ValueError, so an entry this reader
+    cannot see is refused rather than silently dropped. Double and single quote
+    characters are stripped from both ends of each entry.
+    """
+    lines = text.splitlines()
+    start = lines.index("  push:")
+    paths_at = lines.index("    paths:", start)
+    found = []
+    for number, line in enumerate(lines[paths_at + 1:], paths_at + 2):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        is_entry = stripped == "-" or stripped.startswith("- ")
+        indent = len(line) - len(line.lstrip(" "))
+        if indent <= 4 and not is_entry:
+            break
+        if not is_entry:
+            raise ValueError(f"line {number} of the push paths block is not a list entry: {line!r}")
+        found.append(stripped[1:].strip().strip(QUOTES))
+    return found
+
+
 class WorkflowPathsTest(unittest.TestCase):
     """The push filter lists both checkout-attribute paths and excludes nothing."""
 
     WORKFLOW = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "manifest-icon.yml"
 
     def push_paths(self) -> list[str]:
-        lines = self.WORKFLOW.read_text(encoding="ascii").splitlines()
-        start = lines.index("  push:")
-        paths_at = lines.index("    paths:", start)
-        found = []
-        for line in lines[paths_at + 1:]:
-            if not line.startswith("      - "):
-                break
-            found.append(line[len("      - "):].strip().strip('"'))
-        return found
+        return parse_push_paths(self.WORKFLOW.read_text(encoding="ascii"))
+
+    def test_parser_reads_every_entry_form(self):
+        # A single-quoted entry, an entry after a comment or blank line, and an entry
+        # at the indentation of its key are all read; the next key ends the block.
+        quote = chr(39)
+        text = (
+            "on:\n  push:\n    paths:\n      - \"a\"\n      - " + quote + "!b" + quote
+            + "\n      # a comment\n\n      - \"!c\"\n    - d\n    branches:\n      - main\n"
+        )
+        self.assertEqual(parse_push_paths(text), ["a", "!b", "!c", "d"])
+
+    def test_parser_refuses_a_line_that_is_not_an_entry(self):
+        text = "on:\n  push:\n    paths:\n      - a\n      b: c\n      - \"!d\"\n"
+        with self.assertRaises(ValueError):
+            parse_push_paths(text)
 
     def test_push_paths_cover_checkout_attributes(self):
         # A .gitattributes file anywhere can change the bytes git writes for

@@ -16,8 +16,9 @@ What it checks:
       each path component: no component is a symlink, every component before the
       manifest is a directory, and the manifest is a regular file; it is opened
       with O_NOFOLLOW and O_NONBLOCK, re-checked as a regular file through fstat,
-      and loads, unconditionally (no presence test), as a JSON object; a declared
-      manifest that is absent or unreadable fails closed;
+      and loads, unconditionally (no presence test), as a JSON object with no
+      duplicate key in any object; a declared manifest that is absent or
+      unreadable fails closed;
   M3  the icon fields examined are the top-level "icon" key of each manifest and the
       "icon" key of each object in a top-level "plugins" array (plugins[i].icon); an
       icon in a marketplace manifest is refused, because the directory its path
@@ -112,12 +113,15 @@ The base directory of an icon path is the plugin root: the grandparent of a mani
 inside a .claude-plugin directory, otherwise the directory holding the manifest.
 Manifest reads decode utf-8-sig, so a leading UTF-8 byte-order mark does not falsely
 reject a conforming manifest, and reject the non-standard JSON constants NaN and
-Infinity. Filesystem inspection uses os.lstat mode bits rather than the Path
-predicates, which suppress OSErrors on some Python versions and would turn an
-inspection failure into a silent skip. REPO_ROOT is the trust anchor: it is derived
-from the resolved path of this file, so it holds no symlink, and the walks start
-below it. O_NOFOLLOW, O_NONBLOCK, and O_CLOEXEC are POSIX flags; the gate targets
-the Linux CI runner.
+Infinity. They also refuse a duplicate key in any JSON object, at any nesting, with
+keys compared after escape decoding: json.loads keeps only the last value of a
+repeated key, so a first icon value would never be examined. check-skill-discovery.py
+refuses a duplicate top-level frontmatter key for the same reason. Filesystem
+inspection uses os.lstat mode bits rather than the Path predicates, which suppress
+OSErrors on some Python versions and would turn an inspection failure into a silent
+skip. REPO_ROOT is the trust anchor: it is derived from the resolved path of this
+file, so it holds no symlink, and the walks start below it. O_NOFOLLOW, O_NONBLOCK,
+and O_CLOEXEC are POSIX flags; the gate targets the Linux CI runner.
 
 Residuals this gate does not cover:
   1. Header validity is not image validity. The walks check only what I3 and I4
@@ -212,9 +216,14 @@ Residuals this gate does not cover:
 
 Exit codes:
   0  every icon field was checked and conforms
-  1  an invalid icon field, path, image, or manifest set
+  1  an invalid icon field, path, image, manifest, or manifest set, including a
+     manifest that is not valid JSON or repeats a key in one object
   3  a manifest, directory, or icon that could not be read, inspected, resolved, or
      decoded
+
+A manifest too deeply nested for json.loads (RecursionError) exits 3, the form
+check-skill-discovery.py uses. check-agent-plugin-manifest.py exits 1 for the same
+case, so the two siblings differ, and this gate follows check-skill-discovery.py.
 """
 from __future__ import annotations
 
@@ -311,6 +320,14 @@ class WalkError(Exception):
         self.error = error
 
 
+class DuplicateKeyError(Exception):
+    """A JSON object that repeats a key; json.loads alone would keep the last value."""
+
+    def __init__(self, key: str):
+        super().__init__(key)
+        self.key = key
+
+
 def die(message: str, code: int = 1) -> NoReturn:
     print(f"check-manifest-icon: {message}", file=sys.stderr)
     raise SystemExit(code)
@@ -318,6 +335,16 @@ def die(message: str, code: int = 1) -> NoReturn:
 
 def _reject_constant(token: str) -> NoReturn:
     raise ValueError(f"non-standard JSON constant {token!r}")
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+    """object_pairs_hook: build one JSON object, refusing a key that appears twice."""
+    result: dict = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateKeyError(key)
+        result[key] = value
+    return result
 
 
 def _raise(error: OSError) -> NoReturn:
@@ -387,7 +414,14 @@ def load(rel: str) -> dict:
     except UnicodeError as error:
         die(f"{rel} could not be read: {error}", 3)
     try:
-        data = json.loads(text, parse_constant=_reject_constant)
+        data = json.loads(
+            text, parse_constant=_reject_constant, object_pairs_hook=_unique_object
+        )
+    except DuplicateKeyError as error:
+        die(
+            f"{rel} has a duplicate key {error.key!r} in a JSON object; only one value "
+            "per key can be examined"
+        )
     except RecursionError:
         die(f"{rel} could not be decoded (too deeply nested)", 3)
     except ValueError as error:
