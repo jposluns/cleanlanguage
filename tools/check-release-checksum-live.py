@@ -21,7 +21,10 @@ Behaviour:
     conditional. The site is legitimately ahead of the release only when it
     names the current skill version (``Version:`` in ``cleanlanguage/skills/cleanlanguage/SKILL.md``)
     and the tag ``vX`` does not exist yet, which is the pre-tag window the
-    release runbook creates. A different version with no release is a real
+    release runbook creates. In that window the SKILL.md ``Released:`` line is
+    still checked, with no further network call: a malformed line exits 3, and
+    a line missing above the undated baseline fails. A different version with
+    no release is a real
     inconsistency and fails. An existing tag with no published release is a
     deleted or unfinished release and reads as unverifiable. One broken state
     stays invisible to this check: a bump that updated both the verify page and
@@ -52,11 +55,13 @@ Requires the ``gh`` CLI and, in CI, ``GH_TOKEN`` with ``contents: read``.
 Exit codes:
   0  the site checksum matches the published release, or the site is
      legitimately ahead of an unpublished release (it names the current skill
-     version and the tag does not exist yet)
+     version, the tag does not exist yet, and the SKILL.md Released line is
+     well formed, and present above the undated baseline)
   1  drift or inconsistency: the release is published but the site shows a
      different checksum, or the site names an unreleased version that is not
      the current skill version, or the SKILL.md Released date disagrees with
-     the published release (or is missing above the undated baseline)
+     the published release, or the Released line is missing above the undated
+     baseline (also in the pre-tag window)
   2  could not verify (gh or network error, the published release is malformed,
      its ``published_at`` is unreadable or malformed, its ``immutable`` field is
      not exactly true, the release SKILL.md names returns a status other than
@@ -316,6 +321,41 @@ def skill_version() -> str:
     return match.group(1)
 
 
+def released_line(current: str) -> tuple[str | None, bool]:
+    """Return the SKILL.md Released date, or None, and whether the line is
+    required for version ``current``; reads no network state. A malformed line
+    or version exits 3."""
+    released = skill_released()
+    try:
+        required = released is None and release_date_call("requires_release_date", current)
+    except ReleaseDateMalformed as error:
+        die(f"the SKILL.md version {current} was rejected by the extractor: {error}")
+    return released, required
+
+
+def pre_tag_release_line_code(current: str) -> int:
+    """Check the SKILL.md Released line in the pre-tag window, where the
+    release and its tag are already known to be absent, so no network call is
+    made. Returns 0, 1 when the line is missing above the undated baseline, or
+    the code (2 or 3) the check stopped with, after its own report."""
+    try:
+        released, required = released_line(current)
+        if released is None and required:
+            baseline = release_date_attr("BASELINE_VERSION")
+            print("Release date inconsistency found:")
+            print(f"  - release v{current} is not published yet and its tag does not exist")
+            print(
+                f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {current}, above the "
+                f"undated baseline {baseline}, but has no Released: line"
+            )
+            return 1
+    except SystemExit as stop:
+        if stop.code in (2, 3):
+            return stop.code
+        raise
+    return 0
+
+
 def check_release_date(site_version: str, site_status: int) -> bool:
     """G4 (item 26): check the release SKILL.md names, on its own terms.
 
@@ -327,11 +367,7 @@ def check_release_date(site_version: str, site_status: int) -> bool:
     tag = f"v{current}"
     # The line and the baseline rule are read first: an undated release at or
     # below the baseline checks no date, so it makes no network call at all.
-    released = skill_released()
-    try:
-        required = released is None and release_date_call("requires_release_date", current)
-    except ReleaseDateMalformed as error:
-        die(f"the SKILL.md version {current} was rejected by the extractor: {error}")
+    released, required = released_line(current)
     if released is None and not required:
         return True
     status = site_status if current == site_version else release_status(tag)
@@ -500,7 +536,10 @@ def check_site_checksum() -> int:
             f"{version} ahead of the release, which is expected before the tag. "
             f"Nothing to reconcile."
         )
-        return 0
+        # The release and its tag are confirmed absent, so the Released line
+        # is checked offline: a malformed line, or one missing above the
+        # undated baseline, is still reported in this window.
+        return pre_tag_release_line_code(version)
     if status != 200:
         cannot_verify(f"unexpected HTTP {status} reading release {tag}")
 

@@ -3,7 +3,9 @@
 
 The gate must not pass unconditionally when the release the verify page names
 is not published. It passes on a 404 only in the legitimate pre-tag window:
-the site names the current skill version and the tag does not exist yet. A
+the site names the current skill version and the tag does not exist yet,
+and even then the Released line is checked with no further network call, so
+a malformed line exits 3 and a line missing above the baseline fails. A
 mismatched unreleased version fails, a tag with no published release is
 unverifiable, and the published-release comparison and the transient-error
 handling are preserved. Once the release SKILL.md names is published, its
@@ -604,10 +606,51 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(gate.main(), 1)
 
     def test_pre_tag_window_passes(self):
-        self.fixtures(AHEAD, OTHER_SUM, AHEAD)
+        self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15")
         gate.release_status = lambda tag: 404
         gate.tag_status = lambda tag: 404
         self.assertEqual(gate.main(), 0)
+
+    def pre_tag_reports(self, version, released=None):
+        """Run the gate in the pre-tag window for ``version``, asserting the
+        release and the tag are each probed once and nothing else is read
+        over the network; returns (exit code, stdout, stderr)."""
+        self.fixtures(version, OTHER_SUM, version, released)
+        self.published(None, statuses={f"v{version}": 404})
+        gate.gh = unexpected_call
+        gate.release_published_at = unexpected_call
+        gate.release_immutable = unexpected_call
+        code, out, err = self.main_reports()
+        self.assertEqual(self.probed, [f"v{version}"])
+        self.assertEqual(self.tag_probed, [f"v{version}"])
+        self.assertIn("is not published yet", out)
+        return code, out, err
+
+    def test_pre_tag_window_with_a_valid_released_line_passes(self):
+        code, out, err = self.pre_tag_reports(AHEAD, "Released: 2026-11-15  ")
+        self.assertEqual(code, 0, (out, err))
+        self.assertNotIn("inconsistency", out)
+
+    def test_pre_tag_window_with_a_malformed_released_line_exits_3(self):
+        for label, line in (
+            ("impossible date", "Released: 2026-13-45"),
+            ("wrong case", "released: 2026-11-15"),
+        ):
+            with self.subTest(label):
+                code, out, err = self.pre_tag_reports(AHEAD, line)
+                self.assertEqual(code, 3, (out, err))
+                self.assertIn("the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed", err)
+
+    def test_pre_tag_window_missing_released_line_above_baseline_fails(self):
+        code, out, err = self.pre_tag_reports(AHEAD)
+        self.assertEqual(code, 1, (out, err))
+        self.assertIn("Release date inconsistency found", out)
+        self.assertIn(f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line", out)
+
+    def test_pre_tag_window_undated_baseline_passes(self):
+        code, out, err = self.pre_tag_reports(CURRENT)
+        self.assertEqual(code, 0, (out, err))
+        self.assertNotIn("inconsistency", out)
 
     def test_unreleased_version_that_is_not_current_fails(self):
         self.fixtures(BOGUS, OTHER_SUM, CURRENT)
