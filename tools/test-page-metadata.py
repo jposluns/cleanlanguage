@@ -249,7 +249,7 @@ class AuthorRequirementTest(unittest.TestCase):
 
     def test_wrong_primary_author_not_saved_by_secondary(self):
         # The primary Article has the wrong author; a secondary Comment that
-        # names the meta author must NOT rescue it (the round-4 false-green).
+        # names the meta author must NOT rescue it, which would be a false green.
         block = (
             '<script type="application/ld+json">'
             '[{"@type": "Article",'
