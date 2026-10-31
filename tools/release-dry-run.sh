@@ -110,7 +110,8 @@ p.write_bytes("\n".join(lines).encode("utf-8"))
 PYDATE
 # The extractor is probed first, so a missing or broken extractor is reported
 # as that. Then exit 1 or 3 means the stamp did not produce a well-formed line,
-# and any other failure means the extractor crashed, reported as that.
+# exit 4 means the stamped file could not be read, and any other failure means
+# the extractor crashed, reported as that.
 probe_rc=0
 probe="$(python3 tools/skill-release-date.py --baseline 2>/dev/null)" || probe_rc=$?
 case "${probe_rc}:${probe}" in
@@ -122,6 +123,7 @@ stamped="$(python3 tools/skill-release-date.py cleanlanguage/skills/cleanlanguag
 case "${stamped_rc}" in
   0) ;;
   1|3) fail "could not set the dry-run Released date in SKILL.md (extractor exit ${stamped_rc})" ;;
+  4) fail "could not read the stamped cleanlanguage/skills/cleanlanguage/SKILL.md for its Released line (extractor exit 4)" ;;
   *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${stamped_rc}) reading the stamped SKILL.md" ;;
 esac
 [ "${stamped}" = "${dry_date}" ] \

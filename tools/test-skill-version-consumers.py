@@ -8,6 +8,9 @@ test pins that the packager (release-package.sh) selects and validates
 identically, so a malformed first line fails in all three, and a clean version
 still passes. It runs offline: the packager is exercised in a throwaway git
 worktree, and the gates are exercised through their own compiled regexes.
+The packager and the dry run each tell an extractor that could not read its
+input (exit 4) apart from one that failed inside (exit 6); the dry run read is
+exercised from the block extracted from its real script.
 """
 
 from __future__ import annotations
@@ -23,7 +26,37 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PACKAGER = REPO / "tools" / "release-package.sh"
+DRY_RUN = REPO / "tools" / "release-dry-run.sh"
 RELEASE_DATE_TOOL = REPO / "tools" / "skill-release-date.py"
+
+# Reads all of standard input, then fails the read, so the extractor exits 4
+# (its input could not be read) without the writer of the pipe taking a
+# SIGPIPE.
+UNREADABLE_STDIN_HOOK = (
+    "class _UnreadableStdin:\n"
+    "    class buffer:\n"
+    "        @staticmethod\n"
+    "        def read():\n"
+    "            sys.__stdin__.buffer.read()\n"
+    "            raise OSError(5, \"injected read error\")\n"
+    "sys.stdin = _UnreadableStdin()\n"
+)
+# Fails inside the extractor after its input is read, so it exits 6.
+CRASH_HOOK = (
+    "import io as _crash_io\n"
+    "def _crash(*args, **kwargs):\n"
+    "    raise RuntimeError(\"injected internal error\")\n"
+    "_crash_io.TextIOWrapper = _crash\n"
+)
+
+
+def extractor_with(hook: str) -> str:
+    """The real extractor source with ``hook`` run right after its imports."""
+    source = RELEASE_DATE_TOOL.read_text(encoding="utf-8")
+    anchor = "from pathlib import Path\n"
+    if source.count(anchor) != 1:
+        raise AssertionError("the extractor import anchor is not unique")
+    return source.replace(anchor, anchor + hook)
 
 
 def _load(name: str, filename: str):
@@ -258,6 +291,24 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertNotIn("must be a real YYYY-MM-DD date", stderr)
                 self.assertNotIn("malformed", stderr)
 
+    def test_unreadable_input_at_head_is_named_as_unreadable(self):
+        # T4: extractor exit 4 is unreadable input, never a crash.
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                    released_block="Released: 2026-11-15  ",
+                                    extractor=extractor_with(UNREADABLE_STDIN_HOOK))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("at HEAD for its Released line: the extractor could not read its input (exit 4)", stderr)
+        self.assertNotIn("unavailable or crashed", stderr)
+
+    def test_internal_error_at_head_is_reported_as_a_crash(self):
+        # T4: extractor exit 6 is the extractor failing, never unreadable input.
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                    released_block="Released: 2026-11-15  ",
+                                    extractor=extractor_with(CRASH_HOOK))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("unavailable or crashed (exit 6) reading the Released line", stderr)
+        self.assertNotIn("could not read", stderr)
+
     def test_malformed_line_fails_without_release_date(self):
         for label, block in (
             ("not_a_date", "Released: soon"),
@@ -282,6 +333,54 @@ class PackagerReleaseDateTest(unittest.TestCase):
                                             released_block="Released: 2026-11-15  ")
                 self.assertEqual(code, 1, stderr)
                 self.assertIn("--release-date must be a real YYYY-MM-DD date", stderr)
+
+
+def dry_run_stamped_read(extractor: str, skill_readable: bool = True):
+    """Run the stamped Released read of release-dry-run.sh, extracted from the
+    real script (from ``stamped_rc=0`` to its ``esac``), in a throwaway tree
+    holding ``extractor``. Returns (exit code, stdout, stderr)."""
+    lines = DRY_RUN.read_text(encoding="utf-8").split("\n")
+    start = lines.index("stamped_rc=0")
+    block = "\n".join(lines[start: lines.index("esac", start) + 1])
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "tools").mkdir()
+        skill = root / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        if skill_readable:
+            skill.write_text("Version: 1.0.15  \nReleased: 2026-11-15  \n", encoding="utf-8")
+        else:
+            skill.mkdir()
+        (root / "tools" / "skill-release-date.py").write_text(extractor, encoding="utf-8")
+        script = (
+            "set -euo pipefail\n"
+            "fail() { printf 'release-dry-run: %s\\n' \"$1\" >&2; exit 1; }\n"
+            + block + "\nprintf %s \"${stamped}\"\n"
+        )
+        proc = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+class DryRunReleasedReadTest(unittest.TestCase):
+    """T4: the dry run tells unreadable input (exit 4) apart from an extractor
+    that failed inside (exit 6)."""
+
+    def test_stamped_line_is_read(self):
+        code, out, err = dry_run_stamped_read(RELEASE_DATE_TOOL.read_text(encoding="utf-8"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "2026-11-15")
+
+    def test_unreadable_stamped_file_is_named_as_unreadable(self):
+        code, _out, err = dry_run_stamped_read(RELEASE_DATE_TOOL.read_text(encoding="utf-8"), skill_readable=False)
+        self.assertEqual(code, 1, err)
+        self.assertIn("could not read the stamped cleanlanguage/skills/cleanlanguage/SKILL.md for its Released line (extractor exit 4)", err)
+        self.assertNotIn("unavailable or crashed", err)
+
+    def test_internal_error_is_reported_as_a_crash(self):
+        code, _out, err = dry_run_stamped_read(extractor_with(CRASH_HOOK))
+        self.assertEqual(code, 1, err)
+        self.assertIn("unavailable or crashed (exit 6) reading the stamped SKILL.md", err)
+        self.assertNotIn("could not read the stamped", err)
 
 
 def _locale_available(name: str) -> bool:

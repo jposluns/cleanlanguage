@@ -12,8 +12,9 @@ record (G4), checked for the release SKILL.md names whatever version the site
 names, and that release must be immutable; an unpublished release SKILL.md
 names counts as not yet published only when its tag is confirmed absent, and an
 undated release at or below the baseline makes no network call for the date
-check. The gate reads the extractor module only through the attributes it
-declares and validates at load. The network reads of that record are replaced
+check. A date failure never hides checksum drift: both are reported and the
+more severe code wins. The gate reads the extractor module only through the
+attributes it declares and validates at load. The network reads of that record are replaced
 by injected fixtures. These tests pin all of that offline: the
 fixtures
 patch the module's file paths and network readers, so no gh CLI and no
@@ -177,6 +178,43 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertNotIn("asset replacement", out)
         self.assertNotIn("force", out)
         self.assertNotIn("may have moved", out)
+
+    def main_reports(self):
+        """Run the gate, returning (exit code, stdout, stderr) whether it
+        returns or stops with SystemExit."""
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                code = gate.main()
+            except SystemExit as stop:
+                code = stop.code
+        return code, out.getvalue(), err.getvalue()
+
+    def test_date_failure_does_not_hide_checksum_drift(self):
+        # T5: both checks run and both are reported, the more severe code wins.
+        for label, released, published, immutable, expected, reason in (
+            ("date mismatch", "Released: 2026-11-15  ", "2026-11-16T00:00:01Z", "true", 1,
+             "Release date inconsistency found"),
+            ("record not immutable", "Released: 2026-11-15  ", "2026-11-15T09:30:00Z", "false", 2,
+             "could not verify: the immutable field of release"),
+            ("malformed Released line", "Released: soon", "2026-11-15T09:30:00Z", "true", 3,
+             "Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed"),
+        ):
+            with self.subTest(label):
+                self.fixtures(AHEAD, OTHER_SUM, AHEAD, released)
+                self.published(published, immutable=immutable)
+                code, out, err = self.main_reports()
+                self.assertEqual(code, expected, (out, err))
+                self.assertIn(reason, out + err)
+                self.assertIn("Release checksum drift found", out)
+
+    def test_date_failure_beside_a_matching_checksum_still_fails(self):
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-16T00:00:01Z")
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 1, (out, err))
+        self.assertIn("Release date inconsistency found", out)
+        self.assertIn("matches the published", out)
 
     def test_dated_baseline_matching_passes(self):
         # F13: a dated 1.0.14 is compared like any other dated release.

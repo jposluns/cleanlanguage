@@ -221,6 +221,24 @@ jobs:
             echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2." >&2
             exit 1
           }
+          # check_immutable_releases_setting refuses to start a dated release
+          # unless the repository setting that makes new releases immutable is
+          # on (its enabled field reads exactly true). The readback below
+          # accepts only an immutable release record, so a release published
+          # while the setting is off would fail its readback only once it is
+          # public, and every re-run would fail the same way. Any error reading
+          # the setting fails closed: the setting cannot be verified.
+          check_immutable_releases_setting() {
+            local enabled
+            if ! enabled="$(gh api "repos/${GITHUB_REPOSITORY}/immutable-releases" --jq .enabled)"; then
+              echo "Refusing to publish ${RELEASE_TAG}: the repository immutable-releases setting could not be read (see the error above), so it cannot be verified that the release will be immutable. This run pushed no tag and created no release." >&2
+              exit 1
+            fi
+            if [ "${enabled}" != "true" ]; then
+              echo "Refusing to publish ${RELEASE_TAG}: the repository immutable-releases setting reads enabled ${enabled:-empty}, not true, so the release would not be immutable and its publication readback would fail after it is public. Enable immutable releases in the repository settings, then release again. This run pushed no tag and created no release." >&2
+              exit 1
+            fi
+          }
           refuse_publish_window() {
             echo "Refusing to publish ${RELEASE_TAG}: its Released line (${RELEASE_DATE}) would not name the UTC day the release is published (see the reason above). No release was created." >&2
             echo "The tag ${RELEASE_TAG} may already be on origin at ${built_commit}: a tag push started this run, or a dispatch pushed it before this check. To recover, first land a commit on main that re-stamps the Released line (and the renderings) for the UTC day you will publish on, then do one of these:" >&2
@@ -278,6 +296,16 @@ jobs:
               *) release_date_tool_failed "${rc}" "confirming the publication day of ${RELEASE_TAG}" ;;
             esac
           }
+          # Item 26: for a dated release, probe the extractor first, as every
+          # other caller does, so a missing or broken extractor is reported as
+          # that, never read as a verdict on the clock or the release record.
+          if [ "${RELEASE_DATED}" = "1" ]; then
+            prc=0
+            baseline="$(python3 tools/skill-release-date.py --baseline)" || prc=$?
+            if [ "${prc}" -ne 0 ] || ! printf '%s' "${baseline}" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+              release_date_tool_failed "${prc}" "probing it"
+            fi
+          fi
           # The commit we built and will publish. Normalize GITHUB_SHA to a
           # commit id: a pushed annotated tag can set GITHUB_SHA to the tag
           # object rather than the commit, and every tag comparison below then
@@ -379,9 +407,11 @@ jobs:
             fi
           fi
           if [ "${release_exists}" -eq 0 ] && [ "${RELEASE_DATED}" = "1" ]; then
-            # Item 26 (G3): an early check, before any tag operation, so a run
-            # that is already too late does not push a tag it cannot use. The
-            # binding check is the one immediately before the create call.
+            # Item 26 (G3): early checks, before any tag operation, so a run
+            # whose release could not be immutable, or that is already too
+            # late, does not push a tag it cannot use. The binding window
+            # check is the one immediately before the create call.
+            check_immutable_releases_setting
             check_publish_window
           fi
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then

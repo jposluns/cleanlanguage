@@ -137,7 +137,8 @@ if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
 fi
 # The Released line (item 26), read from HEAD through the one shared strict
 # extractor, tools/skill-release-date.py: exit 0 prints the date, exit 3 means
-# no line, exit 1 is a malformed line, and any other exit (2, 6 for an
+# no line, exit 1 is a malformed line, exit 4 means the extractor could not
+# read its input (reported as unreadable input), and any other exit (2, 6 for an
 # internal error, 127, an interpreter failure) means the extractor is
 # unavailable or crashed, which is
 # reported as that, never as malformed content. The extractor is probed first
@@ -171,6 +172,7 @@ case "${released_rc}" in
   0) ;;
   3) released="" ;;
   125) fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line" ;;
+  4) fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line: the extractor could not read its input (exit 4)" ;;
   1)
     fail "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is malformed: $(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-release-date.py 2>&1 >/dev/null || true)"
     ;;

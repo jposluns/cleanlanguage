@@ -65,6 +65,12 @@ Exit codes:
      malformed, or tools/skill-release-date.py could not be loaded, lacks a
      usable attribute this gate uses (see RELEASE_DATE_API), or failed
      unexpectedly
+
+When the release the site names is published, the release-date check and the
+site-checksum comparison both run and both are reported, so a date failure
+never hides checksum drift; the gate then exits with the more severe of the
+two codes, the higher one (3 over 2 over 1 over 0), since 2 and 3 mean a check
+could not complete.
 """
 
 from __future__ import annotations
@@ -362,6 +368,18 @@ def check_release_date(site_version: str, site_status: int) -> bool:
     return True
 
 
+def release_date_code(site_version: str, site_status: int) -> int:
+    """Run check_release_date and return its exit code (0 or 1), or the code
+    (2 or 3) it stopped with, after its own report, so the caller can still
+    run and report the checksum comparison."""
+    try:
+        return 0 if check_release_date(site_version, site_status) else 1
+    except SystemExit as stop:
+        if stop.code in (2, 3):
+            return stop.code
+        raise
+
+
 def main() -> int:
     if not VERIFY_PAGE.is_file():
         die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} does not exist")
@@ -449,8 +467,9 @@ def main() -> int:
     # whatever version the site names (see check_release_date). A date edited
     # after release goes red here; a release that slipped past UTC midnight is
     # refused or caught by the release workflow itself, and goes red here too.
-    if not check_release_date(version, status):
-        return 1
+    # Both checks run and report before the gate exits with the more severe
+    # code, so a date failure cannot hide checksum drift.
+    date_code = release_date_code(version, status)
 
     if site_sum != claimed:
         print("Release checksum drift found:")
@@ -461,13 +480,17 @@ def main() -> int:
             f"checksum. Run the orchestrator's post-release site flip "
             f"(tools/set-release-links.py with checksum {claimed}); see the release runbook."
         )
-        return 1
-
-    print(
-        f"The verify page checksum {site_sum} matches the published {zip_name} "
-        f"for release {tag}."
-    )
-    return 0
+        checksum_code = 1
+    else:
+        print(
+            f"The verify page checksum {site_sum} matches the published {zip_name} "
+            f"for release {tag}."
+        )
+        checksum_code = 0
+    code = max(date_code, checksum_code)
+    if code >= 2:
+        raise SystemExit(code)
+    return code
 
 
 if __name__ == "__main__":
