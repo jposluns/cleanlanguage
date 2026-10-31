@@ -8,6 +8,12 @@ required check is the Cloudflare Pages build. Do not merge while any required
 check is failing or still pending, and do not merge a pull request that has
 unresolved review threads requesting changes.
 
+Once the GitHub Actions checks `Plugin manifests`, `Skill discovery`, and
+`Agent Plugins manifest` are also required on `main`, a pull request whose head
+commit message carries a skip marker such as `[skip ci]` gets no run of those
+three checks and cannot merge until a new commit without a skip marker is
+pushed to it.
+
 ## Commit attribution
 
 Do not credit Claude in commit metadata. Omit the `Co-authored-by` trailer
