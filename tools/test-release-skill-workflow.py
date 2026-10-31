@@ -17,19 +17,37 @@ runs after it, and an undated release (``RELEASE_DATED=0``) checks no date at
 all. The fake ``date`` refuses any call without ``-u``, so a clock read in
 local time goes red.
 
+The workflow is parsed with ``yaml.safe_load`` (PyYAML, the same dependency
+the release packager already relies on in the same CI job), so the step names,
+the keys of each step and every ``env:`` mapping are read as the runner reads
+them, not by line patterns that a blank line or a reordered key could defeat.
 The environment of each step is built the way the runner builds it, from the
 workflow itself: the variables the runner sets, the job ``env:`` keys, the
-step ``env:`` keys read from the YAML (their expressions resolved from the
-test inputs), and the values earlier steps wrote to ``GITHUB_ENV``. The test
-supplies no step variable of its own, and it asserts that every variable a step
-script reads is declared by one of those sources, so deleting a declaration
-goes red. One chained test runs the determine, package and publish steps in
-sequence, carrying ``GITHUB_ENV`` forward. Every modelled step has its
-``env:`` key set pinned, no step or job ``env:`` key may overlap a key an
-earlier step writes to ``GITHUB_ENV`` (so no result depends on the precedence
-the runner gives the two, which these tests do not model), and a modelled step
-may carry no key the harness does not model, such as ``if`` or
-``continue-on-error``.
+step ``env:`` keys (their expressions resolved from the test inputs), and the
+values earlier steps wrote to ``GITHUB_ENV``. The test supplies no step
+variable of its own, and it asserts that every variable a step script reads is
+declared by one of those sources, so deleting a declaration goes red. One
+chained test runs the determine, package and publish steps in sequence,
+carrying ``GITHUB_ENV`` forward.
+
+The structure the harness models is pinned on the parsed data: the exact list
+of steps; the key set of every step; ``shell: bash`` on every modelled step;
+the ``env:`` key set of the job and of every modelled step; no step or job
+``env:`` key overlapping a key an earlier step writes to ``GITHUB_ENV`` (so no
+result depends on the precedence the runner gives the two, which these tests
+do not model); no step other than the validate and determine steps naming
+``GITHUB_ENV`` in any form, and every mention in those two being a write in
+the one form the harness reads; no step naming ``GITHUB_PATH``; no duplicate
+mapping key anywhere in the file (``safe_load`` would otherwise keep the last
+silently); and no read of the repository immutable-releases setting, which the
+workflow token cannot read, so the publication readback is the only
+immutability check. Mutation tests apply the round 4 reproductions (a blank
+line before an ``env:`` override, and an unmodelled step writing
+``RELEASE_DATED=0``) and other forms of the same defects, and require the
+structural checks to name each one. Residual: a write to the runner command
+files that never names ``GITHUB_ENV`` (for example a path built from pieces,
+or a write from inside an action) is not detected; the pinned step list and
+key sets are what keep such a step out.
 
 They run offline: nothing reaches GitHub or any network.
 """
@@ -46,13 +64,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / ".github" / "workflows" / "release-skill.yml"
 EXTRACTOR = REPO / "tools" / "skill-release-date.py"
 VCS = "git"
 COMMIT = "c" * 40
 OTHER_COMMIT = "d" * 40
-INDENT = " " * 10
 
 # The variables the runner itself sets for every step, which a step may read
 # without declaring them.
@@ -63,113 +82,239 @@ RELEASE_TAG_EXPRESSION = (
 )
 
 
-def workflow_lines() -> list[str]:
-    return WORKFLOW.read_text(encoding="utf-8").split("\n")
+VALIDATE = "Read and validate the version"
+PUBLISH = "Create or update GitHub Release"
+DETERMINE = "Determine the expected release date"
+PACKAGE = "Validate, package, and verify the skill zip"
+CHECKOUT = "Check out repository"
+MODELLED = (VALIDATE, DETERMINE, PACKAGE, PUBLISH)
+JOB = "package-and-release"
 
+# The exact steps of the release job, in order.
+EXPECTED_STEPS = [CHECKOUT, VALIDATE, DETERMINE, PACKAGE, PUBLISH]
 
-def step_names() -> list[str]:
-    prefix = "      - name: "
-    return [line[len(prefix):] for line in workflow_lines() if line.startswith(prefix)]
-
-
-def has_run_block(name: str) -> bool:
-    """True when the step ``name`` runs a script (an action step does not)."""
-    lines = workflow_lines()
-    for line in lines[lines.index(f"      - name: {name}") + 1:]:
-        if line.startswith("      - name:"):
-            return False
-        if line.startswith("        run: |"):
-            return True
-    return False
-
-
-def step_block(name: str) -> list[str]:
-    """Return the lines of the workflow step called ``name``, up to its run line."""
-    lines = workflow_lines()
-    start = lines.index(f"      - name: {name}")
-    block = []
-    for line in lines[start + 1:]:
-        if line.startswith("      - name:"):
-            raise AssertionError(f"step {name!r} has no run block")
-        block.append(line)
-        if line.startswith("        run: |"):
-            return block
-    raise AssertionError(f"step {name!r} has no run block")
-
-
-def step_script(name: str) -> str:
-    """Return the ``run: |`` script of the workflow step called ``name``."""
-    lines = workflow_lines()
-    start = lines.index(f"      - name: {name}")
-    index = start + 1
-    while not lines[index].startswith("        run: |"):
-        if lines[index].startswith("      - name:"):
-            raise AssertionError(f"step {name!r} has no run block")
-        index += 1
-    body = []
-    for line in lines[index + 1:]:
-        if line.strip() and not line.startswith(INDENT):
-            break
-        body.append(line[len(INDENT):])
-    script = "\n".join(body).rstrip() + "\n"
-    if "${{" in script:
-        raise AssertionError(f"step {name!r} uses an expression the test cannot supply")
-    return script
-
-
-def mapping_after(lines: list[str], header: str, indent: int) -> dict[str, str]:
-    """Return the ``KEY: value`` pairs indented ``indent`` spaces under ``header``."""
-    if header not in lines:
-        return {}
-    pairs = {}
-    for line in lines[lines.index(header) + 1:]:
-        if not line.startswith(" " * indent) or line.startswith(" " * (indent + 1)):
-            break
-        key, _, value = line.strip().partition(": ")
-        pairs[key] = value
-    return pairs
-
-
-def step_env(name: str) -> dict[str, str]:
-    """The ``env:`` keys the workflow declares for the step ``name``, raw."""
-    return mapping_after(step_block(name), "        env:", 10)
-
-
-def step_keys(name: str) -> set[str]:
-    """The keys of the workflow step ``name``: its ``- name:`` key and every
-    line indented exactly eight spaces up to the next step. Script lines of a
-    ``run: |`` block are indented further, so they are never read as keys."""
-    lines = workflow_lines()
-    keys = {"name"}
-    for line in lines[lines.index(f"      - name: {name}") + 1:]:
-        if line.strip() and not line.startswith(" " * 8):
-            break
-        match = re.match(r" {8}([A-Za-z][A-Za-z0-9_-]*):", line)
-        if match:
-            keys.add(match.group(1))
-    return keys
-
-
-# The step keys the harness models. Any other key, for example a step-level
-# if or continue-on-error, changes what the runner does without the harness
-# seeing it, so it fails the suite until the harness models it.
+# The keys of the release job, and of each of its steps. The step keys the
+# harness models are name, env, shell and run; any other key on a modelled
+# step, for example a step-level if or continue-on-error, changes what the
+# runner does without the harness seeing it, so it fails the suite until the
+# harness models it.
+JOB_KEYS = {"runs-on", "env", "steps"}
 MODELLED_STEP_KEYS = {"name", "env", "shell", "run"}
+STEP_KEYS = {
+    CHECKOUT: {"name", "uses", "with"},
+    VALIDATE: {"name", "shell", "run"},
+    DETERMINE: {"name", "env", "shell", "run"},
+    PACKAGE: {"name", "shell", "run"},
+    PUBLISH: {"name", "env", "shell", "run"},
+}
+
+# The env: keys the job and each modelled step declare, and the keys the
+# steps before each named step write to GITHUB_ENV.
+JOB_ENV_KEYS = {"RELEASE_TAG"}
+STEP_ENV_KEYS = {VALIDATE: set(), DETERMINE: {"GH_TOKEN"}, PACKAGE: set(), PUBLISH: {"GH_TOKEN", "FORCE"}}
+GITHUB_ENV_WRITES = {
+    VALIDATE: set(),
+    DETERMINE: {"VERSION"},
+    PACKAGE: {"VERSION", "RELEASE_DATED", "RELEASE_DATE"},
+    PUBLISH: {"VERSION", "RELEASE_DATED", "RELEASE_DATE"},
+}
+
+# The only steps that may write GITHUB_ENV, and the one form of write the
+# harness reads. Every mention of GITHUB_ENV in those steps must be such a
+# write; any mention in any other step fails, whatever its form.
+GITHUB_ENV_WRITERS = (VALIDATE, DETERMINE)
+CANONICAL_WRITE = re.compile(r"echo \"([A-Z_][A-Z0-9_]*)=[^\"]*\" >> \"\$\{GITHUB_ENV\}\"")
 
 
-def job_env() -> dict[str, str]:
-    """The ``env:`` keys the workflow declares for the release job, raw."""
-    lines = workflow_lines()
-    job = lines[lines.index("  package-and-release:"):]
-    return mapping_after(job[: job.index("    steps:")], "    env:", 6)
+def env_mapping(value, where: str) -> dict[str, str]:
+    """An env: mapping as parsed, checked to hold only string keys and values,
+    the only form the harness models."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise AssertionError(f"the env: of {where} is not a mapping: {value!r}")
+    for key, item in value.items():
+        if not isinstance(key, str) or not isinstance(item, str):
+            raise AssertionError(f"the env: of {where} has a non-string entry {key!r}: {item!r}")
+    return dict(value)
 
 
-def github_env_writes(name: str) -> set[str]:
-    """The keys the steps before ``name`` write to ``GITHUB_ENV``."""
-    names = step_names()
-    written = set()
-    for earlier in [n for n in names[: names.index(name)] if has_run_block(n)]:
-        written |= set(re.findall(r"echo \"([A-Z_][A-Z0-9_]*)=[^\"]*\" >> \"\$\{GITHUB_ENV\}\"", step_script(earlier)))
-    return written
+def dumped(value) -> str:
+    return json.dumps(value, default=str)
+
+
+class Workflow:
+    """The release workflow, parsed with yaml.safe_load."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self.data = yaml.safe_load(text)
+        self.job = self.data["jobs"][JOB]
+        self.steps = self.job["steps"]
+
+    def step_names(self) -> list:
+        return [step.get("name") for step in self.steps]
+
+    def step(self, name: str) -> dict:
+        matches = [step for step in self.steps if step.get("name") == name]
+        if len(matches) != 1:
+            raise AssertionError(f"the workflow has {len(matches)} steps named {name!r}")
+        return matches[0]
+
+    def step_script(self, name: str) -> str:
+        """The run: script of the step ``name``."""
+        run = self.step(name).get("run")
+        if not isinstance(run, str):
+            raise AssertionError(f"step {name!r} has no run block")
+        script = run.rstrip() + "\n"
+        if "${{" in script:
+            raise AssertionError(f"step {name!r} uses an expression the test cannot supply")
+        return script
+
+    def step_env(self, name: str) -> dict[str, str]:
+        """The env: keys the workflow declares for the step ``name``, raw."""
+        return env_mapping(self.step(name).get("env"), f"step {name!r}")
+
+    def step_keys(self, name: str) -> set[str]:
+        return set(self.step(name))
+
+    def job_env(self) -> dict[str, str]:
+        """The env: keys the workflow declares for the release job, raw."""
+        return env_mapping(self.job.get("env"), f"job {JOB!r}")
+
+    def github_env_writes(self, name: str) -> set[str]:
+        """The keys the steps before ``name`` write to GITHUB_ENV."""
+        written = set()
+        for earlier in self.steps[: self.step_names().index(name)]:
+            run = earlier.get("run")
+            if isinstance(run, str):
+                written |= set(CANONICAL_WRITE.findall(run))
+        return written
+
+
+def problems_layout(wf: Workflow) -> list[str]:
+    problems = []
+    jobs = sorted(wf.data["jobs"])
+    if jobs != [JOB]:
+        problems.append(f"the workflow jobs are {jobs}, not [{JOB!r}]")
+    for key in ("env", "defaults"):
+        if key in wf.data:
+            problems.append(f"the workflow carries a top-level {key}: key the harness does not model")
+    if set(wf.job) != JOB_KEYS:
+        problems.append(f"job {JOB!r} carries the keys {sorted(wf.job)}, not {sorted(JOB_KEYS)}")
+    return problems
+
+
+def problems_step_list(wf: Workflow) -> list[str]:
+    names = wf.step_names()
+    if names != EXPECTED_STEPS:
+        return [f"the workflow steps are {names}, not the pinned list {EXPECTED_STEPS}"]
+    return []
+
+
+def problems_step_keys(wf: Workflow) -> list[str]:
+    problems = []
+    for step in wf.steps:
+        name = step.get("name")
+        keys = set(step)
+        if name in STEP_KEYS and keys != STEP_KEYS[name]:
+            problems.append(f"step {name!r} carries the keys {sorted(keys)}, not {sorted(STEP_KEYS[name])}")
+        if name in MODELLED:
+            if not keys <= MODELLED_STEP_KEYS:
+                problems.append(f"step {name!r} carries keys the harness does not model: {sorted(keys - MODELLED_STEP_KEYS)}")
+            shell = step.get("shell")
+            if shell != "bash":
+                problems.append(f"step {name!r} runs under shell {shell!r}, not bash")
+    return problems
+
+
+def problems_env(wf: Workflow) -> list[str]:
+    problems = []
+    job = wf.job_env()
+    if set(job) != JOB_ENV_KEYS:
+        problems.append(f"job {JOB!r} declares env keys {sorted(job)}, not {sorted(JOB_ENV_KEYS)}")
+    for name in MODELLED:
+        declared = wf.step_env(name)
+        if set(declared) != STEP_ENV_KEYS[name]:
+            problems.append(f"step {name!r} declares env keys {sorted(declared)}, not {sorted(STEP_ENV_KEYS[name])}")
+        written = wf.github_env_writes(name)
+        if written != GITHUB_ENV_WRITES[name]:
+            problems.append(f"the steps before {name!r} write {sorted(written)} to GITHUB_ENV, not {sorted(GITHUB_ENV_WRITES[name])}")
+        overlap = set(job).union(declared).intersection(written)
+        if overlap:
+            problems.append(f"step {name!r} declares env keys an earlier step writes to GITHUB_ENV: {sorted(overlap)}")
+    return problems
+
+
+def problems_runner_files(wf: Workflow) -> list[str]:
+    problems = []
+    outside = dumped({key: value for key, value in wf.job.items() if key != "steps"})
+    for token in ("GITHUB_ENV", "GITHUB_PATH"):
+        if token in outside:
+            problems.append(f"job {JOB!r} names {token} outside its steps")
+    for step in wf.steps:
+        name = step.get("name")
+        if "GITHUB_PATH" in dumped(step):
+            problems.append(f"step {name!r} names GITHUB_PATH, which no step may write")
+        if name not in GITHUB_ENV_WRITERS:
+            if "GITHUB_ENV" in dumped(step):
+                problems.append(f"step {name!r} names GITHUB_ENV, which only {list(GITHUB_ENV_WRITERS)} may write")
+            continue
+        run = step.get("run") if isinstance(step.get("run"), str) else ""
+        if "GITHUB_ENV" in dumped({key: value for key, value in step.items() if key != "run"}):
+            problems.append(f"step {name!r} names GITHUB_ENV outside its run: script")
+        mentions, writes = run.count("GITHUB_ENV"), len(CANONICAL_WRITE.findall(run))
+        if mentions != writes:
+            problems.append(f"step {name!r} names GITHUB_ENV {mentions} times but makes {writes} writes in the modelled form")
+    return problems
+
+
+def problems_setting_endpoint(wf: Workflow) -> list[str]:
+    # U1: GitHub documents the immutable-releases setting endpoint as needing
+    # administration read access, which the workflow token cannot be granted.
+    if "immutable-releases" in wf.text:
+        return ["the workflow names the immutable-releases setting endpoint, which the workflow token cannot read"]
+    return []
+
+
+def problems_duplicate_keys(wf: Workflow) -> list[str]:
+    """Every mapping key repeated within one mapping, from the composed node
+    tree (no object is constructed), since safe_load keeps the last silently."""
+    problems = []
+    pending = [yaml.compose(wf.text, Loader=yaml.SafeLoader)]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, yaml.MappingNode):
+            seen = set()
+            for key, value in node.value:
+                label = key.value if isinstance(key, yaml.ScalarNode) else None
+                if label in seen:
+                    problems.append(f"line {key.start_mark.line + 1} repeats the key {label!r}")
+                seen.add(label)
+                pending.extend((key, value))
+        elif isinstance(node, yaml.SequenceNode):
+            pending.extend(node.value)
+    return problems
+
+
+STRUCTURAL_CHECKS = (
+    problems_layout, problems_step_list, problems_step_keys, problems_env,
+    problems_runner_files, problems_setting_endpoint, problems_duplicate_keys,
+)
+
+
+def structural_problems(wf: Workflow) -> list[str]:
+    return [problem for check in STRUCTURAL_CHECKS for problem in check(wf)]
+
+
+WORKFLOW_TEXT = WORKFLOW.read_text(encoding="utf-8")
+WF = Workflow(WORKFLOW_TEXT)
+step_names = WF.step_names
+step_script = WF.step_script
+step_env = WF.step_env
+step_keys = WF.step_keys
+job_env = WF.job_env
+github_env_writes = WF.github_env_writes
 
 
 def script_reads(script: str) -> set[str]:
@@ -281,7 +426,7 @@ class WorkflowStepTest(unittest.TestCase):
         self.write_exec(self.work / "tools" / "release-package.sh", FAKE_PACKAGER)
         self.env_file = root / "github-env"
         self.set_state(commit=COMMIT, clock="2026-11-15T12:00:00Z",
-                       published_at="2026-11-15T12:00:03Z", immutable="true", enabled="true")
+                       published_at="2026-11-15T12:00:03Z", immutable="true")
         self.skill("Version: 1.0.15  \nReleased: 2026-11-15  \n")
         # The runner, the dispatch inputs, and the values earlier steps wrote
         # to GITHUB_ENV; no step variable is supplied directly.
@@ -304,7 +449,10 @@ class WorkflowStepTest(unittest.TestCase):
 
     def set_state(self, **values):
         for key, value in values.items():
-            (self.state / key).write_text(value, encoding="utf-8")
+            if value is None:
+                (self.state / key).unlink(missing_ok=True)
+            else:
+                (self.state / key).write_text(value, encoding="utf-8")
 
     def skill(self, text: str):
         (self.work / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md").write_text(text, encoding="utf-8")
@@ -407,22 +555,9 @@ def is_field_read(field):
     return lambda call: call[0] == "gh" and call[1][:1] == ["api"] and "--jq" in call[1] and call[1][-1] == "." + field
 
 
-SETTING_READ = ["api", "repos/jposluns/cleanlanguage/immutable-releases", "--jq", ".enabled"]
-
-
-def is_setting_read(call):
-    return call[0] == "gh" and call[1] == SETTING_READ
-
-
 def is_tag_operation(call):
     return call[0] == VCS and call[1][:1] in (["tag"], ["push"])
 
-
-VALIDATE = "Read and validate the version"
-PUBLISH = "Create or update GitHub Release"
-DETERMINE = "Determine the expected release date"
-PACKAGE = "Validate, package, and verify the skill zip"
-MODELLED = (VALIDATE, DETERMINE, PACKAGE, PUBLISH)
 
 # Extractors that cannot run at all: the interpreter fails before main, on a
 # SyntaxError or on an import that raises ModuleNotFoundError.
@@ -436,6 +571,9 @@ BROKEN_EXTRACTORS = (
 BAD_READBACKS = (
     ("immutable false", {"immutable": "false"}, "immutable field reads false"),
     ("immutable null", {"immutable": "null"}, "immutable field reads null"),
+    ("immutable missing", {"immutable": None}, "immutable field reads null"),
+    ("immutable empty", {"immutable": ""}, "immutable field reads empty"),
+    ("immutable unreadable", {"immutable": "FAIL"}, "immutable field could not be read back"),
     ("wrong day", {"published_at": "2026-11-16T00:00:02Z"}, "IS PUBLISHED on a different UTC day"),
 )
 
@@ -482,6 +620,33 @@ class HarnessTest(WorkflowStepTest):
                 keys = step_keys(name)
                 self.assertFalse(keys.intersection({"if", "continue-on-error"}), f"step {name!r} carries {sorted(keys)}")
                 self.assertLessEqual(keys, MODELLED_STEP_KEYS)
+
+    def test_the_workflow_has_exactly_the_pinned_steps(self):
+        self.assertEqual(step_names(), EXPECTED_STEPS)
+        self.assertEqual(problems_step_list(WF), [])
+
+    def test_every_step_carries_its_pinned_keys(self):
+        self.assertEqual(problems_step_keys(WF), [])
+        self.assertEqual(problems_layout(WF), [])
+
+    def test_modelled_steps_run_under_bash(self):
+        for name in MODELLED:
+            with self.subTest(name):
+                self.assertEqual(WF.step(name)["shell"], "bash")
+
+    def test_env_declarations_and_writes_hold_on_the_parsed_data(self):
+        self.assertEqual(problems_env(WF), [])
+
+    def test_only_the_writer_steps_name_github_env(self):
+        self.assertEqual(problems_runner_files(WF), [])
+        self.assertEqual(len(CANONICAL_WRITE.findall(step_script(VALIDATE))), 1)
+        self.assertEqual(len(CANONICAL_WRITE.findall(step_script(DETERMINE))), 4)
+
+    def test_the_workflow_has_no_duplicate_key(self):
+        self.assertEqual(problems_duplicate_keys(WF), [])
+
+    def test_every_structural_check_passes(self):
+        self.assertEqual(structural_problems(WF), [])
 
 
 class PublishStepTest(WorkflowStepTest):
@@ -562,13 +727,24 @@ class PublishStepTest(WorkflowStepTest):
         self.assertIn("could not be read back", err)
 
     def test_a_release_that_is_not_immutable_fails(self):
-        for value in ("false", "null", ""):
-            with self.subTest(value):
-                self.reset_calls()
-                self.set_state(immutable=value)
-                code, _out, err = self.run_step(PUBLISH)
-                self.assertEqual(code, 1, err)
-                self.assertIn("immutable field reads", err)
+        # U1: with no pre-check, the first-publication readback is the only
+        # immutability check, and every value but exactly true refuses.
+        for event, remote_tag in (("workflow_dispatch", ""), ("push", COMMIT)):
+            for value in ("false", "null", None, "", "True", "TRUE", "1", " true", "true false", "FAIL"):
+                with self.subTest(event=event, value=value):
+                    self.reset_calls()
+                    self.runner["GITHUB_EVENT_NAME"] = event
+                    self.set_state(immutable=value, remote_tag=remote_tag)
+                    code, out, err = self.run_step(PUBLISH)
+                    self.assertEqual(code, 1, err)
+                    if value == "FAIL":
+                        self.assertIn("immutable field could not be read back", err)
+                    else:
+                        self.assertIn("immutable field reads ", err)
+                    self.assertNotIn("the day its Released line names", out)
+                    calls = self.calls()
+                    self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
+                    self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
 
     def test_undated_release_checks_no_date(self):
         self.carried["RELEASE_DATED"] = "0"
@@ -604,58 +780,39 @@ class PublishStepTest(WorkflowStepTest):
                 self.assertFalse(any(is_tag_operation(c) or is_create(c) for c in calls), calls)
 
 
-class ImmutableReleasesSettingTest(WorkflowStepTest):
-    """T1: a dated, not yet published release starts only when the repository
-    setting that makes new releases immutable reads enabled exactly true."""
+class NoSettingPreCheckTest(WorkflowStepTest):
+    """U1: the workflow never reads the repository immutable-releases setting,
+    whose endpoint the workflow token cannot read; a dated first publication
+    relies on the readback alone."""
 
-    def test_setting_is_read_before_any_tag_operation(self):
+    def test_workflow_never_calls_the_immutable_releases_endpoint(self):
+        self.assertNotIn("immutable-releases", WORKFLOW_TEXT)
+        for step in WF.steps:
+            with self.subTest(step.get("name")):
+                self.assertNotIn("immutable-releases", dumped(step))
+
+    def test_no_run_calls_the_immutable_releases_endpoint(self):
+        for event, remote_tag, status in (
+            ("workflow_dispatch", "", "404"), ("push", COMMIT, "404"), ("workflow_dispatch", COMMIT, "200"),
+        ):
+            with self.subTest(event=event, status=status):
+                self.reset_calls()
+                self.runner["GITHUB_EVENT_NAME"] = event
+                self.set_state(remote_tag=remote_tag, status=status)
+                code, _out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 0, err)
+                calls = self.calls()
+                self.assertTrue(calls)
+                self.assertFalse(
+                    any(c[0] == "gh" and any("immutable-releases" in a for a in c[1]) for c in calls), calls
+                )
+
+    def test_first_publication_proceeds_to_the_readback(self):
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 0, err)
         calls = self.calls()
-        setting = self.index_of(calls, is_setting_read)
-        self.assertLess(setting, self.index_of(calls, is_tag_operation))
-        self.assertLess(setting, self.index_of(calls, is_create))
-
-    def test_setting_is_read_before_create_on_a_tag_push(self):
-        self.runner["GITHUB_EVENT_NAME"] = "push"
-        self.set_state(remote_tag=COMMIT)
-        code, _out, err = self.run_step(PUBLISH)
-        self.assertEqual(code, 0, err)
-        calls = self.calls()
-        self.assertLess(self.index_of(calls, is_setting_read), self.index_of(calls, is_create))
-
-    def test_setting_that_is_not_true_refuses_before_any_tag_operation(self):
-        for value in ("false", "null", ""):
-            for event, remote_tag in (("workflow_dispatch", ""), ("push", COMMIT)):
-                with self.subTest(value=value, event=event):
-                    self.reset_calls()
-                    self.runner["GITHUB_EVENT_NAME"] = event
-                    self.set_state(enabled=value, remote_tag=remote_tag)
-                    code, _out, err = self.run_step(PUBLISH)
-                    self.assertEqual(code, 1, err)
-                    shown = value or "empty"
-                    self.assertIn(f"immutable-releases setting reads enabled {shown}, not true", err)
-                    calls = self.calls()
-                    self.assertTrue(any(is_setting_read(c) for c in calls), calls)
-                    self.assertFalse(any(is_tag_operation(c) or is_create(c) for c in calls), calls)
-
-    def test_setting_that_cannot_be_read_refuses(self):
-        self.set_state(enabled="FAIL")
-        code, _out, err = self.run_step(PUBLISH)
-        self.assertEqual(code, 1, err)
-        self.assertIn("immutable-releases setting could not be read", err)
-        calls = self.calls()
-        self.assertFalse(any(is_tag_operation(c) or is_create(c) for c in calls), calls)
-
-    def test_undated_release_does_not_read_the_setting(self):
-        self.carried["RELEASE_DATED"] = "0"
-        self.carried["RELEASE_DATE"] = ""
-        self.set_state(enabled="false")
-        code, _out, err = self.run_step(PUBLISH)
-        self.assertEqual(code, 0, err)
-        calls = self.calls()
-        self.assertTrue(any(is_create(c) for c in calls), calls)
-        self.assertFalse(any(is_setting_read(c) for c in calls), calls)
+        self.assertLess(self.index_of(calls, is_tag_operation), self.index_of(calls, is_create))
+        self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
 
 
 class RerunAndForceTest(WorkflowStepTest):
@@ -883,6 +1040,89 @@ class ChainedRunTest(WorkflowStepTest):
         results = self.chain()
         self.assertEqual([r[1] for r in results], [0, 0, 1], results)
         self.assertIn("immutable field reads false", results[-1][3])
+
+
+FORCE_LINE = "          FORCE: ${{ inputs.force }}\n"
+PACKAGE_LINE = "      - name: Validate, package, and verify the skill zip\n"
+PACKAGE_BODY = "          # The packager always refuses a malformed Released line, and a\n"
+PUBLISH_SHELL = "          FORCE: ${{ inputs.force }}\n        shell: bash\n"
+
+
+def unmodelled_step(line: str) -> str:
+    return (
+        "      - name: Unmodelled step\n"
+        "        shell: bash\n"
+        "        run: |\n"
+        "          " + line + "\n"
+        "\n"
+    )
+
+
+class MutationTest(unittest.TestCase):
+    """U2: each reproduced defect, and other forms of it, applied to the real
+    workflow text, must be named by the structural checks."""
+
+    @staticmethod
+    def mutated(old: str, new: str) -> Workflow:
+        if WORKFLOW_TEXT.count(old) != 1:
+            raise AssertionError(f"mutation anchor not unique: {old!r}")
+        return Workflow(WORKFLOW_TEXT.replace(old, new))
+
+    def assertNamed(self, wf: Workflow, *fragments: str):
+        problems = structural_problems(wf)
+        for fragment in fragments:
+            self.assertTrue(any(fragment in problem for problem in problems), (fragment, problems))
+
+    def test_blank_line_before_an_env_override_is_caught(self):
+        # Round 4 reproduction: valid YAML that the line reader stopped at.
+        wf = self.mutated(FORCE_LINE, FORCE_LINE + "\n          RELEASE_DATED: \"0\"\n")
+        self.assertEqual(wf.step_env(PUBLISH)["RELEASE_DATED"], "0")
+        self.assertNamed(
+            wf,
+            "step " + repr(PUBLISH) + " declares env keys an earlier step writes to GITHUB_ENV: " + repr(["RELEASE_DATED"]),
+            f"step {PUBLISH!r} declares env keys",
+        )
+
+    def test_unmodelled_step_writing_release_dated_is_caught(self):
+        # Round 4 reproduction: an extra step overriding RELEASE_DATED.
+        wf = self.mutated(PACKAGE_LINE, unmodelled_step("echo \"RELEASE_DATED=0\" >> \"${GITHUB_ENV}\"") + PACKAGE_LINE)
+        self.assertNamed(wf, "the workflow steps are", "step " + repr("Unmodelled step") + " names GITHUB_ENV")
+
+    def test_every_form_of_a_github_env_reference_is_caught(self):
+        forms = (
+            ("braced", "echo \"RELEASE_DATED=0\" >> \"${GITHUB_ENV}\""),
+            ("unbraced", "echo RELEASE_DATED=0 >> \"$GITHUB_ENV\""),
+            ("via a variable", "target=\"$GITHUB_ENV\"; echo RELEASE_DATED=0 >> \"$target\""),
+        )
+        for label, line in forms:
+            with self.subTest(label, place="modelled step"):
+                wf = self.mutated(PACKAGE_BODY, "          " + line + "\n" + PACKAGE_BODY)
+                self.assertNamed(wf, "step " + repr(PACKAGE) + " names GITHUB_ENV")
+            with self.subTest(label, place="unmodelled step"):
+                wf = self.mutated(PACKAGE_LINE, unmodelled_step(line) + PACKAGE_LINE)
+                self.assertNamed(wf, "step " + repr("Unmodelled step") + " names GITHUB_ENV")
+
+    def test_a_writer_step_writing_in_another_form_is_caught(self):
+        anchor = "          echo \"Releasing version ${version} as ${RELEASE_TAG}.\"\n"
+        wf = self.mutated(anchor, anchor + "          echo RELEASE_DATED=0 >> \"$GITHUB_ENV\"\n")
+        self.assertNamed(wf, "step " + repr(VALIDATE) + " names GITHUB_ENV 2 times but makes 1 writes")
+
+    def test_a_shell_other_than_bash_is_caught(self):
+        wf = self.mutated(PUBLISH_SHELL, PUBLISH_SHELL.replace("shell: bash", "shell: sh"))
+        self.assertNamed(wf, "step " + repr(PUBLISH) + " runs under shell " + repr("sh") + ", not bash")
+
+    def test_a_duplicate_env_key_is_caught(self):
+        wf = self.mutated(PUBLISH_SHELL, PUBLISH_SHELL + "        env:\n          RELEASE_DATED: \"0\"\n")
+        self.assertNamed(wf, "repeats the key " + repr("env"))
+
+    def test_a_step_level_condition_is_caught(self):
+        wf = self.mutated(PUBLISH_SHELL, PUBLISH_SHELL + "        if: false\n")
+        self.assertNamed(wf, "carries keys the harness does not model: [" + repr("if") + "]")
+
+    def test_a_setting_read_is_caught(self):
+        anchor = "          confirm_published_release() { # label\n"
+        wf = self.mutated(anchor, "          gh api \"repos/${GITHUB_REPOSITORY}/immutable-releases\" --jq .enabled\n" + anchor)
+        self.assertNamed(wf, "immutable-releases setting endpoint")
 
 
 if __name__ == "__main__":

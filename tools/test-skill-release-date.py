@@ -59,6 +59,13 @@ DECORATED = (
     ("word joiner", "\u2060Released: 2026-11-01"),
     ("bidirectional control", "\u202aReleased: 2026-11-01"),
     ("soft hyphen inside the key", "Rele\u00adased: 2026-11-01"),
+    # U4: a table row, a bracket, and the full-width colon.
+    ("table row", "| Released: 2026-11-01 |"),
+    ("bold table cell", "| **Released:** 2026-11-01 |"),
+    ("second table cell", "| | Released: 2026-11-01 |"),
+    ("bracket", "[Released: 2026-11-01]"),
+    ("full-width colon", "Released\uff1a 2026-11-01"),
+    ("table row with a full-width colon", "| Released\uff1a2026-11-01 |"),
 )
 
 # Decorations outside the rule, which the docstring states are not detected.

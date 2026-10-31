@@ -387,6 +387,47 @@ class ConditionalPassTest(unittest.TestCase):
             [("api", "repos/jposluns/cleanlanguage/releases/tags/v1.0.15", "--jq", ".published_at")],
         )
 
+    def test_readers_fail_closed_on_an_os_or_decode_error(self):
+        # U3: an OSError other than a missing gh, or gh output that does not
+        # decode, is unverifiable (exit 2), never a traceback read as drift.
+        def undecodable(*args, check=True):
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        def denied(*args, check=True):
+            raise PermissionError(13, "Permission denied")
+
+        readers = (
+            ("release_immutable", self._saved[7]), ("release_published_at", self._saved[6]),
+            ("release_status", self._saved[3]), ("tag_status", self._saved[4]),
+        )
+        for name, reader in readers:
+            for fake in (undecodable, denied):
+                with self.subTest(name, error=fake.__name__):
+                    gate.gh = fake
+                    err = io.StringIO()
+                    with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(err):
+                        reader("v1.0.15")
+                    self.assertEqual(caught.exception.code, 2)
+                    self.assertIn("could not verify: could not read", err.getvalue())
+
+    def test_undecodable_immutable_read_does_not_hide_checksum_drift(self):
+        # U3: the date check stops with exit 2 and the checksum drift is
+        # still reported.
+        self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z")
+        gate.release_immutable = self._saved[7]
+
+        def fake(*args, check=True):
+            if args[:1] == ("api",):
+                raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            return self.fake_download(*args, check=check)
+
+        gate.gh = fake
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn("could not verify: could not read the immutable field of release", err)
+        self.assertIn("Release checksum drift found", out)
+
     def test_extractor_crash_inside_a_call_exits_3(self):
         # F5: an unexpected failure of the loaded extractor is unavailable
         # (exit 3), never a drift verdict (exit 1).

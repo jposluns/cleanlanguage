@@ -207,6 +207,8 @@ def api_status(path: str, what: str) -> int:
         proc = gh("api", "--include", "--silent", path, check=False)
     except FileNotFoundError:
         cannot_verify("the gh CLI is not available")
+    except (OSError, UnicodeError) as error:
+        cannot_verify(f"could not read {what}: {error!r}")
     codes = re.findall(r"^HTTP/[0-9.]+ (\d{3})", proc.stdout + "\n" + proc.stderr, re.M)
     if not codes:
         cannot_verify(f"could not read {what} (gh exit {proc.returncode})")
@@ -227,12 +229,15 @@ def release_published_at(tag: str) -> str:
     """Return the raw ``published_at`` value of release ``tag``, as gh prints it.
 
     The value is interpreted only by the extractor ``release_day_from_published_at``,
-    which states the assumption it rests on. A gh failure is unverifiable.
+    which states the assumption it rests on. A gh failure, including an
+    OSError or output that does not decode, is unverifiable.
     """
     try:
         proc = gh("api", f"repos/{REPO}/releases/tags/{tag}", "--jq", ".published_at", check=False)
     except FileNotFoundError:
         cannot_verify("the gh CLI is not available")
+    except (OSError, UnicodeError) as error:
+        cannot_verify(f"could not read published_at for release {tag}: {error!r}")
     if proc.returncode != 0:
         cannot_verify(f"could not read published_at for release {tag} (gh exit {proc.returncode})")
     return proc.stdout.removesuffix("\n")
@@ -241,11 +246,14 @@ def release_published_at(tag: str) -> str:
 def release_immutable(tag: str) -> str:
     """Return the raw ``immutable`` field of release ``tag``, as gh prints it.
 
-    The caller accepts only exactly ``true``. A gh failure is unverifiable."""
+    The caller accepts only exactly ``true``. A gh failure, including an
+    OSError or output that does not decode, is unverifiable."""
     try:
         proc = gh("api", f"repos/{REPO}/releases/tags/{tag}", "--jq", ".immutable", check=False)
     except FileNotFoundError:
         cannot_verify("the gh CLI is not available")
+    except (OSError, UnicodeError) as error:
+        cannot_verify(f"could not read the immutable field of release {tag}: {error!r}")
     if proc.returncode != 0:
         cannot_verify(f"could not read the immutable field of release {tag} (gh exit {proc.returncode})")
     return proc.stdout.removesuffix("\n")

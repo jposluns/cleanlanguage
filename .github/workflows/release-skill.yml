@@ -221,24 +221,6 @@ jobs:
             echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2." >&2
             exit 1
           }
-          # check_immutable_releases_setting refuses to start a dated release
-          # unless the repository setting that makes new releases immutable is
-          # on (its enabled field reads exactly true). The readback below
-          # accepts only an immutable release record, so a release published
-          # while the setting is off would fail its readback only once it is
-          # public, and every re-run would fail the same way. Any error reading
-          # the setting fails closed: the setting cannot be verified.
-          check_immutable_releases_setting() {
-            local enabled
-            if ! enabled="$(gh api "repos/${GITHUB_REPOSITORY}/immutable-releases" --jq .enabled)"; then
-              echo "Refusing to publish ${RELEASE_TAG}: the repository immutable-releases setting could not be read (see the error above), so it cannot be verified that the release will be immutable. This run pushed no tag and created no release." >&2
-              exit 1
-            fi
-            if [ "${enabled}" != "true" ]; then
-              echo "Refusing to publish ${RELEASE_TAG}: the repository immutable-releases setting reads enabled ${enabled:-empty}, not true, so the release would not be immutable and its publication readback would fail after it is public. Enable immutable releases in the repository settings, then release again. This run pushed no tag and created no release." >&2
-              exit 1
-            fi
-          }
           refuse_publish_window() {
             echo "Refusing to publish ${RELEASE_TAG}: its Released line (${RELEASE_DATE}) would not name the UTC day the release is published (see the reason above). No release was created." >&2
             echo "The tag ${RELEASE_TAG} may already be on origin at ${built_commit}: a tag push started this run, or a dispatch pushed it before this check. To recover, first land a commit on main that re-stamps the Released line (and the renderings) for the UTC day you will publish on, then do one of these:" >&2
@@ -266,6 +248,16 @@ jobs:
           # tools/skill-release-date.py --confirm-published. The log line it
           # prints after the first creation is the first-publication
           # observation that tools/check-release-checksum-live.py defers to.
+          # This readback is the only immutability check. The repository
+          # setting that makes new releases immutable is deliberately not
+          # read beforehand: GitHub documents its REST endpoint as needing
+          # administration read access, which the workflow GITHUB_TOKEN cannot
+          # be granted, so such a pre-check would refuse every dated release
+          # (tools/test-release-skill-workflow.py fails if the workflow names
+          # that endpoint). The readback fails closed: an unreadable, missing
+          # (null), empty or any other non-true immutable value refuses the
+          # run. A release published while the setting is off is already
+          # public when this refuses, and every re-run refuses it the same way.
           confirm_published_release() { # label
             local immutable published_at rc=0
             if ! immutable="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .immutable)"; then
@@ -407,11 +399,10 @@ jobs:
             fi
           fi
           if [ "${release_exists}" -eq 0 ] && [ "${RELEASE_DATED}" = "1" ]; then
-            # Item 26 (G3): early checks, before any tag operation, so a run
-            # whose release could not be immutable, or that is already too
-            # late, does not push a tag it cannot use. The binding window
-            # check is the one immediately before the create call.
-            check_immutable_releases_setting
+            # Item 26 (G3): an early window check, before any tag operation,
+            # so a run that is already too late does not push a tag it cannot
+            # use. The binding window check is the one immediately before the
+            # create call.
             check_publish_window
           fi
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then

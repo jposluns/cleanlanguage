@@ -19,11 +19,12 @@ published. The rules, all enforced here so every caller agrees:
     character (category ``Cf``, for example a zero-width space or a byte
     order mark) is removed from it, it starts with ``released`` in any case,
     optionally behind any run of leading whitespace and Markdown markers
-    (``>``, ``#``, ``*``, ``_``, ``+``, ``-``, or an ordered-list number
-    followed by ``.`` or ``)``), and the word is followed by optional blanks
-    or emphasis markers (``*``, ``_``) and then a colon. A key-like line
-    decorated in any other way, for example inside inline code or an HTML
-    tag, is not detected.
+    (``>``, ``#``, ``*``, ``_``, ``+``, ``-``, a table pipe ``|``, an opening
+    bracket ``[``, or an ordered-list number followed by ``.`` or ``)``), and
+    the word is followed by optional blanks or emphasis markers (``*``,
+    ``_``) and then a colon, either ``:`` or the full-width colon ``U+FF1A``.
+    A key-like line decorated in any other way, for example inside inline
+    code or an HTML tag, is not detected.
   - The first line that looks like a ``Released:`` key is authoritative. It must
     be spelled exactly ``Released:`` and match
     ``Released:[ \\t]*YYYY-MM-DD[ \\t]*``; a malformed first line is rejected,
@@ -98,10 +99,12 @@ BASELINE_VERSION = "1.0.14"
 PUBLISH_MARGIN_SECONDS = 600
 
 # Any line that looks like the key, whatever its case, leading whitespace or
-# leading Markdown markers, matched after format characters are removed (see
-# looks_like_key). The first such line is the authoritative one; if it is not
-# spelled exactly "Released:" it is malformed, never read as absent.
-RELEASED_KEY_LIKE = re.compile(r"(?:\s|[>#*_+-]|[0-9]+[.)])*released(?:[ \t]|[*_])*:", re.IGNORECASE)
+# leading Markdown markers (a table pipe and an opening bracket among them),
+# and with an ASCII or a full-width colon, matched after format characters are
+# removed (see looks_like_key). The first such line is the authoritative one;
+# if it is not spelled exactly "Released:" it is malformed, never read as
+# absent.
+RELEASED_KEY_LIKE = re.compile(r"(?:\s|[>#*_+|\[-]|[0-9]+[.)])*released(?:[ \t]|[*_])*[:\uff1a]", re.IGNORECASE)
 
 # Item 26: the exit code for an internal failure of the extractor itself,
 # distinct from 4 (the input could not be read).
