@@ -885,15 +885,19 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_unreadable_site_release_status_still_checks_the_released_line(self):
         # Sibling of MEDIUM 2: a release status for the version the site names
-        # that cannot be read stops only the checksum comparison (exit 2); the
-        # Released line is still checked offline, with no further probe.
+        # that cannot be read stops only the checksum comparison (exit 2); for
+        # the same version the Released line is still checked offline, with no
+        # further probe. A malformed line is read before any probe of a newer
+        # release SKILL.md names, so it exits 3 with no further probe either;
+        # the probe of a newer release is pinned in the next test (row 62).
         def unreadable(tag):
             self.probed.append(tag)
             gate.cannot_verify(f"could not read the release status for {tag} (gh exit 1)")
 
         for label, site, skill, released, expected, reason in (
             ("malformed line, same version", AHEAD, AHEAD, "Released: soon", 3, "is malformed"),
-            ("malformed line, newer SKILL.md", CURRENT, AHEAD, "Released: soon", 3, "is malformed"),
+            ("malformed line, newer SKILL.md, read before any probe", CURRENT, AHEAD,
+             "Released: soon", 3, "is malformed"),
             ("line missing above the baseline", AHEAD, AHEAD, None, 2,
              f"the release state of v{AHEAD}, the version the verify page names, could not be verified"),
             ("valid line", AHEAD, AHEAD, "Released: 2026-11-15  ", 2, None),
@@ -914,6 +918,48 @@ class ConditionalPassTest(unittest.TestCase):
                 else:
                     self.assertIn(reason, out + err)
                 self.assertEqual(self.probed, [f"v{site}"])
+
+    def test_unreadable_site_release_status_probes_a_newer_skill_release(self):
+        # Row 62, LOW 1 of DISCOVERY round 2: when the release status of the
+        # version the site names cannot be read and SKILL.md names a newer
+        # version, that newer release was never probed, so its state is not
+        # unknown: the release-date check probes it on its own terms, as the
+        # unexpected-status path does, and a wrong date on it is reported. The
+        # checksum comparison still cannot run, so the exit stays at least 2.
+        def statuses(newer):
+            def status(tag):
+                self.probed.append(tag)
+                if tag == f"v{CURRENT}":
+                    gate.cannot_verify(f"could not read the release status for {tag} (gh exit 1)")
+                return newer
+            return status
+
+        for label, released, newer, immutable, expected, reason, asked in (
+            ("date mismatch", "Released: 2026-11-01  ", 200, "true", 2,
+             "Release date inconsistency found", [f"v{AHEAD}"]),
+            ("matching date", "Released: 2026-11-15  ", 200, "true", 2,
+             f"matches the publication day of release v{AHEAD}", [f"v{AHEAD}"]),
+            ("line missing above the baseline", None, 200, "true", 2,
+             f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line", []),
+            ("record not immutable", "Released: 2026-11-15  ", 200, "false", 2,
+             f"the immutable field of release v{AHEAD} is", []),
+            ("newer release not published", "Released: 2026-11-15  ", 404, "true", 2,
+             f"Release v{AHEAD}, the version SKILL.md names, is not published yet", []),
+            ("newer release unexpected status", "Released: 2026-11-15  ", 503, "true", 2,
+             f"unexpected HTTP 503 reading release v{AHEAD}, the version SKILL.md names", []),
+        ):
+            with self.subTest(label):
+                self.fixtures(CURRENT, OTHER_SUM, AHEAD, released)
+                self.published("2026-11-15T09:30:00Z", immutable=immutable)
+                gate.release_status = statuses(newer)
+                gate.gh = unexpected_call
+                code, out, err = self.main_reports()
+                self.assertEqual(code, expected, (out, err))
+                self.assertIn("could not read the release status for v1.0.14", err)
+                self.assertIn(reason, out + err)
+                self.assertEqual(self.probed, [f"v{CURRENT}", f"v{AHEAD}"])
+                self.assertEqual(self.asked, asked)
+                self.assertNotIn(f"v{CURRENT}", self.tag_probed + self.immutable_asked)
 
     def test_unverifiable_newer_release_still_reports_a_missing_released_line(self):
         # Sibling of MEDIUM 2 inside the date check: an unverifiable state of

@@ -29,7 +29,10 @@ Behaviour:
     deleted or unfinished release and reads as unverifiable, as does a release
     or tag status that cannot be read; on each such path the SKILL.md
     ``Released:`` line is still checked with no further network call, and the
-    more severe code wins. One broken state
+    more severe code wins. When the release status of the version the site
+    names cannot be read and SKILL.md names a different version, the
+    release-date check below probes the release SKILL.md names instead. One
+    broken state
     stays invisible to this check: a bump that updated both the verify page and
     SKILL.md but whose tag was never pushed is indistinguishable from the
     pre-tag window by repository state alone.
@@ -50,6 +53,8 @@ Behaviour:
     absent only when that version is at or below the undated baseline
     declared in ``tools/skill-release-date.py``; the line and that rule are
     read first, and then no network call is made for the date check at all.
+    An undated release at or below that baseline is therefore not checked for
+    immutability either.
     The meaning of ``published_at`` is an assumption,
     isolated in ``release_day_from_published_at`` in that tool; see its
     docstring.
@@ -79,7 +84,8 @@ The release-date check and the site-checksum comparison both run and both
 are reported when the release the site names is published, including when its
 download fails, its downloaded assets cannot be read, or its manifest is
 malformed or undecodable, and also when that
-release returns a status other than 200 or 404 and when the site names an
+release returns a status other than 200 or 404, or a status that cannot be
+read while SKILL.md names a different version, and when the site names an
 unreleased version that is not the current skill version, so neither failure
 hides the other. Within the date check of a published release, a Released line
 missing above the undated baseline does not hide an immutable field that is not
@@ -389,13 +395,16 @@ def offline_release_line_code(situation: str) -> int:
     return 0
 
 
-def check_release_date(site_version: str, site_status: int) -> bool:
+def check_release_date(site_version: str, site_status: int | None) -> bool:
     """G4 (item 26): check the release SKILL.md names, on its own terms.
 
     The release probed is the one for the SKILL.md version, whatever version
     the site names, so a site that still names the previous release cannot
-    hide a wrong date on a published newer one. Returns False (after printing
-    why) on an inconsistency; exits 2 when the state cannot be verified."""
+    hide a wrong date on a published newer one. ``site_status`` is the status
+    already read for the release the site names; it is None only when that
+    status could not be read and SKILL.md names a different version, so it is
+    never used. Returns False (after printing why) on an inconsistency; exits
+    2 when the state cannot be verified."""
     current = skill_version()
     tag = f"v{current}"
     # The line and the baseline rule are read first: an undated release at or
@@ -489,7 +498,7 @@ def check_release_date(site_version: str, site_status: int) -> bool:
     return True
 
 
-def release_date_code(site_version: str, site_status: int) -> int:
+def release_date_code(site_version: str, site_status: int | None) -> int:
     """Run check_release_date and return its exit code (0 or 1), or the code
     (2 or 3) it stopped with, after its own report, so the caller can still
     run and report the checksum comparison."""
@@ -583,9 +592,22 @@ def check_site_checksum() -> int:
     except SystemExit as stop:
         if stop.code != 2:
             raise
-        # The status cannot be read, so the checksum comparison cannot run;
-        # the Released line is still checked offline and the more severe code
-        # wins, so a malformed line (exit 3) is not hidden.
+        # The status cannot be read, so the checksum comparison cannot run,
+        # and the more severe code wins, so a malformed line (exit 3) is not
+        # hidden. When SKILL.md names the same version, the state of its
+        # release is this unreadable status, so the Released line is checked
+        # offline. When it names a different version, that release was never
+        # probed, so the release-date check probes it on its own terms, as on
+        # the unexpected-status path below (row 62), and a wrong date on a
+        # published newer release is still reported.
+        try:
+            same_version = skill_version() == version
+        except SystemExit as unreadable:
+            if unreadable.code != 3:
+                raise
+            return 3
+        if not same_version:
+            return max(2, release_date_code(version, None))
         return max(2, offline_release_line_code(
             f"the release state of {tag}, the version the verify page names, could not be verified"
         ))
