@@ -51,14 +51,14 @@ What it checks:
       13 and never repeated; every chunk complete with a valid CRC, a four-letter
       ASCII type, and a length at most 2**31 - 1; a valid bit depth and colour type
       pair, compression 0, filter 0, interlace 0 or 1; a critical chunk (upper-case
-      first letter) other than IHDR, PLTE, IDAT, and IEND is refused; PLTE appears
-      at most once, before the first IDAT, never for colour types 0 and 4, with a
-      length that is a multiple of 3 from 3 to 768 and, for colour type 3, no more
-      entries than the bit depth can index; colour type 3 has a PLTE before its
-      first IDAT; at least one IDAT precedes IEND and the IDAT chunks are
-      consecutive; IEND has an empty payload and no byte follows it; every
-      ancillary chunk (lower-case first letter), public or private, is skipped by
-      its length and never interpreted;
+      first letter) whose type is not in PNG_CRITICAL (IHDR, PLTE, IDAT, IEND) is
+      refused; PLTE appears at most once, before the first IDAT, never for colour
+      types 0 and 4, with a length that is a multiple of 3 from 3 to 768 and, for
+      colour type 3, no more entries than the bit depth can index; colour type 3
+      has a PLTE before its first IDAT; at least one IDAT precedes IEND and the
+      IDAT chunks are consecutive; IEND has an empty payload and no byte follows
+      it; every ancillary chunk (lower-case first letter), public or private, is
+      skipped by its length and never interpreted;
   I4  a JPEG is walked marker by marker from the SOI to the first scan header (SOS):
       fill bytes and standalone markers (TEM, RST0 to RST7) are skipped, every other
       segment is skipped by its length, and exactly one frame header (SOF0 to
@@ -68,12 +68,17 @@ What it checks:
       for its frame marker (ITU-T T.81 Table B.2: 8 for baseline; 8 or 12 for
       extended and progressive; 2 to 16 for lossless; hierarchical frames as their
       process), and a non-zero height (a DNL height is refused) and width; the
-      scan header declares 1 to 4 components, has length exactly 6 + 2 * Ns, and
-      names each component once and only components the frame header declares; an
-      SOS before the frame header, a second frame header, a second SOI, an EOI, a
-      marker 0x00, a non-marker byte, a truncated segment, a length below 2, or a
-      file that ends before the first SOS is refused; the walk stops at the end of
-      the first scan header;
+      scan header declares 1 to 4 components, has length exactly 6 + 2 * Ns,
+      names each component once and only components the frame header declares,
+      and gives each component a DC and an AC entropy table selector within the
+      range its frame process allows (ITU-T T.81 Table B.3, SOS_TABLE_SELECTORS:
+      0 to 1 each for baseline; 0 to 3 each for extended and progressive; for
+      lossless, DC 0 to 3 and AC 0, since a lossless scan codes no AC
+      coefficients; hierarchical frames as their process); an SOS before the
+      frame header, a second frame header, a second SOI, an EOI, a marker 0x00, a
+      non-marker byte, a truncated segment, a length below 2, or a file that ends
+      before the first SOS is refused; the walk stops at the end of the first scan
+      header;
   I5  the image is square, each side 512 to 2048 pixels inclusive;
   I6  each conforming icon field prints one success line to stdout.
 
@@ -101,21 +106,55 @@ below it. O_NOFOLLOW, O_NONBLOCK, and O_CLOEXEC are POSIX flags; the gate target
 the Linux CI runner.
 
 Residuals this gate does not cover:
-  1. Header validity is not image validity. For a PNG, IDAT is never decompressed,
-     so a corrupt or short zlib stream passes; ancillary chunks are skipped unread,
-     so their content, their ordering relative to PLTE and IDAT, and their
-     multiplicity are not checked; the reserved and safe-to-copy bits of a chunk
-     type are not interpreted. For a JPEG, nothing after the end of the first scan
-     header is read: the entropy-coded data, any later scans and the table segments
-     between them, a DNL marker, the EOI marker, and any bytes after EOI are never
-     inspected, so a JPEG truncated or corrupted anywhere after its first scan
-     header passes. Before that point, the contents of table and application
-     segments (DQT, DHT, DRI, APPn, COM) are skipped by length; whether the tables
-     a scan selects were defined, the sampling factors and quantization table
-     selectors of the frame header, the spectral and approximation fields of the
-     scan header, the limit of 4 components in a progressive frame, a frame header
-     longer than its component table, and a standalone RST marker before the first
-     scan are not checked.
+  1. Header validity is not image validity. The walks check only what I3 and I4
+     state. The list below is the closed set of what they leave unchecked: every
+     field the code reads but does not validate, every byte it skips, and every
+     structure after the point where a walk stops, derived from each byte offset
+     parse_png and parse_jpeg read.
+     PNG (the walk reads every chunk header and CRC from the signature to IEND
+     and refuses any byte after IEND, so no structure lies beyond it):
+       a. chunk type letters 2 to 4: the private bit (letter 2), the reserved bit
+          (letter 3, which the specification requires to be upper case), and the
+          safe-to-copy bit (letter 4) are not interpreted; only letter 1 is;
+       b. PLTE: only its length is read; the palette entries are not;
+       c. IDAT: the payload is never read or decompressed, so the zlib header, the
+          deflate stream, the Adler-32 checksum, the filter byte of each scanline,
+          and the decompressed length are unchecked, a zero-length IDAT passes,
+          and for colour type 3 a pixel index beyond the palette is unchecked;
+       d. ancillary chunks (lower-case first letter), public or private: the
+          payload is skipped after its CRC; the position relative to PLTE and to
+          the IDAT run (for example a tRNS before PLTE or after IDAT), apart from
+          the refusal of any chunk between two IDAT chunks, the multiplicity, and
+          any rule between ancillary chunks are not checked, so APNG frame chunks
+          pass unread.
+     JPEG (the walk stops at the end of the first scan header):
+       e. segments skipped by their length with the payload unread: APP0 to APP15,
+          COM, DQT, DHT, DAC, DRI, DNL, DHP, EXP, JPG (0xC8), JPG0 to JPG13 (0xF0
+          to 0xFD), and the reserved markers 0x02 to 0xBF, which the walk treats as
+          length segments; a skipped segment of length 2 passes; no segment is
+          required, so a JPEG with no DQT or DHT passes;
+       f. marker placement: a DNL, DHP, or EXP before the first scan, and a
+          standalone TEM or RST0 to RST7 marker before the first scan, are
+          accepted; the hierarchical structure is not checked, so no DHP is
+          required, a differential frame marker (SOF5 to SOF7, SOF13 to SOF15) is
+          accepted as the first frame header, and the dimensions are read from
+          the first frame header, not from a DHP segment;
+       g. frame header: the sampling factors byte and the quantization table
+          selector byte of each component, every byte after the component table
+          within the segment length, and the component count limit of a process
+          (at most 4 for a progressive frame) are not checked;
+       h. scan header: the spectral selection start and end (Ss, Se) and the
+          successive approximation byte (Ah, Al) are not read; whether the scan
+          components follow the frame header order, whether an interleaved scan
+          stays within 10 blocks per MCU, and whether the quantization and
+          entropy tables that the frame and scan select were defined, and are
+          Huffman or arithmetic tables to match the frame marker, are not checked;
+          the table selectors are checked for range only;
+       i. everything after the end of the first scan header: the entropy-coded
+          data, the RST markers within it, any later scans and the segments
+          between them, a DNL after the first scan, the EOI marker, and any bytes
+          after EOI, so a JPEG truncated or corrupted anywhere after its first
+          scan header passes.
   2. Renderability is not checked: arithmetic-coded and lossless JPEG frame types
      (SOF3, SOF9 to SOF11, SOF15), 12-bit and hierarchical JPEGs, CMYK or Adobe
      APP14-transformed JPEGs, 16-bit and palette PNGs, and APNG pass the header
@@ -190,8 +229,9 @@ OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
-# The critical PNG chunk types this gate recognizes; any other critical chunk is
-# refused, as a conforming decoder must refuse it.
+# The critical PNG chunk types this gate recognizes; parse_png refuses a critical
+# chunk (upper-case first letter) whose type is not in this set, as a conforming
+# decoder must refuse it.
 PNG_CRITICAL = frozenset({"IHDR", "PLTE", "IDAT", "IEND"})
 # Valid sample precisions per JPEG frame marker (ITU-T T.81 Table B.2): baseline 8;
 # extended sequential and progressive 8 or 12; lossless 2 to 16; the hierarchical
@@ -210,6 +250,25 @@ SOF_PRECISIONS = {
     0xCD: frozenset({8, 12}),
     0xCE: frozenset({8, 12}),
     0xCF: frozenset(range(2, 17)),
+}
+# Largest valid scan-header entropy table selectors (DC Td, AC Ta) per frame marker
+# (ITU-T T.81 Table B.3): baseline 1 and 1; extended sequential and progressive 3
+# and 3; lossless 3 and 0, since a lossless scan codes no AC coefficients; the
+# hierarchical frames as their process.
+SOS_TABLE_SELECTORS = {
+    0xC0: (1, 1),
+    0xC1: (3, 3),
+    0xC2: (3, 3),
+    0xC3: (3, 0),
+    0xC5: (3, 3),
+    0xC6: (3, 3),
+    0xC7: (3, 0),
+    0xC9: (3, 3),
+    0xCA: (3, 3),
+    0xCB: (3, 0),
+    0xCD: (3, 3),
+    0xCE: (3, 3),
+    0xCF: (3, 0),
 }
 # Frame headers SOF0 to SOF15; 0xC4 (DHT), 0xC8 (JPG, reserved) and 0xCC (DAC) are
 # never frame headers.
@@ -398,6 +457,8 @@ def parse_png(data: bytes) -> tuple[int, int]:
         if zlib.crc32(data[offset + 4:end - 4]) != stored_crc:
             raise ImageError(f"chunk {chunk_type!r} at offset {offset} has a bad CRC")
         payload = data[offset + 8:end - 4]
+        if 65 <= raw_type[0] <= 90 and chunk_type not in PNG_CRITICAL:
+            raise ImageError(f"unknown critical chunk {chunk_type!r} at offset {offset}")
         if first:
             first = False
             width, height, depth, colour, compression, filtering, interlace = struct.unpack(
@@ -447,8 +508,6 @@ def parse_png(data: bytes) -> tuple[int, int]:
             if end != size:
                 raise ImageError(f"{size - end} bytes follow IEND")
             return width, height
-        elif 65 <= raw_type[0] <= 90:
-            raise ImageError(f"unknown critical chunk {chunk_type!r} at offset {offset}")
         previous = chunk_type
         offset = end
 
@@ -457,7 +516,7 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
     """I4: walk markers from the SOI to the first SOS; return the frame (width, height)."""
     size = len(data)
     offset = 2
-    frame: tuple[int, int, frozenset[int]] | None = None
+    frame: tuple[int, int, frozenset[int], int] | None = None
     while True:
         phase = "the frame header" if frame is None else "the first scan (SOS)"
         ends = "file ends before any frame header" if frame is None else (
@@ -523,7 +582,7 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
                 raise ImageError("frame header declares height 0 (DNL), so dimensions cannot be read")
             if width == 0:
                 raise ImageError("frame header declares width 0")
-            frame = (width, height, frozenset(identifiers))
+            frame = (width, height, frozenset(identifiers), marker)
         elif marker == 0xDA:
             if length < 3:
                 raise ImageError(f"scan header at offset {marker_offset} is too short")
@@ -543,6 +602,15 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
                     raise ImageError(
                         f"scan header names component {selector}, which the frame header "
                         "does not declare"
+                    )
+            dc_limit, ac_limit = SOS_TABLE_SELECTORS[frame[3]]
+            for index, selector in enumerate(selectors):
+                dc_table, ac_table = divmod(data[offset + 4 + 2 * index], 16)
+                if dc_table > dc_limit or ac_table > ac_limit:
+                    raise ImageError(
+                        f"scan header gives component {selector} DC table {dc_table} and "
+                        f"AC table {ac_table}; frame marker 0x{frame[3]:02X} allows DC 0 "
+                        f"to {dc_limit} and AC 0 to {ac_limit}"
                     )
             return frame[0], frame[1]
         offset += length

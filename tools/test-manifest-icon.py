@@ -120,6 +120,17 @@ SOS = jpeg_segment(0xDA, bytes([1, 1, 0, 0, 63, 0]))
 SOI = b"\xff\xd8"
 
 
+def table_jpeg(sof, tables):
+    """SOI, a 3-component frame header, a scan with the given table bytes, EOI.
+
+    The scan names components 1 onward, one per table selector byte (DC table in
+    the high four bits, AC table in the low four bits).
+    """
+    entries = b"".join(bytes([index + 1, value]) for index, value in enumerate(tables))
+    scan = jpeg_segment(0xDA, bytes([len(tables)]) + entries + bytes([0, 63, 0]))
+    return SOI + jpeg_segment(sof, frame_payload(512, 512)) + scan + b"\x00\xff\xd9"
+
+
 def make_jpeg(width, height, sof=0xC0, pre=(), components=3, fill=b"", with_sos=True,
               with_eoi=True, precision=8):
     """SOI, pre-segments (raw bytes), fill bytes, a frame header, a minimal SOS, EOI."""
@@ -873,6 +884,27 @@ class ManifestIconTest(unittest.TestCase):
                 self.set_icon("CL_icon.png", make_png(512, 512, before_idat=((chunk_type, b""),)))
                 self.expect_exit(1, "unknown critical chunk " + repr(chunk_type.decode("ascii")))
 
+    def test_png_critical_set_is_exact(self):
+        self.assertEqual(gate.PNG_CRITICAL, frozenset({"IHDR", "PLTE", "IDAT", "IEND"}))
+
+    def test_png_critical_set_governs_the_refusal(self):
+        # The unknown-critical refusal reads PNG_CRITICAL: a type dropped from the set
+        # is refused as unknown, and a type added to it is no longer refused.
+        plte = make_png(512, 512, colour=2, before_idat=((b"PLTE", bytes(3)),))
+        for critical, data, chunk_type in (
+            (gate.PNG_CRITICAL - {"PLTE"}, plte, "PLTE"),
+            (gate.PNG_CRITICAL - {"IDAT"}, make_png(512, 512), "IDAT"),
+            (frozenset(), make_png(512, 512), "IHDR"),
+        ):
+            with self.subTest(chunk=chunk_type):
+                self.set_icon("CL_icon.png", data)
+                with mock.patch.object(gate, "PNG_CRITICAL", critical):
+                    self.expect_exit(1, "unknown critical chunk " + repr(chunk_type))
+        self.set_icon("CL_icon.png", make_png(512, 512, before_idat=((b"ZZZZ", b""),)))
+        self.expect_exit(1, "unknown critical chunk " + repr("ZZZZ"))
+        with mock.patch.object(gate, "PNG_CRITICAL", gate.PNG_CRITICAL | {"ZZZZ"}):
+            self.expect_pass()
+
     def test_png_palette_without_plte_fails(self):
         self.set_icon("CL_icon.png", make_png(512, 512, colour=3))
         self.expect_exit(1, "colour type 3 has no PLTE chunk before IDAT")
@@ -1072,6 +1104,54 @@ class ManifestIconTest(unittest.TestCase):
             with self.subTest(needle=needle):
                 self.set_icon("icon.jpg", SOI + frame + scan + b"\x00\xff\xd9")
                 self.expect_exit(1, needle)
+
+    def test_jpeg_scan_table_selectors_out_of_range_fail(self):
+        # ITU-T T.81 Table B.3: baseline 0 to 1; extended and progressive 0 to 3;
+        # lossless DC 0 to 3 and AC 0; hierarchical frames as their process.
+        for sof, tables, component, dc, ac, dc_max, ac_max in (
+            (0xC0, (0x20,), 1, 2, 0, 1, 1),
+            (0xC0, (0x02,), 1, 0, 2, 1, 1),
+            (0xC0, (0xFF,), 1, 15, 15, 1, 1),
+            (0xC0, (0x00, 0x11, 0x12), 3, 1, 2, 1, 1),
+            (0xC1, (0x40,), 1, 4, 0, 3, 3),
+            (0xC2, (0x04,), 1, 0, 4, 3, 3),
+            (0xC9, (0x33, 0x44), 2, 4, 4, 3, 3),
+            (0xCE, (0x40,), 1, 4, 0, 3, 3),
+            (0xC3, (0x01,), 1, 0, 1, 3, 0),
+            (0xC3, (0x40,), 1, 4, 0, 3, 0),
+            (0xC7, (0x00, 0x01), 2, 0, 1, 3, 0),
+            (0xCF, (0x31,), 1, 3, 1, 3, 0),
+        ):
+            with self.subTest(sof=hex(sof), tables=tables):
+                self.set_icon("icon.jpg", table_jpeg(sof, tables))
+                self.expect_exit(
+                    1,
+                    f"scan header gives component {component} DC table {dc} and AC table "
+                    f"{ac}; frame marker 0x{sof:02X} allows DC 0 to {dc_max} and AC 0 to {ac_max}",
+                )
+
+    def test_jpeg_scan_table_selectors_in_range_pass(self):
+        for sof, tables in (
+            (0xC0, (0x00, 0x11, 0x11)),
+            (0xC0, (0x10, 0x01)),
+            (0xC1, (0x33,)),
+            (0xC2, (0x30, 0x03)),
+            (0xC5, (0x33,)),
+            (0xCA, (0x33, 0x22, 0x11)),
+            (0xC3, (0x30,)),
+            (0xC7, (0x00, 0x10)),
+            (0xCF, (0x30,)),
+        ):
+            with self.subTest(sof=hex(sof), tables=tables):
+                self.set_icon("icon.jpg", table_jpeg(sof, tables))
+                self.expect_pass()
+
+    def test_jpeg_scan_table_selector_limits_are_exact(self):
+        lossless = {0xC3, 0xC7, 0xCB, 0xCF}
+        expected = {marker: (3, 0) if marker in lossless else (3, 3) for marker in gate.SOF_MARKERS}
+        expected[0xC0] = (1, 1)
+        self.assertEqual(set(gate.SOS_TABLE_SELECTORS), set(gate.SOF_MARKERS))
+        self.assertEqual(gate.SOS_TABLE_SELECTORS, expected)
 
     def test_jpeg_segments_between_frame_and_scan_are_skipped(self):
         frame = jpeg_segment(0xC0, frame_payload(512, 512))
