@@ -73,7 +73,8 @@ Exit codes:
 
 The release-date check and the site-checksum comparison both run and both
 are reported when the release the site names is published, including when its
-download fails or its manifest is malformed, and when the site names an
+download fails or its manifest is malformed or undecodable, and also when that
+release returns a status other than 200 or 404 and when the site names an
 unreleased version that is not the current skill version, so neither failure
 hides the other. The extractor is loaded inside main, not at import, so a load
 failure is reported and contributes exit 3 while the checksum comparison still
@@ -136,18 +137,19 @@ def _unavailable(message: str) -> None:
 
 def _load_release_date_tool():
     # Any failure to load, a missing or unreadable file, a SyntaxError, or an
-    # exception raised while the module runs, means the extractor is
-    # unavailable: exit 3, never the drift exit 1 a stray traceback would give.
+    # exception raised while the module runs, SystemExit included, means the
+    # extractor is unavailable: exit 3, never the drift exit 1 a stray
+    # traceback would give, nor the code a SystemExit carries (row 58).
     try:
         spec = importlib.util.spec_from_file_location("skill_release_date", RELEASE_DATE_TOOL)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         _unavailable(f"could not load {RELEASE_DATE_TOOL.name} (the extractor is unavailable): {error!r}")
     for name, kind in RELEASE_DATE_API:
         try:
             usable = _api_kind_ok(getattr(module, name), kind)
-        except Exception:
+        except (Exception, SystemExit):
             usable = False
         if not usable:
             _unavailable(
@@ -190,7 +192,7 @@ def release_date_attr(name: str):
         raise SystemExit(3)
     try:
         return getattr(RELEASE_DATE, name)
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         _unavailable(f"{RELEASE_DATE_TOOL.name} lacks {name}: {error!r}")
 
 
@@ -198,14 +200,14 @@ def release_date_call(name: str, *args):
     """Call the function ``name`` of the loaded extractor, resolving it here.
 
     Its ``Malformed`` verdict on content is raised as ``ReleaseDateMalformed``;
-    any other exception, including a function or class that has gone missing
-    or is not callable, means the extractor itself failed, which exits 3 as
-    unavailable, never as a content verdict or a drift."""
+    any other exception or SystemExit, including a function or class that has
+    gone missing or is not callable, means the extractor itself failed, which
+    exits 3 as unavailable, never as a content verdict, a pass, or a drift."""
     function = release_date_attr(name)
     malformed = release_date_attr("Malformed")
     try:
         return function(*args)
-    except Exception as error:
+    except (Exception, SystemExit) as error:
         if isinstance(malformed, type) and issubclass(malformed, Exception) and isinstance(error, malformed):
             raise ReleaseDateMalformed(str(error)) from None
         _unavailable(f"{RELEASE_DATE_TOOL.name} failed unexpectedly in {name}: {error!r}")
@@ -426,7 +428,7 @@ def check_release_date(site_version: str, site_status: int) -> bool:
             "nor its record can be replaced. If the line was edited after the "
             "release, restore the value the published zip carries; if the "
             "published zip itself names the wrong day, the remedy is a corrective "
-            "version whose Released line names its own publication day. The "
+            "new version whose Released line names its own publication day. The "
             "first-publication readback the release workflow printed when it "
             "created the release (its run log) records the day GitHub recorded."
         )
@@ -468,7 +470,10 @@ def published_digest(tag: str, zip_name: str, manifest_name: str) -> str:
 
         # The manifest must be exactly one line: a 64-hex digest, two spaces, and
         # the expected basename. A crafted path inside it cannot redirect the check.
-        lines = manifest_path.read_text(encoding="utf-8").splitlines()
+        try:
+            lines = manifest_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as error:
+            cannot_verify(f"could not read {manifest_name} from {tag}: {error!r}")
         if len(lines) != 1:
             cannot_verify(f"{manifest_name} is not exactly one line")
         claimed = lines[0].split("  ")[0]
@@ -541,7 +546,13 @@ def check_site_checksum() -> int:
         # undated baseline, is still reported in this window.
         return pre_tag_release_line_code(version)
     if status != 200:
-        cannot_verify(f"unexpected HTTP {status} reading release {tag}")
+        # The checksum comparison cannot run (exit 2), but the release-date
+        # check below still runs and reports, and the more severe code wins.
+        print(
+            f"check-release-checksum-live: could not verify: unexpected HTTP {status} reading release {tag}",
+            file=sys.stderr,
+        )
+        return max(2, release_date_code(version, status))
 
     # A failed download or a malformed release stops only the checksum
     # comparison (exit 2); the release-date check below still runs and reports.

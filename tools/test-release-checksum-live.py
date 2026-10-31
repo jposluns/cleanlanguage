@@ -179,9 +179,12 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertIn("published_at reads 2026-11-16T00:00:01Z (UTC day 2026-11-16)", out)
         self.assertIn("first-publication readback", out)
         self.assertNotIn("Correct the line to match the release record", out)
-        # R4: the release is immutable, so the remedy is a corrective version;
-        # no republish or asset replacement is offered.
-        self.assertIn("the remedy is a corrective version", out)
+        # R4: the release is immutable, so the remedy is a corrective new
+        # version; no republish or asset replacement is offered. Row 74: the
+        # wording matches the release workflow, which says corrective new
+        # version.
+        self.assertIn("the remedy is a corrective new version", out)
+        self.assertNotIn("corrective version", out)
         self.assertNotIn("asset replacement", out)
         self.assertNotIn("force", out)
         self.assertNotIn("may have moved", out)
@@ -571,6 +574,79 @@ class ConditionalPassTest(unittest.TestCase):
         finally:
             gate.RELEASE_DATE.release_day_from_published_at = saved
 
+    def test_extractor_raising_system_exit_exits_3(self):
+        # Row 58: an extractor that raises SystemExit, whatever its code, is
+        # unavailable (exit 3), never a pass (0) or a drift (1), whether it
+        # raises it inside a call or from a lookup on the module.
+        def stop_with(code):
+            def stop(*args, **kwargs):
+                raise SystemExit(code)
+            return stop
+
+        for stop_code in (0, 1, None):
+            for place in ("call", "lookup"):
+                with self.subTest(code=stop_code, place=place):
+                    saved = gate.RELEASE_DATE.release_day_from_published_at
+                    if place == "call":
+                        gate.RELEASE_DATE.release_day_from_published_at = stop_with(stop_code)
+                        reason = "failed unexpectedly in release_day_from_published_at"
+                    else:
+                        del gate.RELEASE_DATE.release_day_from_published_at
+                        gate.RELEASE_DATE.__getattr__ = stop_with(stop_code)
+                        reason = "lacks release_day_from_published_at"
+                    try:
+                        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+                        self.published("2026-11-15T09:30:00Z")
+                        code, out, err = self.main_reports()
+                        self.assertEqual(code, 3, (out, err))
+                        self.assertIn(reason, err)
+                        self.assertIn("SystemExit", err)
+                    finally:
+                        vars(gate.RELEASE_DATE).pop("__getattr__", None)
+                        gate.RELEASE_DATE.release_day_from_published_at = saved
+
+    def test_unexpected_status_of_the_site_release_does_not_hide_the_date_check(self):
+        # Row 62: a status other than 200 or 404 for the release the site
+        # names stops only the checksum comparison (exit 2); the release-date
+        # check still runs and reports, and the more severe code wins. A
+        # malformed line is read before any probe of the newer release.
+        for label, released, expected, reason, probed in (
+            ("date mismatch", "Released: 2026-11-15  ", 2, "Release date inconsistency found",
+             [f"v{CURRENT}", f"v{AHEAD}"]),
+            ("malformed Released line", "Released: soon", 3,
+             "Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed", [f"v{CURRENT}"]),
+        ):
+            with self.subTest(label):
+                self.fixtures(CURRENT, ZIP_SUM, AHEAD, released)
+                self.published("2026-11-16T00:00:01Z", statuses={f"v{CURRENT}": 503})
+                code, out, err = self.main_reports()
+                self.assertEqual(code, expected, (out, err))
+                self.assertIn(f"could not verify: unexpected HTTP 503 reading release v{CURRENT}", err)
+                self.assertIn(reason, out + err)
+                self.assertEqual(self.probed, probed)
+
+    def test_undecodable_manifest_is_unverifiable(self):
+        # Row 63: a published manifest that is not UTF-8 cannot be verified
+        # (exit 2), never an uncaught UnicodeDecodeError read as drift; the
+        # release-date check still runs and reports.
+        def undecodable_manifest(*args, check=True):
+            self.fake_download(*args, check=check)
+            version = args[2].removeprefix("v")
+            target = Path(args[args.index("--dir") + 1])
+            (target / f"cleanlanguage-{version}.zip.sha256").write_bytes(
+                ZIP_SUM.encode("ascii") + b"  cleanlanguage-\xff.zip"
+            )
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-16T00:00:01Z")
+        gate.gh = undecodable_manifest
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn(f"could not verify: could not read cleanlanguage-{AHEAD}.zip.sha256 from v{AHEAD}", err)
+        self.assertIn("Release date inconsistency found", out)
+        self.assertNotIn("Release checksum drift found", out)
+
     def test_extractor_attribute_gone_at_call_time_exits_3(self):
         # R3: every lookup is resolved inside the protected wrapper, so an
         # attribute missing at call time is unavailable (exit 3), never an
@@ -797,6 +873,24 @@ class ModuleLoadTest(unittest.TestCase):
         code, err = self.run_with_extractor("raise RuntimeError(\"boom\")\n")
         self.assertEqual(code, 3, err)
         self.assertIn("RuntimeError", err)
+
+    def test_system_exit_while_loading_exits_3(self):
+        # Row 58: an extractor that raises SystemExit while it loads, or from
+        # a lookup the load validates, is unavailable (exit 3), whatever code
+        # it raises, never a pass (0) or a drift (1).
+        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
+        lookup = source + "\ndel extract\ndef __getattr__(name):\n    raise SystemExit(0)\n"
+        for label, body, reason in (
+            ("SystemExit(0) at load", "raise SystemExit(0)\n", "could not load skill-release-date.py"),
+            ("SystemExit(1) at load", "raise SystemExit(1)\n", "could not load skill-release-date.py"),
+            ("bare SystemExit at load", "raise SystemExit\n", "could not load skill-release-date.py"),
+            ("SystemExit(0) from an API lookup", lookup, "lacks a usable extract "),
+        ):
+            with self.subTest(label):
+                code, err = self.run_with_extractor(body)
+                self.assertEqual(code, 3, err)
+                self.assertIn(reason, err)
+                self.assertIn("the extractor is unavailable", err)
 
     def test_incomplete_extractor_api_exits_3_naming_the_attribute(self):
         # R3: the API the gate uses is validated at load time.
