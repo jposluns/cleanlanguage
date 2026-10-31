@@ -137,13 +137,15 @@ Residuals this gate does not cover:
           and for colour type 3 a pixel index beyond the palette is unchecked;
        d. ancillary chunks (lower-case first letter), public or private: the
           walk checks only that the type is four ASCII letters, that the length
-          is at most 2**31 - 1 and fits in the file, that the CRC matches, and
-          that no chunk lies between two IDAT chunks. No other rule on an
-          ancillary chunk is checked: not its payload, its length against any
-          other field, its position, its multiplicity, or any relation to IHDR,
-          PLTE or another chunk (for example a tRNS before PLTE or for colour
-          type 4 or 6, a tRNS or hIST whose length does not match the PLTE entry
-          count, or a hIST with no PLTE), so APNG frame chunks pass unread.
+          is at most 2**31 - 1 and fits in the file, that the CRC matches, that
+          the chunk lies after IHDR and before IEND, and that no chunk lies
+          between two IDAT chunks. No other rule on an ancillary chunk is
+          checked: not its payload, its length against any other field, its
+          position within that span apart from the IDAT run, its multiplicity,
+          or any relation to IHDR, PLTE or another chunk (for example a tRNS
+          before PLTE or for colour type 4 or 6, a tRNS or hIST whose length
+          does not match the PLTE entry count, or a hIST with no PLTE), so APNG
+          frame chunks pass unread.
      JPEG (the walk stops at the end of the first scan header):
        e. segments skipped by their length with the payload unread: APP0 to APP15,
           COM, DQT, DHT, DAC, DRI, DNL, DHP, EXP, JPG (0xC8), JPG0 to JPG13 (0xF0
