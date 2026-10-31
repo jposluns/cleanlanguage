@@ -14,7 +14,10 @@
 # that the generated files and the embed are current (regenerated) and the
 # Version agrees everywhere, so a failing case can fail only on the Released
 # check it targets; each failure is also pinned by its message. The passing
-# cases record the source hash with --update --force inside the copy.
+# cases record the source hash with --update --force inside the copy. Every
+# fixture sets its own Version and Released lines explicitly (an undated
+# fixture strips them), so the suite gives the same verdicts on an undated
+# checkout and on a dated one.
 #
 # It runs offline.
 #
@@ -78,6 +81,12 @@ open(path, "w", encoding="utf-8", newline="").write("\n".join(lines))
 PYSET
 }
 
+drop_released_everywhere() {
+  set_meta "${skill}" Released-drop "" ""
+  set_meta "${eleven}" Released-drop "" ""
+  set_meta "${eight}" Released-drop "" ""
+}
+
 set_version_everywhere() {
   set_meta "${skill}" Version "$1" ""
   set_meta "${eleven}" Version "$1" ""
@@ -90,6 +99,15 @@ regen() {
 
 record() {
   (cd "${work}" && tools/check-portable-text-sync.sh --update --force >/dev/null 2>&1)
+}
+
+# An undated fixture at version $1: every Released line is stripped, whatever
+# the checkout carries, and the generated files are regenerated.
+undated_fixture() {
+  fresh
+  drop_released_everywhere
+  set_version_everywhere "$1"
+  regen
 }
 
 # A dated 1.0.15 fixture in which every file agrees. The 11k file drops its
@@ -132,15 +150,35 @@ expect_fail() { # label fragment
   fi
 }
 
-# 1. The undated baseline passes as it stands.
-fresh
+# 1. The undated baseline passes.
+undated_fixture 1.0.14
+if record; then pass "undated 1.0.14 fixture records"; else fail "undated 1.0.14 fixture records"; fi
 expect_pass "baseline 1.0.14 without a Released line passes"
 
 # 2. G1: above the baseline, the line is required.
-fresh
-set_version_everywhere 1.0.15
-regen
+undated_fixture 1.0.15
 expect_fail "1.0.15 without a Released line fails" "above the undated baseline 1.0.14"
+
+# 2a. G1 compares versions numerically, by the extractor rule: at or below
+#     the baseline an undated skill passes, above it it fails.
+for v in 1.0.9 1.00.14; do
+  undated_fixture "${v}"
+  if record; then pass "undated ${v} fixture records"; else fail "undated ${v} fixture records"; fi
+  expect_pass "undated ${v} (not above the baseline) passes"
+done
+for v in 1.0.100 1.1.0; do
+  undated_fixture "${v}"
+  expect_fail "undated ${v} (above the baseline) fails" "is version ${v}, above the undated baseline 1.0.14"
+done
+
+# 2b. A missing or broken extractor is reported as unavailable, never as a
+#     malformed line.
+undated_fixture 1.0.14
+rm -f "${work}/tools/skill-release-date.py"
+expect_fail "a missing extractor is reported as unavailable" "tools/skill-release-date.py is unavailable or broken"
+undated_fixture 1.0.14
+printf 'def broken(:\n' > "${work}/tools/skill-release-date.py"
+expect_fail "a broken extractor is reported as unavailable" "tools/skill-release-date.py is unavailable or broken"
 
 # 3. A consistent dated release above the baseline passes.
 dated_fixture
@@ -158,18 +196,16 @@ set_meta "${eleven}" Released-drop "" ""
 expect_fail "a rendering missing the date fails" "Released disagreement: SKILL.md=2026-11-15, ${eleven}=absent"
 
 # 6. G1: an impossible date in the skill fails, whatever the renderings say.
-fresh
-set_version_everywhere 1.0.15
+undated_fixture 1.0.15
 set_meta "${skill}" Released 2026-02-30 "  "
 regen
 expect_fail "an impossible date fails" "Malformed Released: line in ${skill}"
 
 # 7. G1: the date on the wrong line fails.
-fresh
-set_version_everywhere 1.0.15
+undated_fixture 1.0.15
 set_meta "${skill}" Released-after-Author 2026-11-15 "  "
 regen
-expect_fail "the date on the wrong line fails" "Malformed Released: line in ${skill}"
+expect_fail "the date on the wrong line fails" "is not the line directly after"
 
 # 8. G2: a malformed line in a rendering fails.
 dated_fixture
@@ -177,7 +213,7 @@ set_meta "${eleven}" Released soon ""
 expect_fail "a malformed rendering line fails" "Malformed Released: line in ${eleven}"
 
 # 9. G2 at the baseline: a rendering dated while the skill is not fails.
-fresh
+undated_fixture 1.0.14
 set_meta "${eight}" Released 2026-11-15 ""
 expect_fail "a dated rendering beside an undated skill fails" "Released disagreement: SKILL.md=absent, ${eight}=2026-11-15"
 

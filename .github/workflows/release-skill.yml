@@ -102,10 +102,58 @@ jobs:
           # published_at, interpreted only by tools/skill-release-date.py
           # --published-day, the one place that states the assumption about
           # that field. Any other status fails closed. The packager compares
-          # this date with the Released line at HEAD (the line may be absent
-          # only at or below the undated baseline). This probe duplicates the
+          # this date with the Released line at HEAD. This probe duplicates the
           # one in the publish step on purpose (one purpose each), and the
-          # publish step re-checks the UTC day before it creates a release.
+          # publish step re-checks the UTC day immediately before it creates a
+          # release and reads the publication day back afterwards.
+          #
+          # An undated release (no Released line, at or below the undated
+          # baseline) checks no date at all, exactly as before item 26:
+          # RELEASE_DATED=0 skips this probe, the packager date check, the
+          # publication-window check, and the readback.
+          #
+          # Every call to the extractor tells its own content verdicts (exit 1
+          # malformed, 3 absent, 4 unreadable) apart from the extractor being
+          # unavailable or crashed (2, 127, anything else), and the probe below
+          # runs first so a broken extractor is never read as a content verdict.
+          release_date_tool_failed() { # exit-code what
+            echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2, so the release date cannot be checked." >&2
+            exit 1
+          }
+          prc=0
+          baseline="$(python3 tools/skill-release-date.py --baseline)" || prc=$?
+          if [ "${prc}" -ne 0 ] || ! printf '%s' "${baseline}" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+            release_date_tool_failed "${prc}" "probing it"
+          fi
+          rc=0
+          python3 tools/skill-release-date.py cleanlanguage/skills/cleanlanguage/SKILL.md >/dev/null || rc=$?
+          case "${rc}" in
+            0) dated=1 ;;
+            3)
+              rc=0
+              requirement="$(python3 tools/skill-release-date.py --requires-date "${VERSION}")" || rc=$?
+              case "${rc}" in
+                0) ;;
+                1) echo "tools/skill-release-date.py rejected the version ${VERSION} (see the error above)." >&2; exit 1 ;;
+                *) release_date_tool_failed "${rc}" "deciding whether ${VERSION} needs a Released line" ;;
+              esac
+              case "${requirement}" in
+                optional) dated=0 ;;
+                # The line is required; the packager refuses its absence.
+                required) dated=1 ;;
+                *) echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for ${VERSION}." >&2; exit 1 ;;
+              esac
+              ;;
+            1) echo "The Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed (see the error above)." >&2; exit 1 ;;
+            4) echo "Could not read cleanlanguage/skills/cleanlanguage/SKILL.md for its Released line (see the error above)." >&2; exit 1 ;;
+            *) release_date_tool_failed "${rc}" "reading the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md" ;;
+          esac
+          if [ "${dated}" -eq 0 ]; then
+            echo "RELEASE_DATED=0" >> "${GITHUB_ENV}"
+            echo "RELEASE_DATE=" >> "${GITHUB_ENV}"
+            echo "SKILL.md ${VERSION} carries no Released line and is at or below the undated baseline ${baseline}; no release date is checked."
+            exit 0
+          fi
           response="$(mktemp)"
           set +e
           gh api --include --silent "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" >"${response}" 2>&1
@@ -121,10 +169,16 @@ jobs:
                 echo "Could not read published_at for the existing release ${RELEASE_TAG}." >&2
                 exit 1
               fi
-              if ! release_date="$(python3 tools/skill-release-date.py --published-day "${published_at}")"; then
-                echo "The published_at of ${RELEASE_TAG} (${published_at:-empty}) is not a usable UTC instant (see the error above)." >&2
-                exit 1
-              fi
+              rc=0
+              release_date="$(python3 tools/skill-release-date.py --published-day "${published_at}")" || rc=$?
+              case "${rc}" in
+                0) ;;
+                1)
+                  echo "The published_at of ${RELEASE_TAG} (${published_at:-empty}) is not a usable UTC instant (see the error above)." >&2
+                  exit 1
+                  ;;
+                *) release_date_tool_failed "${rc}" "reading the published_at of ${RELEASE_TAG}" ;;
+              esac
               ;;
             *)
               echo "Could not determine whether ${RELEASE_TAG} is already published (HTTP ${status:-none}), so its release date is unknown." >&2
@@ -132,12 +186,23 @@ jobs:
               exit 1
               ;;
           esac
+          echo "RELEASE_DATED=1" >> "${GITHUB_ENV}"
           echo "RELEASE_DATE=${release_date}" >> "${GITHUB_ENV}"
           echo "Expected release date ${release_date} (UTC) for ${RELEASE_TAG}."
 
       - name: Validate, package, and verify the skill zip
         shell: bash
-        run: tools/release-package.sh --tag "${RELEASE_TAG}" --release-date "${RELEASE_DATE}"
+        run: |
+          set -euo pipefail
+          # The packager always refuses a malformed Released line, and a
+          # missing one above the undated baseline; --release-date adds only
+          # the check that the line names the expected day, so an undated
+          # release (RELEASE_DATED=0) is packaged without it.
+          if [ "${RELEASE_DATED}" = "1" ]; then
+            tools/release-package.sh --tag "${RELEASE_TAG}" --release-date "${RELEASE_DATE}"
+          else
+            tools/release-package.sh --tag "${RELEASE_TAG}"
+          fi
 
       - name: Create or update GitHub Release
         env:
@@ -146,7 +211,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # The commit we built and will publish. Normalise GITHUB_SHA to a
+          # Item 26 (G3) helpers, used only for a dated release
+          # (RELEASE_DATED=1). check_publish_window refuses to start
+          # publishing unless the UTC clock, read at the call, is still on the
+          # day RELEASE_DATE with at least 10 minutes left before UTC midnight
+          # (tools/skill-release-date.py --publish-window decides that).
+          release_date_tool_failed() { # exit-code what
+            echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2." >&2
+            exit 1
+          }
+          refuse_publish_window() {
+            echo "Refusing to publish ${RELEASE_TAG}: its Released line (${RELEASE_DATE}) would not name the UTC day the release is published (see the reason above). No release was created." >&2
+            echo "The tag ${RELEASE_TAG} may already be on origin at ${built_commit}: a tag push started this run, or a dispatch pushed it before this check. To recover, first land a commit on main that re-stamps the Released line (and the renderings) for the UTC day you will publish on, then do one of these:" >&2
+            echo "  - delete the remote tag (git push origin --delete refs/tags/${RELEASE_TAG}) and release again, either by pushing ${RELEASE_TAG} at the new commit or by dispatching this workflow from main with tag ${RELEASE_TAG};" >&2
+            echo "  - or dispatch this workflow from main with tag ${RELEASE_TAG} and the force input; with no published release, force only moves the unpublished tag to the new commit." >&2
+            exit 1
+          }
+          check_publish_window() {
+            local rc=0
+            python3 tools/skill-release-date.py --publish-window "${RELEASE_DATE}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null || rc=$?
+            case "${rc}" in
+              0) ;;
+              5) refuse_publish_window ;;
+              1) echo "The expected release date ${RELEASE_DATE} or the clock reading is malformed (see the error above)." >&2; exit 1 ;;
+              *) release_date_tool_failed "${rc}" "checking the publication window" ;;
+            esac
+          }
+          # The commit we built and will publish. Normalize GITHUB_SHA to a
           # commit id: a pushed annotated tag can set GITHUB_SHA to the tag
           # object rather than the commit, and every tag comparison below then
           # uses this peeled commit, so a legitimate annotated-tag release is
@@ -241,20 +332,11 @@ jobs:
               exit 1
             fi
           fi
-          if [ "${release_exists}" -eq 0 ]; then
-            # Item 26 (G3): the expected release date was fixed from the UTC
-            # clock before packaging. If the UTC day has rolled over since, the
-            # Released line no longer names the publication day, so refuse here,
-            # before any tag is pushed or release created. A window of seconds
-            # remains between this re-check and the create call below; the
-            # post-release check (tools/check-release-checksum-live.py) catches
-            # a release that slips past UTC midnight inside it.
-            today="$(date -u +%F)"
-            if [ "${today}" != "${RELEASE_DATE}" ]; then
-              echo "The UTC day rolled over from ${RELEASE_DATE} to ${today} after the release date was checked, so the Released line would not name the publication day." >&2
-              echo "Nothing was tagged or published by this step. Re-stamp the Released line for the new day on main, then release again." >&2
-              exit 1
-            fi
+          if [ "${release_exists}" -eq 0 ] && [ "${RELEASE_DATED}" = "1" ]; then
+            # Item 26 (G3): an early check, before any tag operation, so a run
+            # that is already too late does not push a tag it cannot use. The
+            # binding check is the one immediately before the create call.
+            check_publish_window
           fi
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             if [ -z "${remote_tag_sha}" ]; then
@@ -286,6 +368,14 @@ jobs:
               "dist/cleanlanguage-${VERSION}.zip.sha256" \
               --clobber
           else
+            if [ "${RELEASE_DATED}" = "1" ]; then
+              # Item 26 (G3): the binding publication-window check, after every
+              # tag operation and immediately before the create call, so the
+              # tag push cannot carry the run past UTC midnight unchecked. The
+              # 10-minute margin covers the create call and its asset uploads;
+              # the readback below confirms the day that GitHub recorded.
+              check_publish_window
+            fi
             gh release create "${RELEASE_TAG}" --verify-tag \
               dist/cleanlanguage.zip \
               dist/cleanlanguage.zip.sha256 \
@@ -293,6 +383,42 @@ jobs:
               "dist/cleanlanguage-${VERSION}.zip.sha256" \
               --title "Clean Language ${RELEASE_TAG}" \
               --generate-notes
+            if [ "${RELEASE_DATED}" = "1" ]; then
+              # Item 26 (G3): the first-publication readback. Read the
+              # published_at GitHub recorded for the release just created and
+              # require its UTC day to be the Released day, and require the
+              # release to be immutable, so its record cannot be replaced
+              # later. This log line is the first-publication observation that
+              # tools/check-release-checksum-live.py defers to.
+              if ! published_at="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .published_at)"; then
+                echo "::error::Release ${RELEASE_TAG} was created, but its published_at could not be read back, so its publication day is unconfirmed against Released: ${RELEASE_DATE}." >&2
+                exit 1
+              fi
+              echo "First-publication readback: release ${RELEASE_TAG} published_at ${published_at:-empty}."
+              rc=0
+              python3 tools/skill-release-date.py --confirm-published "${RELEASE_DATE}" "${published_at}" >/dev/null || rc=$?
+              case "${rc}" in
+                0) echo "Release ${RELEASE_TAG} was published on ${RELEASE_DATE} (UTC), the day its Released line names." ;;
+                5)
+                  echo "::error::Release ${RELEASE_TAG} IS PUBLISHED on a different UTC day from its Released line: Released ${RELEASE_DATE}, published_at ${published_at} (see the days above)." >&2
+                  echo "The published zip carries Released: ${RELEASE_DATE}, so this needs a maintainer decision (a corrective version, or a deliberate force republish with a re-stamped line); tools/check-release-checksum-live.py reports the same disagreement until it is resolved." >&2
+                  exit 1
+                  ;;
+                1)
+                  echo "::error::Release ${RELEASE_TAG} was created, but its published_at (${published_at:-empty}) is not a usable UTC instant, so its publication day is unconfirmed against Released: ${RELEASE_DATE}." >&2
+                  exit 1
+                  ;;
+                *) release_date_tool_failed "${rc}" "confirming the publication day of ${RELEASE_TAG}" ;;
+              esac
+              if ! immutable="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .immutable)"; then
+                echo "::error::Release ${RELEASE_TAG} was created, but its immutable field could not be read back." >&2
+                exit 1
+              fi
+              if [ "${immutable}" != "true" ]; then
+                echo "::error::Release ${RELEASE_TAG} was created, but its immutable field reads ${immutable:-empty}, not true, so its published_at could later be replaced and cannot be relied on." >&2
+                exit 1
+              fi
+            fi
           fi
 
       # No site step follows. Publishing the release is this workflow's last act.

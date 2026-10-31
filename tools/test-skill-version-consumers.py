@@ -85,11 +85,13 @@ def gate_verdict(gate, skill_text: str):
     return (True, match.group(1)) if match else (False, None)
 
 
-def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
     CHECKOUT's release-package.sh and tools/skill-release-date.py (so the code
     under test, not HEAD's copy, is exercised), passing ``--release-date`` when
-    ``release_date`` is given. Returns (exit_code, stderr)."""
+    ``release_date`` is given and then ``extra_args``. ``extractor`` replaces
+    the extractor: ``"missing"`` deletes it, any other text is written in its
+    place. Returns (exit_code, stderr)."""
     skill = skill_with(version_block, released_block) + extra_tail
     with tempfile.TemporaryDirectory() as tmp:
         wt = Path(tmp) / "wt"
@@ -114,12 +116,17 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
             os.chmod(wt / "tools" / "release-package.sh", 0o755)
             shutil.copyfile(RELEASE_DATE_TOOL, wt / "tools" / "skill-release-date.py")
+            if extractor == "missing":
+                (wt / "tools" / "skill-release-date.py").unlink()
+            elif extractor is not None:
+                (wt / "tools" / "skill-release-date.py").write_text(extractor, encoding="utf-8")
             env = dict(os.environ)
             if locale is not None:
                 env["LC_ALL"] = locale
             args = ["bash", str(wt / "tools" / "release-package.sh")]
             if release_date is not None:
                 args += ["--release-date", release_date]
+            args += list(extra_args)
             result = subprocess.run(args, capture_output=True, text=True, env=env)
             return result.returncode, result.stderr
         finally:
@@ -178,9 +185,9 @@ class PackagerContractTest(unittest.TestCase):
 class PackagerReleaseDateTest(unittest.TestCase):
     """T3 (item 26): the packager checks the Released line it ships.
 
-    With ``--release-date`` it requires the HEAD Released line to name that
-    day, accepting the line absent only at or below the undated baseline; a
-    malformed line fails with or without the argument."""
+    Whether or not ``--release-date`` is given, it refuses a malformed line
+    and a missing one above the undated baseline; ``--release-date`` adds only
+    the check that the HEAD Released line names that day."""
 
     def test_matching_release_date_builds(self):
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
@@ -202,9 +209,54 @@ class PackagerReleaseDateTest(unittest.TestCase):
         code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", release_date="2026-11-15")
         self.assertEqual(code, 0, stderr)
 
-    def test_absent_line_without_release_date_builds(self):
+    def test_absent_line_above_baseline_without_release_date_fails(self):
+        # F8: presence above the baseline is enforced without the flag too.
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("has no Released: line, but version 1.2.3 sorts above the undated baseline 1.0.14", stderr)
+
+    def test_dated_line_without_release_date_builds(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", released_block="Released: 2026-11-15  ")
         self.assertEqual(code, 0, stderr)
+
+    def test_baseline_rule_is_numeric(self):
+        # F7: the extractor decides the comparison, so the packager agrees with
+        # every other caller, leading zeros included.
+        for version, builds in (
+            ("1.0.9", True), ("1.0.14", True), ("1.00.14", True),
+            ("1.0.15", False), ("1.0.100", False), ("1.1.0", False),
+        ):
+            for release_date in (None, "2026-11-15"):
+                with self.subTest(version=version, release_date=release_date):
+                    code, stderr = run_packager(f"Version: {version}  ", version, release_date=release_date)
+                    if builds:
+                        self.assertEqual(code, 0, stderr)
+                    else:
+                        self.assertEqual(code, 1, stderr)
+                        self.assertIn("has no Released: line", stderr)
+
+    def test_trailing_flag_without_a_value_fails_with_a_message(self):
+        # F6: a trailing --release-date (or --tag) names what is missing.
+        for flag, fragment in (
+            ("--release-date", "--release-date needs a YYYY-MM-DD value"),
+            ("--tag", "--tag needs a value"),
+        ):
+            with self.subTest(flag):
+                code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", extra_args=(flag,))
+                self.assertEqual(code, 1, stderr)
+                self.assertIn(fragment, stderr)
+
+    def test_unavailable_extractor_is_not_blamed_on_the_content(self):
+        # F5: a missing or broken extractor is unavailable, not a bad date or
+        # a malformed line.
+        for label, body in (("missing", "missing"), ("broken", "def broken(:\n")):
+            with self.subTest(label):
+                code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", release_date="2026-11-15",
+                                            extractor=body)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("tools/skill-release-date.py is unavailable or broken", stderr)
+                self.assertNotIn("must be a real YYYY-MM-DD date", stderr)
+                self.assertNotIn("malformed", stderr)
 
     def test_malformed_line_fails_without_release_date(self):
         for label, block in (
@@ -275,7 +327,8 @@ class UnicodeAndStressTest(unittest.TestCase):
         # CR) and accepts 1.2.3; the packager strips a trailing CR too, so both
         # accept. The pre-change packager rejected it (the CR survived).
         block = "Version: 1.2.3\r"
-        code, stderr = run_packager(block, "1.2.3")
+        # 1.2.3 is above the undated baseline, so it carries a Released line.
+        code, stderr = run_packager(block, "1.2.3", released_block="Released: 2026-11-15\r")
         self.assertEqual(code, 0, stderr)
         for gate in (LINKS, CHECKSUM):
             matched, version = gate_verdict(gate, skill_with(block))
@@ -361,10 +414,11 @@ class ZipLayoutTest(unittest.TestCase):
                 capture_output=True, check=True,
             )
             try:
-                # Exercise the checkout's packager, not HEAD's copy, so an
-                # uncommitted change to the re-root is caught locally too.
+                # Exercise the checkout's packager and extractor, not HEAD's
+                # copies, so an uncommitted change is caught locally too.
                 shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
                 os.chmod(wt / "tools" / "release-package.sh", 0o755)
+                shutil.copyfile(RELEASE_DATE_TOOL, wt / "tools" / "skill-release-date.py")
                 proc = subprocess.run(
                     ["bash", str(wt / "tools" / "release-package.sh")],
                     capture_output=True, text=True,

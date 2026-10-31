@@ -156,6 +156,64 @@ class ExtractorCliTest(unittest.TestCase):
             with self.subTest(value):
                 self.assertEqual(run(None, "--check-date", value)[0], 1)
 
+    def test_released_beside_a_malformed_version_line_is_rejected(self):
+        # F12: the Version line value is validated before the placement rule.
+        for version in ("Version: draft", "Version: 1.0", "Version: 1.0.15 beta"):
+            with self.subTest(version):
+                self.assertRejects(HEAD + version + "\n" + RELEASED + TAIL, "is not a bare X.Y.Z version")
+        self.assertRejects(HEAD + "Version: draft\nAuthor: x\n" + RELEASED, "is not a bare X.Y.Z version")
+
+    def test_unreadable_input_exits_4(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, out, err = run(None, tmp)
+        self.assertEqual((code, out), (4, ""), err)
+        self.assertIn("could not read", err)
+
+    def test_requires_date(self):
+        # F7: one numeric baseline rule for every caller.
+        for version, answer in (
+            ("1.0.9", "optional"), ("1.0.14", "optional"), ("1.00.14", "optional"),
+            ("1.0.15", "required"), ("1.0.100", "required"), ("1.1.0", "required"),
+        ):
+            with self.subTest(version):
+                self.assertEqual(run(None, "--requires-date", version)[:2], (0, answer + "\n"))
+        for value in ("1.0", "v1.0.15", ""):
+            with self.subTest(value):
+                self.assertEqual(run(None, "--requires-date", value)[0], 1)
+
+    def test_publish_window(self):
+        # F1: same UTC day with at least 10 minutes left passes; anything else
+        # is refused with exit 5, and a malformed value is exit 1.
+        for now in ("2026-11-15T00:00:00Z", "2026-11-15T12:00:00Z", "2026-11-15T23:50:00Z"):
+            with self.subTest(now):
+                self.assertEqual(run(None, "--publish-window", "2026-11-15", now)[:2], (0, "2026-11-15\n"))
+        for now, fragment in (
+            ("2026-11-15T23:50:01Z", "only 599 seconds remain"),
+            ("2026-11-15T23:59:59Z", "only 1 seconds remain"),
+            ("2026-11-16T00:00:05Z", "the UTC day is now 2026-11-16"),
+            ("2026-11-14T12:00:00Z", "the UTC day is now 2026-11-14"),
+        ):
+            with self.subTest(now):
+                code, out, err = run(None, "--publish-window", "2026-11-15", now)
+                self.assertEqual((code, out), (5, ""), err)
+                self.assertIn(fragment, err)
+        for args in (("2026-11-15", "2026-11-15T12:00:00"), ("2026-02-30", "2026-11-15T12:00:00Z")):
+            with self.subTest(args):
+                self.assertEqual(run(None, "--publish-window", *args)[0], 1)
+        self.assertEqual(run(None, "--publish-window", "2026-11-15")[0], 2)
+
+    def test_confirm_published(self):
+        self.assertEqual(
+            run(None, "--confirm-published", "2026-11-15", "2026-11-15T23:59:59Z")[:2], (0, "2026-11-15\n")
+        )
+        code, out, err = run(None, "--confirm-published", "2026-11-15", "2026-11-16T00:00:02Z")
+        self.assertEqual((code, out), (5, ""), err)
+        self.assertIn("published on 2026-11-16", err)
+        self.assertIn("names 2026-11-15", err)
+        for value in ("null", "", "2026-11-15"):
+            with self.subTest(value):
+                self.assertEqual(run(None, "--confirm-published", "2026-11-15", value)[0], 1)
+
     def test_published_day(self):
         self.assertEqual(run(None, "--published-day", "2026-11-15T23:59:59Z")[:2], (0, "2026-11-15\n"))
         for value in (
@@ -172,6 +230,7 @@ class FunctionTest(unittest.TestCase):
 
     def test_requires_release_date_sorts_numerically(self):
         self.assertFalse(srd.requires_release_date("1.0.14"))
+        self.assertFalse(srd.requires_release_date("1.00.14"))
         self.assertFalse(srd.requires_release_date("1.0.9"))
         self.assertFalse(srd.requires_release_date("0.99.99"))
         self.assertTrue(srd.requires_release_date("1.0.15"))

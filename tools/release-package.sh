@@ -19,8 +19,9 @@
 #      skill name line and at least one Markdown reference, the two structural
 #      checks the previous inline validation enforced. Reads the Released line
 #      (item 26) through tools/skill-release-date.py and fails on a malformed
-#      one; with --release-date, also fails unless the line names that date,
-#      accepting it absent only at or below the undated baseline version.
+#      one, and on a missing one when the version sorts above the undated
+#      baseline, whether or not --release-date is given; --release-date adds
+#      only the check that the line names that date.
 #   2. Requires every git entry under cleanlanguage/ to carry mode 100644,
 #      which rejects executable files (100755), symlinks (120000), and
 #      submodules (160000) in one comparison.
@@ -55,8 +56,8 @@
 #   tools/release-package.sh                 Build and verify at HEAD.
 #   tools/release-package.sh --tag v1.0.12   Also require the tag to match.
 #   tools/release-package.sh --release-date 2026-11-15
-#                                            Also require the Released line to
-#                                            name that UTC day.
+#                                            Also require the Released line,
+#                                            when present, to name that UTC day.
 #
 # Exit codes:
 #   0  built and verified
@@ -76,8 +77,12 @@ release_date=""
 release_date_given=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --tag) shift; tag="${1:-}" ;;
-    --release-date) shift; release_date="${1:-}"; release_date_given=1 ;;
+    --tag)
+      [ $# -ge 2 ] || fail "--tag needs a value, for example --tag v1.0.12"
+      shift; tag="$1" ;;
+    --release-date)
+      [ $# -ge 2 ] || fail "--release-date needs a YYYY-MM-DD value"
+      shift; release_date="$1"; release_date_given=1 ;;
     *) fail "unknown argument $1" ;;
   esac
   shift
@@ -132,13 +137,27 @@ if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
 fi
 # The Released line (item 26), read from HEAD through the one shared strict
 # extractor, tools/skill-release-date.py: exit 0 prints the date, exit 3 means
-# no line, anything else is a malformed line. A malformed line fails whether or
+# no line, exit 1 is a malformed line, and any other exit (2, 127, an
+# interpreter failure) means the extractor is unavailable or crashed, which is
+# reported as that, never as malformed content. The extractor is probed first
+# (--baseline), so a missing or broken extractor fails here, before an exit 1
+# could be mistaken for a content verdict. A malformed line fails whether or
 # not --release-date is given. The pipeline statuses are read explicitly, so a
 # failed blob read cannot surface as the extractor exit 3 (absent) that
 # pipefail would otherwise report.
+probe_rc=0
+baseline="$(python3 tools/skill-release-date.py --baseline 2>/dev/null)" || probe_rc=$?
+if [ "${probe_rc}" -ne 0 ] || ! printf '%s' "${baseline}" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+  fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc}), so the Released line could not be checked"
+fi
 if [ -n "${release_date_given}" ]; then
-  python3 tools/skill-release-date.py --check-date "${release_date}" >/dev/null 2>&1 \
-    || fail "--release-date must be a real YYYY-MM-DD date, got ${release_date:-nothing}"
+  check_rc=0
+  python3 tools/skill-release-date.py --check-date "${release_date}" >/dev/null 2>&1 || check_rc=$?
+  case "${check_rc}" in
+    0) ;;
+    1) fail "--release-date must be a real YYYY-MM-DD date, got ${release_date:-nothing}" ;;
+    *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${check_rc}) checking --release-date ${release_date:-nothing}" ;;
+  esac
 fi
 released_rc=0
 released="$(
@@ -151,23 +170,33 @@ case "${released_rc}" in
   0) ;;
   3) released="" ;;
   125) fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line" ;;
-  *)
+  1)
     fail "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is malformed: $(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-release-date.py 2>&1 >/dev/null || true)"
     ;;
+  *)
+    fail "tools/skill-release-date.py is unavailable or crashed (exit ${released_rc}) reading the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"
+    ;;
 esac
-if [ -n "${release_date_given}" ]; then
-  if [ -z "${released}" ]; then
-    # Absence is legitimate only at or below the undated baseline (the release
-    # of an undated version, for example a re-run of it).
-    baseline="$(python3 tools/skill-release-date.py --baseline)" \
-      || fail "could not read the release-date baseline from tools/skill-release-date.py"
-    higher="$(printf '%s\n%s\n' "${baseline}" "${version}" | sort -V | tail -1)"
-    if [ "${version}" != "${baseline}" ] && [ "${higher}" = "${version}" ]; then
-      fail "SKILL.md at HEAD has no Released: line, but version ${version} sorts above the undated baseline ${baseline}; add Released: ${release_date} directly after the Version line"
-    fi
-  elif [ "${released}" != "${release_date}" ]; then
-    fail "SKILL.md Released date (${released}) at HEAD does not match the release date (${release_date}); re-stamp the Released line for the UTC day the release is published"
-  fi
+if [ -z "${released}" ]; then
+  # Absence is legitimate only at or below the undated baseline (the release
+  # of an undated version, for example a re-run of it). This holds whether or
+  # not --release-date is given; the extractor decides the comparison.
+  req_rc=0
+  requirement="$(python3 tools/skill-release-date.py --requires-date "${version}" 2>/dev/null)" || req_rc=$?
+  case "${req_rc}" in
+    0) ;;
+    1) fail "tools/skill-release-date.py rejected the version ${version} as not a bare X.Y.Z" ;;
+    *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${req_rc}) deciding whether ${version} needs a Released line" ;;
+  esac
+  case "${requirement}" in
+    optional) ;;
+    required)
+      fail "SKILL.md at HEAD has no Released: line, but version ${version} sorts above the undated baseline ${baseline}; add Released: YYYY-MM-DD (the UTC release day) directly after the Version line"
+      ;;
+    *) fail "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for whether ${version} needs a Released line" ;;
+  esac
+elif [ -n "${release_date_given}" ] && [ "${released}" != "${release_date}" ]; then
+  fail "SKILL.md Released date (${released}) at HEAD does not match the release date (${release_date}); re-stamp the Released line for the UTC day the release is published"
 fi
 # grep -Eq exits on the first match, so a here-string (not a printf pipe) avoids
 # a SIGPIPE that set -o pipefail would turn into a spurious failure on a large
@@ -311,7 +340,7 @@ chmod 644 "${staging}/cleanlanguage/LICENSE" "${staging}/cleanlanguage/NOTICE.md
 commit_epoch="$(git show -s --format=%ct HEAD)"
 # Canonical, umask-independent modes for a distributed artefact: the packaged
 # files carry only regular content (the mode gate above rejects anything but
-# 100644), so normalise every directory to 0755 and every file to 0644. Zip
+# 100644), so normalize every directory to 0755 and every file to 0644. Zip
 # records the Unix mode in each entry, so without this an ambient umask would
 # change the central-directory bytes and the checksum for the same commit.
 find "${staging}" -type d -exec chmod 755 {} +

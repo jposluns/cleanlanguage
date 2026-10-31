@@ -33,17 +33,35 @@ accept it absent at or below it.
 Input modes:
   ``FILE`` reads that file; ``-`` or no argument reads all of stdin (so a
   producer piped in completes and can take no ``SIGPIPE``).
-  ``--baseline`` prints the baseline version.
+  ``--baseline`` prints the baseline version. Shell callers also run it first
+  as an availability probe: a missing, unreadable or broken extractor fails
+  the probe, so a later exit 1 is known to come from the content.
+  ``--requires-date VERSION`` prints ``required`` when ``VERSION`` sorts above
+  the baseline (compared numerically, part by part, so ``1.0.100`` is above
+  ``1.0.14`` and ``1.00.14`` equals it) and ``optional`` otherwise. Every
+  baseline comparison uses this one rule; no caller re-implements it.
   ``--check-date VALUE`` validates a bare ``YYYY-MM-DD`` calendar date and
   prints it.
   ``--published-day VALUE`` prints the UTC day of a release ``published_at``
   value; see ``release_day_from_published_at`` for the assumption it carries.
+  ``--publish-window EXPECTED NOW`` checks, immediately before a release is
+  created, that the UTC instant ``NOW`` (``YYYY-MM-DDTHH:MM:SSZ``, read from
+  the clock by the caller) falls on the day ``EXPECTED`` with at least
+  ``PUBLISH_MARGIN_SECONDS`` left before UTC midnight, and prints
+  ``EXPECTED``; otherwise it refuses with exit 5.
+  ``--confirm-published EXPECTED PUBLISHED_AT`` checks, after a release is
+  created, that its ``published_at`` falls on the day ``EXPECTED`` and prints
+  that day; a different day is refused with exit 5, naming both days.
 
 Exit codes:
-  0  success; the date (or the baseline) is printed to stdout
-  1  malformed line or value, or the input could not be read or decoded
+  0  success; the requested value is printed to stdout
+  1  malformed line or value, or the input is not valid UTF-8
   2  usage error
   3  absent: no ``Released:`` line
+  4  could not evaluate: the input file could not be read, or the extractor
+     itself failed unexpectedly
+  5  refused: a well-formed value that names the wrong day
+     (``--publish-window``, ``--confirm-published``)
 """
 
 from __future__ import annotations
@@ -60,6 +78,12 @@ PROG = "skill-release-date"
 # when the skill version sorts above this and accepted absent at or below it.
 BASELINE_VERSION = "1.0.14"
 
+# Item 26 (G3): the release workflow refuses to start publishing when fewer
+# than this many seconds remain in the UTC day, so the creation of the release
+# and its asset uploads cannot slip past midnight onto a later day than the
+# Released line names.
+PUBLISH_MARGIN_SECONDS = 600
+
 # Any line that looks like the key, whatever its case or leading blanks. The
 # first such line is the authoritative one; if it is not spelled exactly
 # "Released:" it is malformed, never read as absent.
@@ -68,6 +92,7 @@ RELEASED_LINE = re.compile(r"Released:[ \t]*([0-9]{4}-[0-9]{2}-[0-9]{2})[ \t]*")
 DATE_FORM = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 BARE_VERSION = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
 PUBLISHED_AT_FORM = re.compile(r"([0-9]{4}-[0-9]{2}-[0-9]{2})T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+VERSION_LINE = re.compile(r"Version:[ \t]*[0-9]+\.[0-9]+\.[0-9]+[ \t]*")
 
 
 class Malformed(ValueError):
@@ -109,6 +134,14 @@ def extract(text: str) -> str | None:
     version_index = next((i for i, l in enumerate(lines) if l.startswith("Version:")), None)
     if version_index is None:
         raise Malformed("a Released line is present but there is no Version: line")
+    # The Version line the Released line hangs from must itself be a bare
+    # X.Y.Z, checked before the placement rule, so a date is never accepted
+    # beside a malformed version.
+    if VERSION_LINE.fullmatch(lines[version_index]) is None:
+        raise Malformed(
+            f"the first Version: line (line {version_index + 1}) is not a bare X.Y.Z "
+            f"version: {lines[version_index]!r}"
+        )
     if first != version_index + 1:
         raise Malformed(
             f"the Released line (line {first + 1}) is not the line directly after "
@@ -155,16 +188,45 @@ def release_day_from_published_at(value: str) -> str:
     null, an offset other than ``Z``, fractional seconds, or an impossible date
     or time.
     """
+    return parse_instant(value, "published_at").date().isoformat()
+
+
+def parse_instant(value: str, what: str) -> datetime.datetime:
+    """Return the UTC instant ``value`` (exactly ``YYYY-MM-DDTHH:MM:SSZ``)."""
     if not isinstance(value, str):
-        raise Malformed(f"published_at is not a string: {value!r}")
-    match = PUBLISHED_AT_FORM.fullmatch(value)
-    if match is None:
-        raise Malformed(f"published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: {value!r}")
+        raise Malformed(f"{what} is not a string: {value!r}")
+    if PUBLISHED_AT_FORM.fullmatch(value) is None:
+        raise Malformed(f"{what} is not a YYYY-MM-DDTHH:MM:SSZ instant: {value!r}")
     try:
-        datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+        instant = datetime.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
     except ValueError as error:
-        raise Malformed(f"published_at is not a real instant: {value!r} ({error})") from None
-    return match.group(1)
+        raise Malformed(f"{what} is not a real instant: {value!r} ({error})") from None
+    return instant.replace(tzinfo=datetime.timezone.utc)
+
+
+def publish_window_problem(expected: str, now: datetime.datetime) -> str | None:
+    """Why publishing must not start at ``now`` for a release dated ``expected``.
+
+    None when ``now`` falls on the UTC day ``expected`` with at least
+    ``PUBLISH_MARGIN_SECONDS`` left before the next UTC midnight."""
+    today = now.date().isoformat()
+    if today != expected:
+        return (
+            f"the UTC day is now {today} ({now:%Y-%m-%dT%H:%M:%SZ}), not {expected}, "
+            f"the day the Released line names"
+        )
+    midnight = datetime.datetime.combine(
+        now.date() + datetime.timedelta(days=1), datetime.time(0), tzinfo=datetime.timezone.utc
+    )
+    remaining = int((midnight - now).total_seconds())
+    if remaining < PUBLISH_MARGIN_SECONDS:
+        return (
+            f"only {remaining} seconds remain in the UTC day {expected} "
+            f"({now:%Y-%m-%dT%H:%M:%SZ}); publishing is refused within "
+            f"{PUBLISH_MARGIN_SECONDS // 60} minutes of UTC midnight, so the release "
+            f"cannot land on a later day than its Released line names"
+        )
+    return None
 
 
 def die(message: str, code: int = 1):
@@ -182,7 +244,7 @@ def read_universal(source: str | None) -> str:
         else:
             data = Path(source).read_bytes()
     except OSError as error:
-        die(f"could not read {where}: {error}")
+        die(f"could not read {where}: {error}", 4)
     try:
         return io.TextIOWrapper(io.BytesIO(data), encoding="utf-8", newline=None).read()
     except UnicodeDecodeError as error:
@@ -190,8 +252,9 @@ def read_universal(source: str | None) -> str:
 
 
 USAGE = (
-    f"usage: {PROG} [FILE|-] | --baseline | --check-date YYYY-MM-DD"
-    f" | --published-day PUBLISHED_AT"
+    f"usage: {PROG} [FILE|-] | --baseline | --requires-date VERSION"
+    f" | --check-date YYYY-MM-DD | --published-day PUBLISHED_AT"
+    f" | --publish-window YYYY-MM-DD NOW | --confirm-published YYYY-MM-DD PUBLISHED_AT"
 )
 
 
@@ -199,6 +262,38 @@ def main(argv: list[str]) -> int:
     args = argv[1:]
     if args == ["--baseline"]:
         print(BASELINE_VERSION)
+        return 0
+    if len(args) == 2 and args[0] == "--requires-date":
+        try:
+            required = requires_release_date(args[1])
+        except Malformed as error:
+            die(str(error))
+        print("required" if required else "optional")
+        return 0
+    if len(args) == 3 and args[0] == "--publish-window":
+        try:
+            expected = parse_date(args[1])
+            now = parse_instant(args[2], "the current instant")
+        except Malformed as error:
+            die(str(error))
+        problem = publish_window_problem(expected, now)
+        if problem is not None:
+            die(f"refusing to start publishing: {problem}", 5)
+        print(expected)
+        return 0
+    if len(args) == 3 and args[0] == "--confirm-published":
+        try:
+            expected = parse_date(args[1])
+            day = release_day_from_published_at(args[2])
+        except Malformed as error:
+            die(str(error))
+        if day != expected:
+            die(
+                f"the release was published on {day} (UTC; published_at {args[2]}), "
+                f"but its Released line names {expected}",
+                5,
+            )
+        print(day)
         return 0
     if len(args) == 2 and args[0] in ("--check-date", "--published-day"):
         try:
@@ -225,4 +320,11 @@ def main(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv))
+    try:
+        code = main(sys.argv)
+    except SystemExit:
+        raise
+    except Exception as error:  # an internal failure is cannot-evaluate, never malformed
+        print(f"{PROG}: internal error: {error!r}", file=sys.stderr)
+        code = 4
+    sys.exit(code)

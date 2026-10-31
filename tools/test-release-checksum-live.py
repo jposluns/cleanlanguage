@@ -8,8 +8,10 @@ mismatched unreleased version fails, a tag with no published release is
 unverifiable, and the published-release comparison and the transient-error
 handling are preserved. Once the release SKILL.md names is published, its
 Released line (item 26) must name the UTC day of the release published_at
-record (G4); the network read of that record is replaced by injected
-fixtures. These tests pin all of that offline: the fixtures
+record (G4), checked for the release SKILL.md names whatever version the site
+names, and that release must be immutable; the network reads of that record
+are replaced by injected fixtures. These tests pin all of that offline: the
+fixtures
 patch the module's file paths and network readers, so no gh CLI and no
 network access are needed. The CI workflow invokes this file before the gate
 itself runs against the real pages, so the regression proof runs even when
@@ -18,9 +20,13 @@ the network gate cannot.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
+import io
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -55,7 +61,7 @@ class ConditionalPassTest(unittest.TestCase):
         self._saved = (
             gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL,
             gate.release_status, gate.tag_status, gate.gh,
-            gate.release_published_at,
+            gate.release_published_at, gate.release_immutable,
         )
         root = Path(self._tmp.name)
         gate.REPO_ROOT = root
@@ -65,10 +71,12 @@ class ConditionalPassTest(unittest.TestCase):
         gate.tag_status = unexpected_call
         gate.gh = unexpected_call
         gate.release_published_at = unexpected_call
+        gate.release_immutable = unexpected_call
 
     def tearDown(self):
         (gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL, gate.release_status,
-         gate.tag_status, gate.gh, gate.release_published_at) = self._saved
+         gate.tag_status, gate.gh, gate.release_published_at,
+         gate.release_immutable) = self._saved
         self._tmp.cleanup()
 
     def fixtures(self, site_version, site_sum, skill_version, released=None):
@@ -92,17 +100,39 @@ class ConditionalPassTest(unittest.TestCase):
         )
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    def published(self, published_at):
-        """Stand in for the release record read, recording each tag asked for."""
+    def published(self, published_at, statuses=None, immutable="true"):
+        """Stand in for the release record reads, recording each tag asked for.
+
+        ``statuses`` maps a tag to its release status (default 200);
+        ``immutable`` is the raw immutable field every release reports."""
         self.asked = []
+        self.probed = []
+        self.immutable_asked = []
+        statuses = statuses or {}
 
         def reader(tag):
             self.asked.append(tag)
             return published_at
 
+        def status(tag):
+            self.probed.append(tag)
+            return statuses.get(tag, 200)
+
+        def immutable_reader(tag):
+            self.immutable_asked.append(tag)
+            return immutable
+
         gate.release_published_at = reader
-        gate.release_status = lambda tag: 200
+        gate.release_immutable = immutable_reader
+        gate.release_status = status
         gate.gh = self.fake_download
+
+    def main_output(self):
+        """Run the gate, returning (exit code, stdout)."""
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            code = gate.main()
+        return code, buffer.getvalue()
 
     # --- G4 (item 26): the Released line against the release record ---------
 
@@ -116,6 +146,80 @@ class ConditionalPassTest(unittest.TestCase):
         self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
         self.published("2026-11-16T00:00:01Z")
         self.assertEqual(gate.main(), 1)
+
+    def test_mismatch_message_states_both_values_and_defers_to_the_readback(self):
+        # F3: never tell the maintainer to copy a record that may have moved.
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-16T00:00:01Z")
+        code, out = self.main_output()
+        self.assertEqual(code, 1)
+        self.assertIn("says Released: 2026-11-15", out)
+        self.assertIn("published_at reads 2026-11-16T00:00:01Z (UTC day 2026-11-16)", out)
+        self.assertIn("published_at may have moved since then, for example after an asset replacement", out)
+        self.assertIn("first-publication readback", out)
+        self.assertNotIn("Correct the line to match the release record", out)
+
+    def test_dated_baseline_matching_passes(self):
+        # F13: a dated 1.0.14 is compared like any other dated release.
+        self.fixtures(CURRENT, ZIP_SUM, CURRENT, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z")
+        self.assertEqual(gate.main(), 0)
+        self.assertEqual(self.asked, [f"v{CURRENT}"])
+
+    def test_dated_baseline_mismatched_fails(self):
+        self.fixtures(CURRENT, ZIP_SUM, CURRENT, "Released: 2026-11-15  ")
+        self.published("2026-11-16T09:30:00Z")
+        self.assertEqual(gate.main(), 1)
+
+    def test_release_that_is_not_immutable_is_unverifiable(self):
+        # F14: the date comparison relies on an immutable release record.
+        for value in ("false", "null", "", "True", "true "):
+            with self.subTest(value):
+                self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+                self.published("2026-11-15T09:30:00Z", immutable=value)
+                with self.assertRaises(SystemExit) as caught:
+                    gate.main()
+                self.assertEqual(caught.exception.code, 2)
+                self.assertEqual(self.immutable_asked, [f"v{AHEAD}"])
+
+    def test_immutable_reader_asks_for_the_immutable_field(self):
+        gate.release_immutable = self._saved[7]
+        seen = []
+
+        def fake(*args, check=True):
+            seen.append(args)
+            return subprocess.CompletedProcess(args, 0, "true\n", "")
+
+        gate.gh = fake
+        self.assertEqual(gate.release_immutable("v1.0.15"), "true")
+        self.assertEqual(
+            seen, [("api", "repos/jposluns/cleanlanguage/releases/tags/v1.0.15", "--jq", ".immutable")]
+        )
+
+    def test_immutable_reader_fails_closed_on_gh_error(self):
+        gate.release_immutable = self._saved[7]
+        gate.gh = lambda *args, check=True: subprocess.CompletedProcess(args, 1, "", "HTTP 502")
+        with self.assertRaises(SystemExit) as caught:
+            gate.release_immutable("v1.0.15")
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_undated_release_reads_no_record_field(self):
+        # F9: an undated release at or below the baseline reads neither field.
+        self.fixtures(CURRENT, ZIP_SUM, CURRENT)
+        self.published("2026-11-15T09:30:00Z", immutable="false")
+        self.assertEqual(gate.main(), 0)
+        self.assertEqual((self.asked, self.immutable_asked), ([], []))
+
+    def test_baseline_rule_is_numeric_for_an_undated_published_release(self):
+        # F7: the same rule the extractor applies everywhere.
+        for version, expected in (
+            ("1.0.9", 0), ("1.0.14", 0), ("1.00.14", 0),
+            ("1.0.15", 1), ("1.0.100", 1), ("1.1.0", 1),
+        ):
+            with self.subTest(version):
+                self.fixtures(version, ZIP_SUM, version)
+                self.published("2026-11-15T09:30:00Z")
+                self.assertEqual(gate.main(), expected)
 
     def test_missing_released_line_above_baseline_fails(self):
         self.fixtures(AHEAD, ZIP_SUM, AHEAD)
@@ -145,14 +249,35 @@ class ConditionalPassTest(unittest.TestCase):
             gate.main()
         self.assertEqual(caught.exception.code, 3)
 
-    def test_site_naming_an_older_release_skips_the_date_check(self):
-        # After a bump, SKILL.md is ahead of the published release the site
-        # still names; the date belongs to the unpublished version, so the
-        # published release record is not compared with it.
+    # --- F2: the release SKILL.md names is checked on its own terms ---------
+
+    def test_site_naming_an_older_release_still_checks_the_newer_date(self):
+        # The site still names 1.0.14; v1.0.15 is published on another day.
         self.fixtures(CURRENT, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
-        self.published("2020-01-01T00:00:00Z")
+        self.published("2026-11-16T00:00:05Z")
+        self.assertEqual(gate.main(), 1)
+        self.assertEqual(self.asked, [f"v{AHEAD}"])
+        self.assertEqual(self.probed, [f"v{CURRENT}", f"v{AHEAD}"])
+
+    def test_site_naming_an_older_release_with_a_matching_newer_date_passes(self):
+        self.fixtures(CURRENT, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z")
+        self.assertEqual(gate.main(), 0)
+        self.assertEqual(self.asked, [f"v{AHEAD}"])
+
+    def test_unpublished_newer_release_skips_the_date_check(self):
+        self.fixtures(CURRENT, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2020-01-01T00:00:00Z", statuses={f"v{AHEAD}": 404})
         self.assertEqual(gate.main(), 0)
         self.assertEqual(self.asked, [])
+        self.assertEqual(self.probed, [f"v{CURRENT}", f"v{AHEAD}"])
+
+    def test_unexpected_status_of_the_newer_release_is_unverifiable(self):
+        self.fixtures(CURRENT, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z", statuses={f"v{AHEAD}": 503})
+        with self.assertRaises(SystemExit) as caught:
+            gate.main()
+        self.assertEqual(caught.exception.code, 2)
 
     def test_published_at_reader_fails_closed_on_gh_error(self):
         # The real reader: a gh failure is unverifiable, never an empty value.
@@ -176,6 +301,24 @@ class ConditionalPassTest(unittest.TestCase):
             seen,
             [("api", "repos/jposluns/cleanlanguage/releases/tags/v1.0.15", "--jq", ".published_at")],
         )
+
+    def test_extractor_crash_inside_a_call_exits_3(self):
+        # F5: an unexpected failure of the loaded extractor is unavailable
+        # (exit 3), never a drift verdict (exit 1).
+        saved = gate.RELEASE_DATE.release_day_from_published_at
+
+        def crash(value):
+            raise RuntimeError("boom")
+
+        gate.RELEASE_DATE.release_day_from_published_at = crash
+        try:
+            self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+            self.published("2026-11-15T09:30:00Z")
+            with self.assertRaises(SystemExit) as caught:
+                gate.main()
+            self.assertEqual(caught.exception.code, 3)
+        finally:
+            gate.RELEASE_DATE.release_day_from_published_at = saved
 
     def test_published_release_with_matching_checksum_passes(self):
         self.fixtures(CURRENT, ZIP_SUM, CURRENT)
@@ -295,6 +438,38 @@ class ConditionalPassTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             gate.main()
         self.assertEqual(caught.exception.code, 3)
+
+
+class ModuleLoadTest(unittest.TestCase):
+    """F5: the gate exits 3 (unavailable), not 1 (drift), when the extractor
+    module cannot be loaded, whatever the reason."""
+
+    def run_with_extractor(self, body):
+        with tempfile.TemporaryDirectory() as tmp:
+            tools = Path(tmp) / "tools"
+            tools.mkdir()
+            shutil.copy2(MODULE_PATH, tools / MODULE_PATH.name)
+            if body is not None:
+                (tools / "skill-release-date.py").write_text(body, encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, "-I", str(tools / MODULE_PATH.name)], capture_output=True, text=True
+            )
+        return proc.returncode, proc.stderr
+
+    def test_missing_extractor_exits_3(self):
+        code, err = self.run_with_extractor(None)
+        self.assertEqual(code, 3, err)
+        self.assertIn("the extractor is unavailable", err)
+
+    def test_syntax_error_exits_3(self):
+        code, err = self.run_with_extractor("def broken(:\n")
+        self.assertEqual(code, 3, err)
+        self.assertIn("SyntaxError", err)
+
+    def test_exception_while_loading_exits_3(self):
+        code, err = self.run_with_extractor("raise RuntimeError(\"boom\")\n")
+        self.assertEqual(code, 3, err)
+        self.assertIn("RuntimeError", err)
 
 
 if __name__ == "__main__":
