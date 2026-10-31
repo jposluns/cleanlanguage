@@ -1044,6 +1044,128 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertNotIn("Release checksum drift found", out)
 
 
+    # --- Fix round 2: no early return hides a more severe result, and a
+    # required file is reported by its real stat error ------------------------
+
+    def test_missing_released_line_does_not_hide_an_immutable_failure(self):
+        # F1 (codex MEDIUM): on the published path a Released line missing
+        # above the baseline (exit 1) does not hide an immutable field that
+        # is not exactly true, or cannot be read (exit 2): both are reported,
+        # the more severe 2 wins, and published_at is not read, since there is
+        # no line to compare it with.
+        def unreadable(tag):
+            self.immutable_asked.append(tag)
+            gate.cannot_verify(f"could not read the immutable field of release {tag} (gh exit 1)")
+
+        for label, immutable, reason in (
+            ("not immutable", "false", "the immutable field of release v1.0.15 is"),
+            ("immutable field unreadable", None, "could not read the immutable field of release v1.0.15"),
+        ):
+            with self.subTest(label):
+                self.fixtures(AHEAD, ZIP_SUM, AHEAD)
+                self.published("2026-11-15T09:30:00Z", immutable=immutable)
+                if immutable is None:
+                    gate.release_immutable = unreadable
+                code, out, err = self.main_reports()
+                self.assertEqual(code, 2, (out, err))
+                self.assertIn(f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line", out)
+                self.assertIn(reason, err)
+                self.assertIn("matches the published", out)
+                self.assertEqual(self.immutable_asked, [f"v{AHEAD}"])
+                self.assertEqual(self.asked, [])
+
+    def test_missing_released_line_beside_an_immutable_release_still_fails(self):
+        # F1: with an immutable release the missing line still exits 1.
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD)
+        self.published("2026-11-15T09:30:00Z")
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 1, (out, err))
+        self.assertIn("but has no Released: line", out)
+        self.assertEqual(self.immutable_asked, [f"v{AHEAD}"])
+        self.assertEqual(self.asked, [])
+
+    @unittest.skipIf(os.geteuid() == 0, "root searches a directory whatever its mode")
+    def test_required_file_behind_an_unsearchable_directory_is_unreadable_not_missing(self):
+        # F4 (claude LOW): a verify page or SKILL.md that cannot be reached
+        # because its directory cannot be searched is reported by its real
+        # stat error (exit 3), never as a file that does not exist.
+        root = Path(self._tmp.name)
+        for label, target in (("verify page", "verify"), ("SKILL.md", "skill")):
+            with self.subTest(label):
+                folder = root / f"locked-{target}"
+                folder.mkdir()
+                gate.VERIFY_PAGE = root / "index.html"
+                gate.SKILL = root / "SKILL.md"
+                if target == "verify":
+                    gate.VERIFY_PAGE = folder / "index.html"
+                else:
+                    gate.SKILL = folder / "SKILL.md"
+                self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+                self.published(None, statuses={f"v{AHEAD}": 404})
+                folder.chmod(0)
+                try:
+                    code, out, err = self.main_reports()
+                finally:
+                    folder.chmod(0o700)
+                shown = (gate.VERIFY_PAGE if target == "verify" else gate.SKILL).relative_to(root)
+                self.assertEqual(code, 3, (out, err))
+                self.assertIn(f"{shown} could not be read: PermissionError", err)
+                self.assertNotIn("does not exist", err)
+
+    @unittest.skipIf(os.geteuid() == 0, "root searches a directory whatever its mode")
+    def test_both_skill_readers_report_an_unsearchable_directory(self):
+        # F4 sweep: skill_released and skill_version each check SKILL.md.
+        folder = Path(self._tmp.name) / "locked"
+        folder.mkdir()
+        gate.SKILL = folder / "SKILL.md"
+        gate.SKILL.write_text(f"Version: {AHEAD}\nReleased: 2026-11-15\n", encoding="utf-8")
+        for reader in (gate.skill_released, gate.skill_version):
+            with self.subTest(reader.__name__):
+                folder.chmod(0)
+                err = io.StringIO()
+                try:
+                    with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(err):
+                        reader()
+                finally:
+                    folder.chmod(0o700)
+                self.assertEqual(caught.exception.code, 3)
+                self.assertIn("locked/SKILL.md could not be read: PermissionError", err.getvalue())
+                self.assertNotIn("does not exist", err.getvalue())
+
+    def test_required_file_that_is_absent_or_not_a_file_is_named_as_such(self):
+        # F4: an absent required file still reads as missing; a directory in
+        # its place is not a regular file.
+        for label, make, reason in (
+            ("absent", lambda: None, "index.html does not exist"),
+            ("a directory", lambda: gate.VERIFY_PAGE.mkdir(), "index.html is not a regular file"),
+        ):
+            with self.subTest(label):
+                gate.VERIFY_PAGE = Path(self._tmp.name) / label.replace(" ", "-") / "index.html"
+                gate.VERIFY_PAGE.parent.mkdir()
+                make()
+                code, out, err = self.main_reports()
+                self.assertEqual(code, 3, (out, err))
+                self.assertIn(reason, err)
+
+    @unittest.skipIf(os.geteuid() == 0, "root searches a directory whatever its mode")
+    def test_downloaded_asset_behind_an_unsearchable_directory_is_unreadable_not_missing(self):
+        # F4 sweep: the downloaded assets are reported by their real stat
+        # error (exit 2), never as missing from the release.
+        def locked_download(*args, check=True):
+            self.fake_download(*args, check=check)
+            Path(args[args.index("--dir") + 1]).chmod(0o600)
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z")
+        gate.gh = locked_download
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn(f"could not verify: could not read cleanlanguage-{AHEAD}.zip from v{AHEAD}: PermissionError", err)
+        self.assertNotIn("is missing", err)
+        self.assertIn("matches the publication day", out)
+
+
 class ModuleLoadTest(unittest.TestCase):
     """F5: the gate exits 3 (unavailable), not 1 (drift), when the extractor
     module cannot be loaded, whatever the reason."""

@@ -81,7 +81,9 @@ download fails, its downloaded assets cannot be read, or its manifest is
 malformed or undecodable, and also when that
 release returns a status other than 200 or 404 and when the site names an
 unreleased version that is not the current skill version, so neither failure
-hides the other. The extractor is loaded inside main, not at import, so a load
+hides the other. Within the date check of a published release, a Released line
+missing above the undated baseline does not hide an immutable field that is not
+exactly true: both are reported and the more severe 2 wins. The extractor is loaded inside main, not at import, so a load
 failure is reported and contributes exit 3 while the checksum comparison still
 runs and reports. The gate then exits with the most severe code, the highest
 one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not complete.
@@ -92,6 +94,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -228,6 +231,22 @@ def cannot_verify(message: str) -> None:
     raise SystemExit(2)
 
 
+def require_regular_file(path: Path, shown: str) -> None:
+    """Exit 3 unless the required file ``path`` (named ``shown``) is a regular
+    file, naming the real reason. An absent path reads as missing; a stat that
+    fails for another reason, such as a directory that cannot be searched, is
+    reported as that error, never as a missing file, since ``Path.is_file``
+    reads any such error as False."""
+    try:
+        mode = path.stat().st_mode
+    except (FileNotFoundError, NotADirectoryError):
+        die(f"{shown} does not exist")
+    except OSError as error:
+        die(f"{shown} could not be read: {type(error).__name__}: {error}")
+    if not stat.S_ISREG(mode):
+        die(f"{shown} is not a regular file")
+
+
 def gh(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(["gh", *args], capture_output=True, text=True, check=check)
 
@@ -299,8 +318,7 @@ def skill_released() -> str | None:
 
     A malformed line is a required file that cannot be read correctly (exit 3).
     """
-    if not SKILL.is_file():
-        die(f"{SKILL.relative_to(REPO_ROOT)} does not exist")
+    require_regular_file(SKILL, str(SKILL.relative_to(REPO_ROOT)))
     try:
         text = SKILL.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
@@ -313,8 +331,7 @@ def skill_released() -> str | None:
 
 def skill_version() -> str:
     """Return the current version named by ``cleanlanguage/skills/cleanlanguage/SKILL.md``."""
-    if not SKILL.is_file():
-        die(f"{SKILL.relative_to(REPO_ROOT)} does not exist")
+    require_regular_file(SKILL, str(SKILL.relative_to(REPO_ROOT)))
     try:
         text = SKILL.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
@@ -430,9 +447,12 @@ def check_release_date(site_version: str, site_status: int) -> bool:
                 current, f"the release state of {tag}, the version SKILL.md names, could not be verified"
             )
         raise
+    # A Released line missing above the baseline (exit 1) does not hide the
+    # immutable check, a property of the release record itself: the missing
+    # line is reported first, and an immutable field that is not exactly true,
+    # or cannot be read, still stops with the more severe 2.
     if released is None:
         report_missing_released_line(current, f"release {tag} is published")
-        return False
     # The date comparison relies on published_at still being the first
     # publication instant; an immutable release cannot have had its assets
     # replaced since, so anything but exactly true cannot be verified.
@@ -442,6 +462,9 @@ def check_release_date(site_version: str, site_status: int) -> bool:
             f"the immutable field of release {tag} is {immutable!r}, not true, so its "
             f"published_at cannot be relied on as the first publication instant"
         )
+    if released is None:
+        # With no line there is no day to compare, so published_at is not read.
+        return False
     raw = release_published_at(tag)
     try:
         published_day = release_date_call("release_day_from_published_at", raw)
@@ -494,8 +517,17 @@ def published_digest(tag: str, zip_name: str, manifest_name: str) -> str:
             )
         zip_path = Path(tmp) / zip_name
         manifest_path = Path(tmp) / manifest_name
-        if not zip_path.is_file() or not manifest_path.is_file():
-            cannot_verify(f"release {tag} is missing {zip_name} or {manifest_name}")
+        # A downloaded asset whose stat fails for a reason other than its
+        # absence is reported as that error, never as a missing asset.
+        for asset in (zip_path, manifest_path):
+            try:
+                present = stat.S_ISREG(asset.stat().st_mode)
+            except (FileNotFoundError, NotADirectoryError):
+                present = False
+            except OSError as error:
+                cannot_verify(f"could not read {asset.name} from {tag}: {type(error).__name__}: {error}")
+            if not present:
+                cannot_verify(f"release {tag} is missing {zip_name} or {manifest_name}")
 
         # The manifest must be exactly one line: a 64-hex digest, two spaces, and
         # the expected basename. A crafted path inside it cannot redirect the check.
@@ -522,8 +554,7 @@ def check_site_checksum() -> int:
     """Check the site checksum and the release date, returning the most
     severe code of the checks that ran (0 to 3), or stopping with 2 or 3 when
     the gate cannot go on; main combines it with the extractor load."""
-    if not VERIFY_PAGE.is_file():
-        die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} does not exist")
+    require_regular_file(VERIFY_PAGE, str(VERIFY_PAGE.relative_to(REPO_ROOT)))
     # A required file that cannot be read or decoded exits 3, never an
     # uncaught traceback (exit 1, drift); main still combines it with the
     # extractor load result.
