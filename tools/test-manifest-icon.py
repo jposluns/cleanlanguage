@@ -5,17 +5,21 @@ Patch the gate repository root and manifest set to a temporary fixture holding a
 five manifests and a generated icon, and drive the failure and success paths
 offline with the standard library. Every image fixture is built at run time; no
 binary fixture file is tracked. OSError paths are driven by unittest.mock, not by
-chmod.
+chmod; a mock of a descriptor call is scoped to the descriptors opened for either
+the icon or the manifests, so it cannot fire on the wrong file.
 """
 from __future__ import annotations
 
 import contextlib
+import errno
 import importlib.util
 import io
 import json
 import os
 import shutil
+import signal
 import struct
+import sys
 import tempfile
 import unittest
 import zlib
@@ -41,11 +45,28 @@ MANIFESTS = (
 )
 
 
+class StalledOpen(Exception):
+    """Raised by the alarm handler when an open blocks; deliberately not an OSError."""
+
+
 def png_chunk(chunk_type: bytes, payload: bytes, corrupt: bool = False) -> bytes:
     crc = zlib.crc32(chunk_type + payload)
     if corrupt:
         crc ^= 1
     return struct.pack(">I", len(payload)) + chunk_type + payload + struct.pack(">I", crc)
+
+
+def ihdr_payload(width, height, depth=8, colour=6, interlace=0) -> bytes:
+    return struct.pack(">IIBBBBB", width, height, depth, colour, 0, 0, interlace)
+
+
+IDAT = png_chunk(b"IDAT", zlib.compress(b""))
+IEND = png_chunk(b"IEND", b"")
+
+
+def png_from(*chunks) -> bytes:
+    """The PNG signature followed by the given complete chunks, in order."""
+    return gate.PNG_SIGNATURE + b"".join(chunks)
 
 
 def make_png(
@@ -63,7 +84,7 @@ def make_png(
     ihdr_length=13,
 ):
     """A complete PNG: signature, IHDR, extra chunks, one IDAT, IEND, trailing bytes."""
-    ihdr = struct.pack(">IIBBBBB", width, height, depth, colour, 0, 0, interlace)
+    ihdr = ihdr_payload(width, height, depth, colour, interlace)
     ihdr = (ihdr + bytes(16))[:ihdr_length]
     out = gate.PNG_SIGNATURE
     if first_chunk is not None:
@@ -88,16 +109,25 @@ def jpeg_segment(marker: int, payload: bytes) -> bytes:
     return bytes([0xFF, marker]) + struct.pack(">H", len(payload) + 2) + payload
 
 
-def frame_payload(width, height, components=3) -> bytes:
-    table = b"".join(bytes([index + 1, 0x11, 0]) for index in range(components))
-    return struct.pack(">BHHB", 8, height, width, components) + table
+def frame_payload(width, height, components=3, precision=8, identifiers=None) -> bytes:
+    if identifiers is None:
+        identifiers = range(1, components + 1)
+    table = b"".join(bytes([identifier, 0x11, 0]) for identifier in identifiers)
+    return struct.pack(">BHHB", precision, height, width, components) + table
 
 
-def make_jpeg(width, height, sof=0xC0, pre=(), components=3, fill=b"", with_sos=True, with_eoi=True):
+SOS = jpeg_segment(0xDA, bytes([1, 1, 0, 0, 63, 0]))
+SOI = b"\xff\xd8"
+
+
+def make_jpeg(width, height, sof=0xC0, pre=(), components=3, fill=b"", with_sos=True,
+              with_eoi=True, precision=8):
     """SOI, pre-segments (raw bytes), fill bytes, a frame header, a minimal SOS, EOI."""
-    out = b"\xff\xd8" + b"".join(pre) + fill + jpeg_segment(sof, frame_payload(width, height, components))
+    out = SOI + b"".join(pre) + fill + jpeg_segment(
+        sof, frame_payload(width, height, components, precision)
+    )
     if with_sos:
-        out += jpeg_segment(0xDA, bytes([1, 1, 0, 0, 63, 0])) + b"\x00\x01\x02"
+        out += SOS + b"\x00\x01\x02"
     if with_eoi:
         out += b"\xff\xd9"
     return out
@@ -158,6 +188,65 @@ class ManifestIconTest(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             self.assertEqual(gate.main(), 0)
         return out.getvalue()
+
+    def run_check_icon(self, base, repo_root=None, icon="./assets/CL_icon.png"):
+        """Call check_icon directly; return (exit code, stderr) or (0, stdout)."""
+        err = io.StringIO()
+        out = io.StringIO()
+        if repo_root is None:
+            repo_root = self.root.resolve()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+            try:
+                gate.check_icon(CLAUDE, "icon", icon, base, repo_root)
+            except SystemExit as caught:
+                return caught.code, err.getvalue()
+        return 0, out.getvalue()
+
+    @contextlib.contextmanager
+    def scoped_io(self, manifests=False, open_error=None, fstat_result=None,
+                  fstat_error=None, read_result=None, read_error=None):
+        """Mock os.open, os.fstat and os.read for the icon only, or for manifests only.
+
+        Yields the list of scoped paths whose open was attempted, so a test can show
+        the mock reached the file it targets.
+        """
+        real_open, real_fstat, real_read = os.open, os.fstat, os.read
+        attempts = []
+        scoped_fds = set()
+
+        def in_scope(path):
+            return (Path(os.fsdecode(path)).suffix == ".json") == manifests
+
+        def fake_open(path, flags, *args, **kwargs):
+            if not in_scope(path):
+                return real_open(path, flags, *args, **kwargs)
+            attempts.append(Path(os.fsdecode(path)))
+            if open_error is not None:
+                raise open_error
+            fd = real_open(path, flags, *args, **kwargs)
+            scoped_fds.add(fd)
+            return fd
+
+        def fake_fstat(fd, *args, **kwargs):
+            if fd in scoped_fds:
+                if fstat_error is not None:
+                    raise fstat_error
+                if fstat_result is not None:
+                    return fstat_result
+            return real_fstat(fd, *args, **kwargs)
+
+        def fake_read(fd, count):
+            if fd in scoped_fds:
+                if read_error is not None:
+                    raise read_error
+                if read_result is not None:
+                    return read_result
+            return real_read(fd, count)
+
+        with mock.patch.object(gate.os, "open", side_effect=fake_open), \
+                mock.patch.object(gate.os, "fstat", side_effect=fake_fstat), \
+                mock.patch.object(gate.os, "read", side_effect=fake_read):
+            yield attempts
 
     # Pass cases.
 
@@ -288,6 +377,110 @@ class ManifestIconTest(unittest.TestCase):
         with mock.patch.object(gate.json, "loads", side_effect=RecursionError):
             self.expect_exit(3, "could not be decoded")
 
+    # Manifest paths (M2): no symlink anywhere, regular file, opened without following.
+
+    def test_manifest_symlink_file_fails(self):
+        real = self.root / "cleanlanguage" / ".claude-plugin" / "real.json"
+        real.write_text(json.dumps(self.claude), encoding="utf-8")
+        (self.root / CLAUDE).unlink()
+        os.symlink("real.json", self.root / CLAUDE)
+        self.expect_exit(1, f"{CLAUDE} path component " + repr("plugin.json") + " is a symlink")
+
+    def test_manifest_symlink_directory_fails(self):
+        with tempfile.TemporaryDirectory() as outside:
+            Path(outside, "plugin.json").write_text(json.dumps(self.claude), encoding="utf-8")
+            shutil.rmtree(self.root / "cleanlanguage" / ".claude-plugin")
+            os.symlink(outside, self.root / "cleanlanguage" / ".claude-plugin")
+            self.expect_exit(1, f"{CLAUDE} path component " + repr(".claude-plugin") + " is a symlink")
+
+    def test_manifest_component_not_directory_fails(self):
+        shutil.rmtree(self.root / "plugin")
+        (self.root / "plugin").write_text("not a directory", encoding="utf-8")
+        self.expect_exit(
+            1, "plugin/.claude-plugin/marketplace.json path component " + repr("plugin") + " is not a directory"
+        )
+
+    def test_manifest_is_directory_fails(self):
+        (self.root / HOOKS).unlink()
+        (self.root / HOOKS).mkdir()
+        self.expect_exit(1, f"{HOOKS} is not a regular file")
+
+    def test_non_regular_manifest_is_never_opened(self):
+        (self.root / HOOKS).unlink()
+        os.mkfifo(self.root / HOOKS)
+        real_open = os.open
+        calls = []
+
+        def spy(path, *args, **kwargs):
+            calls.append(Path(os.fsdecode(path)))
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch.object(gate.os, "open", side_effect=spy):
+            self.expect_exit(1, f"{HOOKS} is not a regular file")
+        self.assertNotIn(self.root / HOOKS, calls)
+        self.assertEqual(len(calls), 4)
+
+    def test_manifest_lstat_oserror_fails_closed(self):
+        real_lstat = os.lstat
+        target = self.root / "cleanlanguage" / ".claude-plugin"
+
+        def fake_lstat(path, *args, **kwargs):
+            if Path(os.fsdecode(path)) == target:
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch.object(gate.os, "lstat", side_effect=fake_lstat):
+            self.expect_exit(3, f"{CLAUDE} could not be read")
+
+    def test_manifest_open_oserror_fails_closed(self):
+        with self.scoped_io(manifests=True, open_error=PermissionError(13, "Permission denied")) as attempts:
+            self.expect_exit(3, f"{MARKET} could not be read")
+        self.assertEqual(len(attempts), 1)
+
+    def test_manifest_fstat_non_regular_fails(self):
+        fifo_mode = os.stat_result((0o010644, 0, 0, 1, 0, 0, 100, 0, 0, 0))
+        with self.scoped_io(manifests=True, fstat_result=fifo_mode):
+            self.expect_exit(1, f"{MARKET} is not a regular file")
+
+    def test_manifest_read_oserror_fails_closed(self):
+        with self.scoped_io(manifests=True, read_error=OSError(5, "Input/output error")):
+            self.expect_exit(3, f"{MARKET} could not be read: [Errno 5]")
+
+    def test_manifest_final_symlink_missed_by_lstat_is_refused_by_open(self):
+        real = self.root / "cleanlanguage" / ".claude-plugin" / "real.json"
+        real.write_text(json.dumps(self.claude), encoding="utf-8")
+        (self.root / CLAUDE).unlink()
+        os.symlink("real.json", self.root / CLAUDE)
+        real_lstat = os.lstat
+        target = self.root / CLAUDE
+
+        def fake_lstat(path, *args, **kwargs):
+            if Path(os.fsdecode(path)) == target:
+                return os.stat(path)
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch.object(gate.os, "lstat", side_effect=fake_lstat):
+            self.expect_exit(3, f"{CLAUDE} could not be read: [Errno {errno.ELOOP}]")
+
+    def test_open_flags_refuse_symlinks_and_never_block(self):
+        real_open = os.open
+        seen = []
+
+        def spy(path, flags, *args, **kwargs):
+            seen.append((Path(os.fsdecode(path)).suffix, flags))
+            return real_open(path, flags, *args, **kwargs)
+
+        with mock.patch.object(gate.os, "open", side_effect=spy):
+            self.expect_pass()
+        self.assertEqual(sorted(suffix for suffix, _ in seen), [".json"] * 5 + [".png"])
+        for suffix, flags in seen:
+            with self.subTest(suffix=suffix):
+                for label, bit in (("O_NOFOLLOW", os.O_NOFOLLOW), ("O_NONBLOCK", os.O_NONBLOCK),
+                                   ("O_CLOEXEC", os.O_CLOEXEC)):
+                    self.assertEqual(flags | bit, flags, f"{suffix} open lacks {label}")
+                self.assertNotEqual(flags | os.O_WRONLY, flags)
+                self.assertNotEqual(flags | os.O_RDWR, flags)
+
     # Required icon and marketplace scope (M3, M4).
 
     def test_icon_missing_from_required_manifest_fails(self):
@@ -389,12 +582,82 @@ class ManifestIconTest(unittest.TestCase):
             os.symlink(outside, self.assets)
             self.expect_exit(1, "is a symlink")
 
-    def test_plugin_root_resolving_outside_repository_fails(self):
+    def test_plugin_root_symlink_outside_repository_fails(self):
         with tempfile.TemporaryDirectory() as outside:
             moved = Path(outside) / "cleanlanguage"
             shutil.move(str(self.root / "cleanlanguage"), str(moved))
             os.symlink(moved, self.root / "cleanlanguage")
-            self.expect_exit(1, "resolves outside the repository")
+            self.expect_exit(1, "component " + repr("cleanlanguage") + " is a symlink")
+
+    def test_symlinked_plugin_root_inside_repository_fails(self):
+        hidden = self.root / ".git"
+        hidden.mkdir()
+        shutil.move(str(self.root / "cleanlanguage"), str(hidden / "qa-root"))
+        os.symlink(".git/qa-root", self.root / "cleanlanguage")
+        self.expect_exit(1, "component " + repr("cleanlanguage") + " is a symlink")
+
+    def test_check_icon_refuses_symlinked_plugin_root(self):
+        shutil.move(str(self.root / "cleanlanguage"), str(self.root / "real-plugin"))
+        os.symlink("real-plugin", self.root / "cleanlanguage")
+        code, text = self.run_check_icon(self.root / "cleanlanguage")
+        self.assertEqual(code, 1, text)
+        self.assertIn("plugin root component " + repr("cleanlanguage") + " is a symlink", text)
+
+    def test_check_icon_refuses_plugin_root_that_is_not_a_directory(self):
+        code, text = self.run_check_icon(self.root / "cleanlanguage" / "plugin.json")
+        self.assertEqual(code, 1, text)
+        self.assertIn("plugin root component " + repr("plugin.json") + " is not a directory", text)
+
+    def test_check_icon_plugin_root_outside_repository_root_fails_closed(self):
+        with tempfile.TemporaryDirectory() as outside:
+            code, text = self.run_check_icon(Path(outside))
+        self.assertEqual(code, 3, text)
+        self.assertIn("is not inside the repository root", text)
+
+    def test_check_icon_plugin_root_uninspectable_fails_closed(self):
+        real_lstat = os.lstat
+        target = self.root / "cleanlanguage"
+
+        def fake_lstat(path, *args, **kwargs):
+            if Path(os.fsdecode(path)) == target:
+                raise PermissionError(13, "Permission denied", str(path))
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch.object(gate.os, "lstat", side_effect=fake_lstat):
+            code, text = self.run_check_icon(target)
+        self.assertEqual(code, 3, text)
+        self.assertIn("plugin root component " + repr("cleanlanguage") + " could not be inspected", text)
+
+    def test_check_icon_resolving_outside_repository_fails(self):
+        with tempfile.TemporaryDirectory() as outside:
+            code, text = self.run_check_icon(self.root / "cleanlanguage", Path(outside).resolve())
+        self.assertEqual(code, 1, text)
+        self.assertIn("resolves outside the repository", text)
+
+    def test_icon_resolving_outside_plugin_root_fails(self):
+        other = self.root / "other"
+        other.mkdir()
+        (other / "CL_icon.png").write_bytes(make_png(512, 512))
+        shutil.rmtree(self.assets)
+        os.symlink("../other", self.assets)
+        real_lstat = os.lstat
+        lied = []
+
+        def fake_lstat(path, *args, **kwargs):
+            # Lie only to the gate walk, as a directory swapped in after it would; the
+            # tree walk (os.walk calls os.path.islink) and resolve() see the truth.
+            frame = sys._getframe(1)
+            while frame is not None and frame.f_code.co_filename == mock.__file__:
+                frame = frame.f_back
+            caller = frame.f_code.co_name if frame is not None else ""
+            if Path(os.fsdecode(path)) == self.assets and caller == "walk_without_symlinks":
+                lied.append(path)
+                return os.stat(path)
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch.object(gate.os, "lstat", side_effect=fake_lstat):
+            self.expect_exit(1, "resolves outside the plugin root")
+        self.assertEqual(len(lied), 1)
 
     def test_icon_is_directory_fails(self):
         (self.assets / "dir.png").mkdir()
@@ -410,34 +673,76 @@ class ManifestIconTest(unittest.TestCase):
                 calls = []
 
                 def spy(path, *args, **kwargs):
-                    calls.append(Path(path))
+                    calls.append(Path(os.fsdecode(path)))
                     return real_open(path, *args, **kwargs)
 
                 self.set_icon_value(f"./assets/{name}")
                 with mock.patch.object(gate.os, "open", side_effect=spy):
                     self.expect_exit(1, "is not a regular file")
-                self.assertEqual(calls, [])
+                self.assertEqual([call for call in calls if call.suffix != ".json"], [])
+                self.assertEqual(len(calls), 5)
+
+    def test_final_symlink_missed_by_lstat_is_refused_by_open(self):
+        (self.assets / "real.png").write_bytes(make_png(512, 512))
+        os.symlink("real.png", self.assets / "link.png")
+        self.set_icon_value("./assets/link.png")
+        real_lstat = os.lstat
+        target = self.assets / "link.png"
+
+        def fake_lstat(path, *args, **kwargs):
+            if Path(os.fsdecode(path)) == target:
+                return os.stat(path)
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch.object(gate.os, "lstat", side_effect=fake_lstat):
+            self.expect_exit(3, "icon file " + repr("./assets/link.png") + f" could not be read: [Errno {errno.ELOOP}]")
+
+    def test_fifo_missed_by_lstat_does_not_stall_the_open(self):
+        os.mkfifo(self.assets / "fifo.png")
+        self.set_icon_value("./assets/fifo.png")
+        regular = os.lstat(self.assets / "CL_icon.png")
+        real_lstat = os.lstat
+        target = self.assets / "fifo.png"
+
+        def fake_lstat(path, *args, **kwargs):
+            if Path(os.fsdecode(path)) == target:
+                return regular
+            return real_lstat(path, *args, **kwargs)
+
+        def on_alarm(signum, frame):
+            raise StalledOpen("the open of a FIFO blocked")
+
+        previous = signal.signal(signal.SIGALRM, on_alarm)
+        signal.alarm(5)
+        try:
+            with mock.patch.object(gate.os, "lstat", side_effect=fake_lstat):
+                self.expect_exit(1, "is not a regular file")
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, previous)
 
     def test_fstat_non_regular_fails(self):
         fifo_mode = os.stat_result((0o010644, 0, 0, 1, 0, 0, 100, 0, 0, 0))
-        with mock.patch.object(gate.os, "fstat", return_value=fifo_mode):
-            self.expect_exit(1, "is not a regular file")
+        with self.scoped_io(fstat_result=fifo_mode) as attempts:
+            self.expect_exit(1, "field icon: icon path " + repr("./assets/CL_icon.png") + " is not a regular file")
+        self.assertEqual(len(attempts), 1)
 
     def test_fstat_oserror_fails_closed(self):
-        with mock.patch.object(gate.os, "fstat", side_effect=OSError(5, "Input/output error")):
-            self.expect_exit(3, "could not be read")
+        with self.scoped_io(fstat_error=OSError(5, "Input/output error")):
+            self.expect_exit(3, "field icon: icon file " + repr("./assets/CL_icon.png") + " could not be read")
 
     def test_icon_component_not_directory_fails(self):
         self.set_icon_value("./assets/CL_icon.png/inner.png")
         self.expect_exit(1, "is not a regular file")
 
     def test_icon_open_oserror_fails_closed(self):
-        with mock.patch.object(gate.os, "open", side_effect=PermissionError(13, "Permission denied")):
-            self.expect_exit(3, "could not be read")
+        with self.scoped_io(open_error=PermissionError(13, "Permission denied")) as attempts:
+            self.expect_exit(3, "field icon: icon file " + repr("./assets/CL_icon.png") + " could not be read")
+        self.assertEqual(len(attempts), 1)
 
     def test_icon_read_oserror_fails_closed(self):
-        with mock.patch.object(gate.os, "read", side_effect=OSError(5, "Input/output error")):
-            self.expect_exit(3, "could not be read")
+        with self.scoped_io(read_error=OSError(5, "Input/output error")):
+            self.expect_exit(3, "field icon: icon file " + repr("./assets/CL_icon.png") + " could not be read")
 
     def test_icon_lstat_oserror_fails_closed(self):
         real_lstat = os.lstat
@@ -451,7 +756,7 @@ class ManifestIconTest(unittest.TestCase):
             self.expect_exit(3, "could not be inspected")
 
     def test_file_changed_during_read_fails_closed(self):
-        with mock.patch.object(gate.os, "read", return_value=b""):
+        with self.scoped_io(read_result=b""):
             self.expect_exit(3, "changed while it was read")
 
     def test_empty_file_fails(self):
@@ -553,6 +858,68 @@ class ManifestIconTest(unittest.TestCase):
                 self.set_icon("CL_icon.png", data)
                 self.expect_exit(1, needle)
 
+    def test_png_iend_with_payload_fails(self):
+        data = png_from(png_chunk(b"IHDR", ihdr_payload(512, 512)), IDAT, png_chunk(b"IEND", b"hostile"))
+        self.set_icon("CL_icon.png", data)
+        self.expect_exit(1, "IEND length is 7, not 0")
+
+    def test_png_second_ihdr_fails(self):
+        self.set_icon("CL_icon.png", make_png(512, 512, before_idat=((b"IHDR", ihdr_payload(100, 200)),)))
+        self.expect_exit(1, "a second IHDR chunk appears at offset 33")
+
+    def test_png_unknown_critical_chunk_fails(self):
+        for chunk_type in (b"ZZZZ", b"CgBI", b"Idat"):
+            with self.subTest(chunk=chunk_type):
+                self.set_icon("CL_icon.png", make_png(512, 512, before_idat=((chunk_type, b""),)))
+                self.expect_exit(1, "unknown critical chunk " + repr(chunk_type.decode("ascii")))
+
+    def test_png_palette_without_plte_fails(self):
+        self.set_icon("CL_icon.png", make_png(512, 512, colour=3))
+        self.expect_exit(1, "colour type 3 has no PLTE chunk before IDAT")
+
+    def test_png_valid_palettes_pass(self):
+        for depth, colour, entries in ((8, 3, 256), (1, 3, 2), (8, 2, 16), (8, 6, 1)):
+            with self.subTest(depth=depth, colour=colour, entries=entries):
+                plte = ((b"PLTE", bytes(3 * entries)),)
+                self.set_icon("CL_icon.png", make_png(512, 512, depth=depth, colour=colour, before_idat=plte))
+                self.expect_pass()
+
+    def test_png_plte_rules_fail(self):
+        ihdr3 = png_chunk(b"IHDR", ihdr_payload(512, 512, colour=3))
+        ihdr2 = png_chunk(b"IHDR", ihdr_payload(512, 512, colour=2))
+        plte = png_chunk(b"PLTE", bytes(3))
+        cases = (
+            (make_png(512, 512, colour=0, before_idat=((b"PLTE", bytes(3)),)),
+             "colour type 0 must not carry a PLTE chunk"),
+            (make_png(512, 512, colour=4, before_idat=((b"PLTE", bytes(3)),)),
+             "colour type 4 must not carry a PLTE chunk"),
+            (make_png(512, 512, colour=3, before_idat=((b"PLTE", bytes(4)),)),
+             "PLTE length 4 is not a multiple of 3 from 3 to 768"),
+            (make_png(512, 512, colour=3, before_idat=((b"PLTE", b""),)),
+             "PLTE length 0 is not a multiple of 3 from 3 to 768"),
+            (make_png(512, 512, colour=3, before_idat=((b"PLTE", bytes(771)),)),
+             "PLTE length 771 is not a multiple of 3 from 3 to 768"),
+            (make_png(512, 512, depth=1, colour=3, before_idat=((b"PLTE", bytes(9)),)),
+             "PLTE has 3 entries, more than bit depth 1 can index"),
+            (png_from(ihdr3, plte, plte, IDAT, IEND), "a second PLTE chunk appears"),
+            (png_from(ihdr2, IDAT, plte, IEND), "follows IDAT"),
+        )
+        for data, needle in cases:
+            with self.subTest(needle=needle):
+                self.set_icon("CL_icon.png", data)
+                self.expect_exit(1, needle)
+
+    def test_png_idat_not_consecutive_fails(self):
+        ihdr = png_chunk(b"IHDR", ihdr_payload(512, 512))
+        data = png_from(ihdr, IDAT, png_chunk(b"tEXt", b"a\x00b"), IDAT, IEND)
+        self.set_icon("CL_icon.png", data)
+        self.expect_exit(1, "is not consecutive with the earlier IDAT")
+
+    def test_png_consecutive_idat_pass(self):
+        ihdr = png_chunk(b"IHDR", ihdr_payload(512, 512))
+        self.set_icon("CL_icon.png", png_from(ihdr, IDAT, IDAT, IDAT, IEND))
+        self.expect_pass()
+
     # JPEG structure (I4).
 
     def test_jpeg_sos_before_sof_fails(self):
@@ -629,6 +996,102 @@ class ManifestIconTest(unittest.TestCase):
         for marker in sorted(gate.SOF_MARKERS):
             with self.subTest(marker=hex(marker)):
                 self.set_icon("icon.jpg", make_jpeg(512, 512, sof=marker))
+                self.expect_pass()
+
+    def test_jpeg_frame_marker_set_is_exact(self):
+        expected = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+        self.assertEqual(set(gate.SOF_MARKERS), expected)
+
+    def test_jpeg_ends_after_frame_header_fails(self):
+        frame = jpeg_segment(0xC0, frame_payload(512, 512))
+        for data in (SOI + frame, SOI + frame + jpeg_segment(0xC4, bytes(21)),
+                     make_jpeg(512, 512, with_sos=False, with_eoi=False), SOI + frame + b"\xff"):
+            with self.subTest(size=len(data)):
+                self.set_icon("icon.jpg", data)
+                self.expect_exit(1, "file ends before any scan (SOS)")
+
+    def test_jpeg_eoi_before_sos_fails(self):
+        self.set_icon("icon.jpg", make_jpeg(512, 512, with_sos=False))
+        self.expect_exit(1, "EOI reached before any scan (SOS)")
+
+    def test_jpeg_invalid_precision_fails(self):
+        for marker, precision in ((0xC0, 0), (0xC0, 12), (0xC1, 16), (0xC2, 0), (0xC3, 1),
+                                  (0xC3, 17), (0xCF, 255)):
+            with self.subTest(marker=hex(marker), precision=precision):
+                self.set_icon("icon.jpg", make_jpeg(512, 512, sof=marker, precision=precision))
+                self.expect_exit(
+                    1, f"sample precision {precision} is not valid for frame marker 0x{marker:02X}"
+                )
+
+    def test_jpeg_minimal_frame_with_zero_precision_fails(self):
+        data = SOI + jpeg_segment(0xC0, struct.pack(">BHHB", 0, 512, 512, 1) + bytes([1, 0x11, 0]))
+        self.assertEqual(len(data), 15)
+        self.set_icon("icon.jpg", data)
+        self.expect_exit(1, "sample precision 0 is not valid for frame marker 0xC0")
+
+    def test_jpeg_valid_precisions_pass(self):
+        for marker, precision in ((0xC1, 12), (0xC2, 12), (0xC3, 2), (0xC3, 16), (0xCF, 12)):
+            with self.subTest(marker=hex(marker), precision=precision):
+                self.set_icon("icon.jpg", make_jpeg(512, 512, sof=marker, precision=precision))
+                self.expect_pass()
+
+    def test_jpeg_second_frame_header_fails(self):
+        frame = jpeg_segment(0xC0, frame_payload(512, 512))
+        self.set_icon("icon.jpg", SOI + frame + frame + SOS + b"\xff\xd9")
+        self.expect_exit(1, "a second frame header at offset 21 appears before the first scan (SOS)")
+
+    def test_jpeg_markers_after_frame_header_fail(self):
+        frame = jpeg_segment(0xC0, frame_payload(512, 512))
+        for tail, needle in (
+            (b"\xff\xd8" + SOS, "a second SOI appears before the first scan (SOS)"),
+            (b"\xff\x00" + SOS, "marker 0x00 at offset 21 is not valid before the first scan (SOS)"),
+            (b"\x41" + SOS, "byte at offset 21 is not a marker prefix"),
+        ):
+            with self.subTest(needle=needle):
+                self.set_icon("icon.jpg", SOI + frame + tail)
+                self.expect_exit(1, needle)
+
+    def test_jpeg_duplicate_frame_identifiers_fail(self):
+        frame = jpeg_segment(0xC0, frame_payload(512, 512, identifiers=(1, 1, 2)))
+        self.set_icon("icon.jpg", SOI + frame + SOS + b"\xff\xd9")
+        self.expect_exit(1, "frame header declares a component identifier twice")
+
+    def test_jpeg_bad_scan_header_fails(self):
+        frame = jpeg_segment(0xC0, frame_payload(512, 512))
+        for scan, needle in (
+            (jpeg_segment(0xDA, b""), "scan header at offset 21 is too short"),
+            (jpeg_segment(0xDA, bytes([0, 0, 63, 0])), "scan header declares 0 components, not 1 to 4"),
+            (jpeg_segment(0xDA, bytes([5] + [1, 0] * 5 + [0, 63, 0])),
+             "scan header declares 5 components, not 1 to 4"),
+            (jpeg_segment(0xDA, bytes([1, 1, 0, 0, 63, 0, 0])),
+             "scan header at offset 21 has length 9, not 8 for 1 components"),
+            (jpeg_segment(0xDA, bytes([1, 9, 0, 0, 63, 0])),
+             "scan header names component 9, which the frame header does not declare"),
+            (jpeg_segment(0xDA, bytes([2, 1, 0, 1, 0, 0, 63, 0])), "scan header names a component twice"),
+        ):
+            with self.subTest(needle=needle):
+                self.set_icon("icon.jpg", SOI + frame + scan + b"\x00\xff\xd9")
+                self.expect_exit(1, needle)
+
+    def test_jpeg_segments_between_frame_and_scan_are_skipped(self):
+        frame = jpeg_segment(0xC0, frame_payload(512, 512))
+        between = (
+            jpeg_segment(0xC4, b"\x00\xff\xc0\x00\x11\x08\x00\x64\x00\x64\xff\xda" + bytes(9)),
+            jpeg_segment(0xDB, bytes(65)),
+            jpeg_segment(0xDD, b"\x00\x10"),
+            jpeg_segment(0xFE, b"comment \xff\xd9"),
+            b"\xff\xff",
+        )
+        scan = jpeg_segment(0xDA, bytes([3, 1, 0, 2, 0x11, 3, 0x11, 0, 63, 0]))
+        self.set_icon("icon.jpg", SOI + frame + b"".join(between) + scan + b"\x12\x34\xff\xd9")
+        self.assertIn("is a JPEG of 512 x 512 pixels", self.expect_pass())
+
+    def test_jpeg_walk_stops_at_the_first_scan_header(self):
+        # Residual 1: nothing after the first scan header is read.
+        frame = jpeg_segment(0xC0, frame_payload(512, 512))
+        for tail in (b"", b"\xff\xd8 not entropy data", b"\x00" * 7):
+            with self.subTest(tail=tail):
+                self.set_icon("icon.jpg", SOI + frame + SOS + tail)
                 self.expect_pass()
 
     # Geometry (I5) and message shape.

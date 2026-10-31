@@ -12,8 +12,12 @@ What it checks:
       top-level .git directory is pruned) is declared in MANIFESTS, so a new
       manifest cannot carry an icon past the gate unseen; a tree that cannot be
       listed fails closed;
-  M2  every declared manifest loads, unconditionally (no presence test), as a JSON
-      object; a declared manifest that is absent or unreadable fails closed;
+  M2  every declared manifest is reached from the repository root with os.lstat on
+      each path component: no component is a symlink, every component before the
+      manifest is a directory, and the manifest is a regular file; it is opened
+      with O_NOFOLLOW and O_NONBLOCK, re-checked as a regular file through fstat,
+      and loads, unconditionally (no presence test), as a JSON object; a declared
+      manifest that is absent or unreadable fails closed;
   M3  the icon fields examined are the top-level "icon" key of each manifest and the
       "icon" key of each object in a top-level "plugins" array (plugins[i].icon); an
       icon in a marketplace manifest is refused, because the directory its path
@@ -28,28 +32,48 @@ What it checks:
   P3  it is a canonical "./" relative path: every component after the "./" prefix is
       non-empty and neither "." nor "..", with no trailing slash, so an absolute or
       traversing path is refused before any filesystem call;
-  F1  each component, walked from the plugin root with os.lstat, exists and is not a
-      symlink, and each non-final component is a directory;
+  F1  each path component, walked with os.lstat from the repository root through
+      the plugin root (the plugin root itself included) and on to the icon file,
+      exists and is not a symlink, and every component before the icon file is a
+      directory;
   F2  the final component is a regular file;
   F3  backstop: the resolved icon path lies inside both the plugin root and the
       repository;
-  F4  the file is opened with O_NOFOLLOW and O_NONBLOCK (so a FIFO swapped in
-      cannot stall the open), re-checked as a regular file through fstat, and read in full up to MAX_ICON_BYTES + 1 bytes; a file whose length
-      changes between fstat and the read fails closed;
+  F4  the file is opened with O_NOFOLLOW (so a final component swapped for a symlink
+      after the walk is refused with ELOOP) and O_NONBLOCK (so a FIFO swapped in
+      cannot stall the open), re-checked as a regular file through fstat, and read
+      in full up to MAX_ICON_BYTES + 1 bytes; a file whose length changes between
+      fstat and the read fails closed;
   F5  the file is not empty and its size is strictly below MAX_ICON_BYTES, checked
       before any parse;
   I1  the format is decided by the file signature alone, PNG or JPEG;
   I3  a PNG is walked chunk by chunk without decompression: IHDR first with length
-      13, every chunk complete with a valid CRC and a four-letter ASCII type, a
-      valid bit depth and colour type pair, compression 0, filter 0, interlace 0
-      or 1, at least one IDAT before IEND, and no byte after IEND; every other
-      chunk, ancillary or private, is skipped by its length and never interpreted;
-  I4  a JPEG is walked marker by marker from the SOI: fill bytes and standalone
-      markers are skipped, every other segment is skipped by its length, and the
-      first frame header (SOF0 to SOF15, never DHT, JPG, or DAC) supplies the
-      dimensions; SOS, EOI, a second SOI, marker 0x00, a non-marker byte, a
-      truncated segment, a length below 2, or a frame header that is short or
-      declares 0 components, height 0 (DNL), or width 0 is refused;
+      13 and never repeated; every chunk complete with a valid CRC, a four-letter
+      ASCII type, and a length at most 2**31 - 1; a valid bit depth and colour type
+      pair, compression 0, filter 0, interlace 0 or 1; a critical chunk (upper-case
+      first letter) other than IHDR, PLTE, IDAT, and IEND is refused; PLTE appears
+      at most once, before the first IDAT, never for colour types 0 and 4, with a
+      length that is a multiple of 3 from 3 to 768 and, for colour type 3, no more
+      entries than the bit depth can index; colour type 3 has a PLTE before its
+      first IDAT; at least one IDAT precedes IEND and the IDAT chunks are
+      consecutive; IEND has an empty payload and no byte follows it; every
+      ancillary chunk (lower-case first letter), public or private, is skipped by
+      its length and never interpreted;
+  I4  a JPEG is walked marker by marker from the SOI to the first scan header (SOS):
+      fill bytes and standalone markers (TEM, RST0 to RST7) are skipped, every other
+      segment is skipped by its length, and exactly one frame header (SOF0 to
+      SOF15, never DHT, JPG, or DAC) must precede the first SOS and supplies the
+      dimensions; the frame header declares at least 1 component with distinct
+      identifiers, a component table that fits its length, a sample precision valid
+      for its frame marker (ITU-T T.81 Table B.2: 8 for baseline; 8 or 12 for
+      extended and progressive; 2 to 16 for lossless; hierarchical frames as their
+      process), and a non-zero height (a DNL height is refused) and width; the
+      scan header declares 1 to 4 components, has length exactly 6 + 2 * Ns, and
+      names each component once and only components the frame header declares; an
+      SOS before the frame header, a second frame header, a second SOI, an EOI, a
+      marker 0x00, a non-marker byte, a truncated segment, a length below 2, or a
+      file that ends before the first SOS is refused; the walk stops at the end of
+      the first scan header;
   I5  the image is square, each side 512 to 2048 pixels inclusive;
   I6  each conforming icon field prints one success line to stdout.
 
@@ -67,27 +91,46 @@ Claude Code specification, so labelled as such):
 
 The base directory of an icon path is the plugin root: the grandparent of a manifest
 inside a .claude-plugin directory, otherwise the directory holding the manifest.
-Manifest reads use utf-8-sig, so a leading UTF-8 byte-order mark does not falsely
+Manifest reads decode utf-8-sig, so a leading UTF-8 byte-order mark does not falsely
 reject a conforming manifest, and reject the non-standard JSON constants NaN and
 Infinity. Filesystem inspection uses os.lstat mode bits rather than the Path
 predicates, which suppress OSErrors on some Python versions and would turn an
-inspection failure into a silent skip. O_NOFOLLOW, O_NONBLOCK, and O_CLOEXEC are
-POSIX flags; the gate targets the Linux CI runner.
+inspection failure into a silent skip. REPO_ROOT is the trust anchor: it is derived
+from the resolved path of this file, so it holds no symlink, and the walks start
+below it. O_NOFOLLOW, O_NONBLOCK, and O_CLOEXEC are POSIX flags; the gate targets
+the Linux CI runner.
 
 Residuals this gate does not cover:
-  1. Header validity is not image validity: IDAT is never decompressed and JPEG scan
-     data is never decoded, so a PNG with valid framing and a corrupt stream, or a
-     JPEG with a valid frame header and corrupt entropy data, passes.
+  1. Header validity is not image validity. For a PNG, IDAT is never decompressed,
+     so a corrupt or short zlib stream passes; ancillary chunks are skipped unread,
+     so their content, their ordering relative to PLTE and IDAT, and their
+     multiplicity are not checked; the reserved and safe-to-copy bits of a chunk
+     type are not interpreted. For a JPEG, nothing after the end of the first scan
+     header is read: the entropy-coded data, any later scans and the table segments
+     between them, a DNL marker, the EOI marker, and any bytes after EOI are never
+     inspected, so a JPEG truncated or corrupted anywhere after its first scan
+     header passes. Before that point, the contents of table and application
+     segments (DQT, DHT, DRI, APPn, COM) are skipped by length; whether the tables
+     a scan selects were defined, the sampling factors and quantization table
+     selectors of the frame header, the spectral and approximation fields of the
+     scan header, the limit of 4 components in a progressive frame, a frame header
+     longer than its component table, and a standalone RST marker before the first
+     scan are not checked.
   2. Renderability is not checked: arithmetic-coded and lossless JPEG frame types
-     (SOF3, SOF9 to SOF11, SOF15), CMYK or Adobe APP14-transformed JPEGs, 16-bit and
-     palette PNGs, and APNG pass the header checks, though some renderers cannot
-     show them. A multi-picture (MPO) file reports its first frame. EXIF orientation
-     is ignored; a rotation preserves squareness and side length, so it cannot turn
-     a passing icon into a failing one.
-  3. Symlink races: the lstat walk and O_NOFOLLOW close the race on the final
-     component; a directory component swapped between the walk and the open
-     remains, bounded by the resolve backstop and by CI running on a fresh
-     checkout.
+     (SOF3, SOF9 to SOF11, SOF15), 12-bit and hierarchical JPEGs, CMYK or Adobe
+     APP14-transformed JPEGs, 16-bit and palette PNGs, and APNG pass the header
+     checks, though some renderers cannot show them. A multi-picture (MPO) file
+     reports its first frame. EXIF orientation is ignored; a rotation preserves
+     squareness and side length, so it cannot turn a passing icon into a failing
+     one.
+  3. Symlink races and hard links: the lstat walks refuse a symlink on every path
+     component from below the repository root to the manifest and to the icon, and
+     O_NOFOLLOW closes the race on the final component of both; a directory
+     component swapped for a symlink between a walk and its open remains, bounded
+     for an icon by the resolve backstop and for both by CI running on a fresh
+     checkout. A hard link is indistinguishable from a regular file, so an icon
+     hard-linked to a file outside the plugin root passes locally; git cannot
+     record a hard link, so CI cannot see one.
   4. Local versus CI: the tree walk sees untracked manifests and icons that CI will
      not, so a local pass can rest on an uncommitted file; CI on the checkout is the
      authoritative run. The walk does not descend into a symlinked directory, so a
@@ -97,15 +140,16 @@ Residuals this gate does not cover:
   6. The floor (PNG or JPEG, square, 512 to 2048, under 2 MB read as 2,000,000
      bytes, the "./" prefix, extension consistency) is repository policy from the
      row 64 brief and plan, not a verified CLI specification; the pinned CLI
-     validator remains the authority on what Claude Code accepts.
+     validator remains the authority on what Claude Code accepts. The PNG and JPEG
+     structural rules above are applied from the format specifications as known to
+     the author; they were not re-verified against the specification texts in this
+     change.
   7. Scope: only top-level icon keys and plugins[i].icon keys are examined; an icon
      key at any other nesting is not seen. YAML icon references
      (cleanlanguage/agents/openai.yaml) are outside this gate; its icon_small is an
      SVG this gate would refuse, so those references stay with release-package.sh.
   8. A marketplace icon is refused rather than checked, because its base directory
      is unverified.
-  9. The plugin-root branch of the F3 backstop is reachable only through a race
-     that F1 otherwise closes, so no test drives it directly.
 
 Exit codes:
   0  every icon field was checked and conforms
@@ -122,7 +166,7 @@ import struct
 import sys
 import zlib
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MANIFESTS = (
@@ -140,13 +184,36 @@ MAX_ICON_BYTES = 2000000
 MIN_SIDE = 512
 MAX_SIDE = 2048
 
+# Every manifest and icon is opened without following a symlink, without blocking on
+# a FIFO, and without leaking the descriptor.
+OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 JPEG_SIGNATURE = b"\xff\xd8\xff"
+# The critical PNG chunk types this gate recognizes; any other critical chunk is
+# refused, as a conforming decoder must refuse it.
+PNG_CRITICAL = frozenset({"IHDR", "PLTE", "IDAT", "IEND"})
+# Valid sample precisions per JPEG frame marker (ITU-T T.81 Table B.2): baseline 8;
+# extended sequential and progressive 8 or 12; lossless 2 to 16; the hierarchical
+# frames (SOF5 to SOF7, SOF13 to SOF15) as their process.
+SOF_PRECISIONS = {
+    0xC0: frozenset({8}),
+    0xC1: frozenset({8, 12}),
+    0xC2: frozenset({8, 12}),
+    0xC3: frozenset(range(2, 17)),
+    0xC5: frozenset({8, 12}),
+    0xC6: frozenset({8, 12}),
+    0xC7: frozenset(range(2, 17)),
+    0xC9: frozenset({8, 12}),
+    0xCA: frozenset({8, 12}),
+    0xCB: frozenset(range(2, 17)),
+    0xCD: frozenset({8, 12}),
+    0xCE: frozenset({8, 12}),
+    0xCF: frozenset(range(2, 17)),
+}
 # Frame headers SOF0 to SOF15; 0xC4 (DHT), 0xC8 (JPG, reserved) and 0xCC (DAC) are
 # never frame headers.
-SOF_MARKERS = frozenset(
-    {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
-)
+SOF_MARKERS = frozenset(SOF_PRECISIONS)
 EXTENSIONS = {"PNG": frozenset({".png"}), "JPEG": frozenset({".jpg", ".jpeg"})}
 # Valid PNG bit depths per colour type.
 PNG_DEPTHS = {
@@ -164,16 +231,19 @@ class ImageError(Exception):
     """An image that does not parse; the message is the reason."""
 
 
+class WalkError(Exception):
+    """A path component that is absent, uninspectable, a symlink, or not a directory."""
+
+    def __init__(self, kind: str, part: str, error: OSError | None = None):
+        super().__init__(kind)
+        self.kind = kind
+        self.part = part
+        self.error = error
+
+
 def die(message: str, code: int = 1) -> NoReturn:
     print(f"check-manifest-icon: {message}", file=sys.stderr)
     raise SystemExit(code)
-
-
-def _rel(path: Path) -> str:
-    try:
-        return path.relative_to(REPO_ROOT).as_posix()
-    except ValueError:
-        return str(path)
 
 
 def _reject_constant(token: str) -> NoReturn:
@@ -184,19 +254,76 @@ def _raise(error: OSError) -> NoReturn:
     raise error
 
 
-def load(path: Path) -> dict:
+def walk_without_symlinks(
+    start: Path, parts: Sequence[str], directories_only: bool = False
+) -> tuple[Path, os.stat_result | None]:
+    """os.lstat each cumulative component below start; return the last path and stat.
+
+    Every component must exist and must not be a symlink. Every component before the
+    last must be a directory, and the last one too when directories_only is true.
+    """
+    current = start
+    info = None
+    for index, part in enumerate(parts):
+        current = current / part
+        try:
+            info = os.lstat(current)
+        except FileNotFoundError as error:
+            raise WalkError("missing", part, error) from error
+        except OSError as error:
+            raise WalkError("error", part, error) from error
+        if stat.S_ISLNK(info.st_mode):
+            raise WalkError("symlink", part)
+        if (directories_only or index < len(parts) - 1) and not stat.S_ISDIR(info.st_mode):
+            raise WalkError("notdir", part)
+    return current, info
+
+
+def load(rel: str) -> dict:
+    """M2: reach the manifest without symlinks, open it without following one, parse."""
     try:
-        text = path.read_text(encoding="utf-8-sig")
-    except (OSError, UnicodeError) as error:
-        die(f"{_rel(path)} could not be read: {error}", 3)
+        path, info = walk_without_symlinks(REPO_ROOT, rel.split("/"))
+    except WalkError as walk:
+        if walk.kind == "symlink":
+            die(
+                f"{rel} path component {walk.part!r} is a symlink; a manifest must be "
+                "reached without symlinks"
+            )
+        if walk.kind == "notdir":
+            die(f"{rel} path component {walk.part!r} is not a directory")
+        die(f"{rel} could not be read: {walk.error}", 3)
+    if not stat.S_ISREG(info.st_mode):
+        die(f"{rel} is not a regular file")
+    try:
+        fd = os.open(path, OPEN_FLAGS)
+    except OSError as error:
+        die(f"{rel} could not be read: {error}", 3)
+    blocks: list[bytes] = []
+    try:
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                die(f"{rel} is not a regular file")
+            while True:
+                block = os.read(fd, READ_BLOCK)
+                if not block:
+                    break
+                blocks.append(block)
+        except OSError as error:
+            die(f"{rel} could not be read: {error}", 3)
+    finally:
+        os.close(fd)
+    try:
+        text = b"".join(blocks).decode("utf-8-sig")
+    except UnicodeError as error:
+        die(f"{rel} could not be read: {error}", 3)
     try:
         data = json.loads(text, parse_constant=_reject_constant)
     except RecursionError:
-        die(f"{_rel(path)} could not be decoded (too deeply nested)", 3)
+        die(f"{rel} could not be decoded (too deeply nested)", 3)
     except ValueError as error:
-        die(f"{_rel(path)} is not valid JSON: {error}")
+        die(f"{rel} is not valid JSON: {error}")
     if not isinstance(data, dict):
-        die(f"{_rel(path)} is not a JSON object")
+        die(f"{rel} is not a JSON object")
     return data
 
 
@@ -242,7 +369,9 @@ def parse_png(data: bytes) -> tuple[int, int]:
     offset = len(PNG_SIGNATURE)
     first = True
     seen_idat = False
-    width = height = 0
+    seen_plte = False
+    previous = ""
+    width = height = depth = colour = 0
     while True:
         if offset == size:
             raise ImageError("no IEND chunk")
@@ -288,45 +417,75 @@ def parse_png(data: bytes) -> tuple[int, int]:
                 raise ImageError(f"filter method {filtering} is not 0")
             if interlace not in (0, 1):
                 raise ImageError(f"interlace method {interlace} is not 0 or 1")
+        elif chunk_type == "IHDR":
+            raise ImageError(f"a second IHDR chunk appears at offset {offset}")
+        elif chunk_type == "PLTE":
+            if seen_plte:
+                raise ImageError(f"a second PLTE chunk appears at offset {offset}")
+            if seen_idat:
+                raise ImageError(f"the PLTE chunk at offset {offset} follows IDAT")
+            if colour in (0, 4):
+                raise ImageError(f"colour type {colour} must not carry a PLTE chunk")
+            if length == 0 or length % 3 != 0 or length > 768:
+                raise ImageError(f"PLTE length {length} is not a multiple of 3 from 3 to 768")
+            if colour == 3 and length // 3 > 2**depth:
+                raise ImageError(
+                    f"PLTE has {length // 3} entries, more than bit depth {depth} can index"
+                )
+            seen_plte = True
         elif chunk_type == "IDAT":
+            if seen_idat and previous != "IDAT":
+                raise ImageError(f"IDAT chunk at offset {offset} is not consecutive with the earlier IDAT")
+            if colour == 3 and not seen_plte:
+                raise ImageError("colour type 3 has no PLTE chunk before IDAT")
             seen_idat = True
         elif chunk_type == "IEND":
+            if length != 0:
+                raise ImageError(f"IEND length is {length}, not 0")
             if not seen_idat:
                 raise ImageError("no IDAT chunk before IEND")
             if end != size:
                 raise ImageError(f"{size - end} bytes follow IEND")
             return width, height
+        elif 65 <= raw_type[0] <= 90:
+            raise ImageError(f"unknown critical chunk {chunk_type!r} at offset {offset}")
+        previous = chunk_type
         offset = end
 
 
 def parse_jpeg(data: bytes) -> tuple[int, int]:
-    """I4: walk markers from the SOI; return (width, height) from the first frame."""
+    """I4: walk markers from the SOI to the first SOS; return the frame (width, height)."""
     size = len(data)
     offset = 2
+    frame: tuple[int, int, frozenset[int]] | None = None
     while True:
+        phase = "the frame header" if frame is None else "the first scan (SOS)"
+        ends = "file ends before any frame header" if frame is None else (
+            "file ends before any scan (SOS)"
+        )
         if offset >= size:
-            raise ImageError("file ends before any frame header")
+            raise ImageError(ends)
         if data[offset] != 0xFF:
             raise ImageError(f"byte at offset {offset} is not a marker prefix")
         while offset < size and data[offset] == 0xFF:
             offset += 1
         if offset >= size:
-            raise ImageError("file ends before any frame header")
+            raise ImageError(ends)
         marker = data[offset]
         marker_offset = offset - 1
         offset += 1
         if marker == 0x00:
-            raise ImageError(
-                f"marker 0x00 at offset {marker_offset} is not valid before the frame header"
-            )
+            raise ImageError(f"marker 0x00 at offset {marker_offset} is not valid before {phase}")
         if marker == 0x01 or 0xD0 <= marker <= 0xD7:
             continue
         if marker == 0xD8:
-            raise ImageError("a second SOI appears before the frame header")
-        if marker == 0xDA:
+            raise ImageError(f"a second SOI appears before {phase}")
+        if marker == 0xDA and frame is None:
             raise ImageError("scan data (SOS) begins before any frame header")
         if marker == 0xD9:
-            raise ImageError("EOI reached before any frame header")
+            if frame is None:
+                raise ImageError("EOI reached before any frame header")
+            raise ImageError("EOI reached before any scan (SOS)")
         if offset + 2 > size:
             raise ImageError(f"segment at offset {marker_offset} is truncated")
         (length,) = struct.unpack(">H", data[offset:offset + 2])
@@ -335,9 +494,14 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
         if offset + length > size:
             raise ImageError(f"segment at offset {marker_offset} is truncated")
         if marker in SOF_MARKERS:
+            if frame is not None:
+                raise ImageError(
+                    f"a second frame header at offset {marker_offset} appears before the "
+                    "first scan (SOS)"
+                )
             if length < 8:
                 raise ImageError(f"frame header at offset {marker_offset} is too short")
-            _precision, height, width, components = struct.unpack(
+            precision, height, width, components = struct.unpack(
                 ">BHHB", data[offset + 2:offset + 8]
             )
             if components == 0:
@@ -347,11 +511,40 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
                     f"frame header at offset {marker_offset} is too short for "
                     f"{components} components"
                 )
+            identifiers = [data[offset + 8 + 3 * index] for index in range(components)]
+            if len(set(identifiers)) != components:
+                raise ImageError("frame header declares a component identifier twice")
+            if precision not in SOF_PRECISIONS[marker]:
+                raise ImageError(
+                    f"sample precision {precision} is not valid for frame marker "
+                    f"0x{marker:02X}"
+                )
             if height == 0:
                 raise ImageError("frame header declares height 0 (DNL), so dimensions cannot be read")
             if width == 0:
                 raise ImageError("frame header declares width 0")
-            return width, height
+            frame = (width, height, frozenset(identifiers))
+        elif marker == 0xDA:
+            if length < 3:
+                raise ImageError(f"scan header at offset {marker_offset} is too short")
+            count = data[offset + 2]
+            if not 1 <= count <= 4:
+                raise ImageError(f"scan header declares {count} components, not 1 to 4")
+            if length != 6 + 2 * count:
+                raise ImageError(
+                    f"scan header at offset {marker_offset} has length {length}, not "
+                    f"{6 + 2 * count} for {count} components"
+                )
+            selectors = [data[offset + 3 + 2 * index] for index in range(count)]
+            if len(set(selectors)) != count:
+                raise ImageError("scan header names a component twice")
+            for selector in selectors:
+                if selector not in frame[2]:
+                    raise ImageError(
+                        f"scan header names component {selector}, which the frame header "
+                        "does not declare"
+                    )
+            return frame[0], frame[1]
         offset += length
 
 
@@ -377,7 +570,7 @@ def check_path_syntax(where: str, icon: object) -> list[str]:
 def read_icon(where: str, icon: str, path: Path) -> bytes:
     """F4 and F5: open without following a symlink, bound the size, read in full."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        fd = os.open(path, OPEN_FLAGS)
     except OSError as error:
         die(f"{where}: icon file {icon!r} could not be read: {error}", 3)
     try:
@@ -414,23 +607,38 @@ def check_icon(rel: str, field: str, icon: object, base: Path, repo_root: Path) 
     where = f"{rel} field {field}"
     parts = check_path_syntax(where, icon)
 
-    # F1/F2: walk from the plugin root without following any symlink.
-    current = base
-    for index, part in enumerate(parts):
-        current = current / part
-        try:
-            info = os.lstat(current)
-        except FileNotFoundError:
-            die(f"{where}: icon file does not exist: {icon!r}")
-        except OSError as error:
-            die(f"{where}: icon path {icon!r} could not be inspected: {error}", 3)
-        if stat.S_ISLNK(info.st_mode):
+    # F1: walk from the repository root to the plugin root, the plugin root included,
+    # without following any symlink.
+    try:
+        root_parts = base.relative_to(REPO_ROOT).parts
+    except ValueError:
+        die(f"{where}: plugin root {base} is not inside the repository root {REPO_ROOT}", 3)
+    try:
+        walk_without_symlinks(REPO_ROOT, root_parts, directories_only=True)
+    except WalkError as walk:
+        if walk.kind == "symlink":
             die(
-                f"{where}: path component {part!r} of {icon!r} is a symlink; the icon "
+                f"{where}: plugin root component {walk.part!r} is a symlink; the icon "
                 "must be reached without symlinks"
             )
-        if index < len(parts) - 1 and not stat.S_ISDIR(info.st_mode):
-            die(f"{where}: icon path {icon!r} is not a regular file")
+        if walk.kind == "notdir":
+            die(f"{where}: plugin root component {walk.part!r} is not a directory")
+        die(f"{where}: plugin root component {walk.part!r} could not be inspected: {walk.error}", 3)
+
+    # F1/F2: and on from the plugin root to the icon file.
+    try:
+        current, info = walk_without_symlinks(base, parts)
+    except WalkError as walk:
+        if walk.kind == "missing":
+            die(f"{where}: icon file does not exist: {icon!r}")
+        if walk.kind == "error":
+            die(f"{where}: icon path {icon!r} could not be inspected: {walk.error}", 3)
+        if walk.kind == "symlink":
+            die(
+                f"{where}: path component {walk.part!r} of {icon!r} is a symlink; the icon "
+                "must be reached without symlinks"
+            )
+        die(f"{where}: icon path {icon!r} is not a regular file")
     if not stat.S_ISREG(info.st_mode):
         die(f"{where}: icon path {icon!r} is not a regular file")
 
@@ -501,7 +709,7 @@ def main() -> int:
             "review its icon fields"
         )
 
-    loaded = [(rel, load(REPO_ROOT / rel)) for rel in declared]  # M2
+    loaded = [(rel, load(rel)) for rel in declared]  # M2
 
     try:
         repo_root = REPO_ROOT.resolve()
