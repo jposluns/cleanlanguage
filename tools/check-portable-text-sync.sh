@@ -18,8 +18,11 @@
 # the hash no longer matches and the gate fails until a maintainer reconciles both
 # hand-maintained files and re-records with --update. It also checks that every
 # file opens with the canonical first line, that the Version agrees across the
-# skill and all files, that cleanlanguage.md and cleanlanguage-29k.md are byte-
-# equal, and that the condensed files are within their size labels.
+# skill and all files, that the skill carries a well-formed Released line when
+# its version sorts above the undated baseline and that every file carries the
+# same Released value as the skill (or none when the skill has none), that
+# cleanlanguage.md and cleanlanguage-29k.md are byte-equal, and that the
+# condensed files are within their size labels.
 #
 # Usage:
 #   tools/check-portable-text-sync.sh            Check; exit non-zero on drift.
@@ -68,6 +71,50 @@ check_common() {
   for f in "${all_files[@]}"; do
     if [ "$(version_of "${f}")" != "${sv}" ]; then
       echo "Version disagreement: SKILL.md=${sv}, ${f}=$(version_of "${f}")." >&2; return 1
+    fi
+  done
+  # The Released line (item 26). One shared strict extractor,
+  # tools/skill-release-date.py, reads it everywhere: exit 0 prints the date,
+  # exit 3 means no line, and anything else is a malformed line or an unreadable
+  # file, which fails here whatever the version. G1: the skill must carry the
+  # line when its version sorts above the baseline the extractor declares (the
+  # last undated release), and may omit it at or below that baseline. G2: every
+  # rendering carries the same parsed value as the skill, or none when the skill
+  # has none; parsed values are compared because the hand-maintained files carry
+  # no trailing hard-break spaces.
+  local sr rc baseline higher fr frc
+  rc=0
+  sr="$(python3 tools/skill-release-date.py cleanlanguage/skills/cleanlanguage/SKILL.md 2>/dev/null)" || rc=$?
+  case "${rc}" in
+    0) ;;
+    3) sr="" ;;
+    *)
+      echo "Malformed Released: line in cleanlanguage/skills/cleanlanguage/SKILL.md: $(python3 tools/skill-release-date.py cleanlanguage/skills/cleanlanguage/SKILL.md 2>&1 >/dev/null || true)" >&2
+      return 1
+      ;;
+  esac
+  baseline="$(python3 tools/skill-release-date.py --baseline)" \
+    || { echo "Could not read the release-date baseline from tools/skill-release-date.py." >&2; return 1; }
+  if [ -z "${sr}" ]; then
+    higher="$(printf '%s\n%s\n' "${baseline}" "${sv}" | sort -V | tail -1)"
+    if [ "${sv}" != "${baseline}" ] && [ "${higher}" = "${sv}" ]; then
+      echo "cleanlanguage/skills/cleanlanguage/SKILL.md is version ${sv}, above the undated baseline ${baseline}, but has no Released: YYYY-MM-DD line directly after its Version line." >&2
+      return 1
+    fi
+  fi
+  for f in "${all_files[@]}"; do
+    frc=0
+    fr="$(python3 tools/skill-release-date.py "${f}" 2>/dev/null)" || frc=$?
+    case "${frc}" in
+      0) ;;
+      3) fr="" ;;
+      *)
+        echo "Malformed Released: line in ${f}: $(python3 tools/skill-release-date.py "${f}" 2>&1 >/dev/null || true)" >&2
+        return 1
+        ;;
+    esac
+    if [ "${fr}" != "${sr}" ]; then
+      echo "Released disagreement: SKILL.md=${sr:-absent}, ${f}=${fr:-absent}." >&2; return 1
     fi
   done
   # The canonical file mirrors the largest rendering byte-for-byte.

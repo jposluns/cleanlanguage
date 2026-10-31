@@ -6,7 +6,10 @@ is not published. It passes on a 404 only in the legitimate pre-tag window:
 the site names the current skill version and the tag does not exist yet. A
 mismatched unreleased version fails, a tag with no published release is
 unverifiable, and the published-release comparison and the transient-error
-handling are preserved. These tests pin all of that offline: the fixtures
+handling are preserved. Once the release SKILL.md names is published, its
+Released line (item 26) must name the UTC day of the release published_at
+record (G4); the network read of that record is replaced by injected
+fixtures. These tests pin all of that offline: the fixtures
 patch the module's file paths and network readers, so no gh CLI and no
 network access are needed. The CI workflow invokes this file before the gate
 itself runs against the real pages, so the regression proof runs even when
@@ -52,6 +55,7 @@ class ConditionalPassTest(unittest.TestCase):
         self._saved = (
             gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL,
             gate.release_status, gate.tag_status, gate.gh,
+            gate.release_published_at,
         )
         root = Path(self._tmp.name)
         gate.REPO_ROOT = root
@@ -60,28 +64,118 @@ class ConditionalPassTest(unittest.TestCase):
         gate.release_status = unexpected_call
         gate.tag_status = unexpected_call
         gate.gh = unexpected_call
+        gate.release_published_at = unexpected_call
 
     def tearDown(self):
         (gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL, gate.release_status,
-         gate.tag_status, gate.gh) = self._saved
+         gate.tag_status, gate.gh, gate.release_published_at) = self._saved
         self._tmp.cleanup()
 
-    def fixtures(self, site_version, site_sum, skill_version):
+    def fixtures(self, site_version, site_sum, skill_version, released=None):
         gate.VERIFY_PAGE.write_text(
             VERIFY.format(version=site_version, checksum=site_sum), encoding="utf-8"
         )
-        gate.SKILL.write_text(f"Version: {skill_version}  \n", encoding="utf-8")
+        text = f"Version: {skill_version}  \n"
+        if released is not None:
+            text += f"{released}\n"
+        gate.SKILL.write_text(text, encoding="utf-8")
 
     def fake_download(self, *args, check=True):
         self.assertEqual(args[:2], ("release", "download"))
         self.assertIn("--repo", args)
         self.assertEqual(args[args.index("--repo") + 1], "jposluns/cleanlanguage")
+        version = args[2].removeprefix("v")
         target = Path(args[args.index("--dir") + 1])
-        (target / f"cleanlanguage-{CURRENT}.zip").write_bytes(ZIP_BYTES)
-        (target / f"cleanlanguage-{CURRENT}.zip.sha256").write_text(
-            f"{ZIP_SUM}  cleanlanguage-{CURRENT}.zip", encoding="utf-8"
+        (target / f"cleanlanguage-{version}.zip").write_bytes(ZIP_BYTES)
+        (target / f"cleanlanguage-{version}.zip.sha256").write_text(
+            f"{ZIP_SUM}  cleanlanguage-{version}.zip", encoding="utf-8"
         )
         return subprocess.CompletedProcess(args, 0, "", "")
+
+    def published(self, published_at):
+        """Stand in for the release record read, recording each tag asked for."""
+        self.asked = []
+
+        def reader(tag):
+            self.asked.append(tag)
+            return published_at
+
+        gate.release_published_at = reader
+        gate.release_status = lambda tag: 200
+        gate.gh = self.fake_download
+
+    # --- G4 (item 26): the Released line against the release record ---------
+
+    def test_released_date_matching_published_day_passes(self):
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T23:59:59Z")
+        self.assertEqual(gate.main(), 0)
+        self.assertEqual(self.asked, [f"v{AHEAD}"])
+
+    def test_released_date_differing_from_published_day_fails(self):
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-16T00:00:01Z")
+        self.assertEqual(gate.main(), 1)
+
+    def test_missing_released_line_above_baseline_fails(self):
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD)
+        self.published("2026-11-15T09:30:00Z")
+        self.assertEqual(gate.main(), 1)
+        self.assertEqual(self.asked, [])
+
+    def test_missing_released_line_at_baseline_passes(self):
+        self.fixtures(CURRENT, ZIP_SUM, CURRENT)
+        self.published("2026-11-15T09:30:00Z")
+        self.assertEqual(gate.main(), 0)
+        self.assertEqual(self.asked, [])
+
+    def test_unusable_published_at_is_unverifiable(self):
+        for value in ("null", "", "2026-11-15", "2026-11-15T09:30:00+01:00"):
+            with self.subTest(value):
+                self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+                self.published(value)
+                with self.assertRaises(SystemExit) as caught:
+                    gate.main()
+                self.assertEqual(caught.exception.code, 2)
+
+    def test_malformed_released_line_on_published_path_exits_3(self):
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: soon")
+        self.published("2026-11-15T09:30:00Z")
+        with self.assertRaises(SystemExit) as caught:
+            gate.main()
+        self.assertEqual(caught.exception.code, 3)
+
+    def test_site_naming_an_older_release_skips_the_date_check(self):
+        # After a bump, SKILL.md is ahead of the published release the site
+        # still names; the date belongs to the unpublished version, so the
+        # published release record is not compared with it.
+        self.fixtures(CURRENT, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2020-01-01T00:00:00Z")
+        self.assertEqual(gate.main(), 0)
+        self.assertEqual(self.asked, [])
+
+    def test_published_at_reader_fails_closed_on_gh_error(self):
+        # The real reader: a gh failure is unverifiable, never an empty value.
+        gate.release_published_at = self._saved[6]
+        gate.gh = lambda *args, check=True: subprocess.CompletedProcess(args, 1, "", "HTTP 502")
+        with self.assertRaises(SystemExit) as caught:
+            gate.release_published_at("v1.0.15")
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_published_at_reader_asks_for_the_published_at_field(self):
+        gate.release_published_at = self._saved[6]
+        seen = []
+
+        def fake(*args, check=True):
+            seen.append(args)
+            return subprocess.CompletedProcess(args, 0, "2026-11-15T09:30:00Z\n", "")
+
+        gate.gh = fake
+        self.assertEqual(gate.release_published_at("v1.0.15"), "2026-11-15T09:30:00Z")
+        self.assertEqual(
+            seen,
+            [("api", "repos/jposluns/cleanlanguage/releases/tags/v1.0.15", "--jq", ".published_at")],
+        )
 
     def test_published_release_with_matching_checksum_passes(self):
         self.fixtures(CURRENT, ZIP_SUM, CURRENT)

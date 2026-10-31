@@ -23,6 +23,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PACKAGER = REPO / "tools" / "release-package.sh"
+RELEASE_DATE_TOOL = REPO / "tools" / "skill-release-date.py"
 
 
 def _load(name: str, filename: str):
@@ -41,16 +42,25 @@ HEAD_SKILL = subprocess.run(
 ).stdout
 
 
-def skill_with(version_block: str | None) -> str:
+def skill_with(version_block: str | None, released_block: str | None = None) -> str:
     """The real SKILL.md text with its first ``Version:`` line replaced by
-    ``version_block`` (which may be empty to drop it, or multi-line)."""
+    ``version_block`` (which may be empty to drop it, or multi-line).
+
+    When ``version_block`` is given, any ``Released:`` line in the real text is
+    dropped (so a fixture version is never paired with the real date), and
+    ``released_block``, when given, is inserted directly after the version
+    block."""
     if version_block is None:
         return HEAD_SKILL
     out, replaced = [], False
     for line in HEAD_SKILL.splitlines(keepends=True):
+        if line.startswith("Released:"):
+            continue
         if not replaced and line.startswith("Version:"):
             if version_block:
                 out.append(version_block + "\n")
+            if released_block is not None:
+                out.append(released_block + "\n")
             replaced = True
         else:
             out.append(line)
@@ -75,11 +85,12 @@ def gate_verdict(gate, skill_text: str):
     return (True, match.group(1)) if match else (False, None)
 
 
-def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
-    CHECKOUT's release-package.sh (so the code under test, not HEAD's copy, is
-    exercised). Returns (exit_code, stderr)."""
-    skill = skill_with(version_block) + extra_tail
+    CHECKOUT's release-package.sh and tools/skill-release-date.py (so the code
+    under test, not HEAD's copy, is exercised), passing ``--release-date`` when
+    ``release_date`` is given. Returns (exit_code, stderr)."""
+    skill = skill_with(version_block, released_block) + extra_tail
     with tempfile.TemporaryDirectory() as tmp:
         wt = Path(tmp) / "wt"
         subprocess.run(
@@ -102,13 +113,14 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             )
             shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
             os.chmod(wt / "tools" / "release-package.sh", 0o755)
+            shutil.copyfile(RELEASE_DATE_TOOL, wt / "tools" / "skill-release-date.py")
             env = dict(os.environ)
             if locale is not None:
                 env["LC_ALL"] = locale
-            result = subprocess.run(
-                ["bash", str(wt / "tools" / "release-package.sh")],
-                capture_output=True, text=True, env=env,
-            )
+            args = ["bash", str(wt / "tools" / "release-package.sh")]
+            if release_date is not None:
+                args += ["--release-date", release_date]
+            result = subprocess.run(args, capture_output=True, text=True, env=env)
             return result.returncode, result.stderr
         finally:
             subprocess.run(
@@ -161,6 +173,63 @@ class PackagerContractTest(unittest.TestCase):
         code, stderr = run_packager("", "1.0.14")
         self.assertEqual(code, 1, stderr)
         self.assertIn("no Version: line found", stderr)
+
+
+class PackagerReleaseDateTest(unittest.TestCase):
+    """T3 (item 26): the packager checks the Released line it ships.
+
+    With ``--release-date`` it requires the HEAD Released line to name that
+    day, accepting the line absent only at or below the undated baseline; a
+    malformed line fails with or without the argument."""
+
+    def test_matching_release_date_builds(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                    released_block="Released: 2026-11-15  ")
+        self.assertEqual(code, 0, stderr)
+
+    def test_mismatched_release_date_fails(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-16",
+                                    released_block="Released: 2026-11-15  ")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("does not match the release date (2026-11-16)", stderr)
+
+    def test_absent_line_above_baseline_with_release_date_fails(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("has no Released: line", stderr)
+
+    def test_absent_line_at_baseline_with_release_date_builds(self):
+        code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", release_date="2026-11-15")
+        self.assertEqual(code, 0, stderr)
+
+    def test_absent_line_without_release_date_builds(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3")
+        self.assertEqual(code, 0, stderr)
+
+    def test_malformed_line_fails_without_release_date(self):
+        for label, block in (
+            ("not_a_date", "Released: soon"),
+            ("impossible_date", "Released: 2026-02-30"),
+            ("misspelt_key", "released: 2026-11-15"),
+        ):
+            with self.subTest(label):
+                code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", released_block=block)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("Released line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is malformed", stderr)
+
+    def test_line_away_from_version_fails(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                    extra_tail="\nReleased: 2026-11-15\n")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("is malformed", stderr)
+
+    def test_invalid_release_date_argument_fails(self):
+        for value in ("2026-02-30", "", "15 November 2026"):
+            with self.subTest(value):
+                code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date=value,
+                                            released_block="Released: 2026-11-15  ")
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("--release-date must be a real YYYY-MM-DD date", stderr)
 
 
 def _locale_available(name: str) -> bool:

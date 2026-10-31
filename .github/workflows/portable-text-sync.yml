@@ -26,6 +26,9 @@ on:
       - "site/instructions/index.html"
       - "tools/portable-text-skill-source.sha256"
       - "tools/skill-version.py"
+      - "tools/skill-release-date.py"
+      - "tools/test-skill-release-date.py"
+      - "tools/test-portable-text-release-date.sh"
       - "tools/check-portable-text-sync.sh"
       - "tools/check-instructions-page.py"
       - ".github/workflows/portable-text-sync.yml"
@@ -43,6 +46,9 @@ on:
       - "site/instructions/index.html"
       - "tools/portable-text-skill-source.sha256"
       - "tools/skill-version.py"
+      - "tools/skill-release-date.py"
+      - "tools/test-skill-release-date.py"
+      - "tools/test-portable-text-release-date.sh"
       - "tools/check-portable-text-sync.sh"
       - "tools/check-instructions-page.py"
       - ".github/workflows/portable-text-sync.yml"
@@ -56,6 +62,14 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Test the Released-line extractor
+        shell: bash
+        run: python3 tools/test-skill-release-date.py
+
+      - name: Test the Released-line checks in the sync gate
+        shell: bash
+        run: bash tools/test-portable-text-release-date.sh
 
       - name: Check the portable text is reconciled with the skill
         shell: bash

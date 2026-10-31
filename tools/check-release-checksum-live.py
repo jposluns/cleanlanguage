@@ -30,6 +30,12 @@ Behaviour:
   - If the release exists, downloads the version-named zip and its ``.sha256``,
     proves the release is self-consistent (the zip hashes to its own manifest),
     and requires the site's displayed checksum to equal that published digest.
+  - If the release exists and is the version SKILL.md names, also requires the
+    SKILL.md ``Released:`` line (item 26) to name the UTC day of the release
+    ``published_at`` record. The line may be absent only when that version is
+    at or below the undated baseline declared in ``tools/skill-release-date.py``.
+    The meaning of ``published_at`` is an assumption, isolated in
+    ``release_day_from_published_at`` in that tool; see its docstring.
 
 Requires the ``gh`` CLI and, in CI, ``GH_TOKEN`` with ``contents: read``.
 
@@ -39,15 +45,19 @@ Exit codes:
      version and the tag does not exist yet)
   1  drift or inconsistency: the release is published but the site shows a
      different checksum, or the site names an unreleased version that is not
-     the current skill version
+     the current skill version, or the SKILL.md Released date disagrees with
+     the published release (or is missing above the undated baseline)
   2  could not verify (gh or network error, the published release is malformed,
-     or the tag exists with no published release)
-  3  a required file could not be read
+     its ``published_at`` is unreadable or malformed, or the tag exists with no
+     published release)
+  3  a required file could not be read, or the SKILL.md Released line is
+     malformed
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import re
 import subprocess
 import sys
@@ -64,6 +74,28 @@ DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) i
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
 VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
+
+# The one shared strict Released-line extractor (item 26), loaded as a module
+# so this gate applies the same grammar, the same baseline, and the same single
+# published_at interpretation as every other caller.
+RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
+
+
+def _load_release_date_tool():
+    try:
+        spec = importlib.util.spec_from_file_location("skill_release_date", RELEASE_DATE_TOOL)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except (OSError, ImportError, AttributeError) as error:
+        print(
+            f"check-release-checksum-live: could not load {RELEASE_DATE_TOOL.name}: {error}",
+            file=sys.stderr,
+        )
+        raise SystemExit(3)
+    return module
+
+
+RELEASE_DATE = _load_release_date_tool()
 
 
 def die(message: str) -> None:
@@ -104,6 +136,38 @@ def release_status(tag: str) -> int:
 def tag_status(tag: str) -> int:
     """Return the HTTP status for the tag ref itself."""
     return api_status(f"repos/{REPO}/git/ref/tags/{tag}", f"the tag status for {tag}")
+
+
+def release_published_at(tag: str) -> str:
+    """Return the raw ``published_at`` value of release ``tag``, as gh prints it.
+
+    The value is interpreted only by ``RELEASE_DATE.release_day_from_published_at``,
+    which states the assumption it rests on. A gh failure is unverifiable.
+    """
+    try:
+        proc = gh("api", f"repos/{REPO}/releases/tags/{tag}", "--jq", ".published_at", check=False)
+    except FileNotFoundError:
+        cannot_verify("the gh CLI is not available")
+    if proc.returncode != 0:
+        cannot_verify(f"could not read published_at for release {tag} (gh exit {proc.returncode})")
+    return proc.stdout.removesuffix("\n")
+
+
+def skill_released() -> str | None:
+    """Return the ``Released:`` date in SKILL.md, or None when it has no line.
+
+    A malformed line is a required file that cannot be read correctly (exit 3).
+    """
+    if not SKILL.is_file():
+        die(f"{SKILL.relative_to(REPO_ROOT)} does not exist")
+    try:
+        text = SKILL.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        die(f"cleanlanguage/skills/cleanlanguage/SKILL.md could not be read: {error}")
+    try:
+        return RELEASE_DATE.extract(text)
+    except RELEASE_DATE.Malformed as error:
+        die(f"the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed: {error}")
 
 
 def skill_version() -> str:
@@ -205,6 +269,37 @@ def main() -> int:
                 f"published {zip_name} ({computed}) does not match its own "
                 f"manifest ({claimed}); the release is malformed"
             )
+
+    # Item 26 (G4): once the release SKILL.md names is published, its Released
+    # line must name the UTC day of that release published_at, so a date edited
+    # after release, or a release that slipped past UTC midnight after the
+    # release-time check fixed the date, goes red here.
+    if version == skill_version():
+        released = skill_released()
+        if released is None:
+            if RELEASE_DATE.requires_release_date(version):
+                print("Release date inconsistency found:")
+                print(f"  - release {tag} is published")
+                print(
+                    f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {version}, above the "
+                    f"undated baseline {RELEASE_DATE.BASELINE_VERSION}, but has no Released: line"
+                )
+                return 1
+        else:
+            try:
+                published_day = RELEASE_DATE.release_day_from_published_at(release_published_at(tag))
+            except RELEASE_DATE.Malformed as error:
+                cannot_verify(f"the published_at of release {tag} is unusable: {error}")
+            if released != published_day:
+                print("Release date inconsistency found:")
+                print(f"  - cleanlanguage/skills/cleanlanguage/SKILL.md says Released: {released}")
+                print(f"  - release {tag} was published on {published_day} (UTC)")
+                print(
+                    "\nThe Released line must name the UTC day the release was first "
+                    "published. Correct the line to match the release record."
+                )
+                return 1
+            print(f"The SKILL.md Released date {released} matches the publication day of release {tag}.")
 
     if site_sum != claimed:
         print("Release checksum drift found:")

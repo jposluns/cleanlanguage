@@ -87,9 +87,57 @@ jobs:
           echo "VERSION=${version}" >> "${GITHUB_ENV}"
           echo "Releasing version ${version} as ${RELEASE_TAG}."
 
+      - name: Determine the expected release date
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Item 26 (G3): the SKILL.md Released line must name the UTC day the
+          # release is first published, and that is checked BEFORE anything is
+          # published. A new release (HTTP 404) is published today, so the
+          # expected date is the UTC day now, read once here. An existing
+          # release (HTTP 200: a re-run or a force dispatch) keeps its first
+          # publication day, so the expected date is the UTC day of its
+          # published_at, interpreted only by tools/skill-release-date.py
+          # --published-day, the one place that states the assumption about
+          # that field. Any other status fails closed. The packager compares
+          # this date with the Released line at HEAD (the line may be absent
+          # only at or below the undated baseline). This probe duplicates the
+          # one in the publish step on purpose (one purpose each), and the
+          # publish step re-checks the UTC day before it creates a release.
+          response="$(mktemp)"
+          set +e
+          gh api --include --silent "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" >"${response}" 2>&1
+          set -e
+          status="$(awk '$1 ~ /^HTTP\/[0-9.]+$/ { code=$2 } END { print code }' "${response}")"
+          rm -f "${response}"
+          case "${status}" in
+            404)
+              release_date="$(date -u +%F)"
+              ;;
+            200)
+              if ! published_at="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .published_at)"; then
+                echo "Could not read published_at for the existing release ${RELEASE_TAG}." >&2
+                exit 1
+              fi
+              if ! release_date="$(python3 tools/skill-release-date.py --published-day "${published_at}")"; then
+                echo "The published_at of ${RELEASE_TAG} (${published_at:-empty}) is not a usable UTC instant (see the error above)." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Could not determine whether ${RELEASE_TAG} is already published (HTTP ${status:-none}), so its release date is unknown." >&2
+              echo "Refusing to proceed rather than check the Released line against a guess." >&2
+              exit 1
+              ;;
+          esac
+          echo "RELEASE_DATE=${release_date}" >> "${GITHUB_ENV}"
+          echo "Expected release date ${release_date} (UTC) for ${RELEASE_TAG}."
+
       - name: Validate, package, and verify the skill zip
         shell: bash
-        run: tools/release-package.sh --tag "${RELEASE_TAG}"
+        run: tools/release-package.sh --tag "${RELEASE_TAG}" --release-date "${RELEASE_DATE}"
 
       - name: Create or update GitHub Release
         env:
@@ -190,6 +238,21 @@ jobs:
               echo "Release ${RELEASE_TAG} is already published, but its tag now resolves to ${remote_tag_sha:-nothing}, not ${built_commit}." >&2
               echo "Republishing different bytes under a published version would break its checksum as a trust signal." >&2
               echo "Cut a new version, or run this workflow manually with the force input to overwrite ${RELEASE_TAG} deliberately (select the tag as the run ref)." >&2
+              exit 1
+            fi
+          fi
+          if [ "${release_exists}" -eq 0 ]; then
+            # Item 26 (G3): the expected release date was fixed from the UTC
+            # clock before packaging. If the UTC day has rolled over since, the
+            # Released line no longer names the publication day, so refuse here,
+            # before any tag is pushed or release created. A window of seconds
+            # remains between this re-check and the create call below; the
+            # post-release check (tools/check-release-checksum-live.py) catches
+            # a release that slips past UTC midnight inside it.
+            today="$(date -u +%F)"
+            if [ "${today}" != "${RELEASE_DATE}" ]; then
+              echo "The UTC day rolled over from ${RELEASE_DATE} to ${today} after the release date was checked, so the Released line would not name the publication day." >&2
+              echo "Nothing was tagged or published by this step. Re-stamp the Released line for the new day on main, then release again." >&2
               exit 1
             fi
           fi

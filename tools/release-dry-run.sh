@@ -90,6 +90,26 @@ cd "${worktree}"
 sed -i -E "s/^(Version:[[:space:]]*)[0-9][0-9.]*/\1${dry_version}/" cleanlanguage/skills/cleanlanguage/SKILL.md
 grep -qE "^Version:[[:space:]]*${dry_version}([[:space:]]|\$)" cleanlanguage/skills/cleanlanguage/SKILL.md \
   || fail "could not set the dry-run version in SKILL.md"
+# A real bump above the undated baseline also stamps the Released line (item 26)
+# with the UTC day of the release, so stamp the dry-run date directly after the
+# Version line: insert the line when HEAD carries none (the undated baseline)
+# and replace its value otherwise, keeping the two-space hard break. The
+# shared extractor then confirms the stamped value.
+python3 - "${dry_date}" <<'PYDATE'
+import sys
+from pathlib import Path
+d = sys.argv[1]
+p = Path("cleanlanguage/skills/cleanlanguage/SKILL.md")
+lines = p.read_bytes().decode("utf-8").split("\n")
+vi = next(i for i, l in enumerate(lines) if l.startswith("Version:"))
+if vi + 1 < len(lines) and lines[vi + 1].startswith("Released:"):
+    lines[vi + 1] = "Released: " + d + "  "
+else:
+    lines.insert(vi + 1, "Released: " + d + "  ")
+p.write_bytes("\n".join(lines).encode("utf-8"))
+PYDATE
+[ "$(python3 tools/skill-release-date.py cleanlanguage/skills/cleanlanguage/SKILL.md)" = "${dry_date}" ] \
+  || fail "could not set the dry-run Released date in SKILL.md"
 
 # The plugin manifest carries the same version, and release-package.sh asserts the
 # two agree. A real release bumps both together, so the dry run must too, or it
@@ -130,17 +150,29 @@ PYSEED
 grep -q "article:modified_time\" content=\"${seed_date}\"" site/install/index.html \
   || fail "the sentinel seed did not take on the install page"
 
-# 1. Validate, package, and verify the zip, exactly as the release does.
-tools/release-package.sh --tag "${dry_tag}"
+# 1. Validate, package, and verify the zip, exactly as the release does,
+#    including the release-date check the workflow runs with the UTC day.
+tools/release-package.sh --tag "${dry_tag}" --release-date "${dry_date}"
 
 # 1a. Prove the build is REPRODUCIBLE: a second build under a different umask
 #     and a hostile ZIPOPT must yield the identical archive and checksum, so a
 #     third party who rebuilds the commit to verify the release gets our bytes.
 first_sum="$(cut -d' ' -f1 < dist/cleanlanguage.zip.sha256)"
-( umask 077; ZIPOPT="-0" ZIP="-1" tools/release-package.sh --tag "${dry_tag}" >/dev/null )
+( umask 077; ZIPOPT="-0" ZIP="-1" tools/release-package.sh --tag "${dry_tag}" --release-date "${dry_date}" >/dev/null )
 second_sum="$(cut -d' ' -f1 < dist/cleanlanguage.zip.sha256)"
 [ "${first_sum}" = "${second_sum}" ] \
   || fail "the build is not reproducible: ${first_sum} vs ${second_sum} under a different umask/ZIPOPT"
+
+# 1b. Prove the release-date check is live: the same commit, asked to release
+#     on the sentinel day its Released line does not name, must be refused for
+#     exactly that reason, before anything is built.
+if date_err="$(tools/release-package.sh --tag "${dry_tag}" --release-date "${seed_date}" 2>&1 >/dev/null)"; then
+  fail "the packager accepted a release date (${seed_date}) that the Released line does not name"
+fi
+case "${date_err}" in
+  *"does not match the release date (${seed_date})"*) ;;
+  *) fail "the packager refused the sentinel release date for another reason: ${date_err}" ;;
+esac
 
 # 2. Point the site at the dry-run release, exactly as the orchestrator's
 #    post-release flip does,
@@ -158,8 +190,10 @@ python3 tools/generate-sitemap.py --write
 #    triggers (link check, page metadata, the sitemap, and the install page; the portable
 #    text gate does not run on a site-only pull request, and the synthetic
 #    version bump above stands in for a human commit that gate already
-#    covers in real pull requests). check-page-metadata can only pass if the
-#    writer restamped the sentinel dates seeded above.
+#    covers in real pull requests; the Released date agreement across the
+#    renderings is likewise proved by that gate on the real bump pull
+#    request). check-page-metadata can only pass if the writer restamped the
+#    sentinel dates seeded above.
 tools/check-release-links.py
 python3 tools/check-page-metadata.py
 python3 tools/generate-sitemap.py

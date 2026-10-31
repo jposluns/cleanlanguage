@@ -19,6 +19,7 @@ on:
       - "cleanlanguage/skills/cleanlanguage/SKILL.md"
       - "tools/check-release-checksum-live.py"
       - "tools/test-release-checksum-live.py"
+      - "tools/skill-release-date.py"
       - ".github/workflows/release-checksum-live.yml"
   pull_request:
     paths:
@@ -26,6 +27,7 @@ on:
       - "cleanlanguage/skills/cleanlanguage/SKILL.md"
       - "tools/check-release-checksum-live.py"
       - "tools/test-release-checksum-live.py"
+      - "tools/skill-release-date.py"
       - ".github/workflows/release-checksum-live.yml"
   schedule:
     - cron: "17 13 * * *"
