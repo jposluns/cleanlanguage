@@ -356,7 +356,7 @@ class SkillDiscoveryTest(unittest.TestCase):
         self.expect_exit(1, "'name' is missing or not a non-empty string")
 
     def test_entry_reaching_skill_via_sibling_path_fails(self):
-        # codex round-2 HIGH: an entry outside './skills/' that resolves into skills/
+        # An entry outside './skills/' that resolves into skills/
         # through a symlink, paired with an undeclared same-basename skills/<x>
         # directory, previously passed by basename reconciliation. It must now be
         # rejected at entry syntax.
