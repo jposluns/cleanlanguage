@@ -49,14 +49,19 @@ have false failures, accepted as low severity: a round number that the rule abov
 is caught in either form, even in ordinary text, whatever follows it, including the end of the
 text. Examples, not a complete list: in the colon form, a word that follows the number only on the
 next physical line does not exempt it, so such a line fails until the text is reflowed to keep the
-word on the line of the number; in the plain form, a word after a space does not exempt it; and in
+word on the line of the number; in the plain form, a word after a space does not exempt it; in
 either form, a number that a bracket, a percent sign, an arrow, an underscore or a numeric
 character that is not a letter, such as superscript two, a vulgar fraction or a Roman numeral sign,
-follows is caught. The PatternSelfCheck case pins the forms the patterns are known to cover, a
-letter of each Unicode letter category that exempts either form, the ordinary code and prose they
-must not flag, these accepted false failures, a second round number match of each form in one
-searched text and, for each Python placement, the literal set of forms it skips because they would
-end its string literal early, so a pattern weakened or widened past any of those sets fails the
+follows is caught; and in a Python file, where both forms are matched against every physical line
+of code as well as of prose, ordinary arithmetic and identifiers in code, such as the lines
+"x = rounds - 1", "x = rounds-1" and "round2 = 3", are caught. Code lines stay matched because a
+label in a string literal that is not a statement of its own, such as an assertion message, would
+otherwise pass. The PatternSelfCheck case pins the forms the patterns are known to cover, a letter
+of each Unicode letter category that exempts either form, the ordinary code and prose they must
+not flag, these accepted false failures, a second round number match of each form in one searched
+text, the earlier match when both forms match one searched text and, for each Python placement,
+the literal set of forms it skips because they would end its string literal early and leave source
+that does not tokenize or parse, so a pattern weakened or widened past any of those sets fails the
 suite.
 """
 import ast
@@ -416,6 +421,13 @@ class PatternSelfCheck(unittest.TestCase):
     FALSE_FAILURES = ("round: 7 (default)", "round: 7%", "round: 7 -> 8",
                       "round: 7\u00b2", "Area per round: 7 \u00bd", "round: 7\u2167")
     FALSE_FAILURE_PYTHON = ("# Keep round: 7\n# decimal places\nx = 1\n",)
+    # Accepted low-severity false failures in Python code, which is matched line by line as prose
+    # is: ordinary arithmetic and an identifier that the plain form catches. They stay caught, so
+    # code matching cannot be confined to prose silently.
+    CODE_FALSE_FAILURES = ("x = rounds - 1\n", "x = rounds-1\n", "round2 = 3\n")
+    # Labels in Python string literals that are not statements of their own, an assertion message
+    # and an assigned value, which only the matching of code lines catches.
+    CODE_STRING_LABELS = ("assert x, \"fixed in round 7\"\n", "message = \x27fixed in round: 7\x27\n")
     CODE = ("closure=\"C1\", opened=\"2026-09-01\"", "[\"2\", \"2026-09-02\", \"Second\", \"C2\"]",
             "[\"PD-7\", \"MR-1\", \"AT-1\", \"CL-1\", 0xFFA0, 0xD800]")
     # Ordinary Python that the hyphen and colon forms must not flag: subtraction, hyphenated
@@ -434,9 +446,10 @@ class PatternSelfCheck(unittest.TestCase):
     # Python placement: a comment, a multi-line function docstring, a one-line suite docstring in
     # double and in single quotes, and a module docstring, with the label mid-sentence and at the
     # very end, just before the closing quotes. A form that would end the literal of a placement
-    # early, by holding its delimiter, cannot sit inside it, so it is skipped for that placement
-    # only, and the skipped set must be exactly the forms that would, judged from the delimiter of
-    # that placement alone, and equal the literal set pinned for that placement in EXPECTED_SKIPS.
+    # early, by holding its delimiter, and leave source that does not tokenize or parse cannot sit
+    # inside it, so it is skipped for that placement only, and the skipped set must be exactly the
+    # forms that would, judged from the delimiter of that placement and a parse of the source, and
+    # equal the literal set pinned for that placement in EXPECTED_SKIPS.
     # The multi-line SPLIT and SPREAD forms are checked in their own tests below.
     PLACEMENTS = ("# fixed in {}\nx = 1\n",
                   "# fixed in {}, so x holds\nx = 1\n",
@@ -465,6 +478,16 @@ class PatternSelfCheck(unittest.TestCase):
     ESCAPED_FORMS = ("refuting the gemini seed\\\x27s claim", "the \\\"round 7\\\"",
                      "refuting the gemini seed\\\\\x27s claim")
     ESCAPED_SKIPS = ((), (), (), (), (), (), ("refuting the gemini seed\\\\\x27s claim",), (), ())
+    # Forms that end a literal early but leave adjacent string literals that still parse, checked in
+    # every placement: two double quotes on each side of the label, which end a triple-quoted
+    # literal early where they sit just before the closing quotes, and two single quotes on each
+    # side, which end the single-quoted literal early. Python joins the adjacent literals, so the
+    # source parses and the label is caught, never skipped. The early closures and the empty skips
+    # are pinned literally in PLACEMENTS order.
+    ADJACENT_FORMS = ("\"\"round 7\"\"", "\x27\x27round 7\x27\x27")
+    ADJACENT_EARLY = ((), (), (), ("\"\"round 7\"\"",), (), ("\"\"round 7\"\"",),
+                      ("\x27\x27round 7\x27\x27",), (), ("\"\"round 7\"\"",))
+    ADJACENT_SKIPS = ((), (), (), (), (), (), (), (), ())
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
@@ -505,6 +528,12 @@ class PatternSelfCheck(unittest.TestCase):
         for source in self.FALSE_FAILURE_PYTHON:
             with self.subTest(source=source):
                 self.assertTrue(scan("x.py", source), source)
+
+    def test_python_code_lines_are_matched_for_round_numbers(self):
+        for source in self.CODE_FALSE_FAILURES + self.CODE_STRING_LABELS:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source),
+                                 ["x.py:1: a review round number: " + source.strip()], source)
 
     @staticmethod
     def character_after_number(text):
@@ -559,7 +588,30 @@ class PatternSelfCheck(unittest.TestCase):
                 self.assertEqual(skipped, set(expected), placement)
 
     @staticmethod
-    def expected_skip(placement, text):
+    def parses(source):
+        """Whether source tokenizes and parses as Python."""
+        try:
+            for _ in tokenize.generate_tokens(io.StringIO(source).readline):
+                pass
+            ast.parse(source)
+        except (tokenize.TokenError, SyntaxError):
+            return False
+        return True
+
+    @classmethod
+    def expected_skip(cls, placement, text):
+        """Whether text, put in placement, ends its literal early and leaves source that fails.
+
+        A form skips only when it ends the literal that holds it early, as ends_literal_early
+        judges from the delimiter of the placement alone, and the source that results does not
+        tokenize and parse. An early closure can leave adjacent string literals that still parse,
+        as two double quotes do just before triple closing quotes and two single quotes do inside
+        a single-quoted literal, and such a form is checked like any other, not skipped.
+        """
+        return cls.ends_literal_early(placement, text) and not cls.parses(placement.format(text))
+
+    @staticmethod
+    def ends_literal_early(placement, text):
         """Whether text, put in placement, would end the string literal that holds it early.
 
         The delimiter is the one that opens the literal of the placement itself, read from the
@@ -617,6 +669,14 @@ class PatternSelfCheck(unittest.TestCase):
 
     def test_an_escaped_quote_is_judged_by_the_escape_aware_oracle(self):
         self.check_skips_against_the_oracle(self.ESCAPED_FORMS, self.ESCAPED_SKIPS)
+
+    def test_an_early_closure_that_still_parses_is_caught_not_skipped(self):
+        self.assertEqual(len(self.ADJACENT_EARLY), len(self.PLACEMENTS))
+        for placement, early in zip(self.PLACEMENTS, self.ADJACENT_EARLY):
+            with self.subTest(placement=placement):
+                self.assertEqual({text for text in self.ADJACENT_FORMS
+                                  if self.ends_literal_early(placement, text)}, set(early), placement)
+        self.check_skips_against_the_oracle(self.ADJACENT_FORMS, self.ADJACENT_SKIPS)
 
     def test_bare_id_in_python_prose_is_caught(self):
         self.assertTrue(scan("x.py", "# the L5 case\nx = 1\n"))
@@ -684,6 +744,18 @@ class PatternSelfCheck(unittest.TestCase):
             with self.subTest(rel=rel, text=text):
                 found = scan(rel, text)
                 self.assertIn(rel + ":1: a review round number across a line break: " + second, found)
+
+    def test_the_earlier_of_the_two_forms_is_returned(self):
+        self.assertEqual(self.every_round_match("fixed in round 7 and round: 8"), ["round 7", "round: 8"])
+        self.assertEqual(self.every_round_match("fixed in round: 7, and round 8"), ["round: 7", "round 8"])
+        for rel, text, first in (("x.md", "fixed round\n7 and round: 8\n", "round 7"),
+                                 ("x.md", "fixed round:\n7, and round 8\n", "round: 7"),
+                                 ("x.py", "# fixed round\n# 7 and round: 8\n", "round 7"),
+                                 ("x.py", "# fixed round:\n# 7, and round 8\n", "round: 7")):
+            with self.subTest(rel=rel, text=text):
+                found = scan(rel, text)
+                self.assertIn(rel + ":1: a review round number across a line break: " + first, found)
+                self.assertTrue(any(hit.startswith(rel + ":2: a review round number: ") for hit in found), found)
 
 
 def probe(paths):
