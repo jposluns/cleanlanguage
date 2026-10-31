@@ -243,6 +243,15 @@ class _ClaimsBool(_ClaimsType):
     claimed = bool
 
 
+class _ClaimsNone(_ClaimsType):
+    """Fix round 7 (codex LOW): a value that only claims to be None, so
+    only an exact type check refuses it as a result of extract. NoneType
+    cannot be subclassed, so such a claim is the only way a value other than
+    None passes isinstance(value, type(None))."""
+
+    claimed = type(None)
+
+
 class _ExitingStrText(Exception):
     """Fix round 6: an error whose str is an _ExitingStr."""
 
@@ -869,6 +878,11 @@ class ConditionalPassTest(unittest.TestCase):
              returning(_ExitingStr("2026-11-15")), released, "returned an unusable result from extract"),
             ("extract returns a value that only claims to be a str", "extract",
              returning(_ClaimsStr()), released, "returned an unusable result from extract"),
+            # Fix round 7 (codex LOW): the None alternative of extract is
+            # checked by identity too, so a value that only claims to be None
+            # is refused.
+            ("extract returns a value that only claims to be None", "extract",
+             returning(_ClaimsNone()), released, "returned an unusable result from extract"),
             ("requires_release_date returns a value that only claims to be a bool", "requires_release_date",
              returning(_ClaimsBool()), None, "returned an unusable result from requires_release_date"),
             ("release_day_from_published_at returns a str subclass whose methods exit 0",
@@ -886,6 +900,12 @@ class ConditionalPassTest(unittest.TestCase):
             ("a Malformed verdict whose str is a str subclass whose methods exit 0",
              "release_day_from_published_at", raising(_ExitingStrMalformed()), released,
              failed + ": _ExitingStrMalformed: (its message could not be read)"),
+            # Fix round 7 (claude informational): _describe reads the class name
+            # from the real type of the error, never its __class__, so an error
+            # whose __class__ property names another class is described by the
+            # name of its own class.
+            ("an error whose __class__ property names another class", "release_day_from_published_at",
+             raising(_ClassSpoofError("boom")), released, failed + ": _ClassSpoofError: boom"),
         )
         for label, name, value, line, reason in cases:
             with self.subTest(label):
