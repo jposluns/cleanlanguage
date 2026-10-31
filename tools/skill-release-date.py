@@ -15,13 +15,23 @@ The field (item 26) is one meta line, directly after the ``Version:`` line:
 meaning the UTC calendar day on which the matching GitHub Release was first
 published. The rules, all enforced here so every caller agrees:
 
+  - A line looks like a ``Released:`` key when, once every Unicode format
+    character (category ``Cf``, for example a zero-width space or a byte
+    order mark) is removed from it, it starts with ``released`` in any case,
+    optionally behind any run of leading whitespace and Markdown markers
+    (``>``, ``#``, ``*``, ``_``, ``+``, ``-``, or an ordered-list number
+    followed by ``.`` or ``)``), and the word is followed by optional blanks
+    or emphasis markers (``*``, ``_``) and then a colon. A key-like line
+    decorated in any other way, for example inside inline code or an HTML
+    tag, is not detected.
   - The first line that looks like a ``Released:`` key is authoritative. It must
     be spelled exactly ``Released:`` and match
     ``Released:[ \\t]*YYYY-MM-DD[ \\t]*``; a malformed first line is rejected,
     never skipped to a later well-formed one.
   - The value must be a real calendar date (``datetime.date.fromisoformat``).
   - The line must be the line immediately after the first ``Version:`` line.
-  - A second ``Released:`` line anywhere is rejected, so a stale copy cannot
+  - A second line that looks like a ``Released:`` key, anywhere and however it
+    is decorated within the rule above, is rejected, so a stale copy cannot
     survive beside a fresh one.
   - Absent (no line looks like a ``Released:`` key) is a distinct outcome from
     malformed, because absence is legitimate at or below the baseline version.
@@ -58,10 +68,12 @@ Exit codes:
   1  malformed line or value, or the input is not valid UTF-8
   2  usage error
   3  absent: no ``Released:`` line
-  4  could not evaluate: the input file could not be read, or the extractor
-     itself failed unexpectedly
+  4  could not evaluate: the input file could not be read
   5  refused: a well-formed value that names the wrong day
      (``--publish-window``, ``--confirm-published``)
+  6  the extractor itself failed unexpectedly (an internal error); every
+     caller reports this as the extractor failing, never as a content verdict
+     or as unreadable input
 """
 
 from __future__ import annotations
@@ -70,6 +82,7 @@ import datetime
 import io
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 PROG = "skill-release-date"
@@ -84,10 +97,15 @@ BASELINE_VERSION = "1.0.14"
 # Released line names.
 PUBLISH_MARGIN_SECONDS = 600
 
-# Any line that looks like the key, whatever its case or leading blanks. The
-# first such line is the authoritative one; if it is not spelled exactly
-# "Released:" it is malformed, never read as absent.
-RELEASED_KEY_LIKE = re.compile(r"[ \t]*released[ \t]*:", re.IGNORECASE)
+# Any line that looks like the key, whatever its case, leading whitespace or
+# leading Markdown markers, matched after format characters are removed (see
+# looks_like_key). The first such line is the authoritative one; if it is not
+# spelled exactly "Released:" it is malformed, never read as absent.
+RELEASED_KEY_LIKE = re.compile(r"(?:\s|[>#*_+-]|[0-9]+[.)])*released(?:[ \t]|[*_])*:", re.IGNORECASE)
+
+# Item 26: the exit code for an internal failure of the extractor itself,
+# distinct from 4 (the input could not be read).
+INTERNAL_ERROR_EXIT = 6
 RELEASED_LINE = re.compile(r"Released:[ \t]*([0-9]{4}-[0-9]{2}-[0-9]{2})[ \t]*")
 DATE_FORM = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 BARE_VERSION = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
@@ -97,6 +115,14 @@ VERSION_LINE = re.compile(r"Version:[ \t]*[0-9]+\.[0-9]+\.[0-9]+[ \t]*")
 
 class Malformed(ValueError):
     """A Released line or value that breaks the strict grammar."""
+
+
+def looks_like_key(line: str) -> bool:
+    """True when ``line`` looks like a Released key under the module rule:
+    format characters (category ``Cf``) are removed first, so an invisible
+    zero-width character cannot hide a stale copy."""
+    visible = "".join(ch for ch in line if unicodedata.category(ch) != "Cf")
+    return RELEASED_KEY_LIKE.match(visible) is not None
 
 
 def parse_date(value: str) -> str:
@@ -117,7 +143,7 @@ def extract(text: str) -> str | None:
     on any breach of the grammar in the module docstring.
     """
     lines = text.split("\n")
-    keyed = [i for i, line in enumerate(lines) if RELEASED_KEY_LIKE.match(line)]
+    keyed = [i for i, line in enumerate(lines) if looks_like_key(line)]
     if not keyed:
         return None
     first = keyed[0]
@@ -220,8 +246,9 @@ def publish_window_problem(expected: str, now: datetime.datetime) -> str | None:
     )
     remaining = int((midnight - now).total_seconds())
     if remaining < PUBLISH_MARGIN_SECONDS:
+        left = "1 second remains" if remaining == 1 else f"{remaining} seconds remain"
         return (
-            f"only {remaining} seconds remain in the UTC day {expected} "
+            f"only {left} in the UTC day {expected} "
             f"({now:%Y-%m-%dT%H:%M:%SZ}); publishing is refused within "
             f"{PUBLISH_MARGIN_SECONDS // 60} minutes of UTC midnight, so the release "
             f"cannot land on a later day than its Released line names"
@@ -324,7 +351,7 @@ if __name__ == "__main__":
         code = main(sys.argv)
     except SystemExit:
         raise
-    except Exception as error:  # an internal failure is cannot-evaluate, never malformed
+    except Exception as error:  # an internal failure has its own exit, never malformed or unreadable
         print(f"{PROG}: internal error: {error!r}", file=sys.stderr)
-        code = 4
+        code = INTERNAL_ERROR_EXIT
     sys.exit(code)

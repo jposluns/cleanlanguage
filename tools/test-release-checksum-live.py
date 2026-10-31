@@ -9,8 +9,12 @@ unverifiable, and the published-release comparison and the transient-error
 handling are preserved. Once the release SKILL.md names is published, its
 Released line (item 26) must name the UTC day of the release published_at
 record (G4), checked for the release SKILL.md names whatever version the site
-names, and that release must be immutable; the network reads of that record
-are replaced by injected fixtures. These tests pin all of that offline: the
+names, and that release must be immutable; an unpublished release SKILL.md
+names counts as not yet published only when its tag is confirmed absent, and an
+undated release at or below the baseline makes no network call for the date
+check. The gate reads the extractor module only through the attributes it
+declares and validates at load. The network reads of that record are replaced
+by injected fixtures. These tests pin all of that offline: the
 fixtures
 patch the module's file paths and network readers, so no gh CLI and no
 network access are needed. The CI workflow invokes this file before the gate
@@ -20,6 +24,7 @@ the network gate cannot.
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import hashlib
 import importlib.util
@@ -100,15 +105,24 @@ class ConditionalPassTest(unittest.TestCase):
         )
         return subprocess.CompletedProcess(args, 0, "", "")
 
-    def published(self, published_at, statuses=None, immutable="true"):
+    def published(self, published_at, statuses=None, immutable="true", tags=None):
         """Stand in for the release record reads, recording each tag asked for.
 
         ``statuses`` maps a tag to its release status (default 200);
-        ``immutable`` is the raw immutable field every release reports."""
+        ``immutable`` is the raw immutable field every release reports;
+        ``tags`` maps a tag to its tag ref status (default 404)."""
         self.asked = []
         self.probed = []
         self.immutable_asked = []
+        self.tag_probed = []
         statuses = statuses or {}
+        tags = tags or {}
+
+        def tag_reader(tag):
+            self.tag_probed.append(tag)
+            return tags.get(tag, 404)
+
+        gate.tag_status = tag_reader
 
         def reader(tag):
             self.asked.append(tag)
@@ -155,9 +169,14 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("says Released: 2026-11-15", out)
         self.assertIn("published_at reads 2026-11-16T00:00:01Z (UTC day 2026-11-16)", out)
-        self.assertIn("published_at may have moved since then, for example after an asset replacement", out)
         self.assertIn("first-publication readback", out)
         self.assertNotIn("Correct the line to match the release record", out)
+        # R4: the release is immutable, so the remedy is a corrective version;
+        # no republish or asset replacement is offered.
+        self.assertIn("the remedy is a corrective version", out)
+        self.assertNotIn("asset replacement", out)
+        self.assertNotIn("force", out)
+        self.assertNotIn("may have moved", out)
 
     def test_dated_baseline_matching_passes(self):
         # F13: a dated 1.0.14 is compared like any other dated release.
@@ -271,6 +290,34 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(gate.main(), 0)
         self.assertEqual(self.asked, [])
         self.assertEqual(self.probed, [f"v{CURRENT}", f"v{AHEAD}"])
+        self.assertEqual(self.tag_probed, [f"v{AHEAD}"])
+
+    def test_unpublished_newer_release_with_an_existing_tag_is_unverifiable(self):
+        # R2: as on the same-version path, a tag with no release is a deleted
+        # or failed release, never a release not yet published.
+        self.fixtures(CURRENT, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z", statuses={f"v{AHEAD}": 404}, tags={f"v{AHEAD}": 200})
+        with self.assertRaises(SystemExit) as caught:
+            gate.main()
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.tag_probed, [f"v{AHEAD}"])
+        self.assertEqual(self.asked, [])
+
+    def test_unpublished_newer_release_whose_tag_cannot_be_checked_is_unverifiable(self):
+        self.fixtures(CURRENT, ZIP_SUM, AHEAD)
+        self.published("2026-11-15T09:30:00Z", statuses={f"v{AHEAD}": 404}, tags={f"v{AHEAD}": 503})
+        with self.assertRaises(SystemExit) as caught:
+            gate.main()
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_undated_baseline_beside_an_older_site_release_makes_no_probe(self):
+        # R5: the line and the baseline rule are read first, so an undated
+        # release at or below the baseline makes no network call for G4.
+        self.fixtures("1.0.13", ZIP_SUM, CURRENT)
+        self.published("2026-11-15T09:30:00Z")
+        self.assertEqual(gate.main(), 0)
+        self.assertEqual(self.probed, ["v1.0.13"])
+        self.assertEqual((self.tag_probed, self.asked, self.immutable_asked), ([], [], []))
 
     def test_unexpected_status_of_the_newer_release_is_unverifiable(self):
         self.fixtures(CURRENT, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
@@ -319,6 +366,28 @@ class ConditionalPassTest(unittest.TestCase):
             self.assertEqual(caught.exception.code, 3)
         finally:
             gate.RELEASE_DATE.release_day_from_published_at = saved
+
+    def test_extractor_attribute_gone_at_call_time_exits_3(self):
+        # R3: every lookup is resolved inside the protected wrapper, so an
+        # attribute missing at call time is unavailable (exit 3), never an
+        # uncaught AttributeError (exit 1, drift).
+        for name, released in (
+            ("extract", "Released: 2026-11-15  "),
+            ("release_day_from_published_at", "Released: 2026-11-15  "),
+            ("requires_release_date", None),
+            ("Malformed", "Released: 2026-11-15  "),
+        ):
+            with self.subTest(name):
+                saved = getattr(gate.RELEASE_DATE, name)
+                delattr(gate.RELEASE_DATE, name)
+                try:
+                    self.fixtures(AHEAD, ZIP_SUM, AHEAD, released)
+                    self.published("2026-11-15T09:30:00Z")
+                    with self.assertRaises(SystemExit) as caught:
+                        gate.main()
+                    self.assertEqual(caught.exception.code, 3)
+                finally:
+                    setattr(gate.RELEASE_DATE, name, saved)
 
     def test_published_release_with_matching_checksum_passes(self):
         self.fixtures(CURRENT, ZIP_SUM, CURRENT)
@@ -470,6 +539,77 @@ class ModuleLoadTest(unittest.TestCase):
         code, err = self.run_with_extractor("raise RuntimeError(\"boom\")\n")
         self.assertEqual(code, 3, err)
         self.assertIn("RuntimeError", err)
+
+    def test_incomplete_extractor_api_exits_3_naming_the_attribute(self):
+        # R3: the API the gate uses is validated at load time.
+        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
+        for label, tail, name in (
+            ("missing extract", "del extract\n", "extract"),
+            ("missing Malformed", "del Malformed\n", "Malformed"),
+            ("non-callable extract", "extract = 5\n", "extract"),
+            ("missing requires_release_date", "del requires_release_date\n", "requires_release_date"),
+            ("missing release_day_from_published_at", "del release_day_from_published_at\n",
+             "release_day_from_published_at"),
+            ("Malformed not an exception class", "Malformed = \"x\"\n", "Malformed"),
+            ("BASELINE_VERSION not a version", "BASELINE_VERSION = 14\n", "BASELINE_VERSION"),
+        ):
+            with self.subTest(label):
+                code, err = self.run_with_extractor(source + "\n" + tail)
+                self.assertEqual(code, 3, err)
+                self.assertIn(f"lacks a usable {name} ", err)
+                self.assertNotIn("does not exist", err)
+
+
+class ExtractorApiTest(unittest.TestCase):
+    """R3: the class of every reference to an attribute of the loaded
+    extractor module. The gate names none directly; it passes declared names
+    to release_date_call and release_date_attr, the only lookup is the one in
+    release_date_attr, and every declared name is usable in the real
+    extractor."""
+
+    def setUp(self):
+        self.tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
+
+    def test_no_direct_attribute_of_the_loaded_module(self):
+        direct = [
+            node.lineno for node in ast.walk(self.tree)
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "RELEASE_DATE"
+        ]
+        self.assertEqual(direct, [])
+
+    def test_every_routed_name_is_declared(self):
+        declared = {name for name, _kind in gate.RELEASE_DATE_API}
+        routed, dynamic = [], []
+        for node in ast.walk(self.tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in (
+                "release_date_call", "release_date_attr"
+            ):
+                first = node.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    routed.append(first.value)
+                else:
+                    dynamic.append(ast.unparse(first))
+        self.assertTrue(routed)
+        self.assertLessEqual(set(routed), declared)
+        # The only non-literal name is the wrapper passing its own parameter on.
+        self.assertEqual(dynamic, ["name"])
+
+    def test_the_only_lookup_on_the_module_is_in_release_date_attr(self):
+        lookups = []
+        for func in ast.walk(self.tree):
+            if isinstance(func, ast.FunctionDef):
+                for node in ast.walk(func):
+                    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                            and node.func.id in ("getattr", "hasattr", "setattr", "delattr")
+                            and node.args and isinstance(node.args[0], ast.Name)
+                            and node.args[0].id == "RELEASE_DATE"):
+                        lookups.append(func.name)
+        self.assertEqual(lookups, ["release_date_attr"])
+
+    def test_every_declared_name_is_usable_in_the_real_extractor(self):
+        for name, kind in gate.RELEASE_DATE_API:
+            with self.subTest(name):
+                self.assertTrue(gate._api_kind_ok(getattr(gate.RELEASE_DATE, name), kind))
 
 
 if __name__ == "__main__":

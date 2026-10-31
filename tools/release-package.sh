@@ -137,8 +137,9 @@ if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
 fi
 # The Released line (item 26), read from HEAD through the one shared strict
 # extractor, tools/skill-release-date.py: exit 0 prints the date, exit 3 means
-# no line, exit 1 is a malformed line, and any other exit (2, 127, an
-# interpreter failure) means the extractor is unavailable or crashed, which is
+# no line, exit 1 is a malformed line, and any other exit (2, 6 for an
+# internal error, 127, an interpreter failure) means the extractor is
+# unavailable or crashed, which is
 # reported as that, never as malformed content. The extractor is probed first
 # (--baseline), so a missing or broken extractor fails here, before an exit 1
 # could be mistaken for a content verdict. A malformed line fails whether or

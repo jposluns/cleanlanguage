@@ -180,6 +180,22 @@ undated_fixture 1.0.14
 printf 'def broken(:\n' > "${work}/tools/skill-release-date.py"
 expect_fail "a broken extractor is reported as unavailable" "tools/skill-release-date.py is unavailable or broken"
 
+# 2c. An internal error of the extractor (exit 6) is reported as the extractor
+#     crashing, never as an unreadable file or a malformed line. The copy is
+#     made to crash on decoding its input, after the probe has passed.
+undated_fixture 1.0.14
+python3 - "${work}/tools/skill-release-date.py" <<"PYCRASH"
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+anchor = "from pathlib import Path\n"
+if text.count(anchor) != 1:
+    sys.exit("crash anchor not unique in " + path)
+hook = "import io as _crash_io\ndef _crash(*args, **kwargs):\n    raise RuntimeError(\"injected internal error\")\n_crash_io.TextIOWrapper = _crash\n"
+open(path, "w", encoding="utf-8").write(text.replace(anchor, anchor + hook))
+PYCRASH
+expect_fail "an extractor internal error is reported as a crash" "tools/skill-release-date.py is unavailable or crashed (exit 6)"
+
 # 3. A consistent dated release above the baseline passes.
 dated_fixture
 if record; then pass "dated 1.0.15 fixture records"; else fail "dated 1.0.15 fixture records"; fi

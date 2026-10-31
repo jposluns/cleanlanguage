@@ -114,8 +114,9 @@ jobs:
           #
           # Every call to the extractor tells its own content verdicts (exit 1
           # malformed, 3 absent, 4 unreadable) apart from the extractor being
-          # unavailable or crashed (2, 127, anything else), and the probe below
-          # runs first so a broken extractor is never read as a content verdict.
+          # unavailable or crashed (2, 6 for an internal error, 127, anything
+          # else), and the probe below runs first so a broken extractor is
+          # never read as a content verdict.
           release_date_tool_failed() { # exit-code what
             echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2, so the release date cannot be checked." >&2
             exit 1
@@ -237,6 +238,46 @@ jobs:
               *) release_date_tool_failed "${rc}" "checking the publication window" ;;
             esac
           }
+          # confirm_published_release is the publication readback. It runs on
+          # EVERY path that ends a dated release run successfully: after the
+          # first creation, on a re-run at the same commit, and after a force
+          # upload, so a retry cannot turn a failed readback green. It requires
+          # the release record to be immutable (immutable exactly true), so its
+          # published_at cannot be replaced later, and then requires the UTC
+          # day of its published_at to be the Released day, decided only by
+          # tools/skill-release-date.py --confirm-published. The log line it
+          # prints after the first creation is the first-publication
+          # observation that tools/check-release-checksum-live.py defers to.
+          confirm_published_release() { # label
+            local immutable published_at rc=0
+            if ! immutable="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .immutable)"; then
+              echo "::error::Release ${RELEASE_TAG} is published, but its immutable field could not be read back." >&2
+              exit 1
+            fi
+            if [ "${immutable}" != "true" ]; then
+              echo "::error::Release ${RELEASE_TAG} is published, but its immutable field reads ${immutable:-empty}, not true, so its published_at could later be replaced and cannot be relied on." >&2
+              exit 1
+            fi
+            if ! published_at="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .published_at)"; then
+              echo "::error::Release ${RELEASE_TAG} is published, but its published_at could not be read back, so its publication day is unconfirmed against Released: ${RELEASE_DATE}." >&2
+              exit 1
+            fi
+            echo "$1: release ${RELEASE_TAG} published_at ${published_at:-empty}."
+            python3 tools/skill-release-date.py --confirm-published "${RELEASE_DATE}" "${published_at}" >/dev/null || rc=$?
+            case "${rc}" in
+              0) echo "Release ${RELEASE_TAG} was published on ${RELEASE_DATE} (UTC), the day its Released line names." ;;
+              5)
+                echo "::error::Release ${RELEASE_TAG} IS PUBLISHED on a different UTC day from its Released line: Released ${RELEASE_DATE}, published_at ${published_at} (see the days above)." >&2
+                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective version whose Released line names its own publication day; tools/check-release-checksum-live.py reports the same disagreement until then." >&2
+                exit 1
+                ;;
+              1)
+                echo "::error::Release ${RELEASE_TAG} is published, but its published_at (${published_at:-empty}) is not a usable UTC instant, so its publication day is unconfirmed against Released: ${RELEASE_DATE}." >&2
+                exit 1
+                ;;
+              *) release_date_tool_failed "${rc}" "confirming the publication day of ${RELEASE_TAG}" ;;
+            esac
+          }
           # The commit we built and will publish. Normalize GITHUB_SHA to a
           # commit id: a pushed annotated tag can set GITHUB_SHA to the tag
           # object rather than the commit, and every tag comparison below then
@@ -323,6 +364,11 @@ jobs:
               cmp -s "${verify_dir}/cleanlanguage.zip" "${verify_dir}/cleanlanguage-${VERSION}.zip" \
                 || { echo "The published stable and version-named zips of ${RELEASE_TAG} differ." >&2; exit 1; }
               rm -rf "${verify_dir}"; trap - EXIT
+              if [ "${RELEASE_DATED}" = "1" ]; then
+                # Item 26 (G3): a re-run ends green only on the same readback
+                # as the first publication.
+                confirm_published_release "Re-run readback"
+              fi
               echo "Release ${RELEASE_TAG} is already published at ${built_commit}, complete and self-consistent; kept its assets. The orchestrator flips the site checksum post-release."
               exit 0
             else
@@ -361,12 +407,19 @@ jobs:
             fi
           fi
           if [ "${release_exists}" -eq 1 ]; then
+            # The force path itself (replacing the assets of a published
+            # release) is reviewed separately under backlog item 57; the
+            # readback below only keeps a forced run from ending green on a
+            # release record it has not confirmed.
             gh release upload "${RELEASE_TAG}" \
               dist/cleanlanguage.zip \
               dist/cleanlanguage.zip.sha256 \
               "dist/cleanlanguage-${VERSION}.zip" \
               "dist/cleanlanguage-${VERSION}.zip.sha256" \
               --clobber
+            if [ "${RELEASE_DATED}" = "1" ]; then
+              confirm_published_release "Force readback"
+            fi
           else
             if [ "${RELEASE_DATED}" = "1" ]; then
               # Item 26 (G3): the binding publication-window check, after every
@@ -384,40 +437,8 @@ jobs:
               --title "Clean Language ${RELEASE_TAG}" \
               --generate-notes
             if [ "${RELEASE_DATED}" = "1" ]; then
-              # Item 26 (G3): the first-publication readback. Read the
-              # published_at GitHub recorded for the release just created and
-              # require its UTC day to be the Released day, and require the
-              # release to be immutable, so its record cannot be replaced
-              # later. This log line is the first-publication observation that
-              # tools/check-release-checksum-live.py defers to.
-              if ! published_at="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .published_at)"; then
-                echo "::error::Release ${RELEASE_TAG} was created, but its published_at could not be read back, so its publication day is unconfirmed against Released: ${RELEASE_DATE}." >&2
-                exit 1
-              fi
-              echo "First-publication readback: release ${RELEASE_TAG} published_at ${published_at:-empty}."
-              rc=0
-              python3 tools/skill-release-date.py --confirm-published "${RELEASE_DATE}" "${published_at}" >/dev/null || rc=$?
-              case "${rc}" in
-                0) echo "Release ${RELEASE_TAG} was published on ${RELEASE_DATE} (UTC), the day its Released line names." ;;
-                5)
-                  echo "::error::Release ${RELEASE_TAG} IS PUBLISHED on a different UTC day from its Released line: Released ${RELEASE_DATE}, published_at ${published_at} (see the days above)." >&2
-                  echo "The published zip carries Released: ${RELEASE_DATE}, so this needs a maintainer decision (a corrective version, or a deliberate force republish with a re-stamped line); tools/check-release-checksum-live.py reports the same disagreement until it is resolved." >&2
-                  exit 1
-                  ;;
-                1)
-                  echo "::error::Release ${RELEASE_TAG} was created, but its published_at (${published_at:-empty}) is not a usable UTC instant, so its publication day is unconfirmed against Released: ${RELEASE_DATE}." >&2
-                  exit 1
-                  ;;
-                *) release_date_tool_failed "${rc}" "confirming the publication day of ${RELEASE_TAG}" ;;
-              esac
-              if ! immutable="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .immutable)"; then
-                echo "::error::Release ${RELEASE_TAG} was created, but its immutable field could not be read back." >&2
-                exit 1
-              fi
-              if [ "${immutable}" != "true" ]; then
-                echo "::error::Release ${RELEASE_TAG} was created, but its immutable field reads ${immutable:-empty}, not true, so its published_at could later be replaced and cannot be relied on." >&2
-                exit 1
-              fi
+              # Item 26 (G3): the first-publication readback.
+              confirm_published_release "First-publication readback"
             fi
           fi
 

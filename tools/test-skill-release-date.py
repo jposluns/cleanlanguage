@@ -5,8 +5,10 @@ Item 26 adds a ``Released: YYYY-MM-DD`` meta line directly after the
 ``Version:`` line of the skill and its portable renderings. Every gate reads it
 through one extractor, so these tests pin that extractor grammar: the first
 line carrying the key is authoritative, the value is a real calendar date, the
-line sits directly after the first ``Version:`` line, a duplicate is rejected,
-and absence (exit 3) is distinct from malformed (exit 1). They also pin the one
+line sits directly after the first ``Version:`` line, a duplicate is rejected
+(also behind Markdown markers or invisible format characters), absence (exit
+3) is distinct from malformed (exit 1), and an internal error of the extractor
+has its own exit (6), distinct from an unreadable input (4). They also pin the one
 function that interprets a release ``published_at`` value, and (T2) that the
 portable-text builder carries the line into the generated rendering.
 
@@ -36,6 +38,45 @@ VERSION = "Version: 1.0.15  \n"
 RELEASED = "Released: 2026-11-15  \n"
 TAIL = "Author: Jeff Posluns  \nLicence: CC BY-SA 4.0\n\nBody text.\n"
 VALID = HEAD + VERSION + RELEASED + TAIL
+
+# R8: stale copies of the key that the duplicate rule must still see.
+DECORATED = (
+    ("bold", "**Released:** 2026-11-01"),
+    ("bold key", "**Released**: 2026-11-01"),
+    ("underscore emphasis", "__Released:__ 2026-11-01"),
+    ("dash bullet", "- Released: 2026-11-01"),
+    ("star bullet", "* Released: 2026-11-01"),
+    ("plus bullet", "+ Released: 2026-11-01"),
+    ("ordered list", "1. Released: 2026-11-01"),
+    ("ordered list with a parenthesis", "2) Released: 2026-11-01"),
+    ("block quote", "> Released: 2026-11-01"),
+    ("quoted bold bullet", "> - **Released:** 2026-11-01"),
+    ("heading", "## Released: 2026-11-01"),
+    ("tab", "\tReleased: 2026-11-01"),
+    ("no-break space", "\u00a0Released: 2026-11-01"),
+    ("zero-width space", "\u200bReleased: 2026-11-01"),
+    ("byte order mark", "\ufeffReleased: 2026-11-01"),
+    ("word joiner", "\u2060Released: 2026-11-01"),
+    ("bidirectional control", "\u202aReleased: 2026-11-01"),
+    ("soft hyphen inside the key", "Rele\u00adased: 2026-11-01"),
+)
+
+# Decorations outside the rule, which the docstring states are not detected.
+UNDETECTED = (
+    ("inline code", "`Released: 2026-11-01`"),
+    ("HTML tag", "<b>Released:</b> 2026-11-01"),
+)
+
+# Runs the real extractor as a script with its input decoding made to crash,
+# to observe the exit code of an internal error.
+CRASH_RUNNER = (
+    "import io, runpy, sys\n"
+    "def crash(*args, **kwargs):\n"
+    "    raise RuntimeError(\"injected internal error\")\n"
+    "io.TextIOWrapper = crash\n"
+    "sys.argv = sys.argv[1:]\n"
+    "runpy.run_path(sys.argv[0], run_name=\"__main__\")\n"
+)
 
 
 def run(data: bytes | None = None, *args: str, stdin: bool = False):
@@ -107,6 +148,38 @@ class ExtractorCliTest(unittest.TestCase):
 
     def test_duplicate_line_is_rejected(self):
         self.assertRejects(VALID + "Released: 2026-11-15\n", "more than one Released line")
+
+    def test_decorated_duplicate_lines_are_rejected(self):
+        # R8: a stale copy behind Markdown markers or format characters is
+        # still a second Released line.
+        for label, line in DECORATED:
+            with self.subTest(label):
+                self.assertRejects(VALID + line + "\n", "more than one Released line")
+
+    def test_decorated_first_line_is_malformed_not_skipped(self):
+        for label, line in DECORATED:
+            with self.subTest(label):
+                self.assertRejects(HEAD + line + "\n" + VERSION + RELEASED + TAIL, "not spelled exactly")
+
+    def test_decorations_outside_the_rule_are_not_detected(self):
+        # The residual the module docstring states, pinned so the claim and
+        # the behaviour cannot drift apart.
+        for label, line in UNDETECTED:
+            with self.subTest(label):
+                self.assertAccepts(VALID + line + "\n")
+
+    def test_internal_error_exits_6_not_4(self):
+        # R6: an internal failure is not an unreadable input.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "SKILL.md"
+            path.write_text(VALID, encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, "-I", "-c", CRASH_RUNNER, str(EXTRACTOR), str(path)],
+                capture_output=True, text=True,
+            )
+        self.assertEqual(proc.returncode, 6, proc.stderr)
+        self.assertIn("internal error", proc.stderr)
+        self.assertIn("injected internal error", proc.stderr)
 
     def test_misspelt_key_is_malformed_not_absent(self):
         self.assertRejects(HEAD + VERSION + "released: 2026-11-15\n" + TAIL, "not spelled exactly")
@@ -189,7 +262,8 @@ class ExtractorCliTest(unittest.TestCase):
                 self.assertEqual(run(None, "--publish-window", "2026-11-15", now)[:2], (0, "2026-11-15\n"))
         for now, fragment in (
             ("2026-11-15T23:50:01Z", "only 599 seconds remain"),
-            ("2026-11-15T23:59:59Z", "only 1 seconds remain"),
+            ("2026-11-15T23:59:59Z", "only 1 second remains in"),
+            ("2026-11-15T23:59:58Z", "only 2 seconds remain in"),
             ("2026-11-16T00:00:05Z", "the UTC day is now 2026-11-16"),
             ("2026-11-14T12:00:00Z", "the UTC day is now 2026-11-14"),
         ):
@@ -197,6 +271,7 @@ class ExtractorCliTest(unittest.TestCase):
                 code, out, err = run(None, "--publish-window", "2026-11-15", now)
                 self.assertEqual((code, out), (5, ""), err)
                 self.assertIn(fragment, err)
+                self.assertNotIn(" 1 seconds", err)
         for args in (("2026-11-15", "2026-11-15T12:00:00"), ("2026-02-30", "2026-11-15T12:00:00Z")):
             with self.subTest(args):
                 self.assertEqual(run(None, "--publish-window", *args)[0], 1)
@@ -227,6 +302,9 @@ class ExtractorCliTest(unittest.TestCase):
 class FunctionTest(unittest.TestCase):
     def test_baseline_constant(self):
         self.assertEqual(srd.BASELINE_VERSION, "1.0.14")
+
+    def test_internal_error_exit_constant(self):
+        self.assertEqual(srd.INTERNAL_ERROR_EXIT, 6)
 
     def test_requires_release_date_sorts_numerically(self):
         self.assertFalse(srd.requires_release_date("1.0.14"))

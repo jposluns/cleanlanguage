@@ -61,8 +61,9 @@ version_of() {
 # line, and return 0; otherwise report why the line cannot be accepted and
 # return 1. The one shared strict extractor, tools/skill-release-date.py, does
 # the reading: exit 0 prints the date, 3 means no line, 1 is malformed content,
-# 4 is an unreadable file, and anything else (2, 127, an interpreter failure)
-# means the extractor itself is unavailable or crashed, which is reported as
+# 4 is an unreadable file, and anything else (2, 6 for an internal error of
+# the extractor, 127, an interpreter failure) means the extractor itself is
+# unavailable or crashed, which is reported as
 # that, never as malformed content. Every exit but 0 and 3 fails closed.
 released_of() {
   local out rc=0
