@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       force:
-        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one; the remedy for a published release is a corrective new version. Leave it unchecked. To finish a run that failed before it published, re-run this workflow with the tag itself selected as the run ref, not main."
+        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one; the remedy for a published release is a corrective new version. Leave it unchecked. To finish a run that failed before it published, dispatch this workflow again with the tag itself selected as the run ref, not main; the re-run button keeps the original run ref and inputs."
         required: false
         default: false
         type: boolean
@@ -269,6 +269,7 @@ jobs:
             local immutable published_at rc=0
             if ! immutable="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .immutable)"; then
               echo "::error::Release ${RELEASE_TAG} is published, but its immutable field could not be read back." >&2
+              echo "Once the release record is readable, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main, to verify the published release." >&2
               exit 1
             fi
             if [ "${immutable}" != "true" ]; then
@@ -282,6 +283,7 @@ jobs:
             fi
             if ! published_at="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .published_at)"; then
               echo "::error::Release ${RELEASE_TAG} is published, but its published_at could not be read back, so its publication day is unconfirmed against Released: ${RELEASE_DATE}." >&2
+              echo "Once the release record is readable, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main, to verify the published release." >&2
               exit 1
             fi
             echo "$1: release ${RELEASE_TAG} published_at ${published_at:-empty}."
@@ -346,6 +348,7 @@ jobs:
             if [ "${FORCE}" = "true" ]; then
               echo "Refusing the force input: release ${RELEASE_TAG} is already published, and an immutable release cannot be republished." >&2
               echo "The force input only moves the tag of a release that is not yet published. The remedy for a published release is a corrective new version." >&2
+              echo "To verify the published release instead, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main." >&2
               exit 1
             fi
             if [ "${remote_tag_sha}" = "${built_commit}" ]; then
