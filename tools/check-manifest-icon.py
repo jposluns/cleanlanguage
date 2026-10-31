@@ -549,7 +549,7 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
             raise ImageError(ends)
         if read_byte(data, offset, size) != 0xFF:
             raise ImageError(f"byte at offset {offset} is not a marker prefix")
-        while offset < size and data[offset] == 0xFF:
+        while offset < size and read_byte(data, offset, size) == 0xFF:
             offset += 1
         if offset >= size:
             raise ImageError(ends)
