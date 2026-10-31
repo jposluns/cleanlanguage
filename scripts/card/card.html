@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+  html,body{margin:0;width:1200px;height:630px;overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff}
+  .card{position:relative;width:1200px;height:630px;background:radial-gradient(900px 620px at 1040px 560px,rgba(52,211,153,.5),rgba(52,211,153,0) 60%),radial-gradient(760px 540px at 120px 60px,rgba(20,92,59,.95),rgba(20,92,59,0) 62%),#07140e}
+  .safe{position:absolute;left:120px;top:75px;width:960px;height:480px;display:flex;flex-direction:column;justify-content:center;gap:14px}
+  .top{display:flex;justify-content:space-between;align-items:center;flex:0 0 auto}
+  .text{display:flex;flex-direction:column;justify-content:center;gap:16px;width:592px}
+  .artbox{width:340px;height:430px;display:flex;justify-content:flex-end;align-items:center;flex:none}
+  .art{height:430px;max-width:340px;filter:drop-shadow(0 18px 28px rgba(0,0,0,.45))}
+  .brand{margin:0;font-weight:800;line-height:1;letter-spacing:-.03em;text-shadow:0 4px 14px rgba(0,0,0,.4);white-space:nowrap;width:max-content}
+  .brand .word{color:#6ee7b7}
+  .brand b{color:#fbbf24;font-weight:800}
+  .rule{height:6px;border-radius:3px;background:#fbbf24;margin:2px 0}
+  .line{margin:0;font-weight:700;line-height:1.1;letter-spacing:-.015em;white-space:nowrap;width:max-content;text-shadow:0 2px 8px rgba(0,0,0,.35)}
+  .lines{display:flex;flex-direction:column;gap:8px}
+  .sub{margin:4px 0 0;font-size:27px;line-height:1.35;font-weight:400;color:rgba(255,255,255,.88);text-wrap:balance}
+  .formula{margin:0;line-height:1;font-weight:800;letter-spacing:-.01em;white-space:nowrap;width:max-content;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.6)}
+  .formula .f{color:#fbbf24}.formula .g{color:#5eb0ef}
+</style></head><body><div class="card"><div class="safe">
+  <div class="top">
+    <div class="text">
+      <h1 class="brand" id="b"><span class="word">CleanLanguage</span><b>.ai</b></h1>
+      <div class="rule" id="r"></div>
+      <div class="lines"><p class="line" id="l1">Precise, direct, natural AI writing.</p><p class="line" id="l2">A skill you install once, anywhere.</p></div>
+      <p class="sub" id="s">Free writing rules, installed as a skill in any AI assistant or development environment.</p>
+    </div>
+    <div class="artbox"><img class="art" src="illustration.svg" alt=""></div>
+  </div>
+  
+</div></div>
+<script>
+  const width=el=>el.getBoundingClientRect().width;
+  const fit=(el,target,cap,floor)=>{let s=cap; el.style.fontSize=s+'px'; while(width(el)>target && s>floor){s-=1; el.style.fontSize=s+'px'} return s};
+  const b=document.getElementById('b'); const bs=fit(b,592,112,60); const W=width(b); document.getElementById('r').style.width=W+'px';
+  const l1=document.getElementById('l1'), l2=document.getElementById('l2'); const ls=Math.min(fit(l1,592,48,20),fit(l2,592,48,20)); l1.style.fontSize=ls+'px'; l2.style.fontSize=ls+'px';
+  const f=document.getElementById('f'); const fsz=f?fit(f,960,40,20):null; const sub=document.getElementById('s'); if(sub.getAttribute('style')) fit(sub,592,30,18);
+  window.__m={brand:bs,brandW:Math.round(W),line:ls,formula:fsz};
+</script></body></html>
