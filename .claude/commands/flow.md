@@ -1,7 +1,8 @@
 # /flow (cleanlanguage, interim local command)
 
 INTERIM. This command's own inlined text below is authoritative for cleanlanguage (except for the
-tiers and the QA cycle, which the machine-local "Working method" section governs) and is reviewed
+tiers and the QA cycle, which the machine-local "Working method" section governs, and the unattended
+vote rule, which its decisions section governs) and is reviewed
 through this repository's PR gate. It adapts the fleet /flow standard, whose co-owned reference copy is
 `/opt/inbox/FLOW.md` (reconciled with lab_infra's `docs/operating-model.md`, the NORMATIVE source that governs where the two differ); that reference is a
 cross-check, not an unreviewed override of this file. When lab_infra renders a shared `/flow` command
@@ -120,7 +121,10 @@ that QA STEP (a proposal, per Blocked-verification): while it is owed, the run l
 other items to pipeline top-up and read-only prep on upcoming verified-DISJOINT items, as
 cycle step 9 allows, and starts no other apply while this branch is open; the seat is never
 dropped or substituted on that basis. The machine-local "Working method" section sets when an owed
-seat ends. A review that hunts for ways past a security
+seat ends; after the last DISCOVERY round (round 9, or the last round of a maintainer extension, as
+that section sets), a codex seat still owed after its single re-issue is filled by the codex leg of
+the next VERIFY round, the cap of 3 VERIFY rounds still holds, and the obligation ends when the
+item parks. A review that hunts for ways past a security
 control (a review whose task includes, in whole or in part, finding inputs, commands, or paths that a
 guard, hook, sandbox, filter, or permission check fails to block) NEVER goes to codex: run it on
 claude + gemini and, where the tier needs a third family, add an independent, differently-primed
@@ -154,11 +158,14 @@ substitution, not as an unavailability drop. When a required family is genuinely
 the drop and give its seat to a reachable, unbarred family that holds no seat (gemini, for codex on a
 dual-family tier); only where there is none, run an independent, differently-primed second pass in a
 separate clean context as the recorded fallback, and re-run an unreachable family once it returns,
-but only for an item that has not parked after DISCOVERY round 9 or that the maintainer resumes.
+but only for an item that has not parked after its last DISCOVERY round (round 9, or the last round of a
+maintainer extension, as the machine-local "Working method" section sets) or that the maintainer resumes.
 Each lost seat gets its own substitute, so a tri-family tier with codex barred and gemini genuinely
 unreachable runs claude plus 2 independent, differently-primed claude passes, each in its own clean
 context: the fallback pass for the gemini seat and the fleet-rule substitution pass for the codex seat.
-QA is dispatched read-only via `orch-verify`; judge by the result signal, not by grepping worker output.
+QA is dispatched read-only via `orch-verify`, except a claude seat that the maintainer directs to run
+in-session, on the terms the machine-local "Working method" section sets; judge by the result signal, not
+by grepping worker output.
 
 ## Gates and merge (cleanlanguage)
 
@@ -189,13 +196,15 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   The repo `.claude/rules/maintainer-questions.md` sets that shape in its "Superseded in part" note:
   the four roles replace its Option A to D lettering. See that note for the roles, their order, and
   which role carries the recommendation; this file does not restate them.
-  Blocking + unattended -> record BLOCKED only under the provenance test above, route
+  Blocking + unattended -> the unattended vote rule in the machine-local
+  `/opt/cleanlanguage/.claude/CLAUDE.md` decisions section governs; this file does not restate it.
+  A step that rule does not settle stays held: record BLOCKED only under the provenance test above, route
   to the next independent item; if all items genuinely depend on it, close via /handoff. Non-blocking ->
   append to `/opt/cleanlanguage/private/pending-decisions.md` with a pre-drafted four-role block.
 - REVERSIBILITY GATE (every mode): only a closed allowlist auto-continues unattended/at timeout (observe;
   verify-ephemeral; authorial-local on the authorized branch; read-only worker dispatch; gate/QA runs;
   open a PR; merge a green routine PR under the standing grant). Everything irreversible or outward, and
-  every authorial CHOICE, DEFERS. A timeout is NEVER an authorization source.
+  every authorial CHOICE that the unattended vote rule does not settle, DEFERS. A timeout is NEVER an authorization source.
 
 ## Standing disciplines (every mode)
 

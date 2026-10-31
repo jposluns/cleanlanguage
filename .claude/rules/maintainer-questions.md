@@ -19,11 +19,11 @@ one option carries both roles, the asker says so and why, and there is no
 separate Option B. Option C is the maximal option, and Option D is the
 free-form answer, given through the dialog's own free-text field rather than a
 listed option. One AskUserQuestion round may carry up to 4 questions,
-whatever their weight. Where the text below differs, this note governs; in
-particular, "in prose", "Do not batch several questions into one message", and
-the ban on a multiple-choice chip interface in the first bullet under Format no
-longer apply. In the first and last bullets under Format, read "question" as
-"round": the next round follows only after the current one is answered. A
+whatever their weight. Where the text below differs, this note governs. In the
+last bullet under Format, read "question" as "round": the next round follows
+only after the current one is answered. A timeout never authorizes an
+irreversible or outward action; a decision left unanswered is recorded, and the
+step it gates is held while other work continues. A
 fleet-wide decision SOP owned by lab_infra, the infrastructure orchestrator for
 the fleet, will later replace this rule.
 
@@ -33,8 +33,8 @@ order.
 
 ## Format
 
-- Ask one question at a time, in prose. Do not batch several questions into one
-  message, and do not use a multiple-choice chip interface for these.
+- Ask one round at a time: give brief prose context, then the AskUser four-role
+  dialog (the AskUserQuestion tool). Keep one decision per question.
 - Give each question a clear recommendation and viable alternatives:
   - **Option A**: the recommended answer, marked as recommended.
   - **Option B** and **Option C**: two other viable options.
