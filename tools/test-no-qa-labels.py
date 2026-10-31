@@ -29,31 +29,35 @@ prose, and its residual is open-ended: a label in any phrasing, synonym or layou
 not list passes, and no list of known gaps can close that set. Completeness over the class of
 review-history labels therefore rests on an independent search of the scanned files, not on this
 lint. The known residual forms are these: a review pass named in words ("the third review"); a
-round number after a colon that a letter of any script, any character of Unicode category L,
-follows on the same physical line, with or without a space between, as in the text
-"round: 7 decimal places" or a time in microseconds written with the micro sign or the Greek
-mu, or that a decimal continuation follows, as in "round: 7.5"; a round number that any letter
-suffix follows, an ordinal or any other, as in "round 7th" or "round 7a"; a finding id of three
-or more capital letters or of more than two digits; a finding id with a hyphen or a
-letter suffix, such as "the F-1 case" or "the F1a case", anywhere outside parentheses and the
-word "finding"; in prose, a bare id that follows "point " or starts with "PR" (the forms the
-plan uses for its open points and pull-request slices), exclusions the code-line bare id pattern
-does not make, so "point F1" is still caught on any line; a reviewer named other than as codex,
-claude or gemini; a family name more than two words away from its review or credit word, or
-credited by a verb outside REVIEW_WORD; in a Python file, a label split across two lines of a
-string that is not a statement of its own, such as an argument or an assigned value, which is
-matched line by line only; and a bare id in code that does not use one of the letters of the
-code-line bare id pattern. The colon form also has false failures, accepted as low severity: any
-colon round number that neither a letter nor a decimal continuation follows on its own physical
-line is caught, even in ordinary text. Examples, not a complete list: a word that follows the
-number only on the next physical line does not exempt it, so such a line fails until the text is
-reflowed to keep the word on the line of the number; and a number that a bracket, a percent sign,
-an arrow or a numeric character that is not a letter, such as superscript two, a vulgar fraction
-or a Roman numeral sign, follows is caught. The PatternSelfCheck case pins the forms the patterns
-are known to cover, a letter of each Unicode letter category that exempts the colon form, the
-ordinary code and prose they must not flag, these accepted false failures and, for each Python
-placement, the literal set of forms it skips because they would end its string literal early, so
-a pattern weakened or widened past any of those sets fails the suite.
+round number, in the plain form or the colon form, that one rule exempts, because a letter of any
+script, any character of Unicode category L, follows it, directly in the plain form, as in "round
+7th" or "round 7a", and on the same physical line with or without a space between in the colon
+form, as in the text "round: 7 decimal places" or a time in microseconds written with the micro
+sign or the Greek mu, or because a decimal continuation follows it, as in "round 7.5" or "round:
+7.5"; a round number written in decimal digits other than the ASCII digits 0 to 9, such as
+Arabic-Indic or fullwidth digits, which neither form matches; a finding id of three or more capital
+letters or of more than two digits; a finding id with a hyphen or a letter suffix, such as "the F-1
+case" or "the F1a case", anywhere outside parentheses and the word "finding"; in prose, a bare id
+that follows "point " or starts with "PR" (the forms the plan uses for its open points and
+pull-request slices), exclusions the code-line bare id pattern does not make, so "point F1" is
+still caught on any line; a reviewer named other than as codex, claude or gemini; a family name
+more than two words away from its review or credit word, or credited by a verb outside REVIEW_WORD;
+in a Python file, a label split across two lines of a string that is not a statement of its own,
+such as an argument or an assigned value, which is matched line by line only; and a bare id in code
+that does not use one of the letters of the code-line bare id pattern. Both round number forms also
+have false failures, accepted as low severity: a round number that the rule above does not exempt
+is caught in either form, even in ordinary text, whatever follows it, including the end of the
+text. Examples, not a complete list: in the colon form, a word that follows the number only on the
+next physical line does not exempt it, so such a line fails until the text is reflowed to keep the
+word on the line of the number; in the plain form, a word after a space does not exempt it; and in
+either form, a number that a bracket, a percent sign, an arrow, an underscore or a numeric
+character that is not a letter, such as superscript two, a vulgar fraction or a Roman numeral sign,
+follows is caught. The PatternSelfCheck case pins the forms the patterns are known to cover, a
+letter of each Unicode letter category that exempts either form, the ordinary code and prose they
+must not flag, these accepted false failures, a second round number match of each form in one
+searched text and, for each Python placement, the literal set of forms it skips because they would
+end its string literal early, so a pattern weakened or widened past any of those sets fails the
+suite.
 """
 import ast
 import bisect
@@ -90,42 +94,54 @@ NEAR = r"(?:\W+\w+){0,2}?\W+"
 
 
 class RoundNumberPattern:
-    """The review round number pattern, whose colon form is exempt only before a letter.
+    """The review round number pattern, whose two forms are exempt only before a letter.
 
-    The colon form passes only when a letter of any script, a character whose Unicode category
-    starts with L, or a decimal continuation follows the number, so "round: 7 decimal places", a
-    time in microseconds and "round: 7.5" pass. Any other ending, such as a closing quote, a
-    bracket, a mark or a numeric character that is not a letter (superscript two, a vulgar
-    fraction or a Roman numeral sign), is caught. The re module has no letter class, so the letter
-    test is made in code, and search returns a match the way re.Pattern.search does.
+    One rule decides the plain form, as in "round 7", and the colon form, as in "round: 7": a round
+    number passes only when a letter of any script, a character whose Unicode category starts with
+    L, follows it, directly in the plain form and after any spaces on the same physical line in the
+    colon form, or when a decimal continuation follows it. So "round 7th", "round 7a", "round 7.5",
+    "round: 7 decimal places", a time in microseconds and "round: 7.5" pass. Any other ending, or
+    the end of the text, is caught: in the plain form a space before a word, in the colon form a
+    line break before a word, and in either form a closing quote, a bracket, a mark, an underscore
+    or a numeric character that is not a letter (superscript two, a vulgar fraction or a Roman
+    numeral sign). The re module has no letter class, and its word boundary counts those numeric
+    characters and the underscore as word characters, so the letter test is made in code, and
+    search returns a match the way re.Pattern.search does. split_hits searches a joined prose block
+    for this pattern with its line breaks kept, so a letter on the next physical line never exempts
+    the colon form.
 
     The matches of both forms are found once for each text searched and kept, so the run of
     searches split_hits makes over one joined block, one from every start position, costs time
-    linear in the block instead of a rescan of every remaining exempt colon form for each match.
+    linear in the block instead of a rescan of every remaining exempt match for each match.
     A kept match is the match a search from any position up to its start would return: the re
     module tests a word boundary against the whole text, not only from the search position, and
     every match of either form starts where the word round starts and holds no other such start,
     so a search from a later position cannot find a match that starts inside an earlier one.
     """
 
-    PLAIN = re.compile(r"(?i)\brounds?[-\s]*#?[0-9]+\b")
+    PLAIN = re.compile(r"(?i)\brounds?[-\s]*#?[0-9]+(?!\.?[0-9])")
     COLON = re.compile(r"(?i)\brounds?\s*:\s*#?[0-9]+(?!\.?[0-9])")
-    SPACE = re.compile(r"\s*")
+    SPACE = re.compile(r"[^\S\n]*")
 
     def __init__(self):
         self.text = None
         self.plain = self.colon = ()
         self.plain_starts = self.colon_starts = ()
 
+    @staticmethod
+    def letter_at(text, at):
+        """Whether the character of text at index at is a letter."""
+        return at < len(text) and unicodedata.category(text[at]).startswith("L")
+
     def letter_follows(self, text, match):
-        """Whether a letter follows match in text, after any whitespace."""
-        after = self.SPACE.match(text, match.end()).end()
-        return after < len(text) and unicodedata.category(text[after]).startswith("L")
+        """Whether a letter follows match in text, after any spaces on the same line."""
+        return self.letter_at(text, self.SPACE.match(text, match.end()).end())
 
     def index(self, text):
-        """Find and keep the plain matches and the unexempt colon matches of text, once per text."""
+        """Find and keep the unexempt matches of both forms in text, once per text."""
         if text is not self.text:
-            self.plain = tuple(self.PLAIN.finditer(text))
+            self.plain = tuple(match for match in self.PLAIN.finditer(text)
+                               if not self.letter_at(text, match.end()))
             self.colon = tuple(match for match in self.COLON.finditer(text)
                                if not self.letter_follows(text, match))
             self.plain_starts = tuple(match.start() for match in self.plain)
@@ -153,7 +169,7 @@ class RoundNumberPattern:
 
 # Matched against every physical line and every joined prose block.
 LABEL_PATTERNS = (
-    # The colon form is exempt only before a letter or a decimal continuation; see the class.
+    # Each form is exempt only before a letter or a decimal continuation; see the class.
     ("a review round number", RoundNumberPattern()),
     ("a fix round", re.compile(r"(?i)\bfix[- ]rounds?\b")),
     ("a QA round", re.compile(r"(?i)\bQA round\b")),
@@ -281,8 +297,10 @@ def split_hits(block):
     """(line number, pattern name, matched text) for each match that crosses a line break.
 
     The whole block is joined with single spaces and searched as one text, from every start
-    position, so a label spread over any number of lines is caught and an earlier match cannot
-    hide a later one. A match is reported at the segment where it starts.
+    position, so a label spread over any number of lines is caught and an earlier match cannot hide
+    a later one. The round number pattern searches the block joined with line breaks instead, so a
+    letter exempts its colon form only on the line of the number. A match is reported at the
+    segment where it starts, with any line break in its text shown as a space.
     """
     starts = []
     offset = 0
@@ -290,16 +308,18 @@ def split_hits(block):
         starts.append(offset)
         offset += len(text) + 1
     joined = " ".join(text for _, text in block)
+    lined = "\n".join(text for _, text in block)
     hits = []
     for name, pattern in ALL_PATTERNS:
+        searched = lined if isinstance(pattern, RoundNumberPattern) else joined
         position = 0
         while True:
-            match = pattern.search(joined, position)
+            match = pattern.search(searched, position)
             if match is None:
                 break
             first = bisect.bisect_right(starts, match.start()) - 1
             last = bisect.bisect_right(starts, match.end()) - 1
-            hit = (block[first][0], name, match.group(0))
+            hit = (block[first][0], name, match.group(0).replace("\n", " "))
             if last > first and hit not in hits:
                 hits.append(hit)
             position = match.start() + 1
@@ -363,12 +383,15 @@ class PatternSelfCheck(unittest.TestCase):
     # Forms added when the guard was widened: round numbers with a colon at a label position, a
     # plural, a number sign or a hyphen, a hyphenated fix round, the credit verbs, a severity id in
     # any case, a hyphenated finding id in parentheses or after the word finding, and a
-    # letter-suffixed finding id.
+    # letter-suffixed finding id, and a plain round number that an underscore or a numeric
+    # character that is not a letter follows, such as superscript two, one half or the Roman
+    # numeral eight.
     WIDENED = ("as fixed in round: 7", "rounds 7 and 8", "round #7", "the fix-round change",
                "codex caught this", "spotted by gemini", "claude noticed the gap", "gemini confirmed it",
                "High-1: x", "a high-2 case", "(F1a)", "finding F-1", "(F-1)", "round: 7.",
                "as fixed in round: 7, then", "(round: 7)", "round 7", "round-7", "round: 7",
-               "round: 7]", "round: 7?", "round: 7!", "**round: 7**")
+               "round: 7]", "round: 7?", "round: 7!", "**round: 7**",
+               "round 7\u00b2", "round 7\u00bd", "round 7\u2167", "round 7_")
     PROSE = ("U+3164", "aiqt_hooks.py:8414", "\\x1f", "class T01StopActionable", "sha256",
              "item 28.2 stage 2, PR1-d", "open point P5", "round-trip through json.dumps",
              "Point the command at the QA cycle", "commit d191071", "UTF-8", "line 8:", "the g1 prefix",
@@ -376,8 +399,9 @@ class PatternSelfCheck(unittest.TestCase):
              "maintained with Claude", "Claude, Anthropic, OpenAI, Codex, Copilot, or Gemini",
              "U+FFA0", "U+D800..U+DFFF", "round: 7 decimal places", "round: 7.5",
              "Time per round: 7\u00b5s", "Time per round: 7 \u03bcs",
-             "round: 7\u00b5", "round: 7 \u03bc", "round: 7\u5e74")
-    # The colon form is exempt before a letter of any script, so one sample stands for each of
+             "round: 7\u00b5", "round: 7 \u03bc", "round: 7\u5e74",
+             "round 7th", "round 7a", "round 7.5", "round 7\u0434")
+    # Both forms are exempt before a letter of any script, so one sample stands for each of
     # the five letter categories, from scripts the samples above do not use: Cyrillic small and
     # capital letters (Ll, Lu), Arabic and Hebrew letters (Lo), modifier letters (Lm), titlecase
     # letters (Lt) and the ideographic iteration mark (Lm), with and without a space. They pass,
@@ -433,6 +457,14 @@ class PatternSelfCheck(unittest.TestCase):
     # each placement alone.
     DOUBLE_QUOTE_FORMS = ("the \"round 7\" case", "\"round 7\"")
     DOUBLE_QUOTE_SKIPS = ((), (), (), ("\"round 7\"",), (), ("\"round 7\"",), (), (), ("\"round 7\"",))
+    # Forms that hold a backslash-escaped quote, checked in every placement: an escaped single
+    # quote and an escaped double quote at the end of the text, which never end a literal, and a
+    # single quote after an escaped backslash, which ends a single-quoted literal early. The skips
+    # are pinned literally in PLACEMENTS order and must match the escape-aware skip derived from
+    # the delimiter of each placement alone.
+    ESCAPED_FORMS = ("refuting the gemini seed\\\x27s claim", "the \\\"round 7\\\"",
+                     "refuting the gemini seed\\\\\x27s claim")
+    ESCAPED_SKIPS = ((), (), (), (), (), (), ("refuting the gemini seed\\\\\x27s claim",), (), ())
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
@@ -479,7 +511,7 @@ class PatternSelfCheck(unittest.TestCase):
         """The first character after the colon round number in text."""
         return re.search(r"round: 7\s*(.)", text).group(1)
 
-    def test_a_letter_of_every_category_exempts_the_colon_form(self):
+    def test_a_letter_of_every_category_exempts_both_forms(self):
         for text in self.LETTER_EXEMPT:
             with self.subTest(text=text):
                 self.assertEqual(labels_in(text), [], text)
@@ -489,13 +521,19 @@ class PatternSelfCheck(unittest.TestCase):
         self.assertEqual({unicodedata.category(char) for char in letters}, {"Lu", "Ll", "Lt", "Lm", "Lo"})
         scripts = {unicodedata.name(char).split()[0] for char in letters}
         self.assertTrue({"CYRILLIC", "ARABIC", "HEBREW", "MODIFIER"} <= scripts, scripts)
+        for char in letters:
+            with self.subTest(char=char):
+                self.assertEqual(labels_in("round 7" + char), [], char)
+                self.assertEqual(scan("x.py", "# round 7{}\nx = 1\n".format(char)), [], char)
+                self.assertEqual(scan("x.md", "round 7{}\n".format(char)), [], char)
+                self.assertTrue(labels_in("round 7 " + char), char)
 
     def test_a_numeric_character_that_is_not_a_letter_stays_caught(self):
         numerals = [self.character_after_number(text) for text in self.FALSE_FAILURES
                     if not self.character_after_number(text).isascii()]
         self.assertEqual({unicodedata.category(char) for char in numerals}, {"No", "Nl"})
         for char in numerals:
-            for text in ("round: 7" + char, "round: 7 " + char):
+            for text in ("round: 7" + char, "round: 7 " + char, "round 7" + char):
                 with self.subTest(text=text):
                     self.assertTrue(labels_in(text), text)
                     self.assertTrue(scan("x.py", "# {}\nx = 1\n".format(text)), text)
@@ -528,7 +566,10 @@ class PatternSelfCheck(unittest.TestCase):
         token that holds the placeholder, so a comment placement never skips and a quote
         character other than that delimiter never counts. A form skips when the delimiter occurs
         in the literal body before the closing delimiter, as a single quote does inside a
-        single-quoted literal or a final double quote does just before triple closing quotes.
+        single-quoted literal or a final double quote does just before triple closing quotes. A
+        backslash escapes the character after it, as the tokenizer reads the literal, so an escaped
+        quote never ends it, while a quote after an escaped backslash does, and a backslash that
+        escapes the first closing quote leaves the literal unterminated, which skips too.
         """
         marker = "the change"
         for token in tokenize.generate_tokens(io.StringIO(placement.format(marker)).readline):
@@ -542,13 +583,23 @@ class PatternSelfCheck(unittest.TestCase):
         delimiter = opening.group(1)
         body = token.string[len(opening.group(0)):len(token.string) - len(delimiter)]
         body = body.replace(marker, text, 1)
-        return (body + delimiter).find(delimiter) < len(body)
+        closed = body + delimiter
+        at = 0
+        while at < len(closed):
+            if closed[at] == "\\":
+                at += 2
+            elif closed.startswith(delimiter, at):
+                return at < len(body)
+            else:
+                at += 1
+        return True
 
-    def test_a_double_quote_form_is_judged_by_the_delimiter_of_each_placement(self):
-        self.assertEqual(len(self.DOUBLE_QUOTE_SKIPS), len(self.PLACEMENTS))
-        for placement, expected in zip(self.PLACEMENTS, self.DOUBLE_QUOTE_SKIPS):
+    def check_skips_against_the_oracle(self, forms, skips):
+        """Each form in each placement is caught or skipped exactly as expected_skip and skips say."""
+        self.assertEqual(len(skips), len(self.PLACEMENTS))
+        for placement, expected in zip(self.PLACEMENTS, skips):
             skipped = set()
-            for text in self.DOUBLE_QUOTE_FORMS:
+            for text in forms:
                 source = placement.format(text)
                 with self.subTest(placement=placement, text=text):
                     try:
@@ -560,6 +611,12 @@ class PatternSelfCheck(unittest.TestCase):
                     self.assertEqual(text in skipped, self.expected_skip(placement, text), source)
             with self.subTest(placement=placement, skipped=sorted(skipped)):
                 self.assertEqual(skipped, set(expected), placement)
+
+    def test_a_double_quote_form_is_judged_by_the_delimiter_of_each_placement(self):
+        self.check_skips_against_the_oracle(self.DOUBLE_QUOTE_FORMS, self.DOUBLE_QUOTE_SKIPS)
+
+    def test_an_escaped_quote_is_judged_by_the_escape_aware_oracle(self):
+        self.check_skips_against_the_oracle(self.ESCAPED_FORMS, self.ESCAPED_SKIPS)
 
     def test_bare_id_in_python_prose_is_caught(self):
         self.assertTrue(scan("x.py", "# the L5 case\nx = 1\n"))
@@ -582,6 +639,17 @@ class PatternSelfCheck(unittest.TestCase):
                     found = scan(rel, text)
                     self.assertTrue(any(hit.startswith(rel + ":1: ") for hit in found), found)
 
+    def test_a_letter_on_the_next_line_does_not_exempt_a_split_colon_form(self):
+        for rel, text in (("x.md", "fixed in round:\n7\nof review\n"),
+                          ("x.py", "# fixed in round:\n# 7\n# of review\nx = 1\n"),
+                          ("x.py", "\"\"\"fixed in round:\n7\nof review\n\"\"\"\n")):
+            with self.subTest(rel=rel, text=text):
+                self.assertIn(rel + ":1: a review round number across a line break: round: 7", scan(rel, text))
+        for rel, text in (("x.md", "fixed in round:\n7 decimal places\n"),
+                          ("x.py", "# fixed in round:\n# 7 decimal places\nx = 1\n")):
+            with self.subTest(rel=rel, text=text):
+                self.assertEqual(scan(rel, text), [], text)
+
     def test_a_label_spread_over_more_than_three_lines_is_caught_at_its_start(self):
         for rel, text in (("x.py", "".join("# {}\n".format(part) for part in self.SPREAD)),
                           ("x.py", "\"\"\"" + "\n".join(self.SPREAD) + "\n\"\"\"\n"),
@@ -593,6 +661,29 @@ class PatternSelfCheck(unittest.TestCase):
     def test_an_untokenizable_python_file_fails(self):
         with self.assertRaises((tokenize.TokenError, SyntaxError)):
             scan("x.py", "\"\"\"unterminated\n")
+
+    @staticmethod
+    def every_round_match(text):
+        """Every round number match in text, searched from each start position like split_hits."""
+        pattern = RoundNumberPattern()
+        found = []
+        match = pattern.search(text, 0)
+        while match is not None:
+            found.append(match.group(0))
+            match = pattern.search(text, match.start() + 1)
+        return found
+
+    def test_a_second_round_number_in_one_text_is_reported(self):
+        self.assertEqual(self.every_round_match("fixed in round 7 and round 8"), ["round 7", "round 8"])
+        self.assertEqual(self.every_round_match("fixed in round: 7, then round: 8"),
+                         ["round: 7", "round: 8"])
+        for rel, text, second in (("x.md", "fixed in round 7 and round\n8 too\n", "round 8"),
+                                  ("x.py", "# fixed in round 7 and round\n# 8 too\n", "round 8"),
+                                  ("x.md", "fixed in round: 7, then round:\n8, then x\n", "round: 8"),
+                                  ("x.py", "# fixed in round: 7, then round:\n# 8, then x\n", "round: 8")):
+            with self.subTest(rel=rel, text=text):
+                found = scan(rel, text)
+                self.assertIn(rel + ":1: a review round number across a line break: " + second, found)
 
 
 def probe(paths):
