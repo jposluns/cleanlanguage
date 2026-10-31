@@ -50,9 +50,10 @@ number only on the next physical line does not exempt it, so such a line fails u
 reflowed to keep the word on the line of the number; and a number that a bracket, a percent sign,
 an arrow or a numeric character that is not a letter, such as superscript two, a vulgar fraction
 or a Roman numeral sign, follows is caught. The PatternSelfCheck case pins the forms the patterns
-are known to cover, the ordinary code and prose they must not flag, these accepted false failures
-and, for each Python placement, the literal set of forms it skips because they hold its quote
-character, so a pattern weakened or widened past any of those sets fails the suite.
+are known to cover, a letter of each Unicode letter category that exempts the colon form, the
+ordinary code and prose they must not flag, these accepted false failures and, for each Python
+placement, the literal set of forms it skips because they would end its string literal early, so
+a pattern weakened or widened past any of those sets fails the suite.
 """
 import ast
 import bisect
@@ -97,23 +98,56 @@ class RoundNumberPattern:
     bracket, a mark or a numeric character that is not a letter (superscript two, a vulgar
     fraction or a Roman numeral sign), is caught. The re module has no letter class, so the letter
     test is made in code, and search returns a match the way re.Pattern.search does.
+
+    The matches of both forms are found once for each text searched and kept, so the run of
+    searches split_hits makes over one joined block, one from every start position, costs time
+    linear in the block instead of a rescan of every remaining exempt colon form for each match.
+    A kept match is the match a search from any position up to its start would return: the re
+    module tests a word boundary against the whole text, not only from the search position, and
+    every match of either form starts where the word round starts and holds no other such start,
+    so a search from a later position cannot find a match that starts inside an earlier one.
     """
 
     PLAIN = re.compile(r"(?i)\brounds?[-\s]*#?[0-9]+\b")
     COLON = re.compile(r"(?i)\brounds?\s*:\s*#?[0-9]+(?!\.?[0-9])")
     SPACE = re.compile(r"\s*")
 
+    def __init__(self):
+        self.text = None
+        self.plain = self.colon = ()
+        self.plain_starts = self.colon_starts = ()
+
+    def letter_follows(self, text, match):
+        """Whether a letter follows match in text, after any whitespace."""
+        after = self.SPACE.match(text, match.end()).end()
+        return after < len(text) and unicodedata.category(text[after]).startswith("L")
+
+    def index(self, text):
+        """Find and keep the plain matches and the unexempt colon matches of text, once per text."""
+        if text is not self.text:
+            self.plain = tuple(self.PLAIN.finditer(text))
+            self.colon = tuple(match for match in self.COLON.finditer(text)
+                               if not self.letter_follows(text, match))
+            self.plain_starts = tuple(match.start() for match in self.plain)
+            self.colon_starts = tuple(match.start() for match in self.colon)
+            self.text = text
+
+    @staticmethod
+    def first_from(matches, starts, pos):
+        """The first of matches that starts at or after pos, or None."""
+        at = bisect.bisect_left(starts, pos)
+        return matches[at] if at < len(matches) else None
+
     def colon_search(self, text, pos):
         """The first colon-form match at or after pos that no letter follows, or None."""
-        for match in self.COLON.finditer(text, pos):
-            after = self.SPACE.match(text, match.end()).end()
-            if after == len(text) or not unicodedata.category(text[after]).startswith("L"):
-                return match
-        return None
+        self.index(text)
+        return self.first_from(self.colon, self.colon_starts, pos)
 
     def search(self, text, pos=0):
         """The earliest match of either form at or after pos, or None."""
-        found = [match for match in (self.PLAIN.search(text, pos), self.colon_search(text, pos)) if match]
+        self.index(text)
+        found = [match for match in (self.first_from(self.plain, self.plain_starts, pos),
+                                     self.first_from(self.colon, self.colon_starts, pos)) if match]
         return min(found, key=lambda match: match.start()) if found else None
 
 
@@ -343,6 +377,14 @@ class PatternSelfCheck(unittest.TestCase):
              "U+FFA0", "U+D800..U+DFFF", "round: 7 decimal places", "round: 7.5",
              "Time per round: 7\u00b5s", "Time per round: 7 \u03bcs",
              "round: 7\u00b5", "round: 7 \u03bc", "round: 7\u5e74")
+    # The colon form is exempt before a letter of any script, so one sample stands for each of
+    # the five letter categories, from scripts the samples above do not use: Cyrillic small and
+    # capital letters (Ll, Lu), Arabic and Hebrew letters (Lo), modifier letters (Lm), titlecase
+    # letters (Lt) and the ideographic iteration mark (Lm), with and without a space. They pass,
+    # so the exemption cannot narrow to some scripts or drop a category silently.
+    LETTER_EXEMPT = ("round: 7 \u0434\u043d\u044f", "round: 7\u0434", "round: 7 \u0414",
+                     "round: 7 \u0645", "round: 7\u05d0", "round: 7 \u02b0", "round: 7\u02e0",
+                     "round: 7\u3005", "round: 7 \u01c5", "round: 7\u1f88")
     # Accepted low-severity false failures of the colon form, as examples: ordinary text that is
     # caught because neither a letter nor a decimal continuation follows the number on its own
     # line, including a numeric character that is not a letter (superscript two, one half and the
@@ -367,11 +409,11 @@ class PatternSelfCheck(unittest.TestCase):
     # Every single-line caught form, in LABELS, COMMENT_LABELS and WIDENED, is checked in each
     # Python placement: a comment, a multi-line function docstring, a one-line suite docstring in
     # double and in single quotes, and a module docstring, with the label mid-sentence and at the
-    # very end, just before the closing quotes. A form that holds the quote character of a
-    # placement cannot sit inside its literal, so it is skipped for that placement only, and the
-    # skipped set must be exactly the forms that hold that quote character and equal the literal
-    # set pinned for that placement in EXPECTED_SKIPS. The multi-line SPLIT and SPREAD forms are
-    # checked in their own tests below.
+    # very end, just before the closing quotes. A form that would end the literal of a placement
+    # early, by holding its delimiter, cannot sit inside it, so it is skipped for that placement
+    # only, and the skipped set must be exactly the forms that would, judged from the delimiter of
+    # that placement alone, and equal the literal set pinned for that placement in EXPECTED_SKIPS.
+    # The multi-line SPLIT and SPREAD forms are checked in their own tests below.
     PLACEMENTS = ("# fixed in {}\nx = 1\n",
                   "# fixed in {}, so x holds\nx = 1\n",
                   "def f():\n    \"\"\"Handle x.\n\n    Fixed in {}, so x holds.\n    \"\"\"\n",
@@ -384,6 +426,13 @@ class PatternSelfCheck(unittest.TestCase):
     # The forms each placement skips, pinned literally in PLACEMENTS order: only the one-line
     # suite docstring in single quotes skips a form, the one that holds a single quote.
     EXPECTED_SKIPS = ((), (), (), (), (), (), ("refuting the gemini seed\x27s claim",), (), ())
+    # Forms that hold a double quote, checked in every placement: one with the quote inside the
+    # text, which sits in every placement, and one that ends with the quote, which ends a
+    # triple-quoted literal early only where it sits just before the closing quotes. The skips are
+    # pinned literally in PLACEMENTS order and must match the skip derived from the delimiter of
+    # each placement alone.
+    DOUBLE_QUOTE_FORMS = ("the \"round 7\" case", "\"round 7\"")
+    DOUBLE_QUOTE_SKIPS = ((), (), (), ("\"round 7\"",), (), ("\"round 7\"",), (), (), ("\"round 7\"",))
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
@@ -425,11 +474,36 @@ class PatternSelfCheck(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertTrue(scan("x.py", source), source)
 
+    @staticmethod
+    def character_after_number(text):
+        """The first character after the colon round number in text."""
+        return re.search(r"round: 7\s*(.)", text).group(1)
+
+    def test_a_letter_of_every_category_exempts_the_colon_form(self):
+        for text in self.LETTER_EXEMPT:
+            with self.subTest(text=text):
+                self.assertEqual(labels_in(text), [], text)
+                self.assertEqual(scan("x.py", "# {}\nx = 1\n".format(text)), [], text)
+                self.assertEqual(scan("x.md", text + "\n"), [], text)
+        letters = [self.character_after_number(text) for text in self.LETTER_EXEMPT]
+        self.assertEqual({unicodedata.category(char) for char in letters}, {"Lu", "Ll", "Lt", "Lm", "Lo"})
+        scripts = {unicodedata.name(char).split()[0] for char in letters}
+        self.assertTrue({"CYRILLIC", "ARABIC", "HEBREW", "MODIFIER"} <= scripts, scripts)
+
+    def test_a_numeric_character_that_is_not_a_letter_stays_caught(self):
+        numerals = [self.character_after_number(text) for text in self.FALSE_FAILURES
+                    if not self.character_after_number(text).isascii()]
+        self.assertEqual({unicodedata.category(char) for char in numerals}, {"No", "Nl"})
+        for char in numerals:
+            for text in ("round: 7" + char, "round: 7 " + char):
+                with self.subTest(text=text):
+                    self.assertTrue(labels_in(text), text)
+                    self.assertTrue(scan("x.py", "# {}\nx = 1\n".format(text)), text)
+
     def test_every_caught_form_is_caught_in_every_python_placement(self):
         forms = self.LABELS + self.COMMENT_LABELS + self.WIDENED
         self.assertEqual(len(self.EXPECTED_SKIPS), len(self.PLACEMENTS))
         for placement, expected in zip(self.PLACEMENTS, self.EXPECTED_SKIPS):
-            quote = next((q for q in ("\x27", "\x22") if q in placement), None)
             with self.subTest(placement=placement):
                 self.assertEqual(scan("x.py", placement.format("the change")), [], placement)
             skipped = set()
@@ -443,7 +517,48 @@ class PatternSelfCheck(unittest.TestCase):
                 with self.subTest(placement=placement, text=text):
                     self.assertTrue(found, source)
             with self.subTest(placement=placement, skipped=sorted(skipped)):
-                self.assertEqual(skipped, {text for text in forms if quote and quote in text}, placement)
+                self.assertEqual(skipped, {text for text in forms if self.expected_skip(placement, text)}, placement)
+                self.assertEqual(skipped, set(expected), placement)
+
+    @staticmethod
+    def expected_skip(placement, text):
+        """Whether text, put in placement, would end the string literal that holds it early.
+
+        The delimiter is the one that opens the literal of the placement itself, read from the
+        token that holds the placeholder, so a comment placement never skips and a quote
+        character other than that delimiter never counts. A form skips when the delimiter occurs
+        in the literal body before the closing delimiter, as a single quote does inside a
+        single-quoted literal or a final double quote does just before triple closing quotes.
+        """
+        marker = "the change"
+        for token in tokenize.generate_tokens(io.StringIO(placement.format(marker)).readline):
+            if marker in token.string:
+                break
+        else:
+            raise AssertionError("placement holds no placeholder: " + placement)
+        if token.type != tokenize.STRING:
+            return False
+        opening = QUOTE_OPEN.match(token.string)
+        delimiter = opening.group(1)
+        body = token.string[len(opening.group(0)):len(token.string) - len(delimiter)]
+        body = body.replace(marker, text, 1)
+        return (body + delimiter).find(delimiter) < len(body)
+
+    def test_a_double_quote_form_is_judged_by_the_delimiter_of_each_placement(self):
+        self.assertEqual(len(self.DOUBLE_QUOTE_SKIPS), len(self.PLACEMENTS))
+        for placement, expected in zip(self.PLACEMENTS, self.DOUBLE_QUOTE_SKIPS):
+            skipped = set()
+            for text in self.DOUBLE_QUOTE_FORMS:
+                source = placement.format(text)
+                with self.subTest(placement=placement, text=text):
+                    try:
+                        found = scan("x.py", source)
+                    except (tokenize.TokenError, SyntaxError):
+                        skipped.add(text)
+                    else:
+                        self.assertTrue(found, source)
+                    self.assertEqual(text in skipped, self.expected_skip(placement, text), source)
+            with self.subTest(placement=placement, skipped=sorted(skipped)):
                 self.assertEqual(skipped, set(expected), placement)
 
     def test_bare_id_in_python_prose_is_caught(self):
