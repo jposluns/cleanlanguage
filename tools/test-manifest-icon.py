@@ -194,6 +194,27 @@ class ManifestIconTest(unittest.TestCase):
         self.assertIn(needle, err.getvalue())
         return err.getvalue()
 
+    def expect_image_error(self, name, image_format, reason):
+        """Expect exit 1 whose whole stderr is the parse refusal of icon name for reason."""
+        err = self.expect_exit(1, reason)
+        icon = "./assets/" + name
+        self.assertEqual(
+            err,
+            f"check-manifest-icon: {CLAUDE} field icon: icon file {icon!r} is not a "
+            f"parseable {image_format}: {reason}\n",
+        )
+
+    def resolve_raising(self, target, error):
+        """Patch Path.resolve to raise error for the path target only."""
+        real_resolve = Path.resolve
+
+        def fake_resolve(path, *args, **kwargs):
+            if path == target:
+                raise error
+            return real_resolve(path, *args, **kwargs)
+
+        return mock.patch.object(gate.Path, "resolve", autospec=True, side_effect=fake_resolve)
+
     def expect_pass(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -215,11 +236,14 @@ class ManifestIconTest(unittest.TestCase):
 
     @contextlib.contextmanager
     def scoped_io(self, manifests=False, open_error=None, fstat_result=None,
-                  fstat_error=None, read_result=None, read_error=None):
+                  fstat_error=None, read_result=None, read_error=None, read_sizes=None):
         """Mock os.open, os.fstat and os.read for the icon only, or for manifests only.
 
         Yields the list of scoped paths whose open was attempted, so a test can show
-        the mock reached the file it targets.
+        the mock reached the file it targets. When read_sizes is a list, every scoped
+        read returns a full block of the size it asks for and appends that size, so
+        the file never ends. More than 10000 scoped reads of any kind raise
+        RuntimeError, so an unbounded read loop fails the test instead of hanging it.
         """
         real_open, real_fstat, real_read = os.open, os.fstat, os.read
         attempts = []
@@ -246,12 +270,20 @@ class ManifestIconTest(unittest.TestCase):
                     return fstat_result
             return real_fstat(fd, *args, **kwargs)
 
+        reads = []
+
         def fake_read(fd, count):
             if fd in scoped_fds:
+                reads.append(count)
+                if len(reads) > 10000:
+                    raise RuntimeError("a scoped read loop is unbounded")
                 if read_error is not None:
                     raise read_error
                 if read_result is not None:
                     return read_result
+                if read_sizes is not None:
+                    read_sizes.append(count)
+                    return bytes(count)
             return real_read(fd, count)
 
         with mock.patch.object(gate.os, "open", side_effect=fake_open), \
@@ -279,6 +311,7 @@ class ManifestIconTest(unittest.TestCase):
             (b"iTXt", b"XML:com.adobe.xmp\x00\x00\x00\x00\x00<x/>"),
             (b"pHYs", bytes(9)),
             (b"mkBF", b"\xff\xc0\x00\x11 private"),
+            (b"zTXt", b"Comment\x00\x00" + zlib.compress(b"z")),
         )
         self.set_icon("CL_icon.png", make_png(512, 512, before_idat=extra))
         self.assertIn("512 x 512", self.expect_pass())
@@ -308,7 +341,8 @@ class ManifestIconTest(unittest.TestCase):
         self.assertIn("is a JPEG of 512 x 512 pixels", self.expect_pass())
 
     def test_jpeg_fill_bytes_and_rst_before_sof_pass(self):
-        pre = (jpeg_segment(0xE0, b"JFIF\x00"), b"\xff\xff\xff\xd0", b"\xff\x01")
+        rst = b"".join(bytes([0xFF, marker]) for marker in range(0xD0, 0xD8))
+        pre = (jpeg_segment(0xE0, b"JFIF\x00"), b"\xff\xff\xff\xd0", b"\xff\x01", rst)
         self.set_icon("icon.jpg", make_jpeg(512, 512, pre=pre, fill=b"\xff\xff"))
         self.expect_pass()
 
@@ -347,6 +381,17 @@ class ManifestIconTest(unittest.TestCase):
         (self.root / "extra").mkdir()
         (self.root / "extra" / "plugin.json").write_text("{}", encoding="utf-8")
         self.expect_exit(1, "extra/plugin.json is on disk but not declared in MANIFESTS")
+
+    def test_unlisted_marketplace_on_disk_fails(self):
+        (self.root / "extra" / ".claude-plugin").mkdir(parents=True)
+        (self.root / "extra" / ".claude-plugin" / "marketplace.json").write_text("{}", encoding="utf-8")
+        self.expect_exit(1, "extra/.claude-plugin/marketplace.json is on disk but not declared in MANIFESTS")
+
+    def test_declared_manifest_set_and_root_are_exact(self):
+        real_root, real_manifests, real_required = self._saved
+        self.assertEqual(real_root, MODULE_PATH.parent.parent)
+        self.assertEqual(real_manifests, MANIFESTS)
+        self.assertEqual(real_required, (CLAUDE,))
 
     def test_tree_walk_oserror_fails_closed(self):
         with mock.patch.object(gate.os, "walk", side_effect=OSError("walk refused")):
@@ -453,6 +498,10 @@ class ManifestIconTest(unittest.TestCase):
         with self.scoped_io(manifests=True, fstat_result=fifo_mode):
             self.expect_exit(1, f"{MARKET} is not a regular file")
 
+    def test_manifest_read_stops_at_end_of_file(self):
+        with self.scoped_io(manifests=True, read_result=b""):
+            self.expect_exit(1, f"{MARKET} is not valid JSON")
+
     def test_manifest_read_oserror_fails_closed(self):
         with self.scoped_io(manifests=True, read_error=OSError(5, "Input/output error")):
             self.expect_exit(3, f"{MARKET} could not be read: [Errno 5]")
@@ -512,7 +561,7 @@ class ManifestIconTest(unittest.TestCase):
     def test_marketplace_icon_fails(self):
         self.write_json(MARKET, {"name": "m", "icon": "./x.png", "plugins": []})
         self.expect_exit(1, f"{MARKET} field icon: an icon in a marketplace manifest is not supported")
-        self.write_json(MARKET, {"name": "m", "plugins": [{"name": "a"}, "s", {"icon": "./x.png"}]})
+        self.write_json(MARKET, {"name": "m", "plugins": [{"name": "a"}, "icon", {"icon": "./x.png"}]})
         self.expect_exit(1, f"{MARKET} field plugins[2].icon: an icon in a marketplace manifest")
 
     def test_plugin_entry_icon_in_plugin_manifest_is_checked(self):
@@ -565,7 +614,8 @@ class ManifestIconTest(unittest.TestCase):
 
     def test_icon_control_and_surrogate_fail(self):
         for value in ("./assets/CL\x01icon.png", "./assets/CL\x7ficon.png",
-                      "./assets/CL\nicon.png", "./assets/CL\ud800icon.png"):
+                      "./assets/CL\nicon.png", "./assets/CL\x1ficon.png", "./assets/CL\ud800icon.png",
+                      "./assets/CL\udffficon.png"):
             with self.subTest(value=value):
                 self.set_icon_value(value)
                 self.expect_exit(1, "contains a control, NUL, surrogate, or backslash character")
@@ -766,9 +816,55 @@ class ManifestIconTest(unittest.TestCase):
         with mock.patch.object(gate.os, "lstat", side_effect=fake_lstat):
             self.expect_exit(3, "could not be inspected")
 
+    def test_icon_lstat_io_error_fails_closed(self):
+        real_lstat = os.lstat
+
+        def fake_lstat(path, *args, **kwargs):
+            if Path(path).name == "CL_icon.png":
+                raise OSError(errno.EIO, "Input/output error", str(path))
+            return real_lstat(path, *args, **kwargs)
+
+        with mock.patch.object(gate.os, "lstat", side_effect=fake_lstat):
+            self.expect_exit(3, "icon path " + repr("./assets/CL_icon.png") + " could not be inspected: [Errno 5]")
+
     def test_file_changed_during_read_fails_closed(self):
         with self.scoped_io(read_result=b""):
             self.expect_exit(3, "changed while it was read")
+
+    def test_icon_read_is_bounded(self):
+        # A file that grows without end is read to MAX_ICON_BYTES + 1 bytes at most,
+        # in blocks of at most READ_BLOCK, and then refused as changed.
+        sizes = []
+        with self.scoped_io(read_sizes=sizes) as attempts:
+            self.expect_exit(
+                3, "field icon: icon file " + repr("./assets/CL_icon.png") + " changed while it was read"
+            )
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(sum(sizes), 2000001)
+        self.assertEqual(len(sizes), 31)
+        self.assertEqual(max(sizes), 65536)
+        self.assertEqual(sizes[-1], 2000001 - 30 * 65536)
+
+    def test_icon_resolve_failure_fails_closed(self):
+        icon = self.assets / "CL_icon.png"
+        plugin_root = self.root / "cleanlanguage"
+        for target in (icon, plugin_root):
+            for error in (OSError(errno.ELOOP, "Too many levels of symbolic links"),
+                          RuntimeError("Symlink loop from " + repr(str(target)))):
+                with self.subTest(target=target.name, error=type(error).__name__):
+                    with self.resolve_raising(target, error):
+                        self.expect_exit(
+                            3,
+                            "field icon: icon path " + repr("./assets/CL_icon.png")
+                            + f" could not be resolved: {error}",
+                        )
+
+    def test_repository_root_resolve_failure_fails_closed(self):
+        for error in (OSError(errno.EACCES, "Permission denied"), RuntimeError("Symlink loop")):
+            with self.subTest(error=type(error).__name__):
+                with self.resolve_raising(self.root, error):
+                    err = self.expect_exit(3, f"the repository root could not be resolved: {error}")
+                self.assertEqual(err, f"check-manifest-icon: the repository root could not be resolved: {error}\n")
 
     def test_empty_file_fails(self):
         self.set_icon("CL_icon.png", b"")
@@ -782,7 +878,8 @@ class ManifestIconTest(unittest.TestCase):
 
     def test_foreign_signatures_fail(self):
         for data in (b"GIF89a" + bytes(20), b"RIFF\x00\x00\x00\x00WEBPVP8 ",
-                     b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>", b"\x89PNG\r\n"):
+                     b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>", b"\x89PNG\r\n",
+                     b"\xff\xd8\x00" + bytes(20)):
             with self.subTest(data=data[:8]):
                 self.set_icon("CL_icon.png", data)
                 self.expect_exit(1, "is neither PNG nor JPEG by file signature")
@@ -830,13 +927,17 @@ class ManifestIconTest(unittest.TestCase):
         self.set_icon("CL_icon.png", make_png(512, 512, ihdr_length=12))
         self.expect_exit(1, "IHDR length is 12, not 13")
 
-    def test_png_zero_width_fails(self):
-        self.set_icon("CL_icon.png", make_png(0, 512))
-        self.expect_exit(1, "width or height is 0")
+    def test_png_zero_dimension_fails(self):
+        for width, height in ((0, 512), (512, 0), (0, 0)):
+            with self.subTest(width=width, height=height):
+                self.set_icon("CL_icon.png", make_png(width, height))
+                self.expect_image_error("CL_icon.png", "PNG", "width or height is 0")
 
     def test_png_dimension_above_u31_fails(self):
-        self.set_icon("CL_icon.png", make_png(2**31, 2**31))
-        self.expect_exit(1, "width or height is above 2**31 - 1")
+        for width, height in ((2**31, 2**31), (512, 2**31), (2**31, 512), (2**32 - 1, 512)):
+            with self.subTest(width=width, height=height):
+                self.set_icon("CL_icon.png", make_png(width, height))
+                self.expect_image_error("CL_icon.png", "PNG", "width or height is above 2**31 - 1")
 
     def test_png_missing_iend_fails(self):
         self.set_icon("CL_icon.png", make_png(512, 512, with_iend=False))
@@ -851,10 +952,23 @@ class ManifestIconTest(unittest.TestCase):
         self.expect_exit(1, "no IDAT chunk before IEND")
 
     def test_png_bad_depth_colour_pair_fails(self):
-        for depth, colour in ((8, 1), (16, 3), (4, 6), (2, 2)):
-            with self.subTest(depth=depth, colour=colour):
-                self.set_icon("CL_icon.png", make_png(512, 512, depth=depth, colour=colour))
-                self.expect_exit(1, f"bit depth {depth} and colour type {colour} are not a valid pair")
+        valid = {0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8}, 4: {8, 16}, 6: {8, 16}}
+        for colour in range(8):
+            for depth in (0, 1, 2, 3, 4, 8, 16, 32):
+                if depth in valid.get(colour, set()):
+                    continue
+                with self.subTest(depth=depth, colour=colour):
+                    self.set_icon("CL_icon.png", make_png(512, 512, depth=depth, colour=colour))
+                    self.expect_exit(1, f"bit depth {depth} and colour type {colour} are not a valid pair")
+
+    def test_png_valid_depth_colour_pairs_pass(self):
+        valid = {0: {1, 2, 4, 8, 16}, 2: {8, 16}, 3: {1, 2, 4, 8}, 4: {8, 16}, 6: {8, 16}}
+        for colour, depths in valid.items():
+            for depth in sorted(depths):
+                with self.subTest(depth=depth, colour=colour):
+                    extra = ((b"PLTE", bytes(3)),) if colour == 3 else ()
+                    self.set_icon("CL_icon.png", make_png(512, 512, depth=depth, colour=colour, before_idat=extra))
+                    self.expect_pass()
 
     def test_png_bad_methods_fail(self):
         for index, needle in ((10, "compression method 1 is not 0"),
@@ -986,9 +1100,39 @@ class ManifestIconTest(unittest.TestCase):
     def test_jpeg_short_frame_header_fails(self):
         short = jpeg_segment(0xC0, struct.pack(">BHHB", 8, 512, 512, 3) + bytes(3))
         self.set_icon("icon.jpg", b"\xff\xd8" + short + b"\xff\xd9")
-        self.expect_exit(1, "is too short for 3 components")
-        self.set_icon("icon.jpg", b"\xff\xd8" + jpeg_segment(0xC0, bytes(4)) + b"\xff\xd9")
-        self.expect_exit(1, "frame header at offset 2 is too short")
+        self.expect_image_error("icon.jpg", "JPEG", "frame header at offset 2 is too short for 3 components")
+        short = jpeg_segment(0xC0, struct.pack(">BHHB", 8, 512, 512, 3) + bytes(7))
+        self.set_icon("icon.jpg", b"\xff\xd8" + short + b"\xff\xd9")
+        self.expect_image_error("icon.jpg", "JPEG", "frame header at offset 2 is too short for 3 components")
+        # A frame header shorter than its fixed fields, followed by more bytes or at
+        # the end of the file, is refused by the length check with a gate message.
+        for data in (b"\xff\xd8" + jpeg_segment(0xC0, bytes(4)) + b"\xff\xd9",
+                     b"\xff\xd8" + jpeg_segment(0xC0, bytes(4)),
+                     b"\xff\xd8" + jpeg_segment(0xC0, bytes(5)),
+                     b"\xff\xd8" + jpeg_segment(0xC2, b"")):
+            with self.subTest(data=data):
+                self.set_icon("icon.jpg", data)
+                self.expect_image_error("icon.jpg", "JPEG", "frame header at offset 2 is too short")
+
+    def test_bounded_readers_refuse_reads_past_their_structure(self):
+        # I7: the second layer under every length check in both parsers.
+        data = bytes(range(10))
+        self.assertEqual(gate.read_struct(">H", data, 8, 10), (0x0809,))
+        self.assertEqual(gate.read_struct(">BHHB", data, 0, 6), (0, 0x0102, 0x0304, 5))
+        self.assertEqual(gate.read_byte(data, 9, 10), 9)
+        self.assertEqual(gate.read_byte(data, 0, 1), 0)
+        for start, limit in ((9, 10), (4, 5), (9, 20), (-1, 10), (-2, 10), (10, 30)):
+            with self.subTest(reader="read_struct", start=start, limit=limit):
+                with self.assertRaises(gate.ImageError) as caught:
+                    gate.read_struct(">H", data, start, limit)
+                self.assertEqual(
+                    str(caught.exception), f"a 2-byte field at offset {start} reads past the end of its structure"
+                )
+        for index, limit in ((10, 10), (5, 5), (10, 20), (-1, 10), (0, 0)):
+            with self.subTest(reader="read_byte", index=index, limit=limit):
+                with self.assertRaises(gate.ImageError) as caught:
+                    gate.read_byte(data, index, limit)
+                self.assertEqual(str(caught.exception), f"the byte at offset {index} lies past the end of its structure")
 
     def test_jpeg_garbage_after_soi_fails(self):
         self.set_icon("icon.jpg", b"\xff\xd8\xff\x01\x41\x42" + bytes(20))
@@ -1024,15 +1168,46 @@ class ManifestIconTest(unittest.TestCase):
                 self.set_icon("icon.jpg", make_jpeg(300, 300, pre=(decoy,)))
                 self.expect_exit(1, "300 x 300 pixels")
 
-    def test_jpeg_every_frame_marker_accepted(self):
-        for marker in sorted(gate.SOF_MARKERS):
+    def test_jpeg_supported_frame_markers_accepted(self):
+        for marker in (0xC0, 0xC1, 0xC2):
             with self.subTest(marker=hex(marker)):
                 self.set_icon("icon.jpg", make_jpeg(512, 512, sof=marker))
                 self.expect_pass()
 
+    def test_jpeg_unsupported_processes_refused_by_name(self):
+        # Repository policy: only SOF0, SOF1 and SOF2, the processes web clients are
+        # expected to render, are accepted; every other frame marker is refused by name.
+        names = {
+            0xC3: "SOF3, lossless",
+            0xC5: "SOF5, differential sequential",
+            0xC6: "SOF6, differential progressive",
+            0xC7: "SOF7, differential lossless",
+            0xC9: "SOF9, extended sequential, arithmetic coding",
+            0xCA: "SOF10, progressive, arithmetic coding",
+            0xCB: "SOF11, lossless, arithmetic coding",
+            0xCD: "SOF13, differential sequential, arithmetic coding",
+            0xCE: "SOF14, differential progressive, arithmetic coding",
+            0xCF: "SOF15, differential lossless, arithmetic coding",
+        }
+        frame = jpeg_segment(0xC0, frame_payload(512, 512))
+        for marker, name in names.items():
+            for label, data, offset in (
+                ("first", make_jpeg(512, 512, sof=marker), 2),
+                ("selectors 4 and 5", table_jpeg(marker, (0x45, 0x55, 0x55)), 2),
+                ("truncated", SOI + bytes([0xFF, marker]), 2),
+                ("after SOF0", SOI + frame + jpeg_segment(marker, frame_payload(512, 512)) + SOS, 21),
+            ):
+                with self.subTest(marker=hex(marker), case=label):
+                    self.set_icon("icon.jpg", data)
+                    self.expect_image_error(
+                        "icon.jpg", "JPEG",
+                        f"frame marker 0x{marker:02X} at offset {offset} ({name}) is an unsupported "
+                        "JPEG process; only SOF0, SOF1, and SOF2 are accepted",
+                    )
+
     def test_jpeg_frame_marker_set_is_exact(self):
-        expected = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
-        self.assertEqual(set(gate.SOF_MARKERS), expected)
+        self.assertEqual(set(gate.SOF_MARKERS), {0xC0, 0xC1, 0xC2})
+        self.assertEqual(set(gate.UNSUPPORTED_SOF), {0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
 
     def test_jpeg_ends_after_frame_header_fails(self):
         frame = jpeg_segment(0xC0, frame_payload(512, 512))
@@ -1047,8 +1222,8 @@ class ManifestIconTest(unittest.TestCase):
         self.expect_exit(1, "EOI reached before any scan (SOS)")
 
     def test_jpeg_invalid_precision_fails(self):
-        for marker, precision in ((0xC0, 0), (0xC0, 12), (0xC1, 16), (0xC2, 0), (0xC3, 1),
-                                  (0xC3, 17), (0xCF, 255)):
+        for marker, precision in ((0xC0, 0), (0xC0, 12), (0xC0, 16), (0xC1, 0), (0xC1, 16),
+                                  (0xC2, 0), (0xC2, 16), (0xC2, 255)):
             with self.subTest(marker=hex(marker), precision=precision):
                 self.set_icon("icon.jpg", make_jpeg(512, 512, sof=marker, precision=precision))
                 self.expect_exit(
@@ -1062,7 +1237,7 @@ class ManifestIconTest(unittest.TestCase):
         self.expect_exit(1, "sample precision 0 is not valid for frame marker 0xC0")
 
     def test_jpeg_valid_precisions_pass(self):
-        for marker, precision in ((0xC1, 12), (0xC2, 12), (0xC3, 2), (0xC3, 16), (0xCF, 12)):
+        for marker, precision in ((0xC0, 8), (0xC1, 8), (0xC1, 12), (0xC2, 8), (0xC2, 12)):
             with self.subTest(marker=hex(marker), precision=precision):
                 self.set_icon("icon.jpg", make_jpeg(512, 512, sof=marker, precision=precision))
                 self.expect_pass()
@@ -1092,6 +1267,7 @@ class ManifestIconTest(unittest.TestCase):
         frame = jpeg_segment(0xC0, frame_payload(512, 512))
         for scan, needle in (
             (jpeg_segment(0xDA, b""), "scan header at offset 21 is too short"),
+            (jpeg_segment(0xDA, bytes([1])), "scan header at offset 21 has length 3, not 8 for 1 components"),
             (jpeg_segment(0xDA, bytes([0, 0, 63, 0])), "scan header declares 0 components, not 1 to 4"),
             (jpeg_segment(0xDA, bytes([5] + [1, 0] * 5 + [0, 63, 0])),
              "scan header declares 5 components, not 1 to 4"),
@@ -1106,21 +1282,17 @@ class ManifestIconTest(unittest.TestCase):
                 self.expect_exit(1, needle)
 
     def test_jpeg_scan_table_selectors_out_of_range_fail(self):
-        # ITU-T T.81 Table B.3: baseline 0 to 1; extended and progressive 0 to 3;
-        # lossless DC 0 to 3 and AC 0; hierarchical frames as their process.
+        # ITU-T T.81 Table B.3: SOF0 0 to 1; SOF1 and SOF2 0 to 3.
         for sof, tables, component, dc, ac, dc_max, ac_max in (
             (0xC0, (0x20,), 1, 2, 0, 1, 1),
             (0xC0, (0x02,), 1, 0, 2, 1, 1),
             (0xC0, (0xFF,), 1, 15, 15, 1, 1),
             (0xC0, (0x00, 0x11, 0x12), 3, 1, 2, 1, 1),
             (0xC1, (0x40,), 1, 4, 0, 3, 3),
+            (0xC1, (0x04,), 1, 0, 4, 3, 3),
             (0xC2, (0x04,), 1, 0, 4, 3, 3),
-            (0xC9, (0x33, 0x44), 2, 4, 4, 3, 3),
-            (0xCE, (0x40,), 1, 4, 0, 3, 3),
-            (0xC3, (0x01,), 1, 0, 1, 3, 0),
-            (0xC3, (0x40,), 1, 4, 0, 3, 0),
-            (0xC7, (0x00, 0x01), 2, 0, 1, 3, 0),
-            (0xCF, (0x31,), 1, 3, 1, 3, 0),
+            (0xC2, (0x33, 0x44), 2, 4, 4, 3, 3),
+            (0xC2, (0x40,), 1, 4, 0, 3, 3),
         ):
             with self.subTest(sof=hex(sof), tables=tables):
                 self.set_icon("icon.jpg", table_jpeg(sof, tables))
@@ -1135,23 +1307,20 @@ class ManifestIconTest(unittest.TestCase):
             (0xC0, (0x00, 0x11, 0x11)),
             (0xC0, (0x10, 0x01)),
             (0xC1, (0x33,)),
+            (0xC1, (0x30, 0x03)),
             (0xC2, (0x30, 0x03)),
-            (0xC5, (0x33,)),
-            (0xCA, (0x33, 0x22, 0x11)),
-            (0xC3, (0x30,)),
-            (0xC7, (0x00, 0x10)),
-            (0xCF, (0x30,)),
+            (0xC2, (0x33, 0x22, 0x11)),
         ):
             with self.subTest(sof=hex(sof), tables=tables):
                 self.set_icon("icon.jpg", table_jpeg(sof, tables))
                 self.expect_pass()
 
     def test_jpeg_scan_table_selector_limits_are_exact(self):
-        lossless = {0xC3, 0xC7, 0xCB, 0xCF}
-        expected = {marker: (3, 0) if marker in lossless else (3, 3) for marker in gate.SOF_MARKERS}
-        expected[0xC0] = (1, 1)
-        self.assertEqual(set(gate.SOS_TABLE_SELECTORS), set(gate.SOF_MARKERS))
-        self.assertEqual(gate.SOS_TABLE_SELECTORS, expected)
+        self.assertEqual(gate.SOS_TABLE_SELECTORS, {0xC0: (1, 1), 0xC1: (3, 3), 0xC2: (3, 3)})
+        self.assertEqual(
+            gate.SOF_PRECISIONS,
+            {0xC0: frozenset({8}), 0xC1: frozenset({8, 12}), 0xC2: frozenset({8, 12})},
+        )
 
     def test_jpeg_segments_between_frame_and_scan_are_skipped(self):
         frame = jpeg_segment(0xC0, frame_payload(512, 512))

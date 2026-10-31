@@ -61,26 +61,32 @@ What it checks:
       skipped by its length and never interpreted;
   I4  a JPEG is walked marker by marker from the SOI to the first scan header (SOS):
       fill bytes and standalone markers (TEM, RST0 to RST7) are skipped, every other
-      segment is skipped by its length, and exactly one frame header (SOF0 to
-      SOF15, never DHT, JPG, or DAC) must precede the first SOS and supplies the
-      dimensions; the frame header declares at least 1 component with distinct
-      identifiers, a component table that fits its length, a sample precision valid
-      for its frame marker (ITU-T T.81 Table B.2: 8 for baseline; 8 or 12 for
-      extended and progressive; 2 to 16 for lossless; hierarchical frames as their
-      process), and a non-zero height (a DNL height is refused) and width; the
-      scan header declares 1 to 4 components, has length exactly 6 + 2 * Ns,
-      names each component once and only components the frame header declares,
-      and gives each component a DC and an AC entropy table selector within the
-      range its frame process allows (ITU-T T.81 Table B.3, SOS_TABLE_SELECTORS:
-      0 to 1 each for baseline; 0 to 3 each for extended and progressive; for
-      lossless, DC 0 to 3 and AC 0, since a lossless scan codes no AC
-      coefficients; hierarchical frames as their process); an SOS before the
-      frame header, a second frame header, a second SOI, an EOI, a marker 0x00, a
-      non-marker byte, a truncated segment, a length below 2, or a file that ends
-      before the first SOS is refused; the walk stops at the end of the first scan
-      header;
+      segment is skipped by its length, and exactly one frame header must precede
+      the first SOS and supplies the dimensions; the frame header is SOF0, SOF1, or
+      SOF2 (the repository policy below), every other frame marker (SOF3, SOF5 to
+      SOF7, SOF9 to SOF11, SOF13 to SOF15) is refused by name as an unsupported
+      JPEG process wherever it appears before the first SOS, and DHT, JPG, and DAC
+      are never frame headers; the frame header declares at least 1 component with
+      distinct identifiers, a component table that fits its length, a sample
+      precision valid for its frame marker (ITU-T T.81 Table B.2: 8 for SOF0; 8 or
+      12 for SOF1 and SOF2), and a non-zero height (a DNL height is refused) and
+      width; the scan header declares 1 to 4 components, has length exactly
+      6 + 2 * Ns, names each component once and only components the frame header
+      declares, and gives each component a DC and an AC Huffman table selector
+      within the range its frame marker allows (ITU-T T.81 Table B.3,
+      SOS_TABLE_SELECTORS: 0 to 1 each for SOF0; 0 to 3 each for SOF1 and SOF2);
+      an SOS before the frame header, a second frame header, a second SOI, an EOI,
+      a marker 0x00, a non-marker byte, a truncated segment, a length below 2, or
+      a file that ends before the first SOS is refused; the walk stops at the end
+      of the first scan header;
   I5  the image is square, each side 512 to 2048 pixels inclusive;
-  I6  each conforming icon field prints one success line to stdout.
+  I6  each conforming icon field prints one success line to stdout;
+  I7  every fixed-width field and every single byte that parse_png and parse_jpeg
+      read goes through a bounds-checked reader (read_struct, read_byte) that
+      refuses, as an image error, a read past the end of its chunk or segment or
+      past the end of the file, so a malformed image is refused with a gate
+      message even where an earlier length check is missing, never by an uncaught
+      struct.error or IndexError.
 
 Repository-policy checks (taken from the row 64 brief and plan, not from a verified
 Claude Code specification, so labelled as such):
@@ -88,6 +94,14 @@ Claude Code specification, so labelled as such):
   I2  the lower-cased file extension is consistent with the signature (.png for a
       PNG; .jpg or .jpeg for a JPEG); the signature decides the format and the
       extension never does, but a JPEG named .png is refused;
+  I4  the accepted JPEG processes: only SOF0 (baseline), SOF1 (extended
+      sequential, Huffman coding), and SOF2 (progressive, Huffman coding). The
+      policy accepts only the processes that web clients are expected to render:
+      an arithmetic-coded, lossless, or differential (hierarchical) frame can
+      decode in a reference decoder and still fail to render in a client, so it
+      is refused by name rather than passed. This is an orchestrator policy
+      decision of row 64, not a verified Claude Code specification, and the JPEG
+      support of particular clients was not verified in this change;
   F5  the 2 MB limit is read as 2,000,000 bytes, strictly below; a 2 MiB
       (2,097,152-byte) reading would accept files the decimal reading refuses, so
       the stricter decimal reading is used while the CLI limit is unverified;
@@ -135,10 +149,11 @@ Residuals this gate does not cover:
           required, so a JPEG with no DQT or DHT passes;
        f. marker placement: a DNL, DHP, or EXP before the first scan, and a
           standalone TEM or RST0 to RST7 marker before the first scan, are
-          accepted; the hierarchical structure is not checked, so no DHP is
-          required, a differential frame marker (SOF5 to SOF7, SOF13 to SOF15) is
-          accepted as the first frame header, and the dimensions are read from
-          the first frame header, not from a DHP segment;
+          accepted; the hierarchical structure is not checked: a DHP segment is
+          skipped, so a hierarchical image whose first frame header is SOF0,
+          SOF1, or SOF2 passes with its dimensions read from that first frame
+          header, not from the DHP segment, and its differential frames lie
+          after the first scan header, unread (item i);
        g. frame header: the sampling factors byte and the quantization table
           selector byte of each component, every byte after the component table
           within the segment length, and the component count limit of a process
@@ -147,21 +162,20 @@ Residuals this gate does not cover:
           successive approximation byte (Ah, Al) are not read; whether the scan
           components follow the frame header order, whether an interleaved scan
           stays within 10 blocks per MCU, and whether the quantization and
-          entropy tables that the frame and scan select were defined, and are
-          Huffman or arithmetic tables to match the frame marker, are not checked;
-          the table selectors are checked for range only;
+          Huffman tables that the frame and scan select were defined are not
+          checked; the table selectors are checked for range only;
        i. everything after the end of the first scan header: the entropy-coded
           data, the RST markers within it, any later scans and the segments
           between them, a DNL after the first scan, the EOI marker, and any bytes
           after EOI, so a JPEG truncated or corrupted anywhere after its first
           scan header passes.
-  2. Renderability is not checked: arithmetic-coded and lossless JPEG frame types
-     (SOF3, SOF9 to SOF11, SOF15), 12-bit and hierarchical JPEGs, CMYK or Adobe
-     APP14-transformed JPEGs, 16-bit and palette PNGs, and APNG pass the header
-     checks, though some renderers cannot show them. A multi-picture (MPO) file
-     reports its first frame. EXIF orientation is ignored; a rotation preserves
-     squareness and side length, so it cannot turn a passing icon into a failing
-     one.
+  2. Renderability is not checked beyond the accepted JPEG processes: 12-bit
+     JPEGs (SOF1 or SOF2 at precision 12), a hierarchical JPEG whose first frame
+     header is SOF0, SOF1, or SOF2 (item 1f), CMYK or Adobe APP14-transformed
+     JPEGs, 16-bit and palette PNGs, and APNG pass the header checks, though some
+     renderers cannot show them. A multi-picture (MPO) file reports its first
+     frame. EXIF orientation is ignored; a rotation preserves squareness and side
+     length, so it cannot turn a passing icon into a failing one.
   3. Symlink races and hard links: the lstat walks refuse a symlink on every path
      component from below the repository root to the manifest and to the icon, and
      O_NOFOLLOW closes the race on the final component of both; a directory
@@ -177,8 +191,9 @@ Residuals this gate does not cover:
   5. A case-insensitive filesystem can resolve a differently cased icon path
      locally while the Linux CI runner refuses it; CI is authoritative.
   6. The floor (PNG or JPEG, square, 512 to 2048, under 2 MB read as 2,000,000
-     bytes, the "./" prefix, extension consistency) is repository policy from the
-     row 64 brief and plan, not a verified CLI specification; the pinned CLI
+     bytes, the "./" prefix, extension consistency, the accepted JPEG processes)
+     is repository policy from the row 64 brief, plan, and orchestrator
+     decisions, not a verified CLI specification; the pinned CLI
      validator remains the authority on what Claude Code accepts. The PNG and JPEG
      structural rules above are applied from the format specifications as known to
      the author; they were not re-verified against the specification texts in this
@@ -233,46 +248,37 @@ JPEG_SIGNATURE = b"\xff\xd8\xff"
 # chunk (upper-case first letter) whose type is not in this set, as a conforming
 # decoder must refuse it.
 PNG_CRITICAL = frozenset({"IHDR", "PLTE", "IDAT", "IEND"})
-# Valid sample precisions per JPEG frame marker (ITU-T T.81 Table B.2): baseline 8;
-# extended sequential and progressive 8 or 12; lossless 2 to 16; the hierarchical
-# frames (SOF5 to SOF7, SOF13 to SOF15) as their process.
+# Valid sample precisions per accepted JPEG frame marker (ITU-T T.81 Table B.2):
+# SOF0 (baseline) 8; SOF1 (extended sequential, Huffman) and SOF2 (progressive,
+# Huffman) 8 or 12.
 SOF_PRECISIONS = {
     0xC0: frozenset({8}),
     0xC1: frozenset({8, 12}),
     0xC2: frozenset({8, 12}),
-    0xC3: frozenset(range(2, 17)),
-    0xC5: frozenset({8, 12}),
-    0xC6: frozenset({8, 12}),
-    0xC7: frozenset(range(2, 17)),
-    0xC9: frozenset({8, 12}),
-    0xCA: frozenset({8, 12}),
-    0xCB: frozenset(range(2, 17)),
-    0xCD: frozenset({8, 12}),
-    0xCE: frozenset({8, 12}),
-    0xCF: frozenset(range(2, 17)),
 }
-# Largest valid scan-header entropy table selectors (DC Td, AC Ta) per frame marker
-# (ITU-T T.81 Table B.3): baseline 1 and 1; extended sequential and progressive 3
-# and 3; lossless 3 and 0, since a lossless scan codes no AC coefficients; the
-# hierarchical frames as their process.
+# Largest valid scan-header Huffman table selectors (DC Td, AC Ta) per accepted
+# frame marker (ITU-T T.81 Table B.3): SOF0 1 and 1; SOF1 and SOF2 3 and 3.
 SOS_TABLE_SELECTORS = {
     0xC0: (1, 1),
     0xC1: (3, 3),
     0xC2: (3, 3),
-    0xC3: (3, 0),
-    0xC5: (3, 3),
-    0xC6: (3, 3),
-    0xC7: (3, 0),
-    0xC9: (3, 3),
-    0xCA: (3, 3),
-    0xCB: (3, 0),
-    0xCD: (3, 3),
-    0xCE: (3, 3),
-    0xCF: (3, 0),
 }
-# Frame headers SOF0 to SOF15; 0xC4 (DHT), 0xC8 (JPG, reserved) and 0xCC (DAC) are
-# never frame headers.
+# The accepted frame headers (repository policy: the processes web clients render).
 SOF_MARKERS = frozenset(SOF_PRECISIONS)
+# Every other frame header, refused by name as an unsupported JPEG process; 0xC4
+# (DHT), 0xC8 (JPG, reserved) and 0xCC (DAC) are never frame headers.
+UNSUPPORTED_SOF = {
+    0xC3: "SOF3, lossless",
+    0xC5: "SOF5, differential sequential",
+    0xC6: "SOF6, differential progressive",
+    0xC7: "SOF7, differential lossless",
+    0xC9: "SOF9, extended sequential, arithmetic coding",
+    0xCA: "SOF10, progressive, arithmetic coding",
+    0xCB: "SOF11, lossless, arithmetic coding",
+    0xCD: "SOF13, differential sequential, arithmetic coding",
+    0xCE: "SOF14, differential progressive, arithmetic coding",
+    0xCF: "SOF15, differential lossless, arithmetic coding",
+}
 EXTENSIONS = {"PNG": frozenset({".png"}), "JPEG": frozenset({".jpg", ".jpeg"})}
 # Valid PNG bit depths per colour type.
 PNG_DEPTHS = {
@@ -422,6 +428,24 @@ def base_directory(manifest: Path) -> Path:
     return parent
 
 
+def read_struct(fmt: str, data: bytes, start: int, limit: int) -> tuple:
+    """I7: unpack fmt at start; refuse a read past limit or past the end of data."""
+    end = start + struct.calcsize(fmt)
+    if start < 0 or end > min(limit, len(data)):
+        raise ImageError(
+            f"a {end - start}-byte field at offset {start} reads past the end of its "
+            "structure"
+        )
+    return struct.unpack_from(fmt, data, start)
+
+
+def read_byte(data: bytes, index: int, limit: int) -> int:
+    """I7: return the byte at index; refuse a read past limit or past the end of data."""
+    if index < 0 or index >= min(limit, len(data)):
+        raise ImageError(f"the byte at offset {index} lies past the end of its structure")
+    return data[index]
+
+
 def parse_png(data: bytes) -> tuple[int, int]:
     """I3: walk every chunk; return (width, height) from IHDR."""
     size = len(data)
@@ -436,7 +460,7 @@ def parse_png(data: bytes) -> tuple[int, int]:
             raise ImageError("no IEND chunk")
         if offset + 8 > size:
             raise ImageError(f"chunk header at offset {offset} is truncated")
-        length, raw_type = struct.unpack(">I4s", data[offset:offset + 8])
+        length, raw_type = read_struct(">I4s", data, offset, size)
         if not all(65 <= byte <= 90 or 97 <= byte <= 122 for byte in raw_type):
             raise ImageError(f"chunk type at offset {offset} is not four ASCII letters")
         chunk_type = raw_type.decode("ascii")
@@ -453,16 +477,15 @@ def parse_png(data: bytes) -> tuple[int, int]:
         end = offset + 12 + length
         if end > size:
             raise ImageError(f"chunk {chunk_type!r} at offset {offset} is truncated")
-        (stored_crc,) = struct.unpack(">I", data[end - 4:end])
+        (stored_crc,) = read_struct(">I", data, end - 4, size)
         if zlib.crc32(data[offset + 4:end - 4]) != stored_crc:
             raise ImageError(f"chunk {chunk_type!r} at offset {offset} has a bad CRC")
-        payload = data[offset + 8:end - 4]
         if 65 <= raw_type[0] <= 90 and chunk_type not in PNG_CRITICAL:
             raise ImageError(f"unknown critical chunk {chunk_type!r} at offset {offset}")
         if first:
             first = False
-            width, height, depth, colour, compression, filtering, interlace = struct.unpack(
-                ">IIBBBBB", payload
+            width, height, depth, colour, compression, filtering, interlace = read_struct(
+                ">IIBBBBB", data, offset + 8, end - 4
             )
             if width == 0 or height == 0:
                 raise ImageError("width or height is 0")
@@ -524,13 +547,13 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
         )
         if offset >= size:
             raise ImageError(ends)
-        if data[offset] != 0xFF:
+        if read_byte(data, offset, size) != 0xFF:
             raise ImageError(f"byte at offset {offset} is not a marker prefix")
         while offset < size and data[offset] == 0xFF:
             offset += 1
         if offset >= size:
             raise ImageError(ends)
-        marker = data[offset]
+        marker = read_byte(data, offset, size)
         marker_offset = offset - 1
         offset += 1
         if marker == 0x00:
@@ -545,12 +568,19 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
             if frame is None:
                 raise ImageError("EOI reached before any frame header")
             raise ImageError("EOI reached before any scan (SOS)")
+        if marker in UNSUPPORTED_SOF:
+            raise ImageError(
+                f"frame marker 0x{marker:02X} at offset {marker_offset} "
+                f"({UNSUPPORTED_SOF[marker]}) is an unsupported JPEG process; only "
+                "SOF0, SOF1, and SOF2 are accepted"
+            )
         if offset + 2 > size:
             raise ImageError(f"segment at offset {marker_offset} is truncated")
-        (length,) = struct.unpack(">H", data[offset:offset + 2])
+        (length,) = read_struct(">H", data, offset, size)
+        limit = offset + length
         if length < 2:
             raise ImageError(f"segment length {length} at offset {marker_offset} is below 2")
-        if offset + length > size:
+        if limit > size:
             raise ImageError(f"segment at offset {marker_offset} is truncated")
         if marker in SOF_MARKERS:
             if frame is not None:
@@ -560,8 +590,8 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
                 )
             if length < 8:
                 raise ImageError(f"frame header at offset {marker_offset} is too short")
-            precision, height, width, components = struct.unpack(
-                ">BHHB", data[offset + 2:offset + 8]
+            precision, height, width, components = read_struct(
+                ">BHHB", data, offset + 2, limit
             )
             if components == 0:
                 raise ImageError("frame header declares 0 components")
@@ -570,7 +600,9 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
                     f"frame header at offset {marker_offset} is too short for "
                     f"{components} components"
                 )
-            identifiers = [data[offset + 8 + 3 * index] for index in range(components)]
+            identifiers = [
+                read_byte(data, offset + 8 + 3 * index, limit) for index in range(components)
+            ]
             if len(set(identifiers)) != components:
                 raise ImageError("frame header declares a component identifier twice")
             if precision not in SOF_PRECISIONS[marker]:
@@ -586,7 +618,7 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
         elif marker == 0xDA:
             if length < 3:
                 raise ImageError(f"scan header at offset {marker_offset} is too short")
-            count = data[offset + 2]
+            count = read_byte(data, offset + 2, limit)
             if not 1 <= count <= 4:
                 raise ImageError(f"scan header declares {count} components, not 1 to 4")
             if length != 6 + 2 * count:
@@ -594,7 +626,7 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
                     f"scan header at offset {marker_offset} has length {length}, not "
                     f"{6 + 2 * count} for {count} components"
                 )
-            selectors = [data[offset + 3 + 2 * index] for index in range(count)]
+            selectors = [read_byte(data, offset + 3 + 2 * index, limit) for index in range(count)]
             if len(set(selectors)) != count:
                 raise ImageError("scan header names a component twice")
             for selector in selectors:
@@ -605,7 +637,7 @@ def parse_jpeg(data: bytes) -> tuple[int, int]:
                     )
             dc_limit, ac_limit = SOS_TABLE_SELECTORS[frame[3]]
             for index, selector in enumerate(selectors):
-                dc_table, ac_table = divmod(data[offset + 4 + 2 * index], 16)
+                dc_table, ac_table = divmod(read_byte(data, offset + 4 + 2 * index, limit), 16)
                 if dc_table > dc_limit or ac_table > ac_limit:
                     raise ImageError(
                         f"scan header gives component {selector} DC table {dc_table} and "
