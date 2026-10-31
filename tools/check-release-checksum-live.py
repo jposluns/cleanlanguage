@@ -110,20 +110,30 @@ caught error is described only
 through _describe, never by its repr, and a returned value and
 BASELINE_VERSION must be of the exact built-in type the gate expects, so no
 extractor method of theirs runs later. Whatever that code raises, a SystemExit
-of any code or any other exception, exits 3, with one exception: a
-KeyboardInterrupt, a subclass included, is let through as an interrupt,
-because the gate cannot tell one the extractor raises from a real Ctrl-C by
-its type. The residual the gate cannot close in-process:
+of any code or any other exception, exits 3 with its report, with one
+exception: a KeyboardInterrupt is let through as an interrupt, because the
+gate cannot tell one the extractor raises from a real Ctrl-C by its type. It
+is let through only when its class has exactly the builtin type as its own
+type and every class on its real MRO but BaseException and object is
+KeyboardInterrupt or a subclass of it (see _is_interrupt), so a subclass of
+KeyboardInterrupt alone is let through. A KeyboardInterrupt that is also a
+SystemExit, or that also inherits any other class, ReleaseDateMalformed
+among them, would otherwise reach a handler of the gate for that other class,
+which would read it as a result of the gate (a SystemExit by its code) or run
+its str unguarded; it exits 3 with its report like any other error, as does
+a KeyboardInterrupt whose class has a custom metaclass. The residual the gate
+cannot close in-process:
 extractor code that calls os._exit, signals its own process, never returns,
 or changes the interpreter state the gate relies on (its globals, sys,
 builtins, or a thread, finalizer, or exit handler it leaves behind) acts
 outside any handler, so it can still end the gate with another code. So does
-an extractor that raises KeyboardInterrupt itself, at load or in a call: the
-gate ends as an interrupt, with the SIGINT status (130 in a shell), not 3;
-raised at load, it ends the gate before the checksum comparison runs or
-reports; and the interpreter prints its text in the traceback outside any
-guard, so an extractor-defined str runs unguarded there. That status is never
-0 or 1 unless that unguarded code itself calls os._exit, the residual above.
+an extractor that raises a KeyboardInterrupt the gate lets through, at load
+or in a call: the gate ends as an interrupt, with the SIGINT status (130 in a
+shell), not 3; raised at load, it ends the gate before the checksum
+comparison runs or reports; and the interpreter prints its text in the
+traceback outside any guard, so an extractor-defined str runs unguarded
+there. That status is never 0 or 1 unless that unguarded code itself calls
+os._exit, the residual above.
 Only running the extractor in a separate process would close that residual,
 and the gate does not.
 """
@@ -203,6 +213,28 @@ def _exception_lineage(cls) -> bool:
     return all(base is BaseException or base is object or issubclass(base, Exception) for base in cls.__mro__)
 
 
+def _is_interrupt(error: BaseException) -> bool:
+    """True only when the caught ``error`` is let through as an interrupt
+    (fix round 8): its class has exactly the builtin type as its own type, so
+    its MRO is the real one, KeyboardInterrupt is on that MRO, and every class
+    on it but BaseException and object is KeyboardInterrupt or a subclass of
+    it. A KeyboardInterrupt that is also a SystemExit, or that also inherits
+    any other class, ReleaseDateMalformed among them, would otherwise reach a
+    handler of the gate for that other class, and one whose class has a
+    custom metaclass could have an MRO that only names KeyboardInterrupt; the
+    caller handles either as any other error, so the gate reports it and
+    exits 3. type(), identity, and issubclass against the builtin
+    KeyboardInterrupt read the real type and MRO, so this runs no extractor
+    hook."""
+    cls = type(error)
+    if type(cls) is not type:
+        return False
+    mro = cls.__mro__
+    return any(base is KeyboardInterrupt for base in mro) and all(
+        base is BaseException or base is object or issubclass(base, KeyboardInterrupt) for base in mro
+    )
+
+
 # The exact built-in types each extractor function may return. Checked by
 # identity, so no extractor-defined method of a returned value (its bool,
 # comparison, or format) runs later in the gate (fix round 4, F1).
@@ -222,12 +254,12 @@ def _guarded_text(read, fallback):
     """Return what ``read()`` gives when it is an exact str, else
     ``fallback``. ``read`` runs extractor-defined code (a str or a class-name
     lookup), so anything it raises, a SystemExit included, gives the fallback;
-    only a KeyboardInterrupt propagates."""
+    only a KeyboardInterrupt that _is_interrupt lets through propagates."""
     try:
         text = read()
-    except KeyboardInterrupt:
-        raise
-    except BaseException:
+    except BaseException as error:
+        if _is_interrupt(error):
+            raise
         return fallback
     return text if type(text) is str else fallback
 
@@ -262,9 +294,9 @@ def _malformed_verdict(error: BaseException, malformed):
             and _plain_exception_class(malformed)
             and any(base is malformed for base in cls.__mro__)
         )
-    except KeyboardInterrupt:
-        raise
-    except BaseException:
+    except BaseException as failure:
+        if _is_interrupt(failure):
+            raise
         return None
     if not verdict:
         return None
@@ -276,22 +308,23 @@ def _load_release_date_tool():
     # exception raised while the module runs, SystemExit included, means the
     # extractor is unavailable: exit 3, never the drift exit 1 a stray
     # traceback would give, nor the code a SystemExit carries (row 58).
-    # Fix round 4 (F1): any BaseException but KeyboardInterrupt, and the
-    # report describes the error through _describe, never its repr.
+    # Fix round 4 (F1): any BaseException but an interrupt, and the report
+    # describes the error through _describe, never its repr. Fix round 8: an
+    # interrupt is only what _is_interrupt lets through.
     try:
         spec = importlib.util.spec_from_file_location("skill_release_date", RELEASE_DATE_TOOL)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-    except KeyboardInterrupt:
-        raise
     except BaseException as error:
+        if _is_interrupt(error):
+            raise
         _unavailable(f"could not load {RELEASE_DATE_TOOL.name} (the extractor is unavailable): {_describe(error)}")
     for name, kind in RELEASE_DATE_API:
         try:
             usable = _api_kind_ok(getattr(module, name), kind)
-        except KeyboardInterrupt:
-            raise
-        except BaseException:
+        except BaseException as error:
+            if _is_interrupt(error):
+                raise
             usable = False
         if not usable:
             _unavailable(
@@ -338,9 +371,9 @@ def release_date_attr(name: str):
     try:
         value = getattr(RELEASE_DATE, name)
         usable = _api_kind_ok(value, kind)
-    except KeyboardInterrupt:
-        raise
     except BaseException as error:
+        if _is_interrupt(error):
+            raise
         _unavailable(f"{RELEASE_DATE_TOOL.name} lacks {name}: {_describe(error)}")
     if not usable:
         _unavailable(
@@ -363,9 +396,9 @@ def release_date_call(name: str, *args):
     malformed = release_date_attr("Malformed")
     try:
         result = function(*args)
-    except KeyboardInterrupt:
-        raise
     except BaseException as error:
+        if _is_interrupt(error):
+            raise
         verdict = _malformed_verdict(error, malformed)
         if verdict is not None:
             raise ReleaseDateMalformed(verdict) from None
@@ -711,10 +744,12 @@ def published_digest(tag: str, zip_name: str, manifest_name: str) -> str:
     return claimed
 
 
-def check_site_checksum() -> int:
+def check_site_checksum(load_code: int = 0) -> int:
     """Check the site checksum and the release date, returning the most
     severe code of the checks that ran (0 to 3), or stopping with 2 or 3 when
-    the gate cannot go on; main combines it with the extractor load."""
+    the gate cannot go on; main combines it with ``load_code``, the result of
+    its extractor load, which the pre-tag window also reads so that it says
+    there is nothing to reconcile only when the gate passes."""
     require_regular_file(VERIFY_PAGE, str(VERIFY_PAGE.relative_to(REPO_ROOT)))
     # A required file that cannot be read or decoded exits 3, never an
     # uncaught traceback (exit 1, drift); main still combines it with the
@@ -807,13 +842,17 @@ def check_site_checksum() -> int:
             return max(2, offline_release_line_code(situation))
         print(
             f"Release {tag} is not published yet; the site and SKILL.md both name "
-            f"{version} ahead of the release, which is expected before the tag. "
-            f"Nothing to reconcile."
+            f"{version} ahead of the release, which is expected before the tag."
         )
         # The release and its tag are confirmed absent, so the Released line
         # is checked offline: a malformed line, or one missing above the
-        # undated baseline, is still reported in this window.
-        return offline_release_line_code(f"release {tag} is not published yet and its tag does not exist")
+        # undated baseline, is still reported in this window. Fix round 8:
+        # the window says there is nothing to reconcile only when that check
+        # and the extractor load both pass, so the gate then exits 0.
+        code = offline_release_line_code(f"release {tag} is not published yet and its tag does not exist")
+        if max(load_code, code) == 0:
+            print("Nothing to reconcile.")
+        return code
     if status != 200:
         # The checksum comparison cannot run (exit 2), but the release-date
         # check below still runs and reports, and the more severe code wins.
@@ -875,12 +914,13 @@ def main() -> int:
     """Run the gate. The extractor is loaded here, inside the protected path,
     so a load failure contributes exit 3 while the checksum comparison still
     runs and reports; the most severe code wins (3 over 2 over 1 over 0). The
-    exception is a KeyboardInterrupt the extractor raises while it loads: it
-    is let through as an interrupt, so the gate ends with the SIGINT status
-    before the comparison runs (see the residual in the module docstring)."""
+    exception is a KeyboardInterrupt the extractor raises while it loads that
+    _is_interrupt lets through as an interrupt, so the gate ends with the
+    SIGINT status before the comparison runs (see the residual in the module
+    docstring)."""
     load_code = load_release_date_tool()
     try:
-        code = check_site_checksum()
+        code = check_site_checksum(load_code)
     except SystemExit as stop:
         if stop.code not in (2, 3):
             raise

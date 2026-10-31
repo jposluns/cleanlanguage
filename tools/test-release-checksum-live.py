@@ -40,6 +40,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -284,6 +285,225 @@ class _ExitingStrMalformed(_REAL_MALFORMED):
 
     def __str__(self):
         return _ExitingStr("bad stamp")
+
+
+class _AnyEqMeta(type):
+    """Fix round 8 (codex LOW): a metaclass whose classes compare equal to
+    anything and unequal to nothing, so a guard that compares a type with ==
+    or != instead of is or is not accepts them."""
+
+    def __eq__(cls, other):
+        return True
+
+    def __ne__(cls, other):
+        return False
+
+    __hash__ = type.__hash__
+
+
+class _EqualsMeta(type):
+    """Fix round 8 (codex LOW): a metaclass whose classes compare equal to
+    the one builtin type named by their ``equal_to`` attribute, so a result
+    check by == instead of is accepts a value of that class as that type."""
+
+    def __eq__(cls, other):
+        return other is cls.equal_to
+
+    def __ne__(cls, other):
+        return other is not cls.equal_to
+
+    __hash__ = type.__hash__
+
+
+def _exit_zero(self, *args, **kwargs):
+    raise SystemExit(0)
+
+
+class _EqualsStr(str, metaclass=_EqualsMeta):
+    """A str subclass that compares equal to str by type and every method of
+    which the gate could reach exits 0."""
+
+    equal_to = str
+    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit_zero
+    __hash__ = str.__hash__
+
+
+class _EqualsNone(metaclass=_EqualsMeta):
+    """A value whose class compares equal to NoneType and every method of
+    which the gate could reach exits 0."""
+
+    equal_to = type(None)
+    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit_zero
+    __hash__ = None
+
+
+class _EqualsBool(metaclass=_EqualsMeta):
+    """A value whose class compares equal to bool and every method of which
+    the gate could reach exits 0."""
+
+    equal_to = bool
+    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit_zero
+    __hash__ = None
+
+
+class _EqualsStrText(Exception):
+    """An error whose str is an _EqualsStr."""
+
+    def __str__(self):
+        return _EqualsStr("boom")
+
+
+class _ClassClaimsStrVersion(str):
+    """A BASELINE_VERSION that is a str subclass whose __class__ property
+    names str and whose format and str exit 0."""
+
+    __class__ = property(lambda self: str)
+    __format__ = __str__ = _exit_zero
+
+
+class _EqTypeMeta(type, metaclass=_AnyEqMeta):
+    """A metaclass that compares equal to the builtin type."""
+
+
+class _EqTypeMalformed(Exception, metaclass=_EqTypeMeta):
+    """A Malformed class whose metaclass compares equal to the builtin type."""
+
+
+class _ClaimingSpoofMeta(type, metaclass=_AnyEqMeta):
+    """A metaclass that compares equal to the builtin type, claims through a
+    __class__ property to be it, and gives its classes an MRO that names the
+    Malformed class."""
+
+    __class__ = property(lambda cls: type)
+
+    def mro(cls):
+        return (cls, _REAL_MALFORMED) + _REAL_MALFORMED.__mro__[1:]
+
+
+class _ClaimingMroSpoofExit(SystemExit, metaclass=_ClaimingSpoofMeta):
+    """An error built on SystemExit whose metaclass compares equal to and
+    claims to be the builtin type and whose MRO names Malformed."""
+
+
+class _EqEscape(BaseException, metaclass=_AnyEqMeta):
+    """A BaseException that is not an Exception and compares equal to any
+    class, BaseException and object among them."""
+
+
+class _EqException(Exception, metaclass=_AnyEqMeta):
+    """An Exception that compares equal to any class, Malformed among them."""
+
+
+class _BasesMalformedError(_REAL_MALFORMED):
+    """A Malformed verdict whose class, of exactly the builtin type, has the
+    _EqEscape class on its real MRO through a __bases__ assignment."""
+
+
+_BasesMalformedError.__bases__ = (_REAL_MALFORMED, _EqEscape)
+
+
+class _BasesEqError(RuntimeError):
+    """An ordinary error whose class, of exactly the builtin type, has the
+    _EqException class on its real MRO through a __bases__ assignment."""
+
+
+_BasesEqError.__bases__ = (RuntimeError, _EqException)
+
+
+class _InterruptExit(KeyboardInterrupt, SystemExit):
+    """Fix round 8 (claude LOW 1): a KeyboardInterrupt that is also a
+    SystemExit, which a SystemExit handler of the gate would read by its
+    code."""
+
+
+class _InterruptMalformed(KeyboardInterrupt, gate.ReleaseDateMalformed):
+    """Fix round 8: a KeyboardInterrupt that also inherits the
+    ReleaseDateMalformed class of the gate and whose str exits 0, so a
+    handler of the gate for that class would run its str unguarded."""
+
+    def __str__(self):
+        raise SystemExit(0)
+
+
+class _PlainMeta(type):
+    pass
+
+
+class _MetaInterrupt(KeyboardInterrupt, metaclass=_PlainMeta):
+    """Fix round 8: a KeyboardInterrupt whose class has a custom metaclass,
+    so its MRO is not taken as the real one."""
+
+
+class _InterruptMroMeta(type, metaclass=_AnyEqMeta):
+    """A metaclass that compares equal to the builtin type, claims through a
+    __class__ property to be it, and gives its classes an MRO that names
+    KeyboardInterrupt."""
+
+    __class__ = property(lambda cls: type)
+
+    def mro(cls):
+        return (cls, KeyboardInterrupt, BaseException, object)
+
+
+class _InterruptMroError(Exception, metaclass=_InterruptMroMeta):
+    """Fix round 8: an Exception whose metaclass gives it an MRO that names
+    KeyboardInterrupt, so an except KeyboardInterrupt clause matches it."""
+
+
+class _BasesInterrupt(KeyboardInterrupt):
+    """Fix round 8: a KeyboardInterrupt whose class, of exactly the builtin
+    type, has the _EqEscape class on its real MRO through a __bases__
+    assignment, so it is also another BaseException."""
+
+
+_BasesInterrupt.__bases__ = (KeyboardInterrupt, _EqEscape)
+
+
+class _ClaimsInterrupt(RuntimeError):
+    """Fix round 8: an ordinary error whose __class__ property names
+    KeyboardInterrupt."""
+
+    __class__ = property(lambda self: KeyboardInterrupt)
+
+
+class _InterruptingStr(RuntimeError):
+    """Fix round 8: an error whose str raises a real KeyboardInterrupt."""
+
+    def __str__(self):
+        raise KeyboardInterrupt()
+
+
+class _InterruptingClassNameMeta(type):
+    @property
+    def __name__(cls):
+        raise KeyboardInterrupt()
+
+
+class _InterruptingClassName(RuntimeError, metaclass=_InterruptingClassNameMeta):
+    """Fix round 8: an error whose class name raises a real
+    KeyboardInterrupt."""
+
+
+class _InterruptingText(Exception):
+    """Fix round 8: an error whose str raises a KeyboardInterrupt that is
+    also a SystemExit."""
+
+    def __str__(self):
+        raise _InterruptExit(0)
+
+
+class _InterruptingNameMeta(type):
+    @property
+    def __name__(cls):
+        raise _InterruptExit(0)
+
+
+class _InterruptingName(Exception, metaclass=_InterruptingNameMeta):
+    """Fix round 8: an error whose class name raises a KeyboardInterrupt that
+    is also a SystemExit."""
+
+    def __str__(self):
+        return "boom"
 
 
 def unexpected_call(*args, **kwargs):
@@ -592,9 +812,11 @@ class ConditionalPassTest(unittest.TestCase):
     def test_unexpected_status_of_the_newer_release_is_unverifiable(self):
         self.fixtures(CURRENT, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
         self.published("2026-11-15T09:30:00Z", statuses={f"v{AHEAD}": 503})
-        with self.assertRaises(SystemExit) as caught:
-            gate.main()
-        self.assertEqual(caught.exception.code, 2)
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        # Fix round 8 (operator sweep): a present Released line is never
+        # reported as missing beside the unverifiable state.
+        self.assertNotIn("has no Released: line", out)
 
     def test_published_at_reader_fails_closed_on_gh_error(self):
         # The real reader: a gh failure is unverifiable, never an empty value.
@@ -725,6 +947,7 @@ class ConditionalPassTest(unittest.TestCase):
             self.assertEqual(caught.exception.code, 3, (out.getvalue(), err.getvalue()))
             self.assertIn("the extractor is unavailable", err.getvalue())
             self.assertIn("is not published yet", out.getvalue())
+            self.assertNotIn("Nothing to reconcile", out.getvalue())
 
     def test_unreleased_other_version_does_not_hide_the_date_check(self):
         # Sibling (a): the site names an unreleased version that is not the
@@ -906,6 +1129,30 @@ class ConditionalPassTest(unittest.TestCase):
             # name of its own class.
             ("an error whose __class__ property names another class", "release_day_from_published_at",
              raising(_ClassSpoofError("boom")), released, failed + ": _ClassSpoofError: boom"),
+            # Fix round 8 (codex LOW): each exact type check compares by
+            # identity, so a value whose class compares equal to the expected
+            # builtin type through its metaclass is refused, for every result
+            # kind of every extractor function, the text _guarded_text reads,
+            # and BASELINE_VERSION; BASELINE_VERSION must also be an exact
+            # str, not one that claims str through a __class__ property
+            # (ModuleLoadTest pins that it must be a bare version).
+            ("extract returns a value whose class compares equal to str", "extract",
+             returning(_EqualsStr("2026-11-15")), released, "returned an unusable result from extract"),
+            ("extract returns a value whose class compares equal to NoneType", "extract",
+             returning(_EqualsNone()), released, "returned an unusable result from extract"),
+            ("requires_release_date returns a value whose class compares equal to bool", "requires_release_date",
+             returning(_EqualsBool()), None, "returned an unusable result from requires_release_date"),
+            ("release_day_from_published_at returns a value whose class compares equal to str",
+             "release_day_from_published_at", returning(_EqualsStr("2026-11-15")), released,
+             "returned an unusable result from release_day_from_published_at"),
+            ("an error whose str is a value whose class compares equal to str", "release_day_from_published_at",
+             raising(_EqualsStrText()), released, failed + ": _EqualsStrText: (its message could not be read)"),
+            ("an error whose text is empty is described by its class name alone",
+             "release_day_from_published_at", raising(RuntimeError("")), released, failed + ": RuntimeError\n"),
+            ("BASELINE_VERSION whose class compares equal to str", "BASELINE_VERSION", _EqualsStr("1.0.14"), None,
+             "lacks a usable BASELINE_VERSION "),
+            ("BASELINE_VERSION whose __class__ property names str", "BASELINE_VERSION",
+             _ClassClaimsStrVersion("1.0.14"), None, "lacks a usable BASELINE_VERSION "),
         )
         for label, name, value, line, reason in cases:
             with self.subTest(label):
@@ -972,6 +1219,21 @@ class ConditionalPassTest(unittest.TestCase):
             ("a Malformed metaclass whose subclass check accepts anything", SystemExit,
              _AcceptingSubclassMalformed, unusable),
             ("a Malformed that only claims to be a class", SystemExit, _PretendClass(), unusable),
+            # Fix round 8 (codex LOW, operator sweep): each type and identity
+            # guard of the classification refuses a class whose metaclass
+            # compares equal to the type it is checked against, or claims it
+            # through a __class__ property, and a class whose real MRO, of a
+            # class of exactly the builtin type, carries such a class through
+            # a __bases__ assignment.
+            ("a Malformed whose metaclass compares equal to the builtin type", RuntimeError,
+             _EqTypeMalformed, unusable),
+            ("a Malformed that is not an exception class", RuntimeError, object, unusable),
+            ("an error built on SystemExit whose metaclass compares equal to and claims to be the builtin type",
+             _ClaimingMroSpoofExit, None, failed),
+            ("a Malformed verdict whose bases carry a BaseException that compares equal to any class",
+             _BasesMalformedError, None, failed),
+            ("an ordinary error whose bases carry an Exception that compares equal to Malformed",
+             _BasesEqError, None, failed),
         )
         for label, error_class, malformed, reason in cases:
             for stop_code in (0, 1, 2, 3, None):
@@ -1008,6 +1270,144 @@ class ConditionalPassTest(unittest.TestCase):
         finally:
             gate.RELEASE_DATE.release_day_from_published_at = saved_day
             gate.RELEASE_DATE.Malformed = saved_malformed
+
+    def test_interrupt_that_is_also_another_class_exits_3(self):
+        # Fix round 8 (claude LOW 1): a KeyboardInterrupt is let through as an
+        # interrupt only when its class has exactly the builtin type as its
+        # own type and every class on its real MRO but BaseException and
+        # object is KeyboardInterrupt or a subclass of it. Anything else the
+        # extractor raises, in a call or from a lookup on the module, or
+        # raises while the gate reads the class name or text of an error,
+        # exits 3 with its report, never the code a SystemExit carries, the
+        # exit an unguarded str in a handler of the gate gives, or an
+        # interrupt, and the checksum comparison still runs.
+        cases = [
+            (f"a KeyboardInterrupt that is also a SystemExit({code})", _InterruptExit(code), "_InterruptExit")
+            for code in (0, 1, 2, 3, None)
+        ] + [
+            ("a KeyboardInterrupt that also inherits ReleaseDateMalformed", _InterruptMalformed(),
+             "_InterruptMalformed: (its message could not be read)"),
+            ("a KeyboardInterrupt with a custom metaclass", _MetaInterrupt("boom"), "_MetaInterrupt: boom"),
+            ("an Exception whose metaclass mro names KeyboardInterrupt", _InterruptMroError("boom"),
+             "_InterruptMroError: boom"),
+            ("a bare BaseException", BaseException("boom"), "BaseException: boom"),
+            ("an error whose str raises an interrupt that is also a SystemExit", _InterruptingText(),
+             "_InterruptingText: (its message could not be read)"),
+            ("an error whose class name raises an interrupt that is also a SystemExit", _InterruptingName(),
+             "an error whose class name could not be read: boom"),
+            ("a KeyboardInterrupt that is also another BaseException through its bases",
+             _BasesInterrupt("boom"), "_BasesInterrupt: boom"),
+            ("an error whose __class__ property names KeyboardInterrupt", _ClaimsInterrupt("boom"),
+             "_ClaimsInterrupt: boom"),
+        ]
+        for place, prefix in (
+            ("call", "failed unexpectedly in release_day_from_published_at: "),
+            ("lookup", "lacks release_day_from_published_at: "),
+        ):
+            for label, error, shown in cases:
+                with self.subTest(label, place=place):
+                    code, out, err = self.interrupt_reports(error, place)
+                    self.assertEqual(code, 3, (out, err))
+                    self.assertIn(prefix + shown, err)
+                    self.assertIn("matches the published", out)
+
+    def test_real_interrupt_is_let_through_at_every_guard(self):
+        # Fix round 8: a KeyboardInterrupt, or a subclass of it alone, is let
+        # through as an interrupt wherever the gate guards extractor code: a
+        # call, a lookup on the module, the class name or text of a caught
+        # error, and a call whose handler is a ReleaseDateMalformed or
+        # SystemExit handler of the gate.
+        class Interrupt(KeyboardInterrupt):
+            pass
+
+        released = "Released: 2026-11-15  "
+        for label, error, place, name, line in (
+            ("a KeyboardInterrupt in a call", KeyboardInterrupt(), "call", "release_day_from_published_at", released),
+            ("a KeyboardInterrupt subclass in a call", Interrupt(), "call", "release_day_from_published_at", released),
+            ("a KeyboardInterrupt from a lookup", KeyboardInterrupt(), "lookup", "release_day_from_published_at",
+             released),
+            ("an error whose str raises a KeyboardInterrupt", _InterruptingStr(), "call",
+             "release_day_from_published_at", released),
+            ("an error whose class name raises a KeyboardInterrupt", _InterruptingClassName(), "call",
+             "release_day_from_published_at", released),
+            ("a KeyboardInterrupt in extract", KeyboardInterrupt(), "call", "extract", released),
+            ("a KeyboardInterrupt in requires_release_date", KeyboardInterrupt(), "call", "requires_release_date",
+             None),
+        ):
+            with self.subTest(label):
+                code, out, err = self.interrupt_reports(error, place, name, line)
+                self.assertEqual(code, "interrupt", (out, err))
+
+    def test_loaded_extractor_module_is_recognized_by_identity(self):
+        # Fix round 8 (operator sweep): the loaded module is told from the
+        # not-loaded state by identity, so a module whose class compares
+        # equal to None runs no comparison of its own and is not loaded
+        # again; its functions decide, here a date mismatch.
+        class ComparingModule(types.ModuleType):
+            def __eq__(self, other):
+                raise SystemExit(0)
+
+            __ne__ = __eq__
+            __hash__ = types.ModuleType.__hash__
+
+        saved_class = type(gate.RELEASE_DATE)
+        gate.RELEASE_DATE.__class__ = ComparingModule
+        try:
+            self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+            self.published("2026-11-16T00:00:01Z")
+            code, out, err = self.main_reports()
+        finally:
+            gate.RELEASE_DATE.__class__ = saved_class
+        self.assertEqual(code, 1, (out, err))
+        self.assertIn("Release date inconsistency found", out)
+
+    def test_requires_release_date_is_not_called_when_the_line_is_present(self):
+        # Fix round 8 (operator sweep): with a Released line present, the
+        # baseline rule is not asked, so no extractor code runs for it.
+        saved = gate.RELEASE_DATE.requires_release_date
+        calls = []
+
+        def recording(*args, **kwargs):
+            calls.append(args)
+            raise RuntimeError("requires_release_date was called")
+
+        gate.RELEASE_DATE.requires_release_date = recording
+        try:
+            self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+            self.published("2026-11-15T09:30:00Z")
+            code, out, err = self.main_reports()
+        finally:
+            gate.RELEASE_DATE.requires_release_date = saved
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual(calls, [])
+
+    def interrupt_reports(self, error, place, name="release_day_from_published_at",
+                          line="Released: 2026-11-15  "):
+        """Run the gate with the extractor function ``name`` raising
+        ``error``, in a call or from a lookup on the module, and SKILL.md
+        carrying the Released line ``line``, returning (exit code, stdout,
+        stderr). An interrupt that escapes the gate gives the code
+        "interrupt", so a test fails rather than the run ending."""
+        saved = vars(gate.RELEASE_DATE)[name]
+
+        def raising(*args, **kwargs):
+            raise error
+
+        if place == "call":
+            setattr(gate.RELEASE_DATE, name, raising)
+        else:
+            delattr(gate.RELEASE_DATE, name)
+            gate.RELEASE_DATE.__getattr__ = raising
+        try:
+            self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
+            self.published("2026-11-15T09:30:00Z")
+            try:
+                return self.main_reports()
+            except KeyboardInterrupt:
+                return "interrupt", "", ""
+        finally:
+            vars(gate.RELEASE_DATE).pop("__getattr__", None)
+            setattr(gate.RELEASE_DATE, name, saved)
 
     def test_unexpected_status_of_the_site_release_does_not_hide_the_date_check(self):
         # Row 62: a status other than 200 or 404 for the release the site
@@ -1131,6 +1531,53 @@ class ConditionalPassTest(unittest.TestCase):
         code, out, err = self.pre_tag_reports(CURRENT)
         self.assertEqual(code, 0, (out, err))
         self.assertNotIn("inconsistency", out)
+
+    def test_pre_tag_window_says_nothing_to_reconcile_only_when_clean(self):
+        # Fix round 8 (claude, pre-existing): the pre-tag window says there is
+        # nothing to reconcile only when the gate passes, never beside a
+        # Released line missing above the baseline (exit 1) or a malformed
+        # line (exit 3).
+        for label, version, released, expected in (
+            ("valid line", AHEAD, "Released: 2026-11-15  ", 0),
+            ("undated baseline", CURRENT, None, 0),
+            ("missing line above the baseline", AHEAD, None, 1),
+            ("malformed line", AHEAD, "Released: soon", 3),
+        ):
+            with self.subTest(label):
+                code, out, err = self.pre_tag_reports(version, released)
+                self.assertEqual(code, expected, (out, err))
+                if expected == 0:
+                    self.assertIn("Nothing to reconcile.", out)
+                else:
+                    self.assertNotIn("Nothing to reconcile", out)
+
+    def test_pre_tag_window_after_a_failed_first_load_never_says_nothing_to_reconcile(self):
+        # Fix round 8: a load that fails in main and succeeds when the check
+        # retries it still ends the gate with 3, so the window does not say
+        # there is nothing to reconcile.
+        self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+        gate.release_status = lambda tag: 404
+        gate.tag_status = lambda tag: 404
+        saved = (gate.RELEASE_DATE, gate._load_release_date_tool)
+        real = gate._load_release_date_tool
+        attempts = []
+
+        def flaky():
+            attempts.append(len(attempts))
+            if len(attempts) == 1:
+                gate._unavailable("could not load skill-release-date.py (the extractor is unavailable): flaky")
+            return real()
+
+        gate.RELEASE_DATE = None
+        gate._load_release_date_tool = flaky
+        try:
+            code, out, err = self.main_reports()
+        finally:
+            gate.RELEASE_DATE, gate._load_release_date_tool = saved
+        self.assertEqual(code, 3, (out, err))
+        self.assertEqual(len(attempts), 2)
+        self.assertIn("is not published yet", out)
+        self.assertNotIn("Nothing to reconcile", out)
 
     def test_unreleased_version_that_is_not_current_fails(self):
         self.fixtures(BOGUS, OTHER_SUM, CURRENT)
@@ -1673,6 +2120,9 @@ class ModuleLoadTest(unittest.TestCase):
              source + "\ndef extract(text):\n    raise KeyboardInterrupt()\n", False),
             ("a KeyboardInterrupt subclass in a call",
              source + "\n" + subclass + "def extract(text):\n    raise K()\n", False),
+            # Fix round 8 (operator sweep): from a lookup the load validates.
+            ("KeyboardInterrupt from an API lookup at load",
+             source + "\ndel extract\ndef __getattr__(name):\n    raise KeyboardInterrupt()\n", True),
         ):
             with self.subTest(label):
                 code, err = self.run_with_extractor(body)
@@ -1681,6 +2131,42 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertIn("KeyboardInterrupt" if "subclass" not in label else "K", err)
                 if at_load:
                     self.assertNotIn("the gh CLI is not available", err)
+
+    def test_extractor_interrupt_that_is_also_another_class_exits_3(self):
+        # Fix round 8 (claude LOW 1): in a gate run as a script, a
+        # KeyboardInterrupt that is also a SystemExit, at load, from a lookup
+        # the load validates, or in a call, or one that also inherits the
+        # ReleaseDateMalformed class of the gate (which the extractor reaches
+        # as the __main__ module) and whose str exits 0, is not let through:
+        # the gate exits 3 with its report, never the code the SystemExit
+        # carries, an interrupt, or the 0 an unguarded str would give.
+        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
+        hybrid = "class H(KeyboardInterrupt, SystemExit):\n    pass\n"
+        mixed = (
+            "import sys as _sys\n"
+            "class H(KeyboardInterrupt, _sys.modules[\"__main__\"].ReleaseDateMalformed):\n"
+            "    def __str__(self):\n        raise SystemExit(0)\n"
+        )
+        cases = [
+            (f"an interrupt that is also SystemExit({code}) at load", hybrid + f"raise H({code})\n",
+             "could not load skill-release-date.py (the extractor is unavailable): H")
+            for code in (0, 1, 2, 3)
+        ] + [
+            ("an interrupt that is also SystemExit(0) from an API lookup",
+             source + "\n" + hybrid + "del extract\ndef __getattr__(name):\n    raise H(0)\n",
+             "lacks a usable extract "),
+            ("an interrupt that is also SystemExit(0) in a call",
+             source + "\n" + hybrid + "def extract(text):\n    raise H(0)\n",
+             "failed unexpectedly in extract: H: 0"),
+            ("an interrupt that also inherits ReleaseDateMalformed in a call",
+             source + "\n" + mixed + "def extract(text):\n    raise H()\n",
+             "failed unexpectedly in extract: H: (its message could not be read)"),
+        ]
+        for label, body, reason in cases:
+            with self.subTest(label):
+                code, err = self.run_with_extractor(body)
+                self.assertEqual(code, 3, err)
+                self.assertIn(reason, err)
 
     def test_system_exit_while_loading_exits_3(self):
         # Row 58: an extractor that raises SystemExit while it loads, or from
@@ -1767,6 +2253,12 @@ class ModuleLoadTest(unittest.TestCase):
              "class _Meta(type):\n    pass\nclass Malformed(ValueError, metaclass=_Meta):\n    pass\n",
              "Malformed"),
             ("BASELINE_VERSION not a version", "BASELINE_VERSION = 14\n", "BASELINE_VERSION"),
+            # Fix round 8 (operator sweep): an exact str that is not a bare
+            # version is refused by the gate itself, even beside a baseline
+            # rule that would not reject it.
+            ("BASELINE_VERSION an exact str that is not a bare version",
+             "BASELINE_VERSION = \"1.0\"\ndef requires_release_date(version):\n    return True\n",
+             "BASELINE_VERSION"),
         ):
             with self.subTest(label):
                 code, err = self.run_with_extractor(source + "\n" + tail)
