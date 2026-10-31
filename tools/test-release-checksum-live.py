@@ -410,6 +410,64 @@ class _BasesEqError(RuntimeError):
 _BasesEqError.__bases__ = (RuntimeError, _EqException)
 
 
+class _PlainInterrupt(KeyboardInterrupt):
+    """Fix round 9: a subclass of KeyboardInterrupt alone, which a real
+    Ctrl-C never raises, so it is not let through."""
+
+
+class _InterruptExitGrandchildBase(KeyboardInterrupt, SystemExit):
+    pass
+
+
+class _InterruptExitGrandchild(_InterruptExitGrandchildBase, KeyboardInterrupt):
+    """VERIFY 5.1 (claude LOW 1a): a KeyboardInterrupt whose SystemExit sits
+    above a direct base."""
+
+
+class _RaisingEqMeta(type):
+    def __eq__(cls, other):
+        raise SystemExit(0)
+
+    __hash__ = type.__hash__
+
+
+class _CodexInterruptA(KeyboardInterrupt, metaclass=_RaisingEqMeta):
+    pass
+
+
+class _CodexInterruptB(KeyboardInterrupt):
+    pass
+
+
+class _CodexInterruptC(BaseException):
+    pass
+
+
+class _CodexInterrupt(_CodexInterruptB):
+    """VERIFY 5.1 (codex LOW 1): a KeyboardInterrupt whose bases, reassigned,
+    put a custom-metaclass ancestor before KeyboardInterrupt on its MRO."""
+
+
+_CodexInterrupt.__bases__ = (_CodexInterruptB, _CodexInterruptA, _CodexInterruptC)
+
+
+class _MalformedSystemExit(_REAL_MALFORMED, SystemExit):
+    pass
+
+
+class _MalformedSystemExitChild(_MalformedSystemExit):
+    """VERIFY 5.1 (claude LOW 1b): a SystemExit and Malformed one level above
+    a direct base."""
+
+
+class _MalformedChild(_REAL_MALFORMED):
+    """Fix round 9: a direct subclass of Malformed, not a verdict."""
+
+
+class _MalformedGrandchild(_MalformedChild):
+    """VERIFY 5.1 (claude LOW 1c): a Malformed grandchild, not a verdict."""
+
+
 class _InterruptExit(KeyboardInterrupt, SystemExit):
     """Fix round 8 (claude LOW 1): a KeyboardInterrupt that is also a
     SystemExit, which a SystemExit handler of the gate would read by its
@@ -603,8 +661,14 @@ class ConditionalPassTest(unittest.TestCase):
     def test_released_date_matching_published_day_passes(self):
         self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
         self.published("2026-11-15T23:59:59Z")
-        self.assertEqual(gate.main(), 0)
+        code, out = self.main_output()
+        self.assertEqual(code, 0, out)
         self.assertEqual(self.asked, [f"v{AHEAD}"])
+        # VERIFY 5.1 (codex LOW 2): a correctly dated published release
+        # prints no missing-line report and no inconsistency.
+        self.assertIn(f"matches the publication day of release v{AHEAD}", out)
+        self.assertNotIn("has no Released: line", out)
+        self.assertNotIn("inconsistency", out)
 
     def test_released_date_differing_from_published_day_fails(self):
         self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
@@ -1234,6 +1298,15 @@ class ConditionalPassTest(unittest.TestCase):
              _BasesMalformedError, None, failed),
             ("an ordinary error whose bases carry an Exception that compares equal to Malformed",
              _BasesEqError, None, failed),
+            # Fix round 9: only an error of exactly the Malformed class is a
+            # verdict, so a subclass of Malformed, a SystemExit and Malformed
+            # above a direct base, and a Malformed grandchild are not
+            # (VERIFY 5.1, claude LOW 1b and 1c), and an error whose metaclass
+            # compares unequal to nothing is not taken for a Malformed.
+            ("a direct subclass of Malformed", _MalformedChild, None, failed),
+            ("a SystemExit and Malformed above a direct base", _MalformedSystemExitChild, None, failed),
+            ("a Malformed grandchild", _MalformedGrandchild, None, failed),
+            ("an error whose metaclass compares unequal to nothing", _EqException, None, failed),
         )
         for label, error_class, malformed, reason in cases:
             for stop_code in (0, 1, 2, 3, None):
@@ -1241,6 +1314,31 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assert_verdict(error_class(stop_code), malformed, 3, reason)
         with self.subTest("an ordinary error whose __class__ property names Malformed"):
             self.assert_verdict(_ClassSpoofError("boom"), None, 3, failed)
+        # Fix round 9: the Malformed class is checked again when the error is
+        # classified, so extractor code that reassigns its __bases__ during
+        # the call, leaving it no Exception, gets no content verdict.
+        with self.subTest("a Malformed whose bases the call reassigns"):
+            class Shifting(ValueError):
+                pass
+
+            def shift_and_raise(*args, **kwargs):
+                Shifting.__bases__ = (BaseException,)
+                raise Shifting("boom")
+
+            saved_day = gate.RELEASE_DATE.release_day_from_published_at
+            saved_malformed = gate.RELEASE_DATE.Malformed
+            gate.RELEASE_DATE.release_day_from_published_at = shift_and_raise
+            gate.RELEASE_DATE.Malformed = Shifting
+            try:
+                self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+                self.published("2026-11-15T09:30:00Z")
+                code, out, err = self.main_reports()
+            finally:
+                gate.RELEASE_DATE.release_day_from_published_at = saved_day
+                gate.RELEASE_DATE.Malformed = saved_malformed
+            self.assertEqual(code, 3, (out, err))
+            self.assertIn(failed + ": Shifting: boom", err)
+            self.assertNotIn("is unusable", err)
         # The control: a genuine Malformed verdict is still a content verdict.
         with self.subTest("a genuine Malformed verdict"):
             self.assert_verdict(_REAL_MALFORMED("bad stamp"), None, 2,
@@ -1272,10 +1370,9 @@ class ConditionalPassTest(unittest.TestCase):
             gate.RELEASE_DATE.Malformed = saved_malformed
 
     def test_interrupt_that_is_also_another_class_exits_3(self):
-        # Fix round 8 (claude LOW 1): a KeyboardInterrupt is let through as an
-        # interrupt only when its class has exactly the builtin type as its
-        # own type and every class on its real MRO but BaseException and
-        # object is KeyboardInterrupt or a subclass of it. Anything else the
+        # Fix round 8 (claude LOW 1), narrowed in fix round 9: a
+        # KeyboardInterrupt is let through as an interrupt only when its class
+        # is exactly KeyboardInterrupt. Anything else the
         # extractor raises, in a call or from a lookup on the module, or
         # raises while the gate reads the class name or text of an error,
         # exits 3 with its report, never the code a SystemExit carries, the
@@ -1299,6 +1396,18 @@ class ConditionalPassTest(unittest.TestCase):
              _BasesInterrupt("boom"), "_BasesInterrupt: boom"),
             ("an error whose __class__ property names KeyboardInterrupt", _ClaimsInterrupt("boom"),
              "_ClaimsInterrupt: boom"),
+            # Fix round 9: only exactly KeyboardInterrupt is let through, so a
+            # subclass of it alone, a SystemExit above a direct base, and the
+            # codex VERIFY 5.1 class with a custom-metaclass ancestor are
+            # refused, and an error whose metaclass compares equal to
+            # KeyboardInterrupt is not taken for it.
+            ("a subclass of KeyboardInterrupt alone", _PlainInterrupt("boom"), "_PlainInterrupt: boom"),
+            ("a KeyboardInterrupt with a SystemExit above a direct base", _InterruptExitGrandchild(0),
+             "_InterruptExitGrandchild: 0"),
+            ("a KeyboardInterrupt with a custom-metaclass ancestor through its bases", _CodexInterrupt("probe"),
+             "_CodexInterrupt: probe"),
+            ("an error whose metaclass compares equal to KeyboardInterrupt", _EqException("boom"),
+             "_EqException: boom"),
         ]
         for place, prefix in (
             ("call", "failed unexpectedly in release_day_from_published_at: "),
@@ -1312,18 +1421,14 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assertIn("matches the published", out)
 
     def test_real_interrupt_is_let_through_at_every_guard(self):
-        # Fix round 8: a KeyboardInterrupt, or a subclass of it alone, is let
-        # through as an interrupt wherever the gate guards extractor code: a
-        # call, a lookup on the module, the class name or text of a caught
+        # Fix round 8, narrowed in fix round 9: exactly KeyboardInterrupt is
+        # let through as an interrupt wherever the gate guards extractor code:
+        # a call, a lookup on the module, the class name or text of a caught
         # error, and a call whose handler is a ReleaseDateMalformed or
         # SystemExit handler of the gate.
-        class Interrupt(KeyboardInterrupt):
-            pass
-
         released = "Released: 2026-11-15  "
         for label, error, place, name, line in (
             ("a KeyboardInterrupt in a call", KeyboardInterrupt(), "call", "release_day_from_published_at", released),
-            ("a KeyboardInterrupt subclass in a call", Interrupt(), "call", "release_day_from_published_at", released),
             ("a KeyboardInterrupt from a lookup", KeyboardInterrupt(), "lookup", "release_day_from_published_at",
              released),
             ("an error whose str raises a KeyboardInterrupt", _InterruptingStr(), "call",
@@ -2106,20 +2211,16 @@ class ModuleLoadTest(unittest.TestCase):
 
     def test_extractor_keyboard_interrupt_is_an_interrupt_not_a_pass_or_drift(self):
         # Fix round 5 (claude LOW 1): the documented residual. A
-        # KeyboardInterrupt the extractor raises, or a subclass, at load or in
-        # a call, is let through as an interrupt, since the gate cannot tell it
-        # from a real Ctrl-C by its type: the gate ends with the SIGINT status,
-        # never 0 (a pass) or 1 (drift), and at load before the checksum
-        # comparison runs.
+        # KeyboardInterrupt the extractor raises, exactly that class, at load
+        # or in a call, is let through as an interrupt, since the gate cannot
+        # tell it from a real Ctrl-C by its type: the gate ends with the
+        # SIGINT status, never 0 (a pass) or 1 (drift), and at load before the
+        # checksum comparison runs.
         source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
-        subclass = "class K(KeyboardInterrupt):\n    pass\n"
         for label, body, at_load in (
             ("KeyboardInterrupt at load", "raise KeyboardInterrupt()\n", True),
-            ("a KeyboardInterrupt subclass at load", subclass + "raise K()\n", True),
             ("KeyboardInterrupt in a call",
              source + "\ndef extract(text):\n    raise KeyboardInterrupt()\n", False),
-            ("a KeyboardInterrupt subclass in a call",
-             source + "\n" + subclass + "def extract(text):\n    raise K()\n", False),
             # Fix round 8 (operator sweep): from a lookup the load validates.
             ("KeyboardInterrupt from an API lookup at load",
              source + "\ndel extract\ndef __getattr__(name):\n    raise KeyboardInterrupt()\n", True),
@@ -2128,9 +2229,27 @@ class ModuleLoadTest(unittest.TestCase):
                 code, err = self.run_with_extractor(body)
                 self.assertNotIn(code, (0, 1), err)
                 self.assertEqual(code, -signal.SIGINT, err)
-                self.assertIn("KeyboardInterrupt" if "subclass" not in label else "K", err)
+                self.assertIn("KeyboardInterrupt", err)
                 if at_load:
                     self.assertNotIn("the gh CLI is not available", err)
+
+    def test_extractor_keyboard_interrupt_subclass_exits_3(self):
+        # Fix round 9: a real Ctrl-C raises exactly KeyboardInterrupt, so a
+        # subclass of it the extractor raises, at load or in a call, is not
+        # let through: the gate exits 3 with its report.
+        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
+        subclass = "class K(KeyboardInterrupt):\n    pass\n"
+        for label, body, reason in (
+            ("a KeyboardInterrupt subclass at load", subclass + "raise K()\n",
+             "could not load skill-release-date.py (the extractor is unavailable): K"),
+            ("a KeyboardInterrupt subclass in a call",
+             source + "\n" + subclass + "def extract(text):\n    raise K()\n",
+             "failed unexpectedly in extract: K"),
+        ):
+            with self.subTest(label):
+                code, err = self.run_with_extractor(body)
+                self.assertEqual(code, 3, err)
+                self.assertIn(reason, err)
 
     def test_extractor_interrupt_that_is_also_another_class_exits_3(self):
         # Fix round 8 (claude LOW 1): in a gate run as a script, a
