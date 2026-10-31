@@ -97,18 +97,35 @@ one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not complete.
 The extractor runs in this process, so every call the gate makes into
 extractor-defined code is guarded: loading the module, each attribute lookup
 and its validation, each function call, the Malformed class checks, and the
-class name and text of a caught error. A caught error is described only
+class name and text of a caught error. Every classification or type decision
+the gate makes from an object the extractor provides reads only what that code
+cannot fake: the real type of the object, through type(), never its __class__,
+and exact builtin types, with no isinstance or issubclass call that could run an
+extractor hook. The Malformed class must be a class whose own type is exactly
+the builtin type and that subclasses Exception, and a caught error is a content
+verdict only when its own class has that builtin type too, no class on its real
+MRO is a SystemExit or any other BaseException that is not an Exception, and
+that MRO holds the Malformed class itself. Anything else exits 3, never 2. A
+caught error is described only
 through _describe, never by its repr, and a returned value and
 BASELINE_VERSION must be of the exact built-in type the gate expects, so no
 extractor method of theirs runs later. Whatever that code raises, a SystemExit
-of any code or any other exception, exits 3; only a KeyboardInterrupt is let
-through as an interrupt. The residual the gate cannot close in-process:
+of any code or any other exception, exits 3, with one exception: a
+KeyboardInterrupt, a subclass included, is let through as an interrupt,
+because the gate cannot tell one the extractor raises from a real Ctrl-C by
+its type. The residual the gate cannot close in-process:
 extractor code that calls os._exit, signals its own process, never returns,
 or changes the interpreter state the gate relies on (its globals, sys,
 builtins, or a thread, finalizer, or exit handler it leaves behind) acts
-outside any handler, so it can still end the gate with another code. Only
-running the extractor in a separate process would close that residual, and
-the gate does not.
+outside any handler, so it can still end the gate with another code. So does
+an extractor that raises KeyboardInterrupt itself, at load or in a call: the
+gate ends as an interrupt, with the SIGINT status (130 in a shell), not 3;
+raised at load, it ends the gate before the checksum comparison runs or
+reports; and the interpreter prints its text in the traceback outside any
+guard, so an extractor-defined str runs unguarded there. That status is never
+0 or 1 unless that unguarded code itself calls os._exit, the residual above.
+Only running the extractor in a separate process would close that residual,
+and the gate does not.
 """
 
 from __future__ import annotations
@@ -158,8 +175,32 @@ def _api_kind_ok(value, kind: str) -> bool:
     if kind == "a function":
         return callable(value)
     if kind == "an exception class":
-        return isinstance(value, type) and issubclass(value, Exception)
+        return _plain_exception_class(value)
     return type(value) is str and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is not None
+
+
+def _plain_exception_class(value) -> bool:
+    """True only when ``value`` is a class whose own type is exactly the
+    builtin type and that subclasses Exception (fix round 5). type() reads the
+    real type, so a value that only claims to be a class through a __class__
+    property, or a class with a custom metaclass, whose instance, subclass, or
+    mro hooks would then decide the Malformed classification, is refused.
+    issubclass against the builtin Exception, itself of exactly the builtin
+    type, takes the builtin subtype path over the real MRO, so it runs no
+    extractor hook."""
+    return type(value) is type and issubclass(value, Exception)
+
+
+def _exception_lineage(cls) -> bool:
+    """True only when the class ``cls`` of a caught error has exactly the
+    builtin type as its own type, so its MRO is the real one, and every class
+    on that MRO but BaseException and object subclasses Exception (fix round
+    5). A SystemExit, or any other BaseException that is not an Exception,
+    even one that also inherits the Malformed class, is never a content
+    verdict."""
+    if type(cls) is not type:
+        return False
+    return all(base is BaseException or base is object or issubclass(base, Exception) for base in cls.__mro__)
 
 
 # The exact built-in types each extractor function may return. Checked by
@@ -203,12 +244,24 @@ def _describe(error: BaseException) -> str:
 
 def _malformed_verdict(error: BaseException, malformed):
     """Return the text of the extractor Malformed verdict ``error``, or None
-    when it is not one. The class checks can run extractor code (a metaclass
-    hook) and so can str(), so each is guarded: a check that raises or exits,
-    or a verdict whose text is not an exact str, is not trusted as a content
-    verdict, and the caller reports the extractor as failed (exit 3)."""
+    when it is not one, and the caller then reports the extractor as failed
+    (exit 3). The verdict is decided only from what extractor code cannot fake
+    (fix round 5): first the real class of ``error``, read with type(), never
+    its __class__, must pass _exception_lineage, so a SystemExit of any code,
+    or any other BaseException that is not an Exception, is refused before any
+    classification; then ``malformed`` must pass _plain_exception_class; then
+    that class must itself be on the real MRO of the class of ``error``,
+    found by identity, so no isinstance call honours a __class__ property and
+    no metaclass instance or subclass check runs. The checks and str() are
+    still guarded: a check that raises or exits, or a verdict whose text is not
+    an exact str, is not trusted as a content verdict."""
     try:
-        verdict = isinstance(malformed, type) and issubclass(malformed, Exception) and isinstance(error, malformed)
+        cls = type(error)
+        verdict = (
+            _exception_lineage(cls)
+            and _plain_exception_class(malformed)
+            and any(base is malformed for base in cls.__mro__)
+        )
     except KeyboardInterrupt:
         raise
     except BaseException:
@@ -821,7 +874,10 @@ def check_site_checksum() -> int:
 def main() -> int:
     """Run the gate. The extractor is loaded here, inside the protected path,
     so a load failure contributes exit 3 while the checksum comparison still
-    runs and reports; the most severe code wins (3 over 2 over 1 over 0)."""
+    runs and reports; the most severe code wins (3 over 2 over 1 over 0). The
+    exception is a KeyboardInterrupt the extractor raises while it loads: it
+    is let through as an interrupt, so the gate ends with the SIGINT status
+    before the comparison runs (see the residual in the module docstring)."""
     load_code = load_release_date_tool()
     try:
         code = check_site_checksum()

@@ -36,6 +36,7 @@ import importlib.util
 import io
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -139,6 +140,70 @@ class _ExitingVersion(str):
         raise SystemExit(0)
 
     __str__ = __format__
+
+
+_REAL_MALFORMED = gate.RELEASE_DATE.Malformed
+
+
+class _ClassSpoofExit(SystemExit):
+    """Fix round 5: a SystemExit whose __class__ property names the real
+    Malformed class, a claim isinstance honours."""
+
+    __class__ = property(lambda self: _REAL_MALFORMED)
+
+
+class _ClassSpoofError(RuntimeError):
+    """Fix round 5: an ordinary error whose __class__ property names the real
+    Malformed class, so only the real type of the error can refuse it."""
+
+    __class__ = property(lambda self: _REAL_MALFORMED)
+
+
+class _MalformedExit(SystemExit, _REAL_MALFORMED):
+    """Fix round 5: a SystemExit that really inherits the Malformed class."""
+
+
+class _MroSpoofMeta(type):
+    def mro(cls):
+        return (cls, _REAL_MALFORMED) + _REAL_MALFORMED.__mro__[1:]
+
+
+class _MroSpoofExit(SystemExit, metaclass=_MroSpoofMeta):
+    """Fix round 5: an error built on SystemExit whose metaclass gives it an
+    MRO that names the Malformed class."""
+
+
+class _AcceptingInstanceMeta(type):
+    def __instancecheck__(cls, instance):
+        return True
+
+
+class _AcceptingInstanceMalformed(Exception, metaclass=_AcceptingInstanceMeta):
+    """Fix round 5: a Malformed class whose instance check accepts anything."""
+
+
+class _AcceptingSubclassMeta(type):
+    def __subclasscheck__(cls, subclass):
+        return True
+
+
+class _AcceptingSubclassMalformed(Exception, metaclass=_AcceptingSubclassMeta):
+    """Fix round 5: a Malformed class whose subclass check accepts anything."""
+
+
+class _PretendClass:
+    """Fix round 5: a Malformed that only claims to be an exception class,
+    through a __class__ property and __bases__, and whose own instance and
+    subclass checks accept anything."""
+
+    __class__ = property(lambda self: type)
+    __bases__ = (Exception,)
+
+    def __instancecheck__(self, instance):
+        return True
+
+    def __subclasscheck__(self, subclass):
+        return True
 
 
 def unexpected_call(*args, **kwargs):
@@ -712,8 +777,10 @@ class ConditionalPassTest(unittest.TestCase):
             ("a BaseException subclass", "release_day_from_published_at", raising(_Escape()), released, failed),
             ("a Malformed verdict whose str exits 0", "release_day_from_published_at",
              raising(_ExitingMalformed()), released, failed),
+            # Fix round 5: a Malformed class with a custom metaclass is refused
+            # as unusable before any of its hooks can run.
             ("a Malformed class whose checks exit 0", "Malformed", _ExitingCheckMalformed, released,
-             "failed unexpectedly in release_day_from_published_at: RuntimeError"),
+             "lacks a usable Malformed (expected an exception class)"),
             ("extract returns a hostile value", "extract", returning(_Hostile()), released,
              "returned an unusable result from extract"),
             ("requires_release_date returns a hostile value", "requires_release_date", returning(_Hostile()), None,
@@ -740,6 +807,62 @@ class ConditionalPassTest(unittest.TestCase):
                 finally:
                     setattr(gate.RELEASE_DATE, name, saved)
                     gate.RELEASE_DATE.release_day_from_published_at = saved_day
+
+    def test_spoofed_malformed_classification_exits_3(self):
+        # Fix round 5 (codex MEDIUM): the Malformed classification reads only
+        # what extractor code cannot fake. A SystemExit of any code, or an
+        # error that only claims to be a Malformed verdict through a __class__
+        # property, a metaclass instance or subclass check, or a metaclass
+        # mro, or a Malformed that only claims to be a class, is unavailable
+        # (exit 3), never a content verdict (exit 2), and the checksum
+        # comparison still runs.
+        failed = "failed unexpectedly in release_day_from_published_at"
+        unusable = "lacks a usable Malformed (expected an exception class)"
+        cases = (
+            ("a SystemExit whose __class__ property names Malformed", _ClassSpoofExit, None, failed),
+            ("a SystemExit that also inherits Malformed", _MalformedExit, None, failed),
+            ("an error built on SystemExit whose metaclass mro names Malformed", _MroSpoofExit, None, failed),
+            ("a Malformed metaclass whose instance check accepts anything", SystemExit,
+             _AcceptingInstanceMalformed, unusable),
+            ("a Malformed metaclass whose subclass check accepts anything", SystemExit,
+             _AcceptingSubclassMalformed, unusable),
+            ("a Malformed that only claims to be a class", SystemExit, _PretendClass(), unusable),
+        )
+        for label, error_class, malformed, reason in cases:
+            for stop_code in (0, 1, 2, 3, None):
+                with self.subTest(label, code=stop_code):
+                    self.assert_verdict(error_class(stop_code), malformed, 3, reason)
+        with self.subTest("an ordinary error whose __class__ property names Malformed"):
+            self.assert_verdict(_ClassSpoofError("boom"), None, 3, failed)
+        # The control: a genuine Malformed verdict is still a content verdict.
+        with self.subTest("a genuine Malformed verdict"):
+            self.assert_verdict(_REAL_MALFORMED("bad stamp"), None, 2,
+                                f"the published_at of release v{AHEAD} is unusable: bad stamp")
+
+    def assert_verdict(self, error, malformed, expected, reason):
+        """Run the gate with release_day_from_published_at raising ``error``
+        and, unless it is None, Malformed replaced by ``malformed``."""
+        saved_day = gate.RELEASE_DATE.release_day_from_published_at
+        saved_malformed = gate.RELEASE_DATE.Malformed
+
+        def raising(*args, **kwargs):
+            raise error
+
+        gate.RELEASE_DATE.release_day_from_published_at = raising
+        if malformed is not None:
+            gate.RELEASE_DATE.Malformed = malformed
+        try:
+            self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+            self.published("2026-11-15T09:30:00Z")
+            code, out, err = self.main_reports()
+            self.assertEqual(code, expected, (out, err))
+            self.assertIn(reason, err)
+            if expected == 3:
+                self.assertNotIn("is unusable", err)
+            self.assertIn("matches the published", out)
+        finally:
+            gate.RELEASE_DATE.release_day_from_published_at = saved_day
+            gate.RELEASE_DATE.Malformed = saved_malformed
 
     def test_unexpected_status_of_the_site_release_does_not_hide_the_date_check(self):
         # Row 62: a status other than 200 or 404 for the release the site
@@ -1389,6 +1512,31 @@ class ModuleLoadTest(unittest.TestCase):
         self.assertEqual(code, 3, err)
         self.assertIn("RuntimeError", err)
 
+    def test_extractor_keyboard_interrupt_is_an_interrupt_not_a_pass_or_drift(self):
+        # Fix round 5 (claude LOW 1): the documented residual. A
+        # KeyboardInterrupt the extractor raises, or a subclass, at load or in
+        # a call, is let through as an interrupt, since the gate cannot tell it
+        # from a real Ctrl-C by its type: the gate ends with the SIGINT status,
+        # never 0 (a pass) or 1 (drift), and at load before the checksum
+        # comparison runs.
+        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
+        subclass = "class K(KeyboardInterrupt):\n    pass\n"
+        for label, body, at_load in (
+            ("KeyboardInterrupt at load", "raise KeyboardInterrupt()\n", True),
+            ("a KeyboardInterrupt subclass at load", subclass + "raise K()\n", True),
+            ("KeyboardInterrupt in a call",
+             source + "\ndef extract(text):\n    raise KeyboardInterrupt()\n", False),
+            ("a KeyboardInterrupt subclass in a call",
+             source + "\n" + subclass + "def extract(text):\n    raise K()\n", False),
+        ):
+            with self.subTest(label):
+                code, err = self.run_with_extractor(body)
+                self.assertNotIn(code, (0, 1), err)
+                self.assertEqual(code, -signal.SIGINT, err)
+                self.assertIn("KeyboardInterrupt" if "subclass" not in label else "K", err)
+                if at_load:
+                    self.assertNotIn("the gh CLI is not available", err)
+
     def test_system_exit_while_loading_exits_3(self):
         # Row 58: an extractor that raises SystemExit while it loads, or from
         # a lookup the load validates, is unavailable (exit 3), whatever code
@@ -1452,6 +1600,10 @@ class ModuleLoadTest(unittest.TestCase):
             ("missing release_day_from_published_at", "del release_day_from_published_at\n",
              "release_day_from_published_at"),
             ("Malformed not an exception class", "Malformed = \"x\"\n", "Malformed"),
+            # Fix round 5: a Malformed class with a custom metaclass is refused.
+            ("Malformed with a custom metaclass",
+             "class _Meta(type):\n    pass\nclass Malformed(ValueError, metaclass=_Meta):\n    pass\n",
+             "Malformed"),
             ("BASELINE_VERSION not a version", "BASELINE_VERSION = 14\n", "BASELINE_VERSION"),
         ):
             with self.subTest(label):
