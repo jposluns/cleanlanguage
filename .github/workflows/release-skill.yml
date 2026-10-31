@@ -273,6 +273,7 @@ jobs:
             fi
             if [ "${immutable}" != "true" ]; then
               echo "::error::Release ${RELEASE_TAG} is published, but its immutable field reads ${immutable:-empty}, not true, so its published_at could later be replaced and cannot be relied on." >&2
+              echo "Turn on immutable releases for the repository, then cut a corrective new version." >&2
               exit 1
             fi
             if [ "${RELEASE_DATED}" != "1" ]; then
@@ -289,7 +290,7 @@ jobs:
               0) echo "Release ${RELEASE_TAG} was published on ${RELEASE_DATE} (UTC), the day its Released line names." ;;
               5)
                 echo "::error::Release ${RELEASE_TAG} IS PUBLISHED on a different UTC day from its Released line: Released ${RELEASE_DATE}, published_at ${published_at} (see the days above)." >&2
-                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective version whose Released line names its own publication day; tools/check-release-checksum-live.py reports the same disagreement until then." >&2
+                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day; tools/check-release-checksum-live.py reports the same disagreement until then." >&2
                 exit 1
                 ;;
               1)
@@ -344,7 +345,7 @@ jobs:
           if [ "${release_exists}" -eq 1 ]; then
             if [ "${FORCE}" = "true" ]; then
               echo "Refusing the force input: release ${RELEASE_TAG} is already published, and an immutable release cannot be republished." >&2
-              echo "The force input only moves the tag of a release that is not yet published. The remedy for a published release is a corrective new version; to verify this one, re-run without the force input." >&2
+              echo "The force input only moves the tag of a release that is not yet published. The remedy for a published release is a corrective new version." >&2
               exit 1
             fi
             if [ "${remote_tag_sha}" = "${built_commit}" ]; then
@@ -407,7 +408,7 @@ jobs:
             else
               echo "Release ${RELEASE_TAG} is already published, but its tag now resolves to ${remote_tag_sha:-nothing}, not ${built_commit}." >&2
               echo "Republishing different bytes under a published version would break its checksum as a trust signal." >&2
-              echo "A published release is immutable, with or without the force input; cut a new version." >&2
+              echo "A published release is immutable, with or without the force input; cut a corrective new version." >&2
               exit 1
             fi
           fi

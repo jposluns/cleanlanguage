@@ -639,6 +639,9 @@ BROKEN_EXTRACTORS = (
         "from pathlib import Path\n", "from pathlib import Path\nimport cleanlanguage_no_such_module\n", 1)),
 )
 
+# Row 72: the remedy the not-immutable readback refusal names.
+REMEDY_NOT_IMMUTABLE = "Turn on immutable releases for the repository, then cut a corrective new version."
+
 # The readback outcomes that must fail a dated run on any path.
 BAD_READBACKS = (
     ("immutable false", {"immutable": "false"}, "immutable field reads false"),
@@ -788,7 +791,7 @@ class PublishStepTest(WorkflowStepTest):
         self.set_state(published_at="2026-11-16T00:00:02Z")
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertIn("the remedy is a corrective version", err)
+        self.assertIn("the remedy is a corrective new version", err)
         self.assertNotIn("force", err)
         self.assertNotIn("republish with", err)
 
@@ -813,6 +816,7 @@ class PublishStepTest(WorkflowStepTest):
                         self.assertIn("immutable field could not be read back", err)
                     else:
                         self.assertIn("immutable field reads ", err)
+                        self.assertIn(REMEDY_NOT_IMMUTABLE, err)
                     self.assertNotIn("the day its Released line names", out)
                     calls = self.calls()
                     self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
@@ -856,6 +860,7 @@ class PublishStepTest(WorkflowStepTest):
                         self.assertIn("immutable field could not be read back", err)
                     else:
                         self.assertIn("immutable field reads ", err)
+                        self.assertIn(REMEDY_NOT_IMMUTABLE, err)
                     self.assertNotIn("is immutable", out)
                     calls = self.calls()
                     self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
@@ -1032,6 +1037,9 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertIn("an immutable release cannot be republished", err)
         self.assertIn("The remedy for a published release is a corrective new version", err)
         self.assertIn("only moves the tag of a release that is not yet published", err)
+        # Row 71: a re-run keeps the force input, so no re-run is advised.
+        self.assertNotIn("re-run", err.lower())
+        self.assertNotIn("to verify this one", err)
         self.assertNotIn("overwriting", out + err)
         self.assertNotIn("kept its assets", out)
         self.assert_no_mutation(self.calls())
@@ -1120,10 +1128,22 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.published(remote_tag=OTHER_COMMIT)
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertIn("with or without the force input; cut a new version", err)
+        self.assertIn("with or without the force input; cut a corrective new version", err)
         self.assertNotIn("to overwrite", err)
         self.assertNotIn("Refusing the force input", err)
         self.assert_no_mutation(self.calls())
+
+    def test_every_remedy_names_a_corrective_new_version(self):
+        # Row 73: every refusal names its remedy in one form. The count is
+        # reconciled against the workflow, so the probe cannot pass empty.
+        echoes = [line for line in WORKFLOW_TEXT.splitlines() if "echo " in line]
+        remedies = [line for line in echoes if "corrective" in line or "new version" in line]
+        self.assertEqual(len(remedies), 8, remedies)
+        for line in echoes:
+            with self.subTest(line.strip()):
+                self.assertNotRegex(line, r"(?<!corrective )new version")
+                self.assertNotIn("corrective version", line)
+                self.assertNotIn("re-run without", line)
 
     def test_force_still_moves_the_tag_of_an_unpublished_release(self):
         # T7: the useful path survives, and its run reads back.
