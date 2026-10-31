@@ -199,9 +199,10 @@ jobs:
         run: |
           set -euo pipefail
           # The packager always refuses a malformed Released line, and a
-          # missing one above the undated baseline; --release-date adds only
-          # the check that the line names the expected day, so an undated
-          # release (RELEASE_DATED=0) is packaged without it.
+          # missing one above the undated baseline; --release-date also
+          # requires the line to be present, at any version, and to name the
+          # expected day, so an undated release (RELEASE_DATED=0) is packaged
+          # without it.
           if [ "${RELEASE_DATED}" = "1" ]; then
             tools/release-package.sh --tag "${RELEASE_TAG}" --release-date "${RELEASE_DATE}"
           else
