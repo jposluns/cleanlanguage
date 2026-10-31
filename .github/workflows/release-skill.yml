@@ -110,7 +110,10 @@ jobs:
           # An undated release (no Released line, at or below the undated
           # baseline) checks no date at all, exactly as before item 26:
           # RELEASE_DATED=0 skips this probe, the packager date check, the
-          # publication-window check, and the readback.
+          # publication-window check, and the publication-day half of the
+          # readback. Item 57: the publish step still requires the release to
+          # read back as immutable on every path that ends the run green,
+          # dated or not.
           #
           # Every call to the extractor tells its own content verdicts (exit 1
           # malformed, 3 absent, 4 unreadable) apart from the extractor being
@@ -212,11 +215,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Item 26 (G3) helpers, used only for a dated release
-          # (RELEASE_DATED=1). check_publish_window refuses to start
-          # publishing unless the UTC clock, read at the call, is still on the
-          # day RELEASE_DATE with at least 10 minutes left before UTC midnight
-          # (tools/skill-release-date.py --publish-window decides that).
+          # Item 26 (G3) helpers. The publication-window check is used only
+          # for a dated release (RELEASE_DATED=1): check_publish_window
+          # refuses to start publishing unless the UTC clock, read at the
+          # call, is still on the day RELEASE_DATE with at least 10 minutes
+          # left before UTC midnight (tools/skill-release-date.py
+          # --publish-window decides that).
           release_date_tool_failed() { # exit-code what
             echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2." >&2
             exit 1
@@ -239,20 +243,23 @@ jobs:
             esac
           }
           # confirm_published_release is the publication readback. It runs on
-          # EVERY path that ends a dated release run successfully: after the
-          # first creation and on a re-run at the same commit, so a retry
-          # cannot turn a failed readback green. It requires
-          # the release record to be immutable (immutable exactly true), so its
-          # published_at cannot be replaced later, and then requires the UTC
-          # day of its published_at to be the Released day, decided only by
-          # tools/skill-release-date.py --confirm-published. The log line it
-          # prints after the first creation is the first-publication
+          # EVERY path that ends a release run successfully, dated or not:
+          # after the first creation and on a re-run at the same commit, so a
+          # retry cannot turn a failed readback green. It requires the release
+          # record to be immutable (immutable exactly true), so its
+          # published_at cannot be replaced later, and then, for a dated
+          # release only, requires the UTC day of its published_at to be the
+          # Released day, decided only by tools/skill-release-date.py
+          # --confirm-published. An undated release (RELEASE_DATED=0) has no
+          # Released day, so its readback ends after the immutable check
+          # (item 57). The log line it prints after the first creation of a
+          # dated release is the first-publication
           # observation that tools/check-release-checksum-live.py defers to.
           # This readback is the only immutability check. The repository
           # setting that makes new releases immutable is deliberately not
           # read beforehand: GitHub documents its REST endpoint as needing
           # administration read access, which the workflow GITHUB_TOKEN cannot
-          # be granted, so such a pre-check would refuse every dated release
+          # be granted, so such a pre-check would refuse every release
           # (tools/test-release-skill-workflow.py fails if the workflow names
           # that endpoint). The readback fails closed: an unreadable, missing
           # (null), empty or any other non-true immutable value refuses the
@@ -267,6 +274,10 @@ jobs:
             if [ "${immutable}" != "true" ]; then
               echo "::error::Release ${RELEASE_TAG} is published, but its immutable field reads ${immutable:-empty}, not true, so its published_at could later be replaced and cannot be relied on." >&2
               exit 1
+            fi
+            if [ "${RELEASE_DATED}" != "1" ]; then
+              echo "$1: release ${RELEASE_TAG} is immutable; it carries no Released line, so no publication day is checked."
+              return 0
             fi
             if ! published_at="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .published_at)"; then
               echo "::error::Release ${RELEASE_TAG} is published, but its published_at could not be read back, so its publication day is unconfirmed against Released: ${RELEASE_DATE}." >&2
@@ -322,7 +333,7 @@ jobs:
             404) release_exists=0 ;;
             *)
               echo "Could not determine whether ${RELEASE_TAG} is already published (HTTP ${status:-none})." >&2
-              echo "Refusing to proceed rather than risk overwriting a published release." >&2
+              echo "Refusing to proceed rather than act on a release whose state is unknown." >&2
               exit 1
               ;;
           esac
@@ -386,13 +397,11 @@ jobs:
               verify_published_asset "cleanlanguage-${VERSION}.zip" "cleanlanguage-${VERSION}.zip.sha256" \
                 || { echo "The published release ${RELEASE_TAG} fails verification against its own published checksums. A published release is immutable and cannot be republished; cut a corrective new version." >&2; exit 1; }
               cmp -s "${verify_dir}/cleanlanguage.zip" "${verify_dir}/cleanlanguage-${VERSION}.zip" \
-                || { echo "The published stable and version-named zips of ${RELEASE_TAG} differ." >&2; exit 1; }
+                || { echo "The published stable and version-named zips of ${RELEASE_TAG} differ. A published release is immutable and cannot be republished; cut a corrective new version." >&2; exit 1; }
               rm -rf "${verify_dir}"; trap - EXIT
-              if [ "${RELEASE_DATED}" = "1" ]; then
-                # Item 26 (G3): a re-run ends green only on the same readback
-                # as the first publication.
-                confirm_published_release "Re-run readback"
-              fi
+              # Item 26 (G3), item 57: a re-run ends green only on the same
+              # readback as the first publication, dated or not.
+              confirm_published_release "Re-run readback"
               echo "Release ${RELEASE_TAG} is already published at ${built_commit}, complete and self-consistent; kept its assets. The orchestrator flips the site checksum post-release."
               exit 0
             else
@@ -449,10 +458,9 @@ jobs:
             "dist/cleanlanguage-${VERSION}.zip.sha256" \
             --title "Clean Language ${RELEASE_TAG}" \
             --generate-notes
-          if [ "${RELEASE_DATED}" = "1" ]; then
-            # Item 26 (G3): the first-publication readback.
-            confirm_published_release "First-publication readback"
-          fi
+          # Item 26 (G3), item 57: the first-publication readback, dated or
+          # not.
+          confirm_published_release "First-publication readback"
 
       # No site step follows. Publishing the release is this workflow's last act.
       # The site's published-checksum flip is performed by the orchestrator out

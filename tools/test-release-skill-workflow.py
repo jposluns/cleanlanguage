@@ -5,7 +5,7 @@ Item 26 (G3) puts three pieces of shell into
 ``.github/workflows/release-skill.yml``: the step that determines the expected
 release date, the packaging step that passes it on, and the publication-time
 checks in the publish step (the publication-window check immediately before
-the create call, and the publication readback on every path that ends a dated
+the create call, and the publication readback on every path that ends a
 release run green: the first creation and a re-run at the same commit). These
 tests EXTRACT each step script from the real workflow file and run it with
 bash, the way the runner does, against fake ``gh``,
@@ -14,7 +14,8 @@ the real ``tools/skill-release-date.py``. The fakes record every call in
 order, so the tests pin both the verdicts and the ordering: the binding window
 check runs after every tag operation and before the create call, the readback
 runs after it, and an undated release (``RELEASE_DATED=0``) checks no date at
-all. The fake ``date`` refuses any call without ``-u``, so a clock read in
+all, though its readback still requires the release to be immutable (item
+57). The fake ``date`` refuses any call without ``-u``, so a clock read in
 local time goes red.
 
 The workflow is parsed with ``yaml.safe_load`` (PyYAML, the same dependency
@@ -326,8 +327,8 @@ STALE_REPUBLISH_TEXT = (
 )
 
 # The publication readback labels of the publish step, in order: one for each
-# path that ends a dated run green (a re-run at the same commit, and the
-# first creation).
+# path that ends a run green, dated or not (a re-run at the same commit, and
+# the first creation).
 READBACK_LABELS = ["Re-run readback", "First-publication readback"]
 READBACK_CALL = re.compile(r"confirm_published_release \"([^\"]+)\"")
 
@@ -410,21 +411,24 @@ if ARGS[:1] == ["api"] and "--jq" in ARGS:
 VERSION = os.environ.get("VERSION", "")
 ASSETS = ["cleanlanguage.zip", "cleanlanguage.zip.sha256",
           "cleanlanguage-" + VERSION + ".zip", "cleanlanguage-" + VERSION + ".zip.sha256"]
-# The state file "missing" names assets the published release lacks, and
-# "corrupt" names zips whose published bytes no longer match their manifest.
+# The state file "missing" names assets the published release lacks,
+# "corrupt" names zips whose published bytes no longer match their manifest,
+# and "differ" names zips published with other bytes and a manifest that
+# matches them, so the two zips differ while each manifest stays valid.
 MISSING = read("missing").split()
 CORRUPT = read("corrupt").split()
+DIFFER = read("differ").split()
 if ARGS[:2] == ["release", "view"]:
     print("\\n".join(asset for asset in ASSETS if asset not in MISSING))
     sys.exit(0)
 if ARGS[:2] == ["release", "download"]:
     target = ARGS[ARGS.index("--dir") + 1]
-    data = b"published zip bytes"
-    digest = hashlib.sha256(data).hexdigest()
     for asset in ASSETS:
+        zip_name = asset[: -len(".sha256")] if asset.endswith(".sha256") else asset
+        data = b"published zip bytes" + (b" differ" if zip_name in DIFFER else b"")
         with open(os.path.join(target, asset), "wb") as handle:
             if asset.endswith(".sha256"):
-                handle.write((digest + "  " + asset[: -len(".sha256")] + "\\n").encode("utf-8"))
+                handle.write((hashlib.sha256(data).hexdigest() + "  " + zip_name + "\\n").encode("utf-8"))
             else:
                 handle.write(data + (b" altered" if asset in CORRUPT else b""))
     sys.exit(0)
@@ -814,16 +818,48 @@ class PublishStepTest(WorkflowStepTest):
                     self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
                     self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
 
-    def test_undated_release_checks_no_date(self):
+    def undated(self):
         self.carried["RELEASE_DATED"] = "0"
         self.carried["RELEASE_DATE"] = ""
-        self.set_state(clock="2026-11-15T23:59:59Z", published_at="2026-11-16T00:00:02Z", immutable="false")
-        code, _out, err = self.run_step(PUBLISH)
-        self.assertEqual(code, 0, err)
-        calls = self.calls()
-        self.assertTrue(any(is_create(c) for c in calls))
-        self.assertFalse(any(is_date(c) for c in calls), calls)
-        self.assertFalse(any(is_field_read("published_at")(c) or is_field_read("immutable")(c) for c in calls), calls)
+        self.set_state(clock="2026-11-15T23:59:59Z", published_at="2026-11-16T00:00:02Z")
+
+    def test_undated_release_checks_no_date_but_reads_back_immutability(self):
+        # Item 57: an undated release checks no date, but its first
+        # publication still ends green only on an immutable record.
+        for event, remote_tag in (("workflow_dispatch", ""), ("push", COMMIT)):
+            with self.subTest(event):
+                self.reset_calls()
+                self.runner["GITHUB_EVENT_NAME"] = event
+                self.undated()
+                self.set_state(remote_tag=remote_tag)
+                code, out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 0, err)
+                calls = self.calls()
+                self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
+                self.assertFalse(any(is_date(c) for c in calls), calls)
+                self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
+                self.assertIn("First-publication readback: release v1.0.15 is immutable", out)
+
+    def test_undated_release_that_is_not_immutable_fails(self):
+        # Item 57: the immutable readback fails closed on an undated release
+        # exactly as on a dated one.
+        for event, remote_tag in (("workflow_dispatch", ""), ("push", COMMIT)):
+            for value in ("false", "null", None, "", "True", "1", "FAIL"):
+                with self.subTest(event=event, value=value):
+                    self.reset_calls()
+                    self.runner["GITHUB_EVENT_NAME"] = event
+                    self.undated()
+                    self.set_state(immutable=value, remote_tag=remote_tag)
+                    code, out, err = self.run_step(PUBLISH)
+                    self.assertEqual(code, 1, err)
+                    if value == "FAIL":
+                        self.assertIn("immutable field could not be read back", err)
+                    else:
+                        self.assertIn("immutable field reads ", err)
+                    self.assertNotIn("is immutable", out)
+                    calls = self.calls()
+                    self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
+                    self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
 
     def test_unavailable_extractor_is_reported_as_unavailable(self):
         (self.work / "tools" / "skill-release-date.py").unlink()
@@ -883,69 +919,94 @@ class NoSettingPreCheckTest(WorkflowStepTest):
         self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
 
 
+# The events that can start a re-run at the same commit: a dispatch, and a
+# re-run of a tag-push run, which keeps the push event.
+RERUN_EVENTS = ("workflow_dispatch", "push")
+
+
+def assert_readback_ran(test, calls, out):
+    """The dated publication readback ran on a re-run: its label, and the
+    immutable read before the published_at read."""
+    immutable = test.index_of(calls, is_field_read("immutable"))
+    published_at = test.index_of(calls, is_field_read("published_at"))
+    test.assertLess(immutable, published_at)
+    test.assertIn("Re-run readback: release v1.0.15 published_at 2026-11-15T12:00:03Z", out)
+
+
 class RerunTest(WorkflowStepTest):
     """R1: a re-run at the same commit ends green only on the same publication
-    readback as the first creation. Item 57: there is no force upload path."""
+    readback as the first creation, on each event that can start one. Item 57:
+    there is no force upload path."""
 
-    def rerun(self):
+    def rerun(self, event="workflow_dispatch"):
+        self.runner["GITHUB_EVENT_NAME"] = event
         self.set_state(status="200", remote_tag=COMMIT)
 
-    def assert_readback_ran(self, calls):
-        immutable = self.index_of(calls, is_field_read("immutable"))
-        published_at = self.index_of(calls, is_field_read("published_at"))
-        self.assertLess(immutable, published_at)
-
     def test_rerun_at_the_same_commit_runs_the_readback(self):
-        self.rerun()
-        code, out, err = self.run_step(PUBLISH)
-        self.assertEqual(code, 0, err)
-        calls = self.calls()
-        self.assertFalse(any(is_create(c) or is_upload(c) for c in calls), calls)
-        self.assert_readback_ran(calls)
-        self.assertIn("Re-run readback: release v1.0.15 published_at 2026-11-15T12:00:03Z", out)
-        self.assertIn("kept its assets", out)
+        for event in RERUN_EVENTS:
+            with self.subTest(event):
+                self.reset_calls()
+                self.rerun(event)
+                code, out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 0, err)
+                calls = self.calls()
+                self.assertFalse(any(is_create(c) or is_upload(c) for c in calls), calls)
+                assert_readback_ran(self, calls, out)
+                self.assertIn("kept its assets", out)
 
     def test_rerun_fails_when_the_readback_does_not_hold(self):
-        for label, state, message in BAD_READBACKS:
-            with self.subTest(label):
-                self.reset_calls()
-                self.set_state(immutable="true", published_at="2026-11-15T12:00:03Z")
-                self.rerun()
-                self.set_state(**state)
-                code, out, err = self.run_step(PUBLISH)
-                self.assertEqual(code, 1, err)
-                self.assertIn(message, err)
-                self.assertNotIn("kept its assets", out)
+        for event in RERUN_EVENTS:
+            for label, state, message in BAD_READBACKS:
+                with self.subTest(event=event, readback=label):
+                    self.reset_calls()
+                    self.set_state(immutable="true", published_at="2026-11-15T12:00:03Z")
+                    self.rerun(event)
+                    self.set_state(**state)
+                    code, out, err = self.run_step(PUBLISH)
+                    self.assertEqual(code, 1, err)
+                    self.assertIn(message, err)
+                    self.assertNotIn("kept its assets", out)
 
     def test_broken_extractor_is_reported_by_the_probe_on_a_rerun(self):
         # T3: a re-run reports a crashed extractor as that, never as an
         # unusable published_at.
-        for label, body in BROKEN_EXTRACTORS:
-            with self.subTest(label):
-                self.reset_calls()
-                self.rerun()
-                (self.work / "tools" / "skill-release-date.py").write_text(body, encoding="utf-8")
-                code, out, err = self.run_step(PUBLISH)
-                self.assertEqual(code, 1, err)
-                self.assertIn("unavailable or crashed (exit 1) while probing it", err)
-                self.assertIn("ModuleNotFoundError" if label == "import-broken" else "SyntaxError", err)
-                self.assertNotIn("not a usable UTC instant", err)
-                self.assertNotIn("kept its assets", out)
-                calls = self.calls()
-                self.assertFalse(any(is_create(c) or is_upload(c) for c in calls), calls)
-                self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
+        for event in RERUN_EVENTS:
+            for label, body in BROKEN_EXTRACTORS:
+                with self.subTest(event=event, extractor=label):
+                    self.reset_calls()
+                    self.rerun(event)
+                    (self.work / "tools" / "skill-release-date.py").write_text(body, encoding="utf-8")
+                    code, out, err = self.run_step(PUBLISH)
+                    self.assertEqual(code, 1, err)
+                    self.assertIn("unavailable or crashed (exit 1) while probing it", err)
+                    self.assertIn("ModuleNotFoundError" if label == "import-broken" else "SyntaxError", err)
+                    self.assertNotIn("not a usable UTC instant", err)
+                    self.assertNotIn("kept its assets", out)
+                    calls = self.calls()
+                    self.assertFalse(any(is_create(c) or is_upload(c) for c in calls), calls)
+                    self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
 
-    def test_undated_rerun_reads_no_record_field(self):
-        self.carried["RELEASE_DATED"] = "0"
-        self.carried["RELEASE_DATE"] = ""
-        self.set_state(immutable="false", published_at="2026-11-16T00:00:02Z")
-        self.rerun()
-        code, _out, err = self.run_step(PUBLISH)
-        self.assertEqual(code, 0, err)
-        calls = self.calls()
-        self.assertFalse(
-            any(is_field_read("published_at")(c) or is_field_read("immutable")(c) for c in calls), calls
-        )
+    def test_undated_rerun_reads_back_immutability_only(self):
+        # Item 57: an undated re-run reads back no publication day, but ends
+        # green only on an immutable record, on each event.
+        for event in RERUN_EVENTS:
+            for value, expected in (("true", 0), ("false", 1), ("FAIL", 1)):
+                with self.subTest(event=event, immutable=value):
+                    self.reset_calls()
+                    self.carried["RELEASE_DATED"] = "0"
+                    self.carried["RELEASE_DATE"] = ""
+                    self.set_state(immutable=value, published_at="2026-11-16T00:00:02Z")
+                    self.rerun(event)
+                    code, out, err = self.run_step(PUBLISH)
+                    self.assertEqual(code, expected, err)
+                    calls = self.calls()
+                    self.assertTrue(any(is_field_read("immutable")(c) for c in calls), calls)
+                    self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
+                    if expected == 0:
+                        self.assertIn("Re-run readback: release v1.0.15 is immutable", out)
+                        self.assertIn("kept its assets", out)
+                    else:
+                        self.assertNotIn("kept its assets", out)
 
 
 class ImmutableReleaseTest(WorkflowStepTest):
@@ -993,8 +1054,9 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assert_no_mutation(self.calls())
 
     def test_rerun_without_force_verifies_and_keeps_the_assets(self):
-        # T3: regression guard for the verification branch, on both events.
-        for event in ("workflow_dispatch", "push"):
+        # T3: regression guard for the verification branch, on both events,
+        # each of which must also run the readback.
+        for event in RERUN_EVENTS:
             with self.subTest(event):
                 self.reset_calls()
                 self.runner["GITHUB_EVENT_NAME"] = event
@@ -1003,7 +1065,9 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertEqual(code, 0, err)
                 self.assertIn("kept its assets", out)
                 self.assertNotIn("Refusing the force input", err)
-                self.assert_no_mutation(self.calls())
+                calls = self.calls()
+                self.assert_no_mutation(calls)
+                assert_readback_ran(self, calls, out)
 
     def test_missing_asset_names_a_corrective_version_not_the_force_input(self):
         # T4
@@ -1030,6 +1094,22 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertIn("does not match its published checksum", err)
                 self.assertIn("fails verification against its own published checksums", err)
                 self.assertIn("cut a corrective new version", err)
+                self.assertNotIn("force", err)
+                self.assertNotIn("kept its assets", out)
+                self.assert_no_mutation(self.calls())
+
+    def test_differing_zips_name_a_corrective_version_not_the_force_input(self):
+        # Each zip matches its own published manifest, but the two differ.
+        for zip_name in ("cleanlanguage.zip", "cleanlanguage-1.0.15.zip"):
+            with self.subTest(zip_name):
+                self.reset_calls()
+                self.published()
+                self.set_state(differ=zip_name)
+                code, out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 1, err)
+                self.assertNotIn("does not match its published checksum", err)
+                self.assertIn("The published stable and version-named zips of v1.0.15 differ.", err)
+                self.assertIn("cannot be republished; cut a corrective new version", err)
                 self.assertNotIn("force", err)
                 self.assertNotIn("kept its assets", out)
                 self.assert_no_mutation(self.calls())
@@ -1090,6 +1170,8 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 code, _out, err = self.run_step(PUBLISH)
                 self.assertEqual(code, 1, err)
                 self.assertIn("Could not determine whether v1.0.15 is already published (HTTP 500)", err)
+                self.assertIn("Refusing to proceed rather than act on a release whose state is unknown.", err)
+                self.assertNotIn("overwriting", err)
                 self.assert_no_mutation(self.calls())
 
     def test_no_text_or_path_offers_a_republish(self):
@@ -1108,7 +1190,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertNotIn(stale, extractor)
 
     def test_every_success_path_reads_back(self):
-        # One readback per remaining success path of a dated run.
+        # One readback per remaining success path, dated or not.
         self.assertEqual(READBACK_CALL.findall(step_script(PUBLISH)), READBACK_LABELS)
 
 
@@ -1336,13 +1418,13 @@ class MutationTest(unittest.TestCase):
         self.assertNamed(wf, "stale republish text " + repr("force is enabled; overwriting"))
 
     def test_a_restored_force_readback_is_caught(self):
-        anchor = "            confirm_published_release \"First-publication readback\"\n"
-        wf = self.mutated(anchor, anchor + "            confirm_published_release \"Force readback\"\n")
+        anchor = "          confirm_published_release \"First-publication readback\"\n"
+        wf = self.mutated(anchor, anchor + "          confirm_published_release \"Force readback\"\n")
         self.assertNamed(wf, "stale republish text " + repr("Force readback"), "reads back under the labels")
 
     def test_a_dropped_rerun_readback_is_caught(self):
-        anchor = "                confirm_published_release \"Re-run readback\"\n"
-        wf = self.mutated(anchor, "                :\n")
+        anchor = "              confirm_published_release \"Re-run readback\"\n"
+        wf = self.mutated(anchor, "              :\n")
         self.assertNamed(wf, "reads back under the labels " + repr(["First-publication readback"]))
 
     def test_a_setting_read_is_caught(self):
