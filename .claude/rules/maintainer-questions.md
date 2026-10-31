@@ -23,7 +23,9 @@ whatever their weight. Where the text below differs, this note governs. In the
 last bullet under Format, read "question" as "round": the next round follows
 only after the current one is answered. A timeout never authorizes an
 irreversible or outward action; a decision left unanswered is recorded, and the
-step it gates is held while other work continues. A
+step it gates is held while other work continues; the mode rules in `/flow`
+set whether that step then falls under the unattended vote rule, which is in
+the machine-local orchestrator instructions, as `/flow` states. A
 fleet-wide decision SOP owned by lab_infra, the infrastructure orchestrator for
 the fleet, will later replace this rule.
 
