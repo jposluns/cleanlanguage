@@ -15,7 +15,9 @@ names, and that release must be immutable; an unpublished release SKILL.md
 names counts as not yet published only when its tag is confirmed absent, and an
 undated release at or below the baseline makes no network call for the date
 check. A date failure never hides checksum drift: both are reported and the
-more severe code wins. The gate reads the extractor module only through the
+more severe code wins. A release state that cannot be verified never hides the
+Released line check, and an unreadable verify page or downloaded asset is
+reported as such, never read as drift. The gate reads the extractor module only through the
 attributes it declares and validates at load. The network reads of that record are replaced
 by injected fixtures. These tests pin all of that offline: the
 fixtures
@@ -32,6 +34,7 @@ import contextlib
 import hashlib
 import importlib.util
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -828,6 +831,217 @@ class ConditionalPassTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             gate.main()
         self.assertEqual(caught.exception.code, 3)
+
+    # --- Fix round 1: no early exit hides the Released line, and every
+    # required read fails closed ---------------------------------------------
+
+    def offline_reports(self, version, released, tag_state):
+        """Run the gate with the site and SKILL.md naming ``version``, its
+        release returning 404 and its tag ``tag_state`` (an HTTP status, or
+        "unreadable" for a tag status that cannot be read), asserting nothing
+        but the two probes is read over the network; returns (exit code,
+        stdout, stderr)."""
+        self.fixtures(version, OTHER_SUM, version, released)
+        self.published(None, statuses={f"v{version}": 404}, tags={f"v{version}": tag_state})
+        if tag_state == "unreadable":
+            def unreadable(tag):
+                self.tag_probed.append(tag)
+                gate.cannot_verify(f"could not read the tag status for {tag} (gh exit 1)")
+            gate.tag_status = unreadable
+        gate.gh = unexpected_call
+        gate.release_published_at = unexpected_call
+        gate.release_immutable = unexpected_call
+        code, out, err = self.main_reports()
+        self.assertEqual(self.probed, [f"v{version}"])
+        self.assertEqual(self.tag_probed, [f"v{version}"])
+        return code, out, err
+
+    def test_same_version_tag_without_release_still_checks_the_released_line(self):
+        # Codex MEDIUM 2: an existing tag, an unexpected tag status, or one
+        # that cannot be read stops only the release verification (exit 2);
+        # the Released line is still checked offline and the more severe code
+        # wins, so a malformed line (exit 3) is not hidden.
+        for tag_state, stop in (
+            (200, "exists but release"), (503, "unexpected HTTP 503 reading tag"),
+            ("unreadable", "could not read the tag status"),
+        ):
+            for label, version, released, expected, reason in (
+                ("malformed line", AHEAD, "Released: soon", 3,
+                 "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed"),
+                ("line missing above the baseline", AHEAD, None, 2,
+                 f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line"),
+                ("valid line", AHEAD, "Released: 2026-11-15  ", 2, None),
+                ("undated baseline", CURRENT, None, 2, None),
+            ):
+                with self.subTest(tag=tag_state, case=label):
+                    code, out, err = self.offline_reports(version, released, tag_state)
+                    self.assertEqual(code, expected, (out, err))
+                    self.assertIn("could not verify: ", err)
+                    self.assertIn(stop, err)
+                    if reason is None:
+                        self.assertNotIn("inconsistency", out)
+                    else:
+                        self.assertIn(reason, out + err)
+
+    def test_unreadable_site_release_status_still_checks_the_released_line(self):
+        # Sibling of MEDIUM 2: a release status for the version the site names
+        # that cannot be read stops only the checksum comparison (exit 2); the
+        # Released line is still checked offline, with no further probe.
+        def unreadable(tag):
+            self.probed.append(tag)
+            gate.cannot_verify(f"could not read the release status for {tag} (gh exit 1)")
+
+        for label, site, skill, released, expected, reason in (
+            ("malformed line, same version", AHEAD, AHEAD, "Released: soon", 3, "is malformed"),
+            ("malformed line, newer SKILL.md", CURRENT, AHEAD, "Released: soon", 3, "is malformed"),
+            ("line missing above the baseline", AHEAD, AHEAD, None, 2,
+             f"the release state of v{AHEAD}, the version the verify page names, could not be verified"),
+            ("valid line", AHEAD, AHEAD, "Released: 2026-11-15  ", 2, None),
+        ):
+            with self.subTest(label):
+                self.fixtures(site, OTHER_SUM, skill, released)
+                self.published(None)
+                gate.release_status = unreadable
+                gate.tag_status = unexpected_call
+                gate.gh = unexpected_call
+                gate.release_published_at = unexpected_call
+                gate.release_immutable = unexpected_call
+                code, out, err = self.main_reports()
+                self.assertEqual(code, expected, (out, err))
+                self.assertIn("could not read the release status", err)
+                if reason is None:
+                    self.assertNotIn("inconsistency", out)
+                else:
+                    self.assertIn(reason, out + err)
+                self.assertEqual(self.probed, [f"v{site}"])
+
+    def test_unverifiable_newer_release_still_reports_a_missing_released_line(self):
+        # Sibling of MEDIUM 2 inside the date check: an unverifiable state of
+        # the release SKILL.md names keeps exit 2 but still reports a Released
+        # line missing above the baseline.
+        for label, statuses, tags in (
+            ("tag without release", {f"v{AHEAD}": 404}, {f"v{AHEAD}": 200}),
+            ("unexpected tag status", {f"v{AHEAD}": 404}, {f"v{AHEAD}": 503}),
+            ("unexpected release status", {f"v{AHEAD}": 503}, {}),
+        ):
+            with self.subTest(label):
+                self.fixtures(CURRENT, ZIP_SUM, AHEAD)
+                self.published("2026-11-15T09:30:00Z", statuses=statuses, tags=tags)
+                code, out, err = self.main_reports()
+                self.assertEqual(code, 2, (out, err))
+                self.assertIn("could not verify: ", err)
+                self.assertIn(
+                    f"the release state of v{AHEAD}, the version SKILL.md names, could not be verified", out
+                )
+                self.assertIn(f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line", out)
+
+    def test_unexpected_status_of_the_same_release_reports_once_and_keeps_the_date_check(self):
+        # Row 62, same-version case: the site and SKILL.md name the same
+        # release and it returns 503. A malformed Released line still exits 3,
+        # and the status is reported in one could-not-verify line, not two.
+        for label, released, expected, reason in (
+            ("malformed Released line", "Released: soon", 3,
+             "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed"),
+            ("line missing above the baseline", None, 2,
+             f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line"),
+            ("valid line", "Released: 2026-11-15  ", 2, None),
+        ):
+            with self.subTest(label):
+                self.fixtures(AHEAD, ZIP_SUM, AHEAD, released)
+                self.published("2026-11-15T09:30:00Z", statuses={f"v{AHEAD}": 503})
+                code, out, err = self.main_reports()
+                self.assertEqual(code, expected, (out, err))
+                self.assertEqual(err.count("unexpected HTTP 503 reading release"), 1, err)
+                if reason is not None:
+                    self.assertIn(reason, out + err)
+                self.assertEqual(self.probed, [f"v{AHEAD}"])
+                self.assertEqual((self.tag_probed, self.asked, self.immutable_asked), ([], [], []))
+
+    def test_unreadable_verify_page_exits_3(self):
+        # Codex MEDIUM 1: a verify page that cannot be read or decoded is a
+        # required file that cannot be read (exit 3), never an uncaught
+        # traceback (exit 1, drift), and nothing is read over the network.
+        def undecodable():
+            gate.VERIFY_PAGE.write_bytes(b"<p>\xff</p>")
+
+        def denied():
+            gate.VERIFY_PAGE.write_text(VERIFY.format(version=AHEAD, checksum=OTHER_SUM), encoding="utf-8")
+            gate.VERIFY_PAGE.chmod(0)
+
+        cases = [("undecodable", undecodable, "UnicodeDecodeError")]
+        if os.geteuid() != 0:
+            cases.append(("permission denied", denied, "PermissionError"))
+        for label, make, reason in cases:
+            with self.subTest(label):
+                gate.SKILL.write_text(f"Version: {AHEAD}\nReleased: 2026-11-15\n", encoding="utf-8")
+                make()
+                try:
+                    code, out, err = self.main_reports()
+                finally:
+                    gate.VERIFY_PAGE.chmod(0o600)
+                self.assertEqual(code, 3, (out, err))
+                self.assertIn("index.html could not be read", err)
+                self.assertIn(reason, err)
+
+    def test_unreadable_verify_page_beside_an_extractor_load_failure_exits_3(self):
+        # MEDIUM 1: the read failure and the extractor load failure are both
+        # reported, and the most severe code (3) is kept.
+        with tempfile.TemporaryDirectory() as tmp:
+            gate.VERIFY_PAGE.write_bytes(b"<p>\xff</p>")
+            gate.SKILL.write_text(f"Version: {AHEAD}\n", encoding="utf-8")
+            fresh = self.gate_beside(Path(tmp), None)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as caught:
+                    fresh.main()
+            self.assertEqual(caught.exception.code, 3, (out.getvalue(), err.getvalue()))
+            self.assertIn("the extractor is unavailable", err.getvalue())
+            self.assertIn("index.html could not be read", err.getvalue())
+
+    def test_unpublished_newer_release_without_a_tag_still_checks_the_released_line(self):
+        # The site names an older published release and SKILL.md names a
+        # newer version whose release and tag are both absent: as in the
+        # same-version pre-tag window, a line missing above the baseline
+        # fails (exit 1) and a malformed line exits 3, never a pass.
+        for label, released, expected, reason in (
+            ("line missing above the baseline", None, 1,
+             f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line"),
+            ("malformed line", "Released: soon", 3,
+             "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed"),
+            ("valid line", "Released: 2026-11-15  ", 0, None),
+        ):
+            with self.subTest(label):
+                self.fixtures(CURRENT, ZIP_SUM, AHEAD, released)
+                self.published("2026-11-15T09:30:00Z", statuses={f"v{AHEAD}": 404})
+                code, out, err = self.main_reports()
+                self.assertEqual(code, expected, (out, err))
+                if reason is None:
+                    self.assertNotIn("inconsistency", out)
+                else:
+                    self.assertIn(reason, out + err)
+                self.assertEqual((self.asked, self.immutable_asked), ([], []))
+
+    @unittest.skipIf(os.geteuid() == 0, "root reads a file whatever its mode")
+    def test_unreadable_downloaded_zip_does_not_hide_the_date_check(self):
+        # Sibling of MEDIUM 1: a downloaded zip that cannot be read stops only
+        # the checksum comparison (exit 2), never an uncaught traceback read
+        # as drift; the release-date check still runs and reports.
+        def unreadable_zip(*args, check=True):
+            self.fake_download(*args, check=check)
+            version = args[2].removeprefix("v")
+            target = Path(args[args.index("--dir") + 1])
+            (target / f"cleanlanguage-{version}.zip").chmod(0)
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-16T00:00:01Z")
+        gate.gh = unreadable_zip
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn(f"could not verify: could not download or read cleanlanguage-{AHEAD}.zip", err)
+        self.assertIn("PermissionError", err)
+        self.assertIn("Release date inconsistency found", out)
+        self.assertNotIn("Release checksum drift found", out)
 
 
 class ModuleLoadTest(unittest.TestCase):

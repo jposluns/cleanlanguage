@@ -26,7 +26,10 @@ Behaviour:
     a line missing above the undated baseline fails. A different version with
     no release is a real
     inconsistency and fails. An existing tag with no published release is a
-    deleted or unfinished release and reads as unverifiable. One broken state
+    deleted or unfinished release and reads as unverifiable, as does a release
+    or tag status that cannot be read; on each such path the SKILL.md
+    ``Released:`` line is still checked with no further network call, and the
+    more severe code wins. One broken state
     stays invisible to this check: a bump that updated both the verify page and
     SKILL.md but whose tag was never pushed is indistinguishable from the
     pre-tag window by repository state alone.
@@ -40,8 +43,9 @@ Behaviour:
     to be immutable (``immutable`` exactly true, so its assets and record
     cannot have been replaced since publication); on 404 it checks the tag
     exactly as the same-version path does, so only a confirmed absent tag
-    means the release is not published yet and the date check is skipped,
-    while an existing tag, or a tag whose status cannot be read, cannot be
+    means the release is not published yet and the date comparison is
+    skipped (a line missing above the undated baseline still fails there, as
+    in the pre-tag window), while an existing tag, or a tag whose status cannot be read, cannot be
     verified; any other release status cannot be verified. The line may be
     absent only when that version is at or below the undated baseline
     declared in ``tools/skill-release-date.py``; the line and that rule are
@@ -73,7 +77,8 @@ Exit codes:
 
 The release-date check and the site-checksum comparison both run and both
 are reported when the release the site names is published, including when its
-download fails or its manifest is malformed or undecodable, and also when that
+download fails, its downloaded assets cannot be read, or its manifest is
+malformed or undecodable, and also when that
 release returns a status other than 200 or 404 and when the site names an
 unreleased version that is not the current skill version, so neither failure
 hides the other. The extractor is loaded inside main, not at import, so a load
@@ -335,21 +340,30 @@ def released_line(current: str) -> tuple[str | None, bool]:
     return released, required
 
 
-def pre_tag_release_line_code(current: str) -> int:
-    """Check the SKILL.md Released line in the pre-tag window, where the
-    release and its tag are already known to be absent, so no network call is
-    made. Returns 0, 1 when the line is missing above the undated baseline, or
-    the code (2 or 3) the check stopped with, after its own report."""
+def report_missing_released_line(current: str, situation: str) -> None:
+    """Report a Released line missing above the undated baseline for version
+    ``current``; ``situation`` states the release state the gate observed."""
+    baseline = release_date_attr("BASELINE_VERSION")
+    print("Release date inconsistency found:")
+    print(f"  - {situation}")
+    print(
+        f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {current}, above the "
+        f"undated baseline {baseline}, but has no Released: line"
+    )
+
+
+def offline_release_line_code(situation: str) -> int:
+    """Check the SKILL.md Released line with no network call, on a path where
+    the release state is already known (the pre-tag window, or a tag with no
+    release) or cannot be read; ``situation`` states that state. A malformed
+    line is never hidden behind a could-not-verify result.
+    Returns 0, 1 when the line is missing above the undated baseline, or the
+    code (2 or 3) the check stopped with, after its own report."""
     try:
+        current = skill_version()
         released, required = released_line(current)
         if released is None and required:
-            baseline = release_date_attr("BASELINE_VERSION")
-            print("Release date inconsistency found:")
-            print(f"  - release v{current} is not published yet and its tag does not exist")
-            print(
-                f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {current}, above the "
-                f"undated baseline {baseline}, but has no Released: line"
-            )
+            report_missing_released_line(current, situation)
             return 1
     except SystemExit as stop:
         if stop.code in (2, 3):
@@ -372,37 +386,52 @@ def check_release_date(site_version: str, site_status: int) -> bool:
     released, required = released_line(current)
     if released is None and not required:
         return True
-    status = site_status if current == site_version else release_status(tag)
-    if status == 404:
-        # As on the same-version path in main: only a confirmed absent tag
-        # means the release is not published yet. An existing tag with no
-        # release is a deleted or failed release, and a tag status that cannot
-        # be read cannot be verified.
-        tag_state = tag_status(tag)
-        if tag_state == 200:
-            cannot_verify(
-                f"tag {tag} exists but release {tag}, the version SKILL.md names, is not "
-                f"published; if a release run is publishing {tag} right now, re-run this "
-                f"check once it completes, and otherwise the release was deleted or its "
-                f"publish failed"
+    try:
+        status = site_status if current == site_version else release_status(tag)
+        if status == 404:
+            # As on the same-version path in main: only a confirmed absent tag
+            # means the release is not published yet. An existing tag with no
+            # release is a deleted or failed release, and a tag status that
+            # cannot be read cannot be verified.
+            tag_state = tag_status(tag)
+            if tag_state == 200:
+                cannot_verify(
+                    f"tag {tag} exists but release {tag}, the version SKILL.md names, is not "
+                    f"published; if a release run is publishing {tag} right now, re-run this "
+                    f"check once it completes, and otherwise the release was deleted or its "
+                    f"publish failed"
+                )
+            if tag_state != 404:
+                cannot_verify(f"unexpected HTTP {tag_state} reading tag {tag}")
+            print(
+                f"Release {tag}, the version SKILL.md names, is not published yet and its "
+                f"tag does not exist; its Released date is checked once it is published."
             )
-        if tag_state != 404:
-            cannot_verify(f"unexpected HTTP {tag_state} reading tag {tag}")
-        print(
-            f"Release {tag}, the version SKILL.md names, is not published yet and its "
-            f"tag does not exist; its Released date is checked once it is published."
-        )
-        return True
-    if status != 200:
-        cannot_verify(f"unexpected HTTP {status} reading release {tag}, the version SKILL.md names")
+            # As in the same-version pre-tag window, a line missing above the
+            # undated baseline still fails (a malformed one already exited 3).
+            if released is None:
+                report_missing_released_line(
+                    current, f"release {tag}, the version SKILL.md names, is not published yet and its tag does not exist"
+                )
+                return False
+            return True
+        if status != 200:
+            if current == site_version:
+                # The same release the site names: the caller has already
+                # reported this status, so it is not reported twice.
+                raise SystemExit(2)
+            cannot_verify(f"unexpected HTTP {status} reading release {tag}, the version SKILL.md names")
+    except SystemExit as stop:
+        # A release state that cannot be verified does not hide a Released
+        # line missing above the baseline: it is reported too, and the exit
+        # stays the more severe 2.
+        if stop.code == 2 and released is None:
+            report_missing_released_line(
+                current, f"the release state of {tag}, the version SKILL.md names, could not be verified"
+            )
+        raise
     if released is None:
-        baseline = release_date_attr("BASELINE_VERSION")
-        print("Release date inconsistency found:")
-        print(f"  - release {tag} is published")
-        print(
-            f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {current}, above the "
-            f"undated baseline {baseline}, but has no Released: line"
-        )
+        report_missing_released_line(current, f"release {tag} is published")
         return False
     # The date comparison relies on published_at still being the first
     # publication instant; an immutable release cannot have had its assets
@@ -495,7 +524,13 @@ def check_site_checksum() -> int:
     the gate cannot go on; main combines it with the extractor load."""
     if not VERIFY_PAGE.is_file():
         die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} does not exist")
-    verify = VERIFY_PAGE.read_text(encoding="utf-8")
+    # A required file that cannot be read or decoded exits 3, never an
+    # uncaught traceback (exit 1, drift); main still combines it with the
+    # extractor load result.
+    try:
+        verify = VERIFY_PAGE.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} could not be read: {type(error).__name__}: {error}")
 
     shown = DISPLAYED_SUM.search(verify)
     if shown is None:
@@ -512,7 +547,17 @@ def check_site_checksum() -> int:
     zip_name = f"cleanlanguage-{version}.zip"
     manifest_name = f"{zip_name}.sha256"
 
-    status = release_status(tag)
+    try:
+        status = release_status(tag)
+    except SystemExit as stop:
+        if stop.code != 2:
+            raise
+        # The status cannot be read, so the checksum comparison cannot run;
+        # the Released line is still checked offline and the more severe code
+        # wins, so a malformed line (exit 3) is not hidden.
+        return max(2, offline_release_line_code(
+            f"the release state of {tag}, the version the verify page names, could not be verified"
+        ))
     if status == 404:
         current = skill_version()
         if version != current:
@@ -527,15 +572,34 @@ def check_site_checksum() -> int:
             # The release SKILL.md names is still checked on its own terms, so
             # this inconsistency cannot hide a wrong date on a published release.
             return max(1, release_date_code(version, status))
-        tag_state = tag_status(tag)
-        if tag_state == 200:
-            cannot_verify(
-                f"tag {tag} exists but release {tag} is not published; if a release "
-                f"run is publishing {tag} right now, re-run this check once it "
-                f"completes, and otherwise the release was deleted or its publish failed"
-            )
+        try:
+            tag_state = tag_status(tag)
+        except SystemExit as stop:
+            if stop.code != 2:
+                raise
+            tag_state = None
         if tag_state != 404:
-            cannot_verify(f"unexpected HTTP {tag_state} reading tag {tag}")
+            # The release cannot be verified (exit 2), but the Released line is
+            # still checked offline, with no further network call, and the more
+            # severe code wins, so a malformed line (exit 3) or a line missing
+            # above the baseline is not hidden.
+            if tag_state == 200:
+                print(
+                    f"check-release-checksum-live: could not verify: tag {tag} exists but "
+                    f"release {tag} is not published; if a release run is publishing {tag} "
+                    f"right now, re-run this check once it completes, and otherwise the "
+                    f"release was deleted or its publish failed",
+                    file=sys.stderr,
+                )
+                situation = f"release {tag} is not published but its tag exists"
+            else:
+                if tag_state is not None:
+                    print(
+                        f"check-release-checksum-live: could not verify: unexpected HTTP {tag_state} reading tag {tag}",
+                        file=sys.stderr,
+                    )
+                situation = f"release {tag} is not published and the state of its tag could not be verified"
+            return max(2, offline_release_line_code(situation))
         print(
             f"Release {tag} is not published yet; the site and SKILL.md both name "
             f"{version} ahead of the release, which is expected before the tag. "
@@ -544,7 +608,7 @@ def check_site_checksum() -> int:
         # The release and its tag are confirmed absent, so the Released line
         # is checked offline: a malformed line, or one missing above the
         # undated baseline, is still reported in this window.
-        return pre_tag_release_line_code(version)
+        return offline_release_line_code(f"release {tag} is not published yet and its tag does not exist")
     if status != 200:
         # The checksum comparison cannot run (exit 2), but the release-date
         # check below still runs and reports, and the more severe code wins.
@@ -561,6 +625,16 @@ def check_site_checksum() -> int:
     except SystemExit as stop:
         if stop.code != 2:
             raise
+        claimed = None
+    except (OSError, UnicodeError) as error:
+        # The download directory, the downloaded zip, or the gh run itself
+        # failed at the operating-system level: the comparison cannot run
+        # (exit 2), never an uncaught traceback read as drift (exit 1).
+        print(
+            f"check-release-checksum-live: could not verify: could not download or read "
+            f"{zip_name} / {manifest_name} from {tag}: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
         claimed = None
 
     # Item 26 (G4): the release SKILL.md names is checked on its own terms,
