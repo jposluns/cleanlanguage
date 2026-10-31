@@ -18,6 +18,8 @@ name: Manifest icon
 # manifest added anywhere, and the five declared manifests are also listed by
 # name. The icon paths it reads today lie under cleanlanguage/assets; a manifest
 # that later points an icon elsewhere must extend this filter in the same change.
+# Checkout attributes are an input too: a .gitattributes file anywhere can change
+# the bytes git writes for the icon and the manifests, so both forms are listed.
 
 on:
   pull_request:
@@ -34,6 +36,8 @@ on:
       - "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
       - "cleanlanguage/assets"
       - "cleanlanguage/assets/**"
+      - ".gitattributes"
+      - "**/.gitattributes"
       - "tools/check-manifest-icon.py"
       - "tools/test-manifest-icon.py"
       - ".github/workflows/manifest-icon.yml"

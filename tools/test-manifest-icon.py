@@ -1365,5 +1365,29 @@ class ManifestIconTest(unittest.TestCase):
         self.assertTrue(err.startswith(f"check-manifest-icon: {CLAUDE} field icon: "), err)
 
 
+class WorkflowPathsTest(unittest.TestCase):
+    """The push filter lists every input that can change the gate result."""
+
+    WORKFLOW = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "manifest-icon.yml"
+
+    def push_paths(self) -> list[str]:
+        lines = self.WORKFLOW.read_text(encoding="ascii").splitlines()
+        start = lines.index("  push:")
+        paths_at = lines.index("    paths:", start)
+        found = []
+        for line in lines[paths_at + 1:]:
+            if not line.startswith("      - "):
+                break
+            found.append(line[len("      - "):].strip().strip('"'))
+        return found
+
+    def test_push_paths_cover_checkout_attributes(self):
+        # A .gitattributes file anywhere can change the bytes git writes for
+        # the icon and the manifests, so a push touching only one must run.
+        paths = self.push_paths()
+        self.assertIn(".gitattributes", paths)
+        self.assertIn("**/.gitattributes", paths)
+
+
 if __name__ == "__main__":
     unittest.main()
