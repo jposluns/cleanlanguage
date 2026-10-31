@@ -8,6 +8,9 @@ test pins that the packager (release-package.sh) selects and validates
 identically, so a malformed first line fails in all three, and a clean version
 still passes. It runs offline: the packager is exercised in a throwaway git
 worktree, and the gates are exercised through their own compiled regexes.
+The packager and the dry run each tell an extractor that could not read its
+input (exit 4) apart from one that failed inside (exit 6); the dry run read is
+exercised from the block extracted from its real script.
 """
 
 from __future__ import annotations
@@ -23,6 +26,37 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 PACKAGER = REPO / "tools" / "release-package.sh"
+DRY_RUN = REPO / "tools" / "release-dry-run.sh"
+RELEASE_DATE_TOOL = REPO / "tools" / "skill-release-date.py"
+
+# Reads all of standard input, then fails the read, so the extractor exits 4
+# (its input could not be read) without the writer of the pipe taking a
+# SIGPIPE.
+UNREADABLE_STDIN_HOOK = (
+    "class _UnreadableStdin:\n"
+    "    class buffer:\n"
+    "        @staticmethod\n"
+    "        def read():\n"
+    "            sys.__stdin__.buffer.read()\n"
+    "            raise OSError(5, \"injected read error\")\n"
+    "sys.stdin = _UnreadableStdin()\n"
+)
+# Fails inside the extractor after its input is read, so it exits 6.
+CRASH_HOOK = (
+    "import io as _crash_io\n"
+    "def _crash(*args, **kwargs):\n"
+    "    raise RuntimeError(\"injected internal error\")\n"
+    "_crash_io.TextIOWrapper = _crash\n"
+)
+
+
+def extractor_with(hook: str) -> str:
+    """The real extractor source with ``hook`` run right after its imports."""
+    source = RELEASE_DATE_TOOL.read_text(encoding="utf-8")
+    anchor = "from pathlib import Path\n"
+    if source.count(anchor) != 1:
+        raise AssertionError("the extractor import anchor is not unique")
+    return source.replace(anchor, anchor + hook)
 
 
 def _load(name: str, filename: str):
@@ -41,16 +75,25 @@ HEAD_SKILL = subprocess.run(
 ).stdout
 
 
-def skill_with(version_block: str | None) -> str:
+def skill_with(version_block: str | None, released_block: str | None = None) -> str:
     """The real SKILL.md text with its first ``Version:`` line replaced by
-    ``version_block`` (which may be empty to drop it, or multi-line)."""
+    ``version_block`` (which may be empty to drop it, or multi-line).
+
+    When ``version_block`` is given, any ``Released:`` line in the real text is
+    dropped (so a fixture version is never paired with the real date), and
+    ``released_block``, when given, is inserted directly after the version
+    block."""
     if version_block is None:
         return HEAD_SKILL
     out, replaced = [], False
     for line in HEAD_SKILL.splitlines(keepends=True):
+        if line.startswith("Released:"):
+            continue
         if not replaced and line.startswith("Version:"):
             if version_block:
                 out.append(version_block + "\n")
+            if released_block is not None:
+                out.append(released_block + "\n")
             replaced = True
         else:
             out.append(line)
@@ -75,11 +118,14 @@ def gate_verdict(gate, skill_text: str):
     return (True, match.group(1)) if match else (False, None)
 
 
-def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
-    CHECKOUT's release-package.sh (so the code under test, not HEAD's copy, is
-    exercised). Returns (exit_code, stderr)."""
-    skill = skill_with(version_block) + extra_tail
+    CHECKOUT's release-package.sh and tools/skill-release-date.py (so the code
+    under test, not HEAD's copy, is exercised), passing ``--release-date`` when
+    ``release_date`` is given and then ``extra_args``. ``extractor`` replaces
+    the extractor: ``"missing"`` deletes it, any other text is written in its
+    place. Returns (exit_code, stderr)."""
+    skill = skill_with(version_block, released_block) + extra_tail
     with tempfile.TemporaryDirectory() as tmp:
         wt = Path(tmp) / "wt"
         subprocess.run(
@@ -102,13 +148,19 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             )
             shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
             os.chmod(wt / "tools" / "release-package.sh", 0o755)
+            shutil.copyfile(RELEASE_DATE_TOOL, wt / "tools" / "skill-release-date.py")
+            if extractor == "missing":
+                (wt / "tools" / "skill-release-date.py").unlink()
+            elif extractor is not None:
+                (wt / "tools" / "skill-release-date.py").write_text(extractor, encoding="utf-8")
             env = dict(os.environ)
             if locale is not None:
                 env["LC_ALL"] = locale
-            result = subprocess.run(
-                ["bash", str(wt / "tools" / "release-package.sh")],
-                capture_output=True, text=True, env=env,
-            )
+            args = ["bash", str(wt / "tools" / "release-package.sh")]
+            if release_date is not None:
+                args += ["--release-date", release_date]
+            args += list(extra_args)
+            result = subprocess.run(args, capture_output=True, text=True, env=env)
             return result.returncode, result.stderr
         finally:
             subprocess.run(
@@ -163,6 +215,174 @@ class PackagerContractTest(unittest.TestCase):
         self.assertIn("no Version: line found", stderr)
 
 
+class PackagerReleaseDateTest(unittest.TestCase):
+    """T3 (item 26): the packager checks the Released line it ships.
+
+    Whether or not ``--release-date`` is given, it refuses a malformed line
+    and a missing one above the undated baseline; ``--release-date`` adds only
+    the check that the HEAD Released line names that day."""
+
+    def test_matching_release_date_builds(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                    released_block="Released: 2026-11-15  ")
+        self.assertEqual(code, 0, stderr)
+
+    def test_mismatched_release_date_fails(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-16",
+                                    released_block="Released: 2026-11-15  ")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("does not match the release date (2026-11-16)", stderr)
+
+    def test_absent_line_above_baseline_with_release_date_fails(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("has no Released: line", stderr)
+
+    def test_absent_line_at_baseline_with_release_date_builds(self):
+        code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", release_date="2026-11-15")
+        self.assertEqual(code, 0, stderr)
+
+    def test_absent_line_above_baseline_without_release_date_fails(self):
+        # F8: presence above the baseline is enforced without the flag too.
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("has no Released: line, but version 1.2.3 sorts above the undated baseline 1.0.14", stderr)
+
+    def test_dated_line_without_release_date_builds(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", released_block="Released: 2026-11-15  ")
+        self.assertEqual(code, 0, stderr)
+
+    def test_baseline_rule_is_numeric(self):
+        # F7: the extractor decides the comparison, so the packager agrees with
+        # every other caller, leading zeros included.
+        for version, builds in (
+            ("1.0.9", True), ("1.0.14", True), ("1.00.14", True),
+            ("1.0.15", False), ("1.0.100", False), ("1.1.0", False),
+        ):
+            for release_date in (None, "2026-11-15"):
+                with self.subTest(version=version, release_date=release_date):
+                    code, stderr = run_packager(f"Version: {version}  ", version, release_date=release_date)
+                    if builds:
+                        self.assertEqual(code, 0, stderr)
+                    else:
+                        self.assertEqual(code, 1, stderr)
+                        self.assertIn("has no Released: line", stderr)
+
+    def test_trailing_flag_without_a_value_fails_with_a_message(self):
+        # F6: a trailing --release-date (or --tag) names what is missing.
+        for flag, fragment in (
+            ("--release-date", "--release-date needs a YYYY-MM-DD value"),
+            ("--tag", "--tag needs a value"),
+        ):
+            with self.subTest(flag):
+                code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", extra_args=(flag,))
+                self.assertEqual(code, 1, stderr)
+                self.assertIn(fragment, stderr)
+
+    def test_unavailable_extractor_is_not_blamed_on_the_content(self):
+        # F5: a missing or broken extractor is unavailable, not a bad date or
+        # a malformed line.
+        for label, body in (("missing", "missing"), ("broken", "def broken(:\n")):
+            with self.subTest(label):
+                code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", release_date="2026-11-15",
+                                            extractor=body)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("tools/skill-release-date.py is unavailable or broken", stderr)
+                self.assertNotIn("must be a real YYYY-MM-DD date", stderr)
+                self.assertNotIn("malformed", stderr)
+
+    def test_unreadable_input_at_head_is_named_as_unreadable(self):
+        # T4: extractor exit 4 is unreadable input, never a crash.
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                    released_block="Released: 2026-11-15  ",
+                                    extractor=extractor_with(UNREADABLE_STDIN_HOOK))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("at HEAD for its Released line: the extractor could not read its input (exit 4)", stderr)
+        self.assertNotIn("unavailable or crashed", stderr)
+
+    def test_internal_error_at_head_is_reported_as_a_crash(self):
+        # T4: extractor exit 6 is the extractor failing, never unreadable input.
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                    released_block="Released: 2026-11-15  ",
+                                    extractor=extractor_with(CRASH_HOOK))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("unavailable or crashed (exit 6) reading the Released line", stderr)
+        self.assertNotIn("could not read", stderr)
+
+    def test_malformed_line_fails_without_release_date(self):
+        for label, block in (
+            ("not_a_date", "Released: soon"),
+            ("impossible_date", "Released: 2026-02-30"),
+            ("misspelt_key", "released: 2026-11-15"),
+        ):
+            with self.subTest(label):
+                code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", released_block=block)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("Released line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is malformed", stderr)
+
+    def test_line_away_from_version_fails(self):
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                    extra_tail="\nReleased: 2026-11-15\n")
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("is malformed", stderr)
+
+    def test_invalid_release_date_argument_fails(self):
+        for value in ("2026-02-30", "", "15 November 2026"):
+            with self.subTest(value):
+                code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date=value,
+                                            released_block="Released: 2026-11-15  ")
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("--release-date must be a real YYYY-MM-DD date", stderr)
+
+
+def dry_run_stamped_read(extractor: str, skill_readable: bool = True):
+    """Run the stamped Released read of release-dry-run.sh, extracted from the
+    real script (from ``stamped_rc=0`` to its ``esac``), in a throwaway tree
+    holding ``extractor``. Returns (exit code, stdout, stderr)."""
+    lines = DRY_RUN.read_text(encoding="utf-8").split("\n")
+    start = lines.index("stamped_rc=0")
+    block = "\n".join(lines[start: lines.index("esac", start) + 1])
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "tools").mkdir()
+        skill = root / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
+        skill.parent.mkdir(parents=True)
+        if skill_readable:
+            skill.write_text("Version: 1.0.15  \nReleased: 2026-11-15  \n", encoding="utf-8")
+        else:
+            skill.mkdir()
+        (root / "tools" / "skill-release-date.py").write_text(extractor, encoding="utf-8")
+        script = (
+            "set -euo pipefail\n"
+            "fail() { printf 'release-dry-run: %s\\n' \"$1\" >&2; exit 1; }\n"
+            + block + "\nprintf %s \"${stamped}\"\n"
+        )
+        proc = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+class DryRunReleasedReadTest(unittest.TestCase):
+    """T4: the dry run tells unreadable input (exit 4) apart from an extractor
+    that failed inside (exit 6)."""
+
+    def test_stamped_line_is_read(self):
+        code, out, err = dry_run_stamped_read(RELEASE_DATE_TOOL.read_text(encoding="utf-8"))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "2026-11-15")
+
+    def test_unreadable_stamped_file_is_named_as_unreadable(self):
+        code, _out, err = dry_run_stamped_read(RELEASE_DATE_TOOL.read_text(encoding="utf-8"), skill_readable=False)
+        self.assertEqual(code, 1, err)
+        self.assertIn("could not read the stamped cleanlanguage/skills/cleanlanguage/SKILL.md for its Released line (extractor exit 4)", err)
+        self.assertNotIn("unavailable or crashed", err)
+
+    def test_internal_error_is_reported_as_a_crash(self):
+        code, _out, err = dry_run_stamped_read(extractor_with(CRASH_HOOK))
+        self.assertEqual(code, 1, err)
+        self.assertIn("unavailable or crashed (exit 6) reading the stamped SKILL.md", err)
+        self.assertNotIn("could not read the stamped", err)
+
+
 def _locale_available(name: str) -> bool:
     try:
         return subprocess.run(["locale", "-a"], capture_output=True, text=True).stdout \
@@ -206,7 +426,8 @@ class UnicodeAndStressTest(unittest.TestCase):
         # CR) and accepts 1.2.3; the packager strips a trailing CR too, so both
         # accept. The pre-change packager rejected it (the CR survived).
         block = "Version: 1.2.3\r"
-        code, stderr = run_packager(block, "1.2.3")
+        # 1.2.3 is above the undated baseline, so it carries a Released line.
+        code, stderr = run_packager(block, "1.2.3", released_block="Released: 2026-11-15\r")
         self.assertEqual(code, 0, stderr)
         for gate in (LINKS, CHECKSUM):
             matched, version = gate_verdict(gate, skill_with(block))
@@ -292,10 +513,11 @@ class ZipLayoutTest(unittest.TestCase):
                 capture_output=True, check=True,
             )
             try:
-                # Exercise the checkout's packager, not HEAD's copy, so an
-                # uncommitted change to the re-root is caught locally too.
+                # Exercise the checkout's packager and extractor, not HEAD's
+                # copies, so an uncommitted change is caught locally too.
                 shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
                 os.chmod(wt / "tools" / "release-package.sh", 0o755)
+                shutil.copyfile(RELEASE_DATE_TOOL, wt / "tools" / "skill-release-date.py")
                 proc = subprocess.run(
                     ["bash", str(wt / "tools" / "release-package.sh")],
                     capture_output=True, text=True,
