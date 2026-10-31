@@ -37,7 +37,7 @@ permissions:
   contents: read
 
 env:
-  CLAUDE_CODE_VERSION: "2.1.261"
+  CLAUDE_CODE_VERSION: "2.1.310"
 
 jobs:
   check:
