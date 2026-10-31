@@ -140,7 +140,9 @@ Residuals this gate does not cover:
           the IDAT run (for example a tRNS before PLTE or after IDAT), apart from
           the refusal of any chunk between two IDAT chunks, the multiplicity, and
           any rule between ancillary chunks are not checked, so APNG frame chunks
-          pass unread.
+          pass unread; nor is any rule that ties an ancillary chunk to the IHDR
+          colour type or to the presence of PLTE (for example a tRNS chunk for
+          colour type 4 or 6, or a hIST chunk with no PLTE).
      JPEG (the walk stops at the end of the first scan header):
        e. segments skipped by their length with the payload unread: APP0 to APP15,
           COM, DQT, DHT, DAC, DRI, DNL, DHP, EXP, JPG (0xC8), JPG0 to JPG13 (0xF0
