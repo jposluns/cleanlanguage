@@ -67,6 +67,80 @@ VERIFY = """<!doctype html>
 """
 
 
+class _Hostile:
+    """Fix round 4 (F1): a value every method of which the gate could reach
+    exits 0, standing in for extractor-defined code that misbehaves."""
+
+    def _exit(self, *args, **kwargs):
+        raise SystemExit(0)
+
+    __repr__ = __str__ = __format__ = __bool__ = __eq__ = __ne__ = _exit
+    __hash__ = None
+
+
+class _ExitingText(Exception):
+    """An error whose repr and str exit 0."""
+
+    def __repr__(self):
+        raise SystemExit(0)
+
+    __str__ = __repr__
+
+
+class _RaisingText(Exception):
+    """An error whose repr and str raise RuntimeError."""
+
+    def __repr__(self):
+        raise RuntimeError("repr failed")
+
+    __str__ = __repr__
+
+
+class _ExitingNameMeta(type):
+    @property
+    def __name__(cls):
+        raise SystemExit(0)
+
+
+class _ExitingName(Exception, metaclass=_ExitingNameMeta):
+    """An error whose class name and str exit 0."""
+
+    def __str__(self):
+        raise SystemExit(0)
+
+
+class _Escape(BaseException):
+    """An error outside Exception and SystemExit."""
+
+
+class _ExitingMalformed(gate.RELEASE_DATE.Malformed):
+    """A Malformed verdict whose str exits 0."""
+
+    def __str__(self):
+        raise SystemExit(0)
+
+
+class _ExitingCheckMeta(type):
+    def __instancecheck__(cls, instance):
+        raise SystemExit(0)
+
+    def __subclasscheck__(cls, subclass):
+        raise SystemExit(0)
+
+
+class _ExitingCheckMalformed(Exception, metaclass=_ExitingCheckMeta):
+    """A Malformed class whose instance and subclass checks exit 0."""
+
+
+class _ExitingVersion(str):
+    """A BASELINE_VERSION whose format and str exit 0."""
+
+    def __format__(self, spec):
+        raise SystemExit(0)
+
+    __str__ = __format__
+
+
 def unexpected_call(*args, **kwargs):
     raise AssertionError(f"unexpected call: {args}")
 
@@ -586,7 +660,9 @@ class ConditionalPassTest(unittest.TestCase):
                 raise SystemExit(code)
             return stop
 
-        for stop_code in (0, 1, None):
+        # Fix round 4 (F2): 2 and 3 too, the codes release_date_code and main
+        # absorb as could not verify, so a pass-through of either fails here.
+        for stop_code in (0, 1, 2, 3, None):
             for place in ("call", "lookup"):
                 with self.subTest(code=stop_code, place=place):
                     saved = gate.RELEASE_DATE.release_day_from_published_at
@@ -607,6 +683,63 @@ class ConditionalPassTest(unittest.TestCase):
                     finally:
                         vars(gate.RELEASE_DATE).pop("__getattr__", None)
                         gate.RELEASE_DATE.release_day_from_published_at = saved
+
+    def test_extractor_code_run_by_the_gate_cannot_escape_exit_3(self):
+        # Fix round 4 (F1): beyond the call itself the gate reaches extractor
+        # code through the repr, str, and class name of a caught error, the
+        # Malformed class checks, and the methods of a returned value or of
+        # BASELINE_VERSION. Whatever that code raises, a SystemExit of any
+        # code or another exception, the gate exits 3 (unavailable), never 0
+        # (a silent pass) or 1 (drift), and the checksum comparison still runs.
+        def raising(error):
+            def call(*args, **kwargs):
+                raise error
+            return call
+
+        def returning(value):
+            def call(*args, **kwargs):
+                return value
+            return call
+
+        released = "Released: 2026-11-15  "
+        failed = "failed unexpectedly in release_day_from_published_at"
+        cases = (
+            ("repr and str exit 0", "release_day_from_published_at", raising(_ExitingText()), released, failed),
+            ("repr and str raise", "release_day_from_published_at", raising(_RaisingText()), released, failed),
+            ("a SystemExit code whose repr exits 0", "release_day_from_published_at",
+             raising(SystemExit(_Hostile())), released, failed),
+            ("class name and str exit 0", "release_day_from_published_at", raising(_ExitingName()), released, failed),
+            ("a BaseException subclass", "release_day_from_published_at", raising(_Escape()), released, failed),
+            ("a Malformed verdict whose str exits 0", "release_day_from_published_at",
+             raising(_ExitingMalformed()), released, failed),
+            ("a Malformed class whose checks exit 0", "Malformed", _ExitingCheckMalformed, released,
+             "failed unexpectedly in release_day_from_published_at: RuntimeError"),
+            ("extract returns a hostile value", "extract", returning(_Hostile()), released,
+             "returned an unusable result from extract"),
+            ("requires_release_date returns a hostile value", "requires_release_date", returning(_Hostile()), None,
+             "returned an unusable result from requires_release_date"),
+            ("release_day_from_published_at returns a hostile value", "release_day_from_published_at",
+             returning(_Hostile()), released, "returned an unusable result from release_day_from_published_at"),
+            ("BASELINE_VERSION with a hostile format", "BASELINE_VERSION", _ExitingVersion("1.0.14"), None,
+             "lacks a usable BASELINE_VERSION "),
+        )
+        for label, name, value, line, reason in cases:
+            with self.subTest(label):
+                saved = vars(gate.RELEASE_DATE)[name]
+                saved_day = gate.RELEASE_DATE.release_day_from_published_at
+                setattr(gate.RELEASE_DATE, name, value)
+                if name == "Malformed":
+                    gate.RELEASE_DATE.release_day_from_published_at = raising(RuntimeError("boom"))
+                try:
+                    self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
+                    self.published("2026-11-15T09:30:00Z")
+                    code, out, err = self.main_reports()
+                    self.assertEqual(code, 3, (out, err))
+                    self.assertIn(reason, err)
+                    self.assertIn("matches the published", out)
+                finally:
+                    setattr(gate.RELEASE_DATE, name, saved)
+                    gate.RELEASE_DATE.release_day_from_published_at = saved_day
 
     def test_unexpected_status_of_the_site_release_does_not_hide_the_date_check(self):
         # Row 62: a status other than 200 or 404 for the release the site
@@ -1265,8 +1398,42 @@ class ModuleLoadTest(unittest.TestCase):
         for label, body, reason in (
             ("SystemExit(0) at load", "raise SystemExit(0)\n", "could not load skill-release-date.py"),
             ("SystemExit(1) at load", "raise SystemExit(1)\n", "could not load skill-release-date.py"),
+            # Fix round 4 (F2): the codes main absorbs as could not verify.
+            ("SystemExit(2) at load", "raise SystemExit(2)\n", "could not load skill-release-date.py"),
+            ("SystemExit(3) at load", "raise SystemExit(3)\n", "could not load skill-release-date.py"),
             ("bare SystemExit at load", "raise SystemExit\n", "could not load skill-release-date.py"),
             ("SystemExit(0) from an API lookup", lookup, "lacks a usable extract "),
+        ):
+            with self.subTest(label):
+                code, err = self.run_with_extractor(body)
+                self.assertEqual(code, 3, err)
+                self.assertIn(reason, err)
+                self.assertIn("the extractor is unavailable", err)
+
+    def test_extractor_code_run_while_reporting_a_load_failure_exits_3(self):
+        # Fix round 4 (F1): the report of a load failure runs no unguarded
+        # extractor code, so an error whose repr, str, or class name exits or
+        # raises, a SystemExit whose code does, or an error outside Exception
+        # and SystemExit, still exits 3 with the report, never 0 or 1.
+        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
+        hostile_text = "    def __repr__(self):\n        raise SystemExit(0)\n    __str__ = __repr__\n"
+        for label, body, reason in (
+            ("a SystemExit code whose repr exits 0",
+             "class C:\n" + hostile_text + "raise SystemExit(C())\n", "could not load skill-release-date.py"),
+            ("an error whose repr and str exit 0",
+             "class E(Exception):\n" + hostile_text + "raise E()\n", "could not load skill-release-date.py"),
+            ("an error whose repr and str raise",
+             "class E(Exception):\n    def __repr__(self):\n        raise RuntimeError(\"x\")\n"
+             "    __str__ = __repr__\nraise E()\n", "could not load skill-release-date.py"),
+            ("an error whose class name and str exit 0",
+             "class M(type):\n    @property\n    def __name__(cls):\n        raise SystemExit(0)\n"
+             "class E(Exception, metaclass=M):\n    def __str__(self):\n        raise SystemExit(0)\n"
+             "raise E()\n", "could not load skill-release-date.py"),
+            ("a BaseException subclass at load",
+             "class B(BaseException):\n    pass\nraise B()\n", "could not load skill-release-date.py"),
+            ("a BaseException subclass from an API lookup",
+             source + "\nclass B(BaseException):\n    pass\ndel extract\ndef __getattr__(name):\n    raise B()\n",
+             "lacks a usable extract "),
         ):
             with self.subTest(label):
                 code, err = self.run_with_extractor(body)

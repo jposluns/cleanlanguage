@@ -233,9 +233,12 @@ for page in site/install/index.html site/verify/index.html; do
   assert_contains "${page}" "\"dateModified\": \"${dry_date}\""
   grep -q "${seed_date}" "${page}" && fail "the sentinel date survived in ${page}; stamping did not run"
 done
+# grep -q exits on its first match, so the entry is captured first and read
+# from a here-string: a pipe into it would rest on the writer making a single
+# write, and any later write would take a SIGPIPE that pipefail reports.
 for name in install verify; do
-  grep -A1 "<loc>https://cleanlanguage.ai/${name}/</loc>" site/sitemap.xml \
-    | grep -q "<lastmod>${dry_date}</lastmod>" \
+  entry="$(grep -A1 "<loc>https://cleanlanguage.ai/${name}/</loc>" site/sitemap.xml)" \
+    && grep -q "<lastmod>${dry_date}</lastmod>" <<< "${entry}" \
     || fail "the sitemap lastmod for /${name}/ was not stamped to ${dry_date}"
 done
 

@@ -77,8 +77,8 @@ Exit codes:
      200 or 404, or the tag exists with no published release)
   3  a required file could not be read, the SKILL.md Released line is
      malformed, or tools/skill-release-date.py could not be loaded, lacks a
-     usable attribute this gate uses (see RELEASE_DATE_API), or failed
-     unexpectedly
+     usable attribute this gate uses (see RELEASE_DATE_API), failed
+     unexpectedly, or returned a value of a type the gate does not expect
 
 The release-date check and the site-checksum comparison both run and both
 are reported when the release the site names is published, including when its
@@ -93,6 +93,22 @@ exactly true: both are reported and the more severe 2 wins. The extractor is loa
 failure is reported and contributes exit 3 while the checksum comparison still
 runs and reports. The gate then exits with the most severe code, the highest
 one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not complete.
+
+The extractor runs in this process, so every call the gate makes into
+extractor-defined code is guarded: loading the module, each attribute lookup
+and its validation, each function call, the Malformed class checks, and the
+class name and text of a caught error. A caught error is described only
+through _describe, never by its repr, and a returned value and
+BASELINE_VERSION must be of the exact built-in type the gate expects, so no
+extractor method of theirs runs later. Whatever that code raises, a SystemExit
+of any code or any other exception, exits 3; only a KeyboardInterrupt is let
+through as an interrupt. The residual the gate cannot close in-process:
+extractor code that calls os._exit, signals its own process, never returns,
+or changes the interpreter state the gate relies on (its globals, sys,
+builtins, or a thread, finalizer, or exit handler it leaves behind) acts
+outside any handler, so it can still end the gate with another code. Only
+running the extractor in a separate process would close that residual, and
+the gate does not.
 """
 
 from __future__ import annotations
@@ -137,11 +153,23 @@ RELEASE_DATE_API = (
 
 
 def _api_kind_ok(value, kind: str) -> bool:
+    # The version must be an exact str, not a subclass, so formatting it in a
+    # report runs no extractor-defined method (fix round 4, F1).
     if kind == "a function":
         return callable(value)
     if kind == "an exception class":
         return isinstance(value, type) and issubclass(value, Exception)
-    return isinstance(value, str) and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is not None
+    return type(value) is str and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is not None
+
+
+# The exact built-in types each extractor function may return. Checked by
+# identity, so no extractor-defined method of a returned value (its bool,
+# comparison, or format) runs later in the gate (fix round 4, F1).
+RELEASE_DATE_RESULTS = {
+    "extract": ((str, type(None)), "a str or None"),
+    "requires_release_date": ((bool,), "a bool"),
+    "release_day_from_published_at": ((str,), "a str"),
+}
 
 
 def _unavailable(message: str) -> None:
@@ -149,21 +177,68 @@ def _unavailable(message: str) -> None:
     raise SystemExit(3)
 
 
+def _guarded_text(read, fallback):
+    """Return what ``read()`` gives when it is an exact str, else
+    ``fallback``. ``read`` runs extractor-defined code (a str or a class-name
+    lookup), so anything it raises, a SystemExit included, gives the fallback;
+    only a KeyboardInterrupt propagates."""
+    try:
+        text = read()
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        return fallback
+    return text if type(text) is str else fallback
+
+
+def _describe(error: BaseException) -> str:
+    """Describe an error raised by extractor code by its class name and its
+    text, each read under _guarded_text, so describing it can neither raise
+    nor exit. The repr is never used: it would run extractor code (an
+    extractor-defined repr, or the repr of a SystemExit code) unguarded."""
+    name = _guarded_text(lambda: type(error).__name__, "an error whose class name could not be read")
+    text = _guarded_text(lambda: str(error), "(its message could not be read)")
+    return f"{name}: {text}" if text else name
+
+
+def _malformed_verdict(error: BaseException, malformed):
+    """Return the text of the extractor Malformed verdict ``error``, or None
+    when it is not one. The class checks can run extractor code (a metaclass
+    hook) and so can str(), so each is guarded: a check that raises or exits,
+    or a verdict whose text is not an exact str, is not trusted as a content
+    verdict, and the caller reports the extractor as failed (exit 3)."""
+    try:
+        verdict = isinstance(malformed, type) and issubclass(malformed, Exception) and isinstance(error, malformed)
+    except KeyboardInterrupt:
+        raise
+    except BaseException:
+        return None
+    if not verdict:
+        return None
+    return _guarded_text(lambda: str(error), None)
+
+
 def _load_release_date_tool():
     # Any failure to load, a missing or unreadable file, a SyntaxError, or an
     # exception raised while the module runs, SystemExit included, means the
     # extractor is unavailable: exit 3, never the drift exit 1 a stray
     # traceback would give, nor the code a SystemExit carries (row 58).
+    # Fix round 4 (F1): any BaseException but KeyboardInterrupt, and the
+    # report describes the error through _describe, never its repr.
     try:
         spec = importlib.util.spec_from_file_location("skill_release_date", RELEASE_DATE_TOOL)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-    except (Exception, SystemExit) as error:
-        _unavailable(f"could not load {RELEASE_DATE_TOOL.name} (the extractor is unavailable): {error!r}")
+    except KeyboardInterrupt:
+        raise
+    except BaseException as error:
+        _unavailable(f"could not load {RELEASE_DATE_TOOL.name} (the extractor is unavailable): {_describe(error)}")
     for name, kind in RELEASE_DATE_API:
         try:
             usable = _api_kind_ok(getattr(module, name), kind)
-        except (Exception, SystemExit):
+        except KeyboardInterrupt:
+            raise
+        except BaseException:
             usable = False
         if not usable:
             _unavailable(
@@ -199,15 +274,27 @@ class ReleaseDateMalformed(Exception):
 
 
 def release_date_attr(name: str):
-    """Return the attribute ``name`` of the loaded extractor. A lookup that
-    fails, or an extractor that cannot be loaded, exits 3 as unavailable,
-    never as a drift."""
+    """Return the attribute ``name`` of the loaded extractor, validated again
+    against its declared kind, since the module can change after it loads. A
+    lookup or validation that fails, a value no longer of its kind, or an
+    extractor that cannot be loaded, exits 3 as unavailable, never as a
+    drift."""
     if load_release_date_tool() != 0:
         raise SystemExit(3)
+    kind = dict(RELEASE_DATE_API)[name]
     try:
-        return getattr(RELEASE_DATE, name)
-    except (Exception, SystemExit) as error:
-        _unavailable(f"{RELEASE_DATE_TOOL.name} lacks {name}: {error!r}")
+        value = getattr(RELEASE_DATE, name)
+        usable = _api_kind_ok(value, kind)
+    except KeyboardInterrupt:
+        raise
+    except BaseException as error:
+        _unavailable(f"{RELEASE_DATE_TOOL.name} lacks {name}: {_describe(error)}")
+    if not usable:
+        _unavailable(
+            f"{RELEASE_DATE_TOOL.name} lacks a usable {name} (expected {kind}), "
+            f"so the extractor is unavailable"
+        )
+    return value
 
 
 def release_date_call(name: str, *args):
@@ -216,15 +303,27 @@ def release_date_call(name: str, *args):
     Its ``Malformed`` verdict on content is raised as ``ReleaseDateMalformed``;
     any other exception or SystemExit, including a function or class that has
     gone missing or is not callable, means the extractor itself failed, which
-    exits 3 as unavailable, never as a content verdict, a pass, or a drift."""
+    exits 3 as unavailable, never as a content verdict, a pass, or a drift.
+    So does a returned value not of the exact type RELEASE_DATE_RESULTS
+    names, and the handler runs extractor code only under a guard."""
     function = release_date_attr(name)
     malformed = release_date_attr("Malformed")
     try:
-        return function(*args)
-    except (Exception, SystemExit) as error:
-        if isinstance(malformed, type) and issubclass(malformed, Exception) and isinstance(error, malformed):
-            raise ReleaseDateMalformed(str(error)) from None
-        _unavailable(f"{RELEASE_DATE_TOOL.name} failed unexpectedly in {name}: {error!r}")
+        result = function(*args)
+    except KeyboardInterrupt:
+        raise
+    except BaseException as error:
+        verdict = _malformed_verdict(error, malformed)
+        if verdict is not None:
+            raise ReleaseDateMalformed(verdict) from None
+        _unavailable(f"{RELEASE_DATE_TOOL.name} failed unexpectedly in {name}: {_describe(error)}")
+    allowed, expected = RELEASE_DATE_RESULTS[name]
+    if not any(type(result) is kind for kind in allowed):
+        _unavailable(
+            f"{RELEASE_DATE_TOOL.name} returned an unusable result from {name} "
+            f"(expected {expected}), so the extractor is unavailable"
+        )
+    return result
 
 
 def die(message: str) -> None:

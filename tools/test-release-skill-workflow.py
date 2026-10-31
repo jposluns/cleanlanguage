@@ -428,10 +428,15 @@ ASSETS = ["cleanlanguage.zip", "cleanlanguage.zip.sha256",
 # and "differ" names zips published with other bytes and a manifest that
 # matches them, so the two zips differ while each manifest stays valid.
 MISSING = read("missing").split()
+# Fix round 4 (F3): "extra" is a count of further assets listed after the
+# required ones. Each name is about 200 bytes, so 1000 of them overflow a
+# 64 KiB pipe buffer many times over and a reader that exits on its first
+# match always leaves its writer with bytes still to write.
+EXTRA = ["extra-asset-%04d-" % index + "x" * 180 + ".txt" for index in range(int(read("extra", "0")))]
 CORRUPT = read("corrupt").split()
 DIFFER = read("differ").split()
 if ARGS[:2] == ["release", "view"]:
-    print("\\n".join(asset for asset in ASSETS if asset not in MISSING))
+    print("\\n".join([asset for asset in ASSETS if asset not in MISSING] + EXTRA))
     sys.exit(0)
 if ARGS[:2] == ["release", "download"]:
     target = ARGS[ARGS.index("--dir") + 1]
@@ -1142,6 +1147,32 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertIn("is missing the asset cleanlanguage.zip.sha256", err)
         self.assertIn("cannot be completed in place; cut a corrective new version", err)
         self.assertNotIn("force", err)
+        self.assertNotIn("kept its assets", out)
+        self.assert_no_mutation(self.calls())
+
+    def test_a_long_asset_list_never_reads_a_present_asset_as_missing(self):
+        # Fix round 4 (F3): grep -q exits on its first match, so a printf
+        # pipe into it took SIGPIPE (141) on a long asset list, and pipefail
+        # then reported a present asset as missing. Here the four required
+        # assets come first and 1000 long names follow them.
+        self.published()
+        self.set_state(extra="1000")
+        code, out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("is missing the asset", err)
+        self.assertIn("kept its assets", out)
+        calls = self.calls()
+        self.assert_no_mutation(calls)
+        assert_readback_ran(self, calls, out)
+
+    def test_a_long_asset_list_still_names_a_missing_asset(self):
+        # Fix round 4 (F3): the membership check still refuses an absent
+        # asset when the list is long.
+        self.published()
+        self.set_state(extra="1000", missing="cleanlanguage-1.0.15.zip.sha256")
+        code, out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 1, err)
+        self.assertIn("is missing the asset cleanlanguage-1.0.15.zip.sha256", err)
         self.assertNotIn("kept its assets", out)
         self.assert_no_mutation(self.calls())
 
