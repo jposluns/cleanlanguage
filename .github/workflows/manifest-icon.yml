@@ -1,0 +1,58 @@
+name: Manifest icon
+
+# Validate every plugin manifest icon field, so a missing, unreadable, or
+# out-of-bounds icon cannot reach main: each icon names an existing regular file
+# inside the repository, reached without symlinks, a PNG or JPEG by file
+# signature, square, 512 to 2048 pixels per side, and under 2 MB, failing closed
+# on an unreadable or unparseable input. Structural, offline, and stdlib-only;
+# also runs the gate tests. The pinned CLI validator (plugin-validate.yml) stays
+# the authority on what Claude Code accepts; this gate is the repository floor.
+#
+# The pull_request trigger carries no paths filter, so this gate reports on every
+# pull request and can be a required check: a path-filtered required check never
+# reports on a pull request outside its paths and blocks the merge as
+# forever-pending. The push trigger keeps its paths filter, because a required
+# check is evaluated on the pull request and the paths it lists cover every file
+# the gate and its tests read, so a push touching none of them cannot change the
+# result. The gate walks the whole tree for manifests, so the two globs cover a
+# manifest added anywhere, and the five declared manifests are also listed by
+# name. The icon paths it reads today lie under cleanlanguage/assets; a manifest
+# that later points an icon elsewhere must extend this filter in the same change.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/plugin.json"
+      - "**/marketplace.json"
+      - ".claude-plugin/marketplace.json"
+      - "cleanlanguage/.claude-plugin/plugin.json"
+      - "cleanlanguage/plugin.json"
+      - "plugin/.claude-plugin/marketplace.json"
+      - "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+      - "cleanlanguage/assets"
+      - "cleanlanguage/assets/**"
+      - "tools/check-manifest-icon.py"
+      - "tools/test-manifest-icon.py"
+      - ".github/workflows/manifest-icon.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # A unique display name, so a required status check names this job alone
+    # and no other workflow job called check can satisfy it.
+    name: Manifest icon
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Run the manifest-icon tests
+        shell: bash
+        run: python3 -I tools/test-manifest-icon.py
+      - name: Validate the manifest icons
+        shell: bash
+        run: python3 -I tools/check-manifest-icon.py
