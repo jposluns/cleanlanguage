@@ -468,6 +468,34 @@ class _MalformedGrandchild(_MalformedChild):
     """VERIFY 5.1 (claude LOW 1c): a Malformed grandchild, not a verdict."""
 
 
+class _HybridMalformedExit(ValueError, SystemExit):
+    """DISCOVERY 6 (codex and claude MEDIUM 1): a Malformed class that is
+    itself a SystemExit."""
+
+
+class _HybridMalformedInterrupt(ValueError, KeyboardInterrupt):
+    """DISCOVERY 6: a Malformed class that is itself a KeyboardInterrupt."""
+
+
+class _HybridExceptionExit(Exception, SystemExit):
+    """DISCOVERY 6 (claude MEDIUM 1): a Malformed class built on Exception
+    and SystemExit."""
+
+
+class _HybridMalformedChild(_HybridMalformedExit):
+    """Fix round 10: a Malformed class whose SystemExit sits above its direct
+    base."""
+
+
+class _EqBasesMalformed(ValueError):
+    """Fix round 10: a Malformed class, of exactly the builtin type, whose
+    real MRO carries, through a __bases__ assignment, a BaseException that is
+    not an Exception and compares equal to any class."""
+
+
+_EqBasesMalformed.__bases__ = (ValueError, _EqEscape)
+
+
 class _InterruptExit(KeyboardInterrupt, SystemExit):
     """Fix round 8 (claude LOW 1): a KeyboardInterrupt that is also a
     SystemExit, which a SystemExit handler of the gate would read by its
@@ -1514,6 +1542,80 @@ class ConditionalPassTest(unittest.TestCase):
             vars(gate.RELEASE_DATE).pop("__getattr__", None)
             setattr(gate.RELEASE_DATE, name, saved)
 
+    def test_hybrid_malformed_class_exits_3(self):
+        # DISCOVERY 6 (codex and claude MEDIUM 1): a Malformed class whose
+        # real MRO holds a class that is neither an Exception nor
+        # BaseException nor object, such as a SystemExit or a
+        # KeyboardInterrupt, is not a usable Malformed class, so an error of
+        # it is never a content verdict: at extract and at each verdict site
+        # the gate exits 3 with the report, and the checksum comparison still
+        # runs.
+        released = "Released: 2026-11-15  "
+        unusable = "lacks a usable Malformed (expected an exception class)"
+        for hybrid in (_HybridMalformedExit, _HybridMalformedInterrupt, _HybridExceptionExit,
+                       _HybridMalformedChild, _EqBasesMalformed):
+            for name, line in (
+                ("extract", released),
+                ("requires_release_date", None),
+                ("release_day_from_published_at", released),
+            ):
+                with self.subTest(hybrid.__name__, site=name):
+                    saved = vars(gate.RELEASE_DATE)[name]
+                    saved_malformed = gate.RELEASE_DATE.Malformed
+
+                    def raising(*args, **kwargs):
+                        raise hybrid("hybrid probe")
+
+                    setattr(gate.RELEASE_DATE, name, raising)
+                    gate.RELEASE_DATE.Malformed = hybrid
+                    try:
+                        self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
+                        self.published("2026-11-15T09:30:00Z")
+                        try:
+                            code, out, err = self.main_reports()
+                        except KeyboardInterrupt:
+                            code, out, err = "interrupt", "", ""
+                    finally:
+                        setattr(gate.RELEASE_DATE, name, saved)
+                        gate.RELEASE_DATE.Malformed = saved_malformed
+                    self.assertEqual(code, 3, (out, err))
+                    self.assertIn(unusable, err)
+                    self.assertNotIn("hybrid probe", err)
+                    self.assertIn("matches the published", out)
+
+    def test_unreadable_site_status_beside_a_skill_file_with_no_version_exits_3(self):
+        # DISCOVERY 6 (claude LOW 1): a release status for the version the
+        # verify page names that cannot be read (2), beside a SKILL.md with no
+        # Version line (3), exits with the more severe 3 and its report.
+        def unreadable(tag):
+            gate.cannot_verify(f"could not read the release status for {tag} (gh exit 1)")
+
+        self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+        gate.SKILL.write_text("Released: 2026-11-15\n", encoding="utf-8")
+        gate.release_status = unreadable
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 3, (out, err))
+        self.assertIn("could not read the release status", err)
+        self.assertIn("line found in cleanlanguage/skills/cleanlanguage/SKILL.md", err)
+
+    def test_undecodable_download_output_is_unverifiable(self):
+        # DISCOVERY 6 (claude LOW 2): download output that does not decode
+        # stops only the checksum comparison (exit 2) with its report, never
+        # an uncaught UnicodeDecodeError read as drift; the date check still
+        # runs and reports.
+        def undecodable(*args, check=True):
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z")
+        gate.gh = undecodable
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        self.assertIn(f"could not verify: could not download or read cleanlanguage-{AHEAD}.zip", err)
+        self.assertIn("UnicodeDecodeError", err)
+        self.assertIn("matches the publication day", out)
+        self.assertNotIn("Release checksum drift found", out)
+
     def test_unexpected_status_of_the_site_release_does_not_hide_the_date_check(self):
         # Row 62: a status other than 200 or 404 for the release the site
         # names stops only the checksum comparison (exit 2); the release-date
@@ -2368,6 +2470,14 @@ class ModuleLoadTest(unittest.TestCase):
              "release_day_from_published_at"),
             ("Malformed not an exception class", "Malformed = \"x\"\n", "Malformed"),
             # Fix round 5: a Malformed class with a custom metaclass is refused.
+            # Fix round 10 (DISCOVERY 6 MEDIUM 1): a Malformed class that is
+            # also a SystemExit or a KeyboardInterrupt is refused at load.
+            ("Malformed that is also a SystemExit",
+             "class Malformed(ValueError, SystemExit):\n    pass\n", "Malformed"),
+            ("Malformed that is also a KeyboardInterrupt",
+             "class Malformed(ValueError, KeyboardInterrupt):\n    pass\n", "Malformed"),
+            ("Malformed built on Exception and SystemExit",
+             "class Malformed(Exception, SystemExit):\n    pass\n", "Malformed"),
             ("Malformed with a custom metaclass",
              "class _Meta(type):\n    pass\nclass Malformed(ValueError, metaclass=_Meta):\n    pass\n",
              "Malformed"),

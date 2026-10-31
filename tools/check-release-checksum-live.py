@@ -102,9 +102,12 @@ the gate makes from an object the extractor provides reads only what that code
 cannot fake: the real type of the object, through type(), never its __class__,
 and exact builtin types, with no isinstance or issubclass call that could run an
 extractor hook. The Malformed class must be a class whose own type is exactly
-the builtin type and that subclasses Exception, and a caught error is a content
+the builtin type, that subclasses Exception, and whose real MRO holds no class
+that is not an Exception but BaseException and object, so it is not also a
+SystemExit or a KeyboardInterrupt (see _plain_exception_class), and a caught
+error is a content
 verdict only when its own class is exactly that Malformed class, and that class
-still subclasses Exception when the error is classified (see
+still passes that check when the error is classified (see
 _malformed_verdict); a subclass of Malformed is not a verdict, since the
 extractor raises only Malformed itself. Anything else exits 3, never 2. A
 caught error is described only
@@ -188,14 +191,20 @@ def _api_kind_ok(value, kind: str) -> bool:
 
 def _plain_exception_class(value) -> bool:
     """True only when ``value`` is a class whose own type is exactly the
-    builtin type and that subclasses Exception (fix round 5). type() reads the
-    real type, so a value that only claims to be a class through a __class__
-    property, or a class with a custom metaclass, whose instance, subclass, or
-    mro hooks would then decide the Malformed classification, is refused.
-    issubclass against the builtin Exception, itself of exactly the builtin
-    type, takes the builtin subtype path over the real MRO, so it runs no
-    extractor hook."""
-    return type(value) is type and issubclass(value, Exception)
+    builtin type, that subclasses Exception (fix round 5), and every class on
+    whose real MRO subclasses Exception or is BaseException or object (fix
+    round 10), so it is not also a SystemExit, a KeyboardInterrupt, or any
+    other BaseException that is not an Exception. type() reads the real type,
+    so a value that only claims to be a class through a __class__ property,
+    or a class with a custom metaclass, whose instance, subclass, or mro hooks
+    would then decide the Malformed classification, is refused; once its own
+    type is exactly the builtin type, its __mro__ is the real one. issubclass
+    against the builtin Exception, itself of exactly the builtin type, takes
+    the builtin subtype path over the real MRO, and the other tests are by
+    identity, so it runs no extractor hook."""
+    return type(value) is type and issubclass(value, Exception) and all(
+        issubclass(base, Exception) or base is BaseException or base is object for base in value.__mro__
+    )
 
 
 def _is_interrupt(error: BaseException) -> bool:
