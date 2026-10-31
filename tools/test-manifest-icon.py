@@ -236,7 +236,7 @@ class ManifestIconTest(unittest.TestCase):
         self.assertEqual(len(out.strip().splitlines()), 1)
 
     def test_dot_vcs_directory_is_pruned(self):
-        hidden = self.root / ("." + "g" + "it")
+        hidden = self.root / ".git"
         hidden.mkdir()
         (hidden / "plugin.json").write_text("{}", encoding="utf-8")
         self.expect_pass()
