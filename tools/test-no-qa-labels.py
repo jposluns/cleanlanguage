@@ -19,25 +19,24 @@ read otherwise, but each physical line of the statement is still matched against
 as source text, as every line is, so a part of such a value can still be caught on its own line,
 an accepted false failure listed below. Docstrings are found with ast.get_docstring, so the
 docstring of a one-line suite counts too, and a string statement may be a plain, f-string,
-template string or bytes literal. Its prose
-is read from the parsed literal, never cut from the source: the decoded text of a plain or bytes
-literal, and only the top-level literal text of an f-string or template string, whose replacement
-fields, with any format spec or nested literal, are code and each read as one space. Each part of
-an implicitly concatenated literal is read from its own delimiter, with its own prefix, and joined
-to the next part as Python joins them, with nothing between, and a backslash that ends a line of a
-part joins the next line with nothing between, while a backslash just before a replacement field,
-which escapes nothing, stays the backslash Python keeps; a line break inside one part, written or
-escaped, is the newline it is, with the space around it stripped. Every pattern but the round number
-pattern reads a line break, in a string value or between the lines of a comment run or paragraph,
-as one space; the round number pattern keeps it, so a letter exempts a colon round number only on
-the line of the number. Before Python 3.12 the tokenizer does not separate the
-fields of an f-string, so an f-string statement fails the scan there. PROSE_PATTERNS holds the
-widened bare finding id, which applies to prose only because code legitimately carries short
-identifiers such as the closure value "C1". A match on a line in ALLOWLIST, the reviewed set of
-lines whose match is a cross-reference to a named plan rather than a review label, passes. A
-scanned file that is missing, unreadable or does not tokenize and parse is a failure, never a
-skip, and an allowlist entry that no longer matches a scanned line is a failure too, so the
-allowlist cannot silently go stale.
+template string or bytes literal. Its prose is read from the parsed literal, never cut from the
+source: the decoded text of a plain or bytes literal, and only the top-level literal text of an
+f-string or template string, whose replacement fields, with any format spec or nested literal, are
+code and each read as one space. Each part of an implicitly concatenated literal is read from its
+own delimiter, with its own prefix, and joined to the next part as Python joins them, with nothing
+between, and a backslash that ends a line of a part joins the next line with nothing between, while
+a backslash just before a replacement field, which escapes nothing, stays the backslash Python
+keeps; a line break inside one part, written or escaped, is the newline it is, with the space around
+it stripped. Every pattern but the round number pattern reads a line break, in a string value or
+between the lines of a comment run or paragraph, as one space; the round number pattern keeps it, so
+a letter exempts a colon round number only on the line of the number. Before Python 3.12 the
+tokenizer does not separate the fields of an f-string, so an f-string statement fails the scan
+there. PROSE_PATTERNS holds the widened bare finding id, which applies to prose only because code
+legitimately carries short identifiers such as the closure value "C1". A match on a line in
+ALLOWLIST, the reviewed set of lines whose match is a cross-reference to a named plan rather than a
+review label, passes. A scanned file that is missing, unreadable or does not tokenize and parse is a
+failure, never a skip, and an allowlist entry that no longer matches a scanned line is a failure
+too, so the allowlist cannot silently go stale.
 
 Run with --probe PATH... to apply the same scan to any files or directories, for example the
 whole tools/ directory: it prints every hit and every unreadable file, and exits 1 when there is
@@ -82,20 +81,22 @@ of code as well as of prose, ordinary arithmetic and identifiers in code, such a
 label in a string literal that is not a statement of its own, such as an assertion message, would
 otherwise pass. A further accepted false failure: in an f-string or template string statement, the
 one space that stands for a replacement field can complete a label in the decoded text, so the text
-"fix", a field and the text "round" written together read as a fix round and are caught. A
-further accepted false failure: in a Python file, each physical line of a string statement is
-matched against LABEL_PATTERNS as source text as well as in the value, so a longer id or a round
-number that the rest of the value completes, from a later part of an implicitly concatenated
-literal, from the next line after a joining backslash or from an escape, as in the parts "the
-F1" and "00 case" or "fixed in round 7" and "th of the plan", is caught on the physical line of
-its first part, though the value reads as the id F100 or the exempt round 7th. The
-PatternSelfCheck case pins the forms the patterns are known to cover, a letter
-of each Unicode letter category that exempts either form, the ordinary code and prose they must
-not flag, these accepted false failures, a second round number match of each form in one searched
-text, the earlier match when both forms match one searched text and, for each Python placement,
-the literal set of forms it skips because they would end its string literal early and leave source
-that does not tokenize or parse, so a pattern weakened or widened past any of those sets fails the
-suite.
+"fix", a field and the text "round" written together read as a fix round and are caught. A further
+accepted false failure: in a Python file, each physical line of a string statement is matched
+against LABEL_PATTERNS as source text as well as in the value, so a physical line that matches
+LABEL_PATTERNS on its own is caught there even where the value reads otherwise. Such a line can hold
+an id or a round number that the rest of the value completes into a longer id or an exempt round
+number, from a later part of an implicitly concatenated literal, from the next line after a joining
+backslash or from an escape later on the same line, as in the parts "the F1" and "00 case" or "fixed
+in round 7" and "th of the plan", whose values read as the id F100 and the exempt round 7th. A
+physical line that matches no pattern of LABEL_PATTERNS on its own is not caught this way, so a
+value that reads as a longer id or an exempt round number passes when no line of it matches on its
+own. The PatternSelfCheck case pins the forms the patterns are known to cover, a letter of each
+Unicode letter category that exempts either form, the ordinary code and prose they must not flag,
+these accepted false failures, a second round number match of each form in one searched text, the
+earlier match when both forms match one searched text and, for each Python placement, the literal
+set of forms it skips because they would end its string literal early and leave source that does not
+tokenize or parse, so a pattern weakened or widened past any of those sets fails the suite.
 """
 import ast
 import bisect
@@ -855,11 +856,21 @@ class PatternSelfCheck(unittest.TestCase):
         ("x = 1\n\"the F1\\x300 case\"\n", ["x.py:2: a bare finding id: \"the F1\\x300 case\""]))
     # A backslash just before a replacement field of an f-string or template string statement
     # escapes nothing, and Python keeps it in the literal text, so the decoded value keeps it too
-    # and it cannot join the text around the field into a label: one backslash, and three, of
-    # which the escaped pair reads as one backslash and Python keeps the last.
+    # and it cannot join the text around the field into a label: one backslash; two, an escaped
+    # pair that reads as one backslash and leaves none to keep; and three, of which the escaped
+    # pair reads as one backslash and Python keeps the last.
     FIELD_BACKSLASH_STATEMENTS = ("x = 1\nf\"the fix\\{x}round case\"\n",
                                   "x = 1\nf\"the L\\{x}5 case\"\n",
+                                  "x = 1\nf\"the fix\\\\{x}round case\"\n",
                                   "x = 1\nf\"the fix\\\\\\{x}round case\"\n")
+    # A backslash that ends a physical line of the literal text of an f-string or template string
+    # statement still joins the next line with nothing between, as it does in a plain literal, in a
+    # triple-quoted and in a single-quoted literal and after a replacement field, so the label it
+    # joins is caught at the line where it starts: (source, the exact report).
+    JOINED_REPORT = ["x.py:2: a bare finding id in prose across a line break: L5"]
+    FIELD_JOINING_STATEMENTS = (("x = 1\nf\"\"\"the L\\\n5 case\"\"\"\n", JOINED_REPORT),
+                                ("x = 1\nf\"the L\\\n5 case {x}\"\n", JOINED_REPORT),
+                                ("x = 1\nf\"\"\"the {x} L\\\n5 case\"\"\"\n", JOINED_REPORT))
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
@@ -1146,23 +1157,43 @@ class PatternSelfCheck(unittest.TestCase):
                 self.assertEqual(len(values), 1, source)
                 self.assertEqual(value_hits(*values[0]), [], source)
 
+    @staticmethod
+    def built_and_decoded(source):
+        """The value Python builds for the last statement of source, and what the scan reads of it.
+
+        Returns that value, the value that the scan decodes from the tokens of the statement, with
+        each replacement field read as one space, and the report of the scan of source.
+        """
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            node = ast.parse(source).body[-1].value
+            found = scan("x.py", source)
+            tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+        statement = [tok for tok in tokens if node.lineno <= tok.start[0] <= node.end_lineno]
+        built = "".join(part.value if isinstance(part, ast.Constant) else " " for part in node.values)
+        return built, statement_value(literal_pieces(statement))[0], found
+
     def test_a_backslash_before_a_replacement_field_is_kept_as_python_keeps_it(self):
         sources = self.FIELD_BACKSLASH_STATEMENTS
         if hasattr(ast, "TemplateStr"):
             sources += ("x = 1\nt\"the fix\\{x}round case\"\n",)
         for source in sources:
             with self.subTest(source=source):
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    node = ast.parse(source).body[-1].value
-                    found = scan("x.py", source)
-                    tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
-                statement = [tok for tok in tokens if tok.start[0] == node.lineno]
-                expected = "".join(part.value if isinstance(part, ast.Constant) else " "
-                                   for part in node.values)
-                self.assertIn("\\", expected, source)
-                self.assertEqual(statement_value(literal_pieces(statement))[0], expected, source)
+                built, value, found = self.built_and_decoded(source)
+                self.assertIn("\\", built, source)
+                self.assertEqual(value, built, source)
                 self.assertEqual(found, [], source)
+
+    def test_a_backslash_that_ends_a_line_of_an_f_string_still_joins_the_next(self):
+        cases = self.FIELD_JOINING_STATEMENTS
+        if hasattr(ast, "TemplateStr"):
+            cases += (("x = 1\nt\"\"\"the L\\\n5 case\"\"\"\n", self.JOINED_REPORT),)
+        for source, expected in cases:
+            with self.subTest(source=source):
+                built, value, found = self.built_and_decoded(source)
+                self.assertNotIn("\\", built, source)
+                self.assertEqual(value, built, source)
+                self.assertEqual(found, expected, source)
 
     def test_a_bytes_literal_decodes_with_its_prefix(self):
         self.assertEqual(decoded("the L\\u0035 case", "b"), "the L\\u0035 case")
