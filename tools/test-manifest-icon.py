@@ -1366,7 +1366,7 @@ class ManifestIconTest(unittest.TestCase):
 
 
 class WorkflowPathsTest(unittest.TestCase):
-    """The push filter lists every input that can change the gate result."""
+    """The push filter lists both checkout-attribute paths and excludes nothing."""
 
     WORKFLOW = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "manifest-icon.yml"
 
@@ -1387,6 +1387,13 @@ class WorkflowPathsTest(unittest.TestCase):
         paths = self.push_paths()
         self.assertIn(".gitattributes", paths)
         self.assertIn("**/.gitattributes", paths)
+
+    def test_push_paths_carry_no_exclusion(self):
+        # A later negative pattern would exclude a listed path again, so no
+        # entry in the push filter may start with an exclamation mark.
+        paths = self.push_paths()
+        self.assertTrue(paths)
+        self.assertEqual([p for p in paths if p.startswith("!")], [])
 
 
 if __name__ == "__main__":
