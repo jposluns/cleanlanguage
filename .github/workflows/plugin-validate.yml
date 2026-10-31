@@ -25,7 +25,7 @@ name: Plugin manifests
 #
 # No paths filter, deliberately. A path-filtered required check never reports on a
 # pull request outside its paths and blocks the merge as forever-pending, so keeping
-# this unfiltered leaves it promotable to a required check.
+# this unfiltered lets it be a required check.
 
 on:
   pull_request:
@@ -41,6 +41,9 @@ env:
 
 jobs:
   check:
+    # A unique display name, so a required status check names this job alone
+    # and no other workflow job called check can satisfy it.
+    name: Plugin manifests
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

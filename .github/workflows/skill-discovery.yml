@@ -4,23 +4,16 @@ name: Skill discovery
 # relocation, or metadata drift cannot reach main. Structural, offline, and
 # fail-closed; also runs the gate's own unit tests.
 #
-# This gate is path-filtered, like agent-plugin-manifest.yml, so it does not run
-# on every push and is therefore NOT a required branch-protection check: a pull
-# request that touches none of these paths would leave a required check pending
-# forever. To promote it to a required check, drop the paths filters so it runs
-# unfiltered on every pull request and push, the reason plugin-validate.yml runs
-# without a paths filter.
+# The pull_request trigger carries no paths filter, so this gate reports on every
+# pull request and can be a required check: a path-filtered required check never
+# reports on a pull request outside its paths and blocks the merge as
+# forever-pending. The push trigger keeps its paths filter, because a required
+# check is evaluated on the pull request and the paths it lists cover every file
+# the gate and its tests read, so a push touching none of them cannot change the
+# result.
 
 on:
   pull_request:
-    paths:
-      - "cleanlanguage/.claude-plugin/plugin.json"
-      - "cleanlanguage/skills"
-      - "cleanlanguage/skills/**"
-      - "cleanlanguage/SKILL.md"
-      - "tools/check-skill-discovery.py"
-      - "tools/test-skill-discovery.py"
-      - ".github/workflows/skill-discovery.yml"
   push:
     branches:
       - main
@@ -38,6 +31,9 @@ permissions:
 
 jobs:
   check:
+    # A unique display name, so a required status check names this job alone
+    # and no other workflow job called check can satisfy it.
+    name: Skill discovery
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
