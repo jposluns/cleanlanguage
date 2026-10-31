@@ -206,6 +206,77 @@ class _PretendClass:
         return True
 
 
+class _ExitingStr(str):
+    """Fix round 6 (claude MEDIUM 1): a str subclass every method of which
+    the gate could reach exits 0. isinstance(value, str) accepts it, so only
+    an exact type check refuses it."""
+
+    def _exit(self, *args, **kwargs):
+        raise SystemExit(0)
+
+    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit
+    __hash__ = str.__hash__
+
+
+class _ClaimsType:
+    """Fix round 6: a value that only claims, through a __class__ property,
+    to be of the builtin type ``claimed``, a claim isinstance honours, and
+    every method of which the gate could reach exits 0. bool cannot be
+    subclassed, so such a claim is the only way a value other than True or
+    False passes isinstance(value, bool)."""
+
+    claimed = None
+    __class__ = property(lambda self: type(self).claimed)
+
+    def _exit(self, *args, **kwargs):
+        raise SystemExit(0)
+
+    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit
+    __hash__ = None
+
+
+class _ClaimsStr(_ClaimsType):
+    claimed = str
+
+
+class _ClaimsBool(_ClaimsType):
+    claimed = bool
+
+
+class _ExitingStrText(Exception):
+    """Fix round 6: an error whose str is an _ExitingStr."""
+
+    def __str__(self):
+        return _ExitingStr("boom")
+
+
+class _ExitingStrNameMeta(type):
+    @property
+    def __name__(cls):
+        return _ExitingStr("Boom")
+
+
+class _ExitingStrName(Exception, metaclass=_ExitingStrNameMeta):
+    """Fix round 6: an error whose class name is an _ExitingStr."""
+
+
+class _ClaimsStrNameMeta(type):
+    @property
+    def __name__(cls):
+        return _ClaimsStr()
+
+
+class _ClaimsStrName(Exception, metaclass=_ClaimsStrNameMeta):
+    """Fix round 6: an error whose class name only claims to be a str."""
+
+
+class _ExitingStrMalformed(_REAL_MALFORMED):
+    """Fix round 6: a genuine Malformed verdict whose str is an _ExitingStr."""
+
+    def __str__(self):
+        return _ExitingStr("bad stamp")
+
+
 def unexpected_call(*args, **kwargs):
     raise AssertionError(f"unexpected call: {args}")
 
@@ -789,6 +860,32 @@ class ConditionalPassTest(unittest.TestCase):
              returning(_Hostile()), released, "returned an unusable result from release_day_from_published_at"),
             ("BASELINE_VERSION with a hostile format", "BASELINE_VERSION", _ExitingVersion("1.0.14"), None,
              "lacks a usable BASELINE_VERSION "),
+            # Fix round 6 (claude MEDIUM 1): each exact type check, of the result
+            # of every extractor function and of the text _guarded_text reads,
+            # refuses a str subclass and a value that only claims its type,
+            # either of which isinstance would accept and whose methods would
+            # then exit 0 later in the gate.
+            ("extract returns a str subclass whose methods exit 0", "extract",
+             returning(_ExitingStr("2026-11-15")), released, "returned an unusable result from extract"),
+            ("extract returns a value that only claims to be a str", "extract",
+             returning(_ClaimsStr()), released, "returned an unusable result from extract"),
+            ("requires_release_date returns a value that only claims to be a bool", "requires_release_date",
+             returning(_ClaimsBool()), None, "returned an unusable result from requires_release_date"),
+            ("release_day_from_published_at returns a str subclass whose methods exit 0",
+             "release_day_from_published_at", returning(_ExitingStr("2026-11-15")), released,
+             "returned an unusable result from release_day_from_published_at"),
+            ("release_day_from_published_at returns a value that only claims to be a str",
+             "release_day_from_published_at", returning(_ClaimsStr()), released,
+             "returned an unusable result from release_day_from_published_at"),
+            ("an error whose str is a str subclass whose methods exit 0", "release_day_from_published_at",
+             raising(_ExitingStrText()), released, failed + ": _ExitingStrText: (its message could not be read)"),
+            ("an error whose class name is a str subclass whose methods exit 0", "release_day_from_published_at",
+             raising(_ExitingStrName()), released, failed + ": an error whose class name could not be read"),
+            ("an error whose class name only claims to be a str", "release_day_from_published_at",
+             raising(_ClaimsStrName()), released, failed + ": an error whose class name could not be read"),
+            ("a Malformed verdict whose str is a str subclass whose methods exit 0",
+             "release_day_from_published_at", raising(_ExitingStrMalformed()), released,
+             failed + ": _ExitingStrMalformed: (its message could not be read)"),
         )
         for label, name, value, line, reason in cases:
             with self.subTest(label):
@@ -807,6 +904,34 @@ class ConditionalPassTest(unittest.TestCase):
                 finally:
                     setattr(gate.RELEASE_DATE, name, saved)
                     gate.RELEASE_DATE.release_day_from_published_at = saved_day
+
+    def test_hostile_error_text_from_an_api_lookup_exits_3(self):
+        # Fix round 6 (claude MEDIUM 1): release_date_attr describes a failed
+        # lookup through _describe too, so an error whose str or class name is
+        # a str subclass whose methods exit 0 still exits 3 with the report,
+        # and the checksum comparison still runs.
+        for label, error, shown in (
+            ("str", _ExitingStrText(), "_ExitingStrText: (its message could not be read)"),
+            ("class name", _ExitingStrName(), "an error whose class name could not be read"),
+        ):
+            with self.subTest(label):
+                saved = gate.RELEASE_DATE.release_day_from_published_at
+
+                def lookup(name):
+                    raise error
+
+                del gate.RELEASE_DATE.release_day_from_published_at
+                gate.RELEASE_DATE.__getattr__ = lookup
+                try:
+                    self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+                    self.published("2026-11-15T09:30:00Z")
+                    code, out, err = self.main_reports()
+                    self.assertEqual(code, 3, (out, err))
+                    self.assertIn("lacks release_day_from_published_at: " + shown, err)
+                    self.assertIn("matches the published", out)
+                finally:
+                    vars(gate.RELEASE_DATE).pop("__getattr__", None)
+                    gate.RELEASE_DATE.release_day_from_published_at = saved
 
     def test_spoofed_malformed_classification_exits_3(self):
         # Fix round 5 (codex MEDIUM): the Malformed classification reads only
@@ -1579,6 +1704,23 @@ class ModuleLoadTest(unittest.TestCase):
              "raise E()\n", "could not load skill-release-date.py"),
             ("a BaseException subclass at load",
              "class B(BaseException):\n    pass\nraise B()\n", "could not load skill-release-date.py"),
+            # Fix round 6 (claude MEDIUM 1): a text or class name that is a str
+            # subclass whose methods exit 0 is refused by the exact type check
+            # in _guarded_text, so the load report still exits 3.
+            ("an error whose str is a str subclass whose methods exit 0",
+             "class S(str):\n    def _exit(self, *args, **kwargs):\n        raise SystemExit(0)\n"
+             "    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit\n"
+             "    __hash__ = str.__hash__\n"
+             "class E(Exception):\n    def __str__(self):\n        return S(\"boom\")\nraise E()\n",
+             "could not load skill-release-date.py (the extractor is unavailable): E: (its message could not be read)"),
+            ("an error whose class name is a str subclass whose methods exit 0",
+             "class S(str):\n    def _exit(self, *args, **kwargs):\n        raise SystemExit(0)\n"
+             "    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit\n"
+             "    __hash__ = str.__hash__\n"
+             "class M(type):\n    @property\n    def __name__(cls):\n        return S(\"E\")\n"
+             "class E(Exception, metaclass=M):\n    pass\nraise E()\n",
+             "could not load skill-release-date.py (the extractor is unavailable): "
+             "an error whose class name could not be read"),
             ("a BaseException subclass from an API lookup",
              source + "\nclass B(BaseException):\n    pass\ndel extract\ndef __getattr__(name):\n    raise B()\n",
              "lacks a usable extract "),
