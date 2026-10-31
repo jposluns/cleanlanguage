@@ -639,6 +639,19 @@ BROKEN_EXTRACTORS = (
         "from pathlib import Path\n", "from pathlib import Path\nimport cleanlanguage_no_such_module\n", 1)),
 )
 
+# Row 72: the remedy the not-immutable readback refusal names.
+REMEDY_NOT_IMMUTABLE = "Turn on immutable releases for the repository, then cut a corrective new version."
+
+# Fix round 1: the next step the two unreadable readback refusals name, and
+# the verification path the force refusal names. Repeating a run keeps its
+# force input and run ref, so each names a fresh dispatch without force at
+# the tag itself.
+REMEDY_UNREADABLE = ("Once the release record is readable, dispatch this workflow again with the force input"
+                     " unchecked and the tag v1.0.15 itself selected as the run ref, not main, to verify the"
+                     " published release.")
+VERIFY_BY_DISPATCH = ("To verify the published release instead, dispatch this workflow again with the force input"
+                      " unchecked and the tag v1.0.15 itself selected as the run ref, not main.")
+
 # The readback outcomes that must fail a dated run on any path.
 BAD_READBACKS = (
     ("immutable false", {"immutable": "false"}, "immutable field reads false"),
@@ -783,12 +796,12 @@ class PublishStepTest(WorkflowStepTest):
         self.assertIn("names 2026-11-15", err)
         self.assertIn("IS PUBLISHED on a different UTC day", err)
 
-    def test_readback_mismatch_names_a_corrective_version_and_no_republish(self):
+    def test_readback_mismatch_names_a_corrective_new_version_and_no_republish(self):
         # R4: an immutable release cannot be republished.
         self.set_state(published_at="2026-11-16T00:00:02Z")
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertIn("the remedy is a corrective version", err)
+        self.assertIn("the remedy is a corrective new version", err)
         self.assertNotIn("force", err)
         self.assertNotIn("republish with", err)
 
@@ -797,6 +810,7 @@ class PublishStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn("could not be read back", err)
+        self.assertIn(REMEDY_UNREADABLE, err)
 
     def test_a_release_that_is_not_immutable_fails(self):
         # U1: with no pre-check, the first-publication readback is the only
@@ -811,8 +825,11 @@ class PublishStepTest(WorkflowStepTest):
                     self.assertEqual(code, 1, err)
                     if value == "FAIL":
                         self.assertIn("immutable field could not be read back", err)
+                        self.assertIn(REMEDY_UNREADABLE, err)
                     else:
                         self.assertIn("immutable field reads ", err)
+                        self.assertIn(REMEDY_NOT_IMMUTABLE, err)
+                        self.assertNotIn(REMEDY_UNREADABLE, err)
                     self.assertNotIn("the day its Released line names", out)
                     calls = self.calls()
                     self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
@@ -854,8 +871,11 @@ class PublishStepTest(WorkflowStepTest):
                     self.assertEqual(code, 1, err)
                     if value == "FAIL":
                         self.assertIn("immutable field could not be read back", err)
+                        self.assertIn(REMEDY_UNREADABLE, err)
                     else:
                         self.assertIn("immutable field reads ", err)
+                        self.assertIn(REMEDY_NOT_IMMUTABLE, err)
+                        self.assertNotIn(REMEDY_UNREADABLE, err)
                     self.assertNotIn("is immutable", out)
                     calls = self.calls()
                     self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
@@ -1032,9 +1052,41 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertIn("an immutable release cannot be republished", err)
         self.assertIn("The remedy for a published release is a corrective new version", err)
         self.assertIn("only moves the tag of a release that is not yet published", err)
+        # Fix round 1: the refusal names the fresh dispatch that verifies the
+        # published release.
+        self.assertIn(VERIFY_BY_DISPATCH, err)
+        # Row 71: a re-run keeps the force input, so no re-run is advised.
+        self.assertNotIn("re-run", err.lower())
+        self.assertNotIn("to verify this one", err)
         self.assertNotIn("overwriting", out + err)
         self.assertNotIn("kept its assets", out)
         self.assert_no_mutation(self.calls())
+
+    def test_the_named_dispatch_verifies_a_release_published_under_force(self):
+        # Fix round 1: a force run publishes, then its readback fails for a
+        # transient reason. Repeating that run keeps force and is refused; the
+        # fresh dispatch both refusals name (force unchecked, the tag as the run
+        # ref, so the built commit is the tag commit) ends green on the readback.
+        self.inputs["force"] = "true"
+        self.set_state(status="404", remote_tag=OTHER_COMMIT, immutable="FAIL")
+        code, _out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 1, err)
+        self.assertTrue(any(is_create(c) for c in self.calls()))
+        self.assertIn(REMEDY_UNREADABLE, err)
+        self.reset_calls()
+        self.set_state(immutable="true")
+        self.published(force="true")
+        code, _out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 1, err)
+        self.assertIn(VERIFY_BY_DISPATCH, err)
+        self.reset_calls()
+        self.published(force="false")
+        code, out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 0, err)
+        self.assertIn("kept its assets", out)
+        calls = self.calls()
+        self.assert_no_mutation(calls)
+        assert_readback_ran(self, calls, out)
 
     def test_force_against_a_published_release_never_moves_its_tag(self):
         # T2: the damaging case, a tag at another commit and force set.
@@ -1069,7 +1121,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assert_no_mutation(calls)
                 assert_readback_ran(self, calls, out)
 
-    def test_missing_asset_names_a_corrective_version_not_the_force_input(self):
+    def test_missing_asset_names_a_corrective_new_version_not_the_force_input(self):
         # T4
         self.published()
         self.set_state(missing="cleanlanguage.zip.sha256")
@@ -1081,7 +1133,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertNotIn("kept its assets", out)
         self.assert_no_mutation(self.calls())
 
-    def test_checksum_mismatch_names_a_corrective_version_not_the_force_input(self):
+    def test_checksum_mismatch_names_a_corrective_new_version_not_the_force_input(self):
         # T5, for each of the two zips, each checked by its own line.
         for zip_name in ("cleanlanguage.zip", "cleanlanguage-1.0.15.zip"):
             with self.subTest(zip_name):
@@ -1098,7 +1150,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertNotIn("kept its assets", out)
                 self.assert_no_mutation(self.calls())
 
-    def test_differing_zips_name_a_corrective_version_not_the_force_input(self):
+    def test_differing_zips_name_a_corrective_new_version_not_the_force_input(self):
         # Each zip matches its own published manifest, but the two differ.
         for zip_name in ("cleanlanguage.zip", "cleanlanguage-1.0.15.zip"):
             with self.subTest(zip_name):
@@ -1120,10 +1172,33 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.published(remote_tag=OTHER_COMMIT)
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertIn("with or without the force input; cut a new version", err)
+        self.assertIn("with or without the force input; cut a corrective new version", err)
         self.assertNotIn("to overwrite", err)
         self.assertNotIn("Refusing the force input", err)
         self.assert_no_mutation(self.calls())
+
+    def test_every_remedy_names_a_corrective_new_version(self):
+        # Row 73: the remedy lines, found by their wording (an echo line that
+        # carries corrective or new version), all read corrective new version,
+        # and no echo line carries a retired wording. The count is reconciled
+        # against the workflow, so the probe cannot pass empty. Residual: a
+        # remedy phrased without either word is neither counted nor checked.
+        echoes = [line for line in WORKFLOW_TEXT.splitlines() if "echo " in line]
+        remedies = [line for line in echoes if "corrective" in line or "new version" in line]
+        self.assertEqual(len(remedies), 8, remedies)
+        for line in echoes:
+            with self.subTest(line.strip()):
+                self.assertNotRegex(line, r"(?<!corrective )new version")
+                self.assertNotIn("corrective version", line)
+                self.assertNotIn("re-run without", line)
+
+    def test_no_test_name_carries_the_retired_wording(self):
+        # Fix round 1: a search for the retired wording finds no test name.
+        names = [name for value in list(globals().values())
+                 if isinstance(value, type) and issubclass(value, unittest.TestCase)
+                 for name in vars(value) if name.startswith("test_")]
+        self.assertGreater(len(names), 50, names)
+        self.assertEqual([name for name in names if "corrective_version" in name], [])
 
     def test_force_still_moves_the_tag_of_an_unpublished_release(self):
         # T7: the useful path survives, and its run reads back.
@@ -1184,6 +1259,10 @@ class ImmutableReleaseTest(WorkflowStepTest):
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
         self.assertTrue(description.startswith("Move the tag of a release that is not yet published"), description)
         self.assertIn("cannot be republished", description)
+        # Fix round 1: the re-run button keeps the original run ref and inputs,
+        # so the description names a fresh dispatch.
+        self.assertNotIn("re-run this workflow", description)
+        self.assertIn("dispatch this workflow again with the tag itself selected as the run ref", description)
         extractor = EXTRACTOR.read_text(encoding="utf-8")
         for stale in ("release upload", "force dispatch", "--clobber"):
             with self.subTest(stale):
