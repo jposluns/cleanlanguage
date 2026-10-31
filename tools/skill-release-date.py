@@ -200,9 +200,10 @@ def release_day_from_published_at(value: str) -> str:
 
       - is the UTC instant at which the release was FIRST published, in the
         form ``YYYY-MM-DDTHH:MM:SSZ``;
-      - is not changed by a later asset re-upload (``gh release upload
-        --clobber``), so a re-run or a force dispatch still reports the
-        original publication instant;
+      - is fixed at first publication, so a re-run still reports the
+        original publication instant (the release workflow has no path
+        that re-uploads the assets of a published release, which is
+        immutable);
       - is null for a draft (``gh api --jq .published_at`` then prints
         ``null``, which is rejected here, failing closed).
 

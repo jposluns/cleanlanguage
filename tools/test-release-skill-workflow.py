@@ -6,9 +6,9 @@ Item 26 (G3) puts three pieces of shell into
 release date, the packaging step that passes it on, and the publication-time
 checks in the publish step (the publication-window check immediately before
 the create call, and the publication readback on every path that ends a dated
-release run green: the first creation, a re-run at the same commit, and a
-force upload). These tests EXTRACT each step script from the real workflow
-file and run it with bash, the way the runner does, against fake ``gh``,
+release run green: the first creation and a re-run at the same commit). These
+tests EXTRACT each step script from the real workflow file and run it with
+bash, the way the runner does, against fake ``gh``,
 ``git`` and ``date`` commands on PATH and a throwaway working directory holding
 the real ``tools/skill-release-date.py``. The fakes record every call in
 order, so the tests pin both the verdicts and the ordering: the binding window
@@ -49,6 +49,17 @@ files that never names ``GITHUB_ENV`` (for example a path built from pieces,
 or a write from inside an action) is not detected; the pinned step list and
 key sets are what keep such a step out.
 
+Item 57 removes the path that re-uploaded the assets of a published release.
+A published release is immutable, so the force input is refused against one
+and only moves the tag of a release that is not yet published. The
+ImmutableReleaseTest cases pin that behaviour and the wording of every
+published-release refusal, and a structural check names any return of an
+asset upload, of a clobbering call other than the verification download, of
+the old step name or the old republish wording, and any change to the one
+readback per success path. Residual: the wording check is a list of known
+strings, so a new wording that offers a republish in other words is not
+caught; the behavioural cases are the guard that does not depend on wording.
+
 They run offline: nothing reaches GitHub or any network.
 """
 
@@ -83,7 +94,7 @@ RELEASE_TAG_EXPRESSION = (
 
 
 VALIDATE = "Read and validate the version"
-PUBLISH = "Create or update GitHub Release"
+PUBLISH = "Create or verify GitHub Release"
 DETERMINE = "Determine the expected release date"
 PACKAGE = "Validate, package, and verify the skill zip"
 CHECKOUT = "Check out repository"
@@ -297,9 +308,54 @@ def problems_duplicate_keys(wf: Workflow) -> list[str]:
     return problems
 
 
+# Item 57: text the workflow carried while it offered a force republish of a
+# published release or re-uploaded its assets, and the old step name; none of
+# it may return.
+STALE_REPUBLISH_TEXT = (
+    "Overwrite an already published release",
+    "force is enabled; overwriting",
+    "Republish deliberately with a manual dispatch",
+    "republish deliberately with a manual dispatch",
+    "force input to overwrite",
+    "deliberate force republish",
+    "except by a deliberate manual dispatch",
+    "force dispatch",
+    "after a force",
+    "Force readback",
+    "Create or update GitHub Release",
+)
+
+# The publication readback labels of the publish step, in order: one for each
+# path that ends a dated run green (a re-run at the same commit, and the
+# first creation).
+READBACK_LABELS = ["Re-run readback", "First-publication readback"]
+READBACK_CALL = re.compile(r"confirm_published_release \"([^\"]+)\"")
+
+
+def problems_republish(wf: Workflow) -> list[str]:
+    """Item 57: no asset upload, no clobbering call but the verification
+    download, none of the old republish wording, and exactly one readback per
+    success path of the publish step."""
+    problems = []
+    for number, line in enumerate(wf.text.split("\n"), 1):
+        if "release upload" in line:
+            problems.append(f"line {number} uploads release assets, which a published release cannot take")
+        if "--clobber" in line and "release download" not in line:
+            problems.append(f"line {number} clobbers outside the verification download")
+    for stale in STALE_REPUBLISH_TEXT:
+        if stale in wf.text:
+            problems.append(f"the workflow carries the stale republish text {stale!r}")
+    if PUBLISH in wf.step_names():
+        labels = READBACK_CALL.findall(wf.step_script(PUBLISH))
+        if labels != READBACK_LABELS:
+            problems.append(f"the publish step reads back under the labels {labels}, not {READBACK_LABELS}")
+    return problems
+
+
 STRUCTURAL_CHECKS = (
     problems_layout, problems_step_list, problems_step_keys, problems_env,
     problems_runner_files, problems_setting_endpoint, problems_duplicate_keys,
+    problems_republish,
 )
 
 
@@ -354,8 +410,12 @@ if ARGS[:1] == ["api"] and "--jq" in ARGS:
 VERSION = os.environ.get("VERSION", "")
 ASSETS = ["cleanlanguage.zip", "cleanlanguage.zip.sha256",
           "cleanlanguage-" + VERSION + ".zip", "cleanlanguage-" + VERSION + ".zip.sha256"]
+# The state file "missing" names assets the published release lacks, and
+# "corrupt" names zips whose published bytes no longer match their manifest.
+MISSING = read("missing").split()
+CORRUPT = read("corrupt").split()
 if ARGS[:2] == ["release", "view"]:
-    print("\\n".join(ASSETS))
+    print("\\n".join(asset for asset in ASSETS if asset not in MISSING))
     sys.exit(0)
 if ARGS[:2] == ["release", "download"]:
     target = ARGS[ARGS.index("--dir") + 1]
@@ -366,7 +426,7 @@ if ARGS[:2] == ["release", "download"]:
             if asset.endswith(".sha256"):
                 handle.write((digest + "  " + asset[: -len(".sha256")] + "\\n").encode("utf-8"))
             else:
-                handle.write(data)
+                handle.write(data + (b" altered" if asset in CORRUPT else b""))
     sys.exit(0)
 sys.exit(0)
 """
@@ -545,6 +605,14 @@ def is_create(call):
 
 def is_upload(call):
     return call[0] == "gh" and call[1][:2] == ["release", "upload"]
+
+
+def is_tag(call):
+    return call[0] == VCS and call[1][:1] == ["tag"]
+
+
+def is_mutation(call):
+    return is_push(call) or is_tag(call) or is_create(call) or is_upload(call)
 
 
 def is_date(call):
@@ -815,22 +883,16 @@ class NoSettingPreCheckTest(WorkflowStepTest):
         self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
 
 
-class RerunAndForceTest(WorkflowStepTest):
-    """R1: a re-run at the same commit and a force upload end green only on the
-    same publication readback as the first creation."""
+class RerunTest(WorkflowStepTest):
+    """R1: a re-run at the same commit ends green only on the same publication
+    readback as the first creation. Item 57: there is no force upload path."""
 
     def rerun(self):
         self.set_state(status="200", remote_tag=COMMIT)
 
-    def force(self):
-        self.inputs["force"] = "true"
-        self.set_state(status="200", remote_tag=OTHER_COMMIT)
-
-    def assert_readback_ran(self, calls, after=None):
+    def assert_readback_ran(self, calls):
         immutable = self.index_of(calls, is_field_read("immutable"))
         published_at = self.index_of(calls, is_field_read("published_at"))
-        if after is not None:
-            self.assertLess(after, immutable)
         self.assertLess(immutable, published_at)
 
     def test_rerun_at_the_same_commit_runs_the_readback(self):
@@ -855,37 +917,6 @@ class RerunAndForceTest(WorkflowStepTest):
                 self.assertIn(message, err)
                 self.assertNotIn("kept its assets", out)
 
-    def test_force_runs_the_readback_after_the_upload(self):
-        self.force()
-        code, out, err = self.run_step(PUBLISH)
-        self.assertEqual(code, 0, err)
-        calls = self.calls()
-        self.assertFalse(any(is_create(c) for c in calls), calls)
-        self.assert_readback_ran(calls, after=self.index_of(calls, is_upload))
-        self.assertIn("Force readback: release v1.0.15 published_at 2026-11-15T12:00:03Z", out)
-
-    def test_force_fails_when_the_readback_does_not_hold(self):
-        for label, state, message in BAD_READBACKS:
-            with self.subTest(label):
-                self.reset_calls()
-                self.set_state(immutable="true", published_at="2026-11-15T12:00:03Z")
-                self.force()
-                self.set_state(**state)
-                code, _out, err = self.run_step(PUBLISH)
-                self.assertEqual(code, 1, err)
-                self.assertIn(message, err)
-                self.assertTrue(any(is_upload(c) for c in self.calls()))
-
-    def test_force_needs_the_declared_force_input(self):
-        # The FORCE variable reaches the script only through the step env
-        # declaration; without the input the forced run is refused.
-        self.inputs["force"] = "false"
-        self.set_state(status="200", remote_tag=OTHER_COMMIT)
-        code, _out, err = self.run_step(PUBLISH)
-        self.assertEqual(code, 1, err)
-        self.assertIn("Cut a new version", err)
-        self.assertFalse(any(is_upload(c) for c in self.calls()))
-
     def test_broken_extractor_is_reported_by_the_probe_on_a_rerun(self):
         # T3: a re-run reports a crashed extractor as that, never as an
         # unusable published_at.
@@ -904,20 +935,181 @@ class RerunAndForceTest(WorkflowStepTest):
                 self.assertFalse(any(is_create(c) or is_upload(c) for c in calls), calls)
                 self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
 
-    def test_undated_rerun_and_force_read_no_record_field(self):
-        for label, arrange in (("re-run", self.rerun), ("force", self.force)):
-            with self.subTest(label):
+    def test_undated_rerun_reads_no_record_field(self):
+        self.carried["RELEASE_DATED"] = "0"
+        self.carried["RELEASE_DATE"] = ""
+        self.set_state(immutable="false", published_at="2026-11-16T00:00:02Z")
+        self.rerun()
+        code, _out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 0, err)
+        calls = self.calls()
+        self.assertFalse(
+            any(is_field_read("published_at")(c) or is_field_read("immutable")(c) for c in calls), calls
+        )
+
+
+class ImmutableReleaseTest(WorkflowStepTest):
+    """Item 57: a published release is immutable. The force input is refused
+    against a published release and only moves the tag of a release that is not
+    yet published; there is no path that re-uploads published assets, and every
+    published-release refusal names a corrective new version, never the force
+    input as a remedy. The fake gh proves the shell logic only, never what
+    GitHub itself enforces."""
+
+    def published(self, remote_tag=COMMIT, force="false"):
+        self.inputs["force"] = force
+        self.set_state(status="200", remote_tag=remote_tag)
+
+    def assert_no_mutation(self, calls):
+        self.assertFalse([c for c in calls if is_mutation(c)], calls)
+
+    def test_force_against_a_published_release_is_refused(self):
+        # T1: the same commit, force set.
+        self.published(force="true")
+        code, out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 1, err)
+        self.assertIn("an immutable release cannot be republished", err)
+        self.assertIn("The remedy for a published release is a corrective new version", err)
+        self.assertIn("only moves the tag of a release that is not yet published", err)
+        self.assertNotIn("overwriting", out + err)
+        self.assertNotIn("kept its assets", out)
+        self.assert_no_mutation(self.calls())
+
+    def test_force_against_a_published_release_never_moves_its_tag(self):
+        # T2: the damaging case, a tag at another commit and force set.
+        self.published(remote_tag=OTHER_COMMIT, force="true")
+        code, _out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 1, err)
+        self.assertIn("an immutable release cannot be republished", err)
+        self.assert_no_mutation(self.calls())
+
+    def test_force_is_refused_for_an_undated_published_release_too(self):
+        self.carried["RELEASE_DATED"] = "0"
+        self.carried["RELEASE_DATE"] = ""
+        self.published(remote_tag=OTHER_COMMIT, force="true")
+        code, _out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 1, err)
+        self.assertIn("an immutable release cannot be republished", err)
+        self.assert_no_mutation(self.calls())
+
+    def test_rerun_without_force_verifies_and_keeps_the_assets(self):
+        # T3: regression guard for the verification branch, on both events.
+        for event in ("workflow_dispatch", "push"):
+            with self.subTest(event):
                 self.reset_calls()
-                self.carried["RELEASE_DATED"] = "0"
-                self.carried["RELEASE_DATE"] = ""
-                self.set_state(immutable="false", published_at="2026-11-16T00:00:02Z")
-                arrange()
-                code, _out, err = self.run_step(PUBLISH)
+                self.runner["GITHUB_EVENT_NAME"] = event
+                self.published()
+                code, out, err = self.run_step(PUBLISH)
                 self.assertEqual(code, 0, err)
-                calls = self.calls()
-                self.assertFalse(
-                    any(is_field_read("published_at")(c) or is_field_read("immutable")(c) for c in calls), calls
-                )
+                self.assertIn("kept its assets", out)
+                self.assertNotIn("Refusing the force input", err)
+                self.assert_no_mutation(self.calls())
+
+    def test_missing_asset_names_a_corrective_version_not_the_force_input(self):
+        # T4
+        self.published()
+        self.set_state(missing="cleanlanguage.zip.sha256")
+        code, out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 1, err)
+        self.assertIn("is missing the asset cleanlanguage.zip.sha256", err)
+        self.assertIn("cannot be completed in place; cut a corrective new version", err)
+        self.assertNotIn("force", err)
+        self.assertNotIn("kept its assets", out)
+        self.assert_no_mutation(self.calls())
+
+    def test_checksum_mismatch_names_a_corrective_version_not_the_force_input(self):
+        # T5, for each of the two zips, each checked by its own line.
+        for zip_name in ("cleanlanguage.zip", "cleanlanguage-1.0.15.zip"):
+            with self.subTest(zip_name):
+                self.reset_calls()
+                self.published()
+                self.set_state(corrupt=zip_name)
+                code, out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 1, err)
+                self.assertIn("Published " + zip_name + " (", err)
+                self.assertIn("does not match its published checksum", err)
+                self.assertIn("fails verification against its own published checksums", err)
+                self.assertIn("cut a corrective new version", err)
+                self.assertNotIn("force", err)
+                self.assertNotIn("kept its assets", out)
+                self.assert_no_mutation(self.calls())
+
+    def test_moved_tag_of_a_published_release_offers_no_force_remedy(self):
+        # T6, which also keeps the former check that FORCE reaches the script
+        # only through the declared input: without it the run is refused.
+        self.published(remote_tag=OTHER_COMMIT)
+        code, _out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 1, err)
+        self.assertIn("with or without the force input; cut a new version", err)
+        self.assertNotIn("to overwrite", err)
+        self.assertNotIn("Refusing the force input", err)
+        self.assert_no_mutation(self.calls())
+
+    def test_force_still_moves_the_tag_of_an_unpublished_release(self):
+        # T7: the useful path survives, and its run reads back.
+        self.inputs["force"] = "true"
+        self.set_state(status="404", remote_tag=OTHER_COMMIT)
+        code, out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 0, err)
+        calls = self.calls()
+        move = self.index_of(calls, lambda c: is_tag(c) and c[1][:2] == ["tag", "-f"])
+        push = self.index_of(calls, lambda c: is_push(c) and "--force" in c[1])
+        create = self.index_of(calls, is_create)
+        self.assertLess(move, push)
+        self.assertLess(push, create)
+        self.assertLess(create, self.index_of(calls, is_field_read("immutable")))
+        self.assertFalse(any(is_upload(c) for c in calls), calls)
+        self.assertIn("First-publication readback", out)
+
+    def test_moved_tag_of_an_unpublished_release_needs_the_force_input(self):
+        # T8
+        self.set_state(status="404", remote_tag=OTHER_COMMIT)
+        code, _out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 1, err)
+        self.assertIn("refusing to move it without the force input", err)
+        self.assert_no_mutation(self.calls())
+
+    def test_tag_push_of_a_new_release_creates_it(self):
+        # T9
+        self.runner["GITHUB_EVENT_NAME"] = "push"
+        self.set_state(status="404", remote_tag=COMMIT)
+        code, out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 0, err)
+        calls = self.calls()
+        self.assertTrue(any(is_create(c) for c in calls), calls)
+        self.assertFalse(any(is_upload(c) or is_push(c) for c in calls), calls)
+        self.assertIn("First-publication readback", out)
+
+    def test_unknown_release_status_fails_closed_before_any_mutation(self):
+        # T10
+        for force in ("false", "true"):
+            with self.subTest(force=force):
+                self.reset_calls()
+                self.inputs["force"] = force
+                self.set_state(status="500", remote_tag=OTHER_COMMIT)
+                code, _out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 1, err)
+                self.assertIn("Could not determine whether v1.0.15 is already published (HTTP 500)", err)
+                self.assert_no_mutation(self.calls())
+
+    def test_no_text_or_path_offers_a_republish(self):
+        """T11, structural: problems_republish holds on the real workflow, the
+        force input describes only a tag move, and the extractor docstring no
+        longer describes a re-upload. Residual: the wording checks are a list
+        of known strings; the behavioural cases above are the guard that does
+        not depend on wording."""
+        self.assertEqual(problems_republish(WF), [])
+        description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
+        self.assertTrue(description.startswith("Move the tag of a release that is not yet published"), description)
+        self.assertIn("cannot be republished", description)
+        extractor = EXTRACTOR.read_text(encoding="utf-8")
+        for stale in ("release upload", "force dispatch", "--clobber"):
+            with self.subTest(stale):
+                self.assertNotIn(stale, extractor)
+
+    def test_every_success_path_reads_back(self):
+        # One readback per remaining success path of a dated run.
+        self.assertEqual(READBACK_CALL.findall(step_script(PUBLISH)), READBACK_LABELS)
 
 
 class DetermineStepTest(WorkflowStepTest):
@@ -1118,6 +1310,40 @@ class MutationTest(unittest.TestCase):
     def test_a_step_level_condition_is_caught(self):
         wf = self.mutated(PUBLISH_SHELL, PUBLISH_SHELL + "        if: false\n")
         self.assertNamed(wf, "carries keys the harness does not model: [" + repr("if") + "]")
+
+    def test_the_old_step_name_is_caught(self):
+        # Item 57 (D4): the step no longer promises an update.
+        # The other structural checks look the publish step up by its name
+        # and raise when it is missing, so the two that name this defect are
+        # called directly.
+        wf = self.mutated("      - name: " + PUBLISH + "\n", "      - name: Create or update GitHub Release\n")
+        problems = problems_step_list(wf) + problems_republish(wf)
+        for fragment in ("the workflow steps are", "stale republish text " + repr("Create or update GitHub Release")):
+            self.assertTrue(any(fragment in problem for problem in problems), (fragment, problems))
+        with self.assertRaisesRegex(AssertionError, "0 steps named " + repr(PUBLISH)):
+            structural_problems(wf)
+
+    def test_a_restored_asset_upload_is_caught(self):
+        anchor = "          gh release create \"${RELEASE_TAG}\" --verify-tag \\\n"
+        upload = "          gh release upload \"${RELEASE_TAG}\" dist/cleanlanguage.zip --clobber\n"
+        wf = self.mutated(anchor, upload + anchor)
+        self.assertNamed(wf, "uploads release assets", "clobbers outside the verification download")
+
+    def test_a_restored_force_bypass_is_caught(self):
+        anchor = "              echo \"Refusing the force input: release ${RELEASE_TAG} is already published"
+        bypass = "              echo \"force is enabled; overwriting the published release ${RELEASE_TAG}.\"\n"
+        wf = self.mutated(anchor, bypass + anchor)
+        self.assertNamed(wf, "stale republish text " + repr("force is enabled; overwriting"))
+
+    def test_a_restored_force_readback_is_caught(self):
+        anchor = "            confirm_published_release \"First-publication readback\"\n"
+        wf = self.mutated(anchor, anchor + "            confirm_published_release \"Force readback\"\n")
+        self.assertNamed(wf, "stale republish text " + repr("Force readback"), "reads back under the labels")
+
+    def test_a_dropped_rerun_readback_is_caught(self):
+        anchor = "                confirm_published_release \"Re-run readback\"\n"
+        wf = self.mutated(anchor, "                :\n")
+        self.assertNamed(wf, "reads back under the labels " + repr(["First-publication readback"]))
 
     def test_a_setting_read_is_caught(self):
         anchor = "          confirm_published_release() { # label\n"

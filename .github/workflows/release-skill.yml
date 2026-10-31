@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       force:
-        description: "Overwrite an already published release and move its tag to this commit. This changes published bytes and checksums; leave it unchecked. To finish a partly failed release, re-run this workflow with the tag itself selected as the run ref, not main."
+        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one; the remedy for a published release is a corrective new version. Leave it unchecked. To finish a run that failed before it published, re-run this workflow with the tag itself selected as the run ref, not main."
         required: false
         default: false
         type: boolean
@@ -97,7 +97,7 @@ jobs:
           # release is first published, and that is checked BEFORE anything is
           # published. A new release (HTTP 404) is published today, so the
           # expected date is the UTC day now, read once here. An existing
-          # release (HTTP 200: a re-run or a force dispatch) keeps its first
+          # release (HTTP 200: a re-run) keeps its first
           # publication day, so the expected date is the UTC day of its
           # published_at, interpreted only by tools/skill-release-date.py
           # --published-day, the one place that states the assumption about
@@ -205,7 +205,7 @@ jobs:
             tools/release-package.sh --tag "${RELEASE_TAG}"
           fi
 
-      - name: Create or update GitHub Release
+      - name: Create or verify GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           FORCE: ${{ inputs.force }}
@@ -240,8 +240,8 @@ jobs:
           }
           # confirm_published_release is the publication readback. It runs on
           # EVERY path that ends a dated release run successfully: after the
-          # first creation, on a re-run at the same commit, and after a force
-          # upload, so a retry cannot turn a failed readback green. It requires
+          # first creation and on a re-run at the same commit, so a retry
+          # cannot turn a failed readback green. It requires
           # the release record to be immutable (immutable exactly true), so its
           # published_at cannot be replaced later, and then requires the UTC
           # day of its published_at to be the Released day, decided only by
@@ -304,10 +304,11 @@ jobs:
           # uses this peeled commit, so a legitimate annotated-tag release is
           # not refused as a mismatch.
           built_commit="$(git rev-parse "${GITHUB_SHA}^{commit}")"
-          # A published release is immutable: its checksum is a trust signal,
-          # so its bytes never change except by a deliberate manual dispatch
-          # with the force input. Probe the release through the API so a
-          # transient error fails closed rather than reading as "no release".
+          # A published release is immutable and its checksum is a trust
+          # signal, so its bytes never change: a bad release is corrected by
+          # a new version, never in place, and the force input is refused
+          # against it. Probe the release through the API so a transient
+          # error fails closed rather than reading as "no release".
           response="$(mktemp)"
           set +e
           gh api --include --silent "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" >"${response}" 2>&1
@@ -330,9 +331,12 @@ jobs:
           # regardless of output order. Tag moves are governed independently.
           remote_tag_sha="$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" "refs/tags/${RELEASE_TAG}" | awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { plain=$1 } END { print (peeled != "" ? peeled : plain) }')"
           if [ "${release_exists}" -eq 1 ]; then
-            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${FORCE}" = "true" ]; then
-              echo "force is enabled; overwriting the published release ${RELEASE_TAG}."
-            elif [ "${remote_tag_sha}" = "${built_commit}" ]; then
+            if [ "${FORCE}" = "true" ]; then
+              echo "Refusing the force input: release ${RELEASE_TAG} is already published, and an immutable release cannot be republished." >&2
+              echo "The force input only moves the tag of a release that is not yet published. The remedy for a published release is a corrective new version; to verify this one, re-run without the force input." >&2
+              exit 1
+            fi
+            if [ "${remote_tag_sha}" = "${built_commit}" ]; then
               # A re-run at the same commit. The published assets are immutable,
               # so keep them; but prove the published release is COMPLETE and
               # SELF-CONSISTENT before the run ends. Each zip is bound to its
@@ -346,7 +350,7 @@ jobs:
               for asset in cleanlanguage.zip cleanlanguage.zip.sha256 "cleanlanguage-${VERSION}.zip" "cleanlanguage-${VERSION}.zip.sha256"; do
                 printf '%s\n' "${published_assets}" | grep -qxF -- "${asset}" || {
                   echo "Published release ${RELEASE_TAG} is missing the asset ${asset}." >&2
-                  echo "Republish deliberately with a manual dispatch and the force input." >&2
+                  echo "A published release is immutable and cannot be completed in place; cut a corrective new version." >&2
                   exit 1
                 }
               done
@@ -378,9 +382,9 @@ jobs:
                 return 0
               }
               verify_published_asset cleanlanguage.zip cleanlanguage.zip.sha256 \
-                || { echo "The published release ${RELEASE_TAG} is corrupt or was partly overwritten; republish deliberately with a manual dispatch and the force input." >&2; exit 1; }
+                || { echo "The published release ${RELEASE_TAG} fails verification against its own published checksums. A published release is immutable and cannot be republished; cut a corrective new version." >&2; exit 1; }
               verify_published_asset "cleanlanguage-${VERSION}.zip" "cleanlanguage-${VERSION}.zip.sha256" \
-                || { echo "The published release ${RELEASE_TAG} is corrupt or was partly overwritten; republish deliberately with a manual dispatch and the force input." >&2; exit 1; }
+                || { echo "The published release ${RELEASE_TAG} fails verification against its own published checksums. A published release is immutable and cannot be republished; cut a corrective new version." >&2; exit 1; }
               cmp -s "${verify_dir}/cleanlanguage.zip" "${verify_dir}/cleanlanguage-${VERSION}.zip" \
                 || { echo "The published stable and version-named zips of ${RELEASE_TAG} differ." >&2; exit 1; }
               rm -rf "${verify_dir}"; trap - EXIT
@@ -394,7 +398,7 @@ jobs:
             else
               echo "Release ${RELEASE_TAG} is already published, but its tag now resolves to ${remote_tag_sha:-nothing}, not ${built_commit}." >&2
               echo "Republishing different bytes under a published version would break its checksum as a trust signal." >&2
-              echo "Cut a new version, or run this workflow manually with the force input to overwrite ${RELEASE_TAG} deliberately (select the tag as the run ref)." >&2
+              echo "A published release is immutable, with or without the force input; cut a new version." >&2
               exit 1
             fi
           fi
@@ -427,40 +431,27 @@ jobs:
               exit 1
             fi
           fi
-          if [ "${release_exists}" -eq 1 ]; then
-            # The force path itself (replacing the assets of a published
-            # release) is reviewed separately under backlog item 57; the
-            # readback below only keeps a forced run from ending green on a
-            # release record it has not confirmed.
-            gh release upload "${RELEASE_TAG}" \
-              dist/cleanlanguage.zip \
-              dist/cleanlanguage.zip.sha256 \
-              "dist/cleanlanguage-${VERSION}.zip" \
-              "dist/cleanlanguage-${VERSION}.zip.sha256" \
-              --clobber
-            if [ "${RELEASE_DATED}" = "1" ]; then
-              confirm_published_release "Force readback"
-            fi
-          else
-            if [ "${RELEASE_DATED}" = "1" ]; then
-              # Item 26 (G3): the binding publication-window check, after every
-              # tag operation and immediately before the create call, so the
-              # tag push cannot carry the run past UTC midnight unchecked. The
-              # 10-minute margin covers the create call and its asset uploads;
-              # the readback below confirms the day that GitHub recorded.
-              check_publish_window
-            fi
-            gh release create "${RELEASE_TAG}" --verify-tag \
-              dist/cleanlanguage.zip \
-              dist/cleanlanguage.zip.sha256 \
-              "dist/cleanlanguage-${VERSION}.zip" \
-              "dist/cleanlanguage-${VERSION}.zip.sha256" \
-              --title "Clean Language ${RELEASE_TAG}" \
-              --generate-notes
-            if [ "${RELEASE_DATED}" = "1" ]; then
-              # Item 26 (G3): the first-publication readback.
-              confirm_published_release "First-publication readback"
-            fi
+          # Only a new release reaches this point: every published-release
+          # branch above has exited. There is no upload path for an existing
+          # release, because a published release is immutable.
+          if [ "${RELEASE_DATED}" = "1" ]; then
+            # Item 26 (G3): the binding publication-window check, after every
+            # tag operation and immediately before the create call, so the
+            # tag push cannot carry the run past UTC midnight unchecked. The
+            # 10-minute margin covers the create call and its asset uploads;
+            # the readback below confirms the day that GitHub recorded.
+            check_publish_window
+          fi
+          gh release create "${RELEASE_TAG}" --verify-tag \
+            dist/cleanlanguage.zip \
+            dist/cleanlanguage.zip.sha256 \
+            "dist/cleanlanguage-${VERSION}.zip" \
+            "dist/cleanlanguage-${VERSION}.zip.sha256" \
+            --title "Clean Language ${RELEASE_TAG}" \
+            --generate-notes
+          if [ "${RELEASE_DATED}" = "1" ]; then
+            # Item 26 (G3): the first-publication readback.
+            confirm_published_release "First-publication readback"
           fi
 
       # No site step follows. Publishing the release is this workflow's last act.
