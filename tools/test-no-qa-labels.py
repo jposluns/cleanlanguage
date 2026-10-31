@@ -13,17 +13,21 @@ elsewhere a paragraph of consecutive non-blank lines. A comment run or a paragra
 by line and then as one text with all its line breaks joined, so a label spread over any number of
 lines is caught and reported at the line where it starts. A string statement is matched once, as a
 whole, on its decoded value as Python builds it, and each match is reported at the physical line
-where it starts, so a label spread over its lines is caught there too, while a value that Python
-reads as exempt or as a longer word or id is not split into lines or parts that would read
-otherwise. Docstrings are found with ast.get_docstring, so the docstring of a one-line suite counts
-too, and a string statement may be a plain, f-string, template string or bytes literal. Its prose
+where it starts, so a label spread over its lines is caught there too. The value match does not
+split a value that Python reads as exempt or as a longer word or id into lines or parts that would
+read otherwise, but each physical line of the statement is still matched against LABEL_PATTERNS
+as source text, as every line is, so a part of such a value can still be caught on its own line,
+an accepted false failure listed below. Docstrings are found with ast.get_docstring, so the
+docstring of a one-line suite counts too, and a string statement may be a plain, f-string,
+template string or bytes literal. Its prose
 is read from the parsed literal, never cut from the source: the decoded text of a plain or bytes
 literal, and only the top-level literal text of an f-string or template string, whose replacement
 fields, with any format spec or nested literal, are code and each read as one space. Each part of
 an implicitly concatenated literal is read from its own delimiter, with its own prefix, and joined
 to the next part as Python joins them, with nothing between, and a backslash that ends a line of a
-part joins the next line with nothing between; a line break inside one part, written or escaped,
-is the newline it is, with the space around it stripped. Every pattern but the round number
+part joins the next line with nothing between, while a backslash just before a replacement field,
+which escapes nothing, stays the backslash Python keeps; a line break inside one part, written or
+escaped, is the newline it is, with the space around it stripped. Every pattern but the round number
 pattern reads a line break, in a string value or between the lines of a comment run or paragraph,
 as one space; the round number pattern keeps it, so a letter exempts a colon round number only on
 the line of the number. Before Python 3.12 the tokenizer does not separate the
@@ -78,7 +82,13 @@ of code as well as of prose, ordinary arithmetic and identifiers in code, such a
 label in a string literal that is not a statement of its own, such as an assertion message, would
 otherwise pass. A further accepted false failure: in an f-string or template string statement, the
 one space that stands for a replacement field can complete a label in the decoded text, so the text
-"fix", a field and the text "round" written together read as a fix round and are caught. The
+"fix", a field and the text "round" written together read as a fix round and are caught. A
+further accepted false failure: in a Python file, each physical line of a string statement is
+matched against LABEL_PATTERNS as source text as well as in the value, so a longer id or a round
+number that the rest of the value completes, from a later part of an implicitly concatenated
+literal, from the next line after a joining backslash or from an escape, as in the parts "the
+F1" and "00 case" or "fixed in round 7" and "th of the plan", is caught on the physical line of
+its first part, though the value reads as the id F100 or the exempt round 7th. The
 PatternSelfCheck case pins the forms the patterns are known to cover, a letter
 of each Unicode letter category that exempts either form, the ordinary code and prose they must
 not flag, these accepted false failures, a second round number match of each form in one searched
@@ -288,12 +298,15 @@ def opening_of(literal):
     return opening.group(0)[:-len(opening.group(1))], opening.group(1)
 
 
-def decoded(raw, prefix):
+def decoded(raw, prefix, ends_line=True):
     """The text of raw, one physical line of the body of a literal that prefix opens, as Python reads it.
 
-    A raw literal keeps its text as written. Any other has its escapes decoded, and a backslash
-    that ends the line, which joins the line to the next, is dropped. A bytes literal is read as
-    Latin-1, one character for each byte. An escape that does not decode raises, so the scan fails.
+    A raw literal keeps its text as written. Any other has its escapes decoded. A backslash that
+    ends raw is dropped when ends_line is true, since it joins the line to the next, and kept when
+    ends_line is false, as when it ends the literal text just before a replacement field of an
+    f-string or template string, where it escapes nothing and Python keeps it. A bytes literal is
+    read as Latin-1, one character for each byte. An escape that does not decode raises, so the
+    scan fails.
     """
     prefix = prefix.lower()
     if "r" in prefix:
@@ -302,7 +315,10 @@ def decoded(raw, prefix):
     at = 0
     while at < len(raw):
         if raw[at] == "\\":
-            quoted.append(raw[at:at + 2] if at + 1 < len(raw) else "")
+            if at + 1 < len(raw):
+                quoted.append(raw[at:at + 2])
+            elif not ends_line:
+                quoted.append("\\\\")
             at += 2
         else:
             quoted.append("\\\"" if raw[at] == "\"" else raw[at])
@@ -340,7 +356,7 @@ def literal_pieces(tokens):
         lines = raw.split("\n")
         for offset, part in enumerate(lines):
             breaks = offset > 0 and not joins_next(lines[offset - 1])
-            pieces.append((row + offset, decoded(part, prefix), breaks))
+            pieces.append((row + offset, decoded(part, prefix, offset < len(lines) - 1), breaks))
 
     for tok in tokens:
         if tok.type in FORMATTED_STARTS:
@@ -804,7 +820,8 @@ class PatternSelfCheck(unittest.TestCase):
     # The prose of a string statement is matched once, as a whole, on its decoded value as Python
     # builds it, never part by part and never with a line break between parts that the value
     # lacks: parts that spell the exempt round number "round7th" over three lines, a bare id after
-    # the word point in the next part, and a longer id that two parts split, are not caught.
+    # the word point in the next part, and a longer id that two parts split, are not caught by the
+    # value match, and no physical line of these samples matches LABEL_PATTERNS on its own.
     VALUE_CLEAN = ("x = 1\n(\"fixed in round\"\n \"7\"\n \"th of the plan\")\n",
                    "x = 1\n(\"the open point \"\n \"C1 case\")\n",
                    "x = 1\n(\"the C1\"\n \"00 case\")\n")
@@ -824,6 +841,25 @@ class PatternSelfCheck(unittest.TestCase):
     VALUE_COLON = (("x = 1\n(\"fixed in round:\"\n \"7 decimal places\")\n", []),
                    ("x = 1\n(\"fixed in round:\"\n \"7\\nof review\")\n",
                     ["x.py:2: a review round number across a line break: round:7"]))
+    # Each physical line of a string statement is still matched against LABEL_PATTERNS as source
+    # text, so a part that the rest of the value completes into a longer id or an exempt round
+    # number, from a later part, from the next line after a joining backslash or from an escape, is
+    # caught on its own line, an accepted low-severity false failure that stays caught while the
+    # value alone has no match. (source, the exact report.)
+    VALUE_LINE_FALSE_FAILURES = (
+        ("x = 1\n(\"the F1\"\n \"00 case\")\n", ["x.py:2: a bare finding id: (\"the F1\""]),
+        ("x = 1\n(\"the M1\"\n \"23 model\")\n", ["x.py:2: a bare finding id: (\"the M1\""]),
+        ("x = 1\n(\"fixed in round 7\"\n \"th of the plan\")\n",
+         ["x.py:2: a review round number: (\"fixed in round 7\""]),
+        ("x = 1\n\"the F1\\\n00 case\"\n", ["x.py:2: a bare finding id: \"the F1\\"]),
+        ("x = 1\n\"the F1\\x300 case\"\n", ["x.py:2: a bare finding id: \"the F1\\x300 case\""]))
+    # A backslash just before a replacement field of an f-string or template string statement
+    # escapes nothing, and Python keeps it in the literal text, so the decoded value keeps it too
+    # and it cannot join the text around the field into a label: one backslash, and three, of
+    # which the escaped pair reads as one backslash and Python keeps the last.
+    FIELD_BACKSLASH_STATEMENTS = ("x = 1\nf\"the fix\\{x}round case\"\n",
+                                  "x = 1\nf\"the L\\{x}5 case\"\n",
+                                  "x = 1\nf\"the fix\\\\\\{x}round case\"\n")
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
@@ -1101,6 +1137,32 @@ class PatternSelfCheck(unittest.TestCase):
         for source, expected in self.VALUE_COLON:
             with self.subTest(source=source):
                 self.assertEqual(scan("x.py", source), expected, source)
+
+    def test_a_physical_line_of_a_string_statement_is_still_matched_on_its_own(self):
+        for source, expected in self.VALUE_LINE_FALSE_FAILURES:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), expected, source)
+                values = python_blocks(source)[1]
+                self.assertEqual(len(values), 1, source)
+                self.assertEqual(value_hits(*values[0]), [], source)
+
+    def test_a_backslash_before_a_replacement_field_is_kept_as_python_keeps_it(self):
+        sources = self.FIELD_BACKSLASH_STATEMENTS
+        if hasattr(ast, "TemplateStr"):
+            sources += ("x = 1\nt\"the fix\\{x}round case\"\n",)
+        for source in sources:
+            with self.subTest(source=source):
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    node = ast.parse(source).body[-1].value
+                    found = scan("x.py", source)
+                    tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+                statement = [tok for tok in tokens if tok.start[0] == node.lineno]
+                expected = "".join(part.value if isinstance(part, ast.Constant) else " "
+                                   for part in node.values)
+                self.assertIn("\\", expected, source)
+                self.assertEqual(statement_value(literal_pieces(statement))[0], expected, source)
+                self.assertEqual(found, [], source)
 
     def test_a_bytes_literal_decodes_with_its_prefix(self):
         self.assertEqual(decoded("the L\\u0035 case", "b"), "the L\\u0035 case")
