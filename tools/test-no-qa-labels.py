@@ -12,7 +12,8 @@ lines or a string statement such as a docstring and elsewhere is a paragraph of 
 non-blank lines, is matched line by line against PROSE_PATTERNS as well, and then as one text with
 all its line breaks joined against both sets, so a label spread over any number of lines is caught
 and reported at the line where it starts. Docstrings are found with ast.get_docstring, so the
-docstring of a one-line suite counts too. PROSE_PATTERNS holds the widened bare finding id, which
+docstring of a one-line suite counts too, and a string statement may be a plain, f-string,
+template string or bytes literal. PROSE_PATTERNS holds the widened bare finding id, which
 applies to prose only because code legitimately carries short identifiers such as the closure
 value "C1". A match on a line in ALLOWLIST, the reviewed set of lines whose match is a
 cross-reference to a named plan rather than a review label, passes. A scanned file that is
@@ -238,20 +239,30 @@ def read_text(path):
     return Path(path).read_text(encoding="utf-8")
 
 
+# An f-string, and a template string where this Python parses one, is a node of its own kind.
+FORMATTED_LITERALS = (ast.JoinedStr,) + ((ast.TemplateStr,) if hasattr(ast, "TemplateStr") else ())
+
+
+def is_string_literal(value):
+    """Whether value is a string literal of any kind: plain, bytes, f-string or template string."""
+    return (isinstance(value, FORMATTED_LITERALS)
+            or (isinstance(value, ast.Constant) and isinstance(value.value, (str, bytes))))
+
+
 def string_statements(tree):
     """The string-literal expression statements of a parsed module, in source order.
 
     Every docstring is found with ast.get_docstring on each module, class and function, wherever
     it sits, so the docstring of a one-line suite is included; every other statement that is a
-    string literal alone is included as well.
+    string literal alone, of any kind that is_string_literal names, is included as well, so a
+    docstring-style f-string, template string or bytes statement is prose too.
     """
     found = {}
     for node in ast.walk(tree):
         if isinstance(node, DOCSTRING_OWNERS) and ast.get_docstring(node, clean=False) is not None:
             value = node.body[0].value
             found[(value.lineno, value.col_offset)] = value
-        elif (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
-              and isinstance(node.value.value, str)):
+        elif isinstance(node, ast.Expr) and is_string_literal(node.value):
             found[(node.value.lineno, node.value.col_offset)] = node.value
     return [found[key] for key in sorted(found)]
 
@@ -466,15 +477,16 @@ class PatternSelfCheck(unittest.TestCase):
     # Forms that hold a double quote, checked in every placement: one with the quote inside the
     # text, which sits in every placement, and one that ends with the quote, which ends a
     # triple-quoted literal early only where it sits just before the closing quotes. The skips are
-    # pinned literally in PLACEMENTS order and must match the skip derived from the delimiter of
-    # each placement alone.
+    # pinned literally in PLACEMENTS order and must match expected_skip, which skips a form only
+    # when the delimiter of the placement shows it ends the literal early and the source that
+    # results does not tokenize and parse.
     DOUBLE_QUOTE_FORMS = ("the \"round 7\" case", "\"round 7\"")
     DOUBLE_QUOTE_SKIPS = ((), (), (), ("\"round 7\"",), (), ("\"round 7\"",), (), (), ("\"round 7\"",))
     # Forms that hold a backslash-escaped quote, checked in every placement: an escaped single
     # quote and an escaped double quote at the end of the text, which never end a literal, and a
     # single quote after an escaped backslash, which ends a single-quoted literal early. The skips
-    # are pinned literally in PLACEMENTS order and must match the escape-aware skip derived from
-    # the delimiter of each placement alone.
+    # are pinned literally in PLACEMENTS order and must match expected_skip, whose early closure
+    # test reads backslash escapes as the tokenizer does, joined with the parse of the source.
     ESCAPED_FORMS = ("refuting the gemini seed\\\x27s claim", "the \\\"round 7\\\"",
                      "refuting the gemini seed\\\\\x27s claim")
     ESCAPED_SKIPS = ((), (), (), (), (), (), ("refuting the gemini seed\\\\\x27s claim",), (), ())
@@ -488,6 +500,31 @@ class PatternSelfCheck(unittest.TestCase):
     ADJACENT_EARLY = ((), (), (), ("\"\"round 7\"\"",), (), ("\"\"round 7\"\"",),
                       ("\x27\x27round 7\x27\x27",), (), ("\"\"round 7\"\"",))
     ADJACENT_SKIPS = ((), (), (), (), (), (), (), (), ())
+    # Direct checks of the skip oracle, one row per rule it applies: (placement index, text, ends
+    # the literal early, parses, skips). An escaped quote never ends the literal and a quote after
+    # an escaped backslash does; a backslash before the closing quotes escapes the first of them
+    # and leaves the literal unterminated, which counts as early; an early closure that leaves
+    # adjacent literals that parse is no skip; and a source that fails to parse with no early
+    # closure, in a comment or through a malformed escape in a docstring, is no skip either.
+    ORACLE_CASES = ((6, "the change", False, True, False),
+                    (6, "refuting the gemini seed\\\x27s claim", False, True, False),
+                    (6, "refuting the gemini seed\\\\\x27s claim", True, False, True),
+                    (3, "the \\\"round 7\\\"", False, True, False),
+                    (3, "\"round 7\"", True, False, True),
+                    (3, "\"\"round 7\"\"", True, True, False),
+                    (5, "round 7\\", True, False, True),
+                    (0, "round 7\n)", False, False, False),
+                    (2, "round 7 \\N", False, False, False))
+    # String statements of every literal kind, each with a label: an f-string, a bytes literal, a
+    # raw bytes literal, an f-string with a replacement field, and a label split over two lines of
+    # an f-string. Each is a prose block, so the label is caught at the line where it starts.
+    LITERAL_KIND_STATEMENTS = ("x = 1\nf\"\"\"the L5 case\"\"\"\n", "x = 1\nb\"\"\"the L5 case\"\"\"\n",
+                               "x = 1\nrb\x27the L5 case\x27\n", "x = 1\nF\"the {x} L5 case\"\n",
+                               "x = 1\nf\"\"\"from the gemini\nseed claim\"\"\"\n")
+    # The same literal kinds in ordinary code, an assigned value and a call argument, which are not
+    # statements of their own, so their short identifiers are not caught.
+    LITERAL_KIND_CODE = ("value = f\"C1 {x}\"\n", "value = b\"C1\"\n", "value = rb\x27C1\x27\n",
+                         "print(f\"the {x} C1 case\")\n")
     SPLIT = (("a write that fails removes its output (finding", "L5). A row"),
              ("even when the spellings differ (codex", "reproduced: state_dir x)"),
              ("refuting the gemini", "seed claim"),
@@ -677,6 +714,29 @@ class PatternSelfCheck(unittest.TestCase):
                 self.assertEqual({text for text in self.ADJACENT_FORMS
                                   if self.ends_literal_early(placement, text)}, set(early), placement)
         self.check_skips_against_the_oracle(self.ADJACENT_FORMS, self.ADJACENT_SKIPS)
+
+    def test_the_skip_oracle_judges_each_rule_directly(self):
+        for index, text, early, parsed, skips in self.ORACLE_CASES:
+            placement = self.PLACEMENTS[index]
+            with self.subTest(placement=placement, text=text):
+                self.assertEqual(self.ends_literal_early(placement, text), early, text)
+                self.assertEqual(self.parses(placement.format(text)), parsed, text)
+                self.assertEqual(self.expected_skip(placement, text), skips, text)
+
+    def test_a_string_statement_of_every_literal_kind_is_a_prose_block(self):
+        for source in self.LITERAL_KIND_STATEMENTS:
+            with self.subTest(source=source):
+                found = scan("x.py", source)
+                self.assertTrue(any(hit.startswith("x.py:2: ") for hit in found), found)
+        for source in self.LITERAL_KIND_CODE:
+            with self.subTest(source=source):
+                self.assertEqual(scan("x.py", source), [], source)
+
+    def test_a_template_string_statement_is_a_prose_block(self):
+        if not hasattr(ast, "TemplateStr"):
+            self.skipTest("this Python parses no template string")
+        found = scan("x.py", "x = 1\nt\"\"\"the L5 case\"\"\"\n")
+        self.assertTrue(any(hit.startswith("x.py:2: ") for hit in found), found)
 
     def test_bare_id_in_python_prose_is_caught(self):
         self.assertTrue(scan("x.py", "# the L5 case\nx = 1\n"))
