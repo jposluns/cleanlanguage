@@ -66,11 +66,14 @@ Exit codes:
      usable attribute this gate uses (see RELEASE_DATE_API), or failed
      unexpectedly
 
-When the release the site names is published, the release-date check and the
-site-checksum comparison both run and both are reported, so a date failure
-never hides checksum drift; the gate then exits with the more severe of the
-two codes, the higher one (3 over 2 over 1 over 0), since 2 and 3 mean a check
-could not complete.
+The release-date check and the site-checksum comparison both run and both
+are reported when the release the site names is published, including when its
+download fails or its manifest is malformed, and when the site names an
+unreleased version that is not the current skill version, so neither failure
+hides the other. The extractor is loaded inside main, not at import, so a load
+failure is reported and contributes exit 3 while the checksum comparison still
+runs and reports. The gate then exits with the most severe code, the highest
+one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not complete.
 """
 
 from __future__ import annotations
@@ -149,7 +152,24 @@ def _load_release_date_tool():
     return module
 
 
-RELEASE_DATE = _load_release_date_tool()
+# None until load_release_date_tool runs inside main: loading at import would
+# exit 3 before main, so a load failure would hide the checksum comparison.
+RELEASE_DATE = None
+
+
+def load_release_date_tool() -> int:
+    """Load the extractor if it is not loaded yet. Returns 0, or 3 after
+    reporting why the extractor is unavailable; a failed load is retried at
+    the next use."""
+    global RELEASE_DATE
+    if RELEASE_DATE is None:
+        try:
+            RELEASE_DATE = _load_release_date_tool()
+        except SystemExit as stop:
+            if stop.code != 3:
+                raise
+            return 3
+    return 0
 
 
 class ReleaseDateMalformed(Exception):
@@ -159,7 +179,10 @@ class ReleaseDateMalformed(Exception):
 
 def release_date_attr(name: str):
     """Return the attribute ``name`` of the loaded extractor. A lookup that
-    fails exits 3 as unavailable, never as a drift."""
+    fails, or an extractor that cannot be loaded, exits 3 as unavailable,
+    never as a drift."""
+    if load_release_date_tool() != 0:
+        raise SystemExit(3)
     try:
         return getattr(RELEASE_DATE, name)
     except Exception as error:
@@ -388,57 +411,9 @@ def release_date_code(site_version: str, site_status: int) -> int:
         raise
 
 
-def main() -> int:
-    if not VERIFY_PAGE.is_file():
-        die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} does not exist")
-    verify = VERIFY_PAGE.read_text(encoding="utf-8")
-
-    shown = DISPLAYED_SUM.search(verify)
-    if shown is None:
-        die('the verify page has no <code id="published-checksum"> block')
-    site_sum = shown.group(1).strip()
-    if not SHA256.match(site_sum):
-        die(f"the displayed checksum {site_sum!r} is not a 64 character lower-case SHA-256")
-
-    stated = DISPLAYED_VERSION.search(verify)
-    if stated is None:
-        die("the verify page does not state which version its checksum belongs to")
-    version = stated.group(1)
-    tag = f"v{version}"
-    zip_name = f"cleanlanguage-{version}.zip"
-    manifest_name = f"{zip_name}.sha256"
-
-    status = release_status(tag)
-    if status == 404:
-        current = skill_version()
-        if version != current:
-            print("Release checksum inconsistency found:")
-            print(f"  - the verify page names version {version}, which has no published release")
-            print(f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {current} as the current version")
-            print(
-                f"\nA site legitimately ahead of its release names the current skill "
-                f"version. This looks like a typo or a stale bump; align the verify "
-                f"page with SKILL.md, or publish release {tag}."
-            )
-            return 1
-        tag_state = tag_status(tag)
-        if tag_state == 200:
-            cannot_verify(
-                f"tag {tag} exists but release {tag} is not published; if a release "
-                f"run is publishing {tag} right now, re-run this check once it "
-                f"completes, and otherwise the release was deleted or its publish failed"
-            )
-        if tag_state != 404:
-            cannot_verify(f"unexpected HTTP {tag_state} reading tag {tag}")
-        print(
-            f"Release {tag} is not published yet; the site and SKILL.md both name "
-            f"{version} ahead of the release, which is expected before the tag. "
-            f"Nothing to reconcile."
-        )
-        return 0
-    if status != 200:
-        cannot_verify(f"unexpected HTTP {status} reading release {tag}")
-
+def published_digest(tag: str, zip_name: str, manifest_name: str) -> str:
+    """Download the release zip and its manifest, prove the zip hashes to its
+    own manifest, and return that published digest; exits 2 when it cannot."""
     with tempfile.TemporaryDirectory() as tmp:
         try:
             gh(
@@ -470,6 +445,73 @@ def main() -> int:
                 f"published {zip_name} ({computed}) does not match its own "
                 f"manifest ({claimed}); the release is malformed"
             )
+    return claimed
+
+
+def check_site_checksum() -> int:
+    """Check the site checksum and the release date, returning the most
+    severe code of the checks that ran (0 to 3), or stopping with 2 or 3 when
+    the gate cannot go on; main combines it with the extractor load."""
+    if not VERIFY_PAGE.is_file():
+        die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} does not exist")
+    verify = VERIFY_PAGE.read_text(encoding="utf-8")
+
+    shown = DISPLAYED_SUM.search(verify)
+    if shown is None:
+        die('the verify page has no <code id="published-checksum"> block')
+    site_sum = shown.group(1).strip()
+    if not SHA256.match(site_sum):
+        die(f"the displayed checksum {site_sum!r} is not a 64 character lower-case SHA-256")
+
+    stated = DISPLAYED_VERSION.search(verify)
+    if stated is None:
+        die("the verify page does not state which version its checksum belongs to")
+    version = stated.group(1)
+    tag = f"v{version}"
+    zip_name = f"cleanlanguage-{version}.zip"
+    manifest_name = f"{zip_name}.sha256"
+
+    status = release_status(tag)
+    if status == 404:
+        current = skill_version()
+        if version != current:
+            print("Release checksum inconsistency found:")
+            print(f"  - the verify page names version {version}, which has no published release")
+            print(f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {current} as the current version")
+            print(
+                f"\nA site legitimately ahead of its release names the current skill "
+                f"version. This looks like a typo or a stale bump; align the verify "
+                f"page with SKILL.md, or publish release {tag}."
+            )
+            # The release SKILL.md names is still checked on its own terms, so
+            # this inconsistency cannot hide a wrong date on a published release.
+            return max(1, release_date_code(version, status))
+        tag_state = tag_status(tag)
+        if tag_state == 200:
+            cannot_verify(
+                f"tag {tag} exists but release {tag} is not published; if a release "
+                f"run is publishing {tag} right now, re-run this check once it "
+                f"completes, and otherwise the release was deleted or its publish failed"
+            )
+        if tag_state != 404:
+            cannot_verify(f"unexpected HTTP {tag_state} reading tag {tag}")
+        print(
+            f"Release {tag} is not published yet; the site and SKILL.md both name "
+            f"{version} ahead of the release, which is expected before the tag. "
+            f"Nothing to reconcile."
+        )
+        return 0
+    if status != 200:
+        cannot_verify(f"unexpected HTTP {status} reading release {tag}")
+
+    # A failed download or a malformed release stops only the checksum
+    # comparison (exit 2); the release-date check below still runs and reports.
+    try:
+        claimed = published_digest(tag, zip_name, manifest_name)
+    except SystemExit as stop:
+        if stop.code != 2:
+            raise
+        claimed = None
 
     # Item 26 (G4): the release SKILL.md names is checked on its own terms,
     # whatever version the site names (see check_release_date). A date edited
@@ -479,7 +521,9 @@ def main() -> int:
     # code, so a date failure cannot hide checksum drift.
     date_code = release_date_code(version, status)
 
-    if site_sum != claimed:
+    if claimed is None:
+        checksum_code = 2
+    elif site_sum != claimed:
         print("Release checksum drift found:")
         print(f"  - the verify page shows {site_sum} for version {version}")
         print(f"  - the published {zip_name} is {claimed}")
@@ -495,7 +539,21 @@ def main() -> int:
             f"for release {tag}."
         )
         checksum_code = 0
-    code = max(date_code, checksum_code)
+    return max(date_code, checksum_code)
+
+
+def main() -> int:
+    """Run the gate. The extractor is loaded here, inside the protected path,
+    so a load failure contributes exit 3 while the checksum comparison still
+    runs and reports; the most severe code wins (3 over 2 over 1 over 0)."""
+    load_code = load_release_date_tool()
+    try:
+        code = check_site_checksum()
+    except SystemExit as stop:
+        if stop.code not in (2, 3):
+            raise
+        code = stop.code
+    code = max(load_code, code)
     if code >= 2:
         raise SystemExit(code)
     return code

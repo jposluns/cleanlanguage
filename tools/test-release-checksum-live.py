@@ -41,6 +41,11 @@ MODULE_PATH = Path(__file__).resolve().parent / "check-release-checksum-live.py"
 spec = importlib.util.spec_from_file_location("check_release_checksum_live", MODULE_PATH)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
+# The gate loads the extractor inside main, never at import, so a load failure
+# cannot hide the checksum comparison; load it here once for the tests that
+# patch the loaded module.
+if gate.RELEASE_DATE is None:
+    gate.RELEASE_DATE = gate._load_release_date_tool()
 
 CURRENT = "1.0.14"
 AHEAD = "1.0.15"
@@ -428,6 +433,124 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertIn("could not verify: could not read the immutable field of release", err)
         self.assertIn("Release checksum drift found", out)
 
+    def gate_beside(self, tools, body):
+        """Load a fresh copy of the gate from ``tools`` beside the extractor
+        source ``body`` (None for no extractor), wired to the fixtures and
+        readers of this test. A stop while loading fails the test, since the
+        gate must load and reach main whatever the extractor holds."""
+        shutil.copy2(MODULE_PATH, tools / MODULE_PATH.name)
+        if body is not None:
+            (tools / "skill-release-date.py").write_text(body, encoding="utf-8")
+        fresh_spec = importlib.util.spec_from_file_location(
+            "check_release_checksum_live_fresh", tools / MODULE_PATH.name
+        )
+        fresh = importlib.util.module_from_spec(fresh_spec)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            try:
+                fresh_spec.loader.exec_module(fresh)
+            except SystemExit as stop:
+                self.fail(f"loading the gate stopped with exit {stop.code} before main ran: {err.getvalue()}")
+        for name in (
+            "REPO_ROOT", "VERIFY_PAGE", "SKILL", "release_status", "tag_status", "gh",
+            "release_published_at", "release_immutable",
+        ):
+            setattr(fresh, name, getattr(gate, name))
+        return fresh
+
+    def test_extractor_load_failure_does_not_hide_checksum_drift(self):
+        # Round 5: the extractor is loaded inside main, so a load failure
+        # contributes exit 3 while the checksum comparison still runs and
+        # reports the drift.
+        real = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
+        for label, body, reason in (
+            ("missing extractor", None, "could not load skill-release-date.py"),
+            ("syntax-broken extractor", "def broken(:\n", "SyntaxError"),
+            ("API-invalid extractor", real + "\nextract = 5\n", "lacks a usable extract "),
+        ):
+            with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
+                self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+                self.published("2026-11-15T09:30:00Z")
+                fresh = self.gate_beside(Path(tmp), body)
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    try:
+                        code = fresh.main()
+                    except SystemExit as stop:
+                        code = stop.code
+                self.assertEqual(code, 3, (out.getvalue(), err.getvalue()))
+                self.assertIn(reason, err.getvalue())
+                self.assertIn("the extractor is unavailable", err.getvalue())
+                self.assertIn("Release checksum drift found", out.getvalue())
+
+    def test_extractor_load_failure_still_exits_3_in_the_pre_tag_window(self):
+        # The load failure contributes exit 3 on every path, as it did when
+        # the load ran at import, including one that needs no date check.
+        with tempfile.TemporaryDirectory() as tmp:
+            self.fixtures(AHEAD, OTHER_SUM, AHEAD)
+            gate.release_status = lambda tag: 404
+            gate.tag_status = lambda tag: 404
+            fresh = self.gate_beside(Path(tmp), None)
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit) as caught:
+                    fresh.main()
+            self.assertEqual(caught.exception.code, 3, (out.getvalue(), err.getvalue()))
+            self.assertIn("the extractor is unavailable", err.getvalue())
+            self.assertIn("is not published yet", out.getvalue())
+
+    def test_unreleased_other_version_does_not_hide_the_date_check(self):
+        # Sibling (a): the site names an unreleased version that is not the
+        # current one; the release SKILL.md names is still checked on its own
+        # terms and the more severe code wins.
+        for label, published, immutable, expected, reason in (
+            ("date mismatch", "2026-11-16T00:00:01Z", "true", 1, "Release date inconsistency found"),
+            ("record not immutable", "2026-11-15T09:30:00Z", "false", 2,
+             "could not verify: the immutable field of release"),
+        ):
+            with self.subTest(label):
+                self.fixtures(BOGUS, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+                self.published(published, statuses={f"v{BOGUS}": 404}, immutable=immutable)
+                code, out, err = self.main_reports()
+                self.assertEqual(code, expected, (out, err))
+                self.assertIn("Release checksum inconsistency found", out)
+                self.assertIn(reason, out + err)
+                self.assertEqual(self.probed, [f"v{BOGUS}", f"v{AHEAD}"])
+
+    def test_unusable_download_does_not_hide_the_date_check(self):
+        # Sibling (b): a failed download or a malformed manifest stops only
+        # the checksum comparison (exit 2); the date check still runs and
+        # reports, and the more severe code wins.
+        def failed(*args, check=True):
+            raise subprocess.CalledProcessError(1, ["gh", *args], "", "HTTP 502")
+
+        def two_line_manifest(*args, check=True):
+            self.fake_download(*args, check=check)
+            version = args[2].removeprefix("v")
+            target = Path(args[args.index("--dir") + 1])
+            (target / f"cleanlanguage-{version}.zip.sha256").write_text(
+                f"{ZIP_SUM}  cleanlanguage-{version}.zip\nextra\n", encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        for label, download, released, expected, reason, stop in (
+            ("failed download, date mismatch", failed, "Released: 2026-11-15  ", 2,
+             "Release date inconsistency found", "could not download"),
+            ("malformed manifest, malformed Released line", two_line_manifest, "Released: soon", 3,
+             "Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed",
+             "is not exactly one line"),
+        ):
+            with self.subTest(label):
+                self.fixtures(AHEAD, OTHER_SUM, AHEAD, released)
+                self.published("2026-11-16T00:00:01Z")
+                gate.gh = download
+                code, out, err = self.main_reports()
+                self.assertEqual(code, expected, (out, err))
+                self.assertIn(reason, out + err)
+                self.assertIn("could not verify: ", err)
+                self.assertIn(stop, err)
+                self.assertNotIn("Release checksum drift found", out)
+
     def test_extractor_crash_inside_a_call_exits_3(self):
         # F5: an unexpected failure of the loaded extractor is unavailable
         # (exit 3), never a drift verdict (exit 1).
@@ -594,13 +717,26 @@ class ModuleLoadTest(unittest.TestCase):
 
     def run_with_extractor(self, body):
         with tempfile.TemporaryDirectory() as tmp:
-            tools = Path(tmp) / "tools"
+            root = Path(tmp)
+            tools = root / "tools"
             tools.mkdir()
             shutil.copy2(MODULE_PATH, tools / MODULE_PATH.name)
             if body is not None:
                 (tools / "skill-release-date.py").write_text(body, encoding="utf-8")
+            # The gate loads the extractor inside main and goes on to the
+            # checksum comparison, so give it the pages it reads and an empty
+            # PATH: gh is then absent, so no network call can be made.
+            page = root / "site" / "verify" / "index.html"
+            page.parent.mkdir(parents=True)
+            page.write_text(VERIFY.format(version=AHEAD, checksum=OTHER_SUM), encoding="utf-8")
+            skill = root / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text(f"Version: {AHEAD}\n", encoding="utf-8")
+            empty = root / "empty-path"
+            empty.mkdir()
             proc = subprocess.run(
-                [sys.executable, "-I", str(tools / MODULE_PATH.name)], capture_output=True, text=True
+                [sys.executable, "-I", str(tools / MODULE_PATH.name)], capture_output=True, text=True,
+                env={"PATH": str(empty)},
             )
         return proc.returncode, proc.stderr
 
