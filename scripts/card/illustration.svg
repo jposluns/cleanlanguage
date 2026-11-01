@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 260" role="img" aria-labelledby="t"><title id="t">A fountain pen over a page of clean, even lines</title>
+<defs>
+<linearGradient id="paper" x1="0" y1="0" x2=".4" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e8eee9"/></linearGradient>
+<linearGradient id="pen" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#93c5fd"/><stop offset=".5" stop-color="#1d4ed8"/><stop offset="1" stop-color="#1e1b4b"/></linearGradient>
+<linearGradient id="nib" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f1d28a"/><stop offset="1" stop-color="#a37b1f"/></linearGradient>
+<linearGradient id="badge" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3f9a6e"/><stop offset="1" stop-color="#145c3b"/></linearGradient>
+<filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000" flood-opacity=".4"/></filter>
+<filter id="soft" x="-10%" y="-10%" width="120%" height="120%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity=".3"/></filter>
+</defs>
+<rect x="30" y="26" width="160" height="210" rx="6" fill="#c9d0cb"/>
+<rect x="24" y="18" width="160" height="210" rx="6" fill="url(#paper)" filter="url(#sh)"/>
+<rect x="42" y="42" width="70" height="9" rx="4.5" fill="#145c3b"/>
+<rect x="42" y="68" width="124" height="6" rx="3" fill="#9db6a6"/><rect x="42" y="84" width="108" height="6" rx="3" fill="#9db6a6"/><rect x="42" y="100" width="120" height="6" rx="3" fill="#9db6a6"/>
+<rect x="42" y="116" width="90" height="6" rx="3" fill="#9db6a6"/>
+<path d="M42 140 q10 -8 20 0 t20 0 t20 0" fill="none" stroke="#d9ddd8" stroke-width="5" stroke-linecap="round"/><line x1="40" y1="140" x2="106" y2="140" stroke="#c0392b" stroke-width="3" stroke-linecap="round"/>
+<rect x="42" y="158" width="112" height="6" rx="3" fill="#9db6a6"/><rect x="42" y="174" width="76" height="6" rx="3" fill="#9db6a6"/>
+<g filter="url(#sh)" transform="translate(-92 0) rotate(40 150 170)">
+<rect x="140" y="80" width="22" height="150" rx="6" fill="url(#pen)"/>
+<rect x="140" y="80" width="22" height="14" rx="5" fill="#1e1b4b"/><rect x="140" y="150" width="22" height="8" fill="#f1d28a"/>
+<path d="M140 230 l11 28 l11 -28 z" fill="url(#nib)"/><line x1="151" y1="236" x2="151" y2="252" stroke="#1e1b4b" stroke-width="1.5"/>
+</g>
+<g filter="url(#soft)" transform="translate(172 60)"><circle r="22" fill="url(#badge)"/><polyline points="-9,1 -3,7 10,-7" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></g>
+</svg>
