@@ -613,11 +613,16 @@ class WorkflowStepTest(unittest.TestCase):
 
 
 # Fix round 11: an unconditional claim that a release or its assets are
-# immutable, or that nothing (or no workflow) can republish one.
+# immutable, or that nothing (or no workflow) can republish one. Fix round 12:
+# up to three words (an adverb such as always, permanently or forever) may
+# stand between the verb and the adjective, the verb may be stay or remain,
+# never mutable or not mutable counts as immutable, no one and nobody count as
+# nothing, and can not and can't count as cannot.
 IMMUTABILITY_CLAIM = re.compile(
-    r"\b(releases?|assets?)\b[^.;:]*\b(is|are)\s+immutable\b"
-    r"|\b(nothing|no\s+(other\s+)?workflow|no\s+run)\b[^.;]*\brepublish"
-    r"|\bcannot\s+be\s+republished\b",
+    r"\b(releases?|assets?)\b[^.;:]*\b(is|are|stays?|remains?)\s+(\w+\s+){0,3}?"
+    r"(immutable|never\s+mutable|not\s+mutable)\b"
+    r"|\b(nothing|no\s+one|nobody|no\s+(other\s+)?workflow|no\s+run)\b[^.;]*\brepublish"
+    r"|\bcan(\s*not|\Wt)\s+be\s+republished\b",
     re.IGNORECASE)
 # The printed lines whose truth the workflow establishes first, by their exact
 # text: the readback line printed after the immutable check, the day-mismatch
@@ -1571,8 +1576,9 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # workflow) can republish one. The allowed lines are the ones whose
         # truth the workflow establishes first (the readback lines after the
         # immutable check) and the conditional re-stamping line. Residual:
-        # this is a pattern over known phrasings, and another wording (for
-        # example a claim whose subject is "it") can still slip past it.
+        # this is a pattern over known phrasings, widened in round 12 to the
+        # close variants above, and a claim whose subject is "it", a claim
+        # split across sentences, or another wording can still slip past it.
         self.assertEqual(immutability_claims(WORKFLOW_TEXT), [])
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
         for value in list(job_env().values()) + [description]:
@@ -1584,7 +1590,17 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(len(immutability_claims(mutant)), 1)
         for probe in ("Every published release is immutable.", "The published assets are immutable.",
                       "Nothing can republish it.", "No workflow republishes a release.",
-                      "A release cannot be republished."):
+                      "A release cannot be republished.",
+                      # Fix round 12: the close variants VERIFY 9.2 found.
+                      "Every published release is always immutable.",
+                      "Releases stay immutable once published.",
+                      "No one can republish a published release.",
+                      "A published release can" + chr(39) + "t be republished.",
+                      "Published releases are permanently immutable.",
+                      "A release can not be republished.",
+                      "Published assets are never mutable.",
+                      "Nobody can republish it.",
+                      "A release remains immutable forever."):
             with self.subTest(probe=probe):
                 self.assertNotEqual(immutability_claims(probe), [])
 
