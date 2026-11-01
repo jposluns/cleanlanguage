@@ -98,30 +98,41 @@ The extractor runs in a separate python3 -I child for each call
 (run_release_date_child), so extractor code never runs in this process, and
 what it does to its own process, such as exiting, raising, rewriting a
 global, or signalling itself, acts on the child. The timeout applies to each
-child: a gate run starts several children, so a child that hangs can hold the
-gate for up to CHILD_TIMEOUT_SECONDS on each call. The gate takes a result
-from a child only when the child exits 0 and prints exactly one JSON object
-that matches the contract, and it reads only a bounded part of what the child
-prints (see RESULT_LIMIT). Every other outcome of a child that the gate
-observes exits 3 with its report, never 2, 1, or 0. On a normal end and on a
-timeout, the gate kills the process group of the child before it reaps the
-child, or exits 3 when it cannot; on the other paths described in
-run_release_date_child it may not. A process the child started is killed
-with the group only while it is in the group: a process that leaves the
-child's process group, by any means, can outlive the gate.
+child: a gate run starts several children, and the gate waits for each child
+for up to CHILD_TIMEOUT_SECONDS and then, after a kill, for up to
+REAP_GRACE_SECONDS more before it reaps the child, so these waits can hold
+the gate for up to their sum on each call (the residual below is outside
+these bounds). The gate takes a result from a child only when the child
+exits 0 and prints exactly one JSON object that matches the contract, and
+it reads only a bounded part of what the child prints (see RESULT_LIMIT).
+Every other outcome of a child that the gate observes exits 3 with its
+report, never 2, 1, or 0. On a normal end and on a timeout, the gate kills
+the process group of the child before it reaps the child, or exits 3 when it
+cannot; on the other paths described in run_release_date_child it may
+not. The gate reaps a child only once it has seen that child end, and when
+it sees no end within REAP_GRACE_SECONDS of a kill, it exits 3 and leaves
+the child unreaped. A process the child started is killed with the group
+only while it is in the group: a process that leaves the child's process
+group, by any means, can outlive the gate.
 Separation is not a sandbox. The child runs with the uid, filesystem, and
 network of the gate, so extractor code can do whatever that uid can do,
 including writing files, reaching the network, using CPU, memory, and disk,
 and signalling the gate. A signal it sends to the gate acts on the gate as
 that signal acts on any process: it can interrupt, stop, or end the gate
-outside the exit codes above, and no bound of the gate limits its effect. If
-the gate is killed while it waits, the child, in its own session, can be left
-running. Each call reads the extractor file afresh, so a file replaced during
-a run can give different calls different code. The extractor remains the
-authority on content, so changed extractor code that returns a wrong but
-well-formed answer, or classifies a value as malformed, is not detectable
-here, as it never was; the stderr the gate relays on a failure is
-extractor-controlled text, as the error text it reported was before.
+outside the exit codes above, and no bound of the gate limits its effect.
+More generally, extractor code can act on the gate and on its own children
+through the uid, by signals, tracing, resource limits, or any other means
+that uid has, and so can hold, stop, or end the gate, or keep from the gate
+what a child does, beyond any bound of the gate and outside the exit codes
+above. A report of the gate states what the gate saw, which such action can
+make differ from what the child did. If the gate is killed while it waits,
+the child, in its own session, can be left running. Each call reads the
+extractor file afresh, so a file replaced during a run can give different
+calls different code. The extractor remains the authority on content, so
+changed extractor code that returns a wrong but well-formed answer, or
+classifies a value as malformed, is not detectable here, as it never was;
+the stderr the gate relays on a failure is extractor-controlled text, as the
+error text it reported was before.
 """
 
 from __future__ import annotations
@@ -157,7 +168,10 @@ RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 
 # Row 80: the bounds on one extractor child. CHILD_TIMEOUT_SECONDS applies to
 # each child separately (see the module docstring); on a timeout the gate
-# kills the process group of the child where it can, and exits 3. Of what the
+# kills the process group of the child where it can, and exits 3. After a
+# kill, the gate waits at most REAP_GRACE_SECONDS to see the child end before
+# it reaps it, and exits 3, leaving it unreaped, when it sees no end, so no
+# reap blocks the gate (DISCOVERY round 4, finding 1). Of what the
 # child prints, the gate reads at most STDERR_LIMIT bytes of stderr and one
 # byte more than the stdout bound, which is RESULT_LIMIT bytes plus
 # ECHO_BYTES_PER_CHARACTER bytes for each character of the request argument,
@@ -169,6 +183,7 @@ RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 # echoes the argument keeps its verdict (see
 # test_an_echoed_request_of_any_size_keeps_its_verdict).
 CHILD_TIMEOUT_SECONDS = 20
+REAP_GRACE_SECONDS = 5
 RESULT_LIMIT = 65536
 ECHO_BYTES_PER_CHARACTER = 12
 STDERR_LIMIT = 4096
@@ -251,14 +266,30 @@ def _wait_unreaped(proc: subprocess.Popen, timeout: float) -> bool:
     return True
 
 
+def _reap(proc: subprocess.Popen) -> str | None:
+    """Reap the child ``proc`` once the gate sees it end, waiting at most
+    REAP_GRACE_SECONDS for that with the same non-blocking poll as the main
+    wait (_wait_unreaped), so the reap never blocks the gate. Returns None
+    once the child is reaped, or the reason when the gate saw no end within
+    that grace; the child is then left unreaped."""
+    if not _wait_unreaped(proc, REAP_GRACE_SECONDS):
+        return (
+            f"could not be reaped (the gate saw no end of it within "
+            f"{REAP_GRACE_SECONDS} seconds after its kill)"
+        )
+    proc.wait()
+    return None
+
+
 def _kill_group(proc: subprocess.Popen, ended: bool) -> str | None:
     """Kill the process group of the child ``proc``, which has not been
     reaped yet, so neither its pid nor the group id it leads can have been
-    reused, and then reap the child; ``ended`` is whether the child has
-    already ended. Returns None, or the reason when the group could not be
-    killed: the gate then tries to kill the child itself when ``ended`` is
-    false, and reaps the child only when it has ended or that kill
-    succeeded, so it never waits on a child it could not kill."""
+    reused, and then reap the child (see _reap); ``ended`` is whether the
+    child has already ended. Returns None, or the reason when the group
+    could not be killed or the child could not be reaped: when the group
+    could not be killed, the gate tries to kill the child itself when
+    ``ended`` is false, and reaps the child only when it has ended or that
+    kill succeeded, so it never waits on a child it could not kill."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -271,10 +302,9 @@ def _kill_group(proc: subprocess.Popen, ended: bool) -> str | None:
             except OSError:
                 proc.poll()
                 return problem
-        proc.wait()
-        return problem
-    proc.wait()
-    return None
+        unreaped = _reap(proc)
+        return problem if unreaped is None else f"{problem}, and {unreaped}"
+    return _reap(proc)
 
 
 def run_release_date_child(op: str, arg: str | None = None) -> dict:
@@ -292,11 +322,14 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     normal end and on a timeout, the process group of the child is then
     killed before the child is reaped, or the call exits 3 when the group
     cannot be killed; on the other paths this docstring describes it may not
-    be. A process the child started is killed with the group only while it
-    is in the group, so a process that leaves the child's process group, by
-    any means, can outlive the gate. A wait that reports the child is no
-    longer a child of the gate (ChildProcessError) signals nothing, as its
-    pid may be reused, and exits 3.
+    be. The child is reaped only once the gate sees it end, and when the
+    gate sees no end within REAP_GRACE_SECONDS of the kill, the call exits 3
+    and leaves the child unreaped (see _reap). A process the child started
+    is killed with the group only while it is in the group, so a process
+    that leaves the child's process group, by any means, can outlive the
+    gate. A wait that reports the child is no longer a child of the gate
+    (ChildProcessError) signals nothing, as its pid may be reused, and
+    exits 3.
 
     This function returns only a reply from a child that exits 0 and whose
     stdout, within the bound (see RESULT_LIMIT), is exactly one ASCII JSON
@@ -305,14 +338,15 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     most STDERR_LIMIT bytes of the child stderr, or an exception passes
     through it; it never gives a content verdict, a pass, or a drift for any
     other outcome. Every Exception raised while the gate prepares, starts,
-    waits for, kills, or reads its child exits 3 that way.
+    waits for, kills, reaps, or reads its child exits 3 that way.
 
     A BaseException that is not an Exception, such as a KeyboardInterrupt,
     is not caught that way. When one reaches the gate while it waits, the
     gate kills the group and reaps the child before it passes on, or exits 3
-    when the group cannot be killed; one raised anywhere else, including
-    during that kill, passes on at once, and a child already started may
-    then be left unkilled, unreaped, or both."""
+    when the group cannot be killed or the child cannot be reaped; one
+    raised anywhere else, including during that kill, passes on at once,
+    and a child already started may then be left unkilled, unreaped, or
+    both."""
 
     def fail(reason: str, printed: bytes = b"") -> None:
         message = f"{RELEASE_DATE_TOOL.name} {reason} in {op}, so the extractor is unavailable"
@@ -364,7 +398,9 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
         fail(f"could not be run, waited for, or read ({type(error).__name__}: {error})")
     code = proc.returncode
     if not ended:
-        fail(f"did not finish within {CHILD_TIMEOUT_SECONDS} seconds", printed)
+        # Only what the gate saw is reported: it saw no end of the child
+        # within the timeout, which is not proof that the child was running.
+        fail(f"was not seen to end within {CHILD_TIMEOUT_SECONDS} seconds", printed)
     if code < 0:
         try:
             name = signal.Signals(-code).name

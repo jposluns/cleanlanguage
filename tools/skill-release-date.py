@@ -76,10 +76,9 @@ Input modes:
   ``message`` (the text of the ``Malformed`` verdict). It is printed as ASCII
   JSON with sorted keys and one trailing newline. This mode is designed to
   exit 0 when it has delivered a reply, whatever its outcome, 2 on a bad
-  request, and 6 on an internal error; any other exit, which a BaseException
-  that is not an Exception can cause (see ``json_main``), is a failure of the
-  child too, and the gate reads every exit other than 0 as a failure of the
-  child, whatever stdout holds.
+  request, and 6 on an internal error; any other exit, whatever its cause, is
+  a failure of the child too, and the gate reads every exit other than 0 as a
+  failure of the child, whatever stdout holds.
 
 Exit codes:
   0  success; the requested value is printed to stdout
@@ -317,11 +316,10 @@ def json_main() -> int:
     """Answer one JSON request from stdin with one JSON reply on stdout (see
     ``--json`` in the module docstring). A bad request exits 2 with nothing on
     stdout; only ``Malformed``, or a subclass of it, is a ``malformed``
-    reply, as in every other mode, and any other Exception reaches the
-    internal-error guard (exit 6) instead of a reply. A BaseException that
-    is neither an Exception nor a SystemExit is not caught, and Python ends
-    the child for it as it ends any process (by SIGINT for a
-    KeyboardInterrupt, for example); the gate reads that end as a failure."""
+    reply, as in every other mode, and an Exception that the internal-error
+    guard catches exits 6 instead of a reply. The mode is designed to exit
+    0, 2, or 6; any other exit, or any other end of the child, whatever its
+    cause, is a failure of the child, which the gate treats as such."""
     data = sys.stdin.buffer.read()
     try:
         request = json.loads(data.decode("utf-8"))

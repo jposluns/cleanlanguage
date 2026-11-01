@@ -179,7 +179,7 @@ class ConditionalPassTest(unittest.TestCase):
         )
         # Row 80: a test may point the gate at a fake extractor or shorten
         # the child timeout; both are restored after it.
-        self._saved_child = (gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS)
+        self._saved_child = (gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS)
         root = Path(self._tmp.name)
         gate.REPO_ROOT = root
         gate.VERIFY_PAGE = root / "index.html"
@@ -194,7 +194,7 @@ class ConditionalPassTest(unittest.TestCase):
         (gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL, gate.release_status,
          gate.tag_status, gate.gh, gate.release_published_at,
          gate.release_immutable) = self._saved
-        gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS = self._saved_child
+        gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS = self._saved_child
         self._tmp.cleanup()
 
     def fake_extractor(self, body):
@@ -1947,7 +1947,7 @@ class ConditionalPassTest(unittest.TestCase):
         finally:
             gate.os.killpg = real_killpg
         self.assertEqual(result, ("exit", 3), err)
-        self.assertEqual(err.splitlines(), [self.unavailable("did not finish within 1 seconds", "extract")])
+        self.assertEqual(err.splitlines(), [self.unavailable("was not seen to end within 1 seconds", "extract")])
         self.assertEqual(len(seen), 1, seen)
         pgid, sig, state = seen[0]
         self.assertEqual(sig, signal.SIGKILL)
@@ -1977,8 +1977,15 @@ class ConditionalPassTest(unittest.TestCase):
             kills.append((pgid, sig))
             real_killpg(pgid, sig)
 
+        calls = []
+
         def interrupted(*args):
-            raise KeyboardInterrupt()
+            # Only the wait is interrupted; the reap after the kill polls
+            # the real os.waitid (DISCOVERY round 4, finding 1).
+            calls.append(args)
+            if len(calls) == 1:
+                raise KeyboardInterrupt()
+            return real_waitid(*args)
 
         gate.subprocess.Popen = Recording
         gate.os.killpg = recording
@@ -2116,8 +2123,15 @@ class ConditionalPassTest(unittest.TestCase):
                     kills.append((pgid, sig, process_state(pgid)))
                     real_killpg(pgid, sig)
 
+                calls = []
+
                 def failing(*args):
-                    raise error
+                    # Only the wait fails; the reap after the kill polls the
+                    # real os.waitid (DISCOVERY round 4, finding 1).
+                    calls.append(args)
+                    if len(calls) == 1:
+                        raise error
+                    return real_waitid(*args)
 
                 gate.subprocess.Popen = self.recording_popen(procs)
                 gate.os.killpg = recording
@@ -2424,6 +2438,196 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(result, ("exit", 3), err)
                 self.assertEqual(err.splitlines(), [self.unavailable(rule, "extract")])
 
+    # A fake extractor whose extract op has a process in another session
+    # seize the child with ptrace (the child names it its tracer first), so
+    # the end of the child is reported to that tracer, which holds it for
+    # HOLD seconds, and not to the gate; the child writes the tracer pid to
+    # tracer.pid beside it and exits 9 when the seize is refused.
+    TRACED = (
+        "_real_extract = extract\n"
+        "def extract(text):\n"
+        "    import ctypes, os, time\n"
+        "    libc = ctypes.CDLL(None, use_errno=True)\n"
+        "    libc.ptrace.argtypes = [ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p]\n"
+        "    libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]\n"
+        "    me = os.getpid()\n"
+        "    go_r, go_w = os.pipe()\n"
+        "    done_r, done_w = os.pipe()\n"
+        "    tracer = os.fork()\n"
+        "    if tracer == 0:\n"
+        "        os.setsid()\n"
+        "        os.read(go_r, 1)\n"
+        "        seized = libc.ptrace(0x4206, me, None, None) == 0\n"
+        "        os.write(done_w, b\"ok\" if seized else b\"refused\")\n"
+        "        time.sleep(HOLD)\n"
+        "        os._exit(0)\n"
+        "    with open(Path(__file__).resolve().parent / \"tracer.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
+        "        handle.write(str(tracer))\n"
+        "    libc.prctl(0x59616d61, tracer, 0, 0, 0)\n"
+        "    os.write(go_w, b\"x\")\n"
+        "    if os.read(done_r, 64) != b\"ok\":\n"
+        "        raise SystemExit(9)\n"
+        "    return _real_extract(text)\n"
+    )
+
+    def test_a_child_whose_end_is_hidden_from_the_gate_ends_the_gate_within_the_bound(self):
+        # DISCOVERY round 4, finding 1: a process of the same uid in another
+        # session seizes the child with ptrace, so the child's end is
+        # reported to it and not to the gate. The gate sees no end within
+        # the timeout, kills the group, then sees no end within the reap
+        # grace either, and exits 3 naming that it could not reap the child,
+        # leaving it, within the two bounds, instead of blocking in a reap
+        # until the tracer exits (30 seconds here). The test skips only where
+        # the host refuses the seize; the next test simulates the same
+        # outcome in-process on every host.
+        tool = self.fake_extractor(extractor_with(self.TRACED.replace("HOLD", "30")))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        gate.REAP_GRACE_SECONDS = 1
+        procs = []
+        real_popen = subprocess.Popen
+        gate.subprocess.Popen = self.recording_popen(procs)
+        pid_file = tool.parent / "tracer.pid"
+        try:
+            started = time.monotonic()
+            result, err = self.call_reports("extract", self.ARGS["extract"])
+            elapsed = time.monotonic() - started
+            if result == ("exit", 3) and "exited 9" in err:
+                self.skipTest("this host refuses PTRACE_SEIZE of the child")
+            states = [process_state(proc.pid) for proc in procs]
+            returncodes = [proc.returncode for proc in procs]
+        finally:
+            gate.subprocess.Popen = real_popen
+            # Kill the tracer by its recorded pid, only while it is the
+            # process this test started (it runs the fake extractor), and
+            # then reap the child, whose end the gate now sees.
+            with contextlib.suppress(OSError, ValueError):
+                pid = int(pid_file.read_text(encoding="utf-8"))
+                if str(tool).encode() in Path(f"/proc/{pid}/cmdline").read_bytes():
+                    os.kill(pid, signal.SIGKILL)
+            for proc in procs:
+                if proc.returncode is None:
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        proc.wait(timeout=10)
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            "could not be reaped (the gate saw no end of it within 1 seconds after its kill)", "extract"
+        )])
+        self.assertLess(elapsed, 10)
+        # The child had ended (a zombie held by the tracer) and was left unreaped.
+        self.assertEqual(states, ["Z"])
+        self.assertEqual(returncodes, [None])
+
+    def test_a_child_not_seen_to_end_after_its_kill_is_left_unreaped(self):
+        # DISCOVERY round 4, finding 1, simulated in-process on every host:
+        # os.waitid never reports the end of the child, as when another
+        # process holds it, so after the timeout and the group kill the
+        # gate polls for at most the reap grace, exits 3 naming that it
+        # could not reap the child, and does not reap it.
+        self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        gate.REAP_GRACE_SECONDS = 1
+        procs, kills = [], []
+        real_popen, real_killpg, real_waitid = subprocess.Popen, os.killpg, os.waitid
+
+        def recording(pgid, sig):
+            kills.append((pgid, sig))
+            real_killpg(pgid, sig)
+
+        def hidden(idtype, ident, options):
+            if options & os.WNOHANG:
+                return None
+            return real_waitid(idtype, ident, options)
+
+        gate.subprocess.Popen = self.recording_popen(procs)
+        gate.os.killpg = recording
+        gate.os.waitid = hidden
+        try:
+            started = time.monotonic()
+            result, err = self.call_reports("extract", "x")
+            elapsed = time.monotonic() - started
+            returncodes = [proc.returncode for proc in procs]
+        finally:
+            gate.subprocess.Popen = real_popen
+            gate.os.killpg = real_killpg
+            gate.os.waitid = real_waitid
+            for proc in procs:
+                if proc.returncode is None:
+                    proc.kill()
+                    proc.wait()
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            "could not be reaped (the gate saw no end of it within 1 seconds after its kill)", "extract"
+        )])
+        self.assertEqual(kills, [(procs[0].pid, signal.SIGKILL)])
+        self.assertEqual(returncodes, [None])
+        self.assertLess(elapsed, 10)
+
+    def test_every_mapped_extractor_outcome_reaches_its_exit_and_message_through_main(self):
+        # DISCOVERY round 4, finding 3, at the width of the class: each place
+        # in the gate that turns an outcome of release_date_call into an exit
+        # code or a message (the malformed and absent mapping in
+        # release_date_call, the probe in probe_release_date_tool, the
+        # malformed handlers in skill_released, released_line, and
+        # check_release_date, and the baseline in
+        # report_missing_released_line) is pinned here through main, with its
+        # exact exit and output, so removing any one of them fails this test.
+        matches = f"The verify page checksum {ZIP_SUM} matches the published cleanlanguage-{AHEAD}.zip for release v{AHEAD}."
+        missing = [
+            "Release date inconsistency found:",
+            f"  - release v{AHEAD} is published",
+            f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {AHEAD}, above the undated baseline {CURRENT}, "
+            f"but has no Released: line",
+        ]
+        rejected = b'{"message": "a forged verdict", "op": "requires_release_date", "outcome": "malformed"}\n'
+        for label, extractor, site_sum, skill, released, published_at, expected in (
+            ("extract malformed: skill_released exits 3", None, ZIP_SUM, AHEAD, "Released: soon",
+             "2026-11-15T09:30:00Z",
+             (3, [matches], [
+                 "check-release-checksum-live: the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md "
+                 "is malformed: the first Released line is not a bare YYYY-MM-DD date: 'Released: soon'"
+             ])),
+            ("requires_release_date malformed: released_line exits 3",
+             forging({"requires_release_date": rejected}), ZIP_SUM, AHEAD, None, "2026-11-15T09:30:00Z",
+             (3, [matches], [
+                 f"check-release-checksum-live: the SKILL.md version {AHEAD} was rejected by the extractor: "
+                 f"a forged verdict"
+             ])),
+            ("release_day_from_published_at malformed: check_release_date exits 2", None, ZIP_SUM, AHEAD,
+             "Released: 2026-11-15", "null",
+             (2, [matches], [
+                 f"check-release-checksum-live: could not verify: the published_at of release v{AHEAD} is "
+                 f"unusable: published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: 'null'"
+             ])),
+            ("extract absent above the baseline: the missing line and the baseline are reported", None, ZIP_SUM,
+             AHEAD, None, "2026-11-15T09:30:00Z",
+             (1, missing + [matches], [])),
+            ("extract absent at the baseline: no line is required", None, ZIP_SUM, CURRENT, None,
+             "2026-11-15T09:30:00Z",
+             (0, [f"The verify page checksum {ZIP_SUM} matches the published cleanlanguage-{CURRENT}.zip "
+                  f"for release v{CURRENT}."], [])),
+            ("baseline unavailable: the probe contributes 3 and the checks still run",
+             forging({"baseline": b""}, code=1), OTHER_SUM, AHEAD, "Released: 2026-11-15", "2026-11-15T09:30:00Z",
+             (3, [
+                 f"The SKILL.md Released date 2026-11-15 matches the publication day of release v{AHEAD}.",
+                 "Release checksum drift found:",
+                 f"  - the verify page shows {OTHER_SUM} for version {AHEAD}",
+                 f"  - the published cleanlanguage-{AHEAD}.zip is {ZIP_SUM}",
+                 "",
+                 f"The release v{AHEAD} is published but the site was not flipped to its checksum. Run the "
+                 f"orchestrator's post-release site flip (tools/set-release-links.py with checksum {ZIP_SUM}); "
+                 f"see the release runbook.",
+             ], [PROBE_FAILED])),
+        ):
+            with self.subTest(label):
+                if extractor is None:
+                    gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
+                else:
+                    self.fake_extractor(extractor)
+                self.fixtures(skill, site_sum, skill, released)
+                self.published(published_at)
+                code, out, err = self.main_reports()
+                self.assertEqual((code, out.splitlines(), err.splitlines()), expected)
+
 
 class ModuleLoadTest(unittest.TestCase):
     """F5: the gate exits 3 (unavailable), not 1 (drift), when the extractor
@@ -2662,7 +2866,7 @@ class ModuleLoadTest(unittest.TestCase):
             extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"), wrapper=TIMEOUT_WRAPPER,
         )
         self.assertEqual(code, 3, err)
-        self.assertIn("skill-release-date.py did not finish within 1 seconds in extract, "
+        self.assertIn("skill-release-date.py was not seen to end within 1 seconds in extract, "
                       "so the extractor is unavailable", err)
         self.assertIn("the gh CLI is not available", err)
 
@@ -2691,7 +2895,7 @@ class ModuleLoadTest(unittest.TestCase):
         code, err, (pid, state) = self.run_with_extractor(body, wrapper=TIMEOUT_WRAPPER, inspect=grandchild_state)
         try:
             self.assertEqual(code, 3, err)
-            self.assertIn("skill-release-date.py did not finish within 1 seconds in extract", err)
+            self.assertIn("skill-release-date.py was not seen to end within 1 seconds in extract", err)
             self.assertIn(state, (None, "Z"), f"the grandchild {pid} is still {state}")
         finally:
             if state not in (None, "Z"):
