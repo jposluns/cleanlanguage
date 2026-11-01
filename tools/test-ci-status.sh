@@ -489,6 +489,8 @@ CASE_SHA="$C1_UPPER" run_case "head_sha matches an upper-case sha argument -> gr
 CASE_SHA="$C1" run_case "upper-case head_sha matches the commit read -> green" "$(head_runs "\"$C1_UPPER\"")" "" "" 0
 run_case "numeric head_sha -> unreadable" "$(head_runs 7)" "" "" 3
 run_case "null head_sha -> unreadable" "$(head_runs null)" "" "" 3
+run_err_case "a null head_sha is named on standard error" "$(head_runs null)" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: missing required field head_sha"
 run_case "empty head_sha -> unreadable" "$(head_runs '""')" "" "" 3
 
 # The declared required names follow the workflows, and each workflow runs its
@@ -506,19 +508,29 @@ run_case "empty head_sha -> unreadable" "$(head_runs '""')" "" "" 3
 # is named by its line number, as does a failure of the checker itself. Within
 # that subset the top level holds only name, on, permissions, env and jobs. The
 # on: block holds only a pull_request trigger with nothing under it and a push
-# trigger filtered to main alone. The job with the declared display name holds
-# only the keys name, runs-on and steps, and each of its steps only name, uses,
-# shell and run, so no if:, needs: or continue-on-error: key can skip the job or
-# pass over a failed step. A job skipped by an if:, or by a failed job it needs,
-# concludes skipped, and a step skipped by an if: or allowed to fail leaves the
-# job successful; ci-status.py counts skipped and success as passing, so such a
-# job would read green without running its checks. The job display name is also
-# the only 4-space-indented name: line, and it equals the name that ci-status.py
+# trigger filtered to main alone. The permissions block is exactly contents:
+# read. A top-level env, if present, holds only CLAUDE_CODE_VERSION, set to a
+# dotted version number such as 2.1.310, which cannot change whether or how a
+# step runs, so no BASH_ENV, ENV, SHELLOPTS or BASHOPTS can turn every step into
+# a no-op. The job with the declared display name holds only name, runs-on set
+# to ubuntu-latest, and steps, so no env:, if:, needs:, defaults: or container:
+# key. Each step holds an optional name and either uses: naming an owner/repo
+# action pinned to a full 40-character commit sha, never a local ./ action or a
+# docker:// image, or run: with shell: bash, never another shell or a custom
+# shell command, and nothing else, so no env:, if: or continue-on-error: key. So
+# nothing set in the workflow can skip the job or its steps, or pass over a
+# failed step. A job skipped by an if:, or by a failed job it needs, concludes
+# skipped, and a step skipped by an if: or allowed to fail leaves the job
+# successful; ci-status.py counts skipped and success as passing, so such a job
+# would read green without running its checks. The job display name is also the
+# only 4-space-indented name: line, and it equals the name that ci-status.py
 # declares. A renamed job, a filter that leaves a commit without the check, or
 # any key or line outside that shape fails here, instead of turning every read
-# into a forever-pending one or a false green. Residual: the commands the steps
-# run, and the other jobs of the workflow, are not checked, so a step changed to
-# do nothing still reads green.
+# into a forever-pending one or a false green. Residual: what the commands the
+# steps run and the pinned actions do, including anything they write for later
+# steps, such as a BASH_ENV line in the GITHUB_ENV file, and the other jobs of
+# the workflow, are not checked, so a step changed to do nothing still reads
+# green.
 # wf_shape FILE JOB: print a word for each shape problem found, nothing if none.
 wf_shape() {
   python3 -I - "$1" "$2" <<'PY'
@@ -536,6 +548,10 @@ except (OSError, UnicodeDecodeError):
 KEY = r"[A-Za-z_][A-Za-z0-9_-]*"
 COMMENT = r"(?:\s+#.*)?"
 QUOTED = r"""(?:"[^"\\]*"|'[^']*')"""
+# The values that can change whether or how the steps run, pinned to what the
+# 3 workflows use today.
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+PINNED_ACTION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*@[0-9a-f]{40}")
 PLAIN = r"[A-Za-z0-9_$./][^#]*?"
 WORD = r"""(?:[A-Za-z0-9_./-]+|"[^"\\,\[\]{}]*"|'[^',\[\]{}]*')"""
 ENTRY = re.compile("(" + KEY + "):(?: (.*))?")
@@ -671,19 +687,24 @@ except Refused as err:
     sys.exit(0)
 
 
-def strings(value):
-    return isinstance(value, dict) and all(isinstance(v, str) for v in value.values())
-
-
 found = []
 for key in tree:
     if key not in ("name", "on", "permissions", "env", "jobs"):
         found.append("top-key-" + key)
-for key, ok in (("name", isinstance(tree.get("name"), str)),
-                ("permissions", "permissions" not in tree or strings(tree["permissions"])),
-                ("env", "env" not in tree or strings(tree["env"]))):
-    if not ok:
-        found.append("top-shape-" + key)
+if not isinstance(tree.get("name"), str):
+    found.append("top-shape-name")
+if tree.get("permissions") != {"contents": "read"}:
+    found.append("top-shape-permissions")
+if "env" in tree:
+    env = tree["env"]
+    if not isinstance(env, dict) or not env:
+        found.append("top-shape-env")
+    else:
+        for key, value in env.items():
+            if key != "CLAUDE_CODE_VERSION":
+                found.append("env-key-" + key)
+            elif not isinstance(value, str) or not VERSION.fullmatch(value):
+                found.append("env-value-" + key)
 on = tree.get("on")
 if not isinstance(on, dict) or set(on) != {"pull_request", "push"}:
     found.append("on-block")
@@ -701,7 +722,7 @@ else:
     for key in body:
         if key not in ("name", "runs-on", "steps"):
             found.append("job-key-" + key)
-    if not isinstance(body.get("runs-on"), str):
+    if body.get("runs-on") != "ubuntu-latest":
         found.append("job-shape-runs-on")
     steps = body.get("steps")
     if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) for s in steps):
@@ -713,6 +734,17 @@ else:
                     found.append("step-key-" + key)
                 elif not isinstance(value, str):
                     found.append("step-shape-" + key)
+            # Either a pinned remote action alone, or a run: under exactly bash.
+            if "uses" in step:
+                if "run" in step or "shell" in step:
+                    found.append("step-shape-uses-with-run")
+                if not isinstance(step["uses"], str) or not PINNED_ACTION.fullmatch(step["uses"]):
+                    found.append("step-value-uses")
+            elif "run" in step:
+                if step.get("shell") != "bash":
+                    found.append("step-value-shell")
+            else:
+                found.append("step-shape-empty")
 print(" ".join(dict.fromkeys(found)))
 PY
 }

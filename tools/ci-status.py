@@ -75,12 +75,18 @@ Residual: a required check that concludes skipped or neutral counts as passed, a
 GitHub counts it for a required check, so a job skipped without running its steps
 reads green. For the 3 Actions jobs, tools/test-ci-status.sh reads each workflow
 with an allow-list that fails closed: the on: block holds only a pull_request
-trigger with nothing under it and a push trigger filtered to main alone, and the
-job with a required display name holds only the keys name, runs-on and steps,
-each step only name, uses, shell and run, so no if:, needs: or continue-on-error:
-key can skip the job or pass over a failed step and still read as passing; any
-line outside that shape fails the check. The commands the steps run, and the
-other jobs of the workflow, are not checked.
+trigger with nothing under it and a push trigger filtered to main alone; the
+permissions block is exactly contents: read; a top-level env, if present, holds only
+CLAUDE_CODE_VERSION, set to a dotted version number such as 2.1.310; and the job
+with a required display name holds only name, runs-on set to ubuntu-latest, and
+steps. Each step holds an optional name and either uses: naming an owner/repo action
+pinned to a full 40-character commit sha, or run: with shell: bash, and nothing
+else. So no if:, needs: or continue-on-error: key, no other runner or shell, no
+local or docker action, and no environment variable such as BASH_ENV or SHELLOPTS
+set in the workflow can skip the job or its steps, or pass over a failed step, and
+still read as passing; any line outside that shape fails the check. What the
+commands the steps run and the pinned actions do, including anything they write for
+later steps, and the other jobs of the workflow, are not checked.
 
 The commit is named only by its full 40-character hexadecimal sha, folded to
 lower case and used as given. Every other value, an abbreviation of any length,
@@ -331,19 +337,19 @@ def _iter_json_values(text: str):
         yield obj
 
 
-def _field(value, allow_empty: bool):
+def _field(value, allow_empty: bool, field: str):
     """A field must be a string. null is allowed only for a nullable field (becomes '');
     a bool or number is rejected (a bool is not a valid string even though `x or ''`
     would hide it); an empty string is rejected for a required field. Anything else
-    makes the whole reading fail-closed."""
+    makes the whole reading fail-closed. Each message names FIELD."""
     if value is None:
         if allow_empty:
             return ""
-        raise Unreadable("missing required field")
+        raise Unreadable(f"missing required field {field}")
     if isinstance(value, bool) or not isinstance(value, str):
-        raise Unreadable("non-string check field")
+        raise Unreadable(f"non-string check field {field}")
     if value == "" and not allow_empty:
-        raise Unreadable("empty required field")
+        raise Unreadable(f"empty required field {field}")
     try:
         # A lone surrogate is a valid str but cannot be encoded or printed; reject it
         # so it fails closed here rather than crashing the report later.
@@ -445,14 +451,14 @@ def read_checks(repo: str, full_sha: str, deadline: float):
             # verdict. A present head_sha must be a non-empty string that names the
             # requested commit; absence is tolerated (see the residual above).
             if "head_sha" in run:
-                head = _field(run["head_sha"], allow_empty=False)
+                head = _field(run["head_sha"], allow_empty=False, field="head_sha")
                 if head.lower() != full_sha:
                     raise Unreadable(f"check run head_sha {head!r} is not the requested commit {full_sha}")
             checks.append({
-                "status": _field(run.get("status"), allow_empty=False),
-                "conclusion": _field(run.get("conclusion"), allow_empty=True),
-                "name": _field(run.get("name"), allow_empty=True),
-                "slug": _field(slug, allow_empty=True),
+                "status": _field(run.get("status"), allow_empty=False, field="status"),
+                "conclusion": _field(run.get("conclusion"), allow_empty=True, field="conclusion"),
+                "name": _field(run.get("name"), allow_empty=True, field="name"),
+                "slug": _field(slug, allow_empty=True, field="app.slug"),
             })
     if declared_total is not None and declared_total != len(checks):
         raise Unreadable(
