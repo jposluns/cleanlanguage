@@ -596,8 +596,11 @@ run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT
 # beside the planted ci-status.py, and bash run on /dev//fd/9 (slashes) or on a
 # symlink to /dev/fd/9 (link); the hold forms also pass fd 255 open on the decoy.
 # hold255self passes fd 255 open on the real copied wrapper and runs it normally,
-# so only the close-on-exec check can refuse it. Each refusal has its own
-# message, which the case checks.
+# so only the close-on-exec check can refuse it. dotdotproc and dotdotdevfd
+# open the real copied wrapper as fd 9 and run bash on cwd/L/../fd/9, with L a
+# symlink to /proc/self/fd or to /dev/fd: every other layer would let that real
+# wrapper run, so only the descriptor-path test on the resolved source can
+# refuse it. Each refusal has its own message, which the case checks.
 # non_bash_shell prints the path of a shell whose BASH_VERSION is unset, or fails.
 non_bash_shell() {
   local cand found
@@ -697,6 +700,11 @@ PY
         *" fdlink "*|*" fdlinkhold "*) ln -s /dev/fd/9 "$cwd/l.sh"; fd_target="$cwd/l.sh" ;;
       esac
       entry=(bash -c 'exec 9<"$1" || exit 98; rm -f "$1"; ln -s ci-status.sh "$1 (deleted)"; if [ "$2" = hold ]; then exec 255<"$3" || exit 98; fi; t="$4"; shift 4; exec bash "$t" "$@"' _ "$cwd/h.sh" "$fd_hold" "$cwd/ci-status.sh" "$fd_target") ;;
+    *" dotdotproc "*|*" dotdotdevfd "*)
+      local dd_link=/proc/self/fd
+      case " $resolve " in *" dotdotdevfd "*) dd_link=/dev/fd ;; esac
+      ln -s "$dd_link" "$cwd/L"
+      entry=(bash -c 'exec 9<"$1" || exit 98; shift; exec bash "$@"' _ "$tools/ci-status.sh" "$cwd/L/../fd/9") ;;
     *" hold255self "*)
       entry=(bash -c 'exec 255<"$1" || exit 98; exec bash "$@"' _ "$tools/ci-status.sh") ;;
     *" hardlink "*)
@@ -781,6 +789,8 @@ run_wrapper_case "descriptor decoy run through a symlink to /dev/fd/9 fails clos
 run_wrapper_case "descriptor decoy as /dev//fd/9 with fd 255 held on the decoy fails closed with exit 3" 3 fdslasheshold
 run_wrapper_case "descriptor decoy through a symlink with fd 255 held on the decoy fails closed with exit 3" 3 fdlinkhold
 run_wrapper_case "fd 255 inherited from the caller fails closed with exit 3" 3 hold255self
+run_wrapper_case "real wrapper as L/../fd/9 with L to /proc/self/fd fails closed with exit 3" 3 dotdotproc
+run_wrapper_case "real wrapper as L/../fd/9 with L to /dev/fd fails closed with exit 3" 3 dotdotdevfd
 # Inherited shell options never change a refusal: each runs with no gate, a
 # symlinked gate and an unreadable gate, and must refuse with status 3.
 for opt in errexit nounset pipefail; do

@@ -75,7 +75,10 @@
 # descriptor, whose resolved name a caller can imitate with a decoy file. The
 # resolver repeats that test on the resolved source: it follows the directory and
 # every symlink of the source and refuses when any step lies under /proc or
-# /dev/fd, so /dev//fd/9 and a symlink to /dev/fd/9 are refused too.
+# /dev/fd, so /dev//fd/9, a symlink to /dev/fd/9 and L/../fd/9 with L a symlink
+# to /proc/self/fd are refused too. The source is joined to the working directory
+# without normalizing it, so a .. is resolved through the symlink before it, as
+# the kernel resolves it, never removed as text.
 # os.path.realpath resolves a symlinked wrapper without depending on GNU readlink.
 # The resolved wrapper must be an existing regular file and the same file (device
 # and inode) as the ci-status.sh in its directory, which must have exactly 1
@@ -162,7 +165,7 @@ import os, stat, sys
 def via_descriptor(path):
     # Follow the directory and every symlink of path; True when any step lies
     # under /proc or /dev/fd, or the chain does not end within 40 links.
-    p = os.path.abspath(path)
+    p = os.path.join(os.getcwd(), path)  # no normalizing: .. must follow symlinks
     for _ in range(40):
         d = os.path.realpath(os.path.dirname(p))
         for top in ("/proc", "/dev/fd"):
