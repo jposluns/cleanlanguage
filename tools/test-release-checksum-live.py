@@ -734,6 +734,54 @@ class ConditionalPassTest(unittest.TestCase):
                 code = stop.code
         return code, out.getvalue(), err.getvalue()
 
+    # Exact report lines, for tests that assert the whole gate output (claim 6).
+    CV = "check-release-checksum-live: could not verify: "
+    SHOWN = "cleanlanguage/skills/cleanlanguage/SKILL.md"
+    REMEDY = (
+        "The Released line must name the UTC day the release was first published. The release is "
+        "immutable, so neither its published zip nor its record can be replaced. If the line was "
+        "edited after the release, restore the value the published zip carries; if the published "
+        "zip itself names the wrong day, the remedy is a corrective new version whose Released line "
+        "names its own publication day. The first-publication readback the release workflow printed "
+        "when it created the release (its run log) records the day GitHub recorded."
+    )
+
+    def missing_line(self, situation):
+        return [
+            "Release date inconsistency found:",
+            f"  - {situation}",
+            f"  - {self.SHOWN} names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line",
+        ]
+
+    def malformed_line(self):
+        soon = "Released: soon"
+        return (
+            f"check-release-checksum-live: the Released line in {self.SHOWN} is malformed: "
+            f"the first Released line is not a bare YYYY-MM-DD date: {soon!r}"
+        )
+
+    def site_matches(self):
+        return (
+            f"The verify page checksum {ZIP_SUM} matches the published "
+            f"cleanlanguage-{CURRENT}.zip for release v{CURRENT}."
+        )
+
+    def tag_exists(self, tag, names=""):
+        return (
+            f"tag {tag} exists but release {tag}{names} is not published; if a release run is "
+            f"publishing {tag} right now, re-run this check once it completes, and otherwise the "
+            f"release was deleted or its publish failed"
+        )
+
+    def date_mismatch(self, released, tag, published_at, day):
+        return [
+            "Release date inconsistency found:",
+            f"  - {self.SHOWN} says Released: {released}",
+            f"  - release {tag} published_at reads {published_at} (UTC day {day})",
+            "",
+            self.REMEDY,
+        ]
+
     def test_date_failure_does_not_hide_checksum_drift(self):
         # T5: both checks run and both are reported, the more severe code wins.
         for label, released, published, immutable, expected, reason in (
@@ -886,11 +934,18 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(self.asked, [])
 
     def test_unpublished_newer_release_whose_tag_cannot_be_checked_is_unverifiable(self):
+        # Claim 6: the gate output is fully determined, so the exact stdout and
+        # stderr lines are asserted; each status is reported in exactly one
+        # line, on stderr, and any further line on either stream, in any
+        # wording, fails.
         self.fixtures(CURRENT, ZIP_SUM, AHEAD)
         self.published("2026-11-15T09:30:00Z", statuses={f"v{AHEAD}": 404}, tags={f"v{AHEAD}": 503})
-        with self.assertRaises(SystemExit) as caught:
-            gate.main()
-        self.assertEqual(caught.exception.code, 2)
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        self.assertEqual(err.splitlines(), [f"{self.CV}unexpected HTTP 503 reading tag v{AHEAD}"], err)
+        self.assertEqual(out.splitlines(), self.missing_line(
+            f"the release state of v{AHEAD}, the version SKILL.md names, could not be verified"
+        ) + [self.site_matches()], out)
 
     def test_undated_baseline_beside_an_older_site_release_makes_no_probe(self):
         # R5: the line and the baseline rule are read first, so an undated
@@ -909,6 +964,16 @@ class ConditionalPassTest(unittest.TestCase):
         # Fix round 8 (operator sweep): a present Released line is never
         # reported as missing beside the unverifiable state.
         self.assertNotIn("has no Released: line", out)
+        # Claim 6: the gate output is fully determined, so the exact stdout and
+        # stderr lines are asserted; each status is reported in exactly one
+        # line, on stderr, and any further line on either stream, in any
+        # wording, fails.
+        self.assertEqual(
+            err.splitlines(),
+            [f"{self.CV}unexpected HTTP 503 reading release v{AHEAD}, the version SKILL.md names"],
+            err,
+        )
+        self.assertEqual(out.splitlines(), [self.site_matches()], out)
 
     def test_published_at_reader_fails_closed_on_gh_error(self):
         # The real reader: a gh failure is unverifiable, never an empty value.
@@ -1704,8 +1769,15 @@ class ConditionalPassTest(unittest.TestCase):
         gate.release_status = unreadable
         code, out, err = self.main_reports()
         self.assertEqual(code, 3, (out, err))
-        self.assertIn("could not read the release status", err)
-        self.assertIn("line found in cleanlanguage/skills/cleanlanguage/SKILL.md", err)
+        # Claim 6: the gate output is fully determined, so the exact stdout and
+        # stderr lines are asserted; each status is reported in exactly one
+        # line, on stderr, and any further line on either stream, in any
+        # wording, fails.
+        self.assertEqual(err.splitlines(), [
+            f"{self.CV}could not read the release status for v{AHEAD} (gh exit 1)",
+            f"check-release-checksum-live: no 'Version:' line found in {self.SHOWN}",
+        ], err)
+        self.assertEqual(out.splitlines(), [], out)
 
     def test_undecodable_download_output_is_unverifiable(self):
         # DISCOVERY 6 (claude LOW 2): download output that does not decode
@@ -1730,19 +1802,25 @@ class ConditionalPassTest(unittest.TestCase):
         # names stops only the checksum comparison (exit 2); the release-date
         # check still runs and reports, and the more severe code wins. A
         # malformed line is read before any probe of the newer release.
-        for label, released, expected, reason, probed in (
-            ("date mismatch", "Released: 2026-11-15  ", 2, "Release date inconsistency found",
-             [f"v{CURRENT}", f"v{AHEAD}"]),
-            ("malformed Released line", "Released: soon", 3,
-             "Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed", [f"v{CURRENT}"]),
+        status = f"{self.CV}unexpected HTTP 503 reading release v{CURRENT}"
+        for label, released, expected, out_lines, err_lines, probed in (
+            ("date mismatch", "Released: 2026-11-15  ", 2,
+             self.date_mismatch("2026-11-15", f"v{AHEAD}", "2026-11-16T00:00:01Z", "2026-11-16"),
+             [status], [f"v{CURRENT}", f"v{AHEAD}"]),
+            ("malformed Released line", "Released: soon", 3, [], [status, self.malformed_line()],
+             [f"v{CURRENT}"]),
         ):
             with self.subTest(label):
                 self.fixtures(CURRENT, ZIP_SUM, AHEAD, released)
                 self.published("2026-11-16T00:00:01Z", statuses={f"v{CURRENT}": 503})
                 code, out, err = self.main_reports()
                 self.assertEqual(code, expected, (out, err))
-                self.assertIn(f"could not verify: unexpected HTTP 503 reading release v{CURRENT}", err)
-                self.assertIn(reason, out + err)
+                # Claim 6: the gate output is fully determined, so the exact stdout and
+                # stderr lines are asserted; each status is reported in exactly one
+                # line, on stderr, and any further line on either stream, in any
+                # wording, fails.
+                self.assertEqual(err.splitlines(), err_lines, err)
+                self.assertEqual(out.splitlines(), out_lines, out)
                 self.assertEqual(self.probed, probed)
 
     def test_undecodable_manifest_is_unverifiable(self):
@@ -1911,9 +1989,14 @@ class ConditionalPassTest(unittest.TestCase):
     def test_unexpected_release_status_is_unverifiable(self):
         self.fixtures(CURRENT, ZIP_SUM, CURRENT)
         gate.release_status = lambda tag: 503
-        with self.assertRaises(SystemExit) as caught:
-            gate.main()
-        self.assertEqual(caught.exception.code, 2)
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        # Claim 6: the gate output is fully determined, so the exact stdout and
+        # stderr lines are asserted; each status is reported in exactly one
+        # line, on stderr, and any further line on either stream, in any
+        # wording, fails.
+        self.assertEqual(err.splitlines(), [f"{self.CV}unexpected HTTP 503 reading release v{CURRENT}"], err)
+        self.assertEqual(out.splitlines(), [], out)
 
     def test_missing_skill_file_on_the_404_path_exits_3(self):
         gate.VERIFY_PAGE.write_text(
@@ -1931,12 +2014,23 @@ class ConditionalPassTest(unittest.TestCase):
         gate.gh = lambda *args, check=True: subprocess.CompletedProcess(
             args, 1, "", "network hiccup"
         )
-        with self.assertRaises(SystemExit) as caught:
-            gate.api_status(
-                "repos/jposluns/cleanlanguage/releases/tags/v1.0.14",
-                "the release status for v1.0.14",
-            )
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit) as caught:
+                gate.api_status(
+                    "repos/jposluns/cleanlanguage/releases/tags/v1.0.14",
+                    "the release status for v1.0.14",
+                )
         self.assertEqual(caught.exception.code, 2)
+        # Claim 6: the gate output is fully determined, so the exact stdout and
+        # stderr lines are asserted; each status is reported in exactly one
+        # line, on stderr, and any further line on either stream, in any
+        # wording, fails.
+        self.assertEqual(
+            err.getvalue().splitlines(), [f"{self.CV}could not read the release status for v1.0.14 (gh exit 1)"],
+            err.getvalue(),
+        )
+        self.assertEqual(out.getvalue().splitlines(), [], out.getvalue())
 
     def test_malformed_version_line_on_404_path_exits_3(self):
         # A "Version:" label with the number on the next line must not be read
@@ -2025,27 +2119,37 @@ class ConditionalPassTest(unittest.TestCase):
         # that cannot be read stops only the release verification (exit 2);
         # the Released line is still checked offline and the more severe code
         # wins, so a malformed line (exit 3) is not hidden.
-        for tag_state, stop in (
-            (200, "exists but release"), (503, "unexpected HTTP 503 reading tag"),
-            ("unreadable", "could not read the tag status"),
-        ):
-            for label, version, released, expected, reason in (
-                ("malformed line", AHEAD, "Released: soon", 3,
-                 "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed"),
-                ("line missing above the baseline", AHEAD, None, 2,
-                 f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line"),
-                ("valid line", AHEAD, "Released: 2026-11-15  ", 2, None),
-                ("undated baseline", CURRENT, None, 2, None),
+        for tag_state in (200, 503, "unreadable"):
+            for label, version, released, expected in (
+                ("malformed line", AHEAD, "Released: soon", 3),
+                ("line missing above the baseline", AHEAD, None, 2),
+                ("valid line", AHEAD, "Released: 2026-11-15  ", 2),
+                ("undated baseline", CURRENT, None, 2),
             ):
                 with self.subTest(tag=tag_state, case=label):
+                    tag = f"v{version}"
+                    if tag_state == 200:
+                        status = self.CV + self.tag_exists(tag)
+                        situation = f"release {tag} is not published but its tag exists"
+                    else:
+                        if tag_state == 503:
+                            status = f"{self.CV}unexpected HTTP 503 reading tag {tag}"
+                        else:
+                            status = f"{self.CV}could not read the tag status for {tag} (gh exit 1)"
+                        situation = f"release {tag} is not published and the state of its tag could not be verified"
+                    out_lines, err_lines = [], [status]
+                    if label == "malformed line":
+                        err_lines.append(self.malformed_line())
+                    if label == "line missing above the baseline":
+                        out_lines = self.missing_line(situation)
                     code, out, err = self.offline_reports(version, released, tag_state)
                     self.assertEqual(code, expected, (out, err))
-                    self.assertIn("could not verify: ", err)
-                    self.assertIn(stop, err)
-                    if reason is None:
-                        self.assertNotIn("inconsistency", out)
-                    else:
-                        self.assertIn(reason, out + err)
+                    # Claim 6: the gate output is fully determined, so the exact stdout and
+                    # stderr lines are asserted; each status is reported in exactly one
+                    # line, on stderr, and any further line on either stream, in any
+                    # wording, fails.
+                    self.assertEqual(err.splitlines(), err_lines, err)
+                    self.assertEqual(out.splitlines(), out_lines, out)
 
     def test_unreadable_site_release_status_still_checks_the_released_line(self):
         # Sibling of MEDIUM 2: a release status for the version the site names
@@ -2058,13 +2162,14 @@ class ConditionalPassTest(unittest.TestCase):
             self.probed.append(tag)
             gate.cannot_verify(f"could not read the release status for {tag} (gh exit 1)")
 
-        for label, site, skill, released, expected, reason in (
-            ("malformed line, same version", AHEAD, AHEAD, "Released: soon", 3, "is malformed"),
+        for label, site, skill, released, expected, out_lines, extra_err in (
+            ("malformed line, same version", AHEAD, AHEAD, "Released: soon", 3, [], [self.malformed_line()]),
             ("malformed line, newer SKILL.md, read before any probe", CURRENT, AHEAD,
-             "Released: soon", 3, "is malformed"),
-            ("line missing above the baseline", AHEAD, AHEAD, None, 2,
-             f"the release state of v{AHEAD}, the version the verify page names, could not be verified"),
-            ("valid line", AHEAD, AHEAD, "Released: 2026-11-15  ", 2, None),
+             "Released: soon", 3, [], [self.malformed_line()]),
+            ("line missing above the baseline", AHEAD, AHEAD, None, 2, self.missing_line(
+                f"the release state of v{AHEAD}, the version the verify page names, could not be verified"
+            ), []),
+            ("valid line", AHEAD, AHEAD, "Released: 2026-11-15  ", 2, [], []),
         ):
             with self.subTest(label):
                 self.fixtures(site, OTHER_SUM, skill, released)
@@ -2076,11 +2181,16 @@ class ConditionalPassTest(unittest.TestCase):
                 gate.release_immutable = unexpected_call
                 code, out, err = self.main_reports()
                 self.assertEqual(code, expected, (out, err))
-                self.assertIn("could not read the release status", err)
-                if reason is None:
-                    self.assertNotIn("inconsistency", out)
-                else:
-                    self.assertIn(reason, out + err)
+                # Claim 6: the gate output is fully determined, so the exact stdout and
+                # stderr lines are asserted; each status is reported in exactly one
+                # line, on stderr, and any further line on either stream, in any
+                # wording, fails.
+                self.assertEqual(
+                    err.splitlines(),
+                    [f"{self.CV}could not read the release status for v{site} (gh exit 1)"] + extra_err,
+                    err,
+                )
+                self.assertEqual(out.splitlines(), out_lines, out)
                 self.assertEqual(self.probed, [f"v{site}"])
 
     def test_unreadable_site_release_status_probes_a_newer_skill_release(self):
@@ -2098,19 +2208,23 @@ class ConditionalPassTest(unittest.TestCase):
                 return newer
             return status
 
-        for label, released, newer, immutable, expected, reason, asked in (
+        for label, released, newer, immutable, expected, out_lines, extra_err, asked in (
             ("date mismatch", "Released: 2026-11-01  ", 200, "true", 2,
-             "Release date inconsistency found", [f"v{AHEAD}"]),
+             self.date_mismatch("2026-11-01", f"v{AHEAD}", "2026-11-15T09:30:00Z", "2026-11-15"), [],
+             [f"v{AHEAD}"]),
             ("matching date", "Released: 2026-11-15  ", 200, "true", 2,
-             f"matches the publication day of release v{AHEAD}", [f"v{AHEAD}"]),
+             [f"The SKILL.md Released date 2026-11-15 matches the publication day of release v{AHEAD}."], [],
+             [f"v{AHEAD}"]),
             ("line missing above the baseline", None, 200, "true", 2,
-             f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line", []),
-            ("record not immutable", "Released: 2026-11-15  ", 200, "false", 2,
-             f"the immutable field of release v{AHEAD} is", []),
+             self.missing_line(f"release v{AHEAD} is published"), [], []),
+            ("record not immutable", "Released: 2026-11-15  ", 200, "false", 2, [],
+             [f"{self.CV}the immutable field of release v{AHEAD} is 'false', not true, so its published_at "
+              "cannot be relied on as the first publication instant"], []),
             ("newer release not published", "Released: 2026-11-15  ", 404, "true", 2,
-             f"Release v{AHEAD}, the version SKILL.md names, is not published yet", []),
-            ("newer release unexpected status", "Released: 2026-11-15  ", 503, "true", 2,
-             f"unexpected HTTP 503 reading release v{AHEAD}, the version SKILL.md names", []),
+             [f"Release v{AHEAD}, the version SKILL.md names, is not published yet and its tag does not exist; "
+              "its Released date is checked once it is published."], [], []),
+            ("newer release unexpected status", "Released: 2026-11-15  ", 503, "true", 2, [],
+             [f"{self.CV}unexpected HTTP 503 reading release v{AHEAD}, the version SKILL.md names"], []),
         ):
             with self.subTest(label):
                 self.fixtures(CURRENT, OTHER_SUM, AHEAD, released)
@@ -2119,8 +2233,16 @@ class ConditionalPassTest(unittest.TestCase):
                 gate.gh = unexpected_call
                 code, out, err = self.main_reports()
                 self.assertEqual(code, expected, (out, err))
-                self.assertIn("could not read the release status for v1.0.14", err)
-                self.assertIn(reason, out + err)
+                # Claim 6: the gate output is fully determined, so the exact stdout and
+                # stderr lines are asserted; each status is reported in exactly one
+                # line, on stderr, and any further line on either stream, in any
+                # wording, fails.
+                self.assertEqual(
+                    err.splitlines(),
+                    [f"{self.CV}could not read the release status for v{CURRENT} (gh exit 1)"] + extra_err,
+                    err,
+                )
+                self.assertEqual(out.splitlines(), out_lines, out)
                 self.assertEqual(self.probed, [f"v{CURRENT}", f"v{AHEAD}"])
                 self.assertEqual(self.asked, asked)
                 self.assertNotIn(f"v{CURRENT}", self.tag_probed + self.immutable_asked)
@@ -2129,44 +2251,59 @@ class ConditionalPassTest(unittest.TestCase):
         # Sibling of MEDIUM 2 inside the date check: an unverifiable state of
         # the release SKILL.md names keeps exit 2 but still reports a Released
         # line missing above the baseline.
-        for label, statuses, tags in (
-            ("tag without release", {f"v{AHEAD}": 404}, {f"v{AHEAD}": 200}),
-            ("unexpected tag status", {f"v{AHEAD}": 404}, {f"v{AHEAD}": 503}),
-            ("unexpected release status", {f"v{AHEAD}": 503}, {}),
+        for label, statuses, tags, report in (
+            ("tag without release", {f"v{AHEAD}": 404}, {f"v{AHEAD}": 200},
+             self.tag_exists(f"v{AHEAD}", ", the version SKILL.md names,")),
+            ("unexpected tag status", {f"v{AHEAD}": 404}, {f"v{AHEAD}": 503},
+             f"unexpected HTTP 503 reading tag v{AHEAD}"),
+            ("unexpected release status", {f"v{AHEAD}": 503}, {},
+             f"unexpected HTTP 503 reading release v{AHEAD}, the version SKILL.md names"),
         ):
             with self.subTest(label):
                 self.fixtures(CURRENT, ZIP_SUM, AHEAD)
                 self.published("2026-11-15T09:30:00Z", statuses=statuses, tags=tags)
                 code, out, err = self.main_reports()
                 self.assertEqual(code, 2, (out, err))
-                self.assertIn("could not verify: ", err)
-                self.assertIn(
-                    f"the release state of v{AHEAD}, the version SKILL.md names, could not be verified", out
-                )
-                self.assertIn(f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line", out)
+                # Claim 6: the gate output is fully determined, so the exact stdout and
+                # stderr lines are asserted; each status is reported in exactly one
+                # line, on stderr, and any further line on either stream, in any
+                # wording, fails.
+                self.assertEqual(err.splitlines(), [self.CV + report], err)
+                self.assertEqual(out.splitlines(), self.missing_line(
+                    f"the release state of v{AHEAD}, the version SKILL.md names, could not be verified"
+                ) + [self.site_matches()], out)
 
     def test_unexpected_status_of_the_same_release_reports_once_and_keeps_the_date_check(self):
         # Row 62, same-version case: the site and SKILL.md name the same
         # release and it returns 503. A malformed Released line still exits 3,
         # and the status is reported in one could-not-verify line, not two.
-        for label, released, expected, reason in (
-            ("malformed Released line", "Released: soon", 3,
-             "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed"),
-            ("line missing above the baseline", None, 2,
-             f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line"),
-            ("valid line", "Released: 2026-11-15  ", 2, None),
+        status = f"check-release-checksum-live: could not verify: unexpected HTTP 503 reading release v{AHEAD}"
+        skill = "cleanlanguage/skills/cleanlanguage/SKILL.md"
+        soon = "Released: soon"
+        for label, released, expected, out_lines, err_lines in (
+            ("malformed Released line", soon, 3, [], [
+                status,
+                f"check-release-checksum-live: the Released line in {skill} is malformed: "
+                f"the first Released line is not a bare YYYY-MM-DD date: {soon!r}",
+            ]),
+            ("line missing above the baseline", None, 2, [
+                "Release date inconsistency found:",
+                f"  - the release state of v{AHEAD}, the version SKILL.md names, could not be verified",
+                f"  - {skill} names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line",
+            ], [status]),
+            ("valid line", "Released: 2026-11-15  ", 2, [], [status]),
         ):
             with self.subTest(label):
                 self.fixtures(AHEAD, ZIP_SUM, AHEAD, released)
                 self.published("2026-11-15T09:30:00Z", statuses={f"v{AHEAD}": 503})
                 code, out, err = self.main_reports()
                 self.assertEqual(code, expected, (out, err))
-                self.assertEqual(err.count("unexpected HTTP 503 reading release"), 1, err)
-                # That line is the only could-not-verify line, so a second line
-                # for the same status, in any wording, also fails.
-                self.assertEqual(err.count("check-release-checksum-live: could not verify: "), 1, err)
-                if reason is not None:
-                    self.assertIn(reason, out + err)
+                # The gate output is fully determined here, so the exact stdout
+                # and stderr lines are asserted: the status is reported in exactly
+                # one line, on stderr, and any further line on either stream, in
+                # any wording, fails.
+                self.assertEqual(err.splitlines(), err_lines, err)
+                self.assertEqual(out.splitlines(), out_lines, out)
                 self.assertEqual(self.probed, [f"v{AHEAD}"])
                 self.assertEqual((self.tag_probed, self.asked, self.immutable_asked), ([], [], []))
 
