@@ -442,6 +442,15 @@ elif ARGS[:1] == ["ls-remote"]:
     tag = read("remote_tag")
     if tag:
         print(tag + "\\trefs/tags/" + os.environ["RELEASE_TAG"])
+elif ARGS[:1] == ["tag"]:
+    # The local tag points at the commit named last.
+    with open(os.path.join(STATE, "local_tag"), "w", encoding="utf-8") as handle:
+        handle.write(ARGS[-1])
+elif ARGS[:1] == ["push"] and ARGS[-1] == "refs/tags/" + os.environ["RELEASE_TAG"]:
+    # A tag push moves the remote tag to the local one, so a later run reads
+    # the tag where an earlier run left it.
+    with open(os.path.join(STATE, "remote_tag"), "w", encoding="utf-8") as handle:
+        handle.write(read("local_tag"))
 sys.exit(0)
 """
 
@@ -642,7 +651,8 @@ BROKEN_EXTRACTORS = (
 # Row 72: the remedy the not-immutable readback refusal names.
 REMEDY_NOT_IMMUTABLE = "Turn on immutable releases for the repository, then cut a corrective new version."
 
-# Fix round 1: the next step the two unreadable readback refusals name, and
+# Fix round 1: the next step the unreadable readback refusals name (row 78
+# adds the determine-step refusal), and
 # the verification path the force refusal names. Repeating a run keeps its
 # force input and run ref, so each names a fresh dispatch without force at
 # the tag itself.
@@ -1071,16 +1081,24 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.set_state(status="404", remote_tag=OTHER_COMMIT, immutable="FAIL")
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertTrue(any(is_create(c) for c in self.calls()))
+        calls = self.calls()
+        # Row 78: the forced run moved the tag to the commit it built and
+        # pushed it before the create call, so the later runs read the tag
+        # where this run left it, not where the test put it.
+        move = self.index_of(calls, lambda c: c == [VCS, ["tag", "-f", "v1.0.15", COMMIT]])
+        push = self.index_of(calls, lambda c: is_push(c) and "--force" in c[1] and c[1][-1] == "refs/tags/v1.0.15")
+        self.assertLess(move, push)
+        self.assertLess(push, self.index_of(calls, is_create))
+        self.assertEqual((self.state / "remote_tag").read_text(encoding="utf-8"), COMMIT)
         self.assertIn(REMEDY_UNREADABLE, err)
         self.reset_calls()
-        self.set_state(immutable="true")
-        self.published(force="true")
+        self.set_state(immutable="true", status="200")
+        self.inputs["force"] = "true"
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn(VERIFY_BY_DISPATCH, err)
         self.reset_calls()
-        self.published(force="false")
+        self.inputs["force"] = "false"
         code, out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 0, err)
         self.assertIn("kept its assets", out)
@@ -1259,10 +1277,15 @@ class ImmutableReleaseTest(WorkflowStepTest):
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
         self.assertTrue(description.startswith("Move the tag of a release that is not yet published"), description)
         self.assertIn("cannot be republished", description)
-        # Fix round 1: the re-run button keeps the original run ref and inputs,
-        # so the description names a fresh dispatch.
-        self.assertNotIn("re-run this workflow", description)
-        self.assertIn("dispatch this workflow again with the tag itself selected as the run ref", description)
+        # Row 78: a run dispatched from main that failed before it published
+        # has no tag to select as the run ref, so the description names a
+        # re-run or a fresh dispatch from main for it, and the tag as the run
+        # ref only to verify a release that is already published.
+        self.assertIn("To finish a run that failed before it published, re-run it or dispatch this workflow"
+                      " again from main with the same tag.", description)
+        self.assertIn("To verify a release that is already published, dispatch this workflow again with this"
+                      " input unchecked and the tag itself selected as the run ref, not main", description)
+        self.assertNotIn("failed before it published, dispatch this workflow again with the tag", description)
         extractor = EXTRACTOR.read_text(encoding="utf-8")
         for stale in ("release upload", "force dispatch", "--clobber"):
             with self.subTest(stale):
@@ -1308,6 +1331,15 @@ class DetermineStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 1, err)
         self.assertIn("is not a usable UTC instant", err)
+
+    def test_unreadable_published_at_names_the_verifying_dispatch(self):
+        # Row 78: like the publish-step readback refusals, the refusal names
+        # the next step.
+        self.set_state(status="200", published_at="FAIL")
+        code, _out, err = self.run_step(DETERMINE)
+        self.assertEqual(code, 1, err)
+        self.assertIn("Could not read published_at for the existing release v1.0.15.", err)
+        self.assertIn(REMEDY_UNREADABLE, err)
 
     def test_broken_extractor_is_unavailable_not_malformed(self):
         (self.work / "tools" / "skill-release-date.py").write_text("def broken(:\n", encoding="utf-8")

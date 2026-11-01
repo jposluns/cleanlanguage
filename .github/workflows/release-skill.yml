@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       force:
-        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one; the remedy for a published release is a corrective new version. Leave it unchecked. To finish a run that failed before it published, dispatch this workflow again with the tag itself selected as the run ref, not main; the re-run button keeps the original run ref and inputs."
+        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one; the remedy for a published release is a corrective new version. Leave it unchecked. To finish a run that failed before it published, re-run it or dispatch this workflow again from main with the same tag. To verify a release that is already published, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs."
         required: false
         default: false
         type: boolean
@@ -171,6 +171,7 @@ jobs:
             200)
               if ! published_at="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .published_at)"; then
                 echo "Could not read published_at for the existing release ${RELEASE_TAG}." >&2
+                echo "Once the release record is readable, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main, to verify the published release." >&2
                 exit 1
               fi
               rc=0
