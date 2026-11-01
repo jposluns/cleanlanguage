@@ -28,22 +28,24 @@ planted gate, and SHELLOPTS with noexec or onecmd makes bash run nothing and exi
 0 before ci-status.sh runs.
 
 The verdict comes from the check-runs API, the only endpoint that sees every
-required check: the Cloudflare Pages build (this repository's required check per
-CLAUDE.md) is produced by an external app, not GitHub Actions, so a gate built on
-actions/runs alone would pass while the required check was failing. The legacy
-commits/<sha>/status endpoint is not used either: this repository publishes no
-commit statuses, so it answers "pending" forever.
+required check: the Cloudflare Pages build (the check GitHub requires on this
+repository today, per CLAUDE.md) is produced by an external app, not GitHub
+Actions, so a gate built on actions/runs alone would pass while the required
+check was failing. The legacy commits/<sha>/status endpoint is not used either:
+this repository publishes no commit statuses, so it answers "pending" forever.
 
 Reading is FAIL-CLOSED. The whole paginated response is parsed as JSON; a page
 that is not an object, a check_runs that is not a list, a check that is not an
 object, or any field of the wrong type (a status that is not a non-empty string,
 a conclusion/name/slug that is neither a string nor null) makes the entire reading
-unreadable. Absence of checks, an unreadable read, and a partial reading are never
-success, so a caller waiting for green never mistakes silence, a malformed page, or
-a dropped record for a pass. This replaces an earlier shell implementation that
-serialized checks to delimited text and parsed them in bash, which repeatedly let a
-crafted or malformed field forge or hide a check; parsing structured JSON here
-removes that class of defect.
+unreadable. So does a check run whose head_sha is present and is not a non-empty
+string naming the requested commit; a run that omits head_sha is accepted on the
+strength of the API path, which already names the commit. Absence of checks, an
+unreadable read, and a partial reading are never success, so a caller waiting for
+green never mistakes silence, a malformed page, or a dropped record for a pass.
+This replaces an earlier shell implementation that serialized checks to delimited
+text and parsed them in bash, which repeatedly let a crafted or malformed field
+forge or hide a check; parsing structured JSON here removes that class of defect.
 
 A pass is never declared on one reading: an external app can report before GitHub
 Actions has created its runs, and a read taken in that window sees only the checks
@@ -52,14 +54,51 @@ whose Actions gates had not started). So a pass is confirmed only when two
 consecutive readings have the identical set of checks and conclusions. This costs
 one interval on every green result, whether or not --wait was given.
 
-This repository runs, on every pull request and every push to main, the
-github-actions app (plugin-validate, sitemap) and the external Cloudflare Pages
-build, which CLAUDE.md names as the required check. A passing reading missing either
-of those means that check has not registered (a malformed branch, or the external
-check still building); such a reading is downgraded from pass to pending, never to a
-red. A commit that legitimately ran neither is a safe false-red, never a
-false-green. Pointing --repo at a repository that does not run both unconditionally
-would downgrade a legitimate green to pending.
+This repository runs, on every pull request and every push to main, 3 GitHub
+Actions jobs whose display names are Plugin manifests, Skill discovery and Agent
+Plugins manifest, and the external Cloudflare Pages build, which CLAUDE.md names as
+the check GitHub requires today. The tool insists on all 4, ahead of the branch
+ruleset listing the 3 Actions jobs. Each Actions job is matched by its exact display
+name (case-sensitive and untrimmed) together with the github-actions app slug, so a
+run of the same name from another app, or an unnamed github-actions job such as the
+sitemap check, never satisfies one; the Cloudflare build is matched by its app slug
+alone. A passing reading missing any of the 4 means that check has not registered
+(a malformed branch, a head whose commit message carries a skip marker, or the
+external check still building); such a reading is downgraded from pass to pending,
+never to a red. A commit that legitimately ran none of them is a safe false-red,
+never a false-green. Residual: a name and an app cannot tell which workflow
+produced a run, so a pull request that deletes one of those workflows and adds
+another job with the same display name satisfies the check; GitHub's own
+app-pinned required check has the same limit. Within the same residual, another job
+in one of the 3 workflows can carry one of the 3 display names under a name: key
+indented other than the 4 spaces of a job's own keys. tools/test-ci-status.sh
+compares every name: line indented exactly 4 spaces, whatever form its value takes,
+but compares a job's name: key at any other indent only by its plain or quoted
+text, and only with the display name of that workflow's own job, so such a key
+passes when it carries another workflow's display name in any form, or its own
+workflow's display name in a form whose text differs from that name, such as a
+block scalar or an expression.
+The tool reads the check runs the API
+returns under its default filter, the latest runs, so whether such a job can take
+the place of a failed run of the real job in a reading depends on how the API
+selects the latest runs, which this tool does not control. Pointing --repo at a repository that
+does not run all 4 unconditionally would downgrade a legitimate green to pending.
+Residual: a required check that concludes skipped or neutral counts as passed, as
+GitHub counts it for a required check, so a job skipped without running its steps
+reads green. For the 3 Actions jobs, tools/test-ci-status.sh reads each workflow
+with an allow-list that fails closed: the on: block holds only a pull_request
+trigger with nothing under it and a push trigger filtered to main alone; the
+permissions block is exactly contents: read; a top-level env, if present, holds only
+CLAUDE_CODE_VERSION, set to a dotted version number such as 2.1.310; and the job
+with a required display name holds only name, runs-on set to ubuntu-latest, and
+steps. Each step holds an optional name and either uses: naming an owner/repo action
+pinned to a full 40-character commit sha, or run: with shell: bash, and nothing
+else. So no if:, needs: or continue-on-error: key, no other runner or shell, no
+local or docker action, and no environment variable such as BASH_ENV or SHELLOPTS
+set in the workflow can skip the job or its steps, or pass over a failed step, and
+still read as passing; any line outside that shape fails the check. What the
+commands the steps run and the pinned actions do, including anything they write for
+later steps, and what the other jobs of the workflow run, are not checked.
 
 The commit is named only by its full 40-character hexadecimal sha, folded to
 lower case and used as given. Every other value, an abbreviation of any length,
@@ -310,25 +349,25 @@ def _iter_json_values(text: str):
         yield obj
 
 
-def _field(value, allow_empty: bool):
+def _field(value, allow_empty: bool, field: str):
     """A field must be a string. null is allowed only for a nullable field (becomes '');
     a bool or number is rejected (a bool is not a valid string even though `x or ''`
     would hide it); an empty string is rejected for a required field. Anything else
-    makes the whole reading fail-closed."""
+    makes the whole reading fail-closed. Each message names FIELD."""
     if value is None:
         if allow_empty:
             return ""
-        raise Unreadable("missing required field")
+        raise Unreadable(f"missing required field {field}")
     if isinstance(value, bool) or not isinstance(value, str):
-        raise Unreadable("non-string check field")
+        raise Unreadable(f"non-string check field {field}")
     if value == "" and not allow_empty:
-        raise Unreadable("empty required field")
+        raise Unreadable(f"empty required field {field}")
     try:
         # A lone surrogate is a valid str but cannot be encoded or printed; reject it
         # so it fails closed here rather than crashing the report later.
         value.encode("utf-8")
     except UnicodeEncodeError as exc:
-        raise Unreadable("check field is not encodable text") from exc
+        raise Unreadable(f"check field {field} is not encodable text") from exc
     return value
 
 
@@ -373,6 +412,8 @@ def read_checks(repo: str, full_sha: str, deadline: float):
     # accepted, not fixed: a dishonest transport can return a clean green for any
     # commit regardless, so it lies outside this gate's trust boundary (an authentic
     # gh talking to the real API, which always supplies total_count and unique ids).
+    # A run that omits head_sha is likewise accepted on the strength of the API path
+    # alone.
     declared_total = None
     total_present = None
     seen_ids = set()
@@ -417,11 +458,19 @@ def read_checks(repo: str, full_sha: str, deadline: float):
                 slug = app.get("slug")
             else:
                 raise Unreadable("check run app is not an object")
+            # A run of another commit cannot come from an honest read of this
+            # commit's check-runs path, so it is a transport anomaly, never a
+            # verdict. A present head_sha must be a non-empty string that names the
+            # requested commit; absence is tolerated (see the residual above).
+            if "head_sha" in run:
+                head = _field(run["head_sha"], allow_empty=False, field="head_sha")
+                if head.lower() != full_sha:
+                    raise Unreadable(f"check run head_sha {head!r} is not the requested commit {full_sha}")
             checks.append({
-                "status": _field(run.get("status"), allow_empty=False),
-                "conclusion": _field(run.get("conclusion"), allow_empty=True),
-                "name": _field(run.get("name"), allow_empty=True),
-                "slug": _field(slug, allow_empty=True),
+                "status": _field(run.get("status"), allow_empty=False, field="status"),
+                "conclusion": _field(run.get("conclusion"), allow_empty=True, field="conclusion"),
+                "name": _field(run.get("name"), allow_empty=True, field="name"),
+                "slug": _field(slug, allow_empty=True, field="app.slug"),
             })
     if declared_total is not None and declared_total != len(checks):
         raise Unreadable(
@@ -446,24 +495,41 @@ def verdict_of(checks) -> str:
     return "pass"
 
 
-# The checks this repository runs on every pull request and every push to main: the
-# github-actions app (plugin-validate, sitemap) and the external Cloudflare Pages
-# build, which CLAUDE.md names as the required check. A passing reading that is
-# missing either means that check has not registered yet (or the branch is
-# malformed), so it is not green until both are present.
-# Each required check is matched by its app slug, not its forgeable name. The
-# github-actions app slug is exact; the Cloudflare app slug is
+# The checks this repository runs on every pull request and every push to main,
+# and on which this tool insists: the 3 github-actions jobs Plugin manifests, Skill
+# discovery and Agent Plugins manifest, and the external Cloudflare Pages build,
+# which CLAUDE.md names as the check GitHub requires today. The tool insists on the
+# 3 Actions jobs ahead of the branch ruleset listing them. A passing reading missing
+# any of them means that check has not registered yet (or the head carries a skip
+# marker, or the branch is malformed), so it is not green until all are present.
+# Each Actions job is matched by its exact display name together with the
+# github-actions app slug, so a run of the same name from another app, or an
+# unnamed github-actions job, never satisfies one. The Cloudflare app slug is
 # "cloudflare-workers-and-pages" on this repository, so it is matched by the
-# "cloudflare" prefix to stay robust to Cloudflare's app naming.
+# "cloudflare" prefix to stay robust to Cloudflare's app naming; its name is not
+# consulted.
+# Residual: a name and an app cannot tell which workflow produced a run, so a pull
+# request that deletes one of those workflows and adds another job with the same
+# display name satisfies the check. GitHub's own app-pinned required check has the
+# same limit.
+# Deferred follow-up (after backlog row 68): this list is declared here and is not
+# cross-checked against the branch ruleset for main. That cross-check would also
+# require every context the ruleset lists, report a listed context missing from
+# this list, and fail closed (exit 3) when the ruleset cannot be read.
+def _actions_job(name: str):
+    return lambda c: c["slug"] == "github-actions" and c["name"] == name
+
+
 REQUIRED_CHECKS = (
-    ("github-actions", lambda slug: slug == "github-actions"),
-    ("Cloudflare Pages", lambda slug: slug.startswith("cloudflare")),
+    ("Plugin manifests", _actions_job("Plugin manifests")),
+    ("Skill discovery", _actions_job("Skill discovery")),
+    ("Agent Plugins manifest", _actions_job("Agent Plugins manifest")),
+    ("Cloudflare Pages", lambda c: c["slug"].startswith("cloudflare")),
 )
 
 
 def missing_required(checks) -> list:
-    slugs = {c["slug"] for c in checks}
-    return [label for label, matches in REQUIRED_CHECKS if not any(matches(s) for s in slugs)]
+    return [label for label, matches in REQUIRED_CHECKS if not any(matches(c) for c in checks)]
 
 
 def snapshot(checks) -> str:
@@ -619,7 +685,7 @@ def main() -> int:
                 sys.stderr.write("ci-status: treating absent checks as unreadable, not as a pass\n")
             return 3
 
-        # pending (still running, or a downgraded pass awaiting its github-actions check)
+        # pending (still running, or a downgraded pass awaiting a required check)
         if not wait:
             sys.stdout.write(f"ci-status: checks are still running for {full_sha}\n")
             report(checks)

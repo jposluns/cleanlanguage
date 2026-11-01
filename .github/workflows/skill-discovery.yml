@@ -4,27 +4,33 @@ name: Skill discovery
 # relocation, or metadata drift cannot reach main. Structural, offline, and
 # fail-closed; also runs the gate's own unit tests.
 #
-# The pull_request trigger carries no paths filter, so this gate reports on every
-# pull request and can be a required check: a path-filtered required check never
-# reports on a pull request outside its paths and blocks the merge as
-# forever-pending. The push trigger keeps its paths filter, because a required
-# check is evaluated on the pull request and the paths it lists cover every file
-# the gate and its tests read, so a push touching none of them cannot change the
-# result.
+# Neither trigger carries a paths filter, so this gate reports on every pull
+# request and on every push to main and can be a required check: a
+# path-filtered required check never reports on a pull request outside its
+# paths and blocks the merge as forever-pending. tools/ci-status.sh insists on
+# this check by its display name, so a main commit without a run of it would
+# read as pending; the push trigger therefore runs on every push to main too.
+# tools/test-ci-status.sh reads this workflow with an allow-list that fails
+# closed: the on: block holds only a pull_request trigger with nothing under it
+# and a push trigger filtered to main alone; the permissions block is exactly
+# contents: read; a top-level env, if present, holds only CLAUDE_CODE_VERSION,
+# set to a dotted version number such as 2.1.310; and the job with this display
+# name holds only name, runs-on set to ubuntu-latest, and steps. Each step holds
+# an optional name and either uses: naming an owner/repo action pinned to a full
+# 40-character commit sha, or run: with shell: bash, and nothing else. So no
+# if:, needs: or continue-on-error: key, no other runner or shell, no local or
+# docker action, and no environment variable such as BASH_ENV or SHELLOPTS set
+# in the workflow can skip the job or its steps, or pass over a failed step, and
+# still read as passing; any line outside that shape fails the check. What the
+# commands the steps run and the pinned actions do, including anything they
+# write for later steps, and what the other jobs of the workflow run, are not
+# checked.
 
 on:
   pull_request:
   push:
     branches:
       - main
-    paths:
-      - "cleanlanguage/.claude-plugin/plugin.json"
-      - "cleanlanguage/skills"
-      - "cleanlanguage/skills/**"
-      - "cleanlanguage/SKILL.md"
-      - "tools/check-skill-discovery.py"
-      - "tools/test-skill-discovery.py"
-      - ".github/workflows/skill-discovery.yml"
 
 permissions:
   contents: read

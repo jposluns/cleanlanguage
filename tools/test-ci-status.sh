@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
 #
-# Offline tests for the github-actions fail-safe in ci-status (TODO 19). The
-# verdict logic lives in tools/ci-status.py (a Python rewrite that parses the
-# check-runs JSON structurally and fail-closed); tools/ci-status.sh is a thin
-# wrapper that execs it, so these tests drive the wrapper exactly as callers do.
+# Offline tests for the required-check fail-safe in ci-status (TODO 19, backlog
+# row 66). The verdict logic lives in tools/ci-status.py (a Python rewrite that
+# parses the check-runs JSON structurally and fail-closed); tools/ci-status.sh is
+# a thin wrapper that execs it, so these tests drive the wrapper exactly as
+# callers do.
 #
-# The gate reports a pass only after two identical readings. This repository runs
-# an Actions workflow on every PR and every push to main (plugin-validate,
-# sitemap), so a passing commit with no github-actions check means Actions produced
-# nothing (a malformed-branch false green) and is downgraded to pending, never a
-# red. Presence is read from the same reading as the verdict (the app slug), and
-# the reading is FAIL-CLOSED: a malformed page (non-object, or check_runs that is
-# not a list), a check that is not an object, or any field of the wrong type (a
-# status that is not a non-empty string, a conclusion/name/slug that is neither a
-# string nor null) makes the whole reading unreadable rather than dropping or
-# forging a check. Control characters in a name are inert string data, so they
-# cannot fabricate presence; only the slug decides it. A failed read breaks a
-# confirmation in progress but the same green set reappearing re-arms without
-# consuming the changing-set budget. Waits are deadline-capped; numeric arguments
-# are base-10 and range-checked.
+# The gate reports a pass only after two identical readings. It insists on 4
+# checks: the GitHub Actions jobs Plugin manifests, Skill discovery and Agent
+# Plugins manifest, each matched by its exact display name together with the
+# github-actions app slug, and the external Cloudflare Pages build, matched by its
+# app slug. A passing reading missing any of them is downgraded to pending, never
+# a red; an unnamed or differently named github-actions run, or a required name
+# posted by another app, does not count. Presence is read from the same reading
+# as the verdict, and the reading is FAIL-CLOSED: a malformed page (non-object,
+# or check_runs that is not a list), a check that is not an object, any field of
+# the wrong type (a status that is not a non-empty string, a conclusion/name/slug
+# that is neither a string nor null), or a head_sha that is present and does not
+# name the requested commit makes the whole reading unreadable rather than
+# dropping or forging a check. A name is compared as the whole string, control
+# characters included, and the slug is taken only from the app object, so a
+# required name followed by separators and a slug, under a null app, does not
+# count. A failed read breaks a confirmation in progress but the same green set
+# reappearing re-arms without consuming the changing-set budget. Waits are
+# deadline-capped; numeric arguments are base-10 and range-checked.
 #
 # Each case puts a fake gh on PATH serving check-runs from a per-call "plan"
 # (tokens g/a/f: default payload, alternate payload, or a failed call). ci-status
@@ -36,21 +41,40 @@ setup_failed() {
   printf "FAIL %s (could not create a scratch directory)\n" "$1"; fails=$((fails + 1))
 }
 
-GA_PRESENT='{"check_runs":[
+C1=0c83f120fcc4630694465bcf89f7415a21d54dba
+C1_UPPER=0C83F120FCC4630694465BCF89F7415A21D54DBA
+C2=1111111111111111111111111111111111111111
+
+# The 4 required checks, each green, as JSON fragments; every green fixture is
+# built from them.
+PM_OK='{"status":"completed","conclusion":"success","name":"Plugin manifests","app":{"slug":"github-actions"}}'
+SD_OK='{"status":"completed","conclusion":"success","name":"Skill discovery","app":{"slug":"github-actions"}}'
+APM_OK='{"status":"completed","conclusion":"success","name":"Agent Plugins manifest","app":{"slug":"github-actions"}}'
+CF='{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}'
+REQ_GA="${PM_OK},${SD_OK},${APM_OK}"
+# runs FRAGMENT...: one check-runs page holding the fragments in order.
+runs() { local IFS=,; printf '{"check_runs":[%s]}' "$*"; }
+# head_runs HEAD: the 4 required checks, each carrying "head_sha":HEAD, where
+# HEAD is raw JSON.
+head_runs() {
+  local f out=()
+  for f in "$PM_OK" "$SD_OK" "$APM_OK" "$CF"; do out+=("{\"head_sha\":${1},${f#\{}"); done
+  runs "${out[@]}"
+}
+
+GA_PRESENT="$(runs "$REQ_GA" "$CF")"
+GA_REVERSED="$(runs "$CF" "$APM_OK" "$SD_OK" "$PM_OK")"
+# The reading every github-actions run satisfied before row 66: one unnamed
+# github-actions job (display name check, as the sitemap job has) beside the
+# Cloudflare build. None of the 3 required Actions checks is in it.
+GENERIC_GA='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}},
   {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}
-]}'
-GA_REVERSED='{"check_runs":[
-  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}},
-  {"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}}
 ]}'
 CLOUDFLARE_ONLY='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}
 ]}'
-GA_IN_PROGRESS='{"check_runs":[
-  {"status":"in_progress","conclusion":null,"name":"check","app":{"slug":"github-actions"}},
-  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}
-]}'
+GA_IN_PROGRESS="$(runs '{"status":"in_progress","conclusion":null,"name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")"
 EMPTY_CONCLUSION='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}},
   {"status":"completed","conclusion":null,"name":"success","app":{"slug":"external-app"}}
@@ -63,8 +87,18 @@ INJECT_NL_US='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"benign\ncompleted\u001fsuccess\u001fforged\u001fgithub-actions","app":{"slug":null}},
   {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}
 ]}'
-MULTIPAGE_GA_P2='{"check_runs":[{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}]}
-{"check_runs":[{"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}}]}'
+# A required name followed by a unit separator and the github-actions slug,
+# under a null app, beside the other 3 required checks green. A reader that took
+# the name and slug from the name text (as the earlier shell reader, which split
+# delimited records, could be made to) would see all 4 and call the reading
+# green; the tool takes the slug only from the app object, so Plugin manifests
+# stays missing.
+FORGE_US="$(runs '{"status":"completed","conclusion":"success","name":"Plugin manifests\u001fgithub-actions","app":null}' "$SD_OK" "$APM_OK" "$CF")"
+# The same with a newline and a whole forged record (status, conclusion, name,
+# slug) after it, under an app whose slug is null.
+FORGE_NL_US="$(runs '{"status":"completed","conclusion":"success","name":"benign\ncompleted\u001fsuccess\u001fPlugin manifests\u001fgithub-actions","app":{"slug":null}}' "$SD_OK" "$APM_OK" "$CF")"
+MULTIPAGE_GA_P2="$(runs "$CF")
+$(runs "$REQ_GA")"
 # A page whose check_runs is null (malformed) followed by a green page: the whole
 # reading must be rejected, not confirmed from the good page alone.
 MALFORMED_PAGE='{"check_runs":null}
@@ -85,15 +119,23 @@ FALSE_FIELD='{"check_runs":[{"status":"completed","conclusion":"success","name":
 NONARRAY='{"check_runs":{"only":{"status":"completed","conclusion":"success","name":"good","app":{"slug":"github-actions"}}}}'
 
 # run_case NAME DEFAULT ALT PLAN WANT [EXTRA ci-status ARGS...]
+# The commit read is CASE_SHA when it is set, else the zero sha. When CASE_NEEDLE
+# is set, standard error must contain it as a fixed string. When CASE_ONLY_CALLS
+# is set, every gh call must be exactly the paginated check-runs read of that
+# commit. The fake gh logs every call and answers a commit-status route with a
+# green body, so a tool that consulted commit statuses would see a pass there.
 run_case() {
   local name="$1" def="$2" alt="$3" plan="$4" want="$5"; shift 5
+  local sha="${CASE_SHA:-0000000000000000000000000000000000000000}"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$def" > "$tmp/def.json"
   printf '%s' "$alt" > "$tmp/alt.json"
   printf '%s' "$plan" > "$tmp/plan"
+  : > "$tmp/calls"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$tmp/calls"
 case "\$*" in
   *check-runs*)
     n_file="$tmp/n"
@@ -112,21 +154,39 @@ case "\$*" in
       *) cat "$tmp/def.json" ;;
     esac
     ;;
+  */status*) printf '{"state":"success","statuses":[{"state":"success","context":"Plugin manifests"}]}' ;;
   *"repo view"*) printf 'owner/name' ;;
   *) printf '' ;;
 esac
 GH
   chmod +x "$bin/gh"
-  PATH="$bin:$PATH" bash "$ci" 0000000000000000000000000000000000000000 \
-    --repo owner/name --interval 1 "$@" >/dev/null 2>&1
-  local got=$?
-  if [ "$got" -eq "$want" ]; then
+  PATH="$bin:$PATH" bash "$ci" "$sha" \
+    --repo owner/name --interval 1 "$@" >/dev/null 2>"$tmp/err"
+  local got=$? why=""
+  if [ "$got" -ne "$want" ]; then why="$why exit"; fi
+  if [ -n "${CASE_NEEDLE:-}" ] && ! grep -q -F -- "$CASE_NEEDLE" "$tmp/err"; then
+    why="$why message"
+  fi
+  if [ -n "${CASE_ONLY_CALLS:-}" ]; then
+    local only="api repos/owner/name/commits/${sha}/check-runs --paginate"
+    if [ ! -s "$tmp/calls" ] || grep -q -v -x -F -- "$only" "$tmp/calls"; then why="$why calls"; fi
+  fi
+  if [ -z "$why" ]; then
     printf 'ok   %s (exit %s)\n' "$name" "$got"
   else
-    printf 'FAIL %s (got %s, want %s)\n' "$name" "$got" "$want"; fails=$((fails + 1))
+    printf 'FAIL %s (got %s, want %s;%s)\n' "$name" "$got" "$want" "$why"; fails=$((fails + 1))
   fi
   rm -rf "$tmp"
 }
+
+# run_err_case NAME PAYLOAD WANT NEEDLE: one reading of PAYLOAD must exit WANT
+# with NEEDLE on standard error.
+run_err_case() { local CASE_NEEDLE="$4"; run_case "$1" "$2" "" "" "$3"; }
+# run_log_case NAME PAYLOAD WANT: one reading of PAYLOAD must exit WANT, and the
+# only gh call made must be the paginated check-runs read of the commit, so
+# neither a commit-status read nor a check-runs filter can stand in for a
+# required check.
+run_log_case() { local CASE_ONLY_CALLS=1; run_case "$1" "$2" "" "" "$3"; }
 
 # run_timed_case NAME PAYLOAD MAX_SECONDS WANT EXTRA...
 run_timed_case() {
@@ -261,38 +321,47 @@ GH
 }
 
 
-run_case "github-actions check present -> green" "$GA_PRESENT" "" "" 0
+run_case "all 4 required checks present -> green" "$GA_PRESENT" "" "" 0
 run_case "only external check, no github-actions -> not green" "$CLOUDFLARE_ONLY" "" "" 2
-run_case "unfinished github-actions check -> not green" "$GA_IN_PROGRESS" "" "" 2
+run_case "unfinished required check -> not green" "$GA_IN_PROGRESS" "" "" 2
 run_case "unreadable check-runs read -> not green" "$GA_PRESENT" "" "f" 3
 run_case "failed read between green reads does not confirm" "$GA_PRESENT" "" "g f g f" 3 --wait --timeout 8
 run_case "transient read failures on a stable set still confirm green" "$GA_PRESENT" "" "g f g f g f g f g f g g" 0 --wait --timeout 30
 run_case "reordered identical check set still confirms green" "$GA_PRESENT" "$GA_REVERSED" "g a g a g a" 0
-# A completed check with no conclusion must stay non-green; the unit separator
-# preserves the empty conclusion field rather than collapsing it into the name.
+# A completed check with no conclusion must stay non-green: a null conclusion
+# reads as empty, which is not a passing conclusion, so the reading is red.
 run_case "completed check with null conclusion is not green" "$EMPTY_CONCLUSION" "" "" 1
-# Control characters in a name are stripped before serialization, so US bytes in a
-# name cannot forge a github-actions slug: not green.
+# The tool strips nothing from a name: it compares the whole string, control
+# characters included, and takes the slug only from the app object. These 2
+# readings carry none of the 3 required names, so they stay pending whatever a
+# reader does with control characters; they pin only that such text does not
+# turn a reading red or unreadable.
 run_case "text in a name cannot fabricate github-actions presence" "$INJECT_US" "" "" 2
-# A newline plus separators in a name cannot forge a github-actions record on a new
-# line: control characters are stripped, so it stays one field: not green.
 run_case "newline and text in a name cannot fabricate presence" "$INJECT_NL_US" "" "" 2
-# The sole github-actions check is on page 2 of a paginated payload; read_checks
-# parses every page of the concatenated stream, so it is seen: green.
-run_case "github-actions only on page 2 of a paginated payload -> green" "$MULTIPAGE_GA_P2" "" "" 0
-# read_checks must request --paginate: the fake emits page 2 (the sole
-# github-actions check) only when --paginate is passed, so a tool that drops it
-# would miss it and not be green.
-run_paginate_case "read_checks paginates to see a page-2 github-actions check -> green" "$CLOUDFLARE_ONLY" '{"check_runs":[{"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}}]}' 0
+# These 2 carry a required name with separators and a slug appended, under a
+# null app or a null slug, beside the other 3 required checks green, so a reader
+# that took the name or slug from the name text would read green (exit 0); the
+# tool reads Plugin manifests as missing and names it.
+run_err_case "required name with a separator and slug under a null app does not count" \
+  "$FORGE_US" 2 "required check(s) Plugin manifests not registered"
+run_err_case "required name in a forged record after a newline does not count" \
+  "$FORGE_NL_US" 2 "required check(s) Plugin manifests not registered"
+# The 3 required github-actions checks are on page 2 of a paginated payload;
+# read_checks parses every page of the concatenated stream, so they are seen: green.
+run_case "required github-actions checks only on page 2 of a paginated payload -> green" "$MULTIPAGE_GA_P2" "" "" 0
+# read_checks must request --paginate: the fake emits page 2 (the 3 required
+# github-actions checks) only when --paginate is passed, so a tool that drops it
+# would miss them and not be green.
+run_paginate_case "read_checks paginates to see page-2 required checks -> green" "$CLOUDFLARE_ONLY" "$(runs "$REQ_GA")" 0
 # Duplicate check_runs members: JSON keeps the last, so a naive parser would hide
 # the failing run. Must be rejected as ambiguous.
 DUP_KEY='{"check_runs":[{"status":"completed","conclusion":"failure","name":"required","app":{"slug":"external"}}],"check_runs":[{"status":"completed","conclusion":"success","name":"ga","app":{"slug":"github-actions"}}]}'
 # A page declaring total_count 2 but delivering one run (truncation): the missing
 # run could be failing, so the reading must be rejected.
 TRUNCATED='{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success","name":"ga","app":{"slug":"github-actions"}}]}'
-# github-actions present but the required Cloudflare Pages check ABSENT: not green
-# until the required check registers.
-MISSING_CLOUDFLARE='{"total_count":1,"check_runs":[{"status":"completed","conclusion":"success","name":"pm","app":{"slug":"github-actions"}}]}'
+# The 3 required github-actions checks present but the required Cloudflare Pages
+# check ABSENT: not green until the required check registers.
+MISSING_CLOUDFLARE="{\"total_count\":3,\"check_runs\":[${REQ_GA}]}"
 # A duplicate check-run id pads the list to match total_count while hiding a run.
 DUP_ID='{"total_count":3,"check_runs":[{"id":1,"status":"completed","conclusion":"success","name":"pm","app":{"slug":"github-actions"}},{"id":2,"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}},{"id":2,"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}]}'
 # total_count present as an explicit null is malformed.
@@ -306,17 +375,10 @@ NONOBJ_APP='{"total_count":2,"check_runs":[{"status":"completed","conclusion":"s
 SURROGATE='{"total_count":1,"check_runs":[{"status":"completed","conclusion":"success","name":"\ud800","app":{"slug":"github-actions"}}]}'
 # A green reading with an EXTRA passing check: a different set than GA_PRESENT
 # (both carry the required checks), used to exercise a changing-but-green set.
-GA_PLUS_EXTRA='{"check_runs":[
-  {"status":"completed","conclusion":"success","name":"pm","app":{"slug":"github-actions"}},
-  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}},
-  {"status":"completed","conclusion":"success","name":"extra","app":{"slug":"github-actions"}}
-]}'
+GA_PLUS_EXTRA="$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"success","name":"extra","app":{"slug":"github-actions"}}')"
 # The REAL Cloudflare app slug on this repository is cloudflare-workers-and-pages,
 # not cloudflare-pages; the required-check match is by the "cloudflare" prefix.
-REAL_CLOUDFLARE='{"check_runs":[
-  {"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}},
-  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages"}}
-]}'
+REAL_CLOUDFLARE="$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages"}}')"
 # A digit-only timeout with a leading zero (08) is base-10, not octal: it does not
 # error, and a green commit still confirms green.
 run_case "leading-zero timeout is base 10, not octal -> green" "$GA_PRESENT" "" "" 0 --wait --timeout 08
@@ -351,8 +413,8 @@ run_case "non-ASCII digit timeout is rejected as usage" "$GA_PRESENT" "" "" 3 --
 run_bytes_case "non-UTF-8 output is rejected fail-closed" 3
 # A gh read that would exceed the wait deadline is bounded and fails closed.
 run_slow_case "gh read exceeding the wait deadline is not green" 3
-# The required Cloudflare Pages check absent -> not green even with a green
-# github-actions check (a partial reading is not confirmed).
+# The required Cloudflare Pages check absent -> not green even with the 3 required
+# github-actions checks green (a partial reading is not confirmed).
 run_case "required Cloudflare check absent -> not green" "$MISSING_CLOUDFLARE" "" "" 2
 # A duplicate check-run id must not pad the count to hide a run.
 run_case "duplicate check-run id is rejected fail-closed" "$DUP_ID" "" "" 3
@@ -364,6 +426,8 @@ run_case "inconsistent total_count presence is rejected fail-closed" "$INCONSIST
 run_case "non-object app is rejected fail-closed" "$NONOBJ_APP" "" "" 3
 # A lone surrogate in a name fails closed, it does not crash the report.
 run_case "unencodable name is rejected fail-closed" "$SURROGATE" "" "" 3
+run_err_case "an unencodable name is named on standard error" "$SURROGATE" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: check field name is not encodable text"
 # A nonzero gh exit with a green body on stdout is rejected by the returncode guard.
 run_rc_case "green body with nonzero gh exit is rejected fail-closed" 3
 # In --wait mode a changing-but-green set must NOT give up at the changing-set cap
@@ -377,6 +441,366 @@ run_case "zero-timeout wait window fails closed" "$GA_IN_PROGRESS" "" "" 3 --wai
 run_case "real cloudflare-workers-and-pages slug satisfies the required check" "$REAL_CLOUDFLARE" "" "" 0
 run_timed_case "wait stops near the deadline, not a whole interval past it" "$GA_IN_PROGRESS" 4 2 --wait --timeout 2 --interval 5
 
+# Row 66: the required set is the 3 named GitHub Actions jobs and the Cloudflare
+# build. An Actions job counts only when a run carries its exact display name and
+# the github-actions app slug; every run, duplicates included, still feeds the
+# verdict.
+run_case "unnamed github-actions run is not a required check -> not green" "$GENERIC_GA" "" "" 2
+run_case "Plugin manifests missing -> not green" "$(runs "$SD_OK" "$APM_OK" "$CF")" "" "" 2
+run_case "Skill discovery missing -> not green" "$(runs "$PM_OK" "$APM_OK" "$CF")" "" "" 2
+run_case "Agent Plugins manifest missing -> not green" "$(runs "$PM_OK" "$SD_OK" "$CF")" "" "" 2
+run_err_case "a missing required check is named on standard error" "$(runs "$SD_OK" "$APM_OK" "$CF")" 2 \
+  "required check(s) Plugin manifests not registered"
+run_case "required name from another app does not count -> not green" \
+  "$(runs '{"status":"completed","conclusion":"success","name":"Plugin manifests","app":{"slug":"evil-app"}}' "$SD_OK" "$APM_OK" "$CF" \
+  '{"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}}')" "" "" 2
+run_case "required name with a null app does not count -> not green" \
+  "$(runs '{"status":"completed","conclusion":"success","name":"Plugin manifests","app":null}' "$SD_OK" "$APM_OK" "$CF")" "" "" 2
+run_case "required name in another letter case does not count -> not green" \
+  "$(runs '{"status":"completed","conclusion":"success","name":"plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 2
+run_case "required name with a trailing space does not count -> not green" \
+  "$(runs "$PM_OK" '{"status":"completed","conclusion":"success","name":"Skill discovery ","app":{"slug":"github-actions"}}' "$APM_OK" "$CF")" "" "" 2
+run_case "unfinished required check with --wait stays not green at the deadline" "$GA_IN_PROGRESS" "" "" 2 --wait --timeout 2
+run_case "failed required check -> red" \
+  "$(runs '{"status":"completed","conclusion":"failure","name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 1
+run_case "failing impostor of a required name beside the full set -> red" \
+  "$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"failure","name":"Skill discovery","app":{"slug":"evil-app"}}')" "" "" 1
+run_case "failing other run while a required check is missing -> red" \
+  "$(runs "$PM_OK" "$SD_OK" "$CF" '{"status":"completed","conclusion":"failure","name":"check","app":{"slug":"github-actions"}}')" "" "" 1
+# The failing run has the lower id and comes first, so collapsing duplicates to
+# the latest or highest-id run would hide it; every run must still count.
+run_case "duplicate required run with an earlier one failing -> red" \
+  "$(runs "$PM_OK" '{"id":1,"status":"completed","conclusion":"failure","name":"Skill discovery","app":{"slug":"github-actions"}}' \
+  "{\"id\":2,${SD_OK#\{}" "$APM_OK" "$CF")" "" "" 1
+run_case "duplicate required run with both passing -> green" "$(runs "$PM_OK" "$SD_OK" "$SD_OK" "$APM_OK" "$CF")" "" "" 0
+# The first reading lacks Agent Plugins manifest and must be reported as that
+# required check not registered, not taken as the first of 2 green readings.
+CASE_NEEDLE="required check(s) Agent Plugins manifest not registered" \
+  run_case "required check that registers late is waited for -> green" \
+  "$GA_PRESENT" "$(runs "$PM_OK" "$SD_OK" "$CF")" "a g g" 0 --wait --timeout 30
+run_case "Cloudflare build under another name is matched by its app slug -> green" \
+  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Pages build","app":{"slug":"cloudflare-workers-and-pages"}}')" "" "" 0
+# A green commit status is never read: the only gh call is the check-runs read.
+run_log_case "a green commit status never stands in for a missing required check" "$(runs "$SD_OK" "$APM_OK" "$CF")" 2
+run_log_case "a green reading makes only the paginated check-runs call" "$GA_PRESENT" 0
+# A present head_sha must name the commit read; absence is tolerated.
+run_case "head_sha of another commit on one run -> unreadable" \
+  "$(runs "{\"head_sha\":\"$C2\",${PM_OK#\{}" "$SD_OK" "$APM_OK" "$CF")" "" "" 3
+run_case "head_sha equal to the commit read -> green" "$(head_runs '"0000000000000000000000000000000000000000"')" "" "" 0
+CASE_SHA="$C1_UPPER" run_case "head_sha matches an upper-case sha argument -> green" "$(head_runs "\"$C1\"")" "" "" 0
+CASE_SHA="$C1" run_case "upper-case head_sha matches the commit read -> green" "$(head_runs "\"$C1_UPPER\"")" "" "" 0
+run_case "numeric head_sha -> unreadable" "$(head_runs 7)" "" "" 3
+run_case "null head_sha -> unreadable" "$(head_runs null)" "" "" 3
+run_err_case "a null head_sha is named on standard error" "$(head_runs null)" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: missing required field head_sha"
+run_case "empty head_sha -> unreadable" "$(head_runs '""')" "" "" 3
+
+# The declared required names follow the workflows, and each workflow runs its
+# job on every pull request and every push to main. wf_shape reads each of the 3
+# workflows with an allow-list that fails closed, in Python with the standard
+# library only, because no YAML parser is guaranteed on the CI image. It accepts
+# only the YAML subset these files use: block mappings and block sequences whose
+# keys are plain unquoted words; scalar values that are plain, or quoted on one
+# line without escapes; a one-line flow list of such scalars; block scalars (| or
+# >, with an optional chomping indicator), whose content is every following line
+# indented more than the column of the key that opened the block, so for
+# "- run: |" the column of run, not of the dash; and comments. Any other line,
+# such as a quoted, anchored, aliased, tagged, explicit or merge key, a flow
+# mapping, a duplicate key, a tab or a non-ASCII character, fails the check and
+# is named by its line number. A failure of the checker itself, a workflow that
+# is missing or cannot be read as UTF-8 text, or a workflow with no line other
+# than blank lines and comments, also fails the check, and is named
+# shape-check-error, unreadable-workflow or empty-workflow, not by a line number,
+# so no report names a line past the end of the file. Within that subset the
+# top level holds only name, on, permissions, env and jobs. The on: block holds
+# only a pull_request trigger with nothing under it and a push
+# trigger filtered to main alone. The permissions block is exactly contents:
+# read. A top-level env, if present, holds only CLAUDE_CODE_VERSION, set to a
+# dotted version number such as 2.1.310, which cannot change whether or how a
+# step runs, so no BASH_ENV, ENV, SHELLOPTS or BASHOPTS can turn every step into
+# a no-op. The job with the declared display name holds only name, runs-on set
+# to ubuntu-latest, and steps, so no env:, if:, needs:, defaults: or container:
+# key. Each step holds an optional name and either uses: naming an owner/repo
+# action pinned to a full 40-character commit sha, never a local ./ action or a
+# docker:// image, or run: with shell: bash, never another shell or a custom
+# shell command, and nothing else, so no env:, if: or continue-on-error: key. So
+# nothing set in the workflow can skip the job or its steps, or pass over a
+# failed step. A job skipped by an if:, or by a failed job it needs, concludes
+# skipped, and a step skipped by an if: or allowed to fail leaves the job
+# successful; ci-status.py counts skipped and success as passing, so such a job
+# would read green without running its checks. The job display name is also the
+# only 4-space-indented name: line, and it equals the name that ci-status.py
+# declares. A renamed job, a filter that leaves a commit without the check, or
+# any key or line outside that shape fails here, instead of turning every read
+# into a forever-pending one or a false green. Residual: what the commands the
+# steps run and the pinned actions do, including anything they write for later
+# steps, such as a BASH_ENV line in the GITHUB_ENV file, and what the other
+# jobs of the workflow run, are not checked, so a step changed to do nothing
+# still reads green.
+# wf_shape FILE JOB: print a word for each shape problem found, nothing if none.
+# A line outside the subset, a file that cannot be read as UTF-8, or a file with
+# no line other than blank lines and comments, ends the check with that one word;
+# a failure of the checker itself exits non-zero with nothing on standard output.
+wf_shape() {
+  python3 -I - "$1" "$2" <<'PY'
+import re
+import sys
+
+path, job = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.read().split("\n")
+except (OSError, UnicodeDecodeError):
+    print("unreadable-workflow")
+    sys.exit(0)
+
+KEY = r"[A-Za-z_][A-Za-z0-9_-]*"
+COMMENT = r"(?:\s+#.*)?"
+QUOTED = r"""(?:"[^"\\]*"|'[^']*')"""
+# The only forms accepted for the CLAUDE_CODE_VERSION value and for a uses:
+# value, matching what the 3 workflows use today.
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+PINNED_ACTION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*@[0-9a-f]{40}")
+PLAIN = r"[A-Za-z0-9_$./][^#]*?"
+WORD = r"""(?:[A-Za-z0-9_./-]+|"[^"\\,\[\]{}]*"|'[^',\[\]{}]*')"""
+ENTRY = re.compile("(" + KEY + "):(?: (.*))?")
+BLOCK = re.compile(r"[|>][+-]?" + COMMENT)
+FLOW = re.compile(r"\[\s*(" + WORD + r"(?:\s*,\s*" + WORD + r")*)\s*\]" + COMMENT)
+VALUE = re.compile("(" + QUOTED + "|" + PLAIN + ")" + COMMENT)
+
+
+class Refused(Exception):
+    pass
+
+
+def indent(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+class Reader:
+    """A reader for the YAML subset above; anything outside it raises Refused."""
+
+    def __init__(self, lines):
+        self.lines, self.i = lines, 0
+
+    def fail(self, word="unrecognized-line"):
+        raise Refused(f"{word}-{self.i + 1}")
+
+    def peek(self):
+        # The indent of the next line that is neither blank nor a comment.
+        while self.i < len(self.lines):
+            s = self.lines[self.i].strip()
+            if s and not s.startswith("#"):
+                return indent(self.lines[self.i])
+            self.i += 1
+        return None
+
+    def scalar(self, value):
+        m = VALUE.fullmatch(value)
+        if not m:
+            self.fail()
+        s = m.group(1).rstrip()
+        if s[0] in "\"'":
+            return s[1:-1]
+        if ": " in s or s.endswith(":"):
+            self.fail()
+        return s
+
+    def node(self):
+        col = self.peek()
+        rest = self.lines[self.i][col:]
+        if rest == "-" or rest.startswith("- "):
+            return self.sequence(col)
+        return self.mapping(col, {})
+
+    def sequence(self, col):
+        items = []
+        while self.peek() == col:
+            line = self.lines[self.i]
+            if not line[col:].startswith("- "):
+                self.fail()
+            rest = line[col + 2:]
+            if re.match(KEY + ":(?: |$)", rest):
+                item = {}
+                self.entry(col + 2, rest, item)
+                items.append(self.mapping(col + 2, item))
+            else:
+                items.append(self.scalar(rest))
+                self.i += 1
+        if (self.peek() or 0) > col:
+            self.fail()
+        return items
+
+    def mapping(self, col, found):
+        while self.peek() == col:
+            self.entry(col, self.lines[self.i][col:], found)
+        if (self.peek() or 0) > col:
+            self.fail()
+        return found
+
+    def entry(self, col, rest, found):
+        # col is the column of the key, also for the first key of "- key: ...".
+        m = ENTRY.fullmatch(rest)
+        if not m:
+            self.fail()
+        key, value = m.group(1), (m.group(2) or "").strip()
+        if key in found:
+            self.fail("duplicate-key")
+        if not value or value.startswith("#"):
+            self.i += 1
+            found[key] = self.node() if (self.peek() or 0) > col else None
+        elif BLOCK.fullmatch(value):
+            self.i += 1
+            self.block(col)
+            found[key] = "block scalar"
+        elif value.startswith("["):
+            f = FLOW.fullmatch(value)
+            if not f:
+                self.fail()
+            found[key] = [self.scalar(w) for w in re.split(r"\s*,\s*", f.group(1))]
+            self.i += 1
+        else:
+            found[key] = self.scalar(value)
+            self.i += 1
+
+    def block(self, col):
+        # Block scalar content: every following line that is blank or indented
+        # more than the key column; a later line less indented than the first
+        # content line, but still past the key column, is refused.
+        first = None
+        while self.i < len(self.lines):
+            line = self.lines[self.i]
+            if line.strip():
+                if indent(line) <= col:
+                    return
+                if first is None:
+                    first = indent(line)
+                elif indent(line) < first:
+                    self.fail()
+            self.i += 1
+
+
+reader = Reader(lines)
+try:
+    for n, line in enumerate(lines):
+        if re.search(r"[^\x20-\x7e]", line):
+            reader.i = n
+            reader.fail("character-line")
+    # peek() runs off the end of a file holding only blank lines and comments,
+    # so name that case rather than cite a line past the end of the file.
+    first = reader.peek()
+    if first is None:
+        raise Refused("empty-workflow")
+    if first != 0:
+        reader.fail()
+    tree = reader.mapping(0, {})
+    if reader.peek() is not None:
+        reader.fail()
+except Refused as err:
+    print(err)
+    sys.exit(0)
+
+
+found = []
+for key in tree:
+    if key not in ("name", "on", "permissions", "env", "jobs"):
+        found.append("top-key-" + key)
+if not isinstance(tree.get("name"), str):
+    found.append("top-shape-name")
+if tree.get("permissions") != {"contents": "read"}:
+    found.append("top-shape-permissions")
+if "env" in tree:
+    env = tree["env"]
+    if not isinstance(env, dict) or not env:
+        found.append("top-shape-env")
+    else:
+        for key, value in env.items():
+            if key != "CLAUDE_CODE_VERSION":
+                found.append("env-key-" + key)
+            elif not isinstance(value, str) or not VERSION.fullmatch(value):
+                found.append("env-value-" + key)
+on = tree.get("on")
+if not isinstance(on, dict) or set(on) != {"pull_request", "push"}:
+    found.append("on-block")
+else:
+    if on["pull_request"] is not None:
+        found.append("pull-request-filter")
+    if on["push"] != {"branches": ["main"]}:
+        found.append("push-filter")
+jobs = tree.get("jobs")
+named = [v for v in jobs.values() if isinstance(v, dict) and v.get("name") == job] if isinstance(jobs, dict) else []
+if len(named) != 1:
+    found.append("job-block")
+else:
+    body = named[0]
+    for key in body:
+        if key not in ("name", "runs-on", "steps"):
+            found.append("job-key-" + key)
+    if body.get("runs-on") != "ubuntu-latest":
+        found.append("job-shape-runs-on")
+    steps = body.get("steps")
+    if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) for s in steps):
+        found.append("job-shape-steps")
+    else:
+        for step in steps:
+            for key, value in step.items():
+                if key not in ("name", "uses", "shell", "run"):
+                    found.append("step-key-" + key)
+                elif not isinstance(value, str):
+                    found.append("step-shape-" + key)
+            # Either a pinned remote action alone, or a run: under exactly bash.
+            if "uses" in step:
+                if "run" in step or "shell" in step:
+                    found.append("step-shape-uses-with-run")
+                if not isinstance(step["uses"], str) or not PINNED_ACTION.fullmatch(step["uses"]):
+                    found.append("step-value-uses")
+            elif "run" in step:
+                if step.get("shell") != "bash":
+                    found.append("step-value-shell")
+            else:
+                found.append("step-shape-empty")
+print(" ".join(dict.fromkeys(found)))
+PY
+}
+wf_dir="${here}/../.github/workflows"
+for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill discovery" \
+  "agent-plugin-manifest.yml:Agent Plugins manifest"; do
+  wf="${pair%%:*}" job="${pair#*:}" why=""
+  if [ ! -f "$wf_dir/$wf" ] || [ ! -r "$wf_dir/$wf" ]; then
+    why=" unreadable-workflow"
+  else
+    if [ "$(grep -E '^    name: ' "$wf_dir/$wf")" != "    name: $job" ]; then why="$why job-name"; fi
+    if grep -q -E '^[[:space:]]*(paths|paths-ignore|branches-ignore):' "$wf_dir/$wf"; then why="$why trigger-filter"; fi
+    shape="$(wf_shape "$wf_dir/$wf" "$job")" || why="$why shape-check-error"
+    if [ -n "$shape" ]; then why="$why $shape"; fi
+  fi
+  if [ "$(grep -c -F "_actions_job(\"$job\")" "${here}/ci-status.py")" != 1 ]; then why="$why declared"; fi
+  if [ -z "$why" ]; then
+    printf 'ok   required check %s follows %s\n' "$job" "$wf"
+  else
+    printf 'FAIL required check %s follows %s (%s)\n' "$job" "$wf" "${why# }"; fails=$((fails + 1))
+  fi
+done
+
+# A workflow with no line other than blank lines and comments is named
+# empty-workflow, never by a line number past the end of the file.
+# run_empty_shape_case NAME CONTENT: wf_shape on a file holding exactly CONTENT
+# (printf format) must print empty-workflow and nothing else.
+run_empty_shape_case() {
+  local name="$1" tmp got
+  tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  printf "$2" > "$tmp/wf.yml"
+  if got="$(wf_shape "$tmp/wf.yml" "Skill discovery")" && [ "$got" = "empty-workflow" ]; then
+    printf 'ok   %s\n' "$name"
+  else
+    printf 'FAIL %s (got %s)\n' "$name" "$got"; fails=$((fails + 1))
+  fi
+  rm -rf "$tmp"
+}
+run_empty_shape_case "an empty workflow file is named empty-workflow" ""
+run_empty_shape_case "a workflow of one blank line is named empty-workflow" "\n"
+run_empty_shape_case "a workflow of blank lines and comments is named empty-workflow" "\n# a comment\n  \n"
+
 # Commit sha and repository contract (backlog row 86). The tool accepts only a
 # full 40-character hexadecimal sha and makes no local git call, so no case needs
 # a git repository. Each case copies ci-status.sh and ci-status.py into a
@@ -385,9 +809,7 @@ run_timed_case "wait stops near the deadline, not a whole interval past it" "$GA
 # every call, and snapshots the tool output at its first call. The fake gh repo
 # view answers with GH_REPO when that variable reaches it, else with the VIEW
 # value (FAIL makes it exit 1), so a leaked GH_REPO changes the path read.
-C1=0c83f120fcc4630694465bcf89f7415a21d54dba
-C1_UPPER=0C83F120FCC4630694465BCF89F7415A21D54DBA
-C2=1111111111111111111111111111111111111111
+# C1, C1_UPPER and C2 are set at the top of this file.
 NL="$(printf "\n.")"; NL="${NL%.}"
 
 # run_contract_case NAME WANT EXPECT REPO VIEW ENVSPEC CHECKS [ci-status ARGS...]
