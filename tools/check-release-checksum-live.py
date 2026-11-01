@@ -76,9 +76,10 @@ Exit codes:
      not exactly true, the release SKILL.md names returns a status other than
      200 or 404, or the tag exists with no published release)
   3  a required file could not be read, the SKILL.md Released line is
-     malformed, or a call of tools/skill-release-date.py, which runs in a
+     malformed, a call of tools/skill-release-date.py, which runs in a
      child process, did not give a result the gate could accept (see
-     run_release_date_child)
+     run_release_date_child), or SIGCHLD could not be reset to its default
+     disposition (see reset_sigchld)
 
 The release-date check and the site-checksum comparison both run and both
 are reported when the release the site names is published, including when its
@@ -93,6 +94,13 @@ exactly true: both are reported and the more severe 2 wins. The extractor is pro
 probe that ends in exit 3 is reported and contributes 3 while the checksum
 comparison still runs and reports. The gate then exits with the most severe code, the highest
 one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not complete.
+
+Before it starts any child, main resets SIGCHLD to its default
+disposition (reset_sigchld), because an ignored SIGCHLD, inherited across
+exec from the caller, makes the kernel reap each child as it ends, so the gate
+could not see an extractor child end, and the exit status of a gh child would
+be lost. The verdict therefore does not depend on that inherited state; when
+the reset fails, the gate exits 3 before it starts any child.
 
 The extractor runs in a separate python3 -I child for each call
 (run_release_date_child), so extractor code never runs in this process, and
@@ -457,6 +465,22 @@ def release_date_call(name: str, *args):
     if reply["outcome"] == "absent":
         return None
     return reply["value"]
+
+
+def reset_sigchld() -> None:
+    """Reset SIGCHLD to its default disposition before the gate starts any
+    child. An ignored SIGCHLD, inherited across exec from the caller, makes
+    the kernel reap each child as it ends, so os.waitid would report ECHILD
+    for every extractor child and the exit status of a gh child would be
+    lost. Exits 3 when the disposition cannot be reset, as in a thread other
+    than the main thread (ValueError) or on an OSError."""
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    except (OSError, ValueError) as error:
+        _unavailable(
+            f"could not reset SIGCHLD to its default disposition ({type(error).__name__}: {error}), "
+            f"so the end of a child could be lost"
+        )
 
 
 def probe_release_date_tool() -> int:
@@ -973,10 +997,12 @@ def check_site_checksum(load_code: int = 0) -> int:
 
 
 def main() -> int:
-    """Run the gate. The extractor is probed here, inside the protected path,
-    so a probe that ends in exit 3 contributes 3 while the checksum comparison
-    still runs and reports; the most severe code wins (3 over 2 over 1 over
-    0)."""
+    """Run the gate. SIGCHLD is reset first, before any child starts (see
+    reset_sigchld). The extractor is then probed here, inside the protected
+    path, so a probe that ends in exit 3 contributes 3 while the checksum
+    comparison still runs and reports; the most severe code wins (3 over 2
+    over 1 over 0)."""
+    reset_sigchld()
     load_code = probe_release_date_tool()
     try:
         code = check_site_checksum(load_code)

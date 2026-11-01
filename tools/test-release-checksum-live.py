@@ -177,9 +177,13 @@ class ConditionalPassTest(unittest.TestCase):
             gate.release_status, gate.tag_status, gate.gh,
             gate.release_published_at, gate.release_immutable,
         )
-        # Row 80: a test may point the gate at a fake extractor or shorten
-        # the child timeout; both are restored after it.
-        self._saved_child = (gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS)
+        # Row 80: a test may point the gate at a fake extractor, shorten
+        # the child timeout or the reap grace, or change the output bounds;
+        # each is restored after it.
+        self._saved_child = (
+            gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS,
+            gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT,
+        )
         root = Path(self._tmp.name)
         gate.REPO_ROOT = root
         gate.VERIFY_PAGE = root / "index.html"
@@ -194,7 +198,8 @@ class ConditionalPassTest(unittest.TestCase):
         (gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL, gate.release_status,
          gate.tag_status, gate.gh, gate.release_published_at,
          gate.release_immutable) = self._saved
-        gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS = self._saved_child
+        (gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS,
+         gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT) = self._saved_child
         self._tmp.cleanup()
 
     def fake_extractor(self, body):
@@ -1719,6 +1724,8 @@ class ConditionalPassTest(unittest.TestCase):
              "its outcome is not value, absent, or malformed"),
             ("an outcome that is not a string", "extract", {"op": "extract", "outcome": 1},
              "its outcome is not value, absent, or malformed"),
+            ("an outcome that is a list", "extract", {"op": "extract", "outcome": ["value"]},
+             "its outcome is not value, absent, or malformed"),
             ("the wrong op echoed", "extract", {"op": "baseline", "outcome": "value", "value": day},
              "it answers an op other than extract"),
             ("an op that is not a string", "extract", {"op": 1, "outcome": "value", "value": day},
@@ -1871,6 +1878,7 @@ class ConditionalPassTest(unittest.TestCase):
             ("byte order mark in a key-like line", valid + "\ufeffReleased: 2026-11-01\n"),
             ("text outside the basic plane", valid + "\U0001f600\n"),
             ("no line", f"Version: {AHEAD}\n"),
+            ("a lone surrogate, carried only by ASCII escaping", valid + "\ud800\n"),
             ("a 2 MB valid text", big),
         )
         self.assertGreater(len(big), 2 * 1024 * 1024)
@@ -1904,8 +1912,8 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertNotIn("unavailable", err.getvalue())
 
     def test_a_child_that_cannot_be_started_exits_3(self):
-        # Row 80: a spawn failure, or an interpreter path that is empty or
-        # relative, exits 3 as unavailable without running anything.
+        # Row 80: a spawn failure, or an interpreter path that is empty,
+        # None, or relative, exits 3 as unavailable without running anything.
         gate.RELEASE_DATE_TOOL = Path(self._tmp.name) / "no-such-directory" / "skill-release-date.py"
         result, err = self.call_reports("baseline")
         self.assertEqual(result, ("exit", 3), err)
@@ -1914,7 +1922,7 @@ class ConditionalPassTest(unittest.TestCase):
         ), err)
         self.assertTrue(err.endswith(" in baseline, so the extractor is unavailable\n"), err)
         gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
-        for executable in ("", "python3"):
+        for executable in ("", None, "python3"):
             with self.subTest(executable=executable):
                 saved = sys.executable
                 sys.executable = executable
@@ -2533,7 +2541,13 @@ class ConditionalPassTest(unittest.TestCase):
             kills.append((pgid, sig))
             real_killpg(pgid, sig)
 
+        guard = time.monotonic()
+
         def hidden(idtype, ident, options):
+            # Fix round 6: a gate whose waits had no bound would poll for
+            # ever; it fails here instead of hanging the suite.
+            if time.monotonic() - guard > 30:
+                raise AssertionError("the gate polled for more than 30 seconds")
             if options & os.WNOHANG:
                 return None
             return real_waitid(idtype, ident, options)
@@ -2570,8 +2584,21 @@ class ConditionalPassTest(unittest.TestCase):
         # malformed handlers in skill_released, released_line, and
         # check_release_date, and the baseline in
         # report_missing_released_line) is pinned here through main, with its
-        # exact exit and output, so removing any one of them fails this test.
-        matches = f"The verify page checksum {ZIP_SUM} matches the published cleanlanguage-{AHEAD}.zip for release v{AHEAD}."
+        # exact exit and output. Fix round 6 (DISCOVERY round 5, finding 2):
+        # every value the gate takes from the extractor here, the extracted
+        # day, the baseline rule, the published day, and the baseline itself,
+        # is also given by a fake extractor that answers differently from the
+        # real one (a baseline of 1.0.20, not 1.0.14), so a gate that put
+        # today's real answer in place of any of these calls fails this test
+        # as well as one that dropped a handler. Run as a mutation sweep,
+        # each of those mutants fails here.
+        def site_matches(version):
+            return (f"The verify page checksum {ZIP_SUM} matches the published cleanlanguage-{version}.zip "
+                    f"for release v{version}.")
+
+        matches = site_matches(AHEAD)
+        later = "1.0.21"
+        other_baseline = extractor_with("BASELINE_VERSION = \"1.0.20\"\n")
         missing = [
             "Release date inconsistency found:",
             f"  - release v{AHEAD} is published",
@@ -2617,6 +2644,28 @@ class ConditionalPassTest(unittest.TestCase):
                  f"orchestrator's post-release site flip (tools/set-release-links.py with checksum {ZIP_SUM}); "
                  f"see the release runbook.",
              ], [PROBE_FAILED])),
+            ("a baseline other than today's: the missing line names it", other_baseline, ZIP_SUM, later, None,
+             "2026-11-15T09:30:00Z",
+             (1, [
+                 "Release date inconsistency found:",
+                 f"  - release v{later} is published",
+                 f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {later}, above the undated baseline "
+                 f"1.0.20, but has no Released: line",
+                 site_matches(later),
+             ], [])),
+            ("a baseline other than today's: a version at or below it needs no line", other_baseline, ZIP_SUM,
+             AHEAD, None, "2026-11-15T09:30:00Z",
+             (0, [matches], [])),
+            ("a published day other than today's reading of published_at", extractor_with(
+                "def release_day_from_published_at(value):\n    return \"2026-11-16\"\n"
+            ), ZIP_SUM, AHEAD, "Released: 2026-11-16", "2026-11-15T09:30:00Z",
+             (0, [f"The SKILL.md Released date 2026-11-16 matches the publication day of release v{AHEAD}.",
+                  matches], [])),
+            ("an extracted day other than today's reading of the line", extractor_with(
+                "def extract(text):\n    return \"2026-11-17\"\n"
+            ), ZIP_SUM, AHEAD, "Released: 2026-11-15", "2026-11-17T09:30:00Z",
+             (0, [f"The SKILL.md Released date 2026-11-17 matches the publication day of release v{AHEAD}.",
+                  matches], [])),
         ):
             with self.subTest(label):
                 if extractor is None:
@@ -2627,6 +2676,342 @@ class ConditionalPassTest(unittest.TestCase):
                 self.published(published_at)
                 code, out, err = self.main_reports()
                 self.assertEqual((code, out.splitlines(), err.splitlines()), expected)
+
+
+    # --- Fix round 6: the wait, the reap, and the kill, pinned exactly -------
+
+    def on_fake_clock(self, end_at):
+        """Point the gate at a fake clock that starts at 100 and advances only
+        by the sleeps of the gate, and at an os.waitid that reports the end of
+        the child once that clock reaches ``end_at``. Returns the clock state,
+        the sleeps, the waitid calls, and a function that restores the real
+        clock and waitid. A wait that sleeps more than 10000 times, or reads
+        the clock more than 100000 times, fails instead of hanging."""
+        state = {"now": 100.0, "reads": 0}
+        sleeps, waits = [], []
+        real_time, real_waitid = gate.time, os.waitid
+
+        def monotonic():
+            state["reads"] += 1
+            if state["reads"] > 100000:
+                raise AssertionError("the wait read the clock more than 100000 times")
+            return state["now"]
+
+        def sleep(seconds):
+            if len(sleeps) >= 10000:
+                raise AssertionError("the wait slept more than 10000 times")
+            sleeps.append(seconds)
+            state["now"] += seconds
+
+        def waitid(idtype, ident, options):
+            waits.append((idtype, ident, options))
+            return types.SimpleNamespace(si_pid=ident) if state["now"] >= end_at else None
+
+        gate.time = types.SimpleNamespace(monotonic=monotonic, sleep=sleep)
+        gate.os.waitid = waitid
+
+        def restore():
+            gate.time = real_time
+            gate.os.waitid = real_waitid
+
+        return state, sleeps, waits, restore
+
+    def test_the_wait_polls_within_its_deadline_on_a_fake_clock(self):
+        # Fix round 6 (mutation sweep): _wait_unreaped waits exactly its
+        # timeout argument (here 7.25 seconds, no default of the gate), never
+        # sleeps past the deadline or more than 0.05 seconds at a time,
+        # starts at 1 millisecond and doubles, never sleeps for zero, polls
+        # only with WEXITED, WNOWAIT, and WNOHANG for this pid, and returns
+        # True at the first poll that sees the end.
+        child = types.SimpleNamespace(pid=4242)
+        flags = os.WEXITED | os.WNOWAIT | os.WNOHANG
+        for label, end_at, expected, low, high in (
+            ("no end within the timeout", float("inf"), False, 7.25, 7.25),
+            ("an end after 0.5 seconds", 100.5, True, 0.5, 0.55),
+        ):
+            with self.subTest(label):
+                state, sleeps, waits, restore = self.on_fake_clock(end_at)
+                try:
+                    result = gate._wait_unreaped(child, 7.25)
+                finally:
+                    restore()
+                self.assertIs(result, expected)
+                elapsed = state["now"] - 100.0
+                self.assertGreaterEqual(elapsed, low - 1e-9)
+                self.assertLessEqual(elapsed, high + 1e-9)
+                self.assertEqual(sleeps[:3], [0.001, 0.002, 0.004])
+                self.assertLessEqual(max(sleeps), 0.05)
+                self.assertGreater(min(sleeps), 0)
+                self.assertEqual(set(waits), {(os.P_PID, 4242, flags)})
+                self.assertEqual(len(waits), len(sleeps) + 1)
+
+    def test_the_reap_waits_only_its_grace_on_a_fake_clock(self):
+        # Fix round 6 (mutation sweep): _reap waits at most
+        # REAP_GRACE_SECONDS (here 2.75, no default of the gate) for the end
+        # of the child and names that grace when it sees no end, without
+        # reaping; it reaps once, with Popen.wait, only after it sees the end.
+        gate.REAP_GRACE_SECONDS = 2.75
+        for label, end_at, expected, elapsed, reaped in (
+            ("no end within the grace", float("inf"),
+             "could not be reaped (the gate saw no end of it within 2.75 seconds after its kill)", 2.75, 0),
+            ("an end after 1 second", 101.0, None, None, 1),
+        ):
+            with self.subTest(label):
+                reaps = []
+                child = types.SimpleNamespace(pid=4242, wait=lambda: reaps.append("wait"))
+                state, sleeps, waits, restore = self.on_fake_clock(end_at)
+                try:
+                    result = gate._reap(child)
+                finally:
+                    restore()
+                self.assertEqual(result, expected)
+                self.assertEqual(len(reaps), reaped)
+                if elapsed is not None:
+                    self.assertAlmostEqual(state["now"] - 100.0, elapsed, places=9)
+                else:
+                    self.assertLessEqual(state["now"], 101.05 + 1e-9)
+
+    def kill_reports(self, op, arg, killpg, kill, waitid=None):
+        """Run release_date_call for ``op`` with os.killpg, os.kill, and,
+        when given, os.waitid replaced, recording each os.kill call. Returns
+        (result, stderr, the os.kill calls, the return codes of the children,
+        seconds taken); every child left running is killed and reaped."""
+        procs, kills = [], []
+        real_popen, real_killpg, real_kill, real_waitid = subprocess.Popen, os.killpg, os.kill, os.waitid
+
+        def recording_kill(pid, sig):
+            kills.append((pid, sig))
+            kill(pid, sig)
+
+        gate.subprocess.Popen = self.recording_popen(procs)
+        gate.os.killpg = killpg
+        gate.os.kill = recording_kill
+        if waitid is not None:
+            gate.os.waitid = waitid
+        try:
+            started = time.monotonic()
+            try:
+                result, err = self.call_reports(op, arg)
+            except KeyboardInterrupt:
+                result, err = ("interrupt", None), ""
+            elapsed = time.monotonic() - started
+            returncodes = [proc.returncode for proc in procs]
+        finally:
+            gate.subprocess.Popen = real_popen
+            gate.os.killpg = real_killpg
+            gate.os.kill = real_kill
+            gate.os.waitid = real_waitid
+            for proc in procs:
+                if proc.returncode is None:
+                    proc.kill()
+                    proc.wait()
+        return result, err, [(sig, pid == procs[0].pid) for pid, sig in kills], returncodes, elapsed
+
+    DENIED = PermissionError(errno.EPERM, "Operation not permitted")
+    DENIED_NAMED = "PermissionError: [Errno 1] Operation not permitted"
+    HUNG = "def extract(text):\n    import time\n    time.sleep(300)\n"
+
+    def denied(self, *args):
+        raise self.DENIED
+
+    def test_a_failed_group_kill_kills_the_child_directly_only_when_it_has_not_ended(self):
+        # Fix round 6 (mutation sweep): when the group kill fails, the gate
+        # kills the child itself, with SIGKILL, only when the child has not
+        # ended (after a timeout), and never after a normal end, even when
+        # that kill would fail too; either way it reaps the child it can and
+        # exits 3 naming the group kill.
+        problem = f"could not kill the process group of its child ({self.DENIED_NAMED})"
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        gate.REAP_GRACE_SECONDS = 1
+        for label, body, op, arg, kill, expected_kills, returncodes in (
+            ("after a normal end", None, "baseline", None, os.kill, [], [0]),
+            ("after a normal end, with a direct kill that would fail", None, "baseline", None, self.denied, [], [0]),
+            ("after a timeout", self.HUNG, "extract", "x", os.kill, [(signal.SIGKILL, True)], [-signal.SIGKILL]),
+        ):
+            with self.subTest(label):
+                if body is None:
+                    gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
+                else:
+                    self.fake_extractor(extractor_with(body))
+                result, err, kills, codes, elapsed = self.kill_reports(op, arg, self.denied, kill)
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(problem, op)])
+                self.assertEqual(kills, expected_kills)
+                self.assertEqual(codes, returncodes)
+                self.assertLess(elapsed, 10)
+
+    def test_a_group_kill_that_finds_no_process_still_reaps_the_child(self):
+        # Fix round 6 (mutation sweep): a group kill that reports no such
+        # process (ProcessLookupError) is not a failure: the gate reaps the
+        # ended child and returns its reply. On Linux this cannot happen
+        # while the child is unreaped, as the child leads its own session and
+        # so stays in its group; it is simulated here.
+        def missing(*args):
+            raise ProcessLookupError(errno.ESRCH, "No such process")
+
+        gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
+        result, err, kills, codes, elapsed = self.kill_reports("baseline", None, missing, os.kill)
+        self.assertEqual((result, err), (("value", CURRENT), ""))
+        self.assertEqual(kills, [])
+        self.assertEqual(codes, [0])
+
+    def test_a_failed_direct_kill_still_reaps_a_child_that_has_ended(self):
+        # Fix round 6 (mutation sweep): when the group kill and the direct
+        # kill both fail, the gate does not wait for the child, but a child
+        # that has already ended (here it is killed, and becomes a zombie,
+        # before the direct kill reports its failure) is still reaped by a
+        # non-blocking poll.
+        self.fake_extractor(extractor_with(self.HUNG))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        real_kill = os.kill
+
+        def ends_then_fails(pid, sig):
+            real_kill(pid, signal.SIGKILL)
+            deadline = time.monotonic() + 10
+            while process_state(pid) != "Z" and time.monotonic() < deadline:
+                time.sleep(0.01)
+            raise self.DENIED
+
+        result, err, kills, codes, elapsed = self.kill_reports("extract", "x", self.denied, ends_then_fails)
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            f"could not kill the process group of its child ({self.DENIED_NAMED})", "extract"
+        )])
+        self.assertEqual(kills, [(signal.SIGKILL, True)])
+        self.assertEqual(codes, [-signal.SIGKILL])
+
+    def test_a_failed_group_kill_with_a_hidden_end_leaves_the_child_unreaped(self):
+        # DISCOVERY round 5, finding 1: after a failed group kill and a
+        # direct kill, the reap is bounded by REAP_GRACE_SECONDS like every
+        # other reap. Here os.waitid never reports the end of the child, so
+        # the gate names both the group kill and the reap it could not do,
+        # leaves the child unreaped, and returns within the bounds, where an
+        # unbounded wait would have reaped it.
+        self.fake_extractor(extractor_with(self.HUNG))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        gate.REAP_GRACE_SECONDS = 1
+        real_waitid = os.waitid
+        started = time.monotonic()
+
+        def hidden(idtype, ident, options):
+            # A gate whose waits had no bound would poll for ever; it fails
+            # here instead of hanging the suite.
+            if time.monotonic() - started > 30:
+                raise AssertionError("the gate polled for more than 30 seconds")
+            if options & os.WNOHANG:
+                return None
+            return real_waitid(idtype, ident, options)
+
+        result, err, kills, codes, elapsed = self.kill_reports("extract", "x", self.denied, os.kill, waitid=hidden)
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            f"could not kill the process group of its child ({self.DENIED_NAMED}), and could not be reaped "
+            f"(the gate saw no end of it within 1 seconds after its kill)", "extract"
+        )])
+        self.assertEqual(kills, [(signal.SIGKILL, True)])
+        self.assertEqual(codes, [None])
+        self.assertLess(elapsed, 10)
+
+    def test_an_interrupt_while_waiting_with_a_group_that_cannot_be_killed_exits_3(self):
+        # Fix round 6 (mutation sweep): a KeyboardInterrupt while the gate
+        # waits, when the group cannot be killed, kills the child directly,
+        # as a child that has not ended, reaps it, and exits 3 naming the
+        # group kill instead of passing the interrupt on.
+        self.fake_extractor(extractor_with(self.HUNG))
+        gate.REAP_GRACE_SECONDS = 1
+        real_waitid = os.waitid
+        calls = []
+
+        def interrupted(*args):
+            calls.append(args)
+            if len(calls) == 1:
+                raise KeyboardInterrupt()
+            return real_waitid(*args)
+
+        result, err, kills, codes, elapsed = self.kill_reports(
+            "extract", "x", self.denied, os.kill, waitid=interrupted
+        )
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            f"could not kill the process group of its child ({self.DENIED_NAMED})", "extract"
+        )])
+        self.assertEqual(kills, [(signal.SIGKILL, True)])
+        self.assertEqual(codes, [-signal.SIGKILL])
+        self.assertLess(elapsed, 10)
+
+    def test_the_output_bounds_follow_the_limits_of_the_gate(self):
+        # Fix round 6 (mutation sweep): the stdout bound is RESULT_LIMIT plus
+        # ECHO_BYTES_PER_CHARACTER bytes for each character of the argument,
+        # and at most STDERR_LIMIT bytes of stderr are read and relayed, each
+        # taken from the gate at the call: with limits other than the
+        # defaults (300, 7, and 33), a reply of exactly the bound is
+        # accepted, one byte more is refused naming the bound, the reads ask
+        # for one byte over the bound and for STDERR_LIMIT bytes, and the
+        # relayed stderr is its first 33 bytes, decoded with replacement.
+        gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
+        limit = 300 + 7 * len("xy")
+        valid = b'{"op": "extract", "outcome": "absent"}'
+        padded = valid + b" " * (limit - len(valid))
+        real_temporary_file = tempfile.TemporaryFile
+        for label, output, expected in (
+            ("a reply of exactly the bound", padded, (("value", None), "")),
+            ("a reply one byte over the bound", padded + b" ",
+             (("exit", 3), self.unavailable(f"printed more than {limit} bytes", "extract") + "\n")),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"extract": output}))
+                reads = []
+
+                class Recording:
+                    def __init__(self, real, position):
+                        self._real, self._position = real, position
+
+                    def __getattr__(self, name):
+                        return getattr(self._real, name)
+
+                    def read(self, *args):
+                        reads.append((self._position, args))
+                        return self._real.read(*args)
+
+                    def __enter__(self):
+                        self._real.__enter__()
+                        return self
+
+                    def __exit__(self, *exc):
+                        return self._real.__exit__(*exc)
+
+                made = []
+
+                def factory(*args, **kwargs):
+                    made.append(None)
+                    return Recording(real_temporary_file(*args, **kwargs), len(made) - 1)
+
+                gate.tempfile = types.SimpleNamespace(TemporaryFile=factory)
+                try:
+                    result = self.call_reports("extract", "xy")
+                finally:
+                    gate.tempfile = tempfile
+                self.assertEqual(result, expected)
+                self.assertEqual(sorted(reads), [(1, (limit + 1,)), (2, (33,))])
+        self.fake_extractor(extractor_with(
+            "def json_main():\n"
+            "    sys.stdin.buffer.read()\n"
+            "    sys.stderr.buffer.write(b\"\\xff\" + b\"e\" * 100)\n"
+            "    return 1\n"
+        ))
+        result, err = self.call_reports("extract", "xy")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable("exited 1", "extract") + "; it printed: \ufffd" + "e" * 32])
+
+    def test_a_child_ended_by_a_signal_with_no_name_exits_3_naming_its_number(self):
+        # Fix round 6 (mutation sweep): a signal that has no name in
+        # signal.Signals, here the real-time signal 40, is named by its
+        # number, never a traceback.
+        self.assertNotIn(40, {member.value for member in signal.Signals})
+        self.fake_extractor(extractor_with("def extract(text):\n    import os\n    os.kill(os.getpid(), 40)\n"))
+        result, err = self.call_reports("extract", "x")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable("was killed by signal 40", "extract")])
 
 
 class ModuleLoadTest(unittest.TestCase):
@@ -2963,6 +3348,58 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertEqual(code, 3, err)
                 self.assertIn(f"skill-release-date.py {reason} in extract, so the extractor is unavailable", err)
                 self.assertIn("the gh CLI is not available", err)
+
+    # --- Fix round 6 (DISCOVERY round 5, finding 3): SIGCHLD ----------------
+
+    def test_an_ignored_sigchld_inherited_by_the_gate_keeps_the_verdict(self):
+        # A caller that ignores SIGCHLD passes that disposition across exec,
+        # which makes the kernel reap each child as it ends, so the gate
+        # could never see an extractor child end and would exit 3 on every
+        # run. The gate resets SIGCHLD to its default before any child, so
+        # its verdict, here 2 with gh absent, is the same as with the
+        # default disposition.
+        launch = (
+            "import os, signal, sys\n"
+            "signal.signal(signal.SIGCHLD, signal.{})\n"
+            "os.execv(sys.executable, [sys.executable, \"-I\", sys.argv[1]])\n"
+        )
+        body = EXTRACTOR_PATH.read_text(encoding="utf-8")
+        for disposition in ("SIG_DFL", "SIG_IGN"):
+            with self.subTest(disposition):
+                code, err = self.run_with_extractor(body, wrapper=launch.format(disposition))
+                self.assertEqual(code, 2, err)
+                self.assertEqual(err.splitlines(), ["check-release-checksum-live: could not verify: the gh CLI is not available"])
+
+    def test_a_sigchld_that_cannot_be_reset_exits_3_before_any_child(self):
+        # The reset is refused in a thread other than the main thread
+        # (ValueError); the gate then exits 3 naming it and starts no child.
+        wrapper = (
+            "import importlib.util, sys, threading\n"
+            "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+            "gate = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(gate)\n"
+            "codes = []\n"
+            "def run():\n"
+            "    try:\n"
+            "        codes.append(gate.main())\n"
+            "    except SystemExit as stop:\n"
+            "        codes.append(stop.code)\n"
+            "thread = threading.Thread(target=run)\n"
+            "thread.start()\n"
+            "thread.join()\n"
+            "sys.exit(codes[0] if codes else 70)\n"
+        )
+        code, err, started = self.run_with_extractor(
+            logging_extractor(fail_first=False), wrapper=wrapper, inspect=lambda tools: (tools / "runs.log").exists(),
+        )
+        self.assertEqual(code, 3, err)
+        lines = err.splitlines()
+        self.assertEqual(len(lines), 1, err)
+        self.assertTrue(lines[0].startswith(
+            "check-release-checksum-live: could not reset SIGCHLD to its default disposition (ValueError: "
+        ), err)
+        self.assertTrue(lines[0].endswith("), so the end of a child could be lost"), err)
+        self.assertFalse(started, "a child was started")
 
     # --- Row 80: the accepted same-uid residual, observed ---------------------
 
