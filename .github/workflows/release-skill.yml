@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       force:
-        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one; the remedy for a published release is a corrective new version. Leave it unchecked. To finish a run that failed before it published, re-run it or dispatch this workflow again from main with the same tag. If that tag is already on origin at another commit, for example because the failed run pushed it and main has moved since, check this input on that dispatch from main. To verify a release that is already published, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs."
+        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one. Leave it unchecked. To finish a run that failed before it published, re-run it or dispatch this workflow again from main with the same tag. If that tag is already on origin at another commit, for example because the failed run pushed it and main has moved since, check this input on that dispatch from main. To verify a release that is already published, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs. Cut a corrective new version only if that verification fails, or if the tag is no longer on origin."
         required: false
         default: false
         type: boolean
@@ -345,11 +345,25 @@ jobs:
           # line (^{}) explicitly so an annotated tag resolves to its commit
           # regardless of output order. Tag moves are governed independently.
           remote_tag_sha="$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" "refs/tags/${RELEASE_TAG}" | awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { plain=$1 } END { print (peeled != "" ? peeled : plain) }')"
+          # Fix round 2: the next step for a published release that this run
+          # refuses before verifying it. The verifying dispatch needs the tag
+          # on origin as its run ref. When the tag is gone the remedy is a
+          # corrective new version, not a restored tag: the workflow never
+          # records which commit it published, and the verification compares
+          # the published assets with their own checksums, not with a build,
+          # so a tag restored at a guessed commit could verify green.
+          published_release_remedy() {
+            if [ -z "${remote_tag_sha}" ]; then
+              echo "The tag ${RELEASE_TAG} is no longer on origin, so no dispatch can select it as the run ref to verify the published release; cut a corrective new version." >&2
+            else
+              echo "To verify the published release, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main; cut a corrective new version only if that verification fails." >&2
+            fi
+          }
           if [ "${release_exists}" -eq 1 ]; then
             if [ "${FORCE}" = "true" ]; then
               echo "Refusing the force input: release ${RELEASE_TAG} is already published, and an immutable release cannot be republished." >&2
-              echo "The force input only moves the tag of a release that is not yet published. The remedy for a published release is a corrective new version." >&2
-              echo "To verify the published release instead, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main." >&2
+              echo "The force input only moves the tag of a release that is not yet published." >&2
+              published_release_remedy
               exit 1
             fi
             if [ "${remote_tag_sha}" = "${built_commit}" ]; then
@@ -412,7 +426,8 @@ jobs:
             else
               echo "Release ${RELEASE_TAG} is already published, but its tag now resolves to ${remote_tag_sha:-nothing}, not ${built_commit}." >&2
               echo "Republishing different bytes under a published version would break its checksum as a trust signal." >&2
-              echo "A published release is immutable, with or without the force input; cut a corrective new version." >&2
+              echo "A published release is immutable, with or without the force input, and nothing republishes it." >&2
+              published_release_remedy
               exit 1
             fi
           fi

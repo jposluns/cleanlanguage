@@ -653,14 +653,22 @@ REMEDY_NOT_IMMUTABLE = "Turn on immutable releases for the repository, then cut 
 
 # Fix round 1: the next step the unreadable readback refusals name (row 78
 # adds the determine-step refusal), and the verification path the force
-# refusal names. Repeating a run keeps its
+# refusal names. Fix round 2: the force and moved-tag refusals name that
+# verifying dispatch first, and a corrective new version only if the
+# verification fails. Repeating a run keeps its
 # force input and run ref, so each names a fresh dispatch without force at
 # the tag itself.
 REMEDY_UNREADABLE = ("Once the release record is readable, dispatch this workflow again with the force input"
                      " unchecked and the tag v1.0.15 itself selected as the run ref, not main, to verify the"
                      " published release.")
-VERIFY_BY_DISPATCH = ("To verify the published release instead, dispatch this workflow again with the force input"
-                      " unchecked and the tag v1.0.15 itself selected as the run ref, not main.")
+VERIFY_BY_DISPATCH = ("To verify the published release, dispatch this workflow again with the force input"
+                      " unchecked and the tag v1.0.15 itself selected as the run ref, not main; cut a"
+                      " corrective new version only if that verification fails.")
+
+# Fix round 2: the remedy both refusals name when the tag of a published
+# release is no longer on origin, so no dispatch can select it.
+TAG_GONE = ("The tag v1.0.15 is no longer on origin, so no dispatch can select it as the run ref to"
+            " verify the published release; cut a corrective new version.")
 
 # The readback outcomes that must fail a dated run on any path.
 BAD_READBACKS = (
@@ -1060,7 +1068,9 @@ class ImmutableReleaseTest(WorkflowStepTest):
         code, out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn("an immutable release cannot be republished", err)
-        self.assertIn("The remedy for a published release is a corrective new version", err)
+        # Fix round 2: no unconditional corrective-version remedy ahead of the
+        # verifying dispatch.
+        self.assertNotIn("The remedy for a published release is a corrective new version", err)
         self.assertIn("only moves the tag of a release that is not yet published", err)
         # Fix round 1: the refusal names the fresh dispatch that verifies the
         # published release.
@@ -1190,10 +1200,30 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.published(remote_tag=OTHER_COMMIT)
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertIn("with or without the force input; cut a corrective new version", err)
+        self.assertIn("with or without the force input, and nothing republishes it", err)
+        # Fix round 2: a release whose create call failed after GitHub published
+        # it is probably correct, so the refusal names the verifying dispatch
+        # first, and a corrective new version only if that verification fails.
+        self.assertIn(VERIFY_BY_DISPATCH, err)
+        self.assertNotIn("with or without the force input; cut a corrective new version", err)
         self.assertNotIn("to overwrite", err)
         self.assertNotIn("Refusing the force input", err)
         self.assert_no_mutation(self.calls())
+
+    def test_a_published_release_whose_tag_is_gone_names_a_corrective_new_version(self):
+        # Fix round 2: with the tag gone from origin, no dispatch can select
+        # it as the run ref, so neither refusal names the verifying dispatch;
+        # each names a corrective new version and changes nothing.
+        for force in ("false", "true"):
+            with self.subTest(force=force):
+                self.reset_calls()
+                self.published(remote_tag="", force=force)
+                code, out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 1, err)
+                self.assertIn(TAG_GONE, err)
+                self.assertNotIn("dispatch this workflow again", err)
+                self.assertNotIn("kept its assets", out)
+                self.assert_no_mutation(self.calls())
 
     def test_every_remedy_names_a_corrective_new_version(self):
         # Row 73: the remedy lines, found by their wording (an echo line that
@@ -1277,6 +1307,15 @@ class ImmutableReleaseTest(WorkflowStepTest):
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
         self.assertTrue(description.startswith("Move the tag of a release that is not yet published"), description)
         self.assertIn("cannot be republished", description)
+        # Fix round 2: for a published release the description names the
+        # verifying dispatch first, and a corrective new version only if that
+        # verification fails or the tag is gone.
+        self.assertNotIn("the remedy for a published release is a corrective new version", description)
+        last = ("Cut a corrective new version only if that verification fails, or if the tag is no longer"
+                " on origin.")
+        self.assertTrue(description.endswith(last), description)
+        self.assertLess(description.index("To verify a release that is already published"),
+                        description.index("corrective new version"))
         # Row 78: a run that failed before it published is finished by a
         # re-run or a fresh dispatch from main, and the tag as the run ref is
         # named only to verify a release that is already published. A run
