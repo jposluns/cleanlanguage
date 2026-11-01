@@ -6,14 +6,17 @@
 # tools/ci-status.sh, run as bash tools/ci-status.sh, by absolute path or through
 # PATH, from an ordinary shell with ordinary process state) the exit status
 # follows the 0 to 3 contract below exactly. Under any other caller state the
-# status may be any nonzero code. The exceptions, all disclosed below, are the
-# caller environment (PATH, BASH_ENV and exported functions), which can defeat
-# both properties; bash -n, bash -t and the startup files that bash runs first,
-# which can exit 0 without running the wrapper code as written; and a tracer
-# (ptrace) or seccomp filter set up by the caller, which can alter any system
-# call result, so both properties assume no such control. A copy of the wrapper
-# runs the ci-status.py beside that copy by design: it is the real wrapper of its
-# own directory.
+# status may be any nonzero code. The exceptions, all disclosed below, are: the
+# whole caller environment, every environment variable, including PATH,
+# BASH_ENV, SHELLOPTS (noexec or onecmd there makes bash run nothing and exit 0),
+# BASHOPTS and exported functions, which can defeat both properties; bash -n,
+# bash -t and the startup files that bash runs first, which can exit 0 without
+# running the wrapper code as written; and caller control of the process view, a
+# tracer (ptrace) or seccomp filter that can alter any system call result, or a
+# bind mount or other mount-namespace control that can present the real wrapper
+# beside a planted gate, so both properties assume no such control. A copy of
+# the wrapper runs the ci-status.py beside that copy by design: it is the real
+# wrapper of its own directory.
 #
 # Thin wrapper: the CI verdict logic lives in ci-status.py, a Python rewrite that
 # parses the check-runs JSON structurally and fail-closed. Serializing checks to
@@ -69,17 +72,29 @@
 # ci-status.sh" found through PATH, where $0 is the bare name even though bash
 # 5.3 sets BASH_SOURCE[0] to the full path). Executed through PATH, it receives
 # its full path as both and runs as usual.
+# A source path under /dev/fd/ or /proc/ is refused at once: it names an open
+# descriptor, whose resolved name a caller can imitate with a decoy file.
 # os.path.realpath resolves a symlinked wrapper without depending on GNU readlink.
-# The resolved wrapper must be an existing regular file, and the ci-status.py
-# beside it must be a regular file that is not a symlink and that the resolver can
-# open for reading, or the wrapper exits 3. The resolved wrapper must also have
-# exactly 1 link, so a hard link to the real wrapper placed beside a planted
-# ci-status.py is refused with the cannot-find refusal. Any nonzero resolver status is a
-# refusal, and an empty resolver answer is one too, so a lost status cannot reach
-# the exec. The directory is printed with a trailing slash, so command
-# substitution cannot strip a newline from its name.
-# Residual: the caller environment, including PATH, BASH_ENV and exported shell
-# functions, is outside the trust boundary. PATH chooses the python3 and the gh
+# The resolved wrapper must be an existing regular file and the same file (device
+# and inode) as the ci-status.sh in its directory, which must have exactly 1
+# link; the ci-status.py beside it must be a regular file that is not a symlink
+# and that the resolver can open for reading; otherwise the wrapper exits 3. A
+# hard link to the real wrapper placed beside a planted ci-status.py is refused
+# with the cannot-find refusal. Any nonzero resolver status is a refusal, and an
+# empty resolver answer is one too, so a lost status cannot reach the exec. The
+# directory is printed with a trailing slash, so command substitution cannot
+# strip a newline from its name. Last, the ci-status.sh in the resolved directory
+# must be the same file (test -ef) as /dev/fd/255, where bash 5.3 keeps the
+# script it opened, whether it was run as bash FILE, as bash /dev/fd/N or
+# executed directly. So the gate is bound to the file bash is running, not to a
+# path string: a directory symlink swapped after bash opened the wrapper, or a
+# decoy named like a deleted file, resolves to a directory whose ci-status.sh is
+# a different file, and the wrapper refuses. If fd 255 is not the script, for
+# example because the caller holds fd 255 open, the test fails and the wrapper
+# refuses.
+# Residual: the whole caller environment, every environment variable, including
+# PATH, BASH_ENV, SHELLOPTS, BASHOPTS and exported shell functions, is outside the
+# trust boundary. PATH chooses the python3 and the gh
 # that ci-status.py runs, BASH_ENV runs code before this wrapper, and an exported
 # function such as python3 replaces the resolver below; any of them can run a
 # planted ci-status.py that exits 0. The wrapper defends only against a planted
@@ -133,6 +148,7 @@ __ci_status_find="ci-status: cannot find ci-status.py beside the real ci-status.
   __ci_status_refuse err "ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)"
 if [ "$0" != "$__ci_status_src" ]; then __ci_status_refuse err "$__ci_status_find"; fi
 case "$__ci_status_src" in
+  /dev/fd/* | /proc/*) __ci_status_refuse err "$__ci_status_find" ;;
   */*) ;;
   *) __ci_status_refuse err "$__ci_status_find" ;;
 esac
@@ -141,9 +157,13 @@ __ci_status_here="$(python3 -I -c '
 import os, stat, sys
 try:
     wrapper = os.path.realpath(sys.argv[1])
+    named = os.path.join(os.path.dirname(wrapper), "ci-status.sh")
     gate = os.path.join(os.path.dirname(wrapper), "ci-status.py")
     st = os.stat(wrapper)
-    ok = stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and stat.S_ISREG(os.lstat(gate).st_mode)
+    sn = os.lstat(named)
+    ok = (stat.S_ISREG(st.st_mode) and stat.S_ISREG(sn.st_mode) and sn.st_nlink == 1
+          and (st.st_dev, st.st_ino) == (sn.st_dev, sn.st_ino)
+          and stat.S_ISREG(os.lstat(gate).st_mode))
 except OSError:
     ok = False
 if not ok:
@@ -158,7 +178,8 @@ if [ "$__ci_status_rc" = 4 ]; then
   __ci_status_refuse err "ci-status: cannot read ci-status.py beside the real ci-status.sh ($__ci_status_src)"
 fi
 if [ "$__ci_status_rc" != 0 ] || [ -z "$__ci_status_here" ] ||
-  [ ! -f "${__ci_status_here}ci-status.py" ] || [ -L "${__ci_status_here}ci-status.py" ]; then
+  [ ! -f "${__ci_status_here}ci-status.py" ] || [ -L "${__ci_status_here}ci-status.py" ] ||
+  ! [ "${__ci_status_here}ci-status.sh" -ef /dev/fd/255 ]; then
   __ci_status_refuse err "$__ci_status_find"
 fi
 exec python3 -I "${__ci_status_here}ci-status.py" "$@"

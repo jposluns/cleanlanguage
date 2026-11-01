@@ -15,8 +15,13 @@ success: the tool reaps gh itself with os.waitpid, because CPython subprocess
 reads a lost status (ECHILD from the wait) as 0, and it resets SIGCHLD to its
 default disposition before any gh call, because an ignored SIGCHLD, inherited
 from the caller, makes the system reap gh and lose its status. Both properties
-assume that no tracer (ptrace) or seccomp filter set up by the caller alters
-system call results, since such control can change any result the tool sees.
+assume no caller control of the process view: no tracer (ptrace) or seccomp
+filter that alters system call results, and no bind mount or other
+mount-namespace control that presents the real wrapper beside a planted gate.
+The whole caller environment, every environment variable, including PATH,
+BASH_ENV, SHELLOPTS, BASHOPTS and exported shell functions, is outside the trust
+boundary and can defeat both properties; for example, SHELLOPTS with noexec or
+onecmd makes bash run nothing and exit 0 before ci-status.sh runs.
 
 The verdict comes from the check-runs API, the only endpoint that sees every
 required check: the Cloudflare Pages build (this repository's required check per
@@ -81,9 +86,10 @@ redirect the repository that gh infers; passing --repo avoids that inference.
 The inferred repository comes from gh repo view run in that directory, so it
 depends on the local git configuration of that clone and on which of its remotes
 gh selects; passing --repo avoids that dependence too. Other gh configuration,
-such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged. The caller
-environment, including PATH, BASH_ENV and exported shell functions, is outside
-the trust boundary of this tool: PATH chooses python3 and gh, BASH_ENV runs code
+such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged. The whole caller
+environment, every environment variable, including PATH, BASH_ENV, SHELLOPTS,
+BASHOPTS and exported shell functions, is outside the trust boundary of this
+tool: PATH chooses python3 and gh, BASH_ENV runs code
 before ci-status.sh, and an exported function such as python3 replaces what
 ci-status.sh runs, so a planted ci-status.py can run and exit 0. ci-status.sh
 defends only against a planted ci-status.py in the working directory and against
@@ -328,8 +334,8 @@ def _field(value, allow_empty: bool):
 
 def read_checks(repo: str, full_sha: str, deadline: float):
     """One read. Returns the list of checks, or raises Unreadable, fail-closed. The gh
-    child is bounded by the time left to the deadline (at least one second), so a hung
-    or slow read cannot outlast the wait window."""
+    child is bounded by the time left to the deadline, so a hung or slow read cannot
+    outlast the wait window."""
     remaining = deadline - time.time()
     if remaining <= 0:
         raise Unreadable("the wait window closed before the read")

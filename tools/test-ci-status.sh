@@ -584,8 +584,13 @@ run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT
 # same with those names (and rc) readonly, which must not turn the sourced path
 # into the executed one. hardlink runs a hard link to the copied wrapper placed
 # in the working directory, beside the planted ci-status.py, which must be
-# refused because the wrapper then has 2 links. Each refusal has its own message,
-# which the case checks.
+# refused because the wrapper then has 2 links. fddecoy opens a hard link to the
+# copied wrapper (in the working directory) as fd 9, removes the link, creates a
+# regular decoy file named as /proc/self/fd/9 then reads (".../h.sh (deleted)"),
+# and runs bash /dev/fd/9. dirswap runs the wrapper through a directory symlink
+# that a python3 first on PATH retargets, just before the resolver runs, to a
+# directory holding a copy of the wrapper and the planted ci-status.py. Each
+# refusal has its own message, which the case checks.
 # non_bash_shell prints the path of a shell whose BASH_VERSION is unset, or fails.
 non_bash_shell() {
   local cand found
@@ -659,6 +664,23 @@ PY
       entry=(bash -c '. "$0" "$@"; s=$?; printf "after=%s\n" "$s"; exit "$s"' "$tools/ci-status.sh") ;;
     *" sourcedvars "*)
       entry=(bash -c 'here=keep src=keep cause=keep sourced=keep restricted=keep; . "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; printf "vars=%s,%s,%s,%s,%s\n" "$here" "$src" "$cause" "$sourced" "$restricted"; exit "$s"' bash "$tools/ci-status.sh") ;;
+    *" fddecoy "*)
+      ln "$tools/ci-status.sh" "$cwd/h.sh"
+      entry=(bash -c 'exec 9<"$1" || exit 98; rm -f "$1"; printf "" > "$1 (deleted)"; shift; exec bash /dev/fd/9 "$@"' _ "$cwd/h.sh") ;;
+    *" dirswap "*)
+      local swap_py; swap_py="$(command -v python3)"
+      mkdir -p "$tmp/other" "$tmp/swapbin"
+      cp "${here}/ci-status.sh" "$tmp/other/"
+      cp "$cwd/ci-status.py" "$tmp/other/ci-status.py"
+      ln -s "$tools" "$tmp/link"
+      cat > "$tmp/swapbin/python3" <<PY
+#!/usr/bin/env bash
+if [ ! -e "$tmp/swapped" ]; then : > "$tmp/swapped"; ln -sfn "$tmp/other" "$tmp/link"; fi
+exec "$swap_py" "\$@"
+PY
+      chmod +x "$tmp/swapbin/python3"
+      path="$tmp/swapbin:$bin:$PATH"
+      entry=(bash "$tmp/link/ci-status.sh") ;;
     *" hardlink "*)
       ln "$tools/ci-status.sh" "$cwd/ci-status.sh"
       entry=(bash "$cwd/ci-status.sh") ;;
@@ -734,6 +756,8 @@ run_wrapper_case "wrapper sourced with \$0 set to its own path returns status 3 
 run_wrapper_case "sourced wrapper leaves the variables of the caller unchanged" 3 sourcedvars
 run_wrapper_case "sourced wrapper with readonly caller variables still refuses as sourced" 3 sourcedro
 run_wrapper_case "hard link to the wrapper beside a planted ci-status.py fails closed with exit 3" 3 hardlink
+run_wrapper_case "wrapper run as /dev/fd/N with a deleted-file decoy fails closed with exit 3" 3 fddecoy
+run_wrapper_case "directory symlink swapped before the resolver runs fails closed with exit 3" 3 dirswap
 # Inherited shell options never change a refusal: each runs with no gate, a
 # symlinked gate and an unreadable gate, and must refuse with status 3.
 for opt in errexit nounset pipefail; do
