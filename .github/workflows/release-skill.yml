@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       force:
-        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one. Leave it unchecked. To finish a run that failed before it published, re-run it or dispatch this workflow again from main with the same tag. If that tag is already on origin at another commit, for example because the failed run pushed it and main has moved since, check this input on that dispatch from main. To verify a release that is already published, first check that .github/workflows/release-skill.yml at the tag has the step Create or verify GitHub Release; if it does, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs. A tag without the step Create or verify GitHub Release carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, with or without the force input. Such a release can be checked only by hand, read-only, against the release step of the workflow at that tag; if it fails that check, or cannot be checked, cut a corrective new version. A corrective new version is also the remedy if the dispatch at the tag fails its verification, or if the tag is no longer on origin."
+        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one. Leave it unchecked. To finish a run that failed before it published, re-run it or dispatch this workflow again from main with the same tag. If that tag is already on origin at another commit, for example because the failed run pushed it and main has moved since, check this input on that dispatch from main. To verify a release that is already published, first check that .github/workflows/release-skill.yml at the tag has the step Create or verify GitHub Release; if it does, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs. A tag without the step Create or verify GitHub Release carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, or repeat any of its runs, with or without the force input; its step texts that advise a republish do not apply. Check such a release by hand, read-only: it passes only if it is immutable and each of its assets matches what the workflow at that tag built and published, in its packaging steps as well as its release step. A command that fails to run is run again and says nothing about the release. If it fails, turn on immutable releases if they are off, then cut a corrective new version. A corrective new version is also the remedy if the dispatch at the tag fails its verification, or if the tag is no longer on origin."
         required: false
         default: false
         type: boolean
@@ -34,14 +34,19 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      # Fix round 7: what a run away from the tag prints for a published
-      # release whose tag lacks the publish step, shared by the determine and
-      # publish steps and repeated verbatim in the force input description,
-      # so the three cannot drift. It names the authority, the release step
-      # of the workflow at that tag, and gives no procedure: asset names, zip
-      # layout and checks differ by era, and each recipe written here missed
-      # a case.
-      OLDER_TAG_ADVICE: "A tag without the step Create or verify GitHub Release carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, with or without the force input. Such a release can be checked only by hand, read-only, against the release step of the workflow at that tag; if it fails that check, or cannot be checked, cut a corrective new version."
+      # Fix round 8: the advice for a published release whose tag may lack
+      # the publish step, from one source: the determine and publish steps
+      # print this value and the force input description repeats it
+      # verbatim, so the three copies cannot drift. Whatever the run ref,
+      # at the tag or away from it, the determine step prints it when the published_at of an
+      # existing release cannot be read and its tag is on origin, and the
+      # publish step prints it when it refuses the force input against a
+      # published release whose tag is on origin, or when that tag is on
+      # origin at a commit other than the one this run built. It names the
+      # authority, the workflow at that tag, and gives no procedure: asset
+      # names, zip layout and checks differ by era, and each recipe written
+      # here missed a case.
+      OLDER_TAG_ADVICE: "A tag without the step Create or verify GitHub Release carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, or repeat any of its runs, with or without the force input; its step texts that advise a republish do not apply. Check such a release by hand, read-only: it passes only if it is immutable and each of its assets matches what the workflow at that tag built and published, in its packaging steps as well as its release step. A command that fails to run is run again and says nothing about the release. If it fails, turn on immutable releases if they are off, then cut a corrective new version."
       # What both steps print when the tag of a published release is no
       # longer on origin, with <tag> replaced by the release tag.
       TAG_GONE_ADVICE: "The tag <tag> is no longer on origin, so no dispatch can select it as the run ref to verify the published release; cut a corrective new version."
@@ -73,7 +78,10 @@ jobs:
           fi
           if [ "v${version}" != "${RELEASE_TAG}" ]; then
             echo "SKILL.md version (${version}) does not match the release tag (${RELEASE_TAG})." >&2
-            echo "Set the Version line in cleanlanguage/skills/cleanlanguage/SKILL.md to match the tag, or cut the matching tag." >&2
+            # Fix round 8: this step does not read the release record, so the
+            # advice is right whether or not the tag is already published.
+            echo "This step does not check whether ${RELEASE_TAG} is already published. If it is not, set the Version line in cleanlanguage/skills/cleanlanguage/SKILL.md to match the tag, or cut the matching tag." >&2
+            echo "If it is, do not change the Version line: a published release cannot be republished. See the description of the force input of this workflow." >&2
             exit 1
           fi
           # The orchestrator flips the site to name this version after the release,

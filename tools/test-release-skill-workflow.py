@@ -687,10 +687,25 @@ VERIFY_BY_DISPATCH = ("To verify the published release, first check that .github
 # authority, the release step of the workflow at that tag, and no procedure:
 # no command, file or path.
 OLDER_TAG_ADVICE = ("A tag without the step " + PUBLISH + " carries an older workflow that can"
-                    " republish a published release, so never dispatch this workflow at such a tag, with or"
-                    " without the force input. Such a release can be checked only by hand, read-only, against"
-                    " the release step of the workflow at that tag; if it fails that check, or cannot be"
-                    " checked, cut a corrective new version.")
+                    " republish a published release, so never dispatch this workflow at such a tag, or repeat"
+                    " any of its runs, with or without the force input; its step texts that advise a republish"
+                    " do not apply. Check such a release by hand, read-only: it passes only if it is immutable"
+                    " and each of its assets matches what the workflow at that tag built and published, in its"
+                    " packaging steps as well as its release step. A command that fails to run is run again and"
+                    " says nothing about the release. If it fails, turn on immutable releases if they are off,"
+                    " then cut a corrective new version.")
+# Fix round 8: each condition the advice states, pinned by its words; the
+# advice reaches all 3 sites from one source, so each is pinned at each.
+ADVICE_CONDITIONS = (
+    "never dispatch this workflow at such a tag, or repeat any of its runs, with or without the force input",
+    "its step texts that advise a republish do not apply",
+    "Check such a release by hand, read-only",
+    "it passes only if it is immutable",
+    "each of its assets matches what the workflow at that tag built and published",
+    "in its packaging steps as well as its release step",
+    "A command that fails to run is run again and says nothing about the release.",
+    "If it fails, turn on immutable releases if they are off, then cut a corrective new version.",
+)
 NEVER_AT_OLDER_TAG = OLDER_TAG_ADVICE
 OLDER_TAG_ECHO = "echo \"${OLDER_TAG_ADVICE}\" >" + chr(38) + "2"
 # Fix round 7: the tag-gone text, declared once in the job env and printed by
@@ -1463,10 +1478,14 @@ class ImmutableReleaseTest(WorkflowStepTest):
                     "SKILL.md", "release-skill.yml", "a/b", "--json"):
             with self.subTest(probe=bad):
                 self.assertIsNotNone(ADVICE_NAMES_A_PROCEDURE.search(bad))
-        self.assertIn("checked only by hand, read-only, against the release step of the workflow at that tag",
-                      OLDER_TAG_ADVICE)
-        self.assertIn("if it fails that check, or cannot be checked, cut a corrective new version.",
-                      OLDER_TAG_ADVICE)
+        # Fix round 8: each stated condition, in the one source and in the
+        # verbatim repeat; the two steps print the one source (above).
+        description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
+        for condition in ADVICE_CONDITIONS:
+            with self.subTest(condition=condition):
+                self.assertIn(condition, OLDER_TAG_ADVICE)
+                self.assertIn(condition, job_env()["OLDER_TAG_ADVICE"])
+                self.assertIn(condition, description)
         sentences = [s for s in re.split(r"(?<=[.;])\s+", OLDER_TAG_ADVICE) if s]
         self.assertEqual(len(sentences), len(set(sentences)), sentences)
 
@@ -1489,6 +1508,25 @@ class ImmutableReleaseTest(WorkflowStepTest):
     def test_every_success_path_reads_back(self):
         # One readback per remaining success path, dated or not.
         self.assertEqual(READBACK_CALL.findall(step_script(PUBLISH)), READBACK_LABELS)
+
+
+class ValidateStepTest(WorkflowStepTest):
+    """Fix round 8: the version mismatch refusal cannot tell whether the
+    tag is already published, so its advice holds in both cases."""
+
+    def test_mismatch_advice_holds_whether_or_not_the_tag_is_published(self):
+        shutil.copy2(REPO / "tools" / "skill-version.py", self.work / "tools" / "skill-version.py")
+        self.skill("Version: 1.0.15  \nReleased: 2026-11-15  \n")
+        self.inputs["tag"] = "v1.0.14"
+        code, _out, err = self.run_step(VALIDATE)
+        self.assertEqual(code, 1, err)
+        self.assertIn("SKILL.md version (1.0.15) does not match the release tag (v1.0.14).", err)
+        self.assertIn("This step does not check whether v1.0.14 is already published. If it is not, set the"
+                      " Version line in cleanlanguage/skills/cleanlanguage/SKILL.md to match the tag, or cut"
+                      " the matching tag.", err)
+        self.assertIn("If it is, do not change the Version line: a published release cannot be republished."
+                      " See the description of the force input of this workflow.", err)
+        self.assertFalse(any(c[0] == "gh" for c in self.calls()), self.calls())
 
 
 class DetermineStepTest(WorkflowStepTest):
@@ -1565,6 +1603,29 @@ class DetermineStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(DETERMINE, ignore_lookup_failure(step_script(DETERMINE)))
         self.assertEqual(code, 1, err)
         self.assertIn(TAG_GONE, err)
+
+    def test_a_dated_release_with_no_released_line_reaches_the_packager(self):
+        # Fix round 8: a version above the undated baseline with no Released
+        # line, and a published release. The determine step must not refuse
+        # it with the day mismatch (the line is absent, not wrong); the
+        # packager refuses the absent line. The mutant that drops the
+        # non-empty guard reads the absent line as a wrong day.
+        self.skill("Version: 1.0.15  \nAuthor: x\n")
+        self.set_state(status="200", published_at="2026-11-14T08:00:00Z")
+        code, _out, err = self.run_step(DETERMINE)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.env_values(), {"RELEASE_DATED": "1", "RELEASE_DATE": "2026-11-14"})
+        self.assertNotIn("IS PUBLISHED on", err)
+        code, _out, err = self.run_step(PACKAGE)
+        self.assertEqual(code, 0, err)
+        self.assertIn(["--tag", "v1.0.15", "--release-date", "2026-11-14"],
+                      [c[1] for c in self.calls() if c[0] == "release-package.sh"])
+        guard = "[ -n \"${released}\" ] " + chr(38) + chr(38) + " "
+        script = step_script(DETERMINE)
+        self.assertEqual(script.count(guard), 1)
+        code, _out, err = self.run_step(DETERMINE, script.replace(guard, ""))
+        self.assertEqual(code, 1, err)
+        self.assertIn("IS PUBLISHED on 2026-11-14", err)
 
     def test_published_release_on_another_day_names_a_corrective_new_version(self):
         # Fix round 3: the UTC day rolled over between the window check and
