@@ -97,24 +97,35 @@ comparison still runs and reports. The gate then exits with the most severe code
 one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not complete.
 
 The extractor runs in a separate python3 -I child (run_release_date_child),
-so extractor code cannot reach this process: a call to os._exit, a signal to
-its own process, a hang, a rewritten global, or a KeyboardInterrupt it raises
-ends or stalls only the child, and the gate reads one exit status and one
-bounded stdout, accepting a result only when the exit is 0 and the stdout is
-exactly one JSON object that matches the contract; everything else exits 3
-with its report, never 2, 1, or 0. The process group of the child is killed
-before the gate reaps the child, so a process it started that stays in the
-group, directly or through a double fork (which keeps the group), ends with
-it.
+so extractor code does not run in this process: a call to os._exit, a signal
+to its own process, or a KeyboardInterrupt it raises ends only the child, a
+rewritten global changes only the child, and a hang holds the gate for at
+most CHILD_TIMEOUT_SECONDS.
+The gate reads one exit status, one bounded stdout, and a bounded part of the
+stderr, accepting a result only when the exit is 0 and the stdout is exactly
+one JSON object that matches the contract; every other outcome of the child
+exits 3 with its report, never 2, 1, or 0. Unless the wait reports that the
+child is no longer a child of the gate, or an interrupt reaches the gate
+outside the wait (see run_release_date_child), the process group of the child
+is killed before the gate reaps the child, so a process it started that stays
+in the group, directly or through a double fork (which keeps the group), ends
+with it.
 Separation is not a sandbox. What it does
 not close: the child runs with the uid, filesystem, and network of the gate,
-so extractor code can still write files, reach the network, and start a
-process that leaves the process group (through setsid, or setpgid into a new
-group) and outlives the gate; within
-CHILD_TIMEOUT_SECONDS it can use CPU and fill the stdout and stderr temporary
-files on disk, of which the gate reads only a bounded part (see
-RESULT_LIMIT); if the gate itself is killed while it waits, the child,
-in its own session, runs on until it ends; the child reads the extractor file
+so extractor code can still write files, reach the network, signal the gate,
+and start a process that leaves the process group (through setsid, or setpgid
+into a new group) and outlives the gate. A signal it sends to the gate acts on
+the gate: an interrupt (SIGINT) ends the gate by that signal, a shell status
+of 130, without the rest of its report or any of its exit codes (when it
+arrives while the gate waits, the gate first kills and reaps the child, and
+exits 3 instead when the group cannot be killed); a stop (SIGSTOP) halts the
+gate until something continues it, however long that is, so
+CHILD_TIMEOUT_SECONDS does not bound it; and a signal that ends the gate, such
+as SIGTERM, ends it with no report. Within CHILD_TIMEOUT_SECONDS the child can
+use CPU and memory and fill the stdout and stderr temporary files on disk, of
+which the gate reads only a bounded part (see RESULT_LIMIT); if the gate
+itself is killed while it waits, the child, in its own session, runs on until
+it ends; the child reads the extractor file
 afresh on each call, so a file replaced during a run can give different calls
 different code, where the module was read once before; and the extractor
 remains the authority on content, so changed extractor code that returns a
@@ -156,14 +167,17 @@ RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 
 # Row 80: the bounds on one extractor child. A child that has not ended within
 # CHILD_TIMEOUT_SECONDS is killed with its process group. At most
-# STDERR_LIMIT bytes of its stderr are read, and at most RESULT_LIMIT bytes of
-# its stdout plus ECHO_BYTES_PER_CHARACTER bytes for each character of the
-# request argument: a malformed message echoes at most the argument once,
-# through repr and then ASCII JSON, which takes at most 12 bytes for one
-# character (a printable character outside the basic plane becomes a
-# surrogate pair of two \uXXXX escapes), so a reply that echoes a long
-# argument keeps its verdict, and the memory of the gate stays bounded by the
-# request it already holds, whatever the child prints.
+# STDERR_LIMIT bytes of its stderr are read, and a stdout of at most
+# RESULT_LIMIT bytes plus ECHO_BYTES_PER_CHARACTER bytes for each character of
+# the request argument is accepted (one byte more is read, so a longer stdout
+# is refused): a malformed message echoes at most one line of the argument,
+# or the argument, once, through repr and then ASCII JSON, which takes at most
+# 12 bytes for one character (a printable character outside the basic plane
+# becomes a surrogate pair of two \uXXXX escapes), and its other text is
+# bounded in size or, for repeated Released lines, a list of their line
+# numbers, one for each line of at least nine characters, so a reply that
+# echoes a long argument keeps its verdict, and the memory of the gate stays
+# bounded by the request it already holds, whatever the child prints.
 CHILD_TIMEOUT_SECONDS = 20
 RESULT_LIMIT = 65536
 ECHO_BYTES_PER_CHARACTER = 12
@@ -284,24 +298,33 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     The request is written to a temporary file that is its stdin, and its
     stdout and stderr go to temporary files, so the gate never blocks on a
     pipe and reads only a bounded part of each. The wait, bounded by
-    CHILD_TIMEOUT_SECONDS, leaves the child unreaped; then, on every path, a
-    normal end, a timeout, or an exception while waiting, the process group
-    is killed before the child is reaped, so a process the child started
-    that stays in its group, directly or through a double fork, is killed
-    when the child ends, while one that leaves the group (through setsid,
-    or setpgid into a new group) can outlive the gate. After that, a
-    KeyboardInterrupt while waiting is
-    re-raised unchanged, unless the group could not be killed. A wait that
-    reports the child is no longer a child of the gate signals nothing, as
-    its pid may be reused. A reply is accepted only when the child exits 0
-    and its stdout, at most RESULT_LIMIT bytes plus ECHO_BYTES_PER_CHARACTER
-    for each character of ``arg``, is exactly one ASCII JSON object, with no
-    key repeated, that matches the contract. Every other outcome exits 3 as
-    unavailable, naming the reason and relaying at most STDERR_LIMIT bytes of
-    the child stderr, never a content verdict, a pass, or a drift: so does
-    any exception other than SystemExit raised while the gate creates the
-    temporary files, writes the request, starts, waits for, or kills the
-    child, or reads its output, and a process group that cannot be killed."""
+    CHILD_TIMEOUT_SECONDS, leaves the child unreaped; then, on a normal end,
+    a timeout, or an exception other than ChildProcessError raised while
+    waiting, the process group is killed before the child is reaped, so a
+    process the child started that stays in its group, directly or through
+    a double fork, is killed when the child ends, while one that leaves the
+    group (through setsid, or setpgid into a new group) can outlive the
+    gate. A wait that reports the child is no longer a child of the gate
+    (ChildProcessError) signals nothing, as its pid may be reused. A reply
+    is accepted only when the child exits 0 and its stdout, at most
+    RESULT_LIMIT bytes plus ECHO_BYTES_PER_CHARACTER for each character of
+    ``arg``, is exactly one ASCII JSON object, with no key repeated, that
+    matches the contract. Every other outcome exits 3 as unavailable, naming
+    the reason and relaying at most STDERR_LIMIT bytes of the child stderr,
+    never a content verdict, a pass, or a drift: so does an Exception raised
+    while the gate creates the temporary files, writes the request, starts,
+    waits for, or kills the child, or reads its output, and a process group
+    that cannot be killed.
+
+    A KeyboardInterrupt, like any BaseException that is not an Exception, is
+    not caught that way. Raised while waiting, it passes through unchanged
+    once the group is killed and the child reaped, or becomes exit 3 when
+    the group cannot be killed. Raised anywhere else, it passes through
+    unchanged with the child handled no further: before Popen there is no
+    child; during Popen, between Popen and the wait, or between the wait and
+    the group kill, a started child is neither killed nor reaped; and while
+    the group is killed or the child reaped, the child may be killed but not
+    reaped."""
 
     def fail(reason: str, printed: bytes = b"") -> None:
         message = f"{RELEASE_DATE_TOOL.name} {reason} in {op}, so the extractor is unavailable"

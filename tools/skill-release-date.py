@@ -315,8 +315,11 @@ def json_main() -> int:
     """Answer one JSON request from stdin with one JSON reply on stdout (see
     ``--json`` in the module docstring). A bad request exits 2 with nothing on
     stdout; only ``Malformed`` is a ``malformed`` reply, as in every other
-    mode, and any other exception reaches the internal-error guard (exit 6),
-    with nothing on stdout."""
+    mode, and any other Exception reaches the internal-error guard (exit 6),
+    with nothing on stdout. A KeyboardInterrupt, or another BaseException
+    that is neither an Exception nor a SystemExit, is not caught: Python
+    ends the child with SIGINT for a KeyboardInterrupt and with exit 1 for
+    the others."""
     data = sys.stdin.buffer.read()
     try:
         request = json.loads(data.decode("utf-8"))

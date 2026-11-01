@@ -18,7 +18,8 @@ check. A date failure never hides checksum drift: both are reported and the
 more severe code wins. A release state that cannot be verified never hides the
 Released line check, and an unreadable verify page or downloaded asset is
 reported as such, never read as drift. The gate runs the extractor as a separate python3 -I
-child and reads only its exit status and one JSON reply. The network reads of that record are replaced
+child and reads only its exit status, one bounded JSON reply, and a bounded part
+of its stderr, which it relays on a failure. The network reads of that record are replaced
 by injected fixtures. These tests pin all of that offline: the
 fixtures
 patch the module's file paths and network readers, so no gh CLI and no
@@ -1758,8 +1759,9 @@ class ConditionalPassTest(unittest.TestCase):
                 )], err)
 
     def test_a_reply_larger_than_the_limit_exits_3(self):
-        # Row 80: at most RESULT_LIMIT bytes of stdout are read; a reply of
-        # exactly that size is accepted and one byte more is refused.
+        # Row 80: at most RESULT_LIMIT bytes of stdout are accepted (one byte
+        # more is read, to detect it); a reply of exactly that size is
+        # accepted and one byte more is refused.
         valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}'
         padded = valid + b" " * (gate.RESULT_LIMIT - len(valid))
         self.assertEqual(gate.RESULT_LIMIT, 65536)
@@ -1951,9 +1953,12 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertIsNotNone(state, "the child was reaped before its group was killed")
 
     def test_an_interrupt_while_waiting_kills_the_group_and_propagates(self):
-        # Row 80: any exception while the gate waits, a real Ctrl-C among
-        # them, kills the child group, reaps the child, and propagates
-        # unchanged.
+        # Row 80: a KeyboardInterrupt while the gate waits kills the child
+        # group, reaps the child, and propagates unchanged. It is raised here
+        # from a stubbed os.waitid, one of the two calls of the wait where a
+        # real Ctrl-C can arrive (time.sleep is the other), not by a real
+        # signal; an Exception while waiting exits 3 instead (see
+        # test_a_failure_while_waiting_kills_and_reaps_the_child_and_exits_3).
         # Fix round 1: the gate waits with os.waitid, so the interrupt is
         # raised from there.
         self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
@@ -2024,10 +2029,12 @@ class ConditionalPassTest(unittest.TestCase):
         return Recording
 
     def test_a_failure_in_the_child_machinery_exits_3(self):
-        # Fix round 1 (finding 1): an exception other than SystemExit raised
-        # while the gate creates the temporary files, writes or rewinds the
-        # request, or rewinds or reads the output exits 3 naming it, never a
-        # traceback (exit 1), and leaves no child unreaped.
+        # Fix round 1 (finding 1): an Exception (here an OSError or a
+        # RuntimeError) raised while the gate creates the temporary files,
+        # writes or rewinds the request, or rewinds or reads the output exits
+        # 3 naming it, never a traceback (exit 1), and leaves no child
+        # unreaped. A KeyboardInterrupt there is not caught and passes
+        # through (see run_release_date_child).
         real_temporary_file = tempfile.TemporaryFile
         real_popen = subprocess.Popen
 
@@ -2090,9 +2097,10 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertTrue(all(proc.returncode is not None for proc in procs), "a child was left unreaped")
 
     def test_a_failure_while_waiting_kills_and_reaps_the_child_and_exits_3(self):
-        # Fix round 1 (finding 1): an exception other than SystemExit while
-        # the gate waits kills the child group while the child is unreaped,
-        # reaps the child, and exits 3 naming the exception.
+        # Fix round 1 (finding 1): an Exception other than ChildProcessError
+        # (here an OSError or a RuntimeError) while the gate waits kills the
+        # child group while the child is unreaped, reaps the child, and exits
+        # 3 naming the exception.
         self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
         gate.CHILD_TIMEOUT_SECONDS = 1
         real_popen, real_killpg, real_waitid = subprocess.Popen, os.killpg, os.waitid
@@ -2416,9 +2424,12 @@ class ConditionalPassTest(unittest.TestCase):
 
 class ModuleLoadTest(unittest.TestCase):
     """F5: the gate exits 3 (unavailable), not 1 (drift), when the extractor
-    cannot be run or its child fails, whatever the reason. Row 80: each test
-    runs a copy of the gate as a script, so an outcome that would end or hang
-    the gate itself is observed by the test rather than suffered by it."""
+    cannot be run or its child fails, for each reason tested here. Row 80:
+    each test runs a copy of the gate as a script, so an outcome that would
+    end or hang the gate itself is observed by the test rather than suffered
+    by it. Extractor code that signals the gate itself is the accepted
+    residual, not an exit 3 (see
+    test_extractor_that_interrupts_the_gate_ends_the_gate_by_sigint)."""
 
     def run_with_extractor(self, body, wrapper=None, inspect=None):
         """Run a copy of the gate as a script beside the extractor source
@@ -2449,7 +2460,9 @@ class ModuleLoadTest(unittest.TestCase):
             empty = root / "empty-path"
             empty.mkdir()
             # Fix round 1: a TMPDIR inside this directory, so the temporary
-            # files of the gate and of its children never go to bare /tmp.
+            # files of the gate, which its children write to, never go to
+            # bare /tmp. A child runs with an empty environment, so a
+            # temporary file it made itself would not follow TMPDIR.
             scratch = root / "tmp"
             scratch.mkdir()
             if wrapper is None:
@@ -2487,7 +2500,9 @@ class ModuleLoadTest(unittest.TestCase):
         # at load or in a call, ends only the child, which Python then ends
         # with SIGINT. The gate exits 3 with its report and the checksum
         # comparison still runs, where the in-process gate ended with the
-        # SIGINT status (fix round 5 residual, now closed).
+        # SIGINT status (fix round 5 residual, now closed for an interrupt the
+        # extractor raises; one it sends to the gate is still a residual, see
+        # test_extractor_that_interrupts_the_gate_ends_the_gate_by_sigint).
         for label, body, op in (
             ("KeyboardInterrupt at load", "raise KeyboardInterrupt()\n", "baseline"),
             ("KeyboardInterrupt in a call",
@@ -2623,7 +2638,7 @@ class ModuleLoadTest(unittest.TestCase):
                     self.assertIn(detail, err)
                 self.assertNotIn("does not exist", err)
 
-    # --- Row 80: what extractor code does in the child ends only the child ----
+    # --- Row 80: what extractor code does to its own process ends only the child
 
     def test_extractor_that_signals_its_own_process_exits_3(self):
         # Without the child the gate itself would end by that signal.
@@ -2742,6 +2757,47 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertIn(f"skill-release-date.py {reason} in extract, so the extractor is unavailable", err)
                 self.assertIn("the gh CLI is not available", err)
 
+    # --- Row 80: the accepted same-uid residual, observed ---------------------
+
+    def test_extractor_that_interrupts_the_gate_ends_the_gate_by_sigint(self):
+        # Fix round 3 (DISCOVERY 2, finding 1): the child runs with the uid
+        # of the gate, so extractor code can signal the gate. An interrupt
+        # it sends to its parent, the gate, while the gate waits ends the
+        # gate by SIGINT, with no report and none of its exit codes, after
+        # the gate has killed the child. The probe sleeps first, so the gate
+        # is already waiting, and the interrupt reaches the gate run by
+        # run_with_extractor, never this test runner. A stop (SIGSTOP) is the
+        # same residual and is not run here, as it would halt the gate.
+        body = extractor_with(
+            "import os, signal, time\n"
+            "with open(Path(__file__).resolve().parent / \"child.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
+            "    handle.write(str(os.getpid()))\n"
+            "time.sleep(0.5)\n"
+            "os.kill(os.getppid(), signal.SIGINT)\n"
+            "time.sleep(300)\n"
+        )
+
+        def child_state(tools):
+            pid = int((tools / "child.pid").read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 10
+            state = process_state(pid)
+            while state not in (None, "Z") and time.monotonic() < deadline:
+                time.sleep(0.1)
+                state = process_state(pid)
+            return pid, state
+
+        code, err, (pid, state) = self.run_with_extractor(body, inspect=child_state)
+        try:
+            self.assertEqual(code, -signal.SIGINT, err)
+            self.assertIn("KeyboardInterrupt", err)
+            self.assertNotIn("so the extractor is unavailable", err)
+            self.assertNotIn("the gh CLI is not available", err)
+            self.assertIn(state, (None, "Z"), f"the child {pid} is still {state}")
+        finally:
+            if state not in (None, "Z"):
+                with contextlib.suppress(OSError):
+                    if b"skill-release-date.py" in Path(f"/proc/{pid}/cmdline").read_bytes():
+                        os.kill(pid, signal.SIGKILL)
 
     def test_the_gate_keeps_its_temporary_files_in_the_test_directory(self):
         # Fix round 1 addition: a gate run in this suite is given a TMPDIR
@@ -2787,7 +2843,7 @@ class ModuleLoadTest(unittest.TestCase):
 
     def test_too_few_file_descriptors_exits_3_with_no_traceback(self):
         # Fix round 1 (finding 1): with the open-file limit so low that the
-        # temporary files of a child cannot all be created, every call exits
+        # temporary files of a child cannot all be created, the probe exits
         # 3 naming the error, and the gate exits 3, never a traceback (exit 1).
         wrapper = (
             "import importlib.util, os, resource, sys\n"
@@ -2808,8 +2864,11 @@ class ModuleLoadTest(unittest.TestCase):
 
 class ContractRoutingTest(unittest.TestCase):
     """Row 80 (replaces the R3 attribute routing): every op the gate names is
-    in the contract, every op of the contract is used, and the gate starts a
-    process only in gh and in run_release_date_child."""
+    in the contract, every op of the contract is used, and the only calls
+    inside a function of the gate that start a process through an attribute
+    of subprocess or os are in gh and in run_release_date_child. A start at
+    module level, or through another name, an alias, or another module, is
+    not detected."""
 
     def setUp(self):
         self.tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))

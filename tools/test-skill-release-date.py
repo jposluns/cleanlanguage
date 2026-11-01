@@ -496,7 +496,7 @@ class JsonModeTest(unittest.TestCase):
             self.assertIn("usage: ", err)
 
     def test_internal_error_exits_6_with_nothing_on_stdout(self):
-        # An internal error while the request is read, or inside the op
+        # An internal error while the request is parsed, or inside the op
         # itself, is never a reply: exit 6 and an empty stdout, so a
         # Malformed catch that grew to Exception would fail here.
         for label, target, data in (
