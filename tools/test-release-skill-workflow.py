@@ -690,10 +690,11 @@ OLDER_TAG_ADVICE = ("A tag without the step " + PUBLISH + " carries an older wor
                     " republish a published release, so never dispatch this workflow at such a tag, or repeat"
                     " any of its runs, with or without the force input; its step texts that advise a republish"
                     " do not apply. Check such a release by hand, read-only: it passes only if it is immutable,"
-                    " it has every asset the workflow at that tag publishes, and each asset passes the checks"
-                    " that workflow made on it, in its packaging steps as well as its release step. The check"
-                    " is against what that workflow verified when it published, never against a fresh rebuild,"
-                    " which cannot match byte for byte. A command that fails to run is run again and says"
+                    " it has every asset the workflow at that tag publishes, each published checksum matches its"
+                    " asset, and each asset passes the checks that workflow made on it, in its packaging steps as"
+                    " well as its release step. The check is against what that workflow verified when it"
+                    " published, never against a fresh rebuild: a rebuild with another toolchain can differ, so"
+                    " a mismatch proves nothing. A command that fails to run is run again and says"
                     " nothing about the release. If the release fails that check, turn on immutable releases if"
                     " they are off, then cut a corrective new version.")
 # Fix round 8: each condition the advice states, pinned by its words; the
@@ -704,10 +705,11 @@ ADVICE_CONDITIONS = (
     "Check such a release by hand, read-only",
     "it passes only if it is immutable",
     "it has every asset the workflow at that tag publishes",
+    "each published checksum matches its asset",
     "each asset passes the checks that workflow made on it",
     "in its packaging steps as well as its release step",
-    "The check is against what that workflow verified when it published, never against a fresh rebuild,"
-    " which cannot match byte for byte.",
+    "The check is against what that workflow verified when it published, never against a fresh rebuild:"
+    " a rebuild with another toolchain can differ, so a mismatch proves nothing.",
     "A command that fails to run is run again and says nothing about the release.",
     "If the release fails that check, turn on immutable releases if they are off, then cut a corrective new"
     " version.",
@@ -1140,7 +1142,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.published(force="true")
         code, out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertIn("an immutable release cannot be republished", err)
+        self.assertIn("this workflow never republishes a published release", err)
         # Fix round 2: no unconditional corrective-version remedy ahead of the
         # verifying dispatch.
         self.assertNotIn("The remedy for a published release is a corrective new version", err)
@@ -1196,7 +1198,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.published(remote_tag=OTHER_COMMIT, force="true")
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertIn("an immutable release cannot be republished", err)
+        self.assertIn("this workflow never republishes a published release", err)
         self.assert_no_mutation(self.calls())
 
     def test_force_is_refused_for_an_undated_published_release_too(self):
@@ -1205,7 +1207,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.published(remote_tag=OTHER_COMMIT, force="true")
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertIn("an immutable release cannot be republished", err)
+        self.assertIn("this workflow never republishes a published release", err)
         self.assert_no_mutation(self.calls())
 
     def test_rerun_without_force_verifies_and_keeps_the_assets(self):
@@ -1264,7 +1266,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertEqual(code, 1, err)
                 self.assertNotIn("does not match its published checksum", err)
                 self.assertIn("The published stable and version-named zips of v1.0.15 differ.", err)
-                self.assertIn("cannot be republished; cut a corrective new version", err)
+                self.assertIn("This workflow never republishes a published release; cut a corrective new version", err)
                 self.assertNotIn("force", err)
                 self.assertNotIn("kept its assets", out)
                 self.assert_no_mutation(self.calls())
@@ -1275,7 +1277,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.published(remote_tag=OTHER_COMMIT)
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertIn("with or without the force input, and nothing republishes it", err)
+        self.assertIn("This workflow never republishes a published release, with or without the force input.", err)
         # Fix round 2: a release whose create call failed after GitHub published
         # it is probably correct, so the refusal names the verifying dispatch
         # first, and a corrective new version only if that verification fails.
@@ -1388,7 +1390,13 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(problems_republish(WF), [])
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
         self.assertTrue(description.startswith("Move the tag of a release that is not yet published"), description)
-        self.assertIn("cannot be republished", description)
+        # Fix round 10: a statement about this workflow, not a claim that
+        # every published release is immutable, which an older workflow can
+        # make false.
+        self.assertIn("This workflow never republishes a published release, so this input never overwrites"
+                      " one.", description)
+        self.assertNotIn("A published release is immutable", description)
+        self.assertNotIn("byte for byte", description)
         # Fix round 2: for a published release the description names the
         # verifying dispatch first, and a corrective new version only if that
         # verification fails or the tag is gone.
@@ -1519,6 +1527,18 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(code, 1, err)
         self.assertIn(TAG_GONE, err)
 
+    def test_no_printed_text_claims_every_published_release_is_immutable(self):
+        # Fix round 10: an older workflow can republish, so no echo, env
+        # value or description says that a published release is immutable
+        # or that nothing republishes it.
+        for number, line in enumerate(WORKFLOW_TEXT.splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            with self.subTest(line=number):
+                self.assertNotIn("A published release is immutable", line)
+                self.assertNotIn("nothing republishes it", line)
+                self.assertNotIn("a published release cannot be republished", line)
+
     def test_every_success_path_reads_back(self):
         # One readback per remaining success path, dated or not.
         self.assertEqual(READBACK_CALL.findall(step_script(PUBLISH)), READBACK_LABELS)
@@ -1538,7 +1558,7 @@ class ValidateStepTest(WorkflowStepTest):
         self.assertIn("This step does not check whether v1.0.14 is already published. If it is not, set the"
                       " Version line in cleanlanguage/skills/cleanlanguage/SKILL.md to match the tag, or cut"
                       " the matching tag.", err)
-        self.assertIn("If it is, do not change the Version line: a published release cannot be republished."
+        self.assertIn("If it is, do not change the Version line: this workflow never republishes a published release."
                       " See the description of the force input of this workflow.", err)
         self.assertFalse(any(c[0] == "gh" for c in self.calls()), self.calls())
 
