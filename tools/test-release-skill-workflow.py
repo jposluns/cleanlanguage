@@ -123,7 +123,7 @@ STEP_KEYS = {
 
 # The env: keys the job and each modelled step declare, and the keys the
 # steps before each named step write to GITHUB_ENV.
-JOB_ENV_KEYS = {"RELEASE_TAG", "OLDER_TAG_ADVICE", "TAG_GONE_ADVICE"}
+JOB_ENV_KEYS = {"RELEASE_TAG", "OLDER_TAG_ADVICE", "TAG_GONE_ADVICE", "SUPERSEDED_RELEASE_ADVICE"}
 STEP_ENV_KEYS = {VALIDATE: set(), DETERMINE: {"GH_TOKEN"}, PACKAGE: set(), PUBLISH: {"GH_TOKEN", "FORCE"}}
 GITHUB_ENV_WRITES = {
     VALIDATE: set(),
@@ -354,10 +354,72 @@ def problems_republish(wf: Workflow) -> list[str]:
     return problems
 
 
+def problems_superseded_advice(wf: Workflow) -> list[str]:
+    """Row 88: the superseded-release note has one source, the job env value
+    SUPERSEDED_RELEASE_ADVICE, and the force input description repeats it
+    once, verbatim. In the determine and publish steps every remedy line (an
+    echo line naming a corrective new version, or the OLDER_TAG_ECHO or
+    TAG_GONE_ECHO line) is followed, before its block ends at exit 1, else,
+    fi or }, by exactly one SUPERSEDED_ECHO, the note prints nowhere else,
+    and no script carries the note's words inline. The remedy and print
+    counts are pinned, so the probe cannot pass empty. Residual: a remedy
+    phrased without the word corrective is not found, the same residual as
+    test_every_remedy_names_a_corrective_new_version; the behavioural tests
+    are the guard that does not depend on wording. The constants it reads
+    are declared with the other advice constants below; every call runs
+    after import."""
+    problems = []
+    key = "SUPERSEDED_RELEASE_ADVICE"
+    value = wf.job_env().get(key)
+    if value != SUPERSEDED_RELEASE_ADVICE:
+        problems.append(f"job {JOB!r} declares {key} as {value!r}, not the pinned note")
+    copies = wf.text.count(SUPERSEDED_RELEASE_ADVICE)
+    if copies != 2:
+        problems.append(f"the note {key} appears {copies} times in the workflow, not 2 (the job env and the force input description)")
+    description = wf.data.get("on", wf.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
+    in_description = description.count(SUPERSEDED_RELEASE_ADVICE)
+    if in_description != 1:
+        problems.append(f"the force input description carries the note {key} {in_description} times, not once")
+    close = "\" >" + chr(38) + "2"
+    for name, (expected_remedies, expected_prints) in SUPERSEDED_SITES.items():
+        script = wf.step_script(name)
+        for phrase in SUPERSEDED_PHRASES:
+            if phrase in script:
+                problems.append(f"step {name!r} carries the note's words {phrase!r} inline; it prints {key} only through {SUPERSEDED_ECHO!r}")
+        lines = script.splitlines()
+        remedies = [i for i, line in enumerate(lines)
+                    if ("echo " in line and "corrective" in line) or line.strip() in (OLDER_TAG_ECHO, TAG_GONE_ECHO)]
+        if len(remedies) != expected_remedies:
+            problems.append(f"step {name!r} names {len(remedies)} remedy lines, not the pinned {expected_remedies}")
+        covered = set()
+        for i in remedies:
+            # The rest of the remedy line after its own echo, then each line
+            # to the end of its block (that line included).
+            tail = lines[i].split(close, 1)
+            pieces = [tail[1] if len(tail) == 2 else ""]
+            j = i
+            while "exit 1" not in pieces[-1] and pieces[-1].strip() not in ("else", "fi", "}"):
+                j += 1
+                if j >= len(lines):
+                    break
+                pieces.append(lines[j])
+            prints = "\n".join(pieces).count(SUPERSEDED_ECHO)
+            if prints != 1:
+                problems.append(f"step {name!r} line {i + 1} names a remedy that is followed by {prints} prints of {key}, not 1")
+            covered.update(range(i, j + 1))
+        total = script.count(SUPERSEDED_ECHO)
+        inside = sum(lines[i].count(SUPERSEDED_ECHO) for i in covered)
+        if total != inside:
+            problems.append(f"step {name!r} prints {key} {total - inside} times outside a remedy block")
+        if total != expected_prints:
+            problems.append(f"step {name!r} prints {key} {total} times, not the pinned {expected_prints}")
+    return problems
+
+
 STRUCTURAL_CHECKS = (
     problems_layout, problems_step_list, problems_step_keys, problems_env,
     problems_runner_files, problems_setting_endpoint, problems_duplicate_keys,
-    problems_republish,
+    problems_republish, problems_superseded_advice,
 )
 
 
@@ -628,6 +690,11 @@ class WorkflowStepTest(unittest.TestCase):
     def env_values(self):
         return dict(line.split("=", 1) for line in self.env_file.read_text(encoding="utf-8").splitlines())
 
+    def assert_superseded_advice(self, text: str, times: int = 1):
+        """Row 88: the note follows a corrective-version remedy exactly once,
+        and never prints on a path that names no such remedy (times=0)."""
+        self.assertEqual(text.count(SUPERSEDED_RELEASE_ADVICE), times, text)
+
 
 # Fix round 11: an unconditional claim that a release or its assets are
 # immutable, or that nothing (or no workflow) can republish one. Fix round 12:
@@ -787,6 +854,22 @@ OLDER_TAG_ECHO = "echo \"${OLDER_TAG_ADVICE}\" >" + chr(38) + "2"
 TAG_GONE_ADVICE = ("The tag <tag> is no longer on origin, so no dispatch can select it as the run ref to"
                    " verify the published release; cut a corrective new version.")
 TAG_GONE_ECHO = "echo \"${TAG_GONE_ADVICE//<tag>/${RELEASE_TAG}}\" >" + chr(38) + "2"
+# Row 88: the one note every corrective-version remedy a run can reach for
+# an older release prints after it. Declared once in the job env, printed by
+# both steps only through SUPERSEDED_ECHO, and repeated verbatim at the end
+# of the force input description, as OLDER_TAG_ADVICE is. It is conditional
+# in its own words, so the first-publication readback prints it too.
+SUPERSEDED_RELEASE_ADVICE = ("A corrective new version repairs only the latest release. If a later version"
+                             " supersedes the release that failed, report the failure of that older release"
+                             " to the maintainer.")
+SUPERSEDED_ECHO = "echo \"${SUPERSEDED_RELEASE_ADVICE}\" >" + chr(38) + "2"
+# Words of the note that no step script may carry inline, so a reworded copy
+# is caught as well as a verbatim one. None appears in either script today.
+SUPERSEDED_PHRASES = ("latest release", "older release", "to the maintainer")
+# Per step: the remedy lines the note follows (an echo line that names a
+# corrective new version, or the OLDER_TAG_ECHO or TAG_GONE_ECHO line) and
+# the prints of the note. Pinned so the probe cannot pass empty.
+SUPERSEDED_SITES = {DETERMINE: (4, 3), PUBLISH: (9, 8)}
 # A command name, or a file name, path or archive the advice must not carry.
 ADVICE_NAMES_A_PROCEDURE = re.compile(
     r"\b(gh|git|sha256sum|cmp|unzip|zip|curl)\b|\.(zip|sha256|md|ya?ml)\b|/|--")
@@ -837,7 +920,7 @@ class HarnessTest(WorkflowStepTest):
                 self.step_environment(name)
 
     def test_the_declarations_the_steps_rely_on_are_in_the_workflow(self):
-        self.assertEqual(set(job_env()), {"RELEASE_TAG", "OLDER_TAG_ADVICE", "TAG_GONE_ADVICE"})
+        self.assertEqual(set(job_env()), {"RELEASE_TAG", "OLDER_TAG_ADVICE", "TAG_GONE_ADVICE", "SUPERSEDED_RELEASE_ADVICE"})
         self.assertEqual(set(step_env(VALIDATE)), set())
         self.assertEqual(set(step_env(DETERMINE)), {"GH_TOKEN"})
         self.assertEqual(set(step_env(PACKAGE)), set())
@@ -944,6 +1027,7 @@ class PublishStepTest(WorkflowStepTest):
         self.assertIn("dispatching this workflow from main with tag v1.0.15", err)
         self.assertIn("force input; with no published release, force only moves the unpublished tag", err)
         self.assertNotIn("Nothing was tagged", err)
+        self.assert_superseded_advice(err, 0)
 
     def test_readback_of_a_different_day_fails_loudly_naming_both_days(self):
         self.runner["GITHUB_EVENT_NAME"] = "push"
@@ -961,6 +1045,7 @@ class PublishStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn("the remedy is a corrective new version", err)
+        self.assert_superseded_advice(err)
         self.assertNotIn("force", err)
         self.assertNotIn("republish with", err)
 
@@ -970,6 +1055,7 @@ class PublishStepTest(WorkflowStepTest):
         self.assertEqual(code, 1, err)
         self.assertIn("could not be read back", err)
         self.assertIn(REMEDY_UNREADABLE, err)
+        self.assert_superseded_advice(err, 0)
 
     def test_a_release_that_is_not_immutable_fails(self):
         # U1: with no pre-check, the first-publication readback is the only
@@ -985,10 +1071,12 @@ class PublishStepTest(WorkflowStepTest):
                     if value == "FAIL":
                         self.assertIn("immutable field could not be read back", err)
                         self.assertIn(REMEDY_UNREADABLE, err)
+                        self.assert_superseded_advice(err, 0)
                     else:
                         self.assertIn("immutable field reads ", err)
                         self.assertIn(REMEDY_NOT_IMMUTABLE, err)
                         self.assertNotIn(REMEDY_UNREADABLE, err)
+                        self.assert_superseded_advice(err)
                     self.assertNotIn("the day its Released line names", out)
                     calls = self.calls()
                     self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
@@ -1031,10 +1119,12 @@ class PublishStepTest(WorkflowStepTest):
                     if value == "FAIL":
                         self.assertIn("immutable field could not be read back", err)
                         self.assertIn(REMEDY_UNREADABLE, err)
+                        self.assert_superseded_advice(err, 0)
                     else:
                         self.assertIn("immutable field reads ", err)
                         self.assertIn(REMEDY_NOT_IMMUTABLE, err)
                         self.assertNotIn(REMEDY_UNREADABLE, err)
+                        self.assert_superseded_advice(err)
                     self.assertNotIn("is immutable", out)
                     calls = self.calls()
                     self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
@@ -1091,8 +1181,9 @@ class NoSettingPreCheckTest(WorkflowStepTest):
                 )
 
     def test_first_publication_proceeds_to_the_readback(self):
-        code, _out, err = self.run_step(PUBLISH)
+        code, out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 0, err)
+        self.assert_superseded_advice(out + err, 0)
         calls = self.calls()
         self.assertLess(self.index_of(calls, is_tag_operation), self.index_of(calls, is_create))
         self.assertLess(self.index_of(calls, is_create), self.index_of(calls, is_field_read("immutable")))
@@ -1144,6 +1235,7 @@ class RerunTest(WorkflowStepTest):
                     code, out, err = self.run_step(PUBLISH)
                     self.assertEqual(code, 1, err)
                     self.assertIn(message, err)
+                    self.assert_superseded_advice(err, 0 if label == "immutable unreadable" else 1)
                     self.assertNotIn("kept its assets", out)
 
     def test_broken_extractor_is_reported_by_the_probe_on_a_rerun(self):
@@ -1178,6 +1270,7 @@ class RerunTest(WorkflowStepTest):
                     self.rerun(event)
                     code, out, err = self.run_step(PUBLISH)
                     self.assertEqual(code, expected, err)
+                    self.assert_superseded_advice(err, 1 if value == "false" else 0)
                     calls = self.calls()
                     self.assertTrue(any(is_field_read("immutable")(c) for c in calls), calls)
                     self.assertFalse(any(is_field_read("published_at")(c) for c in calls), calls)
@@ -1218,6 +1311,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertIn(VERIFY_BY_DISPATCH, err)
         # Fix round 3: only at a tag carrying this workflow.
         self.assertIn(NEVER_AT_OLDER_TAG, err)
+        self.assert_superseded_advice(err)
         # Row 71: a re-run keeps the force input, so no re-run is advised.
         self.assertNotIn("re-run", err.lower())
         self.assertNotIn("to verify this one", err)
@@ -1244,17 +1338,20 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertLess(push, self.index_of(calls, is_create))
         self.assertEqual((self.state / "remote_tag").read_text(encoding="utf-8"), COMMIT)
         self.assertIn(REMEDY_UNREADABLE, err)
+        self.assert_superseded_advice(err, 0)
         self.reset_calls()
         self.set_state(immutable="true", status="200")
         self.inputs["force"] = "true"
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn(VERIFY_BY_DISPATCH, err)
+        self.assert_superseded_advice(err)
         self.reset_calls()
         self.inputs["force"] = "false"
         code, out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 0, err)
         self.assertIn("kept its assets", out)
+        self.assert_superseded_advice(out + err, 0)
         calls = self.calls()
         self.assert_no_mutation(calls)
         assert_readback_ran(self, calls, out)
@@ -1265,6 +1362,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn("this workflow never republishes a published release", err)
+        self.assert_superseded_advice(err)
         self.assert_no_mutation(self.calls())
 
     def test_force_is_refused_for_an_undated_published_release_too(self):
@@ -1274,6 +1372,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn("this workflow never republishes a published release", err)
+        self.assert_superseded_advice(err)
         self.assert_no_mutation(self.calls())
 
     def test_rerun_without_force_verifies_and_keeps_the_assets(self):
@@ -1288,6 +1387,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertEqual(code, 0, err)
                 self.assertIn("kept its assets", out)
                 self.assertNotIn("Refusing the force input", err)
+                self.assert_superseded_advice(out + err, 0)
                 calls = self.calls()
                 self.assert_no_mutation(calls)
                 assert_readback_ran(self, calls, out)
@@ -1300,6 +1400,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(code, 1, err)
         self.assertIn("is missing the asset cleanlanguage.zip.sha256", err)
         self.assertIn("cannot be completed in place; cut a corrective new version", err)
+        self.assert_superseded_advice(err)
         self.assertNotIn("force", err)
         self.assertNotIn("kept its assets", out)
         self.assert_no_mutation(self.calls())
@@ -1315,6 +1416,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(code, 0, err)
         self.assertNotIn("is missing the asset", err)
         self.assertIn("kept its assets", out)
+        self.assert_superseded_advice(out + err, 0)
         calls = self.calls()
         self.assert_no_mutation(calls)
         assert_readback_ran(self, calls, out)
@@ -1327,6 +1429,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         code, out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn("is missing the asset cleanlanguage-1.0.15.zip.sha256", err)
+        self.assert_superseded_advice(err)
         self.assertNotIn("kept its assets", out)
         self.assert_no_mutation(self.calls())
 
@@ -1343,6 +1446,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertIn("does not match its published checksum", err)
                 self.assertIn("fails verification against its own published checksums", err)
                 self.assertIn("cut a corrective new version", err)
+                self.assert_superseded_advice(err)
                 self.assertNotIn("force", err)
                 self.assertNotIn("kept its assets", out)
                 self.assert_no_mutation(self.calls())
@@ -1359,6 +1463,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertNotIn("does not match its published checksum", err)
                 self.assertIn("The published stable and version-named zips of v1.0.15 differ.", err)
                 self.assertIn("This workflow never republishes a published release; cut a corrective new version", err)
+                self.assert_superseded_advice(err)
                 self.assertNotIn("force", err)
                 self.assertNotIn("kept its assets", out)
                 self.assert_no_mutation(self.calls())
@@ -1375,6 +1480,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # first, and a corrective new version only if that verification fails.
         self.assertIn(VERIFY_BY_DISPATCH, err)
         self.assertIn(NEVER_AT_OLDER_TAG, err)
+        self.assert_superseded_advice(err)
         self.assertNotIn("with or without the force input; cut a corrective new version", err)
         self.assertNotIn("to overwrite", err)
         self.assertNotIn("Refusing the force input", err)
@@ -1392,8 +1498,32 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertEqual(code, 1, err)
                 self.assertIn(TAG_GONE, err)
                 self.assertNotIn("dispatch this workflow again", err)
+                self.assert_superseded_advice(err)
                 self.assertNotIn("kept its assets", out)
                 self.assert_no_mutation(self.calls())
+
+    def test_a_dropped_note_leaves_the_refusal_without_it(self):
+        # Row 88: a deliberate flip. With one print of the note replaced by
+        # the no-op :, the refusal it followed no longer carries the note, so
+        # the behavioural pins above fail without the change. The publish
+        # step prints the note after, in order from 0: the not-immutable
+        # remedy, the day-mismatch remedy, the tag-gone remedy, the older-tag
+        # advice, the missing-asset remedy, the two checksum remedies and the
+        # differing-zips remedy; site 2 and site 5 are dropped here.
+        script = step_script(PUBLISH)
+        self.assertEqual(script.count(SUPERSEDED_ECHO), 8)
+        self.published(remote_tag="")
+        code, _out, err = self.run_step(PUBLISH, replace_nth(script, SUPERSEDED_ECHO, 2, ":"))
+        self.assertEqual(code, 1, err)
+        self.assertIn(TAG_GONE, err)
+        self.assert_superseded_advice(err, 0)
+        self.reset_calls()
+        self.published()
+        self.set_state(corrupt="cleanlanguage.zip")
+        code, _out, err = self.run_step(PUBLISH, replace_nth(script, SUPERSEDED_ECHO, 5, ":"))
+        self.assertEqual(code, 1, err)
+        self.assertIn("fails verification against its own published checksums", err)
+        self.assert_superseded_advice(err, 0)
 
     def test_every_remedy_names_a_corrective_new_version(self):
         # Row 73: the remedy lines, found by their wording (an echo line that
@@ -1407,7 +1537,8 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # the job env, so they leave this count; the job env values are
         # pinned by test_the_older_tag_advice_and_the_tag_gone_text_each_have_one_source.
         self.assertEqual(len(remedies), 9, remedies)
-        for value in (job_env()["OLDER_TAG_ADVICE"], job_env()["TAG_GONE_ADVICE"]):
+        for value in (job_env()["OLDER_TAG_ADVICE"], job_env()["TAG_GONE_ADVICE"],
+                      job_env()["SUPERSEDED_RELEASE_ADVICE"]):
             self.assertIn("corrective new version", value)
             self.assertNotRegex(value, r"(?<!corrective )new version")
         for line in echoes:
@@ -1446,6 +1577,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn("refusing to move it without the force input", err)
+        self.assert_superseded_advice(err, 0)
         self.assert_no_mutation(self.calls())
 
     def test_tag_push_of_a_new_release_creates_it(self):
@@ -1471,6 +1603,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertIn("Could not determine whether v1.0.15 is already published (HTTP 500)", err)
                 self.assertIn("Refusing to proceed rather than act on a release whose state is unknown.", err)
                 self.assertNotIn("overwriting", err)
+                self.assert_superseded_advice(err, 0)
                 self.assert_no_mutation(self.calls())
 
     def test_no_text_or_path_offers_a_republish(self):
@@ -1500,7 +1633,9 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # sentence names its remedy rather than pointing back at one.
         last = ("A corrective new version is also the remedy if the dispatch at the tag fails its"
                 " verification, or if the tag is no longer on origin.")
-        self.assertTrue(description.endswith(OLDER_TAG_ADVICE + " " + last), description)
+        # Row 88: the shared superseded-release note closes the description.
+        self.assertTrue(description.endswith(OLDER_TAG_ADVICE + " " + last + " " + SUPERSEDED_RELEASE_ADVICE), description)
+        self.assertEqual(description.count(SUPERSEDED_RELEASE_ADVICE), 1, description)
         self.assertNotIn("The same remedy", description)
         sentences = [s for s in re.split(r"(?<=[.;])\s+", description) if s]
         self.assertEqual(len(sentences), len(set(sentences)), sentences)
@@ -1603,6 +1738,37 @@ class ImmutableReleaseTest(WorkflowStepTest):
         sentences = [s for s in re.split(r"(?<=[.;])\s+", OLDER_TAG_ADVICE) if s]
         self.assertEqual(len(sentences), len(set(sentences)), sentences)
 
+    def test_the_superseded_release_advice_has_one_source_and_follows_every_remedy(self):
+        # Row 88: the job env declares the note once; each step prints it
+        # only through SUPERSEDED_ECHO, after every remedy line and nowhere
+        # else; the description ends with it verbatim; it names no command,
+        # file or path, makes no immutability claim, carries none of the
+        # words the refusal tests forbid, and is two sentences.
+        self.assertEqual(problems_superseded_advice(WF), [])
+        self.assertEqual(job_env()["SUPERSEDED_RELEASE_ADVICE"], SUPERSEDED_RELEASE_ADVICE)
+        self.assertEqual(WORKFLOW_TEXT.count(SUPERSEDED_RELEASE_ADVICE), 2)
+        self.assertEqual(WORKFLOW_TEXT.count(SUPERSEDED_ECHO), 11)
+        for name, (_remedies, prints) in SUPERSEDED_SITES.items():
+            with self.subTest(name):
+                script = step_script(name)
+                self.assertEqual(script.count(SUPERSEDED_ECHO), prints)
+                self.assertNotIn(SUPERSEDED_RELEASE_ADVICE, script)
+                for phrase in SUPERSEDED_PHRASES:
+                    self.assertNotIn(phrase, script)
+        self.assertIsNone(ADVICE_NAMES_A_PROCEDURE.search(SUPERSEDED_RELEASE_ADVICE), SUPERSEDED_RELEASE_ADVICE)
+        self.assertEqual(immutability_claims(SUPERSEDED_RELEASE_ADVICE), [])
+        self.assertIn("corrective new version", SUPERSEDED_RELEASE_ADVICE)
+        self.assertNotRegex(SUPERSEDED_RELEASE_ADVICE, r"(?<!corrective )new version")
+        for word in ("force", "re-run", "dispatch this workflow", "immutable", "republish", "overwriting"):
+            self.assertNotIn(word, SUPERSEDED_RELEASE_ADVICE.lower())
+        for dash in (chr(8212), chr(8211)):
+            self.assertNotIn(dash, SUPERSEDED_RELEASE_ADVICE)
+        description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
+        self.assertTrue(description.endswith(" " + SUPERSEDED_RELEASE_ADVICE), description)
+        self.assertEqual(description.count(SUPERSEDED_RELEASE_ADVICE), 1)
+        sentences = [s for s in re.split(r"(?<=[.;])\s+", SUPERSEDED_RELEASE_ADVICE) if s]
+        self.assertEqual(len(sentences), 2, sentences)
+
     def test_a_failed_tag_lookup_stops_the_publish_step_with_no_tag_gone_advice(self):
         # Fix round 5: a failed lookup is not a tag gone from origin. The
         # mutant that ignores the failure (|| true) reads it as gone, so this
@@ -1613,11 +1779,13 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertNotEqual(code, 0, err)
         self.assertNotIn(TAG_GONE, err)
         self.assertNotIn("dispatch this workflow", err)
+        self.assert_superseded_advice(err, 0)
         self.assert_no_mutation(self.calls())
         self.reset_calls()
         code, _out, err = self.run_step(PUBLISH, ignore_lookup_failure(step_script(PUBLISH)))
         self.assertEqual(code, 1, err)
         self.assertIn(TAG_GONE, err)
+        self.assert_superseded_advice(err)
 
     def test_no_printed_text_claims_every_published_release_is_immutable(self):
         # Fix round 11: an older workflow can republish, so no printed line,
@@ -1691,6 +1859,7 @@ class ValidateStepTest(WorkflowStepTest):
                       " the matching tag.", err)
         self.assertIn("If it is, do not change the Version line: this workflow never republishes a published release."
                       " See the description of the force input of this workflow.", err)
+        self.assert_superseded_advice(err, 0)
         self.assertFalse(any(c[0] == "gh" for c in self.calls()), self.calls())
 
 
@@ -1730,6 +1899,7 @@ class DetermineStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 1, err)
         self.assertIn("is not a usable UTC instant", err)
+        self.assert_superseded_advice(err, 0)
 
     def test_unreadable_published_at_names_the_verifying_dispatch(self):
         # Row 78: like the publish-step readback refusals, the refusal names
@@ -1743,6 +1913,7 @@ class DetermineStepTest(WorkflowStepTest):
         # at the tag is named only for a tag carrying this workflow.
         self.assertIn(DETERMINE_UNREADABLE, err)
         self.assertIn(NEVER_AT_OLDER_TAG, err)
+        self.assert_superseded_advice(err)
         self.assertNotIn(REMEDY_UNREADABLE, err)
 
     def test_unreadable_published_at_with_the_tag_gone_names_a_corrective_new_version(self):
@@ -1753,6 +1924,7 @@ class DetermineStepTest(WorkflowStepTest):
         self.assertEqual(code, 1, err)
         self.assertIn("Could not read published_at for the existing release v1.0.15.", err)
         self.assertIn(TAG_GONE, err)
+        self.assert_superseded_advice(err)
         self.assertNotIn("dispatch this workflow", err)
         self.assertTrue(any(c[0] == VCS and c[1][:1] == ["ls-remote"] for c in self.calls()), self.calls())
 
@@ -1764,10 +1936,12 @@ class DetermineStepTest(WorkflowStepTest):
         self.assertIn("Could not read published_at for the existing release v1.0.15.", err)
         self.assertNotIn(TAG_GONE, err)
         self.assertNotIn("dispatch this workflow", err)
+        self.assert_superseded_advice(err, 0)
         self.assertEqual(self.env_values(), {})
         code, _out, err = self.run_step(DETERMINE, ignore_lookup_failure(step_script(DETERMINE)))
         self.assertEqual(code, 1, err)
         self.assertIn(TAG_GONE, err)
+        self.assert_superseded_advice(err)
 
     def test_a_dated_release_with_no_released_line_reaches_the_packager(self):
         # Fix round 8: a version above the undated baseline with no Released
@@ -1803,6 +1977,7 @@ class DetermineStepTest(WorkflowStepTest):
         self.assertIn("Release v1.0.15 IS PUBLISHED on 2026-11-16 (UTC, published_at 2026-11-16T00:00:02Z),"
                       " but the Released line at this commit names 2026-11-15.", err)
         self.assertIn(PUBLISHED_ON_ANOTHER_DAY, err)
+        self.assert_superseded_advice(err)
         self.assertNotIn("dispatch this workflow", err)
         self.assertEqual(self.env_values(), {})
 
@@ -1875,6 +2050,7 @@ class ChainedRunTest(WorkflowStepTest):
         self.assertEqual(calls[package][1], ["--tag", "v1.0.15", "--release-date", "2026-11-15"])
         self.assertLess(package, self.index_of(calls, is_create))
         self.assertIn("First-publication readback", results[-1][2])
+        self.assertNotIn(SUPERSEDED_RELEASE_ADVICE, results[-1][2] + results[-1][3])
 
     def test_rerun_in_sequence_takes_the_first_publication_day(self):
         self.skill("Version: 1.0.15  \nReleased: 2026-11-14  \n")
@@ -1891,6 +2067,7 @@ class ChainedRunTest(WorkflowStepTest):
         results = self.chain()
         self.assertEqual([r[1] for r in results], [1], results)
         self.assertIn(PUBLISHED_ON_ANOTHER_DAY, results[0][3])
+        self.assertEqual(results[0][3].count(SUPERSEDED_RELEASE_ADVICE), 1, results)
         self.assertFalse(any(c[0] == "release-package.sh" for c in self.calls()), self.calls())
 
     def test_rerun_in_sequence_fails_on_a_mutable_release(self):
@@ -1899,6 +2076,7 @@ class ChainedRunTest(WorkflowStepTest):
         results = self.chain()
         self.assertEqual([r[1] for r in results], [0, 0, 1], results)
         self.assertIn("immutable field reads false", results[-1][3])
+        self.assertEqual(results[-1][3].count(SUPERSEDED_RELEASE_ADVICE), 1, results)
 
 
 FORCE_LINE = "          FORCE: ${{ inputs.force }}\n"
@@ -1915,6 +2093,16 @@ def unmodelled_step(line: str) -> str:
         "          " + line + "\n"
         "\n"
     )
+
+
+def replace_nth(text: str, old: str, k: int, new: str) -> str:
+    """text with its k-th occurrence (from 0) of old replaced by new; raises
+    ValueError when there are fewer than k + 1 occurrences, so a loop over
+    sites cannot pass empty."""
+    start = -1
+    for _ in range(k + 1):
+        start = text.index(old, start + 1)
+    return text[:start] + new + text[start + len(old):]
 
 
 class MutationTest(unittest.TestCase):
@@ -2016,6 +2204,51 @@ class MutationTest(unittest.TestCase):
         anchor = "          confirm_published_release() { # label\n"
         wf = self.mutated(anchor, "          gh api \"repos/${GITHUB_REPOSITORY}/immutable-releases\" --jq .enabled\n" + anchor)
         self.assertNamed(wf, "immutable-releases setting endpoint")
+
+    def test_a_note_dropped_from_one_remedy_is_caught(self):
+        # Row 88: each print of the note replaced in turn by the no-op :,
+        # whole-line sites and inline sites alike.
+        self.assertEqual(WORKFLOW_TEXT.count(SUPERSEDED_ECHO), 11)
+        for k in range(11):
+            with self.subTest(site=k):
+                wf = Workflow(replace_nth(WORKFLOW_TEXT, SUPERSEDED_ECHO, k, ":"))
+                self.assertNamed(wf, "followed by 0 prints of SUPERSEDED_RELEASE_ADVICE", "not the pinned")
+
+    def test_an_inline_copy_of_the_note_is_caught(self):
+        # Row 88: the note's text written where the echo of the env value
+        # belongs, verbatim at each site and reworded at one.
+        inline = "echo \"" + SUPERSEDED_RELEASE_ADVICE + "\" >" + chr(38) + "2"
+        for k in range(11):
+            with self.subTest(site=k):
+                wf = Workflow(replace_nth(WORKFLOW_TEXT, SUPERSEDED_ECHO, k, inline))
+                self.assertNamed(wf, "appears 3 times in the workflow", "carries the note's words",
+                                 "followed by 0 prints")
+        reworded = "echo \"Report the failure of that older release to the maintainer.\" >" + chr(38) + "2"
+        wf = Workflow(replace_nth(WORKFLOW_TEXT, SUPERSEDED_ECHO, 0, reworded))
+        self.assertNamed(wf, "carries the note's words " + repr("older release"), "followed by 0 prints")
+
+    def test_a_description_without_or_twice_the_note_is_caught(self):
+        tail = " " + SUPERSEDED_RELEASE_ADVICE + "\""
+        wf = self.mutated(tail, "\"")
+        self.assertNamed(wf, "appears 1 times in the workflow",
+                         "force input description carries the note SUPERSEDED_RELEASE_ADVICE 0 times")
+        wf = self.mutated(tail, tail[:-1] + tail)
+        self.assertNamed(wf, "appears 3 times in the workflow", "2 times, not once")
+
+    def test_a_stray_print_of_the_note_is_caught(self):
+        # Row 88: a print after the unreadable-immutable refusal, which names
+        # no corrective new version.
+        anchor = ("              echo \"::error::Release ${RELEASE_TAG} is published, but its immutable field"
+                  " could not be read back.\" >" + chr(38) + "2\n")
+        wf = self.mutated(anchor, anchor + "              " + SUPERSEDED_ECHO + "\n")
+        self.assertNamed(wf, "1 times outside a remedy block", "9 times, not the pinned 8")
+
+    def test_a_changed_or_dropped_note_declaration_is_caught(self):
+        env_line = "      SUPERSEDED_RELEASE_ADVICE: \"" + SUPERSEDED_RELEASE_ADVICE + "\"\n"
+        wf = self.mutated(env_line, env_line.replace("latest", "newest", 1))
+        self.assertNamed(wf, "not the pinned note", "appears 1 times in the workflow")
+        wf = self.mutated(env_line, "")
+        self.assertNamed(wf, "declares env keys", "not the pinned note")
 
 
 # Row 59: the one API path every probe and readback names.
