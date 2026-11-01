@@ -652,8 +652,8 @@ BROKEN_EXTRACTORS = (
 REMEDY_NOT_IMMUTABLE = "Turn on immutable releases for the repository, then cut a corrective new version."
 
 # Fix round 1: the next step the unreadable readback refusals name (row 78
-# adds the determine-step refusal), and
-# the verification path the force refusal names. Repeating a run keeps its
+# adds the determine-step refusal), and the verification path the force
+# refusal names. Repeating a run keeps its
 # force input and run ref, so each names a fresh dispatch without force at
 # the tag itself.
 REMEDY_UNREADABLE = ("Once the release record is readable, dispatch this workflow again with the force input"
@@ -1277,12 +1277,20 @@ class ImmutableReleaseTest(WorkflowStepTest):
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
         self.assertTrue(description.startswith("Move the tag of a release that is not yet published"), description)
         self.assertIn("cannot be republished", description)
-        # Row 78: a run dispatched from main that failed before it published
-        # has no tag to select as the run ref, so the description names a
-        # re-run or a fresh dispatch from main for it, and the tag as the run
-        # ref only to verify a release that is already published.
+        # Row 78: a run that failed before it published is finished by a
+        # re-run or a fresh dispatch from main, and the tag as the run ref is
+        # named only to verify a release that is already published. A run
+        # can fail after its tag push (the binding window check, or the
+        # create call), so the tag may already be on origin; once main has
+        # moved, an unforced dispatch from main refuses to move it, and the
+        # description names this input for that case. The behavioural
+        # pair is test_force_still_moves_the_tag_of_an_unpublished_release
+        # and test_moved_tag_of_an_unpublished_release_needs_the_force_input.
         self.assertIn("To finish a run that failed before it published, re-run it or dispatch this workflow"
                       " again from main with the same tag.", description)
+        self.assertIn("If that tag is already on origin at another commit, for example because the failed"
+                      " run pushed it and main has moved since, check this input on that dispatch from"
+                      " main.", description)
         self.assertIn("To verify a release that is already published, dispatch this workflow again with this"
                       " input unchecked and the tag itself selected as the run ref, not main", description)
         self.assertNotIn("failed before it published, dispatch this workflow again with the tag", description)
