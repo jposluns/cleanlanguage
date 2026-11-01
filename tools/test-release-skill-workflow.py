@@ -66,7 +66,6 @@ They run offline: nothing reaches GitHub or any network.
 
 from __future__ import annotations
 
-import inspect
 import json
 import os
 import re
@@ -123,7 +122,7 @@ STEP_KEYS = {
 
 # The env: keys the job and each modelled step declare, and the keys the
 # steps before each named step write to GITHUB_ENV.
-JOB_ENV_KEYS = {"RELEASE_TAG", "OLDER_TAG_ADVICE"}
+JOB_ENV_KEYS = {"RELEASE_TAG", "OLDER_TAG_ADVICE", "TAG_GONE_ADVICE"}
 STEP_ENV_KEYS = {VALIDATE: set(), DETERMINE: {"GH_TOKEN"}, PACKAGE: set(), PUBLISH: {"GH_TOKEN", "FORCE"}}
 GITHUB_ENV_WRITES = {
     VALIDATE: set(),
@@ -683,36 +682,25 @@ VERIFY_BY_DISPATCH = ("To verify the published release, first check that .github
 # verifying dispatch only for a tag carrying that step, and for any other tag
 # forbid a dispatch at it and name a read-only check. The readback refusals
 # (REMEDY_UNREADABLE) run at the tag commit, which carries this workflow.
-# Fix round 5: the one advice for such a tag, declared once in the job env and
-# printed by both sites with <tag> replaced, and repeated in the description.
-# It names two pass criteria only and no file name or path inside a zip.
+# Fix round 7: the one advice for such a tag, declared once in the job env,
+# printed by both sites and repeated in the description. It names the
+# authority, the release step of the workflow at that tag, and no procedure:
+# no command, file or path.
 OLDER_TAG_ADVICE = ("A tag without the step " + PUBLISH + " carries an older workflow that can"
                     " republish a published release, so never dispatch this workflow at such a tag, with or"
-                    " without the force input. Verify that release read-only instead: in a new, empty"
-                    " directory, run gh release view <tag> --json isImmutable,assets and gh release download"
-                    " <tag>. If a command cannot run, run it again; that says nothing about the release. The"
-                    " release passes only if isImmutable is true, it has at least one zip, every zip has a"
-                    " .sha256 named after it (its name plus .sha256) and every .sha256 has its zip, each"
-                    " .sha256 names only its own zip, and sha256sum -c passes on each .sha256. If isImmutable"
-                    " is false, turn on immutable releases for the repository, then cut a corrective new"
-                    " version; if any other check fails, cut a corrective new version.")
-NEVER_AT_OLDER_TAG = OLDER_TAG_ADVICE.replace("<tag>", "v1.0.15")
-OLDER_TAG_ECHO = "echo \"${OLDER_TAG_ADVICE//<tag>/${RELEASE_TAG}}\" >" + chr(38) + "2"
-# Fix round 6: every condition the advice states, each pinned by its words.
-PASS_CRITERIA = (
-    "in a new, empty directory",
-    "If a command cannot run, run it again; that says nothing about the release.",
-    "passes only if isImmutable is true",
-    "it has at least one zip",
-    "every zip has a .sha256 named after it (its name plus .sha256)",
-    "every .sha256 has its zip",
-    "each .sha256 names only its own zip",
-    "sha256sum -c passes on each .sha256",
-    "If isImmutable is false, turn on immutable releases for the repository, then cut a corrective new version",
-    "if any other check fails, cut a corrective new version.",
-)
-# A zip file name, or a path or command that reaches inside a zip.
-NAMES_A_ZIP = re.compile(r"[A-Za-z0-9_${}<>-]\.zip\b|unzip|SKILL\.md|Released:")
+                    " without the force input. Such a release can be checked only by hand, read-only, against"
+                    " the release step of the workflow at that tag; if it fails that check, or cannot be"
+                    " checked, cut a corrective new version.")
+NEVER_AT_OLDER_TAG = OLDER_TAG_ADVICE
+OLDER_TAG_ECHO = "echo \"${OLDER_TAG_ADVICE}\" >" + chr(38) + "2"
+# Fix round 7: the tag-gone text, declared once in the job env and printed by
+# both steps with <tag> replaced.
+TAG_GONE_ADVICE = ("The tag <tag> is no longer on origin, so no dispatch can select it as the run ref to"
+                   " verify the published release; cut a corrective new version.")
+TAG_GONE_ECHO = "echo \"${TAG_GONE_ADVICE//<tag>/${RELEASE_TAG}}\" >" + chr(38) + "2"
+# A command name, or a file name, path or archive the advice must not carry.
+ADVICE_NAMES_A_PROCEDURE = re.compile(
+    r"\b(gh|git|sha256sum|cmp|unzip|zip|curl)\b|\.(zip|sha256|md|ya?ml)\b|/|--")
 DETERMINE_UNREADABLE = ("Once the release record is readable, check that .github/workflows/release-skill.yml"
                         " at the tag v1.0.15 has the step " + PUBLISH + ". If it does, dispatch this"
                         " workflow again with the force input unchecked and the tag v1.0.15 itself selected"
@@ -760,7 +748,7 @@ class HarnessTest(WorkflowStepTest):
                 self.step_environment(name)
 
     def test_the_declarations_the_steps_rely_on_are_in_the_workflow(self):
-        self.assertEqual(set(job_env()), {"RELEASE_TAG", "OLDER_TAG_ADVICE"})
+        self.assertEqual(set(job_env()), {"RELEASE_TAG", "OLDER_TAG_ADVICE", "TAG_GONE_ADVICE"})
         self.assertEqual(set(step_env(VALIDATE)), set())
         self.assertEqual(set(step_env(DETERMINE)), {"GH_TOKEN"})
         self.assertEqual(set(step_env(PACKAGE)), set())
@@ -1141,7 +1129,6 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertIn(VERIFY_BY_DISPATCH, err)
         # Fix round 3: only at a tag carrying this workflow.
         self.assertIn(NEVER_AT_OLDER_TAG, err)
-        self.assertIsNone(NAMES_A_ZIP.search(err), err)
         # Row 71: a re-run keeps the force input, so no re-run is advised.
         self.assertNotIn("re-run", err.lower())
         self.assertNotIn("to verify this one", err)
@@ -1273,7 +1260,6 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # first, and a corrective new version only if that verification fails.
         self.assertIn(VERIFY_BY_DISPATCH, err)
         self.assertIn(NEVER_AT_OLDER_TAG, err)
-        self.assertIsNone(NAMES_A_ZIP.search(err), err)
         self.assertNotIn("with or without the force input; cut a corrective new version", err)
         self.assertNotIn("to overwrite", err)
         self.assertNotIn("Refusing the force input", err)
@@ -1302,7 +1288,13 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # remedy phrased without either word is neither counted nor checked.
         echoes = [line for line in WORKFLOW_TEXT.splitlines() if "echo " in line]
         remedies = [line for line in echoes if "corrective" in line or "new version" in line]
-        self.assertEqual(len(remedies), 11, remedies)
+        # Fix round 7: the two tag-gone lines now print TAG_GONE_ADVICE from
+        # the job env, so they leave this count; the job env values are
+        # pinned by test_the_older_tag_advice_and_the_tag_gone_text_each_have_one_source.
+        self.assertEqual(len(remedies), 9, remedies)
+        for value in (job_env()["OLDER_TAG_ADVICE"], job_env()["TAG_GONE_ADVICE"]):
+            self.assertIn("corrective new version", value)
+            self.assertNotRegex(value, r"(?<!corrective )new version")
         for line in echoes:
             with self.subTest(line.strip()):
                 self.assertNotRegex(line, r"(?<!corrective )new version")
@@ -1422,7 +1414,6 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertNotIn("cleanlanguage.zip", description)
         self.assertNotIn("clean-language", description)
         self.assertNotIn("unzip -p cleanlanguage.zip SKILL.md", description)
-        self.assertIsNone(NAMES_A_ZIP.search(description), description)
         # gh release view names the field isImmutable; immutable is the REST field.
         self.assertNotIn("--json immutable", WORKFLOW_TEXT)
         self.assertNotIn("failed before it published, dispatch this workflow again with the tag", description)
@@ -1452,25 +1443,32 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertIn("has the step " + PUBLISH + ". If it does, dispatch", lines[i])
                 self.assertEqual(lines[i + 1].strip(), OLDER_TAG_ECHO)
 
-    def test_the_older_tag_advice_has_one_source_and_its_pass_criteria(self):
-        # Fix round 5: the job env declares the advice once, both steps print
-        # it through the same line, the description repeats it verbatim, and
-        # it names its pass criteria and no zip file or in-zip path.
+    def test_the_older_tag_advice_and_the_tag_gone_text_each_have_one_source(self):
+        # Fix round 7: the job env declares each text once and each step
+        # prints it through one line; the description repeats the advice
+        # verbatim. The advice names no command, file or path, and no
+        # sentence repeats.
         self.assertEqual(job_env()["OLDER_TAG_ADVICE"], OLDER_TAG_ADVICE)
+        self.assertEqual(job_env()["TAG_GONE_ADVICE"], TAG_GONE_ADVICE)
+        self.assertEqual(TAG_GONE, TAG_GONE_ADVICE.replace("<tag>", "v1.0.15"))
         for name in (DETERMINE, PUBLISH):
             with self.subTest(name):
-                self.assertEqual([l.strip() for l in step_script(name).splitlines()].count(OLDER_TAG_ECHO), 1)
+                stripped = [l.strip() for l in step_script(name).splitlines()]
+                self.assertEqual(stripped.count(OLDER_TAG_ECHO), 1)
+                self.assertEqual(stripped.count(TAG_GONE_ECHO), 1)
                 self.assertNotIn("older workflow", step_script(name))
-        for criterion in PASS_CRITERIA:
-            with self.subTest(criterion):
-                self.assertIn(criterion, OLDER_TAG_ADVICE)
-        self.assertIn("--json isImmutable,assets", OLDER_TAG_ADVICE)
+                self.assertNotIn("is no longer on origin", step_script(name))
+        self.assertIsNone(ADVICE_NAMES_A_PROCEDURE.search(OLDER_TAG_ADVICE), OLDER_TAG_ADVICE)
+        for bad in ("gh release view", "sha256sum -c", "cmp a b", "unzip -p", "x.zip", "y.sha256",
+                    "SKILL.md", "release-skill.yml", "a/b", "--json"):
+            with self.subTest(probe=bad):
+                self.assertIsNotNone(ADVICE_NAMES_A_PROCEDURE.search(bad))
+        self.assertIn("checked only by hand, read-only, against the release step of the workflow at that tag",
+                      OLDER_TAG_ADVICE)
+        self.assertIn("if it fails that check, or cannot be checked, cut a corrective new version.",
+                      OLDER_TAG_ADVICE)
         sentences = [s for s in re.split(r"(?<=[.;])\s+", OLDER_TAG_ADVICE) if s]
         self.assertEqual(len(sentences), len(set(sentences)), sentences)
-        self.assertIsNone(NAMES_A_ZIP.search(OLDER_TAG_ADVICE))
-        for bad in ("cleanlanguage.zip", "clean-language.zip", "x-<version>.zip", "unzip -Z1", "SKILL.md"):
-            with self.subTest(probe=bad):
-                self.assertIsNotNone(NAMES_A_ZIP.search(bad))
 
     def test_a_failed_tag_lookup_stops_the_publish_step_with_no_tag_gone_advice(self):
         # Fix round 5: a failed lookup is not a tag gone from origin. The
@@ -1542,7 +1540,6 @@ class DetermineStepTest(WorkflowStepTest):
         # at the tag is named only for a tag carrying this workflow.
         self.assertIn(DETERMINE_UNREADABLE, err)
         self.assertIn(NEVER_AT_OLDER_TAG, err)
-        self.assertIsNone(NAMES_A_ZIP.search(err), err)
         self.assertNotIn(REMEDY_UNREADABLE, err)
 
     def test_unreadable_published_at_with_the_tag_gone_names_a_corrective_new_version(self):
@@ -1603,96 +1600,6 @@ class DetermineStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 1, err)
         self.assertIn("is malformed", err)
-
-
-def stated_verdict(directory: Path, immutable: str) -> str:
-    """Apply the read-only criteria OLDER_TAG_ADVICE states, in its order, to
-    a download directory: "pass", "immutable" (turn on immutable releases,
-    then cut a corrective new version) or "corrective". Each check carries the
-    PASS_CRITERIA words it implements; StatedCriteriaTest requires every one
-    of them in the advice."""
-    if immutable != "true":  # passes only if isImmutable is true
-        return "immutable"
-    names = sorted(path.name for path in directory.iterdir())
-    zips = [name for name in names if name.endswith(".zip")]
-    sums = [name for name in names if name.endswith(".sha256")]
-    if not zips:  # it has at least one zip
-        return "corrective"
-    if any(name + ".sha256" not in sums for name in zips):  # every zip has a .sha256 named after it
-        return "corrective"
-    if any(name[: -len(".sha256")] not in zips for name in sums):  # every .sha256 has its zip
-        return "corrective"
-    for name in sums:  # each .sha256 names only its own zip
-        lines = (directory / name).read_text(encoding="utf-8").splitlines()
-        entries = [re.fullmatch(r"[0-9a-f]{64} [ *](.+)", line) for line in lines]
-        if not entries or any(entry is None or entry.group(1) != name[: -len(".sha256")] for entry in entries):
-            return "corrective"
-    for name in sums:  # sha256sum -c passes on each .sha256
-        if subprocess.run(["sha256sum", "-c", name], cwd=directory, capture_output=True).returncode != 0:
-            return "corrective"
-    return "pass"
-
-
-class StatedCriteriaTest(unittest.TestCase):
-    """Fix round 6: the criteria the read-only advice states, run on a
-    synthetic download of a good release and of each failing case. This
-    proves the stated criteria refuse each case, not what a reader runs."""
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.dir = Path(self._tmp.name)
-        for name, data in (("stable.zip", b"zip bytes"), ("stable-1.0.0.zip", b"zip bytes")):
-            (self.dir / name).write_bytes(data)
-            self.manifest(name)
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def manifest(self, name):
-        # The manifest sha256sum itself writes for the zip, by its bare name.
-        out = subprocess.run(["sha256sum", name], cwd=self.dir, check=True, capture_output=True).stdout
-        (self.dir / (name + ".sha256")).write_bytes(out)
-
-    def test_every_criterion_the_checker_implements_is_in_the_advice(self):
-        for criterion in ("passes only if isImmutable is true", "it has at least one zip",
-                          "every zip has a .sha256 named after it", "every .sha256 has its zip",
-                          "each .sha256 names only its own zip", "sha256sum -c passes on each .sha256"):
-            with self.subTest(criterion):
-                self.assertIn(criterion, OLDER_TAG_ADVICE)
-                self.assertIn("# " + criterion, inspect.getsource(stated_verdict))
-
-    def test_a_good_release_passes(self):
-        self.assertEqual(stated_verdict(self.dir, "true"), "pass")
-
-    def test_a_mutable_release_names_the_immutable_remedy(self):
-        self.assertEqual(stated_verdict(self.dir, "false"), "immutable")
-
-    def test_a_missing_zip_fails(self):
-        (self.dir / "stable-1.0.0.zip").unlink()
-        self.assertEqual(stated_verdict(self.dir, "true"), "corrective")
-
-    def test_no_assets_fails(self):
-        for path in self.dir.iterdir():
-            path.unlink()
-        self.assertEqual(stated_verdict(self.dir, "true"), "corrective")
-
-    def test_a_crossed_manifest_fails_though_sha256sum_alone_passes(self):
-        other = (self.dir / "stable-1.0.0.zip")
-        other.write_bytes(b"other bytes")
-        self.manifest("stable-1.0.0.zip")
-        crossed = (self.dir / "stable-1.0.0.zip.sha256").read_bytes()
-        (self.dir / "stable.zip.sha256").write_bytes(crossed)
-        self.assertEqual(subprocess.run(["sha256sum", "-c", "stable.zip.sha256"], cwd=self.dir,
-                                        capture_output=True).returncode, 0)
-        self.assertEqual(stated_verdict(self.dir, "true"), "corrective")
-
-    def test_a_corrupted_zip_fails(self):
-        (self.dir / "stable.zip").write_bytes(b"zip bytes altered")
-        self.assertEqual(stated_verdict(self.dir, "true"), "corrective")
-
-    def test_a_missing_sha256_fails(self):
-        (self.dir / "stable.zip.sha256").unlink()
-        self.assertEqual(stated_verdict(self.dir, "true"), "corrective")
 
 
 class PackageStepTest(WorkflowStepTest):
