@@ -753,7 +753,11 @@ def check_icon(rel: str, field: str, icon: object, base: Path, repo_root: Path) 
     try:
         root_parts = base.relative_to(REPO_ROOT).parts
     except ValueError:
-        die(f"{where}: plugin root {base} is not inside the repository root {REPO_ROOT}", 3)
+        die(
+            f"{where}: plugin root {str(base)!r} is not inside the repository root "
+            f"{str(REPO_ROOT)!r}",
+            3,
+        )
     try:
         walk_without_symlinks(REPO_ROOT, root_parts, directories_only=True)
     except WalkError as walk:
@@ -846,7 +850,7 @@ def main() -> int:
     on_disk = discover_manifests(REPO_ROOT)  # M1
     for rel in sorted(on_disk - set(declared)):
         die(
-            f"manifest {rel} is on disk but not declared in MANIFESTS; add it and "
+            f"manifest {rel!r} is on disk but not declared in MANIFESTS; add it and "
             "review its icon fields"
         )
 

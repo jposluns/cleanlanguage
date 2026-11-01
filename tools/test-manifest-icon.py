@@ -236,13 +236,16 @@ class ManifestIconTest(unittest.TestCase):
 
     @contextlib.contextmanager
     def scoped_io(self, manifests=False, open_error=None, fstat_result=None,
-                  fstat_error=None, read_result=None, read_error=None, read_sizes=None):
+                  fstat_error=None, read_result=None, read_error=None, read_sizes=None,
+                  read_budget=None):
         """Mock os.open, os.fstat and os.read for the icon only, or for manifests only.
 
         Yields the list of scoped paths whose open was attempted, so a test can show
         the mock reached the file it targets. When read_sizes is a list, every scoped
         read returns a full block of the size it asks for and appends that size, so
-        the file never ends. More than 10000 scoped reads of any kind raise
+        the file never ends; with read_budget as well, the file ends after
+        read_budget bytes, each read returning at most what remains. More than
+        10000 scoped reads of any kind raise
         RuntimeError, so an unbounded read loop fails the test instead of hanging it.
         """
         real_open, real_fstat, real_read = os.open, os.fstat, os.read
@@ -271,6 +274,7 @@ class ManifestIconTest(unittest.TestCase):
             return real_fstat(fd, *args, **kwargs)
 
         reads = []
+        delivered = [0]
 
         def fake_read(fd, count):
             if fd in scoped_fds:
@@ -283,6 +287,9 @@ class ManifestIconTest(unittest.TestCase):
                     return read_result
                 if read_sizes is not None:
                     read_sizes.append(count)
+                    if read_budget is not None:
+                        count = min(count, read_budget - delivered[0])
+                        delivered[0] += count
                     return bytes(count)
             return real_read(fd, count)
 
@@ -377,17 +384,42 @@ class ManifestIconTest(unittest.TestCase):
         (hidden / "plugin.json").write_text("{}", encoding="utf-8")
         self.expect_pass()
 
+    def test_nested_dot_vcs_directory_is_not_pruned(self):
+        # Only the top-level .git directory is pruned: a manifest under a nested
+        # .git directory, such as a vendored checkout, is still reconciled.
+        nested = self.root / "vendor" / ".git"
+        nested.mkdir(parents=True)
+        (nested / "plugin.json").write_text("{}", encoding="utf-8")
+        self.expect_exit(
+            1, "manifest " + repr("vendor/.git/plugin.json") + " is on disk but not declared in MANIFESTS"
+        )
+
     # Manifest set (M1, M2).
 
     def test_unlisted_manifest_on_disk_fails(self):
         (self.root / "extra").mkdir()
         (self.root / "extra" / "plugin.json").write_text("{}", encoding="utf-8")
-        self.expect_exit(1, "extra/plugin.json is on disk but not declared in MANIFESTS")
+        self.expect_exit(1, "manifest " + repr("extra/plugin.json") + " is on disk but not declared in MANIFESTS")
 
     def test_unlisted_marketplace_on_disk_fails(self):
         (self.root / "extra" / ".claude-plugin").mkdir(parents=True)
         (self.root / "extra" / ".claude-plugin" / "marketplace.json").write_text("{}", encoding="utf-8")
-        self.expect_exit(1, "extra/.claude-plugin/marketplace.json is on disk but not declared in MANIFESTS")
+        self.expect_exit(
+            1, "manifest " + repr("extra/.claude-plugin/marketplace.json") + " is on disk but not declared in MANIFESTS"
+        )
+
+    def test_undeclared_manifest_path_is_escaped_in_the_message(self):
+        # A directory name read from disk is printed with repr, so a newline or an
+        # ESC byte in it cannot start a new log line (such as ::error) or a
+        # terminal escape sequence.
+        name = "evil\n::error::spoof\x1b[31m"
+        (self.root / name).mkdir()
+        (self.root / name / "plugin.json").write_text("{}", encoding="utf-8")
+        err = self.expect_exit(1, "is on disk but not declared in MANIFESTS")
+        self.assertNotIn("\x1b", err)
+        self.assertEqual(err.count("\n"), 1, err)
+        self.assertTrue(err.endswith("\n"), err)
+        self.assertIn("manifest " + repr(name + "/plugin.json") + " is on disk", err)
 
     def test_declared_manifest_set_and_root_are_exact(self):
         real_root, real_manifests, real_required = self._saved
@@ -686,6 +718,13 @@ class ManifestIconTest(unittest.TestCase):
                 self.set_icon(name, make_png(512, 512))
                 self.expect_exit(1, "must hold only printable ASCII characters")
 
+    def test_icon_allowlist_endpoints_pass(self):
+        # P2 endpoints: 0x21 (!) and 0x7E (~) are the first and last characters the
+        # allowlist accepts; 0x20 and 0x7F are refused by the tests above.
+        self.set_icon("a!b~c.png", make_png(512, 512))
+        out = self.expect_pass()
+        self.assertIn(repr("./assets/a!b~c.png") + " is a PNG of 512 x 512 pixels", out)
+
     def test_icon_refused_character_outside_the_file_name_fails(self):
         # The refusal reads the whole value, not only the file name: a refused
         # character in a directory component or in the "./" prefix region is
@@ -752,6 +791,18 @@ class ManifestIconTest(unittest.TestCase):
             code, text = self.run_check_icon(Path(outside))
         self.assertEqual(code, 3, text)
         self.assertIn("is not inside the repository root", text)
+
+    def test_check_icon_plugin_root_path_is_escaped_in_the_message(self):
+        # The plugin root and repository root paths are printed with repr, so a
+        # newline or an ESC byte in either cannot spoof a log line.
+        with tempfile.TemporaryDirectory(prefix="evil\n::error::\x1b[31m") as outside:
+            code, text = self.run_check_icon(Path(outside))
+        self.assertEqual(code, 3, text)
+        self.assertNotIn("\x1b", text)
+        self.assertEqual(text.count("\n"), 1, text)
+        self.assertIn(
+            "plugin root " + repr(outside) + " is not inside the repository root " + repr(str(self.root)), text
+        )
 
     def test_check_icon_plugin_root_uninspectable_fails_closed(self):
         real_lstat = os.lstat
@@ -923,6 +974,17 @@ class ManifestIconTest(unittest.TestCase):
         self.assertEqual(max(sizes), 65536)
         self.assertEqual(sizes[-1], 2000001 - 30 * 65536)
 
+    def test_icon_read_requests_one_byte_past_the_limit(self):
+        # A file that has grown to exactly MAX_ICON_BYTES bytes is read on to
+        # MAX_ICON_BYTES + 1: the last request asks for the one byte past the limit,
+        # finds the end of the file, and the read is refused as changed.
+        sizes = []
+        with self.scoped_io(read_sizes=sizes, read_budget=gate.MAX_ICON_BYTES):
+            self.expect_exit(
+                3, "field icon: icon file " + repr("./assets/CL_icon.png") + " changed while it was read"
+            )
+        self.assertEqual(sizes, [65536] * 30 + [2000001 - 30 * 65536, 1])
+
     def test_icon_resolve_failure_fails_closed(self):
         icon = self.assets / "CL_icon.png"
         plugin_root = self.root / "cleanlanguage"
@@ -976,11 +1038,20 @@ class ManifestIconTest(unittest.TestCase):
         data = make_png(512, 512)
         self.set_icon("CL_icon.png", data[:len(data) - 15])
         self.expect_exit(1, "is truncated")
+        # One byte short: the chunk length check refuses it, not the bounded reader.
+        self.set_icon("CL_icon.png", data[:len(data) - 1])
+        self.expect_image_error(
+            "CL_icon.png", "PNG", "chunk " + repr("IEND") + f" at offset {len(data) - 12} is truncated"
+        )
 
     def test_png_truncated_chunk_header_fails(self):
         data = make_png(512, 512, with_iend=False) + b"\x00\x00\x00"
         self.set_icon("CL_icon.png", data)
         self.expect_exit(1, "chunk header at offset")
+        # Seven bytes, one short of a chunk header.
+        head = make_png(512, 512, with_iend=False)
+        self.set_icon("CL_icon.png", head + bytes(7))
+        self.expect_image_error("CL_icon.png", "PNG", f"chunk header at offset {len(head)} is truncated")
 
     def test_png_bad_crc_fails(self):
         for chunk_type in (b"IHDR", b"IDAT"):
@@ -989,13 +1060,22 @@ class ManifestIconTest(unittest.TestCase):
                 self.expect_exit(1, "bad CRC")
 
     def test_png_bad_chunk_type_fails(self):
-        self.set_icon("CL_icon.png", make_png(512, 512, before_idat=((b"ab1d", b""),)))
-        self.expect_exit(1, "is not four ASCII letters")
+        # 0x40, 0x5B, 0x60 and 0x7B lie just outside the two letter ranges.
+        for chunk_type in (b"ab1d", b"ab@d", b"ab[d", b"ab`d", b"ab{d"):
+            with self.subTest(chunk=chunk_type):
+                self.set_icon("CL_icon.png", make_png(512, 512, before_idat=((chunk_type, b""),)))
+                self.expect_exit(1, "is not four ASCII letters")
 
     def test_png_oversized_chunk_length_fails(self):
         data = make_png(512, 512, with_iend=False) + struct.pack(">I", 2**31) + b"tEXt"
         self.set_icon("CL_icon.png", data)
         self.expect_exit(1, "above 2**31 - 1")
+        # Exactly 2**31 - 1 passes the length check and is refused as truncated.
+        head = make_png(512, 512, with_iend=False)
+        self.set_icon("CL_icon.png", head + struct.pack(">I", gate.MAX_U31) + b"tEXt")
+        self.expect_image_error(
+            "CL_icon.png", "PNG", "chunk " + repr("tEXt") + f" at offset {len(head)} is truncated"
+        )
 
     def test_png_first_chunk_not_ihdr_fails(self):
         self.set_icon("CL_icon.png", make_png(512, 512, first_chunk=(b"CgBI", b"\x50\x00\x20\x06")))
@@ -1016,6 +1096,11 @@ class ManifestIconTest(unittest.TestCase):
             with self.subTest(width=width, height=height):
                 self.set_icon("CL_icon.png", make_png(width, height))
                 self.expect_image_error("CL_icon.png", "PNG", "width or height is above 2**31 - 1")
+
+    def test_png_dimension_at_u31_reaches_the_side_bounds(self):
+        # 2**31 - 1 passes the IHDR range check and is refused by the side bounds.
+        self.set_icon("CL_icon.png", make_png(gate.MAX_U31, gate.MAX_U31))
+        self.expect_exit(1, "2147483647 x 2147483647 pixels; each side must be 512 to 2048")
 
     def test_png_missing_iend_fails(self):
         self.set_icon("CL_icon.png", make_png(512, 512, with_iend=False))
@@ -1071,7 +1156,7 @@ class ManifestIconTest(unittest.TestCase):
         self.expect_exit(1, "a second IHDR chunk appears at offset 33")
 
     def test_png_unknown_critical_chunk_fails(self):
-        for chunk_type in (b"ZZZZ", b"CgBI", b"Idat"):
+        for chunk_type in (b"ZZZZ", b"CgBI", b"Idat", b"Aaaa"):
             with self.subTest(chunk=chunk_type):
                 self.set_icon("CL_icon.png", make_png(512, 512, before_idat=((chunk_type, b""),)))
                 self.expect_exit(1, "unknown critical chunk " + repr(chunk_type.decode("ascii")))
@@ -1154,6 +1239,9 @@ class ManifestIconTest(unittest.TestCase):
     def test_jpeg_truncated_segment_fails(self):
         self.set_icon("icon.jpg", b"\xff\xd8\xff\xdb\x00\x50" + bytes(10))
         self.expect_exit(1, "segment at offset 2 is truncated")
+        # One byte short of its declared length.
+        self.set_icon("icon.jpg", b"\xff\xd8\xff\xdb\x00\x05" + bytes(2))
+        self.expect_image_error("icon.jpg", "JPEG", "segment at offset 2 is truncated")
 
     def test_jpeg_truncated_length_fails(self):
         self.set_icon("icon.jpg", b"\xff\xd8\xff\xdb\x00")
@@ -1181,6 +1269,11 @@ class ManifestIconTest(unittest.TestCase):
         self.expect_image_error("icon.jpg", "JPEG", "frame header at offset 2 is too short for 3 components")
         short = jpeg_segment(0xC0, struct.pack(">BHHB", 8, 512, 512, 3) + bytes(7))
         self.set_icon("icon.jpg", b"\xff\xd8" + short + b"\xff\xd9")
+        self.expect_image_error("icon.jpg", "JPEG", "frame header at offset 2 is too short for 3 components")
+        # One byte short of the component table, followed by a valid scan.
+        table = bytes([1, 0x11, 0, 2, 0x11, 0, 3, 0x11])
+        short = jpeg_segment(0xC0, struct.pack(">BHHB", 8, 512, 512, 3) + table)
+        self.set_icon("icon.jpg", b"\xff\xd8" + short + SOS + b"\xff\xd9")
         self.expect_image_error("icon.jpg", "JPEG", "frame header at offset 2 is too short for 3 components")
         # A frame header shorter than its fixed fields, followed by more bytes or at
         # the end of the file, is refused by the length check with a gate message.
@@ -1215,6 +1308,9 @@ class ManifestIconTest(unittest.TestCase):
     def test_jpeg_garbage_after_soi_fails(self):
         self.set_icon("icon.jpg", b"\xff\xd8\xff\x01\x41\x42" + bytes(20))
         self.expect_exit(1, "byte at offset 4 is not a marker prefix")
+        # One byte left after a segment, and it is not a marker prefix.
+        self.set_icon("icon.jpg", SOI + jpeg_segment(0xE0, b"JFIF\x00") + b"\x41")
+        self.expect_image_error("icon.jpg", "JPEG", "byte at offset 11 is not a marker prefix")
 
     def test_jpeg_marker_zero_fails(self):
         self.set_icon("icon.jpg", b"\xff\xd8\xff\x00" + bytes(20))
@@ -1392,6 +1488,13 @@ class ManifestIconTest(unittest.TestCase):
             with self.subTest(sof=hex(sof), tables=tables):
                 self.set_icon("icon.jpg", table_jpeg(sof, tables))
                 self.expect_pass()
+
+    def test_jpeg_four_component_scan_passes(self):
+        # The scan component count is 1 to 4 inclusive.
+        frame = jpeg_segment(0xC0, frame_payload(512, 512, components=4))
+        scan = jpeg_segment(0xDA, bytes([4, 1, 0, 2, 0x11, 3, 0x11, 4, 0x11, 0, 63, 0]))
+        self.set_icon("icon.jpg", SOI + frame + scan + b"\xff\xd9")
+        self.assertIn("is a JPEG of 512 x 512 pixels", self.expect_pass())
 
     def test_jpeg_scan_table_selector_limits_are_exact(self):
         self.assertEqual(gate.SOS_TABLE_SELECTORS, {0xC0: (1, 1), 0xC1: (3, 3), 0xC2: (3, 3)})
