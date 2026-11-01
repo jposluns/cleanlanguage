@@ -661,9 +661,38 @@ REMEDY_NOT_IMMUTABLE = "Turn on immutable releases for the repository, then cut 
 REMEDY_UNREADABLE = ("Once the release record is readable, dispatch this workflow again with the force input"
                      " unchecked and the tag v1.0.15 itself selected as the run ref, not main, to verify the"
                      " published release.")
-VERIFY_BY_DISPATCH = ("To verify the published release, dispatch this workflow again with the force input"
-                      " unchecked and the tag v1.0.15 itself selected as the run ref, not main; cut a"
-                      " corrective new version only if that verification fails.")
+VERIFY_BY_DISPATCH = ("To verify the published release, first check that .github/workflows/release-skill.yml"
+                      " at the tag v1.0.15 has the step " + PUBLISH + ". If it does, dispatch this"
+                      " workflow again with the force input unchecked and the tag v1.0.15 itself selected as"
+                      " the run ref, not main; cut a corrective new version only if that verification fails.")
+
+# Fix round 3: a dispatch at the tag runs the workflow stored at the tag, and a
+# workflow without the publish step name above (older than item 57) can
+# republish. So the refusals of a run that is not at the tag name the
+# verifying dispatch only for a tag carrying that step, and for any other tag
+# forbid a dispatch at it and name a read-only check. The readback refusals
+# (REMEDY_UNREADABLE) run at the tag commit, which carries this workflow.
+NEVER_AT_OLDER_TAG = ("If it does not, the tag carries an older workflow that can republish a published"
+                      " release: never dispatch this workflow at that tag, with or without the force input."
+                      " Verify the release read-only instead (gh release view v1.0.15 --json"
+                      " immutable,publishedAt,assets; gh release download v1.0.15; sha256sum -c on each"
+                      " .sha256 asset; cmp cleanlanguage.zip cleanlanguage-1.0.15.zip, which must report no"
+                      " difference; and unzip -p cleanlanguage.zip SKILL.md | grep ^Released:, which for a"
+                      " dated release must name the UTC day of publishedAt)")
+DETERMINE_UNREADABLE = ("Once the release record is readable, check that .github/workflows/release-skill.yml"
+                        " at the tag v1.0.15 has the step " + PUBLISH + ". If it does, dispatch this"
+                        " workflow again with the force input unchecked and the tag v1.0.15 itself selected"
+                        " as the run ref, not main, to verify the published release.")
+
+# Fix round 3: a published release whose publication day is not its Released
+# day is refused in the determine step, naming the remedy, not the packager
+# re-stamp advice, which leads back to the same verifying dispatch.
+PUBLISHED_ON_ANOTHER_DAY = ("Re-stamping the Released line cannot fix this: the published zip carries the"
+                            " Released line of the commit it was built from, and an immutable release"
+                            " cannot be republished. If the line at this commit was edited after the"
+                            " release, restore the value the published zip carries; otherwise the remedy"
+                            " is a corrective new version whose Released line names its own publication"
+                            " day.")
 
 # Fix round 2: the remedy both refusals name when the tag of a published
 # release is no longer on origin, so no dispatch can select it.
@@ -1075,6 +1104,8 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # Fix round 1: the refusal names the fresh dispatch that verifies the
         # published release.
         self.assertIn(VERIFY_BY_DISPATCH, err)
+        # Fix round 3: only at a tag carrying this workflow.
+        self.assertIn(NEVER_AT_OLDER_TAG + ", and cut a corrective new version only if that check fails.", err)
         # Row 71: a re-run keeps the force input, so no re-run is advised.
         self.assertNotIn("re-run", err.lower())
         self.assertNotIn("to verify this one", err)
@@ -1205,6 +1236,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # it is probably correct, so the refusal names the verifying dispatch
         # first, and a corrective new version only if that verification fails.
         self.assertIn(VERIFY_BY_DISPATCH, err)
+        self.assertIn(NEVER_AT_OLDER_TAG + ", and cut a corrective new version only if that check fails.", err)
         self.assertNotIn("with or without the force input; cut a corrective new version", err)
         self.assertNotIn("to overwrite", err)
         self.assertNotIn("Refusing the force input", err)
@@ -1233,7 +1265,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # remedy phrased without either word is neither counted nor checked.
         echoes = [line for line in WORKFLOW_TEXT.splitlines() if "echo " in line]
         remedies = [line for line in echoes if "corrective" in line or "new version" in line]
-        self.assertEqual(len(remedies), 8, remedies)
+        self.assertEqual(len(remedies), 10, remedies)
         for line in echoes:
             with self.subTest(line.strip()):
                 self.assertNotRegex(line, r"(?<!corrective )new version")
@@ -1330,13 +1362,47 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertIn("If that tag is already on origin at another commit, for example because the failed"
                       " run pushed it and main has moved since, check this input on that dispatch from"
                       " main.", description)
-        self.assertIn("To verify a release that is already published, dispatch this workflow again with this"
-                      " input unchecked and the tag itself selected as the run ref, not main", description)
+        # Fix round 3: the verifying dispatch is named only for a tag whose
+        # workflow has the publish step, and a dispatch at any other tag is
+        # forbidden, since an older workflow can republish.
+        self.assertIn("To verify a release that is already published, first check that"
+                      " .github/workflows/release-skill.yml at the tag has the step " + PUBLISH + "; if it"
+                      " does, dispatch this workflow again with this input unchecked and the tag itself"
+                      " selected as the run ref, not main", description)
+        self.assertIn("A tag without that step carries an older workflow that can republish a published"
+                      " release, so never dispatch this workflow at such a tag, with or without this input;"
+                      " verify that release read-only instead: gh release view <tag> --json"
+                      " immutable,publishedAt,assets; gh release download <tag>; sha256sum -c on each .sha256"
+                      " asset; cmp cleanlanguage.zip cleanlanguage-<version>.zip, which must report no"
+                      " difference; and unzip -p cleanlanguage.zip SKILL.md | grep ^Released:, which for a"
+                      " dated release must name the UTC day of publishedAt.", description)
         self.assertNotIn("failed before it published, dispatch this workflow again with the tag", description)
         extractor = EXTRACTOR.read_text(encoding="utf-8")
         for stale in ("release upload", "force dispatch", "--clobber"):
             with self.subTest(stale):
                 self.assertNotIn(stale, extractor)
+
+    def test_every_dispatch_at_the_tag_is_conditional_outside_the_readback(self):
+        # Fix round 3: every echo line naming a dispatch at the tag as the run
+        # ref either sits in confirm_published_release, which runs only at the
+        # tag commit and so under this workflow, or names the publish step the
+        # tag must carry and is followed by the line forbidding a dispatch at an
+        # older tag. The count is reconciled, so the probe cannot pass empty.
+        lines = WORKFLOW_TEXT.splitlines()
+        start = lines.index("          confirm_published_release() { # label")
+        end = lines.index("          }", start)
+        at_tag = [i for i, line in enumerate(lines)
+                  if "echo " in line and "selected as the run ref, not main" in line]
+        self.assertEqual(len(at_tag), 4, at_tag)
+        inside = [i for i in at_tag if start < i < end]
+        self.assertEqual(len(inside), 2, inside)
+        for i in at_tag:
+            if i in inside:
+                continue
+            with self.subTest(line=i + 1):
+                self.assertIn("has the step " + PUBLISH + ". If it does, dispatch", lines[i])
+                self.assertIn("never dispatch this workflow at that tag, with or without the force input",
+                              lines[i + 1])
 
     def test_every_success_path_reads_back(self):
         # One readback per remaining success path, dated or not.
@@ -1368,6 +1434,7 @@ class DetermineStepTest(WorkflowStepTest):
         self.assertEqual(self.env_values()["RELEASE_DATED"], "1")
 
     def test_existing_release_expects_its_publication_day(self):
+        self.skill("Version: 1.0.15  \nReleased: 2026-11-14  \n")
         self.set_state(status="200", published_at="2026-11-14T08:00:00Z")
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 0, err)
@@ -1386,7 +1453,25 @@ class DetermineStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 1, err)
         self.assertIn("Could not read published_at for the existing release v1.0.15.", err)
-        self.assertIn(REMEDY_UNREADABLE, err)
+        # Fix round 3: this step may run away from the tag, so the dispatch
+        # at the tag is named only for a tag carrying this workflow.
+        self.assertIn(DETERMINE_UNREADABLE, err)
+        self.assertIn(NEVER_AT_OLDER_TAG + ".", err)
+        self.assertNotIn(REMEDY_UNREADABLE, err)
+
+    def test_published_release_on_another_day_names_a_corrective_new_version(self):
+        # Fix round 3: the UTC day rolled over between the window check and
+        # publication, so published_at names the next day. The verifying run
+        # must name the remedy, not the packager re-stamp advice, which would
+        # lead back to this same run.
+        self.set_state(status="200", published_at="2026-11-16T00:00:02Z")
+        code, _out, err = self.run_step(DETERMINE)
+        self.assertEqual(code, 1, err)
+        self.assertIn("Release v1.0.15 IS PUBLISHED on 2026-11-16 (UTC, published_at 2026-11-16T00:00:02Z),"
+                      " but the Released line at this commit names 2026-11-15.", err)
+        self.assertIn(PUBLISHED_ON_ANOTHER_DAY, err)
+        self.assertNotIn("dispatch this workflow", err)
+        self.assertEqual(self.env_values(), {})
 
     def test_broken_extractor_is_unavailable_not_malformed(self):
         (self.work / "tools" / "skill-release-date.py").write_text("def broken(:\n", encoding="utf-8")
@@ -1465,6 +1550,15 @@ class ChainedRunTest(WorkflowStepTest):
         self.assertEqual([r[1] for r in results], [0, 0, 0], results)
         self.assertEqual(self.carried["RELEASE_DATE"], "2026-11-14")
         self.assertIn("Re-run readback: release v1.0.15 published_at 2026-11-14T08:00:00Z", results[-1][2])
+
+    def test_rerun_in_sequence_stops_before_the_packager_on_another_day(self):
+        # Fix round 3: the determine step refuses, so the packager re-stamp
+        # advice is never reached.
+        self.set_state(status="200", remote_tag=COMMIT, published_at="2026-11-16T00:00:02Z")
+        results = self.chain()
+        self.assertEqual([r[1] for r in results], [1], results)
+        self.assertIn(PUBLISHED_ON_ANOTHER_DAY, results[0][3])
+        self.assertFalse(any(c[0] == "release-package.sh" for c in self.calls()), self.calls())
 
     def test_rerun_in_sequence_fails_on_a_mutable_release(self):
         self.skill("Version: 1.0.15  \nReleased: 2026-11-14  \n")

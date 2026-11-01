@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       force:
-        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one. Leave it unchecked. To finish a run that failed before it published, re-run it or dispatch this workflow again from main with the same tag. If that tag is already on origin at another commit, for example because the failed run pushed it and main has moved since, check this input on that dispatch from main. To verify a release that is already published, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs. Cut a corrective new version only if that verification fails, or if the tag is no longer on origin."
+        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one. Leave it unchecked. To finish a run that failed before it published, re-run it or dispatch this workflow again from main with the same tag. If that tag is already on origin at another commit, for example because the failed run pushed it and main has moved since, check this input on that dispatch from main. To verify a release that is already published, first check that .github/workflows/release-skill.yml at the tag has the step Create or verify GitHub Release; if it does, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs. A tag without that step carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, with or without this input; verify that release read-only instead: gh release view <tag> --json immutable,publishedAt,assets; gh release download <tag>; sha256sum -c on each .sha256 asset; cmp cleanlanguage.zip cleanlanguage-<version>.zip, which must report no difference; and unzip -p cleanlanguage.zip SKILL.md | grep ^Released:, which for a dated release must name the UTC day of publishedAt. Cut a corrective new version only if that verification fails, or if the tag is no longer on origin."
         required: false
         default: false
         type: boolean
@@ -130,7 +130,7 @@ jobs:
             release_date_tool_failed "${prc}" "probing it"
           fi
           rc=0
-          python3 tools/skill-release-date.py cleanlanguage/skills/cleanlanguage/SKILL.md >/dev/null || rc=$?
+          released="$(python3 tools/skill-release-date.py cleanlanguage/skills/cleanlanguage/SKILL.md)" || rc=$?
           case "${rc}" in
             0) dated=1 ;;
             3)
@@ -171,7 +171,8 @@ jobs:
             200)
               if ! published_at="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq .published_at)"; then
                 echo "Could not read published_at for the existing release ${RELEASE_TAG}." >&2
-                echo "Once the release record is readable, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main, to verify the published release." >&2
+                echo "Once the release record is readable, check that .github/workflows/release-skill.yml at the tag ${RELEASE_TAG} has the step Create or verify GitHub Release. If it does, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main, to verify the published release." >&2
+                echo "If it does not, the tag carries an older workflow that can republish a published release: never dispatch this workflow at that tag, with or without the force input. Verify the release read-only instead (gh release view ${RELEASE_TAG} --json immutable,publishedAt,assets; gh release download ${RELEASE_TAG}; sha256sum -c on each .sha256 asset; cmp cleanlanguage.zip cleanlanguage-${VERSION}.zip, which must report no difference; and unzip -p cleanlanguage.zip SKILL.md | grep ^Released:, which for a dated release must name the UTC day of publishedAt)." >&2
                 exit 1
               fi
               rc=0
@@ -184,6 +185,14 @@ jobs:
                   ;;
                 *) release_date_tool_failed "${rc}" "reading the published_at of ${RELEASE_TAG}" ;;
               esac
+              # Fix round 3: the packager would refuse this mismatch with its
+              # re-stamp advice, which cannot help a published release, so the
+              # right remedy is named here, before the packager runs.
+              if [ -n "${released}" ] && [ "${released}" != "${release_date}" ]; then
+                echo "Release ${RELEASE_TAG} IS PUBLISHED on ${release_date} (UTC, published_at ${published_at}), but the Released line at this commit names ${released}." >&2
+                echo "Re-stamping the Released line cannot fix this: the published zip carries the Released line of the commit it was built from, and an immutable release cannot be republished. If the line at this commit was edited after the release, restore the value the published zip carries; otherwise the remedy is a corrective new version whose Released line names its own publication day." >&2
+                exit 1
+              fi
               ;;
             *)
               echo "Could not determine whether ${RELEASE_TAG} is already published (HTTP ${status:-none}), so its release date is unknown." >&2
@@ -352,11 +361,18 @@ jobs:
           # records which commit it published, and the verification compares
           # the published assets with their own checksums, not with a build,
           # so a tag restored at a guessed commit could verify green.
+          # Fix round 3: a dispatch at the tag runs the workflow stored at the
+          # tag, and a workflow older than item 57 (no step named Create or
+          # verify GitHub Release) can republish, so the verifying dispatch is
+          # named only for a tag that carries that step. The readback refusals
+          # in confirm_published_release run at the tag commit, which carries
+          # this workflow, so they name the dispatch unconditionally.
           published_release_remedy() {
             if [ -z "${remote_tag_sha}" ]; then
               echo "The tag ${RELEASE_TAG} is no longer on origin, so no dispatch can select it as the run ref to verify the published release; cut a corrective new version." >&2
             else
-              echo "To verify the published release, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main; cut a corrective new version only if that verification fails." >&2
+              echo "To verify the published release, first check that .github/workflows/release-skill.yml at the tag ${RELEASE_TAG} has the step Create or verify GitHub Release. If it does, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main; cut a corrective new version only if that verification fails." >&2
+              echo "If it does not, the tag carries an older workflow that can republish a published release: never dispatch this workflow at that tag, with or without the force input. Verify the release read-only instead (gh release view ${RELEASE_TAG} --json immutable,publishedAt,assets; gh release download ${RELEASE_TAG}; sha256sum -c on each .sha256 asset; cmp cleanlanguage.zip cleanlanguage-${VERSION}.zip, which must report no difference; and unzip -p cleanlanguage.zip SKILL.md | grep ^Released:, which for a dated release must name the UTC day of publishedAt), and cut a corrective new version only if that check fails." >&2
             fi
           }
           if [ "${release_exists}" -eq 1 ]; then
