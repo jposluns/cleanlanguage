@@ -689,11 +689,13 @@ VERIFY_BY_DISPATCH = ("To verify the published release, first check that .github
 OLDER_TAG_ADVICE = ("A tag without the step " + PUBLISH + " carries an older workflow that can"
                     " republish a published release, so never dispatch this workflow at such a tag, or repeat"
                     " any of its runs, with or without the force input; its step texts that advise a republish"
-                    " do not apply. Check such a release by hand, read-only: it passes only if it is immutable"
-                    " and each of its assets matches what the workflow at that tag built and published, in its"
-                    " packaging steps as well as its release step. A command that fails to run is run again and"
-                    " says nothing about the release. If it fails, turn on immutable releases if they are off,"
-                    " then cut a corrective new version.")
+                    " do not apply. Check such a release by hand, read-only: it passes only if it is immutable,"
+                    " it has every asset the workflow at that tag publishes, and each asset passes the checks"
+                    " that workflow made on it, in its packaging steps as well as its release step. The check"
+                    " is against what that workflow verified when it published, never against a fresh rebuild,"
+                    " which cannot match byte for byte. A command that fails to run is run again and says"
+                    " nothing about the release. If the release fails that check, turn on immutable releases if"
+                    " they are off, then cut a corrective new version.")
 # Fix round 8: each condition the advice states, pinned by its words; the
 # advice reaches all 3 sites from one source, so each is pinned at each.
 ADVICE_CONDITIONS = (
@@ -701,10 +703,14 @@ ADVICE_CONDITIONS = (
     "its step texts that advise a republish do not apply",
     "Check such a release by hand, read-only",
     "it passes only if it is immutable",
-    "each of its assets matches what the workflow at that tag built and published",
+    "it has every asset the workflow at that tag publishes",
+    "each asset passes the checks that workflow made on it",
     "in its packaging steps as well as its release step",
+    "The check is against what that workflow verified when it published, never against a fresh rebuild,"
+    " which cannot match byte for byte.",
     "A command that fails to run is run again and says nothing about the release.",
-    "If it fails, turn on immutable releases if they are off, then cut a corrective new version.",
+    "If the release fails that check, turn on immutable releases if they are off, then cut a corrective new"
+    " version.",
 )
 NEVER_AT_OLDER_TAG = OLDER_TAG_ADVICE
 OLDER_TAG_ECHO = "echo \"${OLDER_TAG_ADVICE}\" >" + chr(38) + "2"
@@ -1410,8 +1416,16 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # description names this input for that case. The behavioural
         # pair is test_force_still_moves_the_tag_of_an_unpublished_release
         # and test_moved_tag_of_an_unpublished_release_needs_the_force_input.
-        self.assertIn("To finish a run that failed before it published, re-run it or dispatch this workflow"
-                      " again from main with the same tag.", description)
+        # Fix round 9: a re-run executes the workflow at the run commit, so
+        # the re-run advice is limited to a commit carrying the publish step,
+        # consistent with the ban on repeating the runs of an older tag.
+        self.assertIn("To finish a run that failed before it published, re-run it only if its commit carries"
+                      " the step " + PUBLISH + ", and otherwise dispatch this workflow again from main with the"
+                      " same tag.", description)
+        self.assertNotIn("re-run it or dispatch", description)
+        self.assertIn("or repeat any of its runs", description)
+        # Fix round 9: the subject of the remedy is the release, not a command.
+        self.assertNotIn("If it fails", description)
         self.assertIn("If that tag is already on origin at another commit, for example because the failed"
                       " run pushed it and main has moved since, check this input on that dispatch from"
                       " main.", description)
