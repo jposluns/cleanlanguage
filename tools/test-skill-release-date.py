@@ -9,8 +9,11 @@ line sits directly after the first ``Version:`` line, a duplicate is rejected
 (also behind Markdown markers or invisible format characters), absence (exit
 3) is distinct from malformed (exit 1), and an internal error of the extractor
 has its own exit (6), distinct from an unreadable input (4). They also pin the one
-function that interprets a release ``published_at`` value, and (T2) that the
-portable-text builder carries the line into the generated rendering.
+function that interprets a release ``published_at`` value, (T2) that the
+portable-text builder carries the line into the generated rendering, and (row
+80) the ``--json`` mode the live checksum gate runs as a separate child: its
+exact replies, its bad requests (exit 2), its internal error (exit 6), and its
+agreement with the functions and the other modes.
 
 The tests run offline and touch only throwaway directories.
 """
@@ -18,6 +21,7 @@ The tests run offline and touch only throwaway directories.
 from __future__ import annotations
 
 import importlib.util
+import json
 import shutil
 import subprocess
 import sys
@@ -84,6 +88,31 @@ CRASH_RUNNER = (
     "sys.argv = sys.argv[1:]\n"
     "runpy.run_path(sys.argv[0], run_name=\"__main__\")\n"
 )
+
+# Row 80: runs the real extractor in --json mode with the function named by
+# its first argument (a dotted module.attribute) made to crash, and the
+# request on stdin, to observe the exit code and the empty stdout of an
+# internal error.
+JSON_CRASH_RUNNER = (
+    "import importlib, runpy, sys\n"
+    "def crash(*args, **kwargs):\n"
+    "    raise RuntimeError(\"injected internal error\")\n"
+    "module, name = sys.argv[1].rsplit(\".\", 1)\n"
+    "setattr(importlib.import_module(module), name, crash)\n"
+    "sys.argv = [sys.argv[2], \"--json\"]\n"
+    "runpy.run_path(sys.argv[0], run_name=\"__main__\")\n"
+)
+
+
+def request(op: str, arg: str | None = None) -> bytes:
+    """Encode a --json request, as the gate does."""
+    body = {"op": op} if arg is None else {"op": op, "arg": arg}
+    return json.dumps(body, ensure_ascii=True).encode("ascii")
+
+
+def reply_bytes(reply: dict) -> str:
+    """The exact stdout of a delivered reply."""
+    return json.dumps(reply, ensure_ascii=True, sort_keys=True) + "\n"
 
 
 def run(data: bytes | None = None, *args: str, stdin: bool = False):
@@ -334,6 +363,41 @@ class FunctionTest(unittest.TestCase):
         self.assertIsNone(srd.extract(HEAD + VERSION + TAIL))
         with self.assertRaises(srd.Malformed):
             srd.extract(VALID + "Released: 2026-11-16\n")
+        # Row 80: the --json mode agrees with the function and with the other
+        # modes, message text included.
+        duplicate = VALID + "Released: 2026-11-16\n"
+        for label, text, outcome in (
+            ("a day", VALID, {"outcome": "value", "value": "2026-11-15"}),
+            ("no line", HEAD + VERSION + TAIL, {"outcome": "absent"}),
+            ("a duplicate line", duplicate, None),
+        ):
+            with self.subTest(label):
+                code, out, err = run(request("extract", text), "--json", stdin=True)
+                self.assertEqual(code, 0, err)
+                reply = json.loads(out)
+                if outcome is None:
+                    with self.assertRaises(srd.Malformed) as caught:
+                        srd.extract(text)
+                    outcome = {"outcome": "malformed", "message": str(caught.exception)}
+                self.assertEqual(reply, {"op": "extract", **outcome})
+                cli_code, cli_out, cli_err = run(text.encode("utf-8"))
+                if reply["outcome"] == "value":
+                    self.assertEqual((cli_code, cli_out), (0, reply["value"] + "\n"), cli_err)
+                elif reply["outcome"] == "absent":
+                    self.assertEqual(cli_code, 3, cli_err)
+                else:
+                    self.assertEqual((cli_code, cli_err), (1, f"skill-release-date: {reply['message']}\n"))
+        for value in ("2026-11-15T00:00:00Z", "null"):
+            with self.subTest(published_at=value):
+                code, out, err = run(request("release_day_from_published_at", value), "--json", stdin=True)
+                self.assertEqual(code, 0, err)
+                reply = json.loads(out)
+                cli_code, cli_out, cli_err = run(None, "--published-day", value)
+                if reply["outcome"] == "value":
+                    self.assertEqual((cli_code, cli_out), (0, reply["value"] + "\n"), cli_err)
+                else:
+                    self.assertEqual(reply["outcome"], "malformed")
+                    self.assertEqual((cli_code, cli_err), (1, f"skill-release-date: {reply['message']}\n"))
 
     def test_published_day_function(self):
         self.assertEqual(srd.release_day_from_published_at("2026-11-15T00:00:00Z"), "2026-11-15")
@@ -341,6 +405,113 @@ class FunctionTest(unittest.TestCase):
             with self.subTest(value):
                 with self.assertRaises(srd.Malformed):
                     srd.release_day_from_published_at(value)
+
+
+class JsonModeTest(unittest.TestCase):
+    """Row 80: the --json mode, through the real CLI."""
+
+    def malformed_text(self, function, *args):
+        with self.assertRaises(srd.Malformed) as caught:
+            function(*args)
+        return str(caught.exception)
+
+    def test_every_reply_shape_is_exact(self):
+        duplicate = VALID + "Released: 2026-11-16\n"
+        rows = (
+            ("extract a day", "extract", VALID,
+             {"op": "extract", "outcome": "value", "value": "2026-11-15"}),
+            ("extract with no line", "extract", HEAD + VERSION + TAIL, {"op": "extract", "outcome": "absent"}),
+            ("extract a malformed line", "extract", duplicate,
+             {"op": "extract", "outcome": "malformed", "message": self.malformed_text(srd.extract, duplicate)}),
+            ("requires_release_date above the baseline", "requires_release_date", "1.0.15",
+             {"op": "requires_release_date", "outcome": "value", "value": True}),
+            ("requires_release_date at the baseline", "requires_release_date", "1.0.14",
+             {"op": "requires_release_date", "outcome": "value", "value": False}),
+            ("requires_release_date not a bare version", "requires_release_date", "1.0",
+             {"op": "requires_release_date", "outcome": "malformed",
+              "message": self.malformed_text(srd.requires_release_date, "1.0")}),
+            ("release_day_from_published_at a day", "release_day_from_published_at", "2026-11-15T23:59:59Z",
+             {"op": "release_day_from_published_at", "outcome": "value", "value": "2026-11-15"}),
+            ("release_day_from_published_at unusable", "release_day_from_published_at", "null",
+             {"op": "release_day_from_published_at", "outcome": "malformed",
+              "message": self.malformed_text(srd.release_day_from_published_at, "null")}),
+            ("baseline", "baseline", None, {"op": "baseline", "outcome": "value", "value": "1.0.14"}),
+        )
+        for label, op, arg, reply in rows:
+            with self.subTest(label):
+                code, out, err = run(request(op, arg), "--json", stdin=True)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(out, reply_bytes(reply))
+                self.assertEqual(err, "")
+
+    def test_text_crosses_the_request_exactly(self):
+        # A NUL, a line separator, a byte order mark, and a character outside
+        # the basic plane reach the extractor exactly, so the reply equals the
+        # function called directly, message text included.
+        for label, text in (
+            ("NUL in the line", HEAD + VERSION + "Released: 2026-11-15\x00\n" + TAIL),
+            ("line separator in a key-like line", VALID + "\u2028Released: 2026-11-01\n"),
+            ("byte order mark in a key-like line", VALID + "\ufeffReleased: 2026-11-01\n"),
+            ("text outside the basic plane", VALID + "\U0001f600\n"),
+            ("carriage returns left in the text", VALID.replace("\n", "\r\n")),
+        ):
+            with self.subTest(label):
+                try:
+                    value = srd.extract(text)
+                except srd.Malformed as error:
+                    expected = {"op": "extract", "outcome": "malformed", "message": str(error)}
+                else:
+                    if value is None:
+                        expected = {"op": "extract", "outcome": "absent"}
+                    else:
+                        expected = {"op": "extract", "outcome": "value", "value": value}
+                code, out, err = run(request("extract", text), "--json", stdin=True)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(out, reply_bytes(expected))
+
+    def test_bad_requests_exit_2_with_nothing_on_stdout(self):
+        for label, data in (
+            ("empty stdin", b""),
+            ("invalid UTF-8", b"\xff"),
+            ("not JSON", b"not json"),
+            ("a list", b"[]"),
+            ("a string", b"\"extract\""),
+            ("unknown op", request("nope", "x")),
+            ("op not a string", b'{"op": 5, "arg": "x"}'),
+            ("extra key", b'{"op": "extract", "arg": "x", "extra": 1}'),
+            ("missing arg", b'{"op": "extract"}'),
+            ("missing op", b'{"arg": "x"}'),
+            ("arg not a string", b'{"op": "extract", "arg": 5}'),
+            ("arg null", b'{"op": "release_day_from_published_at", "arg": null}'),
+            ("arg given for baseline", b'{"op": "baseline", "arg": "x"}'),
+            ("nesting too deep to parse", b"[" * 100000),
+        ):
+            with self.subTest(label):
+                code, out, err = run(data, "--json", stdin=True)
+                self.assertEqual((code, out), (2, ""), err)
+                self.assertIn("skill-release-date: --json: ", err)
+        with self.subTest("--json with another argument"):
+            code, out, err = run(request("baseline"), "--json", "extra", stdin=True)
+            self.assertEqual((code, out), (2, ""), err)
+            self.assertIn("usage: ", err)
+
+    def test_internal_error_exits_6_with_nothing_on_stdout(self):
+        # An internal error while the request is read, or inside the op
+        # itself, is never a reply: exit 6 and an empty stdout, so a
+        # Malformed catch that grew to Exception would fail here.
+        for label, target, data in (
+            ("while the request is parsed", "json.loads", request("baseline")),
+            ("inside extract", "unicodedata.category", request("extract", VALID)),
+        ):
+            with self.subTest(label):
+                proc = subprocess.run(
+                    [sys.executable, "-I", "-c", JSON_CRASH_RUNNER, target, str(EXTRACTOR)],
+                    input=data, capture_output=True,
+                )
+                self.assertEqual(proc.returncode, 6, proc.stderr)
+                self.assertEqual(proc.stdout, b"")
+                self.assertIn(b"internal error", proc.stderr)
+                self.assertIn(b"injected internal error", proc.stderr)
 
 
 class BuilderCarriesReleasedTest(unittest.TestCase):
