@@ -637,11 +637,11 @@ class WorkflowStepTest(unittest.TestCase):
 # nothing, and can not and can't count as cannot. Row 87: a pair of commas may
 # set off an aside of up to three words right after the verb (a single comma
 # elsewhere ends the claim, so "is published, but its immutable field" is not
-# one), no-one counts as no one, and
+# one), and up to three words may follow the aside, no-one counts as no one, and
 # could not, will not, won't and can, could or will never count as cannot.
 IMMUTABILITY_CLAIM = re.compile(
     r"\b(releases?|assets?)\b[^.;:]*\b(is|are|stays?|remains?)"
-    r"(\s+(\w+\s+){0,3}?|\s*,\s*(\w+\s+){0,2}\w+\s*,\s*)"
+    r"(\s+(\w+\s+){0,3}?|\s*,\s*(\w+\s+){0,2}\w+\s*,\s*(\w+\s+){0,3}?)"
     r"(immutable|never\s+mutable|not\s+mutable)\b"
     r"|\b(nothing|no[\s-]+one|nobody|no\s+(other\s+)?workflow|no\s+run)\b[^.;]*\brepublish"
     r"|\b(can(\s*not|\Wt)|could(\s*not|n\Wt)|will\s+not|won\Wt|(can|could|will)\s+never)"
@@ -1625,8 +1625,8 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # workflow) can republish one. The allowed lines are the ones whose
         # truth the workflow establishes first (the readback lines after the
         # immutable check) and the conditional re-stamping line. Residual:
-        # this is a pattern over known phrasings, widened in round 12 to the
-        # close variants above, and a claim whose subject is "it", a claim
+        # this is a pattern over known phrasings, widened in round 12 and in
+        # row 87 to the close variants above, and a claim whose subject is "it", a claim
         # split across sentences, or another wording can still slip past it.
         self.assertEqual(immutability_claims(WORKFLOW_TEXT), [])
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
@@ -1653,6 +1653,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                       # Row 87: one probe per alternative the guard lacked or
                       # left unprobed, each caught by that alternative alone.
                       "Releases are, once published, immutable.",
+                      "Releases are, once published, always immutable.",
                       "No-one can republish a published release.",
                       "A release can never be republished.",
                       "A release could never be republished.",
