@@ -219,8 +219,8 @@ class PackagerReleaseDateTest(unittest.TestCase):
     """T3 (item 26): the packager checks the Released line it ships.
 
     Whether or not ``--release-date`` is given, it refuses a malformed line
-    and a missing one above the undated baseline; ``--release-date`` adds only
-    the check that the HEAD Released line names that day."""
+    and a missing one above the undated baseline; ``--release-date`` adds the
+    check that the HEAD Released line is present and names that day."""
 
     def test_matching_release_date_builds(self):
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
@@ -238,9 +238,13 @@ class PackagerReleaseDateTest(unittest.TestCase):
         self.assertEqual(code, 1, stderr)
         self.assertIn("has no Released: line", stderr)
 
-    def test_absent_line_at_baseline_with_release_date_builds(self):
+    def test_absent_line_at_baseline_with_release_date_fails(self):
+        # Row 60: a given --release-date needs a line to check, so its
+        # absence fails at or below the undated baseline too, never a build
+        # that silently ignores the flag.
         code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", release_date="2026-11-15")
-        self.assertEqual(code, 0, stderr)
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("--release-date 2026-11-15 was given, but SKILL.md at HEAD has no Released: line", stderr)
 
     def test_absent_line_above_baseline_without_release_date_fails(self):
         # F8: presence above the baseline is enforced without the flag too.
@@ -254,7 +258,8 @@ class PackagerReleaseDateTest(unittest.TestCase):
 
     def test_baseline_rule_is_numeric(self):
         # F7: the extractor decides the comparison, so the packager agrees with
-        # every other caller, leading zeros included.
+        # every other caller, leading zeros included. Row 60: with
+        # --release-date given, an absent line fails at every version.
         for version, builds in (
             ("1.0.9", True), ("1.0.14", True), ("1.00.14", True),
             ("1.0.15", False), ("1.0.100", False), ("1.1.0", False),
@@ -262,7 +267,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
             for release_date in (None, "2026-11-15"):
                 with self.subTest(version=version, release_date=release_date):
                     code, stderr = run_packager(f"Version: {version}  ", version, release_date=release_date)
-                    if builds:
+                    if builds and release_date is None:
                         self.assertEqual(code, 0, stderr)
                     else:
                         self.assertEqual(code, 1, stderr)

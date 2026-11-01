@@ -397,6 +397,18 @@ def read(name, default=""):
 """
 
 FAKE_GH = FAKE_COMMON + """
+if ARGS[:1] == ["api"]:
+    # Row 59: every API path is answered from one shared state, so the exact
+    # path each call names is logged for ApiPathTest to pin.
+    paths = [arg for index, arg in enumerate(ARGS[1:]) if not arg.startswith("-") and ARGS[index] != "--jq"]
+    kind = ARGS[ARGS.index("--jq") + 1] if "--jq" in ARGS else "status"
+    with open(os.path.join(STATE, "api.log"), "a", encoding="utf-8") as log:
+        log.write(json.dumps([kind, paths]) + "\\n")
+if ARGS[:1] == ["release"]:
+    # Every release subcommand is logged with all its arguments, so the tag
+    # each release read and the create call name is pinned by ApiPathTest.
+    with open(os.path.join(STATE, "release.log"), "a", encoding="utf-8") as log:
+        log.write(json.dumps([ARGS[1] if len(ARGS) > 1 else "", ARGS[2:]]) + "\\n")
 if ARGS[:1] == ["api"] and "--include" in ARGS:
     status = read("status", "404")
     print("HTTP/2.0 " + status + " Fake")
@@ -416,10 +428,15 @@ ASSETS = ["cleanlanguage.zip", "cleanlanguage.zip.sha256",
 # and "differ" names zips published with other bytes and a manifest that
 # matches them, so the two zips differ while each manifest stays valid.
 MISSING = read("missing").split()
+# Fix round 4 (F3): "extra" is a count of further assets listed after the
+# required ones. Each name is about 200 bytes, so 1000 of them overflow a
+# 64 KiB pipe buffer many times over and a reader that exits on its first
+# match always leaves its writer with bytes still to write.
+EXTRA = ["extra-asset-%04d-" % index + "x" * 180 + ".txt" for index in range(int(read("extra", "0")))]
 CORRUPT = read("corrupt").split()
 DIFFER = read("differ").split()
 if ARGS[:2] == ["release", "view"]:
-    print("\\n".join(asset for asset in ASSETS if asset not in MISSING))
+    print("\\n".join([asset for asset in ASSETS if asset not in MISSING] + EXTRA))
     sys.exit(0)
 if ARGS[:2] == ["release", "download"]:
     target = ARGS[ARGS.index("--dir") + 1]
@@ -1133,6 +1150,32 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertNotIn("kept its assets", out)
         self.assert_no_mutation(self.calls())
 
+    def test_a_long_asset_list_never_reads_a_present_asset_as_missing(self):
+        # Fix round 4 (F3): grep -q exits on its first match, so a printf
+        # pipe into it took SIGPIPE (141) on a long asset list, and pipefail
+        # then reported a present asset as missing. Here the four required
+        # assets come first and 1000 long names follow them.
+        self.published()
+        self.set_state(extra="1000")
+        code, out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("is missing the asset", err)
+        self.assertIn("kept its assets", out)
+        calls = self.calls()
+        self.assert_no_mutation(calls)
+        assert_readback_ran(self, calls, out)
+
+    def test_a_long_asset_list_still_names_a_missing_asset(self):
+        # Fix round 4 (F3): the membership check still refuses an absent
+        # asset when the list is long.
+        self.published()
+        self.set_state(extra="1000", missing="cleanlanguage-1.0.15.zip.sha256")
+        code, out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 1, err)
+        self.assertIn("is missing the asset cleanlanguage-1.0.15.zip.sha256", err)
+        self.assertNotIn("kept its assets", out)
+        self.assert_no_mutation(self.calls())
+
     def test_checksum_mismatch_names_a_corrective_new_version_not_the_force_input(self):
         # T5, for each of the two zips, each checked by its own line.
         for zip_name in ("cleanlanguage.zip", "cleanlanguage-1.0.15.zip"):
@@ -1510,6 +1553,87 @@ class MutationTest(unittest.TestCase):
         anchor = "          confirm_published_release() { # label\n"
         wf = self.mutated(anchor, "          gh api \"repos/${GITHUB_REPOSITORY}/immutable-releases\" --jq .enabled\n" + anchor)
         self.assertNamed(wf, "immutable-releases setting endpoint")
+
+
+# Row 59: the one API path every probe and readback names.
+RELEASE_PATH = "repos/jposluns/cleanlanguage/releases/tags/v1.0.15"
+# The one tag every gh release subcommand names, and the shape of any tag.
+PINNED_TAG = "v1.0.15"
+TAG_LIKE = re.compile(r"v[0-9]+[.][0-9]+[.][0-9]+")
+
+
+class ApiPathTest(WorkflowStepTest):
+    """Row 59: the fake gh answers every API path from one shared state, so
+    the exact path of each status probe and of both readback fields is pinned
+    here: the release of RELEASE_TAG, never another release or endpoint.
+    The tag of every gh release subcommand (view, download and create) is
+    pinned the same way: its first argument is RELEASE_TAG, it names no other
+    tag, and it names no other repository."""
+
+    def api_calls(self):
+        path = self.state / "api.log"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+    def assert_exact_paths(self, kinds):
+        calls = self.api_calls()
+        self.assertEqual(sorted({kind for kind, _paths in calls}), sorted(kinds), calls)
+        for kind, paths in calls:
+            with self.subTest(kind=kind):
+                self.assertEqual(paths, [RELEASE_PATH], calls)
+
+    def release_calls(self):
+        path = self.state / "release.log"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+    def assert_release_tag(self, subcommands):
+        calls = self.release_calls()
+        self.assertEqual(sorted({sub for sub, _rest in calls}), sorted(subcommands), calls)
+        for sub, rest in calls:
+            with self.subTest(subcommand=sub):
+                self.assertEqual(rest[:1], [PINNED_TAG], calls)
+                self.assertEqual([arg for arg in rest if TAG_LIKE.fullmatch(arg)], [PINNED_TAG], calls)
+                self.assertEqual([arg for arg in rest if arg == "-R" or arg.startswith("--repo")], [], calls)
+
+    def test_determine_probe_and_published_at_read_name_the_release_tag(self):
+        self.set_state(status="200")
+        code, _out, err = self.run_step(DETERMINE)
+        self.assertEqual(code, 0, err)
+        self.assert_exact_paths(["status", ".published_at"])
+        self.assert_release_tag([])
+
+    def test_determine_probe_of_an_unpublished_release_names_the_release_tag(self):
+        # Gemini (F3): the probe is pinned on the 404 path too, the first
+        # release of a version, where it is the only API call.
+        self.set_state(status="404")
+        code, _out, err = self.run_step(DETERMINE)
+        self.assertEqual(code, 0, err)
+        self.assert_exact_paths(["status"])
+        self.assert_release_tag([])
+
+    def test_first_publication_probe_and_both_readbacks_name_the_release_tag(self):
+        code, _out, err = self.run_step(PUBLISH)
+        self.assertEqual(code, 0, err)
+        self.assert_exact_paths(["status", ".immutable", ".published_at"])
+        self.assert_release_tag(["create"])
+
+    def test_rerun_probe_and_both_readbacks_name_the_release_tag(self):
+        for event in RERUN_EVENTS:
+            with self.subTest(event):
+                (self.state / "api.log").unlink(missing_ok=True)
+                (self.state / "release.log").unlink(missing_ok=True)
+                self.reset_calls()
+                self.runner["GITHUB_EVENT_NAME"] = event
+                self.set_state(status="200", remote_tag=COMMIT)
+                code, _out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 0, err)
+                self.assert_exact_paths(["status", ".immutable", ".published_at"])
+                # Claude and gemini (F2): the asset list and the verification
+                # download read the release of RELEASE_TAG.
+                self.assert_release_tag(["view", "download"])
 
 
 if __name__ == "__main__":

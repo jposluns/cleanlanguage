@@ -21,7 +21,7 @@
 #      (item 26) through tools/skill-release-date.py and fails on a malformed
 #      one, and on a missing one when the version sorts above the undated
 #      baseline, whether or not --release-date is given; --release-date adds
-#      only the check that the line names that date.
+#      the check that the line is present, at any version, and names that date.
 #   2. Requires every git entry under cleanlanguage/ to carry mode 100644,
 #      which rejects executable files (100755), symlinks (120000), and
 #      submodules (160000) in one comparison.
@@ -56,8 +56,9 @@
 #   tools/release-package.sh                 Build and verify at HEAD.
 #   tools/release-package.sh --tag v1.0.12   Also require the tag to match.
 #   tools/release-package.sh --release-date 2026-11-15
-#                                            Also require the Released line,
-#                                            when present, to name that UTC day.
+#                                            Also require the Released line
+#                                            to be present and to name that
+#                                            UTC day.
 #
 # Exit codes:
 #   0  built and verified
@@ -181,9 +182,10 @@ case "${released_rc}" in
     ;;
 esac
 if [ -z "${released}" ]; then
-  # Absence is legitimate only at or below the undated baseline (the release
-  # of an undated version, for example a re-run of it). This holds whether or
-  # not --release-date is given; the extractor decides the comparison.
+  # Without --release-date, absence is legitimate only at or below the
+  # undated baseline (the release of an undated version, for example a re-run
+  # of it); the extractor decides the comparison. A given --release-date has
+  # no line to check, so its absence fails here at any version.
   req_rc=0
   requirement="$(python3 tools/skill-release-date.py --requires-date "${version}" 2>/dev/null)" || req_rc=$?
   case "${req_rc}" in
@@ -192,7 +194,11 @@ if [ -z "${released}" ]; then
     *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${req_rc}) deciding whether ${version} needs a Released line" ;;
   esac
   case "${requirement}" in
-    optional) ;;
+    optional)
+      if [ -n "${release_date_given}" ]; then
+        fail "--release-date ${release_date} was given, but SKILL.md at HEAD has no Released: line to check it against; add Released: ${release_date} directly after the Version line, or omit --release-date for an undated release at or below the undated baseline ${baseline}"
+      fi
+      ;;
     required)
       fail "SKILL.md at HEAD has no Released: line, but version ${version} sorts above the undated baseline ${baseline}; add Released: YYYY-MM-DD (the UTC release day) directly after the Version line"
       ;;

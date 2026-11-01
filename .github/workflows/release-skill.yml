@@ -199,9 +199,10 @@ jobs:
         run: |
           set -euo pipefail
           # The packager always refuses a malformed Released line, and a
-          # missing one above the undated baseline; --release-date adds only
-          # the check that the line names the expected day, so an undated
-          # release (RELEASE_DATED=0) is packaged without it.
+          # missing one above the undated baseline; --release-date also
+          # requires the line to be present, at any version, and to name the
+          # expected day, so an undated release (RELEASE_DATED=0) is packaged
+          # without it.
           if [ "${RELEASE_DATED}" = "1" ]; then
             tools/release-package.sh --tag "${RELEASE_TAG}" --release-date "${RELEASE_DATE}"
           else
@@ -362,8 +363,11 @@ jobs:
               # build, is authoritative, so a runner-image zip/zlib change
               # between the original release and this re-run cannot false-fail.
               published_assets="$(gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name')"
+              # grep -q exits on its first match, so a here-string (not a printf
+              # pipe) avoids a SIGPIPE that set -o pipefail would turn into a
+              # present asset reported as missing on a long asset list.
               for asset in cleanlanguage.zip cleanlanguage.zip.sha256 "cleanlanguage-${VERSION}.zip" "cleanlanguage-${VERSION}.zip.sha256"; do
-                printf '%s\n' "${published_assets}" | grep -qxF -- "${asset}" || {
+                grep -qxF -- "${asset}" <<< "${published_assets}" || {
                   echo "Published release ${RELEASE_TAG} is missing the asset ${asset}." >&2
                   echo "A published release is immutable and cannot be completed in place; cut a corrective new version." >&2
                   exit 1
