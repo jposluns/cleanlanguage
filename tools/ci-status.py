@@ -1,6 +1,32 @@
 #!/usr/bin/env python3
 """Report the CI verdict for one commit, exiting non-zero unless every check passed.
 
+Trust boundary. The caller is trusted, together with all of its process state;
+environment variables (PATH, BASH_ENV, SHELLOPTS, BASHOPTS, exported functions),
+open descriptors, signal state, resource limits, tracers, seccomp filters and the
+mount namespace are examples, not a closed list, and a caller with that control
+can forge any outcome. ci-status.sh and this tool defend against untrusted files
+at the paths they resolve: a planted ci-status.py in the working directory, a
+misplaced, symlinked or hard-linked gate, and a decoy reached through a
+descriptor path. Within that boundary, property A: through tools/ci-status.sh,
+no ci-status.py other than the real one beside the real wrapper runs. Property
+B: the tool exits 0 only when this gate ran and every check passed. Under
+supported invocations (tools/ci-status.sh executed, run as bash
+tools/ci-status.sh, by absolute path or through PATH, from an ordinary shell)
+the exit status follows the codes below exactly. Otherwise the status may be any
+nonzero code, which still keeps property B: resource exhaustion (a failed fork,
+a MemoryError during import), a signal that ends the process, and a syntax error
+in this file are outside the exact-code contract. An import failure that raises an exception
+exits 3. A gh exit status that cannot be observed is unreadable (exit 3), never
+success: the tool reaps gh itself with os.waitpid, because CPython subprocess
+reads a lost status (ECHILD from the wait) as 0, and it resets SIGCHLD to its
+default disposition before any gh call, because an ignored SIGCHLD, inherited
+from the caller, makes the system reap gh and lose its status. Known channels of
+the trusted caller state, as examples: a tracer (ptrace) or seccomp filter can
+alter any system call result, a bind mount can present the real wrapper beside a
+planted gate, and SHELLOPTS with noexec or onecmd makes bash run nothing and exit
+0 before ci-status.sh runs.
+
 The verdict comes from the check-runs API, the only endpoint that sees every
 required check: the Cloudflare Pages build (this repository's required check per
 CLAUDE.md) is produced by an external app, not GitHub Actions, so a gate built on
@@ -35,28 +61,90 @@ red. A commit that legitimately ran neither is a safe false-red, never a
 false-green. Pointing --repo at a repository that does not run both unconditionally
 would downgrade a legitimate green to pending.
 
+The commit is named only by its full 40-character hexadecimal sha, folded to
+lower case and used as given. Every other value, an abbreviation of any length,
+a ref name such as HEAD or main, a revision expression, a path-like value, a
+non-hexadecimal value, or an empty value, is refused (exit 3) with a message to
+pass the full 40-character sha, for example from git rev-parse or gh pr view
+--json headRefOid. The tool makes no local git call of its own, so the API path
+is built only from a full sha, and a full sha that is not a commit of the
+repository fails the API read (exit 3). The sha is printed before any gh call,
+and the repository is printed once it is known.
+
+--repo is accepted only as owner/name with exactly one slash: an owner of ASCII
+letters, digits and hyphens, and a name of ASCII letters, digits, hyphens,
+underscores and dots that does not start with a dot. Any other value is refused
+(exit 3), so --repo cannot add a path segment or a query to the API call. A
+repository inferred with gh repo view is validated the same way.
+
+Every gh call runs in the directory that holds this file, resolved through
+symlinks, so a symlinked copy binds to the clone that holds the real file. Each
+gh call runs with GH_REPO, GH_HOST and every GIT_ variable removed from its
+environment, so none of them can redirect the repository lookup or the API
+call. Residual: gh finds the clone through git, which searches upward from that
+directory, so a copy outside any checkout infers the repository of an enclosing
+checkout if there is one; pass --repo for such a copy. Git configuration that gh
+reaches through HOME, XDG_CONFIG_HOME or the system git configuration, such as a
+url.<base>.insteadOf rewrite or a remote.<name>.gh-resolved setting, can still
+redirect the repository that gh infers; passing --repo avoids that inference.
+The inferred repository comes from gh repo view run in that directory, so it
+depends on the local git configuration of that clone and on which of its remotes
+gh selects; passing --repo avoids that dependence too. Other gh configuration,
+such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged; like the rest of the
+caller environment it is trusted: PATH chooses python3 and gh, BASH_ENV runs
+code before ci-status.sh, and an exported function such as python3 replaces what
+ci-status.sh runs, so a planted ci-status.py can run and exit 0. --timeout,
+--interval and --repo may each be given once; a second use is refused (exit 3).
+
+Output is part of the result. A standard output or standard error that is
+closed at start or not open for writing (bash, started with a standard stream
+closed, can pass that descriptor on open read-only on its own script), a write
+or flush that fails (a full device or a closed pipe), and any other unexpected
+exception end the tool with exit 3, so a lost report is never read as a verdict
+and a crash never reads as a failed check (exit 1). When output works, the exit
+status is the verdict of main unchanged.
+
 Usage:
   ci-status.py <sha>                     Report once and exit.
   ci-status.py <sha> --wait              Poll until the checks settle.
   ci-status.py <sha> --wait --timeout 600 --interval 20
   ci-status.py <sha> --repo owner/name   Override the inferred repository.
+  ci-status.py [options] -- <sha>        A single -- ends option parsing.
 
 Exit codes:
   0  every check passed, confirmed across two consecutive readings
   1  at least one check failed, was cancelled, or timed out
   2  checks are still running, or --wait hit its timeout
-  3  the result could not be read, no checks exist, or usage was wrong
+  3  the result could not be read, no checks exist, usage was wrong, or output
+     failed
 """
 
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
-import time
+try:
+    import fcntl
+    import json
+    import os
+    import re
+    import signal
+    import subprocess
+    import sys
+    import tempfile
+    import time
+except Exception:  # an import failure must never read as a verdict (exit 1)
+    raise SystemExit(3)
 
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
-MAX_DIGITS = 9  # keeps a timeout/interval well inside a machine int, rejecting overflow
+# The largest --timeout or --interval accepted, in seconds (1 day). Each value
+# becomes a subprocess timeout and a sleep; this bound keeps both far inside the
+# limits that raise OverflowError (about 2147483 seconds for a millisecond poll).
+MAX_SECONDS = 86400
+MAX_DIGITS = len(str(MAX_SECONDS))  # rejects a long digit string before int()
+FULL_SHA = re.compile(r"[0-9A-Fa-f]{40}")
+REPO_NAME = re.compile(r"[A-Za-z0-9-]+/(?!\.)[A-Za-z0-9._-]+")
+SHA_HINT = "pass the full 40-character sha (for example from git rev-parse or gh pr view --json headRefOid)"
+GH_REDIRECTS = ("GH_REPO", "GH_HOST")  # removed with every GIT_ variable before each gh call
+TOOL_DIR = os.path.dirname(os.path.realpath(__file__))  # every gh call runs here
 
 
 def die(message: str) -> "NoReturn":  # type: ignore[name-defined]
@@ -73,49 +161,117 @@ def parse_args(argv):
     wait = False
     timeout = 900
     interval = 15
+    options_ended = False
+    given = set()  # --timeout, --interval and --repo seen so far
     it = iter(argv)
     for arg in it:
-        if arg == "--wait":
-            wait = True
-        elif arg == "--timeout":
-            timeout = _whole("--timeout", next(it, ""))
-        elif arg == "--interval":
-            interval = _whole("--interval", next(it, ""))
-        elif arg == "--repo":
-            repo = next(it, "") or die("--repo takes owner/name")
-        elif arg.startswith("-"):
-            die(f"unknown option {arg}")
-        elif sha is None:
+        if options_ended or not arg.startswith("-"):
+            if sha is not None:
+                die("more than one commit given")
             sha = arg
+        elif arg == "--":
+            # A single -- ends option parsing; any later value, a second -- included,
+            # is taken as the commit.
+            options_ended = True
+        elif arg == "--wait":
+            wait = True
+        elif arg in ("--timeout", "--interval", "--repo"):
+            # A repeated option would silently replace the earlier value.
+            if arg in given:
+                die(f"more than one {arg} given")
+            given.add(arg)
+            if arg == "--timeout":
+                timeout = _whole("--timeout", next(it, ""))
+            elif arg == "--interval":
+                interval = _whole("--interval", next(it, ""))
+            else:
+                repo = _repo_name(next(it, ""), "--repo")
         else:
-            die("more than one commit given")
-    if not sha:
-        die("usage: ci-status.py <sha> [--wait] [--timeout N] [--interval N] [--repo owner/name]")
+            die(f"unknown option {arg}")
+    if sha is None:
+        die("usage: ci-status.py [--wait] [--timeout N] [--interval N] [--repo owner/name] [--] <sha>")
     if interval <= 0:
         die("--interval must be above zero")
-    return sha, repo, wait, timeout, interval
+    return _commit_name(sha), repo, wait, timeout, interval
+
+
+def _commit_name(value: str) -> str:
+    """Accept only a full 40-character hexadecimal sha, folded to lower case. Every
+    other value is refused, so an abbreviation is never resolved, a moving ref is
+    never read as a fixed commit, and the API path is built only from hex digits."""
+    if not (value.isascii() and FULL_SHA.fullmatch(value)):
+        die(f"{ascii(value)} is not a full 40-character commit sha; {SHA_HINT}")
+    return value.lower()
+
+
+def _repo_name(value: str, source: str) -> str:
+    """Accept only owner/name with GitHub-safe characters, so the value cannot add a
+    path segment or a query to the API call."""
+    if not (value.isascii() and REPO_NAME.fullmatch(value)):
+        die(f"{source} {ascii(value)} is not owner/name; pass --repo owner/name")
+    return value
 
 
 def _whole(flag: str, value: str) -> int:
-    # Digit-only, and short enough that it cannot overflow into unrelated
-    # semantics. int() itself is unbounded, so the length bound is the real guard.
+    # Digit-only and at most MAX_SECONDS, so the value can never overflow a sleep
+    # or a subprocess timeout. The length check runs first, so int() never sees a
+    # long string.
     if not value or not (value.isascii() and value.isdigit()):
         # str.isdigit() is true for non-ASCII digits (e.g. superscripts) that int()
         # then rejects, so require ASCII digits and never let int() raise.
         die(f"{flag} takes whole seconds")
-    if len(value) > MAX_DIGITS:
-        die(f"{flag} is out of range")
+    if len(value) > MAX_DIGITS or int(value) > MAX_SECONDS:
+        die(f"{flag} is out of range (at most {MAX_SECONDS} seconds)")
     return int(value)
+
+
+def _gh(args, timeout: float):
+    """Run gh in the directory that holds this file, resolved through symlinks, with
+    GH_REPO, GH_HOST and every GIT_ variable removed from its environment, so an
+    ambient value cannot point the repository lookup or the API call elsewhere.
+
+    The child is reaped here with os.waitpid rather than through subprocess,
+    because CPython subprocess reads a lost exit status (ECHILD from the wait) as
+    exit 0. A status that cannot be observed raises ChildProcessError, an OSError,
+    and an end other than a normal exit gives returncode -1, so neither can read
+    as success. Output goes to unnamed temporary files, so gh never blocks on a
+    full pipe while it is polled. OSError and TimeoutExpired reach the caller."""
+    env = {
+        k: v for k, v in os.environ.items()
+        if not (k.startswith("GIT_") or k in GH_REDIRECTS)
+    }
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(["gh", *args], cwd=TOOL_DIR, env=env, stdout=out, stderr=err)
+        end = time.monotonic() + timeout
+        while True:
+            try:
+                pid, status = os.waitpid(proc.pid, os.WNOHANG)
+            except ChildProcessError as exc:
+                proc.returncode = -1  # the child is gone; Popen must not wait for it
+                raise ChildProcessError("the exit status of gh was lost") from exc
+            if pid == proc.pid:
+                break
+            if time.monotonic() >= end:
+                os.kill(proc.pid, signal.SIGKILL)
+                try:
+                    os.waitpid(proc.pid, 0)
+                except ChildProcessError:
+                    pass
+                proc.returncode = -1
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            time.sleep(0.02)
+        code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+        proc.returncode = code
+        out.seek(0)
+        err.seek(0)
+        return subprocess.CompletedProcess(proc.args, code, out.read(), err.read())
 
 
 def infer_repo(timeout: float) -> str:
     if timeout <= 0:
         return die("could not infer the repository; pass --repo owner/name")
     try:
-        proc = subprocess.run(
-            ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
-            capture_output=True, timeout=timeout,
-        )
+        proc = _gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], timeout)
     except (OSError, subprocess.TimeoutExpired):
         return die("could not infer the repository; pass --repo owner/name")
     if proc.returncode != 0:
@@ -124,26 +280,9 @@ def infer_repo(timeout: float) -> str:
         out = proc.stdout.decode("utf-8").strip()
     except UnicodeDecodeError:
         return die("could not read the repository name")
-    return out or die("could not infer the repository; pass --repo owner/name")
-
-
-def resolve_sha(sha: str, timeout: float) -> str:
-    # Bounded and byte-decoded like read_checks; a hung or non-UTF-8 git must not
-    # block or crash, so an unresolvable ref simply falls back to the given sha.
-    if timeout <= 0:
-        return sha
-    try:
-        proc = subprocess.run(
-            ["git", "rev-parse", sha], capture_output=True, timeout=timeout,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return sha
-    if proc.returncode != 0:
-        return sha
-    try:
-        return proc.stdout.decode("utf-8").strip() or sha
-    except UnicodeDecodeError:
-        return sha
+    if not out:
+        die("could not infer the repository; pass --repo owner/name")
+    return _repo_name(out, "the inferred repository")
 
 
 def _no_duplicate_keys(pairs):
@@ -195,16 +334,13 @@ def _field(value, allow_empty: bool):
 
 def read_checks(repo: str, full_sha: str, deadline: float):
     """One read. Returns the list of checks, or raises Unreadable, fail-closed. The gh
-    child is bounded by the time left to the deadline (at least one second), so a hung
-    or slow read cannot outlast the wait window."""
+    child is bounded by the time left to the deadline, so a hung or slow read cannot
+    outlast the wait window."""
     remaining = deadline - time.time()
     if remaining <= 0:
         raise Unreadable("the wait window closed before the read")
     try:
-        proc = subprocess.run(
-            ["gh", "api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"],
-            capture_output=True, timeout=remaining,
-        )
+        proc = _gh(["api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"], remaining)
     except subprocess.TimeoutExpired as exc:
         raise Unreadable(f"gh api did not return within {int(remaining)} seconds") from exc
     except OSError as exc:
@@ -344,13 +480,18 @@ def report(checks, stream=sys.stdout) -> None:
 
 
 def main() -> int:
-    sha, repo, wait, timeout, interval = parse_args(sys.argv[1:])
-    # Create the deadline before the preflight calls so every child read, including
-    # gh repo view and git rev-parse, is bounded by the wait window.
+    full_sha, repo, wait, timeout, interval = parse_args(sys.argv[1:])
+    # Create the deadline before the preflight call so every child read, including
+    # gh repo view, is bounded by the wait window.
     deadline = time.time() + timeout
+    # The sha is printed before any gh call, so the caller sees which commit is read
+    # even when the repository lookup fails.
+    sys.stdout.write(f"ci-status: reading checks for commit {full_sha}\n")
+    sys.stdout.flush()
     if not repo:
         repo = infer_repo(deadline - time.time())
-    full_sha = resolve_sha(sha, deadline - time.time())
+    sys.stdout.write(f"ci-status: repository {repo}\n")
+    sys.stdout.flush()
 
     confirming = False
     confirmed_snapshot = None
@@ -492,5 +633,57 @@ def main() -> int:
         nap()
 
 
+def _note(message: str) -> None:
+    """Write a message to standard error, ignoring any failure to do so."""
+    try:
+        sys.stderr.write(message)
+        sys.stderr.flush()
+    except Exception:  # the stream itself may be the failure being reported
+        pass
+
+
+def _writable(stream) -> bool:
+    """True when the stream exists and its descriptor is open for writing."""
+    if stream is None:
+        return False
+    try:
+        mode = fcntl.fcntl(stream.fileno(), fcntl.F_GETFL) & os.O_ACCMODE
+    except (OSError, ValueError, AttributeError):
+        return False
+    return mode in (os.O_WRONLY, os.O_RDWR)
+
+
+def run() -> int:
+    """Run main and return its exit status, or 3 when output fails or an
+    unexpected exception escapes, so neither can become a verdict."""
+    # An inherited ignored SIGCHLD makes the kernel reap each gh child, so its
+    # exit status reads as 0. Restore the default before any subprocess runs.
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    except (OSError, ValueError):
+        _note("ci-status: cannot reset SIGCHLD, so a gh exit status could be lost\n")
+        return 3
+    if not (_writable(sys.stdout) and _writable(sys.stderr)):
+        _note("ci-status: standard output or standard error cannot be written\n")
+        return 3
+    try:
+        code = main()
+    except SystemExit as exc:
+        code = exc.code
+    except Exception as exc:
+        _note(f"ci-status: unexpected error ({type(exc).__name__}: {exc}); treating the result as unreadable\n")
+        return 3
+    if not isinstance(code, int) or isinstance(code, bool):
+        return 3
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            return 3
+    return code
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    # os._exit skips the interpreter shutdown flush, whose failure would otherwise
+    # replace the status with 120; run has already flushed both streams.
+    os._exit(run())

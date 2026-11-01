@@ -29,6 +29,12 @@ set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 ci="${here}/ci-status.sh"
 fails=0
+skips=0  # a skipped case is reported on a skip line and never counted as ok
+# setup_failed NAME: a case that cannot create its scratch directory fails visibly
+# and runs nothing.
+setup_failed() {
+  printf "FAIL %s (could not create a scratch directory)\n" "$1"; fails=$((fails + 1))
+}
 
 GA_PRESENT='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}},
@@ -81,7 +87,7 @@ NONARRAY='{"check_runs":{"only":{"status":"completed","conclusion":"success","na
 # run_case NAME DEFAULT ALT PLAN WANT [EXTRA ci-status ARGS...]
 run_case() {
   local name="$1" def="$2" alt="$3" plan="$4" want="$5"; shift 5
-  local tmp; tmp="$(mktemp -d)"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$def" > "$tmp/def.json"
   printf '%s' "$alt" > "$tmp/alt.json"
@@ -125,7 +131,7 @@ GH
 # run_timed_case NAME PAYLOAD MAX_SECONDS WANT EXTRA...
 run_timed_case() {
   local name="$1" payload="$2" maxs="$3" want="$4"; shift 4
-  local tmp; tmp="$(mktemp -d)"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$payload" > "$tmp/def.json"
   cat > "$bin/gh" <<GH
@@ -154,7 +160,7 @@ GH
 # that drops --paginate sees only PAGE1. Used to pin that read_checks paginates.
 run_paginate_case() {
   local name="$1" p1="$2" p2="$3" want="$4"
-  local tmp; tmp="$(mktemp -d)"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$p1" > "$tmp/p1.json"
   printf '%s' "$p2" > "$tmp/p2.json"
@@ -185,7 +191,7 @@ GH
 # the RecursionError must be caught and fail closed, not escape as a crash.
 run_deep_case() {
   local name="$1" want="$2"
-  local tmp; tmp="$(mktemp -d)"; local bin="$tmp/bin"; mkdir -p "$bin"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   python3 -c "open('$tmp/cr.json','w').write('['*100000 + ']'*100000)"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
@@ -202,7 +208,7 @@ GH
 # run_bytes_case NAME WANT: fake gh emits a non-UTF-8 byte; must fail closed.
 run_bytes_case() {
   local name="$1" want="$2"
-  local tmp; tmp="$(mktemp -d)"; local bin="$tmp/bin"; mkdir -p "$bin"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
 case "\$*" in *check-runs*) printf '\377garbage';; *"repo view"*) printf 'owner/name';; *) printf '';; esac
@@ -219,7 +225,7 @@ GH
 # bounded so it does not overshoot -> fail closed within the window.
 run_slow_case() {
   local name="$1" want="$2"
-  local tmp; tmp="$(mktemp -d)"; local bin="$tmp/bin"; mkdir -p "$bin"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
 case "\$*" in
@@ -240,7 +246,7 @@ GH
 # returncode guard must reject it (exit 3), not parse the body as green.
 run_rc_case() {
   local name="$1" want="$2"
-  local tmp; tmp="$(mktemp -d)"; local bin="$tmp/bin"; mkdir -p "$bin"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$GA_PRESENT" > "$tmp/def.json"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
@@ -371,6 +377,608 @@ run_case "zero-timeout wait window fails closed" "$GA_IN_PROGRESS" "" "" 3 --wai
 run_case "real cloudflare-workers-and-pages slug satisfies the required check" "$REAL_CLOUDFLARE" "" "" 0
 run_timed_case "wait stops near the deadline, not a whole interval past it" "$GA_IN_PROGRESS" 4 2 --wait --timeout 2 --interval 5
 
+# Commit sha and repository contract (backlog row 86). The tool accepts only a
+# full 40-character hexadecimal sha and makes no local git call, so no case needs
+# a git repository. Each case copies ci-status.sh and ci-status.py into a
+# throwaway tools directory, runs the copy from /, and serves a green reading
+# from a fake gh that logs the arguments, environment and working directory of
+# every call, and snapshots the tool output at its first call. The fake gh repo
+# view answers with GH_REPO when that variable reaches it, else with the VIEW
+# value (FAIL makes it exit 1), so a leaked GH_REPO changes the path read.
+C1=0c83f120fcc4630694465bcf89f7415a21d54dba
+C1_UPPER=0C83F120FCC4630694465BCF89F7415A21D54DBA
+C2=1111111111111111111111111111111111111111
+NL="$(printf "\n.")"; NL="${NL%.}"
+
+# run_contract_case NAME WANT EXPECT REPO VIEW ENVSPEC CHECKS [ci-status ARGS...]
+# EXPECT is the full sha every check-runs call must use, "noapi" when no
+# check-runs call may be made, or "nogh" when no gh call at all may be made.
+# REPO is the owner/name the check-runs path must name. VIEW is what the fake gh
+# repo view prints. ENVSPEC is "-" or space-separated NAME=VALUE assignments; the
+# token SHADOW stands for a PYTHONPATH entry whose json.py exits 7. CHECKS is "-"
+# or space-separated words: env (no gh call saw GH_REPO, GH_HOST or a GIT_
+# variable), pwd (every gh call ran in the real tools directory), first (the sha
+# line was already printed at the first gh call), hint (stderr tells the caller
+# to pass the full 40-character sha), link (run ci-status.py through a symlink
+# in another directory instead of through ci-status.sh), wraplink (run
+# ci-status.sh through a symlink named ci-status.sh in another directory that
+# holds no ci-status.py, so only a wrapper that resolves the link finds the gate),
+# dup (stderr refuses a repeated --repo, --timeout or --interval).
+run_contract_case() {
+  local name="$1" want="$2" expect="$3" repo_want="$4" view="$5" envspec="$6" checks="$7"; shift 7
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local tools="$tmp/repo/tools" bin="$tmp/bin"; mkdir -p "$tools" "$bin" "$tmp/shadow"
+  cp "${here}/ci-status.sh" "${here}/ci-status.py" "$tools/"
+  printf "raise SystemExit(7)\n" > "$tmp/shadow/json.py"
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  printf "%s" "$view" > "$tmp/view"
+  : > "$tmp/calls"; : > "$tmp/envlog"; : > "$tmp/pwds"; : > "$tmp/out"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+[ -e "$tmp/seen" ] || cp "$tmp/out" "$tmp/seen"
+printf "%s\n" "\$*" >> "$tmp/calls"
+env >> "$tmp/envlog"
+pwd -P >> "$tmp/pwds"
+case "\$*" in
+  *check-runs*) cat "$tmp/def.json" ;;
+  *"repo view"*)
+    if [ -n "\${GH_REPO:-}" ]; then printf "%s" "\$GH_REPO"; exit 0; fi
+    if [ "\$(cat "$tmp/view")" = FAIL ]; then exit 1; fi
+    cat "$tmp/view" ;;
+  *) printf "" ;;
+esac
+GH
+  chmod +x "$bin/gh"
+  local envset=() word
+  if [ "$envspec" != "-" ]; then
+    for word in $envspec; do
+      if [ "$word" = SHADOW ]; then word="PYTHONPATH=$tmp/shadow"; fi
+      envset+=("$word")
+    done
+  fi
+  local entry=(bash "$tools/ci-status.sh")
+  case " $checks " in
+    *" link "*)
+      mkdir -p "$tmp/elsewhere"
+      ln -s "$tools/ci-status.py" "$tmp/elsewhere/ci-status.py"
+      entry=(python3 -I "$tmp/elsewhere/ci-status.py") ;;
+    *" wraplink "*)
+      mkdir -p "$tmp/elsewhere"
+      ln -s "$tools/ci-status.sh" "$tmp/elsewhere/ci-status.sh"
+      entry=(bash "$tmp/elsewhere/ci-status.sh") ;;
+  esac
+  (cd / || exit 99; env "${envset[@]}" PATH="$bin:$PATH" "${entry[@]}" \
+    --interval 1 "$@" > "$tmp/out" 2> "$tmp/err")
+  local got=$? ok=1 why=""
+  if [ "$got" -ne "$want" ]; then ok=0; why="$why exit"; fi
+  local runs; runs="$(grep -c check-runs "$tmp/calls")"
+  case "$expect" in
+    nogh) if [ -s "$tmp/calls" ]; then ok=0; why="$why gh-called"; fi ;;
+    noapi) if [ "$runs" -ne 0 ]; then ok=0; why="$why api-called"; fi ;;
+    *)
+      local good; good="$(grep -c -F "repos/${repo_want}/commits/${expect}/check-runs" "$tmp/calls")"
+      if [ "$good" -lt 1 ] || [ "$good" -ne "$runs" ]; then ok=0; why="$why path"; fi
+      if ! grep -q -F "reading checks for commit ${expect}" "$tmp/out"; then ok=0; why="$why sha-line"; fi
+      ;;
+  esac
+  local tooldir; tooldir="$(cd "$tools" || exit 99; pwd -P)"
+  for word in $checks; do
+    case "$word" in
+      env)
+        if [ ! -s "$tmp/envlog" ] || grep -q -E "^(GH_REPO|GH_HOST|GIT_[A-Za-z0-9_]*)=" "$tmp/envlog"; then
+          ok=0; why="$why env"
+        fi ;;
+      pwd)
+        if [ ! -s "$tmp/pwds" ] || grep -q -v -x -F "$tooldir" "$tmp/pwds"; then ok=0; why="$why pwd"; fi ;;
+      first)
+        if [ ! -e "$tmp/seen" ] || ! grep -q -E "reading checks for commit [0-9a-f]{40}" "$tmp/seen"; then
+          ok=0; why="$why not-first"
+        fi ;;
+      hint)
+        if ! grep -q -F "pass the full 40-character sha" "$tmp/err"; then ok=0; why="$why hint"; fi ;;
+      dup)
+        if ! grep -q -E "more than one --(repo|timeout|interval) given" "$tmp/err"; then
+          ok=0; why="$why dup"
+        fi ;;
+      *) ;;
+    esac
+  done
+  if [ "$ok" -eq 1 ]; then
+    printf "ok   %s (exit %s)\n" "$name" "$got"
+  else
+    printf "FAIL %s (got exit %s, want %s;%s)\n" "$name" "$got" "$want" "$why"
+    fails=$((fails + 1))
+  fi
+  rm -rf "$tmp"
+}
+
+# A full sha is accepted as given; upper case is folded to lower case.
+run_contract_case "full sha is used as given" 0 "$C1" owner/name owner/name - "env pwd first" "$C1"
+run_contract_case "full sha unknown locally is used as given" 0 "$C2" owner/name owner/name - - "$C2"
+run_contract_case "upper-case full sha is folded to lower case" 0 "$C1" owner/name owner/name - - "$C1_UPPER"
+# Every abbreviation is refused before any gh call, whatever its length.
+run_contract_case "4-character abbreviation is refused" 3 nogh owner/name owner/name - hint "${C1:0:4}"
+run_contract_case "7-character abbreviation is refused" 3 nogh owner/name owner/name - hint "${C1:0:7}"
+run_contract_case "39-character abbreviation is refused" 3 nogh owner/name owner/name - hint "${C1:0:39}"
+run_contract_case "abbreviation with --repo is refused" 3 nogh owner/name owner/name - hint --repo owner/name "${C1:0:7}"
+# Ref names, revision expressions, path-like, non-hex, empty and over-long values.
+run_contract_case "ref name HEAD is refused" 3 nogh owner/name owner/name - hint HEAD
+run_contract_case "branch name main is refused" 3 nogh owner/name owner/name - hint main
+run_contract_case "revision expression is refused" 3 nogh owner/name owner/name - hint "${C1:0:7}~1"
+run_contract_case "peel expression on a full sha is refused" 3 nogh owner/name owner/name - hint "${C1}^{commit}"
+run_contract_case "path-like value is refused" 3 nogh owner/name owner/name - hint "${C1:0:7}/../x"
+run_contract_case "40-character non-hex value is refused" 3 nogh owner/name owner/name - hint "${C1:0:39}g"
+run_contract_case "empty value is refused" 3 nogh owner/name owner/name - hint ""
+run_contract_case "41-character value is refused" 3 nogh owner/name owner/name - hint "${C1}0"
+run_contract_case "full sha with a trailing newline is refused" 3 nogh owner/name owner/name - hint "${C1}${NL}"
+# --repo is accepted only as owner/name with GitHub-safe characters.
+run_contract_case "--repo with an injected path is refused" 3 nogh owner/name owner/name - - --repo "owner/name/commits/${C2}/check-runs?x=" "$C1"
+run_contract_case "--repo with a query is refused" 3 nogh owner/name owner/name - - --repo "owner/name?x=1" "$C1"
+run_contract_case "--repo with a fragment is refused" 3 nogh owner/name owner/name - - --repo "owner/name#x" "$C1"
+run_contract_case "--repo with a dot-leading name is refused" 3 nogh owner/name owner/name - - --repo "owner/.." "$C1"
+run_contract_case "--repo with a dot owner is refused" 3 nogh owner/name owner/name - - --repo "../name" "$C1"
+run_contract_case "--repo without a slash is refused" 3 nogh owner/name owner/name - - --repo owner "$C1"
+run_contract_case "--repo with a trailing slash is refused" 3 nogh owner/name owner/name - - --repo "owner/name/" "$C1"
+run_contract_case "--repo with a space is refused" 3 nogh owner/name owner/name - - --repo "own er/name" "$C1"
+run_contract_case "--repo with an encoded slash is refused" 3 nogh owner/name owner/name - - --repo "owner/na%2Fme" "$C1"
+run_contract_case "--repo with a trailing newline is refused" 3 nogh owner/name owner/name - - --repo "owner/name${NL}" "$C1"
+run_contract_case "empty --repo is refused" 3 nogh owner/name owner/name - - --repo "" "$C1"
+run_contract_case "--repo with no value is refused" 3 nogh owner/name owner/name - - "$C1" --repo
+run_contract_case "--repo with hyphens, underscores and dots is used" 0 "$C1" my-org/my_repo.js owner/name - - --repo my-org/my_repo.js "$C1"
+# The inferred repository is validated the same way, and the sha is printed first.
+run_contract_case "inferred repository with an injected path is refused" 3 noapi owner/name "owner/name/commits/${C2}/check-runs?x=" - - "$C1"
+run_contract_case "sha line is printed before a failing repository lookup" 3 noapi owner/name FAIL - first "$C1"
+# GH_REPO, GH_HOST and GIT_ variables never reach gh, so they cannot redirect it.
+run_contract_case "ambient GH_REPO does not change the repository" 0 "$C1" owner/name owner/name "GH_REPO=evil/repo" "env pwd" "$C1"
+run_contract_case "ambient GH_REPO does not reach gh with --repo" 0 "$C1" owner/name owner/name "GH_REPO=evil/repo" env --repo owner/name "$C1"
+run_contract_case "ambient GH_HOST does not reach gh" 0 "$C1" owner/name owner/name "GH_HOST=evil.example.invalid" env "$C1"
+run_contract_case "ambient GIT_DIR does not reach gh" 0 "$C1" owner/name owner/name "GIT_DIR=/nonexistent GIT_WORK_TREE=/nonexistent" env "$C1"
+# A single -- ends option parsing.
+run_contract_case "-- ends option parsing with --repo" 0 "$C1" owner/name owner/name - - --repo owner/name -- "$C1"
+run_contract_case "-- ends option parsing with an inferred repository" 0 "$C1" owner/name owner/name - first -- "$C1"
+run_contract_case "trailing -- is accepted" 0 "$C1" owner/name owner/name - - "$C1" --
+run_contract_case "option-like value after -- is refused as a sha" 3 nogh owner/name owner/name - hint -- --wait
+run_contract_case "second -- is an operand, not an option" 3 nogh owner/name owner/name - - -- -- "$C1"
+# The interpreter is isolated, and a symlinked copy binds to the real file.
+run_contract_case "PYTHONPATH shadowing does not change the result" 0 "$C1" owner/name owner/name SHADOW - "$C1"
+run_contract_case "symlinked copy binds to the clone that holds the real file" 0 "$C1" owner/name owner/name - "link pwd" "$C1"
+run_contract_case "symlinked wrapper in another directory runs the real ci-status.py" 0 "$C1" owner/name owner/name - "wraplink pwd first" "$C1"
+# A repeated --repo, --timeout or --interval is refused, never silently replaced.
+# run_contract_case already passes --interval 1, so one more --interval repeats it.
+run_contract_case "second --repo is refused" 3 nogh owner/name owner/name - dup --repo owner/name --repo other/name "$C1"
+run_contract_case "second --timeout is refused" 3 nogh owner/name owner/name - dup --wait --timeout 5 --timeout 6 "$C1"
+run_contract_case "second --interval is refused" 3 nogh owner/name owner/name - dup --interval 2 "$C1"
+# --timeout and --interval are bounded at 86400 seconds, far inside the values
+# that overflow a sleep or a subprocess timeout. run_contract_case passes
+# --interval 1, so the interval bound is checked through run_timed_case below,
+# inside a 2-second wait window so a tool that accepts the value ends within 5
+# seconds instead of sleeping for a day.
+run_contract_case "--timeout at the 86400-second bound is used" 0 "$C1" owner/name owner/name - - --wait --timeout 86400 "$C1"
+run_contract_case "--timeout above the 86400-second bound is refused" 3 nogh owner/name owner/name - - --timeout 86401 "$C1"
+run_contract_case "--timeout that would overflow a subprocess timeout is refused" 3 nogh owner/name owner/name - - --timeout 2147484 "$C1"
+run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT" 5 3 --wait --timeout 2 --interval 86401
+
+# Wrapper path resolution fails closed (VERIFY 1.1 finding 1). Each case runs
+# ci-status.sh from a working directory that holds a planted ci-status.py, which
+# records that it ran. The planted file must never run. RESOLVE is a space-separated
+# list: noreadlink (a readlink first on PATH that exits 1), nopyresolve (a python3
+# first on PATH that exits 1 for python3 -I -c and runs the real python3 otherwise),
+# nopy (the tools directory holds ci-status.sh only). One more token may name how
+# the wrapper is invoked: sourced (bash -c sources it, so $0 is bash, then prints
+# after=<status>; the caller must keep running and see status 3), stdin (bash
+# -s reads it from a pipe), barename (bash ci-status.sh, found through PATH),
+# pylink (a copied wrapper beside a ci-status.py that is a symlink to the planted
+# file), pathexec (ci-status.sh executed through PATH), posixsh (the wrapper run
+# by the first of dash, sh, ksh, mksh or posh that a probe confirms is not bash;
+# skipped when there is none), restricted (bash -r), setr (bash run with a
+# BASH_ENV file that runs set -r), setrsourced (bash -c runs set -r, then sources
+# ci-status.sh found through PATH, then prints after=<status>; the caller must
+# keep running and see status 3), or noread (the ci-status.py
+# beside the wrapper has mode 000; skipped as root, where mode 000 is readable).
+# sourcedself (bash -c sources it with $0 set to the wrapper path, then prints
+# after=<status>; the caller must keep running and see status 3). Without one,
+# the wrapper runs as bash with its absolute path. A shell option token, errexit
+# (bash -e), nounset (bash -u) or pipefail (bash -o pipefail), runs that bash
+# with the option set. sourcedvars sources it from a caller that holds here, src,
+# cause, sourced and restricted, which must be left unchanged; sourcedro does the
+# same with those names (and rc) readonly, which must not turn the sourced path
+# into the executed one. hardlink runs a hard link to the copied wrapper placed
+# in the working directory, beside the planted ci-status.py, which must be
+# refused because the wrapper then has 2 links. fddecoy opens a hard link to the
+# copied wrapper (in the working directory) as fd 9, removes the link, creates a
+# regular decoy file named as /proc/self/fd/9 then reads (".../h.sh (deleted)"),
+# and runs bash /dev/fd/9. dirswap runs the wrapper through a directory symlink
+# that a python3 first on PATH retargets, just before the resolver runs, to a
+# directory holding a copy of the wrapper and the planted ci-status.py.
+# fdslashes, fdlink, fdslasheshold and fdlinkhold build the descriptor decoy of
+# the round 8 seat driver: a hard link to the copied wrapper opened as fd 9 and
+# removed, a symlink named ".../h.sh (deleted)" to a decoy copy of the wrapper
+# beside the planted ci-status.py, and bash run on /dev//fd/9 (slashes) or on a
+# symlink to /dev/fd/9 (link); the hold forms also pass fd 255 open on the decoy.
+# roflags and rotext run bash with a BASH_ENV file that marks the wrapper
+# variable __ci_status_flags (with a close-on-exec value) or __ci_status_text
+# (with a passing path) readonly, so the assignment fails: the wrapper must give
+# the cannot-find refusal, never run the gate on the value the caller set.
+# rorefuse runs a hard link to the copied wrapper, placed beside the planted
+# ci-status.py, with a BASH_ENV file that defines __ci_status_refuse as a no-op
+# and marks it readonly (readonly -f), so the wrapper cannot redefine it: the
+# wrapper must still give the cannot-find refusal, never run the planted file.
+# hold255self passes fd 255 open on the real copied wrapper and runs it normally,
+# so only the close-on-exec check can refuse it. dotdotproc and dotdotdevfd
+# open the real copied wrapper as fd 9 and run bash on cwd/L/../fd/9, with L a
+# symlink to /proc/self/fd or to /dev/fd: every other layer would let that real
+# wrapper run, so only the descriptor-path test on the resolved source can
+# refuse it. dirfd opens the copied tools directory as fd 9 and runs bash on
+# /dev//fd/9/ci-status.sh; WANT A asserts property A only: the planted
+# ci-status.py must not run, and the wrapper must either run the real gate
+# (exit 0 with the sha line) or refuse (exit 3 with the message). Each refusal
+# has its own message, which the case checks.
+# non_bash_shell prints the path of a shell whose BASH_VERSION is unset, or fails.
+non_bash_shell() {
+  local cand found
+  for cand in dash sh ksh mksh posh; do
+    found="$(command -v "$cand")" || continue
+    if [ "$("$found" -c 'echo "${BASH_VERSION:-unset}"' 2>/dev/null)" = unset ]; then
+      printf "%s" "$found"; return 0
+    fi
+  done
+  return 1
+}
+# run_wrapper_case NAME WANT RESOLVE
+run_wrapper_case() {
+  local name="$1" want="$2" resolve="$3" posix_sh=""
+  case " $resolve " in
+    *" posixsh "*)
+      if ! posix_sh="$(non_bash_shell)"; then
+        printf "skip %s (no shell other than bash found)\n" "$name"; skips=$((skips + 1)); return
+      fi ;;
+    *" noread "*)
+      if [ "$(id -u)" -eq 0 ]; then
+        printf "skip %s (running as root, where mode 000 is readable)\n" "$name"; skips=$((skips + 1)); return
+      fi ;;
+  esac
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local tools="$tmp/repo/tools" bin="$tmp/bin" cwd="$tmp/cwd"; mkdir -p "$tools" "$bin" "$cwd"
+  cp "${here}/ci-status.sh" "$tools/"
+  case " $resolve " in *" nopy "*) ;; *) cp "${here}/ci-status.py" "$tools/" ;; esac
+  printf "import pathlib\npathlib.Path(\"%s\").touch()\n" "$tmp/planted-ran" > "$cwd/ci-status.py"
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in
+  *check-runs*) cat "$tmp/def.json" ;;
+  *) printf "" ;;
+esac
+GH
+  chmod +x "$bin/gh"
+  case " $resolve " in
+    *" noreadlink "*)
+      printf "#!/usr/bin/env bash\nexit 1\n" > "$bin/readlink"; chmod +x "$bin/readlink" ;;
+  esac
+  case " $resolve " in
+    *" nopyresolve "*)
+      local real_py; real_py="$(command -v python3)"
+      cat > "$bin/python3" <<PY
+#!/usr/bin/env bash
+if [ "\${1:-}" = "-I" ] && [ "\${2:-}" = "-c" ]; then exit 1; fi
+exec "$real_py" "\$@"
+PY
+      chmod +x "$bin/python3" ;;
+  esac
+  local bflags=()
+  case " $resolve " in
+    *" errexit "*) bflags=(-e) ;;
+    *" nounset "*) bflags=(-u) ;;
+    *" pipefail "*) bflags=(-o pipefail) ;;
+  esac
+  local entry=(bash "${bflags[@]}" "$tools/ci-status.sh") feed="" path="$bin:$PATH"
+  case " $resolve " in
+    *" sourced "*)
+      entry=(bash -c '. "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; exit "$s"' bash "$tools/ci-status.sh") ;;
+    *" stdin "*) feed="$tools/ci-status.sh"; entry=(bash -s --) ;;
+    *" barename "*) path="$bin:$tools:$PATH"; entry=(bash ci-status.sh) ;;
+    *" pylink "*)
+      tools="$tmp/copy"; mkdir -p "$tools"
+      cp "${here}/ci-status.sh" "$tools/"
+      ln -s "$cwd/ci-status.py" "$tools/ci-status.py"
+      entry=(bash "${bflags[@]}" "$tools/ci-status.sh") ;;
+    *" sourcedself "*)
+      entry=(bash -c '. "$0" "$@"; s=$?; printf "after=%s\n" "$s"; exit "$s"' "$tools/ci-status.sh") ;;
+    *" sourcedvars "*)
+      entry=(bash -c 'here=keep src=keep cause=keep sourced=keep restricted=keep; . "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; printf "vars=%s,%s,%s,%s,%s\n" "$here" "$src" "$cause" "$sourced" "$restricted"; exit "$s"' bash "$tools/ci-status.sh") ;;
+    *" fddecoy "*)
+      ln "$tools/ci-status.sh" "$cwd/h.sh"
+      entry=(bash -c 'exec 9<"$1" || exit 98; rm -f "$1"; printf "" > "$1 (deleted)"; shift; exec bash /dev/fd/9 "$@"' _ "$cwd/h.sh") ;;
+    *" dirswap "*)
+      local swap_py; swap_py="$(command -v python3)"
+      mkdir -p "$tmp/other" "$tmp/swapbin"
+      cp "${here}/ci-status.sh" "$tmp/other/"
+      cp "$cwd/ci-status.py" "$tmp/other/ci-status.py"
+      ln -s "$tools" "$tmp/link"
+      cat > "$tmp/swapbin/python3" <<PY
+#!/usr/bin/env bash
+if [ ! -e "$tmp/swapped" ]; then : > "$tmp/swapped"; ln -sfn "$tmp/other" "$tmp/link"; fi
+exec "$swap_py" "\$@"
+PY
+      chmod +x "$tmp/swapbin/python3"
+      path="$tmp/swapbin:$bin:$PATH"
+      entry=(bash "$tmp/link/ci-status.sh") ;;
+    *" fdslashes "*|*" fdlink "*|*" fdslasheshold "*|*" fdlinkhold "*)
+      cp "${here}/ci-status.sh" "$cwd/ci-status.sh"
+      ln "$tools/ci-status.sh" "$cwd/h.sh"
+      local fd_hold=nohold fd_target="/dev//fd/9"
+      case " $resolve " in *" fdslasheshold "*|*" fdlinkhold "*) fd_hold=hold ;; esac
+      case " $resolve " in
+        *" fdlink "*|*" fdlinkhold "*) ln -s /dev/fd/9 "$cwd/l.sh"; fd_target="$cwd/l.sh" ;;
+      esac
+      entry=(bash -c 'exec 9<"$1" || exit 98; rm -f "$1"; ln -s ci-status.sh "$1 (deleted)"; if [ "$2" = hold ]; then exec 255<"$3" || exit 98; fi; t="$4"; shift 4; exec bash "$t" "$@"' _ "$cwd/h.sh" "$fd_hold" "$cwd/ci-status.sh" "$fd_target") ;;
+    *" dotdotproc "*|*" dotdotdevfd "*)
+      local dd_link=/proc/self/fd
+      case " $resolve " in *" dotdotdevfd "*) dd_link=/dev/fd ;; esac
+      ln -s "$dd_link" "$cwd/L"
+      entry=(bash -c 'exec 9<"$1" || exit 98; shift; exec bash "$@"' _ "$tools/ci-status.sh" "$cwd/L/../fd/9") ;;
+    *" dirfd "*)
+      entry=(bash -c 'exec 9<"$1" || exit 98; shift; exec bash "$@"' _ "$tools" "/dev//fd/9/ci-status.sh") ;;
+    *" hold255self "*)
+      entry=(bash -c 'exec 255<"$1" || exit 98; exec bash "$@"' _ "$tools/ci-status.sh") ;;
+    *" hardlink "*)
+      ln "$tools/ci-status.sh" "$cwd/ci-status.sh"
+      entry=(bash "$cwd/ci-status.sh") ;;
+    *" sourcedro "*)
+      entry=(bash -c 'readonly here=keep src=keep cause=keep sourced=0 restricted=0 rc=0; . "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; exit "$s"' bash "$tools/ci-status.sh") ;;
+    *" posixsh "*) entry=("$posix_sh" "$tools/ci-status.sh") ;;
+    *" restricted "*) entry=(bash -r "$tools/ci-status.sh") ;;
+    *" setr "*)
+      printf "set -r\n" > "$tmp/setr.sh"
+      entry=(env BASH_ENV="$tmp/setr.sh" bash "$tools/ci-status.sh") ;;
+    *" roflags "*)
+      printf "readonly __ci_status_flags=2000000\n" > "$tmp/ro.sh"
+      entry=(env BASH_ENV="$tmp/ro.sh" bash "$tools/ci-status.sh") ;;
+    *" rotext "*)
+      printf "readonly __ci_status_text=/ok/ci-status.sh\n" > "$tmp/ro.sh"
+      entry=(env BASH_ENV="$tmp/ro.sh" bash "$tools/ci-status.sh") ;;
+    *" rorefuse "*)
+      ln "$tools/ci-status.sh" "$cwd/ci-status.sh"
+      printf "__ci_status_refuse() { :; }\nreadonly -f __ci_status_refuse\n" > "$tmp/ro.sh"
+      entry=(env BASH_ENV="$tmp/ro.sh" bash "$cwd/ci-status.sh") ;;
+    *" setrsourced "*)
+      path="$bin:$tools:$PATH"
+      entry=(bash -c 'set -r; . ci-status.sh "$@"; s=$?; printf "after=%s\n" "$s"; exit "$s"' bash) ;;
+    *" noread "*) chmod 000 "$tools/ci-status.py" ;;
+    *" pathexec "*)
+      chmod +x "$tools/ci-status.sh"; path="$bin:$tools:$PATH"; entry=(ci-status.sh) ;;
+  esac
+  (cd "$cwd" || exit 99
+    if [ -n "$feed" ]; then
+      cat "$feed" | PATH="$path" "${entry[@]}" --repo owner/name --interval 1 "$C1"
+    else
+      PATH="$path" "${entry[@]}" --repo owner/name --interval 1 "$C1"
+    fi > "$tmp/out" 2> "$tmp/err")
+  local got=$? ok=1 why=""
+  if [ "$want" = A ]; then
+    # Property A only: exit 0 (the real gate ran) or 3 (refused), never a planted run.
+    case "$got" in 0 | 3) want="$got" ;; *) want=3 ;; esac
+  fi
+  if [ "$got" -ne "$want" ]; then ok=0; why="$why exit"; fi
+  if [ -e "$tmp/planted-ran" ]; then ok=0; why="$why planted-ran"; fi
+  local msg="ci-status: cannot find ci-status.py beside the real ci-status.sh" msgfile="$tmp/err"
+  case " $resolve " in
+    *" posixsh "*) msg="ci-status: ci-status.sh must run under bash, not another shell" ;;
+    *" restricted "*|*" setr "*|*" setrsourced "*)
+      msg="ci-status: ci-status.sh cannot run in a restricted shell"; msgfile="$tmp/out" ;;
+    *" noread "*) msg="ci-status: cannot read ci-status.py beside the real ci-status.sh" ;;
+  esac
+  if [ "$want" -eq 3 ] && ! grep -q -F "$msg" "$msgfile"; then
+    ok=0; why="$why message"
+  fi
+  if [ "$want" -eq 0 ] && ! grep -q -F "reading checks for commit ${C1}" "$tmp/out"; then
+    ok=0; why="$why sha-line"
+  fi
+  case " $resolve " in
+    *" sourced "*|*" setrsourced "*|*" sourcedself "*|*" sourcedvars "*|*" sourcedro "*)
+      if ! grep -q -x -F "after=3" "$tmp/out"; then ok=0; why="$why caller-status"; fi ;;
+  esac
+  case " $resolve " in
+    *" sourcedvars "*)
+      if ! grep -q -x -F "vars=keep,keep,keep,keep,keep" "$tmp/out"; then ok=0; why="$why caller-vars"; fi ;;
+  esac
+  if [ "$ok" -eq 1 ]; then
+    printf "ok   %s (exit %s)\n" "$name" "$got"
+  else
+    printf "FAIL %s (got exit %s, want %s;%s)\n" "$name" "$got" "$want" "$why"
+    fails=$((fails + 1))
+  fi
+  rm -rf "$tmp"
+}
+
+run_wrapper_case "normal path runs the real gate, not a planted ./ci-status.py" 0 -
+run_wrapper_case "failing readlink does not run a planted ./ci-status.py" 0 noreadlink
+run_wrapper_case "failed path resolution fails closed with exit 3" 3 nopyresolve
+run_wrapper_case "failed resolution with failing readlink fails closed with exit 3" 3 "noreadlink nopyresolve"
+run_wrapper_case "wrapper with no ci-status.py beside it fails closed with exit 3" 3 nopy
+run_wrapper_case "sourced wrapper returns status 3 to the caller" 3 sourced
+run_wrapper_case "wrapper read from standard input fails closed with exit 3" 3 stdin
+run_wrapper_case "bare wrapper name found through PATH fails closed with exit 3" 3 barename
+run_wrapper_case "symlinked ci-status.py beside a copied wrapper fails closed with exit 3" 3 pylink
+run_wrapper_case "wrapper executed through PATH runs the real gate" 0 pathexec
+run_wrapper_case "wrapper run by a non-bash shell fails closed with exit 3" 3 posixsh
+run_wrapper_case "wrapper run by a restricted shell fails closed with exit 3" 3 restricted
+run_wrapper_case "unreadable ci-status.py fails closed with exit 3" 3 noread
+run_wrapper_case "wrapper executed in a shell restricted by set -r fails closed with exit 3" 3 setr
+run_wrapper_case "wrapper sourced after set -r returns status 3 to the caller" 3 setrsourced
+run_wrapper_case "wrapper sourced with \$0 set to its own path returns status 3 to the caller" 3 sourcedself
+run_wrapper_case "sourced wrapper leaves the variables of the caller unchanged" 3 sourcedvars
+run_wrapper_case "sourced wrapper with readonly caller variables still refuses as sourced" 3 sourcedro
+run_wrapper_case "hard link to the wrapper beside a planted ci-status.py fails closed with exit 3" 3 hardlink
+run_wrapper_case "wrapper run as /dev/fd/N with a deleted-file decoy fails closed with exit 3" 3 fddecoy
+run_wrapper_case "directory symlink swapped before the resolver runs fails closed with exit 3" 3 dirswap
+run_wrapper_case "descriptor decoy run as /dev//fd/9 fails closed with exit 3" 3 fdslashes
+run_wrapper_case "descriptor decoy run through a symlink to /dev/fd/9 fails closed with exit 3" 3 fdlink
+run_wrapper_case "descriptor decoy as /dev//fd/9 with fd 255 held on the decoy fails closed with exit 3" 3 fdslasheshold
+run_wrapper_case "descriptor decoy through a symlink with fd 255 held on the decoy fails closed with exit 3" 3 fdlinkhold
+run_wrapper_case "fd 255 inherited from the caller fails closed with exit 3" 3 hold255self
+run_wrapper_case "readonly __ci_status_flags from BASH_ENV fails closed with exit 3" 3 roflags
+run_wrapper_case "readonly __ci_status_text from BASH_ENV fails closed with exit 3" 3 rotext
+run_wrapper_case "readonly __ci_status_refuse from BASH_ENV with a hard-linked wrapper fails closed with exit 3" 3 rorefuse
+run_wrapper_case "real wrapper as L/../fd/9 with L to /proc/self/fd fails closed with exit 3" 3 dotdotproc
+run_wrapper_case "real wrapper as L/../fd/9 with L to /dev/fd fails closed with exit 3" 3 dotdotdevfd
+run_wrapper_case "directory descriptor /dev//fd/9/ci-status.sh never runs a planted gate" A dirfd
+# Inherited shell options never change a refusal: each runs with no gate, a
+# symlinked gate and an unreadable gate, and must refuse with status 3.
+for opt in errexit nounset pipefail; do
+  run_wrapper_case "$opt: wrapper with no ci-status.py beside it fails closed with exit 3" 3 "$opt nopy"
+  run_wrapper_case "$opt: symlinked ci-status.py beside a copied wrapper fails closed with exit 3" 3 "$opt pylink"
+  run_wrapper_case "$opt: unreadable ci-status.py fails closed with exit 3" 3 "$opt noread"
+done
+
+# run_output_case NAME WANT STREAM KIND: run ci-status.sh with standard output
+# closed (out), standard error closed (err) or standard output on /dev/full
+# (full), for a green reading (green) or a usage error (usage, an abbreviated
+# sha). A failed or impossible write must end the tool with exit 3, never with a
+# verdict or a crash status.
+run_output_case() {
+  local name="$1" want="$2" stream="$3" kind="$4"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in *check-runs*) cat "$tmp/def.json";; *"repo view"*) printf "owner/name";; *) printf "";; esac
+GH
+  chmod +x "$bin/gh"
+  local sha="$C1"
+  if [ "$kind" = usage ]; then sha="${C1:0:7}"; fi
+  case "$stream" in
+    out) PATH="$bin:$PATH" bash "$ci" --repo owner/name --interval 1 "$sha" >&- 2> "$tmp/err" ;;
+    err) PATH="$bin:$PATH" bash "$ci" --repo owner/name --interval 1 "$sha" > "$tmp/out" 2>&- ;;
+    full) PATH="$bin:$PATH" bash "$ci" --repo owner/name --interval 1 "$sha" > /dev/full 2> "$tmp/err" ;;
+  esac
+  local got=$?
+  if [ "$got" -eq "$want" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want %s)\n" "$name" "$got" "$want"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_output_case "green reading with standard output closed exits 3" 3 out green
+run_output_case "green reading with standard error closed exits 3" 3 err green
+run_output_case "usage error with standard output closed exits 3" 3 out usage
+run_output_case "usage error with standard error closed exits 3" 3 err usage
+run_output_case "green reading with standard output on a full device exits 3" 3 full green
+
+# run_signal_case NAME WANT MODE: a fake gh prints a green body and exits 1. MODE
+# sigchld runs ci-status.sh with SIGCHLD ignored, which, unless the gate restores
+# the default, lets the kernel reap gh so its status reads as 0 (a false green).
+run_signal_case() {
+  local name="$1" want="$2" mode="$3"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in *check-runs*) cat "$tmp/def.json"; exit 1;; *"repo view"*) printf "owner/name";; *) printf "";; esac
+GH
+  chmod +x "$bin/gh"
+  local launch='import os, signal, sys
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+os.execvp(sys.argv[1], sys.argv[1:])'
+  case "$mode" in
+    sigchld) PATH="$bin:$PATH" python3 -I -c "$launch" bash "$ci" --repo owner/name --interval 1 "$C1" > /dev/null 2>&1 ;;
+  esac
+  local got=$?
+  if [ "$got" -eq "$want" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want %s)\n" "$name" "$got" "$want"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_signal_case "green body from a failing gh with SIGCHLD ignored exits 3, not 0" 3 sigchld
+
+# run_pipe_case NAME MODE: the refusal for a wrapper with no ci-status.py beside
+# it is written to a standard error whose pipe has no reader, with SIGPIPE at its
+# default. MODE exec runs the wrapper; MODE sourced sources it and the caller must
+# keep running and see status 3. SIGPIPE must not end either.
+run_pipe_case() {
+  local name="$1" mode="$2"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local tools="$tmp/repo/tools"; mkdir -p "$tools"
+  cp "${here}/ci-status.sh" "$tools/"
+  local launch='import os, signal, sys
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+r, w = os.pipe()
+os.close(r)
+os.dup2(w, 2)
+os.close(w)
+os.execvp(sys.argv[1], sys.argv[1:])'
+  case "$mode" in
+    exec) python3 -I -c "$launch" bash "$tools/ci-status.sh" "$C1" > "$tmp/out" ;;
+    sourced)
+      python3 -I -c "$launch" bash -c '. "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; exit "$s"' \
+        bash "$tools/ci-status.sh" "$C1" > "$tmp/out" ;;
+  esac
+  local got=$? ok=1 why=""
+  if [ "$got" -ne 3 ]; then ok=0; why="$why exit"; fi
+  if [ "$mode" = sourced ] && ! grep -q -x -F "after=3" "$tmp/out"; then ok=0; why="$why caller-status"; fi
+  if [ "$ok" -eq 1 ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got exit %s, want 3;%s)\n" "$name" "$got" "$why"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_pipe_case "refusal to a broken pipe still exits 3" exec
+run_pipe_case "sourced refusal to a broken pipe still returns 3 to the caller" sourced
+
+# An exception while importing the standard library exits 3, never 1: the gate is
+# run with json made unimportable.
+import_got=0
+python3 -I -c 'import sys
+sys.modules["json"] = None
+path = sys.argv[1]
+sys.argv = [path, "0c83f120fcc4630694465bcf89f7415a21d54dba"]
+exec(compile(open(path).read(), path, "exec"), {"__name__": "__main__", "__file__": path})' \
+  "${here}/ci-status.py" > /dev/null 2>&1 || import_got=$?
+if [ "$import_got" -eq 3 ]; then printf "ok   import failure exits 3 (exit %s)\n" "$import_got";
+else printf "FAIL import failure exits 3 (got %s, want 3)\n" "$import_got"; fails=$((fails + 1)); fi
+
+# run_lost_status_case NAME: a fake gh prints a green body and exits 1, and the
+# gate runs in process with os.waitpid replaced by one that raises
+# ChildProcessError, as a lost exit status (ECHILD) does. The real gh-running
+# code path must read that as unreadable (exit 3), never as exit 0, whatever
+# CPython subprocess does with ECHILD. The gate is imported under -B, so the
+# run writes no __pycache__ beside the tools under test.
+run_lost_status_case() {
+  local name="$1"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in *check-runs*) cat "$tmp/def.json"; exit 1;; *"repo view"*) printf "owner/name";; *) printf "";; esac
+GH
+  chmod +x "$bin/gh"
+  local got=0
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, sys
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+def lost(*args, **kwargs):
+    raise ChildProcessError(10, "No child processes")
+os.waitpid = lost
+sys.argv = [path, "--repo", "owner/name", "--interval", "1", sys.argv[2]]
+sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > /dev/null 2>&1 || got=$?
+  if [ "$got" -eq 3 ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want 3)\n" "$name" "$got"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
+
+# A skipped case is not verified, so any skip makes the suite incomplete and
+# nonzero; the final line then names the count.
+if [ "$skips" -gt 0 ]; then
+  if [ "$fails" -gt 0 ]; then
+    printf "%s ci-status test(s) failed\n" "$fails"
+  fi
+  printf "ci-status suite incomplete: %s test(s) skipped\n" "$skips"
+  exit 1
+fi
 if [ "$fails" -eq 0 ]; then
   printf 'all ci-status github-actions fail-safe tests pass
 '
