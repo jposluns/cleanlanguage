@@ -21,12 +21,14 @@ an accepted false failure listed below. Docstrings are found with ast.get_docstr
 docstring of a one-line suite counts too, and a string statement may be a plain, f-string,
 template string or bytes literal. Its prose is read from the parsed literal, never cut from the
 source: the decoded text of a plain or bytes literal, and only the top-level literal text of an
-f-string or template string, whose replacement fields, with any format spec or nested literal, are
-code and each read as one space. Each part of an implicitly concatenated literal is read from its
-own delimiter, with its own prefix, and joined to the next part as Python joins them, with nothing
-between, and a backslash that ends a line of a part joins the next line with nothing between, while
-a backslash just before a replacement field, which escapes nothing, stays the backslash Python
-keeps; a line break inside one part, written or escaped, is the newline it is, with the space around
+f-string or template string, whose replacement fields are code and each read as one space, the whole
+field: any format spec or nested literal and, in a self-documenting field such as {x = }, the
+expression, the = and the spaces around it, which Python also puts into the value. Each part of an
+implicitly concatenated literal is read from its own delimiter, with its own prefix, and joined to
+the next part as Python joins them, with nothing between, and a backslash that ends a line of a part
+joins the next line with nothing between, while an unpaired backslash, one left over after the pairs
+before it, just before a replacement field, which escapes nothing, stays the backslash Python keeps;
+a line break inside one part, written or escaped, is the newline it is, with the space around
 it stripped. Every pattern but the round number pattern reads a line break, in a string value or
 between the lines of a comment run or paragraph, as one space; the round number pattern keeps it, so
 a letter exempts a colon round number only on the line of the number. Before Python 3.12 the
