@@ -73,9 +73,14 @@ app-pinned required check has the same limit. Pointing --repo at a repository th
 does not run all 4 unconditionally would downgrade a legitimate green to pending.
 Residual: a required check that concludes skipped or neutral counts as passed, as
 GitHub counts it for a required check, so a job skipped without running its steps
-reads green. For the 3 Actions jobs, tools/test-ci-status.sh guards the job-level
-if: route: it fails if the job that carries a required display name holds an if:,
-needs: or continue-on-error: key, its steps included.
+reads green. For the 3 Actions jobs, tools/test-ci-status.sh reads each workflow
+with an allow-list that fails closed: the on: block holds only a pull_request
+trigger with nothing under it and a push trigger filtered to main alone, and the
+job with a required display name holds only the keys name, runs-on and steps,
+each step only name, uses, shell and run, so no if:, needs: or continue-on-error:
+key can skip the job or pass over a failed step and still read as passing; any
+line outside that shape fails the check. The commands the steps run, and the
+other jobs of the workflow, are not checked.
 
 The commit is named only by its full 40-character hexadecimal sha, folded to
 lower case and used as given. Every other value, an abbreviation of any length,

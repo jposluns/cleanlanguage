@@ -492,25 +492,33 @@ run_case "null head_sha -> unreadable" "$(head_runs null)" "" "" 3
 run_case "empty head_sha -> unreadable" "$(head_runs '""')" "" "" 3
 
 # The declared required names follow the workflows, and each workflow runs its
-# job on every pull request and every push to main. For each of the 3 workflows
-# the check requires all of the following. The job display name is the only
-# 4-space-indented name: line, and it equals the name that ci-status.py declares.
-# The top-level on: block holds exactly 2 triggers and nothing else: a
-# pull_request with no filter key at all (no paths, paths-ignore, branches,
-# branches-ignore, tags or types), and a push whose only filter is branches,
-# listing main alone. The job that carries the display name holds no if:,
-# needs: or continue-on-error: key at any depth, its steps included, and no YAML
-# merge key, alias or flow-style collection that could hide such a key from a
-# line reading. A job skipped by an if:, or by a failed job it needs, concludes
-# skipped, and a step skipped by an if: or allowed to fail leaves the job
-# successful; ci-status.py counts skipped and success as passing, so such a job
-# would read green without running its checks. A renamed job, a filter that
-# leaves a commit without the check, or a route that skips it fails here, instead
-# of turning every read into a forever-pending one or a false green. The reading
-# is strict and line-based, in Python with the standard library only, because no
-# YAML parser is guaranteed on the CI image: any other shape, another trigger
-# included, fails rather than passes. Residual: the commands the steps run are
-# not checked, so a step changed to do nothing still reads green.
+# job on every pull request and every push to main. wf_shape reads each of the 3
+# workflows with an allow-list that fails closed, in Python with the standard
+# library only, because no YAML parser is guaranteed on the CI image. It accepts
+# only the YAML subset these files use: block mappings and block sequences whose
+# keys are plain unquoted words; scalar values that are plain, or quoted on one
+# line without escapes; a one-line flow list of such scalars; block scalars (| or
+# >, with an optional chomping indicator), whose content is every following line
+# indented more than the column of the key that opened the block, so for
+# "- run: |" the column of run, not of the dash; and comments. Any other line,
+# such as a quoted, anchored, aliased, tagged, explicit or merge key, a flow
+# mapping, a duplicate key, a tab or a non-ASCII character, fails the check and
+# is named by its line number, as does a failure of the checker itself. Within
+# that subset the top level holds only name, on, permissions, env and jobs. The
+# on: block holds only a pull_request trigger with nothing under it and a push
+# trigger filtered to main alone. The job with the declared display name holds
+# only the keys name, runs-on and steps, and each of its steps only name, uses,
+# shell and run, so no if:, needs: or continue-on-error: key can skip the job or
+# pass over a failed step. A job skipped by an if:, or by a failed job it needs,
+# concludes skipped, and a step skipped by an if: or allowed to fail leaves the
+# job successful; ci-status.py counts skipped and success as passing, so such a
+# job would read green without running its checks. The job display name is also
+# the only 4-space-indented name: line, and it equals the name that ci-status.py
+# declares. A renamed job, a filter that leaves a commit without the check, or
+# any key or line outside that shape fails here, instead of turning every read
+# into a forever-pending one or a false green. Residual: the commands the steps
+# run, and the other jobs of the workflow, are not checked, so a step changed to
+# do nothing still reads green.
 # wf_shape FILE JOB: print a word for each shape problem found, nothing if none.
 wf_shape() {
   python3 -I - "$1" "$2" <<'PY'
@@ -518,7 +526,6 @@ import re
 import sys
 
 path, job = sys.argv[1], sys.argv[2]
-found = []
 try:
     with open(path, encoding="utf-8") as fh:
         lines = fh.read().split("\n")
@@ -526,91 +533,186 @@ except (OSError, UnicodeDecodeError):
     print("unreadable-workflow")
     sys.exit(0)
 
+KEY = r"[A-Za-z_][A-Za-z0-9_-]*"
+COMMENT = r"(?:\s+#.*)?"
+QUOTED = r"""(?:"[^"\\]*"|'[^']*')"""
+PLAIN = r"[A-Za-z0-9_$./][^#]*?"
+WORD = r"""(?:[A-Za-z0-9_./-]+|"[^"\\,\[\]{}]*"|'[^',\[\]{}]*')"""
+ENTRY = re.compile("(" + KEY + "):(?: (.*))?")
+BLOCK = re.compile(r"[|>][+-]?" + COMMENT)
+FLOW = re.compile(r"\[\s*(" + WORD + r"(?:\s*,\s*" + WORD + r")*)\s*\]" + COMMENT)
+VALUE = re.compile("(" + QUOTED + "|" + PLAIN + ")" + COMMENT)
 
-def significant(line):
-    s = line.strip()
-    return bool(s) and not s.startswith("#")
+
+class Refused(Exception):
+    pass
 
 
 def indent(line):
     return len(line) - len(line.lstrip(" "))
 
 
-def bare(line):
-    # The line without a trailing comment; these workflows quote no " #".
-    return re.sub(r"\s+#.*$", "", line).rstrip()
+class Reader:
+    """A reader for the YAML subset above; anything outside it raises Refused."""
+
+    def __init__(self, lines):
+        self.lines, self.i = lines, 0
+
+    def fail(self, word="unrecognized-line"):
+        raise Refused(f"{word}-{self.i + 1}")
+
+    def peek(self):
+        # The indent of the next line that is neither blank nor a comment.
+        while self.i < len(self.lines):
+            s = self.lines[self.i].strip()
+            if s and not s.startswith("#"):
+                return indent(self.lines[self.i])
+            self.i += 1
+        return None
+
+    def scalar(self, value):
+        m = VALUE.fullmatch(value)
+        if not m:
+            self.fail()
+        s = m.group(1).rstrip()
+        if s[0] in "\"'":
+            return s[1:-1]
+        if ": " in s or s.endswith(":"):
+            self.fail()
+        return s
+
+    def node(self):
+        col = self.peek()
+        rest = self.lines[self.i][col:]
+        if rest == "-" or rest.startswith("- "):
+            return self.sequence(col)
+        return self.mapping(col, {})
+
+    def sequence(self, col):
+        items = []
+        while self.peek() == col:
+            line = self.lines[self.i]
+            if not line[col:].startswith("- "):
+                self.fail()
+            rest = line[col + 2:]
+            if re.match(KEY + ":(?: |$)", rest):
+                item = {}
+                self.entry(col + 2, rest, item)
+                items.append(self.mapping(col + 2, item))
+            else:
+                items.append(self.scalar(rest))
+                self.i += 1
+        if (self.peek() or 0) > col:
+            self.fail()
+        return items
+
+    def mapping(self, col, found):
+        while self.peek() == col:
+            self.entry(col, self.lines[self.i][col:], found)
+        if (self.peek() or 0) > col:
+            self.fail()
+        return found
+
+    def entry(self, col, rest, found):
+        # col is the column of the key, also for the first key of "- key: ...".
+        m = ENTRY.fullmatch(rest)
+        if not m:
+            self.fail()
+        key, value = m.group(1), (m.group(2) or "").strip()
+        if key in found:
+            self.fail("duplicate-key")
+        if not value or value.startswith("#"):
+            self.i += 1
+            found[key] = self.node() if (self.peek() or 0) > col else None
+        elif BLOCK.fullmatch(value):
+            self.i += 1
+            self.block(col)
+            found[key] = "block scalar"
+        elif value.startswith("["):
+            f = FLOW.fullmatch(value)
+            if not f:
+                self.fail()
+            found[key] = [self.scalar(w) for w in re.split(r"\s*,\s*", f.group(1))]
+            self.i += 1
+        else:
+            found[key] = self.scalar(value)
+            self.i += 1
+
+    def block(self, col):
+        # Block scalar content: every following line that is blank or indented
+        # more than the key column; a later line less indented than the first
+        # content line, but still past the key column, is refused.
+        first = None
+        while self.i < len(self.lines):
+            line = self.lines[self.i]
+            if line.strip():
+                if indent(line) <= col:
+                    return
+                if first is None:
+                    first = indent(line)
+                elif indent(line) < first:
+                    self.fail()
+            self.i += 1
 
 
-if any("\t" in line for line in lines):
-    found.append("tab")
-top_key = re.compile(r"""(["']?)([^\s"':#]+)\1\s*:.*""")
-tops = [i for i, line in enumerate(lines) if significant(line) and indent(line) == 0]
-on_at = [i for i in tops if top_key.fullmatch(bare(lines[i])) and top_key.fullmatch(bare(lines[i])).group(2) == "on"]
-if len(on_at) != 1 or bare(lines[on_at[0]]) != "on:":
+reader = Reader(lines)
+try:
+    for n, line in enumerate(lines):
+        if re.search(r"[^\x20-\x7e]", line):
+            reader.i = n
+            reader.fail("character-line")
+    if reader.peek() != 0:
+        reader.fail()
+    tree = reader.mapping(0, {})
+    if reader.peek() is not None:
+        reader.fail()
+except Refused as err:
+    print(err)
+    sys.exit(0)
+
+
+def strings(value):
+    return isinstance(value, dict) and all(isinstance(v, str) for v in value.values())
+
+
+found = []
+for key in tree:
+    if key not in ("name", "on", "permissions", "env", "jobs"):
+        found.append("top-key-" + key)
+for key, ok in (("name", isinstance(tree.get("name"), str)),
+                ("permissions", "permissions" not in tree or strings(tree["permissions"])),
+                ("env", "env" not in tree or strings(tree["env"]))):
+    if not ok:
+        found.append("top-shape-" + key)
+on = tree.get("on")
+if not isinstance(on, dict) or set(on) != {"pull_request", "push"}:
     found.append("on-block")
 else:
-    triggers, current, shape_ok = {}, None, True
-    for line in lines[on_at[0] + 1:]:
-        if not significant(line):
-            continue
-        if indent(line) == 0:
-            break
-        line = bare(line)
-        if indent(line) == 2:
-            m = re.fullmatch(r"  ([a-z_]+):", line)
-            if not m or m.group(1) in triggers:
-                shape_ok = False
-                break
-            current = m.group(1)
-            triggers[current] = []
-        elif current is None:
-            shape_ok = False
-            break
-        else:
-            triggers[current].append(line)
-    if not shape_ok or set(triggers) != {"pull_request", "push"}:
-        found.append("on-block")
-    else:
-        if triggers["pull_request"]:
-            found.append("pull-request-filter")
-        push = triggers["push"]
-        flow = len(push) == 1 and re.fullmatch(r"""    branches:\s*\[\s*(["']?)main\1\s*\]""", push[0])
-        listed = (len(push) == 2 and push[0] == "    branches:"
-                  and re.fullmatch(r"""      - (["']?)main\1""", push[1]))
-        if not (flow or listed):
-            found.append("push-filter")
-names = [i for i, line in enumerate(lines) if bare(line) == "    name: " + job]
-key = top = None
-if len(names) == 1:
-    above = [i for i in range(names[0] - 1, -1, -1) if significant(lines[i])]
-    key = next((i for i in above if indent(lines[i]) <= 2), None)
-    top = next((i for i in above if indent(lines[i]) == 0), None)
-if (key is None or top is None or indent(lines[key]) != 2
-        or not re.fullmatch(r"  [A-Za-z_][A-Za-z0-9_-]*:", bare(lines[key]))
-        or bare(lines[top]) != "jobs:"):
+    if on["pull_request"] is not None:
+        found.append("pull-request-filter")
+    if on["push"] != {"branches": ["main"]}:
+        found.append("push-filter")
+jobs = tree.get("jobs")
+named = [v for v in jobs.values() if isinstance(v, dict) and v.get("name") == job] if isinstance(jobs, dict) else []
+if len(named) != 1:
     found.append("job-block")
 else:
-    scalar = None  # indent of a line that opened a block scalar
-    for line in lines[key + 1:]:
-        if not line.strip():
-            continue
-        if scalar is not None and indent(line) > scalar:
-            continue  # block scalar content, such as a run: | script
-        scalar = None
-        if line.strip().startswith("#"):
-            continue
-        if indent(line) <= 2:
-            break
-        b = bare(line)
-        m = re.match(r"""\s*(?:-\s+)?(["']?)(if|needs|continue-on-error)\1\s*:""", b)
-        if m:
-            found.append({"if": "job-if", "needs": "job-needs"}.get(m.group(2), m.group(2)))
-        if re.search(r"<<\s*:", b):
-            found.append("merge-key")
-        if re.search(r"(?:^\s*-\s*|:\s+)[\[{*]", b):
-            found.append("flow-or-alias")
-        if re.search(r":\s*[|>][-+0-9]*$", b):
-            scalar = indent(line)
+    body = named[0]
+    for key in body:
+        if key not in ("name", "runs-on", "steps"):
+            found.append("job-key-" + key)
+    if not isinstance(body.get("runs-on"), str):
+        found.append("job-shape-runs-on")
+    steps = body.get("steps")
+    if not isinstance(steps, list) or not steps or not all(isinstance(s, dict) for s in steps):
+        found.append("job-shape-steps")
+    else:
+        for step in steps:
+            for key, value in step.items():
+                if key not in ("name", "uses", "shell", "run"):
+                    found.append("step-key-" + key)
+                elif not isinstance(value, str):
+                    found.append("step-shape-" + key)
 print(" ".join(dict.fromkeys(found)))
 PY
 }

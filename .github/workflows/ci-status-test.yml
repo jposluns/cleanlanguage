@@ -10,12 +10,14 @@ name: CI status tests
 # as the verdict (so a forged or injected check name cannot fabricate it); the
 # same set of checks compares equal regardless of API order; and a wait does not
 # overshoot its deadline. The 3 workflows that define those jobs are in the
-# paths filters, because the tests check each of them: the job keeps its
-# declared display name; the on: block holds only a pull_request trigger with no
-# filter and a push trigger filtered to main alone; and the job holds no if:,
-# needs: or continue-on-error: key, its steps included, so it cannot be skipped
-# or pass over a failed step and still read as passing. The commands the steps
-# run are not checked.
+# paths filters, because the tests read each of them with an allow-list that
+# fails closed: the job keeps its declared display name; the on: block holds
+# only a pull_request trigger with nothing under it and a push trigger filtered
+# to main alone; and the job with that display name holds only the keys name,
+# runs-on and steps, each step only name, uses, shell and run, so no if:,
+# needs: or continue-on-error: key can skip the job or pass over a failed step
+# and still read as passing; any line outside that shape fails the check. The
+# commands the steps run, and the other jobs of the workflow, are not checked.
 
 on:
   pull_request:
