@@ -2162,6 +2162,9 @@ class ConditionalPassTest(unittest.TestCase):
                 code, out, err = self.main_reports()
                 self.assertEqual(code, expected, (out, err))
                 self.assertEqual(err.count("unexpected HTTP 503 reading release"), 1, err)
+                # That line is the only could-not-verify line, so a second line
+                # for the same status, in any wording, also fails.
+                self.assertEqual(err.count("check-release-checksum-live: could not verify: "), 1, err)
                 if reason is not None:
                     self.assertIn(reason, out + err)
                 self.assertEqual(self.probed, [f"v{AHEAD}"])
