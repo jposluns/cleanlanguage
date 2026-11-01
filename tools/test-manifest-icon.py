@@ -299,7 +299,9 @@ class ManifestIconTest(unittest.TestCase):
 
     def test_png_512_passes(self):
         out = self.expect_pass()
-        self.assertIn(f"{CLAUDE} field icon: ./assets/CL_icon.png is a PNG of 512 x 512 pixels", out)
+        self.assertIn(
+            f"{CLAUDE} field icon: " + repr("./assets/CL_icon.png") + " is a PNG of 512 x 512 pixels", out
+        )
 
     def test_png_2048_passes(self):
         self.set_icon("CL_icon.png", make_png(2048, 2048))
@@ -606,7 +608,7 @@ class ManifestIconTest(unittest.TestCase):
         (hooks_root / "hooks.png").write_bytes(make_png(600, 600))
         self.write_json(HOOKS, {"name": "hooks", "icon": "./hooks.png"})
         out = self.expect_pass()
-        self.assertIn(f"{HOOKS} field icon: ./hooks.png is a PNG of 600 x 600", out)
+        self.assertIn(f"{HOOKS} field icon: " + repr("./hooks.png") + " is a PNG of 600 x 600", out)
 
     # Path syntax (P1-P3).
 
@@ -643,7 +645,7 @@ class ManifestIconTest(unittest.TestCase):
 
     def test_icon_nul_fails(self):
         self.set_icon_value("./assets/CL_icon.png\x00")
-        self.expect_exit(1, "NUL")
+        self.expect_exit(1, "contains a control, format, surrogate")
 
     def test_icon_control_and_surrogate_fail(self):
         for value in ("./assets/CL\x01icon.png", "./assets/CL\x7ficon.png",
@@ -651,7 +653,27 @@ class ManifestIconTest(unittest.TestCase):
                       "./assets/CL\udffficon.png"):
             with self.subTest(value=value):
                 self.set_icon_value(value)
-                self.expect_exit(1, "contains a control, NUL, surrogate, or backslash character")
+                self.expect_exit(
+                    1,
+                    "contains a control, format, surrogate, line separator, paragraph "
+                    "separator, unassigned, or backslash character (Unicode category "
+                    "Cc, Cf, Cs, Zl, Zp, or Cn)",
+                )
+
+    def test_icon_format_and_separator_characters_fail(self):
+        # U+009B (CSI) and U+0085 (NEL) are C1 controls, U+202E is the
+        # right-to-left override, U+2028 and U+2029 are the line and paragraph
+        # separators; each can alter how a log line or terminal renders, so each
+        # is refused even when the file it names exists. U+0378 is unassigned (Cn),
+        # which a later Unicode release could assign as a format character.
+        for name in ("CL\x9bicon.png", "CL\x85icon.png",
+                     "CL\N{RIGHT-TO-LEFT OVERRIDE}icon.png",
+                     "CL\N{LINE SEPARATOR}icon.png",
+                     "CL\N{PARAGRAPH SEPARATOR}icon.png",
+                     "CL\u0378icon.png"):
+            with self.subTest(name=ascii(name)):
+                self.set_icon(name, make_png(512, 512))
+                self.expect_exit(1, "contains a control, format, surrogate, line separator")
 
     # Filesystem (F1-F5).
 
@@ -1398,72 +1420,100 @@ class ManifestIconTest(unittest.TestCase):
         self.assertTrue(err.startswith(f"check-manifest-icon: {CLAUDE} field icon: "), err)
 
 
-QUOTES = "\"" + chr(39)
+def trigger_block_lines(text: str, key: str) -> list[str]:
+    """Return the raw lines of one trigger block of a workflow, exactly as written.
 
-
-def parse_push_paths(text: str) -> list[str]:
-    """Return the entries of the push paths block of a workflow, without a YAML parser.
-
-    The block runs from the "    paths:" line after "  push:" to the next key at
-    indentation 4 or less. Inside it, a blank line or a comment line is skipped and
-    every other line must be a list entry, else ValueError, so an entry this reader
-    cannot see is refused rather than silently dropped. Double and single quote
-    characters are stripped from both ends of each entry.
+    The block is the key line (for example "  push:") and every following line up
+    to the next line that is non-blank and indented two columns or less, with
+    trailing blank lines trimmed. The key line must appear exactly once in the
+    text, else ValueError, so a second trigger of the same name cannot hide a
+    different block. No entry is decoded: a caller compares the lines byte for
+    byte against one expected block, so an added, removed, reordered, escaped,
+    re-quoted or otherwise altered line fails the comparison.
     """
-    lines = text.splitlines()
-    start = lines.index("  push:")
-    paths_at = lines.index("    paths:", start)
-    found = []
-    for number, line in enumerate(lines[paths_at + 1:], paths_at + 2):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        is_entry = stripped == "-" or stripped.startswith("- ")
-        indent = len(line) - len(line.lstrip(" "))
-        if indent <= 4 and not is_entry:
-            break
-        if not is_entry:
-            raise ValueError(f"line {number} of the push paths block is not a list entry: {line!r}")
-        found.append(stripped[1:].strip().strip(QUOTES))
-    return found
+    lines = text.split("\n")
+    if lines.count(key) != 1:
+        raise ValueError(f"the workflow must hold exactly one {key.strip()!r} line")
+    start = lines.index(key)
+    end = start + 1
+    while end < len(lines) and (not lines[end].strip() or lines[end].startswith("   ")):
+        end += 1
+    block = lines[start:end]
+    while block and not block[-1].strip():
+        block.pop()
+    return block
 
 
 class WorkflowPathsTest(unittest.TestCase):
-    """The push filter lists both checkout-attribute paths and excludes nothing."""
+    """The push block matches one pinned text and pull_request carries no filter."""
 
     WORKFLOW = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "manifest-icon.yml"
 
-    def push_paths(self) -> list[str]:
-        return parse_push_paths(self.WORKFLOW.read_text(encoding="ascii"))
+    # The complete push block of the workflow, byte for byte. A push filter is an
+    # exact, reviewed list: any change to it, including an escaped or re-quoted
+    # entry that decodes in YAML to something this text does not show, must fail
+    # here and be made in both places deliberately.
+    PUSH_BLOCK = [
+        "  push:",
+        "    branches:",
+        "      - main",
+        "    paths:",
+        "      - \"**/plugin.json\"",
+        "      - \"**/marketplace.json\"",
+        "      - \".claude-plugin/marketplace.json\"",
+        "      - \"cleanlanguage/.claude-plugin/plugin.json\"",
+        "      - \"cleanlanguage/plugin.json\"",
+        "      - \"plugin/.claude-plugin/marketplace.json\"",
+        "      - \"plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json\"",
+        "      - \"cleanlanguage/assets\"",
+        "      - \"cleanlanguage/assets/**\"",
+        "      - \".gitattributes\"",
+        "      - \"**/.gitattributes\"",
+        "      - \"tools/check-manifest-icon.py\"",
+        "      - \"tools/test-manifest-icon.py\"",
+        "      - \".github/workflows/manifest-icon.yml\"",
+    ]
 
-    def test_parser_reads_every_entry_form(self):
-        # A single-quoted entry, an entry after a comment or blank line, and an entry
-        # at the indentation of its key are all read; the next key ends the block.
-        quote = chr(39)
-        text = (
-            "on:\n  push:\n    paths:\n      - \"a\"\n      - " + quote + "!b" + quote
-            + "\n      # a comment\n\n      - \"!c\"\n    - d\n    branches:\n      - main\n"
+    def workflow_text(self) -> str:
+        return self.WORKFLOW.read_text(encoding="ascii")
+
+    def test_push_block_is_byte_exact(self):
+        self.assertEqual(trigger_block_lines(self.workflow_text(), "  push:"), self.PUSH_BLOCK)
+
+    def test_pull_request_carries_no_filter(self):
+        # A path-filtered required check never reports on a pull request outside
+        # its paths, so the pull_request trigger must stay a bare key line.
+        self.assertEqual(
+            trigger_block_lines(self.workflow_text(), "  pull_request:"), ["  pull_request:"]
         )
-        self.assertEqual(parse_push_paths(text), ["a", "!b", "!c", "d"])
 
-    def test_parser_refuses_a_line_that_is_not_an_entry(self):
-        text = "on:\n  push:\n    paths:\n      - a\n      b: c\n      - \"!d\"\n"
-        with self.assertRaises(ValueError):
-            parse_push_paths(text)
+    def test_escaped_or_requoted_entry_is_refused(self):
+        # A reader that strips quotes and checks the undecoded text for a leading
+        # exclamation mark accepts both of these; the first decodes in YAML to an
+        # exclusion ("\x21" is "!") and the second re-quotes a listed entry. The
+        # byte-exact comparison refuses both.
+        plain = "      - \"cleanlanguage/assets/**\""
+        for mutated in ("      - \"\\x21cleanlanguage/assets/**\"",
+                        "      - 'cleanlanguage/assets/**'"):
+            with self.subTest(entry=mutated.strip()):
+                block = list(self.PUSH_BLOCK)
+                block[block.index(plain)] = mutated
+                text = "on:\n  pull_request:\n" + "\n".join(block) + "\n\npermissions:\n"
+                self.assertNotEqual(trigger_block_lines(text, "  push:"), self.PUSH_BLOCK)
 
-    def test_push_paths_cover_checkout_attributes(self):
+    def test_push_block_covers_checkout_attributes(self):
         # A .gitattributes file anywhere can change the bytes git writes for
         # the icon and the manifests, so a push touching only one must run.
-        paths = self.push_paths()
-        self.assertIn(".gitattributes", paths)
-        self.assertIn("**/.gitattributes", paths)
+        self.assertIn("      - \".gitattributes\"", self.PUSH_BLOCK)
+        self.assertIn("      - \"**/.gitattributes\"", self.PUSH_BLOCK)
 
-    def test_push_paths_carry_no_exclusion(self):
-        # A later negative pattern would exclude a listed path again, so no
-        # entry in the push filter may start with an exclamation mark.
-        paths = self.push_paths()
-        self.assertTrue(paths)
-        self.assertEqual([p for p in paths if p.startswith("!")], [])
+    def test_push_block_text_carries_no_exclusion(self):
+        # A YAML entry can only decode to a leading exclamation mark through a
+        # literal one or a double-quoted backslash escape; the pinned block, which
+        # the workflow must equal byte for byte, carries neither character.
+        for line in self.PUSH_BLOCK:
+            self.assertNotIn("!", line)
+            self.assertNotIn("\\", line)
 
 
 if __name__ == "__main__":

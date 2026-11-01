@@ -28,8 +28,10 @@ What it checks:
       such manifest is itself declared in MANIFESTS, and a run that checks no icon
       field at all fails as vacuous;
   P1  the icon value is a string with non-whitespace content;
-  P2  it holds no control character (below 0x20, or 0x7F), no NUL, no surrogate, and
-      no backslash;
+  P2  it holds no character of Unicode category Cc (a control, including NUL), Cf
+      (format), Cs (a surrogate), Zl (line separator), Zp (paragraph separator), or
+      Cn (unassigned, since a later Unicode release can assign it as Cf), and no
+      backslash: no character that can alter how a log line or terminal renders;
   P3  it is a canonical "./" relative path: every component after the "./" prefix is
       non-empty and neither "." nor "..", with no trailing slash, so an absolute or
       traversing path is refused before any filesystem call;
@@ -232,6 +234,7 @@ import os
 import stat
 import struct
 import sys
+import unicodedata
 import zlib
 from pathlib import Path
 from typing import NoReturn, Sequence
@@ -692,10 +695,14 @@ def check_path_syntax(where: str, icon: object) -> list[str]:
     if not isinstance(icon, str) or not icon.strip():
         die(f"{where} must be a non-empty string, got {icon!r}")
     if any(
-        ord(ch) < 0x20 or ord(ch) == 0x7F or 0xD800 <= ord(ch) <= 0xDFFF or ch == "\\"
+        unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp", "Cn") or ch == "\\"
         for ch in icon
     ):
-        die(f"{where} value {icon!r} contains a control, NUL, surrogate, or backslash character")
+        die(
+            f"{where} value {icon!r} contains a control, format, surrogate, line "
+            "separator, paragraph separator, unassigned, or backslash character "
+            "(Unicode category Cc, Cf, Cs, Zl, Zp, or Cn)"
+        )
     rest = icon[2:] if icon.startswith("./") else ""
     parts = rest.split("/")
     if not rest or any(part in ("", ".", "..") for part in parts):
@@ -830,7 +837,7 @@ def check_icon(rel: str, field: str, icon: object, base: Path, repo_root: Path) 
 
     # I6
     print(
-        f"check-manifest-icon: {where}: {icon} is a {image_format} of {width} x "
+        f"check-manifest-icon: {where}: {icon!r} is a {image_format} of {width} x "
         f"{height} pixels, {len(data)} bytes."
     )
 
