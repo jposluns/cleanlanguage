@@ -634,12 +634,18 @@ class WorkflowStepTest(unittest.TestCase):
 # up to three words (an adverb such as always, permanently or forever) may
 # stand between the verb and the adjective, the verb may be stay or remain,
 # never mutable or not mutable counts as immutable, no one and nobody count as
-# nothing, and can not and can't count as cannot.
+# nothing, and can not and can't count as cannot. Row 87: a pair of commas may
+# set off an aside of up to three words right after the verb (a single comma
+# elsewhere ends the claim, so "is published, but its immutable field" is not
+# one), no-one counts as no one, and
+# could not, will not, won't and can, could or will never count as cannot.
 IMMUTABILITY_CLAIM = re.compile(
-    r"\b(releases?|assets?)\b[^.;:]*\b(is|are|stays?|remains?)\s+(\w+\s+){0,3}?"
+    r"\b(releases?|assets?)\b[^.;:]*\b(is|are|stays?|remains?)"
+    r"(\s+(\w+\s+){0,3}?|\s*,\s*(\w+\s+){0,2}\w+\s*,\s*)"
     r"(immutable|never\s+mutable|not\s+mutable)\b"
-    r"|\b(nothing|no\s+one|nobody|no\s+(other\s+)?workflow|no\s+run)\b[^.;]*\brepublish"
-    r"|\bcan(\s*not|\Wt)\s+be\s+republished\b",
+    r"|\b(nothing|no[\s-]+one|nobody|no\s+(other\s+)?workflow|no\s+run)\b[^.;]*\brepublish"
+    r"|\b(can(\s*not|\Wt)|could(\s*not|n\Wt)|will\s+not|won\Wt|(can|could|will)\s+never)"
+    r"\s+be\s+republished\b",
     re.IGNORECASE)
 # The printed lines whose truth the workflow establishes first, by their exact
 # text: the readback line printed after the immutable check, the day-mismatch
@@ -1643,7 +1649,19 @@ class ImmutableReleaseTest(WorkflowStepTest):
                       "A release can not be republished.",
                       "Published assets are never mutable.",
                       "Nobody can republish it.",
-                      "A release remains immutable forever."):
+                      "A release remains immutable forever.",
+                      # Row 87: one probe per alternative the guard lacked or
+                      # left unprobed, each caught by that alternative alone.
+                      "Releases are, once published, immutable.",
+                      "No-one can republish a published release.",
+                      "A release can never be republished.",
+                      "A release could never be republished.",
+                      "A release will never be republished.",
+                      "A release will not be republished.",
+                      "A release won" + chr(39) + "t be republished.",
+                      "A release could not be republished.",
+                      "A release couldn" + chr(39) + "t be republished.",
+                      "Published assets are not mutable."):
             with self.subTest(probe=probe):
                 self.assertNotEqual(immutability_claims(probe), [])
 
