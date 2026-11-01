@@ -426,6 +426,8 @@ run_case "inconsistent total_count presence is rejected fail-closed" "$INCONSIST
 run_case "non-object app is rejected fail-closed" "$NONOBJ_APP" "" "" 3
 # A lone surrogate in a name fails closed, it does not crash the report.
 run_case "unencodable name is rejected fail-closed" "$SURROGATE" "" "" 3
+run_err_case "an unencodable name is named on standard error" "$SURROGATE" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: check field name is not encodable text"
 # A nonzero gh exit with a green body on stdout is rejected by the returncode guard.
 run_rc_case "green body with nonzero gh exit is rejected fail-closed" 3
 # In --wait mode a changing-but-green set must NOT give up at the changing-set cap

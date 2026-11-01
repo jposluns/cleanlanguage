@@ -69,7 +69,12 @@ never to a red. A commit that legitimately ran none of them is a safe false-red,
 never a false-green. Residual: a name and an app cannot tell which workflow
 produced a run, so a pull request that deletes one of those workflows and adds
 another job with the same display name satisfies the check; GitHub's own
-app-pinned required check has the same limit. Pointing --repo at a repository that
+app-pinned required check has the same limit. Within the same residual, another job
+in one of the 3 workflows can carry one of the 3 display names, since the other jobs
+of each workflow are not checked (see below). The tool reads the check runs the API
+returns under its default filter, the latest runs, so whether such a job can take
+the place of a failed run of the real job in a reading depends on how the API
+selects the latest runs, which this tool does not control. Pointing --repo at a repository that
 does not run all 4 unconditionally would downgrade a legitimate green to pending.
 Residual: a required check that concludes skipped or neutral counts as passed, as
 GitHub counts it for a required check, so a job skipped without running its steps
@@ -355,7 +360,7 @@ def _field(value, allow_empty: bool, field: str):
         # so it fails closed here rather than crashing the report later.
         value.encode("utf-8")
     except UnicodeEncodeError as exc:
-        raise Unreadable("check field is not encodable text") from exc
+        raise Unreadable(f"check field {field} is not encodable text") from exc
     return value
 
 
