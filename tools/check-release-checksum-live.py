@@ -76,10 +76,8 @@ Exit codes:
      not exactly true, the release SKILL.md names returns a status other than
      200 or 404, or the tag exists with no published release)
   3  a required file could not be read, the SKILL.md Released line is
-     malformed, or tools/skill-release-date.py could not be run, failed, was
-     killed, did not finish within CHILD_TIMEOUT_SECONDS, or did not print a
-     result that matches the JSON contract, or the gate could not prepare,
-     wait for, or read its child, or kill the process group of its child (see
+     malformed, or a call of tools/skill-release-date.py, which runs in a
+     child process, did not give a result the gate could accept (see
      run_release_date_child)
 
 The release-date check and the site-checksum comparison both run and both
@@ -92,45 +90,37 @@ unreleased version that is not the current skill version, so neither failure
 hides the other. Within the date check of a published release, a Released line
 missing above the undated baseline does not hide an immutable field that is not
 exactly true: both are reported and the more severe 2 wins. The extractor is probed inside main, not at import, so a
-failure to run it is reported and contributes exit 3 while the checksum
+probe that ends in exit 3 is reported and contributes 3 while the checksum
 comparison still runs and reports. The gate then exits with the most severe code, the highest
 one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not complete.
 
-The extractor runs in a separate python3 -I child (run_release_date_child),
-so extractor code does not run in this process: a call to os._exit, a signal
-to its own process, or a KeyboardInterrupt it raises ends only the child, a
-rewritten global changes only the child, and a hang holds the gate for at
-most CHILD_TIMEOUT_SECONDS.
-The gate reads one exit status, one bounded stdout, and a bounded part of the
-stderr, accepting a result only when the exit is 0 and the stdout is exactly
-one JSON object that matches the contract; every other outcome of the child
-exits 3 with its report, never 2, 1, or 0. Unless the wait reports that the
-child is no longer a child of the gate, or an interrupt reaches the gate
-outside the wait (see run_release_date_child), the process group of the child
-is killed before the gate reaps the child, so a process it started that stays
-in the group, directly or through a double fork (which keeps the group), ends
-with it.
-Separation is not a sandbox. What it does
-not close: the child runs with the uid, filesystem, and network of the gate,
-so extractor code can still write files, reach the network, signal the gate,
-and start a process that leaves the process group (through setsid, or setpgid
-into a new group) and outlives the gate. A signal it sends to the gate acts on
-the gate: an interrupt (SIGINT) ends the gate by that signal, a shell status
-of 130, without the rest of its report or any of its exit codes (when it
-arrives while the gate waits, the gate first kills and reaps the child, and
-exits 3 instead when the group cannot be killed); a stop (SIGSTOP) halts the
-gate until something continues it, however long that is, so
-CHILD_TIMEOUT_SECONDS does not bound it; and a signal that ends the gate, such
-as SIGTERM, ends it with no report. Within CHILD_TIMEOUT_SECONDS the child can
-use CPU and memory and fill the stdout and stderr temporary files on disk, of
-which the gate reads only a bounded part (see RESULT_LIMIT); if the gate
-itself is killed while it waits, the child, in its own session, runs on until
-it ends; the child reads the extractor file
-afresh on each call, so a file replaced during a run can give different calls
-different code, where the module was read once before; and the extractor
-remains the authority on content, so changed extractor code that returns a
-wrong but well-formed answer, or classifies a value as malformed, is not
-detectable here, as it never was. The stderr the gate relays on a failure is
+The extractor runs in a separate python3 -I child for each call
+(run_release_date_child), so extractor code never runs in this process, and
+what it does to its own process, such as exiting, raising, rewriting a
+global, or signalling itself, acts on the child. The timeout applies to each
+child: a gate run starts several children, so a child that hangs can hold the
+gate for up to CHILD_TIMEOUT_SECONDS on each call. The gate takes a result
+from a child only when the child exits 0 and prints exactly one JSON object
+that matches the contract, and it reads only a bounded part of what the child
+prints (see RESULT_LIMIT). Every other outcome of a child that the gate
+observes exits 3 with its report, never 2, 1, or 0. On a normal end and on a
+timeout, the gate kills the process group of the child before it reaps the
+child, or exits 3 when it cannot; on the other paths described in
+run_release_date_child it may not. A process the child started is killed
+with the group only while it is in the group: a process that leaves the
+child's process group, by any means, can outlive the gate.
+Separation is not a sandbox. The child runs with the uid, filesystem, and
+network of the gate, so extractor code can do whatever that uid can do,
+including writing files, reaching the network, using CPU, memory, and disk,
+and signalling the gate. A signal it sends to the gate acts on the gate as
+that signal acts on any process: it can interrupt, stop, or end the gate
+outside the exit codes above, and no bound of the gate limits its effect. If
+the gate is killed while it waits, the child, in its own session, can be left
+running. Each call reads the extractor file afresh, so a file replaced during
+a run can give different calls different code. The extractor remains the
+authority on content, so changed extractor code that returns a wrong but
+well-formed answer, or classifies a value as malformed, is not detectable
+here, as it never was; the stderr the gate relays on a failure is
 extractor-controlled text, as the error text it reported was before.
 """
 
@@ -165,19 +155,19 @@ VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
 # published_at interpretation as every other caller.
 RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 
-# Row 80: the bounds on one extractor child. A child that has not ended within
-# CHILD_TIMEOUT_SECONDS is killed with its process group. At most
-# STDERR_LIMIT bytes of its stderr are read, and a stdout of at most
-# RESULT_LIMIT bytes plus ECHO_BYTES_PER_CHARACTER bytes for each character of
-# the request argument is accepted (one byte more is read, so a longer stdout
-# is refused): a malformed message echoes at most one line of the argument,
-# or the argument, once, through repr and then ASCII JSON, which takes at most
-# 12 bytes for one character (a printable character outside the basic plane
-# becomes a surrogate pair of two \uXXXX escapes), and its other text is
-# bounded in size or, for repeated Released lines, a list of their line
-# numbers, one for each line of at least nine characters, so a reply that
-# echoes a long argument keeps its verdict, and the memory of the gate stays
-# bounded by the request it already holds, whatever the child prints.
+# Row 80: the bounds on one extractor child. CHILD_TIMEOUT_SECONDS applies to
+# each child separately (see the module docstring); on a timeout the gate
+# kills the process group of the child where it can, and exits 3. Of what the
+# child prints, the gate reads at most STDERR_LIMIT bytes of stderr and one
+# byte more than the stdout bound, which is RESULT_LIMIT bytes plus
+# ECHO_BYTES_PER_CHARACTER bytes for each character of the request argument,
+# so a longer stdout is refused and the memory a reply takes stays bounded by
+# the request the gate already holds. ECHO_BYTES_PER_CHARACTER is the most
+# bytes one character can take through repr and then ASCII JSON (a printable
+# character outside the basic plane becomes a surrogate pair of two \uXXXX
+# escapes, 12 bytes); the allowance is there so that a malformed message that
+# echoes the argument keeps its verdict (see
+# test_an_echoed_request_of_any_size_keeps_its_verdict).
 CHILD_TIMEOUT_SECONDS = 20
 RESULT_LIMIT = 65536
 ECHO_BYTES_PER_CHARACTER = 12
@@ -266,9 +256,9 @@ def _kill_group(proc: subprocess.Popen, ended: bool) -> str | None:
     reaped yet, so neither its pid nor the group id it leads can have been
     reused, and then reap the child; ``ended`` is whether the child has
     already ended. Returns None, or the reason when the group could not be
-    killed: the child itself is then killed directly when it still runs,
-    and it is reaped only when it has ended or that kill succeeded, so the
-    gate never waits on a child it could not kill."""
+    killed: the gate then tries to kill the child itself when ``ended`` is
+    false, and reaps the child only when it has ended or that kill
+    succeeded, so it never waits on a child it could not kill."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
@@ -298,33 +288,31 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     The request is written to a temporary file that is its stdin, and its
     stdout and stderr go to temporary files, so the gate never blocks on a
     pipe and reads only a bounded part of each. The wait, bounded by
-    CHILD_TIMEOUT_SECONDS, leaves the child unreaped; then, on a normal end,
-    a timeout, or an exception other than ChildProcessError raised while
-    waiting, the process group is killed before the child is reaped, so a
-    process the child started that stays in its group, directly or through
-    a double fork, is killed when the child ends, while one that leaves the
-    group (through setsid, or setpgid into a new group) can outlive the
-    gate. A wait that reports the child is no longer a child of the gate
-    (ChildProcessError) signals nothing, as its pid may be reused. A reply
-    is accepted only when the child exits 0 and its stdout, at most
-    RESULT_LIMIT bytes plus ECHO_BYTES_PER_CHARACTER for each character of
-    ``arg``, is exactly one ASCII JSON object, with no key repeated, that
-    matches the contract. Every other outcome exits 3 as unavailable, naming
-    the reason and relaying at most STDERR_LIMIT bytes of the child stderr,
-    never a content verdict, a pass, or a drift: so does an Exception raised
-    while the gate creates the temporary files, writes the request, starts,
-    waits for, or kills the child, or reads its output, and a process group
-    that cannot be killed.
+    CHILD_TIMEOUT_SECONDS for this child, leaves the child unreaped. On a
+    normal end and on a timeout, the process group of the child is then
+    killed before the child is reaped, or the call exits 3 when the group
+    cannot be killed; on the other paths this docstring describes it may not
+    be. A process the child started is killed with the group only while it
+    is in the group, so a process that leaves the child's process group, by
+    any means, can outlive the gate. A wait that reports the child is no
+    longer a child of the gate (ChildProcessError) signals nothing, as its
+    pid may be reused, and exits 3.
 
-    A KeyboardInterrupt, like any BaseException that is not an Exception, is
-    not caught that way. Raised while waiting, it passes through unchanged
-    once the group is killed and the child reaped, or becomes exit 3 when
-    the group cannot be killed. Raised anywhere else, it passes through
-    unchanged with the child handled no further: before Popen there is no
-    child; during Popen, between Popen and the wait, or between the wait and
-    the group kill, a started child is neither killed nor reaped; and while
-    the group is killed or the child reaped, the child may be killed but not
-    reaped."""
+    This function returns only a reply from a child that exits 0 and whose
+    stdout, within the bound (see RESULT_LIMIT), is exactly one ASCII JSON
+    object, with no key repeated, that matches the contract. When it does
+    not return, it exits 3 as unavailable, naming the reason and relaying at
+    most STDERR_LIMIT bytes of the child stderr, or an exception passes
+    through it; it never gives a content verdict, a pass, or a drift for any
+    other outcome. Every Exception raised while the gate prepares, starts,
+    waits for, kills, or reads its child exits 3 that way.
+
+    A BaseException that is not an Exception, such as a KeyboardInterrupt,
+    is not caught that way. When one reaches the gate while it waits, the
+    gate kills the group and reaps the child before it passes on, or exits 3
+    when the group cannot be killed; one raised anywhere else, including
+    during that kill, passes on at once, and a child already started may
+    then be left unkilled, unreaped, or both."""
 
     def fail(reason: str, printed: bytes = b"") -> None:
         message = f"{RELEASE_DATE_TOOL.name} {reason} in {op}, so the extractor is unavailable"
@@ -370,9 +358,9 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
             stdout.seek(0)
             data = stdout.read(limit + 1)
     except Exception as error:
-        # Any failure of the machinery of the gate itself, never a
-        # traceback read as drift (exit 1); SystemExit from fail and a
-        # KeyboardInterrupt pass through unchanged.
+        # An Exception from the machinery of the gate itself exits 3, never
+        # a traceback read as drift (exit 1); a BaseException that is not an
+        # Exception, SystemExit from fail among them, passes through.
         fail(f"could not be run, waited for, or read ({type(error).__name__}: {error})")
     code = proc.returncode
     if not ended:
@@ -423,10 +411,10 @@ def release_date_call(name: str, *args):
     run_release_date_child) and map its reply: a ``value`` reply returns the
     value, an ``absent`` reply returns None, and a ``malformed`` reply, the
     extractor's ``Malformed`` verdict on content, is raised as
-    ``ReleaseDateMalformed`` with its message. Every other outcome, a child
-    that could not be run, failed, was killed, timed out, or printed no
-    result that matches the contract, has already exited 3 as unavailable,
-    never a content verdict, a pass, or a drift."""
+    ``ReleaseDateMalformed`` with its message. run_release_date_child
+    returns only a reply that matches the contract, so no other outcome of
+    a child reaches this mapping (see run_release_date_child for what it
+    does instead)."""
     reply = run_release_date_child(name, *args)
     if reply["outcome"] == "malformed":
         raise ReleaseDateMalformed(reply["message"])
@@ -950,7 +938,7 @@ def check_site_checksum(load_code: int = 0) -> int:
 
 def main() -> int:
     """Run the gate. The extractor is probed here, inside the protected path,
-    so a failure to run it contributes exit 3 while the checksum comparison
+    so a probe that ends in exit 3 contributes 3 while the checksum comparison
     still runs and reports; the most severe code wins (3 over 2 over 1 over
     0)."""
     load_code = probe_release_date_tool()

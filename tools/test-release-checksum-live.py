@@ -18,8 +18,8 @@ check. A date failure never hides checksum drift: both are reported and the
 more severe code wins. A release state that cannot be verified never hides the
 Released line check, and an unreadable verify page or downloaded asset is
 reported as such, never read as drift. The gate runs the extractor as a separate python3 -I
-child and reads only its exit status, one bounded JSON reply, and a bounded part
-of its stderr, which it relays on a failure. The network reads of that record are replaced
+child for each call, reads only a bounded part of what the child prints, and
+accepts only one JSON reply that matches the contract. The network reads of that record are replaced
 by injected fixtures. These tests pin all of that offline: the
 fixtures
 patch the module's file paths and network readers, so no gh CLI and no
@@ -1759,9 +1759,9 @@ class ConditionalPassTest(unittest.TestCase):
                 )], err)
 
     def test_a_reply_larger_than_the_limit_exits_3(self):
-        # Row 80: at most RESULT_LIMIT bytes of stdout are accepted (one byte
-        # more is read, to detect it); a reply of exactly that size is
-        # accepted and one byte more is refused.
+        # Row 80: for a call with no argument, at most RESULT_LIMIT bytes of
+        # stdout are accepted (one byte more is read, to detect it); a reply
+        # of exactly that size is accepted and one byte more is refused.
         valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}'
         padded = valid + b" " * (gate.RESULT_LIMIT - len(valid))
         self.assertEqual(gate.RESULT_LIMIT, 65536)
@@ -1928,9 +1928,10 @@ class ConditionalPassTest(unittest.TestCase):
                 )])
 
     def test_a_hung_child_is_killed_with_its_group_before_it_is_reaped(self):
-        # Row 80: a child that has not ended within CHILD_TIMEOUT_SECONDS is
-        # killed through its process group while it is still unreaped, so the
-        # group id cannot have been reused.
+        # Row 80: here, where the group can be killed, a child that has not
+        # ended within CHILD_TIMEOUT_SECONDS is killed through its process
+        # group while it is still unreaped, so the group id cannot have been
+        # reused.
         self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
         gate.CHILD_TIMEOUT_SECONDS = 1
         seen = []
@@ -1953,11 +1954,11 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertIsNotNone(state, "the child was reaped before its group was killed")
 
     def test_an_interrupt_while_waiting_kills_the_group_and_propagates(self):
-        # Row 80: a KeyboardInterrupt while the gate waits kills the child
-        # group, reaps the child, and propagates unchanged. It is raised here
-        # from a stubbed os.waitid, one of the two calls of the wait where a
-        # real Ctrl-C can arrive (time.sleep is the other), not by a real
-        # signal; an Exception while waiting exits 3 instead (see
+        # Row 80: a KeyboardInterrupt while the gate waits, where the group
+        # can be killed, kills the child group, reaps the child, and
+        # propagates unchanged. It is raised here from a stubbed os.waitid,
+        # not by a real signal, which can arrive at any point of the wait; an
+        # Exception while waiting exits 3 instead (see
         # test_a_failure_while_waiting_kills_and_reaps_the_child_and_exits_3).
         # Fix round 1: the gate waits with os.waitid, so the interrupt is
         # raised from there.
@@ -2098,9 +2099,9 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_a_failure_while_waiting_kills_and_reaps_the_child_and_exits_3(self):
         # Fix round 1 (finding 1): an Exception other than ChildProcessError
-        # (here an OSError or a RuntimeError) while the gate waits kills the
-        # child group while the child is unreaped, reaps the child, and exits
-        # 3 naming the exception.
+        # (here an OSError or a RuntimeError) while the gate waits, where the
+        # group can be killed, kills the child group while the child is
+        # unreaped, reaps the child, and exits 3 naming the exception.
         self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
         gate.CHILD_TIMEOUT_SECONDS = 1
         real_popen, real_killpg, real_waitid = subprocess.Popen, os.killpg, os.waitid
@@ -2170,10 +2171,11 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(kills, [])
 
     def test_what_a_child_forked_ends_with_it_when_it_exits_normally(self):
-        # Fix round 1 (finding 2): a process the child started that stays in
-        # its group, directly or through a double fork (which keeps the
-        # group), is killed once the child has ended normally, and the group
-        # is killed while the ended child is still unreaped.
+        # Fix round 1 (finding 2): a process the child started that is still
+        # in its group, here a direct child and the grandchild of a double
+        # fork (which keeps the group), is killed once the child has ended
+        # normally, and the group is killed while the ended child is still
+        # unreaped.
         direct = (
             "    grandchild = subprocess.Popen([sys.executable, \"-I\", \"-c\", \"import time; time.sleep(300)\"])\n"
             "    pid = grandchild.pid\n"
@@ -2235,10 +2237,11 @@ class ConditionalPassTest(unittest.TestCase):
                                 os.kill(pid, signal.SIGKILL)
 
     def test_a_process_that_leaves_the_group_outlives_the_gate(self):
-        # Fix round 2 (VERIFY 1.1): the disclosed residual, observed. A
-        # process the child started that calls setpgid into a new group
-        # leaves the group of the child, so the group kill does not reach it
-        # and it is still running after the gate has returned its reply.
+        # Fix round 2 (VERIFY 1.1): the disclosed residual, observed: a
+        # process that leaves the child's process group, by any means, can
+        # outlive the gate. Here a process the child started calls setpgid
+        # into a new group, so the group kill does not reach it and it is
+        # still running after the gate has returned its reply.
         tool = self.fake_extractor(extractor_with(
             "_real_extract = extract\n"
             "def extract(text):\n"
@@ -2333,9 +2336,9 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_an_echoed_request_of_any_size_keeps_its_verdict(self):
         # Fix round 1 (finding 4): the stdout bound grows with the request,
-        # so a malformed message that echoes a long argument, enlarged by
-        # repr and by ASCII JSON escaping, keeps the verdict and the message
-        # the extractor gives, as the in-process gate did.
+        # so the malformed messages tested here, which echo a long argument
+        # enlarged by repr and by ASCII JSON escaping, keep the verdict and
+        # the message the extractor gives, as the in-process gate did.
         published = "\u00e9" * 12000
         line = "Released: " + "\u00e9" * 12000
         try:
@@ -2765,16 +2768,28 @@ class ModuleLoadTest(unittest.TestCase):
         # it sends to its parent, the gate, while the gate waits ends the
         # gate by SIGINT, with no report and none of its exit codes, after
         # the gate has killed the child. The probe sleeps first, so the gate
-        # is already waiting, and the interrupt reaches the gate run by
-        # run_with_extractor, never this test runner. A stop (SIGSTOP) is the
+        # is already waiting. Fix round 4 (DISCOVERY 3, finding 5): the probe
+        # signals its parent only when one argument of that parent resolves
+        # to the gate copy that run_with_extractor started, and otherwise
+        # loads as the real extractor, so on a gate that runs extractor code
+        # in its own process, whose parent is this test runner, the test
+        # fails instead of interrupting the runner. A stop (SIGSTOP) is the
         # same residual and is not run here, as it would halt the gate.
         body = extractor_with(
             "import os, signal, time\n"
             "with open(Path(__file__).resolve().parent / \"child.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
             "    handle.write(str(os.getpid()))\n"
             "time.sleep(0.5)\n"
-            "os.kill(os.getppid(), signal.SIGINT)\n"
-            "time.sleep(300)\n"
+            "_parent = os.getppid()\n"
+            f"_gate_copy = os.path.realpath(Path(__file__).resolve().parent / {MODULE_PATH.name!r})\n"
+            "try:\n"
+            "    with open(f\"/proc/{_parent}/cmdline\", \"rb\") as handle:\n"
+            "        _arguments = [argument for argument in handle.read().split(b\"\\0\") if argument]\n"
+            "except OSError:\n"
+            "    _arguments = []\n"
+            "if any(os.path.realpath(os.fsdecode(argument)) == _gate_copy for argument in _arguments):\n"
+            "    os.kill(_parent, signal.SIGINT)\n"
+            "    time.sleep(300)\n"
         )
 
         def child_state(tools):
