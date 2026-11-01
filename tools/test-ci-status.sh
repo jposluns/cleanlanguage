@@ -600,7 +600,11 @@ run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT
 # open the real copied wrapper as fd 9 and run bash on cwd/L/../fd/9, with L a
 # symlink to /proc/self/fd or to /dev/fd: every other layer would let that real
 # wrapper run, so only the descriptor-path test on the resolved source can
-# refuse it. Each refusal has its own message, which the case checks.
+# refuse it. dirfd opens the copied tools directory as fd 9 and runs bash on
+# /dev//fd/9/ci-status.sh; WANT A asserts property A only: the planted
+# ci-status.py must not run, and the wrapper must either run the real gate
+# (exit 0 with the sha line) or refuse (exit 3 with the message). Each refusal
+# has its own message, which the case checks.
 # non_bash_shell prints the path of a shell whose BASH_VERSION is unset, or fails.
 non_bash_shell() {
   local cand found
@@ -705,6 +709,8 @@ PY
       case " $resolve " in *" dotdotdevfd "*) dd_link=/dev/fd ;; esac
       ln -s "$dd_link" "$cwd/L"
       entry=(bash -c 'exec 9<"$1" || exit 98; shift; exec bash "$@"' _ "$tools/ci-status.sh" "$cwd/L/../fd/9") ;;
+    *" dirfd "*)
+      entry=(bash -c 'exec 9<"$1" || exit 98; shift; exec bash "$@"' _ "$tools" "/dev//fd/9/ci-status.sh") ;;
     *" hold255self "*)
       entry=(bash -c 'exec 255<"$1" || exit 98; exec bash "$@"' _ "$tools/ci-status.sh") ;;
     *" hardlink "*)
@@ -731,6 +737,10 @@ PY
       PATH="$path" "${entry[@]}" --repo owner/name --interval 1 "$C1"
     fi > "$tmp/out" 2> "$tmp/err")
   local got=$? ok=1 why=""
+  if [ "$want" = A ]; then
+    # Property A only: exit 0 (the real gate ran) or 3 (refused), never a planted run.
+    case "$got" in 0 | 3) want="$got" ;; *) want=3 ;; esac
+  fi
   if [ "$got" -ne "$want" ]; then ok=0; why="$why exit"; fi
   if [ -e "$tmp/planted-ran" ]; then ok=0; why="$why planted-ran"; fi
   local msg="ci-status: cannot find ci-status.py beside the real ci-status.sh" msgfile="$tmp/err"
@@ -791,6 +801,7 @@ run_wrapper_case "descriptor decoy through a symlink with fd 255 held on the dec
 run_wrapper_case "fd 255 inherited from the caller fails closed with exit 3" 3 hold255self
 run_wrapper_case "real wrapper as L/../fd/9 with L to /proc/self/fd fails closed with exit 3" 3 dotdotproc
 run_wrapper_case "real wrapper as L/../fd/9 with L to /dev/fd fails closed with exit 3" 3 dotdotdevfd
+run_wrapper_case "directory descriptor /dev//fd/9/ci-status.sh never runs a planted gate" A dirfd
 # Inherited shell options never change a refusal: each runs with no gate, a
 # symlinked gate and an unreadable gate, and must refuse with status 3.
 for opt in errexit nounset pipefail; do

@@ -72,13 +72,23 @@
 # 5.3 sets BASH_SOURCE[0] to the full path). Executed through PATH, it receives
 # its full path as both and runs as usual.
 # A source path under /dev/fd/ or /proc/ is refused at once: it names an open
-# descriptor, whose resolved name a caller can imitate with a decoy file. The
-# resolver repeats that test on the resolved source: it follows the directory and
-# every symlink of the source and refuses when any step lies under /proc or
-# /dev/fd, so /dev//fd/9, a symlink to /dev/fd/9 and L/../fd/9 with L a symlink
-# to /proc/self/fd are refused too. The source is joined to the working directory
+# descriptor, whose resolved name a caller can imitate with a decoy file. That
+# text test runs after repeated slashes are collapsed, so //proc/... and
+# /dev//fd/... are refused there too. The resolver repeats the test on the
+# resolved source, but only at 2 points: the realpath of the directory part of the
+# source, and the realpath of the directory of each symlink target in its chain.
+# So /dev//fd/9, a symlink to /dev/fd/9 and L/../fd/9 with L a symlink to
+# /proc/self/fd are refused by it. The source is joined to the working directory
 # without normalizing it, so a .. is resolved through the symlink before it, as
-# the kernel resolves it, never removed as text.
+# the kernel resolves it, never removed as text. It does not inspect every
+# intermediate component: a /proc magic link inside the directory part, such as a
+# directory descriptor (/dev/fd/9/ci-status.sh with fd 9 on a directory) or
+# /proc/self/root/..., resolves to an ordinary directory and passes this layer.
+# These descriptor-path tests are a second layer. What binds the gate to the real
+# wrapper are the identity checks below: the realpath and the ci-status.sh in its
+# directory must be the same file (device and inode) with a single link, that
+# file must be the same file as /dev/fd/255 (test -ef), and fd 255 must carry
+# close-on-exec.
 # os.path.realpath resolves a symlinked wrapper without depending on GNU readlink.
 # The resolved wrapper must be an existing regular file and the same file (device
 # and inode) as the ci-status.sh in its directory, which must have exactly 1
@@ -154,7 +164,8 @@ __ci_status_src="${BASH_SOURCE[0]:-}" || __ci_status_refuse err "ci-status: cann
 __ci_status_find="ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)" ||
   __ci_status_refuse err "ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)"
 if [ "$0" != "$__ci_status_src" ]; then __ci_status_refuse err "$__ci_status_find"; fi
-case "$__ci_status_src" in
+__ci_status_text="$__ci_status_src"; while [[ "$__ci_status_text" == *//* ]]; do __ci_status_text="${__ci_status_text//\/\//\/}"; done
+case "$__ci_status_text" in
   /dev/fd/* | /proc/*) __ci_status_refuse err "$__ci_status_find" ;;
   */*) ;;
   *) __ci_status_refuse err "$__ci_status_find" ;;
@@ -163,8 +174,10 @@ __ci_status_rc=0 || __ci_status_refuse err "$__ci_status_find"
 __ci_status_here="$(python3 -I -c '
 import os, stat, sys
 def via_descriptor(path):
-    # Follow the directory and every symlink of path; True when any step lies
-    # under /proc or /dev/fd, or the chain does not end within 40 links.
+    # True when the realpath of the directory of path, or of the directory of
+    # any symlink target in its chain, lies under /proc or /dev/fd, or when the
+    # chain does not end within 40 links. Intermediate components are not
+    # inspected; the identity checks are what bind the gate to the wrapper.
     p = os.path.join(os.getcwd(), path)  # no normalizing: .. must follow symlinks
     for _ in range(40):
         d = os.path.realpath(os.path.dirname(p))
