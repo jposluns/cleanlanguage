@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """Report the CI verdict for one commit, exiting non-zero unless every check passed.
 
+Guarantees. Property A: through tools/ci-status.sh, no ci-status.py other than the
+real one beside the real wrapper runs. Property B: the tool exits 0 only when this
+gate ran and every check passed. Under supported invocations (tools/ci-status.sh
+executed, run as bash tools/ci-status.sh, by absolute path or through PATH, from
+an ordinary shell with ordinary process state) the exit status follows the codes
+below exactly. Under any other caller state the status may be any nonzero code,
+which still keeps property B: resource exhaustion (a failed fork, a MemoryError
+during import), a signal that ends the process, and a syntax error in this file
+are outside the exact-code contract. An import failure that raises an exception
+exits 3. The tool resets SIGCHLD to its default disposition before any gh call,
+because an ignored SIGCHLD, inherited from the caller, makes the system reap gh
+itself, so its exit status is lost and a failed gh would read as success.
+
 The verdict comes from the check-runs API, the only endpoint that sees every
 required check: the Cloudflare Pages build (this repository's required check per
 CLAUDE.md) is produced by an external app, not GitHub Actions, so a gate built on
@@ -98,16 +111,24 @@ Exit codes:
 
 from __future__ import annotations
 
-import fcntl
-import json
-import os
-import re
-import subprocess
-import sys
-import time
+try:
+    import fcntl
+    import json
+    import os
+    import re
+    import signal
+    import subprocess
+    import sys
+    import time
+except Exception:  # an import failure must never read as a verdict (exit 1)
+    raise SystemExit(3)
 
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
-MAX_DIGITS = 9  # keeps a timeout/interval well inside a machine int, rejecting overflow
+# The largest --timeout or --interval accepted, in seconds (1 day). Each value
+# becomes a subprocess timeout and a sleep; this bound keeps both far inside the
+# limits that raise OverflowError (about 2147483 seconds for a millisecond poll).
+MAX_SECONDS = 86400
+MAX_DIGITS = len(str(MAX_SECONDS))  # rejects a long digit string before int()
 FULL_SHA = re.compile(r"[0-9A-Fa-f]{40}")
 REPO_NAME = re.compile(r"[A-Za-z0-9-]+/(?!\.)[A-Za-z0-9._-]+")
 SHA_HINT = "pass the full 40-character sha (for example from git rev-parse or gh pr view --json headRefOid)"
@@ -181,14 +202,15 @@ def _repo_name(value: str, source: str) -> str:
 
 
 def _whole(flag: str, value: str) -> int:
-    # Digit-only, and short enough that it cannot overflow into unrelated
-    # semantics. int() itself is unbounded, so the length bound is the real guard.
+    # Digit-only and at most MAX_SECONDS, so the value can never overflow a sleep
+    # or a subprocess timeout. The length check runs first, so int() never sees a
+    # long string.
     if not value or not (value.isascii() and value.isdigit()):
         # str.isdigit() is true for non-ASCII digits (e.g. superscripts) that int()
         # then rejects, so require ASCII digits and never let int() raise.
         die(f"{flag} takes whole seconds")
-    if len(value) > MAX_DIGITS:
-        die(f"{flag} is out of range")
+    if len(value) > MAX_DIGITS or int(value) > MAX_SECONDS:
+        die(f"{flag} is out of range (at most {MAX_SECONDS} seconds)")
     return int(value)
 
 
@@ -595,6 +617,13 @@ def _writable(stream) -> bool:
 def run() -> int:
     """Run main and return its exit status, or 3 when output fails or an
     unexpected exception escapes, so neither can become a verdict."""
+    # An inherited ignored SIGCHLD makes the kernel reap each gh child, so its
+    # exit status reads as 0. Restore the default before any subprocess runs.
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    except (OSError, ValueError):
+        _note("ci-status: cannot reset SIGCHLD, so a gh exit status could be lost\n")
+        return 3
     if not (_writable(sys.stdout) and _writable(sys.stderr)):
         _note("ci-status: standard output or standard error cannot be written\n")
         return 3

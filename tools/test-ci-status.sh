@@ -30,6 +30,11 @@ here="$(cd "$(dirname "$0")" && pwd)"
 ci="${here}/ci-status.sh"
 fails=0
 skips=0  # a skipped case is reported on a skip line and never counted as ok
+# setup_failed NAME: a case that cannot create its scratch directory fails visibly
+# and runs nothing.
+setup_failed() {
+  printf "FAIL %s (could not create a scratch directory)\n" "$1"; fails=$((fails + 1))
+}
 
 GA_PRESENT='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}},
@@ -82,7 +87,7 @@ NONARRAY='{"check_runs":{"only":{"status":"completed","conclusion":"success","na
 # run_case NAME DEFAULT ALT PLAN WANT [EXTRA ci-status ARGS...]
 run_case() {
   local name="$1" def="$2" alt="$3" plan="$4" want="$5"; shift 5
-  local tmp; tmp="$(mktemp -d)"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$def" > "$tmp/def.json"
   printf '%s' "$alt" > "$tmp/alt.json"
@@ -126,7 +131,7 @@ GH
 # run_timed_case NAME PAYLOAD MAX_SECONDS WANT EXTRA...
 run_timed_case() {
   local name="$1" payload="$2" maxs="$3" want="$4"; shift 4
-  local tmp; tmp="$(mktemp -d)"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$payload" > "$tmp/def.json"
   cat > "$bin/gh" <<GH
@@ -155,7 +160,7 @@ GH
 # that drops --paginate sees only PAGE1. Used to pin that read_checks paginates.
 run_paginate_case() {
   local name="$1" p1="$2" p2="$3" want="$4"
-  local tmp; tmp="$(mktemp -d)"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$p1" > "$tmp/p1.json"
   printf '%s' "$p2" > "$tmp/p2.json"
@@ -186,7 +191,7 @@ GH
 # the RecursionError must be caught and fail closed, not escape as a crash.
 run_deep_case() {
   local name="$1" want="$2"
-  local tmp; tmp="$(mktemp -d)"; local bin="$tmp/bin"; mkdir -p "$bin"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   python3 -c "open('$tmp/cr.json','w').write('['*100000 + ']'*100000)"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
@@ -203,7 +208,7 @@ GH
 # run_bytes_case NAME WANT: fake gh emits a non-UTF-8 byte; must fail closed.
 run_bytes_case() {
   local name="$1" want="$2"
-  local tmp; tmp="$(mktemp -d)"; local bin="$tmp/bin"; mkdir -p "$bin"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
 case "\$*" in *check-runs*) printf '\377garbage';; *"repo view"*) printf 'owner/name';; *) printf '';; esac
@@ -220,7 +225,7 @@ GH
 # bounded so it does not overshoot -> fail closed within the window.
 run_slow_case() {
   local name="$1" want="$2"
-  local tmp; tmp="$(mktemp -d)"; local bin="$tmp/bin"; mkdir -p "$bin"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
 case "\$*" in
@@ -241,7 +246,7 @@ GH
 # returncode guard must reject it (exit 3), not parse the body as green.
 run_rc_case() {
   local name="$1" want="$2"
-  local tmp; tmp="$(mktemp -d)"; local bin="$tmp/bin"; mkdir -p "$bin"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$GA_PRESENT" > "$tmp/def.json"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
@@ -401,7 +406,7 @@ NL="$(printf "\n.")"; NL="${NL%.}"
 # dup (stderr refuses a repeated --repo, --timeout or --interval).
 run_contract_case() {
   local name="$1" want="$2" expect="$3" repo_want="$4" view="$5" envspec="$6" checks="$7"; shift 7
-  local tmp; tmp="$(mktemp -d)"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local tools="$tmp/repo/tools" bin="$tmp/bin"; mkdir -p "$tools" "$bin" "$tmp/shadow"
   cp "${here}/ci-status.sh" "${here}/ci-status.py" "$tools/"
   printf "raise SystemExit(7)\n" > "$tmp/shadow/json.py"
@@ -543,6 +548,15 @@ run_contract_case "symlinked wrapper in another directory runs the real ci-statu
 run_contract_case "second --repo is refused" 3 nogh owner/name owner/name - dup --repo owner/name --repo other/name "$C1"
 run_contract_case "second --timeout is refused" 3 nogh owner/name owner/name - dup --wait --timeout 5 --timeout 6 "$C1"
 run_contract_case "second --interval is refused" 3 nogh owner/name owner/name - dup --interval 2 "$C1"
+# --timeout and --interval are bounded at 86400 seconds, far inside the values
+# that overflow a sleep or a subprocess timeout. run_contract_case passes
+# --interval 1, so the interval bound is checked through run_timed_case below,
+# inside a 2-second wait window so a tool that accepts the value ends within 5
+# seconds instead of sleeping for a day.
+run_contract_case "--timeout at the 86400-second bound is used" 0 "$C1" owner/name owner/name - - --wait --timeout 86400 "$C1"
+run_contract_case "--timeout above the 86400-second bound is refused" 3 nogh owner/name owner/name - - --timeout 86401 "$C1"
+run_contract_case "--timeout that would overflow a subprocess timeout is refused" 3 nogh owner/name owner/name - - --timeout 2147484 "$C1"
+run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT" 5 3 --wait --timeout 2 --interval 86401
 
 # Wrapper path resolution fails closed (VERIFY 1.1 finding 1). Each case runs
 # ci-status.sh from a working directory that holds a planted ci-status.py, which
@@ -565,7 +579,10 @@ run_contract_case "second --interval is refused" 3 nogh owner/name owner/name - 
 # after=<status>; the caller must keep running and see status 3). Without one,
 # the wrapper runs as bash with its absolute path. A shell option token, errexit
 # (bash -e), nounset (bash -u) or pipefail (bash -o pipefail), runs that bash
-# with the option set. Each refusal has its own message, which the case checks.
+# with the option set. sourcedvars sources it from a caller that holds here, src,
+# cause, sourced and restricted, which must be left unchanged; sourcedro does the
+# same with those names (and rc) readonly, which must not turn the sourced path
+# into the executed one. Each refusal has its own message, which the case checks.
 # non_bash_shell prints the path of a shell whose BASH_VERSION is unset, or fails.
 non_bash_shell() {
   local cand found
@@ -590,7 +607,7 @@ run_wrapper_case() {
         printf "skip %s (running as root, where mode 000 is readable)\n" "$name"; skips=$((skips + 1)); return
       fi ;;
   esac
-  local tmp; tmp="$(mktemp -d)"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local tools="$tmp/repo/tools" bin="$tmp/bin" cwd="$tmp/cwd"; mkdir -p "$tools" "$bin" "$cwd"
   cp "${here}/ci-status.sh" "$tools/"
   case " $resolve " in *" nopy "*) ;; *) cp "${here}/ci-status.py" "$tools/" ;; esac
@@ -637,6 +654,10 @@ PY
       entry=(bash "${bflags[@]}" "$tools/ci-status.sh") ;;
     *" sourcedself "*)
       entry=(bash -c '. "$0" "$@"; s=$?; printf "after=%s\n" "$s"; exit "$s"' "$tools/ci-status.sh") ;;
+    *" sourcedvars "*)
+      entry=(bash -c 'here=keep src=keep cause=keep sourced=keep restricted=keep; . "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; printf "vars=%s,%s,%s,%s,%s\n" "$here" "$src" "$cause" "$sourced" "$restricted"; exit "$s"' bash "$tools/ci-status.sh") ;;
+    *" sourcedro "*)
+      entry=(bash -c 'readonly here=keep src=keep cause=keep sourced=0 restricted=0 rc=0; . "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; exit "$s"' bash "$tools/ci-status.sh") ;;
     *" posixsh "*) entry=("$posix_sh" "$tools/ci-status.sh") ;;
     *" restricted "*) entry=(bash -r "$tools/ci-status.sh") ;;
     *" setr "*)
@@ -672,8 +693,12 @@ PY
     ok=0; why="$why sha-line"
   fi
   case " $resolve " in
-    *" sourced "*|*" setrsourced "*|*" sourcedself "*)
+    *" sourced "*|*" setrsourced "*|*" sourcedself "*|*" sourcedvars "*|*" sourcedro "*)
       if ! grep -q -x -F "after=3" "$tmp/out"; then ok=0; why="$why caller-status"; fi ;;
+  esac
+  case " $resolve " in
+    *" sourcedvars "*)
+      if ! grep -q -x -F "vars=keep,keep,keep,keep,keep" "$tmp/out"; then ok=0; why="$why caller-vars"; fi ;;
   esac
   if [ "$ok" -eq 1 ]; then
     printf "ok   %s (exit %s)\n" "$name" "$got"
@@ -700,6 +725,8 @@ run_wrapper_case "unreadable ci-status.py fails closed with exit 3" 3 noread
 run_wrapper_case "wrapper executed in a shell restricted by set -r fails closed with exit 3" 3 setr
 run_wrapper_case "wrapper sourced after set -r returns status 3 to the caller" 3 setrsourced
 run_wrapper_case "wrapper sourced with \$0 set to its own path returns status 3 to the caller" 3 sourcedself
+run_wrapper_case "sourced wrapper leaves the variables of the caller unchanged" 3 sourcedvars
+run_wrapper_case "sourced wrapper with readonly caller variables still refuses as sourced" 3 sourcedro
 # Inherited shell options never change a refusal: each runs with no gate, a
 # symlinked gate and an unreadable gate, and must refuse with status 3.
 for opt in errexit nounset pipefail; do
@@ -715,7 +742,7 @@ done
 # verdict or a crash status.
 run_output_case() {
   local name="$1" want="$2" stream="$3" kind="$4"
-  local tmp; tmp="$(mktemp -d)"; local bin="$tmp/bin"; mkdir -p "$bin"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   printf "%s" "$GA_PRESENT" > "$tmp/def.json"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
@@ -740,6 +767,78 @@ run_output_case "green reading with standard error closed exits 3" 3 err green
 run_output_case "usage error with standard output closed exits 3" 3 out usage
 run_output_case "usage error with standard error closed exits 3" 3 err usage
 run_output_case "green reading with standard output on a full device exits 3" 3 full green
+
+# run_signal_case NAME WANT MODE: a fake gh prints a green body and exits 1. MODE
+# sigchld runs ci-status.sh with SIGCHLD ignored, which, unless the gate restores
+# the default, lets the kernel reap gh so its status reads as 0 (a false green).
+run_signal_case() {
+  local name="$1" want="$2" mode="$3"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in *check-runs*) cat "$tmp/def.json"; exit 1;; *"repo view"*) printf "owner/name";; *) printf "";; esac
+GH
+  chmod +x "$bin/gh"
+  local launch='import os, signal, sys
+signal.signal(signal.SIGCHLD, signal.SIG_IGN)
+os.execvp(sys.argv[1], sys.argv[1:])'
+  case "$mode" in
+    sigchld) PATH="$bin:$PATH" python3 -I -c "$launch" bash "$ci" --repo owner/name --interval 1 "$C1" > /dev/null 2>&1 ;;
+  esac
+  local got=$?
+  if [ "$got" -eq "$want" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want %s)\n" "$name" "$got" "$want"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_signal_case "green body from a failing gh with SIGCHLD ignored exits 3, not 0" 3 sigchld
+
+# run_pipe_case NAME MODE: the refusal for a wrapper with no ci-status.py beside
+# it is written to a standard error whose pipe has no reader, with SIGPIPE at its
+# default. MODE exec runs the wrapper; MODE sourced sources it and the caller must
+# keep running and see status 3. SIGPIPE must not end either.
+run_pipe_case() {
+  local name="$1" mode="$2"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local tools="$tmp/repo/tools"; mkdir -p "$tools"
+  cp "${here}/ci-status.sh" "$tools/"
+  local launch='import os, signal, sys
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+r, w = os.pipe()
+os.close(r)
+os.dup2(w, 2)
+os.close(w)
+os.execvp(sys.argv[1], sys.argv[1:])'
+  case "$mode" in
+    exec) python3 -I -c "$launch" bash "$tools/ci-status.sh" "$C1" > "$tmp/out" ;;
+    sourced)
+      python3 -I -c "$launch" bash -c '. "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; exit "$s"' \
+        bash "$tools/ci-status.sh" "$C1" > "$tmp/out" ;;
+  esac
+  local got=$? ok=1 why=""
+  if [ "$got" -ne 3 ]; then ok=0; why="$why exit"; fi
+  if [ "$mode" = sourced ] && ! grep -q -x -F "after=3" "$tmp/out"; then ok=0; why="$why caller-status"; fi
+  if [ "$ok" -eq 1 ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got exit %s, want 3;%s)\n" "$name" "$got" "$why"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_pipe_case "refusal to a broken pipe still exits 3" exec
+run_pipe_case "sourced refusal to a broken pipe still returns 3 to the caller" sourced
+
+# An exception while importing the standard library exits 3, never 1: the gate is
+# run with json made unimportable.
+import_got=0
+python3 -I -c 'import sys
+sys.modules["json"] = None
+path = sys.argv[1]
+sys.argv = [path, "0c83f120fcc4630694465bcf89f7415a21d54dba"]
+exec(compile(open(path).read(), path, "exec"), {"__name__": "__main__", "__file__": path})' \
+  "${here}/ci-status.py" > /dev/null 2>&1 || import_got=$?
+if [ "$import_got" -eq 3 ]; then printf "ok   import failure exits 3 (exit %s)\n" "$import_got";
+else printf "FAIL import failure exits 3 (got %s, want 3)\n" "$import_got"; fails=$((fails + 1)); fi
 
 # A skipped case is not verified, so any skip makes the suite incomplete and
 # nonzero; the final line then names the count.

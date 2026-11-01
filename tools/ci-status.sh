@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
 #
+# Guarantees. Property A: no ci-status.py other than the real one beside the real
+# wrapper ever runs through this wrapper. Property B: the wrapper exits 0 only when
+# that gate ran and every check passed. Under supported invocations (executed as
+# tools/ci-status.sh, run as bash tools/ci-status.sh, by absolute path or through
+# PATH, from an ordinary shell with ordinary process state) the exit status
+# follows the 0 to 3 contract below exactly. Under any other caller state the
+# status may be any nonzero code. The exceptions, all disclosed below, are the
+# caller environment (PATH, BASH_ENV and exported functions), which can defeat
+# both properties, and bash -n and bash -t, which exit 0 without running the
+# wrapper code as written.
+#
 # Thin wrapper: the CI verdict logic lives in ci-status.py, a Python rewrite that
 # parses the check-runs JSON structurally and fail-closed. Serializing checks to
 # delimited text and parsing them in bash repeatedly let a crafted or malformed
@@ -19,20 +30,24 @@
 # below. The non-bash refusal cannot tell whether it was sourced, so it always
 # exits 3, which ends a caller that sourced the wrapper into a non-bash shell,
 # still with status 3.
+# Every refusal message is printed from a subshell that ignores SIGPIPE, and any
+# write failure is ignored, so a closed or broken output cannot end the wrapper
+# (or a caller that sourced it) before it returns or exits 3.
 # The wrapper then decides once whether it is sourced: return succeeds in a
 # subshell only when the wrapper is sourced. That test closes standard error with
 # 2>&- rather than redirecting it to a file, and bash 5.3 accepts that in a
-# restricted shell, so the one test serves every refusal. Every later refusal
-# returns 3 to a caller that sourced the wrapper, which keeps running with status
-# 3, and otherwise exits 3. Each refusal message ignores a write failure, so a
-# closed output or errexit in a sourcing caller cannot end the wrapper before it
-# returns or exits 3.
+# restricted shell, so the one test serves every case. When sourced, the wrapper
+# assigns no variable and changes no shell state of the caller: it prints its
+# refusal (the restricted refusal in a restricted shell, otherwise the cannot-find
+# refusal) and returns 3, so the caller keeps running with status 3. A readonly
+# or otherwise unassignable caller variable therefore cannot change its path.
 # When executed, the wrapper next resets the inherited shell state that could
 # change its exit status or skip its checks: errexit, nounset, pipefail,
 # errtrace, functrace, noglob, noclobber, keyword, allexport, verbose, xtrace and
 # posix are turned off, extdebug and expand_aliases are unset, aliases are
-# removed, and the EXIT, ERR, DEBUG and RETURN traps are cleared. When sourced,
-# it changes none of the shell state of the caller and only refuses.
+# removed, and the EXIT, ERR, DEBUG and RETURN traps are cleared. Its own
+# variables carry the __ci_status_ prefix, and an assignment that fails ends in
+# the cannot-find refusal, never in the exec.
 # The wrapper next refuses with status 3 under a restricted shell, which would
 # refuse the redirect and the exec below and exit 1, the code for a failed check.
 # Restricted mode is read from $- as well as from the restricted_shell option,
@@ -42,19 +57,19 @@
 # duplication there, but the restricted shell is documented to refuse output
 # redirection, so this message uses none.
 # The wrapper locates itself from BASH_SOURCE[0], never from $0 alone. It exits
-# 3, and runs no ci-status.py, when it is sourced rather than executed, when it is
-# read from standard input (BASH_SOURCE[0] is empty), when BASH_SOURCE[0] holds no
-# "/" (a bare name is a PATH or working-directory lookup), or when $0 differs from
-# BASH_SOURCE[0] (as in "bash ci-status.sh" found through PATH, where $0 is the
-# bare name even though bash 5.3 sets BASH_SOURCE[0] to the full path). Executed
-# through PATH, it receives its full path as both and runs as usual.
+# 3, and runs no ci-status.py, when it is read from standard input (BASH_SOURCE[0]
+# is empty), when BASH_SOURCE[0] holds no "/" (a bare name is a PATH or
+# working-directory lookup), or when $0 differs from BASH_SOURCE[0] (as in "bash
+# ci-status.sh" found through PATH, where $0 is the bare name even though bash
+# 5.3 sets BASH_SOURCE[0] to the full path). Executed through PATH, it receives
+# its full path as both and runs as usual.
 # os.path.realpath resolves a symlinked wrapper without depending on GNU readlink.
 # The resolved wrapper must be an existing regular file, and the ci-status.py
 # beside it must be a regular file that is not a symlink and that the resolver can
-# open for reading, or the wrapper exits 3. The resolver status is captured
-# directly, so no shell option can turn its failure into another exit status.
-# The directory is printed with a trailing slash, so command substitution cannot
-# strip a newline from its name.
+# open for reading, or the wrapper exits 3. Any nonzero resolver status is a
+# refusal, and an empty resolver answer is one too, so a lost status cannot reach
+# the exec. The directory is printed with a trailing slash, so command
+# substitution cannot strip a newline from its name.
 # Residual: the caller environment, including PATH, BASH_ENV and exported shell
 # functions, is outside the trust boundary. PATH chooses the python3 and the gh
 # that ci-status.py runs, BASH_ENV runs code before this wrapper, and an exported
@@ -69,34 +84,48 @@
 # that names the wrapper by path is refused by bash, with status 1, before the
 # wrapper runs. When the wrapper is sourced, the options and traps of the caller,
 # such as a DEBUG trap under extdebug, stay in force and are outside its reset.
+# Resource exhaustion (a failed fork, for which bash exits 254) and a signal that
+# ends the process are outside the exact-code contract; both give a nonzero
+# status, so property B holds.
 # A BASH_VERSION exported into a non-bash shell passes this check (see above).
 if [ -z "${BASH_VERSION:-}" ]; then
-  printf "ci-status: ci-status.sh must run under bash, not another shell (%s)\n" "$0" >&2 || :
+  (trap "" PIPE; printf "ci-status: ci-status.sh must run under bash, not another shell (%s)\n" "$0" >&2) || :
   exit 3
 fi
-if (return 0 2>&-); then sourced=1; else sourced=0; fi
-if [ "$sourced" -eq 0 ]; then
-  set +e +u +E +T +f +C +k +a +v +x +o pipefail +o posix
-  shopt -u extdebug expand_aliases
-  unalias -a
-  trap - EXIT ERR DEBUG RETURN
+if (return 0 2>&-); then
+  if shopt -q restricted_shell || [[ "$-" == *r* ]]; then
+    (trap "" PIPE; printf "ci-status: ci-status.sh cannot run in a restricted shell (%s)\n" "$0") || :
+  else
+    (trap "" PIPE; printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\n" "${BASH_SOURCE[0]:-}" >&2) || :
+  fi
+  return 3
 fi
-restricted=0
-case "$-" in *r*) restricted=1 ;; esac
-if shopt -q restricted_shell; then restricted=1; fi
-if [ "$restricted" -eq 1 ]; then
-  printf "ci-status: ci-status.sh cannot run in a restricted shell (%s)\n" "$0" || :
-  if [ "$sourced" -eq 1 ]; then return 3; fi
+set +e +u +E +T +f +C +k +a +v +x +o pipefail +o posix
+shopt -u extdebug expand_aliases
+unalias -a
+trap - EXIT ERR DEBUG RETURN
+__ci_status_refuse() {
+  # $1 is the stream (out or err), $2 the message; prints it and exits 3.
+  if [ "$1" = out ]; then
+    (trap "" PIPE; printf "%s\n" "$2") || :
+  else
+    (trap "" PIPE; printf "%s\n" "$2" >&2) || :
+  fi
   exit 3
+}
+if shopt -q restricted_shell || [[ "$-" == *r* ]]; then
+  __ci_status_refuse out "ci-status: ci-status.sh cannot run in a restricted shell ($0)"
 fi
-src="${BASH_SOURCE[0]:-}"
-here=""
-cause=find
-if [ "$sourced" -eq 0 ] && [ "$0" = "$src" ]; then
-  case "$src" in
-    */*)
-      rc=0
-      here="$(python3 -I -c '
+__ci_status_src="${BASH_SOURCE[0]:-}" || __ci_status_refuse err "ci-status: cannot find ci-status.py beside the real ci-status.sh ()"
+__ci_status_find="ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)" ||
+  __ci_status_refuse err "ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)"
+if [ "$0" != "$__ci_status_src" ]; then __ci_status_refuse err "$__ci_status_find"; fi
+case "$__ci_status_src" in
+  */*) ;;
+  *) __ci_status_refuse err "$__ci_status_find" ;;
+esac
+__ci_status_rc=0 || __ci_status_refuse err "$__ci_status_find"
+__ci_status_here="$(python3 -I -c '
 import os, stat, sys
 try:
     wrapper = os.path.realpath(sys.argv[1])
@@ -111,19 +140,12 @@ try:
 except OSError:
     sys.exit(4)
 print(os.path.join(os.path.dirname(wrapper), ""))
-' "$src")" || rc=$?
-      if [ "$rc" -ne 0 ]; then here=""; fi
-      if [ "$rc" -eq 4 ]; then cause=read; fi ;;
-  esac
+' "$__ci_status_src")" || __ci_status_rc=$?
+if [ "$__ci_status_rc" = 4 ]; then
+  __ci_status_refuse err "ci-status: cannot read ci-status.py beside the real ci-status.sh ($__ci_status_src)"
 fi
-if [ "$cause" = read ]; then
-  printf "ci-status: cannot read ci-status.py beside the real ci-status.sh (%s)\n" "$src" >&2 || :
-  if [ "$sourced" -eq 1 ]; then return 3; fi
-  exit 3
+if [ "$__ci_status_rc" != 0 ] || [ -z "$__ci_status_here" ] ||
+  [ ! -f "${__ci_status_here}ci-status.py" ] || [ -L "${__ci_status_here}ci-status.py" ]; then
+  __ci_status_refuse err "$__ci_status_find"
 fi
-if [ -z "$here" ] || [ ! -f "${here}ci-status.py" ] || [ -L "${here}ci-status.py" ]; then
-  printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\n" "$src" >&2 || :
-  if [ "$sourced" -eq 1 ]; then return 3; fi
-  exit 3
-fi
-exec python3 -I "${here}ci-status.py" "$@"
+exec python3 -I "${__ci_status_here}ci-status.py" "$@"
