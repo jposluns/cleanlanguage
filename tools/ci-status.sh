@@ -13,7 +13,14 @@
 # The wrapper first exits 3 when it runs under a shell other than bash, such as
 # sh where /bin/sh is dash. That check is POSIX, so it runs before any bash-only
 # syntax, which a non-bash shell would otherwise fail with exit 2, the code the
-# contract reserves for checks still running or timed out.
+# contract reserves for checks still running or timed out. The check reads
+# BASH_VERSION, so a caller that exports BASH_VERSION into a non-bash shell passes
+# it and fails later with exit 2; that falls under the caller-environment residual
+# below. The wrapper next exits 3 under a restricted shell (bash -r or rbash),
+# which would refuse the redirect and the exec below and exit 1, the code for a
+# failed check. That refusal is printed to standard output: bash 5.3 accepts the
+# >&2 duplication there, but the restricted shell is documented to refuse
+# output redirection, so this message uses none.
 # The wrapper locates itself from BASH_SOURCE[0], never from $0 alone. It exits
 # 3, and runs no ci-status.py, when it is sourced rather than executed, when it is
 # read from standard input (BASH_SOURCE[0] is empty), when BASH_SOURCE[0] holds no
@@ -23,7 +30,8 @@
 # through PATH, it receives its full path as both and runs as usual.
 # os.path.realpath resolves a symlinked wrapper without depending on GNU readlink.
 # The resolved wrapper must be an existing regular file, and the ci-status.py
-# beside it must be a regular file that is not a symlink, or the wrapper exits 3.
+# beside it must be a regular file that is not a symlink and that the resolver can
+# open for reading, or the wrapper exits 3.
 # The directory is printed with a trailing slash, so command substitution cannot
 # strip a newline from its name.
 # Residual: the caller environment, including PATH, BASH_ENV and exported shell
@@ -32,12 +40,20 @@
 # function such as python3 replaces the resolver below; any of them can run a
 # planted ci-status.py that exits 0. The wrapper defends only against a planted
 # ci-status.py in the working directory and against a symlinked or misplaced gate.
+# The checks run before the exec, so a ci-status.py removed or changed between the
+# check and the exec is not caught.
+# A BASH_VERSION exported into a non-bash shell passes this check (see above).
 if [ -z "${BASH_VERSION:-}" ]; then
-  printf "ci-status: cannot find ci-status.py: ci-status.sh must run under bash (%s)\n" "$0" >&2
+  printf "ci-status: ci-status.sh must run under bash, not another shell (%s)\n" "$0" >&2
+  exit 3
+fi
+if shopt -q restricted_shell; then
+  printf "ci-status: ci-status.sh cannot run in a restricted shell (%s)\n" "$0"
   exit 3
 fi
 src="${BASH_SOURCE[0]:-}"
 here=""
+cause=find
 if ! (return 0 2>/dev/null) && [ "$0" = "$src" ]; then
   case "$src" in
     */*)
@@ -51,9 +67,20 @@ except OSError:
     ok = False
 if not ok:
     sys.exit(1)
+try:
+    open(gate, "rb").close()
+except OSError:
+    sys.exit(4)
 print(os.path.join(os.path.dirname(wrapper), ""))
-' "$src")" || here="" ;;
+' "$src")"
+      rc=$?
+      if [ "$rc" -ne 0 ]; then here=""; fi
+      if [ "$rc" -eq 4 ]; then cause=read; fi ;;
   esac
+fi
+if [ "$cause" = read ]; then
+  printf "ci-status: cannot read ci-status.py beside the real ci-status.sh (%s)\n" "$src" >&2
+  exit 3
 fi
 if [ -z "$here" ] || [ ! -f "${here}ci-status.py" ] || [ -L "${here}ci-status.py" ]; then
   printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\n" "$src" >&2

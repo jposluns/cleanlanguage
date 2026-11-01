@@ -29,6 +29,7 @@ set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 ci="${here}/ci-status.sh"
 fails=0
+skips=0  # a skipped case is reported on a skip line and never counted as ok
 
 GA_PRESENT='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}},
@@ -552,12 +553,36 @@ run_contract_case "second --interval is refused" 3 nogh owner/name owner/name - 
 # the wrapper is invoked: sourced (bash -c sources it, so $0 is bash), stdin (bash
 # -s reads it from a pipe), barename (bash ci-status.sh, found through PATH),
 # pylink (a copied wrapper beside a ci-status.py that is a symlink to the planted
-# file), pathexec (ci-status.sh executed through PATH), or posixsh (the wrapper
-# run by dash, or by sh when dash is absent, rather than bash). Without one, the
-# wrapper runs as bash with its absolute path.
+# file), pathexec (ci-status.sh executed through PATH), posixsh (the wrapper run
+# by the first of dash, sh, ksh, mksh or posh that a probe confirms is not bash;
+# skipped when there is none), restricted (bash -r), or noread (the ci-status.py
+# beside the wrapper has mode 000; skipped as root, where mode 000 is readable).
+# Without one, the wrapper runs as bash with its absolute path. Each refusal has
+# its own message, which the case checks.
+# non_bash_shell prints the path of a shell whose BASH_VERSION is unset, or fails.
+non_bash_shell() {
+  local cand found
+  for cand in dash sh ksh mksh posh; do
+    found="$(command -v "$cand")" || continue
+    if [ "$("$found" -c 'echo "${BASH_VERSION:-unset}"' 2>/dev/null)" = unset ]; then
+      printf "%s" "$found"; return 0
+    fi
+  done
+  return 1
+}
 # run_wrapper_case NAME WANT RESOLVE
 run_wrapper_case() {
-  local name="$1" want="$2" resolve="$3"
+  local name="$1" want="$2" resolve="$3" posix_sh=""
+  case " $resolve " in
+    *" posixsh "*)
+      if ! posix_sh="$(non_bash_shell)"; then
+        printf "skip %s (no shell other than bash found)\n" "$name"; skips=$((skips + 1)); return
+      fi ;;
+    *" noread "*)
+      if [ "$(id -u)" -eq 0 ]; then
+        printf "skip %s (running as root, where mode 000 is readable)\n" "$name"; skips=$((skips + 1)); return
+      fi ;;
+  esac
   local tmp; tmp="$(mktemp -d)"
   local tools="$tmp/repo/tools" bin="$tmp/bin" cwd="$tmp/cwd"; mkdir -p "$tools" "$bin" "$cwd"
   cp "${here}/ci-status.sh" "$tools/"
@@ -596,9 +621,9 @@ PY
       cp "${here}/ci-status.sh" "$tools/"
       ln -s "$cwd/ci-status.py" "$tools/ci-status.py"
       entry=(bash "$tools/ci-status.sh") ;;
-    *" posixsh "*)
-      local posix_sh; posix_sh="$(command -v dash || command -v sh)"
-      entry=("$posix_sh" "$tools/ci-status.sh") ;;
+    *" posixsh "*) entry=("$posix_sh" "$tools/ci-status.sh") ;;
+    *" restricted "*) entry=(bash -r "$tools/ci-status.sh") ;;
+    *" noread "*) chmod 000 "$tools/ci-status.py" ;;
     *" pathexec "*)
       chmod +x "$tools/ci-status.sh"; path="$bin:$tools:$PATH"; entry=(ci-status.sh) ;;
   esac
@@ -611,7 +636,13 @@ PY
   local got=$? ok=1 why=""
   if [ "$got" -ne "$want" ]; then ok=0; why="$why exit"; fi
   if [ -e "$tmp/planted-ran" ]; then ok=0; why="$why planted-ran"; fi
-  if [ "$want" -eq 3 ] && ! grep -q -F "ci-status: cannot find ci-status.py" "$tmp/err"; then
+  local msg="ci-status: cannot find ci-status.py beside the real ci-status.sh" msgfile="$tmp/err"
+  case " $resolve " in
+    *" posixsh "*) msg="ci-status: ci-status.sh must run under bash, not another shell" ;;
+    *" restricted "*) msg="ci-status: ci-status.sh cannot run in a restricted shell"; msgfile="$tmp/out" ;;
+    *" noread "*) msg="ci-status: cannot read ci-status.py beside the real ci-status.sh" ;;
+  esac
+  if [ "$want" -eq 3 ] && ! grep -q -F "$msg" "$msgfile"; then
     ok=0; why="$why message"
   fi
   if [ "$want" -eq 0 ] && ! grep -q -F "reading checks for commit ${C1}" "$tmp/out"; then
@@ -637,7 +668,12 @@ run_wrapper_case "bare wrapper name found through PATH fails closed with exit 3"
 run_wrapper_case "symlinked ci-status.py beside a copied wrapper fails closed with exit 3" 3 pylink
 run_wrapper_case "wrapper executed through PATH runs the real gate" 0 pathexec
 run_wrapper_case "wrapper run by a non-bash shell fails closed with exit 3" 3 posixsh
+run_wrapper_case "wrapper run by a restricted shell fails closed with exit 3" 3 restricted
+run_wrapper_case "unreadable ci-status.py fails closed with exit 3" 3 noread
 
+if [ "$skips" -gt 0 ]; then
+  printf "%s ci-status test(s) skipped\n" "$skips"
+fi
 if [ "$fails" -eq 0 ]; then
   printf 'all ci-status github-actions fail-safe tests pass
 '
