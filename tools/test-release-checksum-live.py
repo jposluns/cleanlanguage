@@ -1384,6 +1384,98 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assertEqual(bases, (ValueError, SystemExit))
                     self.assertIn(failed + ": TypeError: __bases__ assignment:", err)
                 self.assertNotIn("is unusable", err)
+        # Fix round 12 (DISCOVERY 7 LOW): reading the text of a verdict runs
+        # extractor code (its str), so the class checks run again after the
+        # text is read. A Malformed whose str reassigns the bases of its class
+        # to a hybrid, or the class of the error itself, gets no content
+        # verdict at any site, and an error that is not a Malformed when it is
+        # caught never becomes one through its str, so each exits 3 with the
+        # report. CPython refuses a SystemExit hybrid here too (its object
+        # layout differs from ValueError), so the str raises TypeError and the
+        # text cannot be read; that case also exits 3.
+        released = "Released: 2026-11-15  "
+        sites = (
+            ("extract", released),
+            ("requires_release_date", None),
+            ("release_day_from_published_at", released),
+        )
+        for shift in (
+            (ValueError, KeyboardInterrupt),
+            (ValueError, GeneratorExit),
+            (ValueError, SystemExit),
+            "the class of the error to a plain error",
+            "the class of a plain error to Malformed",
+        ):
+            for name, line in sites:
+                with self.subTest("a str that reassigns what the verdict checked", shift=shift, site=name):
+                    class Shifting(ValueError):
+                        pass
+
+                    class Plain(ValueError):
+                        pass
+
+                    outcomes = []
+
+                    def text(error):
+                        try:
+                            if type(shift) is tuple:
+                                Shifting.__bases__ = shift
+                            elif shift.endswith("to Malformed"):
+                                error.__class__ = Shifting
+                            else:
+                                error.__class__ = Plain
+                        except TypeError:
+                            outcomes.append("refused")
+                            raise
+                        outcomes.append("shifted")
+                        return "shifted probe"
+
+                    Shifting.__str__ = text
+                    Plain.__str__ = text
+                    raised = Plain if shift == "the class of a plain error to Malformed" else Shifting
+
+                    def raising(*args, **kwargs):
+                        raise raised("probe")
+
+                    saved = vars(gate.RELEASE_DATE)[name]
+                    saved_malformed = gate.RELEASE_DATE.Malformed
+                    setattr(gate.RELEASE_DATE, name, raising)
+                    gate.RELEASE_DATE.Malformed = Shifting
+                    try:
+                        self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
+                        self.published("2026-11-15T09:30:00Z")
+                        try:
+                            code, out, err = self.main_reports()
+                        except KeyboardInterrupt:
+                            code, out, err = "interrupt", "", ""
+                    finally:
+                        setattr(gate.RELEASE_DATE, name, saved)
+                        gate.RELEASE_DATE.Malformed = saved_malformed
+                    self.assertEqual(code, 3, (out, err))
+                    self.assertIn(f"failed unexpectedly in {name}: ", err)
+                    self.assertNotIn("is unusable", err)
+                    self.assertNotIn("is malformed", err)
+                    self.assertNotIn("was rejected by the extractor", err)
+                    self.assertIn("matches the published", out)
+                    if shift == (ValueError, SystemExit):
+                        self.assertEqual(set(outcomes), {"refused"})
+                        self.assertIn("(its message could not be read)", err)
+                    else:
+                        self.assertEqual(set(outcomes), {"shifted"})
+                        self.assertIn("shifted probe", err)
+        # The text of a genuine verdict is read once, before the last class
+        # check, and never again after it.
+        with self.subTest("a genuine Malformed verdict whose text is read once"):
+            reads = []
+
+            class Counted(_REAL_MALFORMED):
+                def __str__(self):
+                    reads.append(1)
+                    return "bad stamp"
+
+            self.assert_verdict(Counted("bad stamp"), Counted, 2,
+                                f"the published_at of release v{AHEAD} is unusable: bad stamp")
+            self.assertEqual(len(reads), 1)
         # The control: a genuine Malformed verdict is still a content verdict.
         with self.subTest("a genuine Malformed verdict"):
             self.assert_verdict(_REAL_MALFORMED("bad stamp"), None, 2,

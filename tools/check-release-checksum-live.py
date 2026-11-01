@@ -107,8 +107,9 @@ that is not an Exception but BaseException and object, so it is not also a
 SystemExit or a KeyboardInterrupt (see _plain_exception_class), and a caught
 error is a content
 verdict only when its own class is exactly that Malformed class, and that class
-still passes that check when the error is classified (see
-_malformed_verdict); a subclass of Malformed is not a verdict, since the
+passes that check, both before and after its text is read, so no extractor
+code runs between the last check and the verdict (see _malformed_verdict); a
+subclass of Malformed is not a verdict, since the
 extractor raises only Malformed itself. Anything else exits 3, never 2. A
 caught error is described only
 through _describe, never by its repr, and a returned value and
@@ -272,10 +273,24 @@ def _malformed_verdict(error: BaseException, malformed):
     checks read only the real type and the builtin subtype path, so neither
     can raise or run extractor code. The text is read under _guarded_text: a
     verdict whose text is not an exact str is not trusted as a content
-    verdict."""
-    if type(error) is not malformed or not _plain_exception_class(malformed):
+    verdict. Reading the text runs extractor code (its str), which can
+    reassign the class of ``error`` or the __bases__ of ``malformed``, so
+    the checks run twice: before the text is read, so that an error that was
+    not a verdict when it was caught never becomes one, and again after it
+    (fix round 12), so that no extractor code runs between the last check
+    and the verdict."""
+    if not _verdict_class(error, malformed):
         return None
-    return _guarded_text(lambda: str(error), None)
+    text = _guarded_text(lambda: str(error), None)
+    if not _verdict_class(error, malformed):
+        return None
+    return text
+
+
+def _verdict_class(error: BaseException, malformed) -> bool:
+    """The class checks of _malformed_verdict: the real class of ``error`` is
+    exactly ``malformed``, and ``malformed`` passes _plain_exception_class."""
+    return type(error) is malformed and _plain_exception_class(malformed)
 
 
 def _load_release_date_tool():
