@@ -371,102 +371,167 @@ run_case "zero-timeout wait window fails closed" "$GA_IN_PROGRESS" "" "" 3 --wai
 run_case "real cloudflare-workers-and-pages slug satisfies the required check" "$REAL_CLOUDFLARE" "" "" 0
 run_timed_case "wait stops near the deadline, not a whole interval past it" "$GA_IN_PROGRESS" 4 2 --wait --timeout 2 --interval 5
 
-# Commit sha resolution (backlog row 86). Each case builds a throwaway git
-# repository with fixed identities and dates, so its commit shas are the same on
-# every machine and need no network; copies ci-status.sh and ci-status.py into
-# it, because an abbreviated sha is resolved in the clone that holds the tool;
-# and serves a green reading from a fake gh that logs every call. The case
-# asserts the exit code and the exact check-runs path, or that no check-runs
-# call was made at all when the sha is refused.
-#
-# Fixed commits over the empty tree: message c63 gives 0c83f120..., message c502
-# gives 0c83a6fc..., so the prefix 0c83 is ambiguous between two commits and 0c83f
-# names one. The case fails closed if the shas ever differ from these.
-C63=0c83f120fcc4630694465bcf89f7415a21d54dba
-C502=0c83a6fc66ee370a161052bcdc334a4f86167999
+# Commit sha and repository contract (backlog row 86). The tool accepts only a
+# full 40-character hexadecimal sha and makes no local git call, so no case needs
+# a git repository. Each case copies ci-status.sh and ci-status.py into a
+# throwaway tools directory, runs the copy from /, and serves a green reading
+# from a fake gh that logs the arguments, environment and working directory of
+# every call, and snapshots the tool output at its first call. The fake gh repo
+# view answers with GH_REPO when that variable reaches it, else with the VIEW
+# value (FAIL makes it exit 1), so a leaked GH_REPO changes the path read.
+C1=0c83f120fcc4630694465bcf89f7415a21d54dba
+C1_UPPER=0C83F120FCC4630694465BCF89F7415A21D54DBA
+C2=1111111111111111111111111111111111111111
+NL="$(printf "\n.")"; NL="${NL%.}"
 
-# run_sha_case NAME SHA WANT EXPECTED_PATH_SHA ENV_ASSIGNMENT_OR_DASH [EXTRA ci-status ARGS...]
-# EXPECTED_PATH_SHA is the full sha the check-runs call must use, or "none" when
-# no check-runs call may be made. ENV_ASSIGNMENT, if not "-", is passed to env.
-run_sha_case() {
-  local name="$1" sha="$2" want="$3" expect="$4" extra_env="$5"; shift 5
+# run_contract_case NAME WANT EXPECT REPO VIEW ENVSPEC CHECKS [ci-status ARGS...]
+# EXPECT is the full sha every check-runs call must use, "noapi" when no
+# check-runs call may be made, or "nogh" when no gh call at all may be made.
+# REPO is the owner/name the check-runs path must name. VIEW is what the fake gh
+# repo view prints. ENVSPEC is "-" or space-separated NAME=VALUE assignments; the
+# token SHADOW stands for a PYTHONPATH entry whose json.py exits 7. CHECKS is "-"
+# or space-separated words: env (no gh call saw GH_REPO, GH_HOST or a GIT_
+# variable), pwd (every gh call ran in the real tools directory), first (the sha
+# line was already printed at the first gh call), hint (stderr tells the caller
+# to pass the full 40-character sha), link (run ci-status.py through a symlink
+# in another directory instead of through ci-status.sh), wraplink (run
+# ci-status.sh through a symlink named ci-status.sh in another directory that
+# holds no ci-status.py, so only a wrapper that resolves the link finds the gate).
+run_contract_case() {
+  local name="$1" want="$2" expect="$3" repo_want="$4" view="$5" envspec="$6" checks="$7"; shift 7
   local tmp; tmp="$(mktemp -d)"
-  local repo="$tmp/repo" bin="$tmp/bin"; mkdir -p "$repo/tools" "$bin"
-  cp "${here}/ci-status.sh" "${here}/ci-status.py" "$repo/tools/"
-  local g=(env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
-    GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid
-    GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
-    GIT_AUTHOR_DATE=2000-01-01T00:00:00Z GIT_COMMITTER_DATE=2000-01-01T00:00:00Z
-    git -C "$repo")
-  "${g[@]}" init -q .
-  local tree c63 c502 tag
-  tree="$("${g[@]}" mktree < /dev/null)"
-  c63="$("${g[@]}" commit-tree "$tree" -m c63)"
-  c502="$("${g[@]}" commit-tree "$tree" -m c502)"
-  "${g[@]}" update-ref refs/heads/main "$c63"
-  "${g[@]}" tag deadbeef "$c502"
-  tag="$(printf "object %s\ntype commit\ntag v1\ntagger t <t@example.invalid> 946684800 +0000\n\nv1\n" "$c63" | "${g[@]}" mktag)"
-  if [ "$c63" != "$C63" ] || [ "$c502" != "$C502" ] || [ "${#tag}" -ne 40 ]; then
-    printf "FAIL %s (fixture objects differ: %s %s %s)\n" "$name" "$c63" "$c502" "$tag"
-    fails=$((fails + 1)); rm -rf "$tmp"; return
-  fi
+  local tools="$tmp/repo/tools" bin="$tmp/bin"; mkdir -p "$tools" "$bin" "$tmp/shadow"
+  cp "${here}/ci-status.sh" "${here}/ci-status.py" "$tools/"
+  printf "raise SystemExit(7)\n" > "$tmp/shadow/json.py"
   printf "%s" "$GA_PRESENT" > "$tmp/def.json"
-  : > "$tmp/calls"
+  printf "%s" "$view" > "$tmp/view"
+  : > "$tmp/calls"; : > "$tmp/envlog"; : > "$tmp/pwds"; : > "$tmp/out"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
+[ -e "$tmp/seen" ] || cp "$tmp/out" "$tmp/seen"
 printf "%s\n" "\$*" >> "$tmp/calls"
+env >> "$tmp/envlog"
+pwd -P >> "$tmp/pwds"
 case "\$*" in
   *check-runs*) cat "$tmp/def.json" ;;
-  *"repo view"*) printf "owner/name" ;;
+  *"repo view"*)
+    if [ -n "\${GH_REPO:-}" ]; then printf "%s" "\$GH_REPO"; exit 0; fi
+    if [ "\$(cat "$tmp/view")" = FAIL ]; then exit 1; fi
+    cat "$tmp/view" ;;
   *) printf "" ;;
 esac
 GH
   chmod +x "$bin/gh"
-  # The tag sha is only known after mktag, so the token TAGPREFIX stands for its
-  # first 8 characters.
-  if [ "$sha" = TAGPREFIX ]; then sha="${tag:0:8}"; fi
-  local envset=()
-  if [ "$extra_env" != "-" ]; then envset=("$extra_env"); fi
-  # Run from / so the old behaviour (git rev-parse in the working directory)
-  # cannot find the fixture repository by accident.
-  (cd / || exit 99; env "${envset[@]}" PATH="$bin:$PATH" bash "$repo/tools/ci-status.sh" "$sha" \
-    --interval 1 "$@" > "$tmp/out" 2> "$tmp/err")
-  local got=$? ok=1
-  if [ "$got" -ne "$want" ]; then ok=0; fi
-  local runs; runs="$(grep -c check-runs "$tmp/calls")"
-  if [ "$expect" = none ]; then
-    if [ "$runs" -ne 0 ]; then ok=0; fi
-  else
-    local good; good="$(grep -c -F "repos/owner/name/commits/${expect}/check-runs" "$tmp/calls")"
-    if [ "$good" -lt 1 ] || [ "$good" -ne "$runs" ]; then ok=0; fi
-    if ! grep -q -F "reading checks for commit ${expect}" "$tmp/out"; then ok=0; fi
+  local envset=() word
+  if [ "$envspec" != "-" ]; then
+    for word in $envspec; do
+      if [ "$word" = SHADOW ]; then word="PYTHONPATH=$tmp/shadow"; fi
+      envset+=("$word")
+    done
   fi
+  local entry=(bash "$tools/ci-status.sh")
+  case " $checks " in
+    *" link "*)
+      mkdir -p "$tmp/elsewhere"
+      ln -s "$tools/ci-status.py" "$tmp/elsewhere/ci-status.py"
+      entry=(python3 -I "$tmp/elsewhere/ci-status.py") ;;
+    *" wraplink "*)
+      mkdir -p "$tmp/elsewhere"
+      ln -s "$tools/ci-status.sh" "$tmp/elsewhere/ci-status.sh"
+      entry=(bash "$tmp/elsewhere/ci-status.sh") ;;
+  esac
+  (cd / || exit 99; env "${envset[@]}" PATH="$bin:$PATH" "${entry[@]}" \
+    --interval 1 "$@" > "$tmp/out" 2> "$tmp/err")
+  local got=$? ok=1 why=""
+  if [ "$got" -ne "$want" ]; then ok=0; why="$why exit"; fi
+  local runs; runs="$(grep -c check-runs "$tmp/calls")"
+  case "$expect" in
+    nogh) if [ -s "$tmp/calls" ]; then ok=0; why="$why gh-called"; fi ;;
+    noapi) if [ "$runs" -ne 0 ]; then ok=0; why="$why api-called"; fi ;;
+    *)
+      local good; good="$(grep -c -F "repos/${repo_want}/commits/${expect}/check-runs" "$tmp/calls")"
+      if [ "$good" -lt 1 ] || [ "$good" -ne "$runs" ]; then ok=0; why="$why path"; fi
+      if ! grep -q -F "reading checks for commit ${expect}" "$tmp/out"; then ok=0; why="$why sha-line"; fi
+      ;;
+  esac
+  local tooldir; tooldir="$(cd "$tools" || exit 99; pwd -P)"
+  for word in $checks; do
+    case "$word" in
+      env)
+        if [ ! -s "$tmp/envlog" ] || grep -q -E "^(GH_REPO|GH_HOST|GIT_[A-Za-z0-9_]*)=" "$tmp/envlog"; then
+          ok=0; why="$why env"
+        fi ;;
+      pwd)
+        if [ ! -s "$tmp/pwds" ] || grep -q -v -x -F "$tooldir" "$tmp/pwds"; then ok=0; why="$why pwd"; fi ;;
+      first)
+        if [ ! -e "$tmp/seen" ] || ! grep -q -E "reading checks for commit [0-9a-f]{40}" "$tmp/seen"; then
+          ok=0; why="$why not-first"
+        fi ;;
+      hint)
+        if ! grep -q -F "pass the full 40-character sha" "$tmp/err"; then ok=0; why="$why hint"; fi ;;
+      *) ;;
+    esac
+  done
   if [ "$ok" -eq 1 ]; then
     printf "ok   %s (exit %s)\n" "$name" "$got"
   else
-    printf "FAIL %s (got exit %s, want %s, path sha %s)\n" "$name" "$got" "$want" "$expect"
+    printf "FAIL %s (got exit %s, want %s;%s)\n" "$name" "$got" "$want" "$why"
     fails=$((fails + 1))
   fi
   rm -rf "$tmp"
 }
 
-run_sha_case "full sha present locally is used as given" "$C63" 0 "$C63" -
-run_sha_case "full sha not present locally is used as given" 1111111111111111111111111111111111111111 0 1111111111111111111111111111111111111111 -
-run_sha_case "upper-case full sha is folded to lower case" 0C83F120FCC4630694465BCF89F7415A21D54DBA 0 "$C63" -
-run_sha_case "unique abbreviation resolves to its full sha" 0c83f 0 "$C63" -
-run_sha_case "ambiguous abbreviation is refused" 0c83 3 none -
-run_sha_case "unknown abbreviation is refused" 37f36851 3 none -
-run_sha_case "abbreviation of a tree is refused" 4b825dc 3 none -
-run_sha_case "abbreviation of a tag object is not peeled" TAGPREFIX 3 none -
-run_sha_case "tag named like a sha is not used as one" deadbeef 3 none -
-run_sha_case "ref name is refused" HEAD 3 none -
-run_sha_case "revision expression is refused" "0c83f~1" 3 none -
-run_sha_case "non-hex value is refused" zzzz 3 none -
-run_sha_case "path-like value is refused" "0c83f/../x" 3 none -
-run_sha_case "three-character abbreviation is refused" 0c8 3 none -
-run_sha_case "41-character value is refused" "${C63}0" 3 none -
-run_sha_case "abbreviation with --repo is refused" 0c83f 3 none - --repo owner/name
-run_sha_case "ambient GIT_DIR cannot redirect the lookup" 0c83f 0 "$C63" GIT_DIR=/nonexistent
+# A full sha is accepted as given; upper case is folded to lower case.
+run_contract_case "full sha is used as given" 0 "$C1" owner/name owner/name - "env pwd first" "$C1"
+run_contract_case "full sha unknown locally is used as given" 0 "$C2" owner/name owner/name - - "$C2"
+run_contract_case "upper-case full sha is folded to lower case" 0 "$C1" owner/name owner/name - - "$C1_UPPER"
+# Every abbreviation is refused before any gh call, whatever its length.
+run_contract_case "4-character abbreviation is refused" 3 nogh owner/name owner/name - hint "${C1:0:4}"
+run_contract_case "7-character abbreviation is refused" 3 nogh owner/name owner/name - hint "${C1:0:7}"
+run_contract_case "39-character abbreviation is refused" 3 nogh owner/name owner/name - hint "${C1:0:39}"
+run_contract_case "abbreviation with --repo is refused" 3 nogh owner/name owner/name - hint --repo owner/name "${C1:0:7}"
+# Ref names, revision expressions, path-like, non-hex, empty and over-long values.
+run_contract_case "ref name HEAD is refused" 3 nogh owner/name owner/name - hint HEAD
+run_contract_case "branch name main is refused" 3 nogh owner/name owner/name - hint main
+run_contract_case "revision expression is refused" 3 nogh owner/name owner/name - hint "${C1:0:7}~1"
+run_contract_case "peel expression on a full sha is refused" 3 nogh owner/name owner/name - hint "${C1}^{commit}"
+run_contract_case "path-like value is refused" 3 nogh owner/name owner/name - hint "${C1:0:7}/../x"
+run_contract_case "40-character non-hex value is refused" 3 nogh owner/name owner/name - hint "${C1:0:39}g"
+run_contract_case "empty value is refused" 3 nogh owner/name owner/name - hint ""
+run_contract_case "41-character value is refused" 3 nogh owner/name owner/name - hint "${C1}0"
+run_contract_case "full sha with a trailing newline is refused" 3 nogh owner/name owner/name - hint "${C1}${NL}"
+# --repo is accepted only as owner/name with GitHub-safe characters.
+run_contract_case "--repo with an injected path is refused" 3 nogh owner/name owner/name - - --repo "owner/name/commits/${C2}/check-runs?x=" "$C1"
+run_contract_case "--repo with a query is refused" 3 nogh owner/name owner/name - - --repo "owner/name?x=1" "$C1"
+run_contract_case "--repo with a fragment is refused" 3 nogh owner/name owner/name - - --repo "owner/name#x" "$C1"
+run_contract_case "--repo with a dot-leading name is refused" 3 nogh owner/name owner/name - - --repo "owner/.." "$C1"
+run_contract_case "--repo with a dot owner is refused" 3 nogh owner/name owner/name - - --repo "../name" "$C1"
+run_contract_case "--repo without a slash is refused" 3 nogh owner/name owner/name - - --repo owner "$C1"
+run_contract_case "--repo with a trailing slash is refused" 3 nogh owner/name owner/name - - --repo "owner/name/" "$C1"
+run_contract_case "--repo with a space is refused" 3 nogh owner/name owner/name - - --repo "own er/name" "$C1"
+run_contract_case "--repo with an encoded slash is refused" 3 nogh owner/name owner/name - - --repo "owner/na%2Fme" "$C1"
+run_contract_case "--repo with a trailing newline is refused" 3 nogh owner/name owner/name - - --repo "owner/name${NL}" "$C1"
+run_contract_case "empty --repo is refused" 3 nogh owner/name owner/name - - --repo "" "$C1"
+run_contract_case "--repo with no value is refused" 3 nogh owner/name owner/name - - "$C1" --repo
+run_contract_case "--repo with hyphens, underscores and dots is used" 0 "$C1" my-org/my_repo.js owner/name - - --repo my-org/my_repo.js "$C1"
+# The inferred repository is validated the same way, and the sha is printed first.
+run_contract_case "inferred repository with an injected path is refused" 3 noapi owner/name "owner/name/commits/${C2}/check-runs?x=" - - "$C1"
+run_contract_case "sha line is printed before a failing repository lookup" 3 noapi owner/name FAIL - first "$C1"
+# GH_REPO, GH_HOST and GIT_ variables never reach gh, so they cannot redirect it.
+run_contract_case "ambient GH_REPO does not change the repository" 0 "$C1" owner/name owner/name "GH_REPO=evil/repo" "env pwd" "$C1"
+run_contract_case "ambient GH_REPO does not reach gh with --repo" 0 "$C1" owner/name owner/name "GH_REPO=evil/repo" env --repo owner/name "$C1"
+run_contract_case "ambient GH_HOST does not reach gh" 0 "$C1" owner/name owner/name "GH_HOST=evil.example.invalid" env "$C1"
+run_contract_case "ambient GIT_DIR does not reach gh" 0 "$C1" owner/name owner/name "GIT_DIR=/nonexistent GIT_WORK_TREE=/nonexistent" env "$C1"
+# A single -- ends option parsing.
+run_contract_case "-- ends option parsing with --repo" 0 "$C1" owner/name owner/name - - --repo owner/name -- "$C1"
+run_contract_case "-- ends option parsing with an inferred repository" 0 "$C1" owner/name owner/name - first -- "$C1"
+run_contract_case "trailing -- is accepted" 0 "$C1" owner/name owner/name - - "$C1" --
+run_contract_case "option-like value after -- is refused as a sha" 3 nogh owner/name owner/name - hint -- --wait
+run_contract_case "second -- is an operand, not an option" 3 nogh owner/name owner/name - - -- -- "$C1"
+# The interpreter is isolated, and a symlinked copy binds to the real file.
+run_contract_case "PYTHONPATH shadowing does not change the result" 0 "$C1" owner/name owner/name SHADOW - "$C1"
+run_contract_case "symlinked copy binds to the clone that holds the real file" 0 "$C1" owner/name owner/name - "link pwd" "$C1"
+run_contract_case "symlinked wrapper in another directory runs the real ci-status.py" 0 "$C1" owner/name owner/name - "wraplink pwd first" "$C1"
 
 if [ "$fails" -eq 0 ]; then
   printf 'all ci-status github-actions fail-safe tests pass

@@ -35,18 +35,37 @@ red. A commit that legitimately ran neither is a safe false-red, never a
 false-green. Pointing --repo at a repository that does not run both unconditionally
 would downgrade a legitimate green to pending.
 
-The commit is named by its full 40-character sha, used as given, or by an
-abbreviation of 4 to 39 hexadecimal characters. An abbreviation is accepted only
-when the clone that holds this tool has exactly one commit whose sha starts with
-it; it is then replaced by that full sha before any API call. A ref name such as
-HEAD or main, a revision expression, or any other value is refused (exit 3), so
-the API path is built only from a full sha, and the full sha used is printed.
+The commit is named only by its full 40-character hexadecimal sha, folded to
+lower case and used as given. Every other value, an abbreviation of any length,
+a ref name such as HEAD or main, a revision expression, a path-like value, a
+non-hexadecimal value, or an empty value, is refused (exit 3) with a message to
+pass the full 40-character sha, for example from git rev-parse or gh pr view
+--json headRefOid. The tool makes no local git call of its own, so the API path
+is built only from a full sha, and a full sha that is not a commit of the
+repository fails the API read (exit 3). The sha is printed before any gh call,
+and the repository is printed once it is known.
+
+--repo is accepted only as owner/name with exactly one slash: an owner of ASCII
+letters, digits and hyphens, and a name of ASCII letters, digits, hyphens,
+underscores and dots that does not start with a dot. Any other value is refused
+(exit 3), so --repo cannot add a path segment or a query to the API call. A
+repository inferred with gh repo view is validated the same way.
+
+Every gh call runs in the directory that holds this file, resolved through
+symlinks, so a symlinked copy binds to the clone that holds the real file. Each
+gh call runs with GH_REPO, GH_HOST and every GIT_ variable removed from its
+environment, so none of them can redirect the repository lookup or the API
+call. Residual: gh finds the clone through git, which searches upward from that
+directory, so a copy outside any checkout infers the repository of an enclosing
+checkout if there is one; pass --repo for such a copy. Other gh configuration,
+such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged.
 
 Usage:
   ci-status.py <sha>                     Report once and exit.
   ci-status.py <sha> --wait              Poll until the checks settle.
   ci-status.py <sha> --wait --timeout 600 --interval 20
   ci-status.py <sha> --repo owner/name   Override the inferred repository.
+  ci-status.py [options] -- <sha>        A single -- ends option parsing.
 
 Exit codes:
   0  every check passed, confirmed across two consecutive readings
@@ -66,9 +85,11 @@ import time
 
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
 MAX_DIGITS = 9  # keeps a timeout/interval well inside a machine int, rejecting overflow
-FULL_SHA = re.compile(r"[0-9a-f]{40}")
-MIN_ABBREV = 4  # git rev-parse --disambiguate lists nothing for fewer hex digits
-TOOL_DIR = os.path.dirname(os.path.realpath(__file__))
+FULL_SHA = re.compile(r"[0-9A-Fa-f]{40}")
+REPO_NAME = re.compile(r"[A-Za-z0-9-]+/(?!\.)[A-Za-z0-9._-]+")
+SHA_HINT = "pass the full 40-character sha (for example from git rev-parse or gh pr view --json headRefOid)"
+GH_REDIRECTS = ("GH_REPO", "GH_HOST")  # removed with every GIT_ variable before each gh call
+TOOL_DIR = os.path.dirname(os.path.realpath(__file__))  # every gh call runs here
 
 
 def die(message: str) -> "NoReturn":  # type: ignore[name-defined]
@@ -85,38 +106,49 @@ def parse_args(argv):
     wait = False
     timeout = 900
     interval = 15
+    options_ended = False
     it = iter(argv)
     for arg in it:
-        if arg == "--wait":
+        if options_ended or not arg.startswith("-"):
+            if sha is not None:
+                die("more than one commit given")
+            sha = arg
+        elif arg == "--":
+            # A single -- ends option parsing; any later value, a second -- included,
+            # is taken as the commit.
+            options_ended = True
+        elif arg == "--wait":
             wait = True
         elif arg == "--timeout":
             timeout = _whole("--timeout", next(it, ""))
         elif arg == "--interval":
             interval = _whole("--interval", next(it, ""))
         elif arg == "--repo":
-            repo = next(it, "") or die("--repo takes owner/name")
-        elif arg.startswith("-"):
-            die(f"unknown option {arg}")
-        elif sha is None:
-            sha = arg
+            repo = _repo_name(next(it, ""), "--repo")
         else:
-            die("more than one commit given")
-    if not sha:
-        die("usage: ci-status.py <sha> [--wait] [--timeout N] [--interval N] [--repo owner/name]")
+            die(f"unknown option {arg}")
+    if sha is None:
+        die("usage: ci-status.py [--wait] [--timeout N] [--interval N] [--repo owner/name] [--] <sha>")
     if interval <= 0:
         die("--interval must be above zero")
     return _commit_name(sha), repo, wait, timeout, interval
 
 
 def _commit_name(value: str) -> str:
-    """Accept only a hexadecimal object name: a ref name, a revision expression, or
-    a path-like value is refused, so a moving ref is never read as a fixed commit and
-    the API path is built only from hex digits. Upper case is folded to lower case."""
-    if not (value.isascii() and re.fullmatch(r"[0-9A-Fa-f]+", value)):
-        die(f"{ascii(value)} is not a commit sha; pass the full 40-character sha")
-    if not MIN_ABBREV <= len(value) <= 40:
-        die(f"{value} is not 4 to 40 hexadecimal characters; pass the full 40-character sha")
+    """Accept only a full 40-character hexadecimal sha, folded to lower case. Every
+    other value is refused, so an abbreviation is never resolved, a moving ref is
+    never read as a fixed commit, and the API path is built only from hex digits."""
+    if not (value.isascii() and FULL_SHA.fullmatch(value)):
+        die(f"{ascii(value)} is not a full 40-character commit sha; {SHA_HINT}")
     return value.lower()
+
+
+def _repo_name(value: str, source: str) -> str:
+    """Accept only owner/name with GitHub-safe characters, so the value cannot add a
+    path segment or a query to the API call."""
+    if not (value.isascii() and REPO_NAME.fullmatch(value)):
+        die(f"{source} {ascii(value)} is not owner/name; pass --repo owner/name")
+    return value
 
 
 def _whole(flag: str, value: str) -> int:
@@ -131,14 +163,25 @@ def _whole(flag: str, value: str) -> int:
     return int(value)
 
 
+def _gh(args, timeout: float):
+    """Run gh in the directory that holds this file, resolved through symlinks, with
+    GH_REPO, GH_HOST and every GIT_ variable removed from its environment, so an
+    ambient value cannot point the repository lookup or the API call elsewhere.
+    OSError and TimeoutExpired reach the caller."""
+    env = {
+        k: v for k, v in os.environ.items()
+        if not (k.startswith("GIT_") or k in GH_REDIRECTS)
+    }
+    return subprocess.run(
+        ["gh", *args], cwd=TOOL_DIR, env=env, capture_output=True, timeout=timeout,
+    )
+
+
 def infer_repo(timeout: float) -> str:
     if timeout <= 0:
         return die("could not infer the repository; pass --repo owner/name")
     try:
-        proc = subprocess.run(
-            ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
-            cwd=TOOL_DIR, capture_output=True, timeout=timeout,
-        )
+        proc = _gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], timeout)
     except (OSError, subprocess.TimeoutExpired):
         return die("could not infer the repository; pass --repo owner/name")
     if proc.returncode != 0:
@@ -147,80 +190,9 @@ def infer_repo(timeout: float) -> str:
         out = proc.stdout.decode("utf-8").strip()
     except UnicodeDecodeError:
         return die("could not read the repository name")
-    return out or die("could not infer the repository; pass --repo owner/name")
-
-
-def _git(args, deadline: float, stdin: bytes = b""):
-    """Run git in the clone that holds this tool, bounded by the wait window. Every
-    ambient GIT_ variable is removed first, so GIT_DIR, GIT_OBJECT_DIRECTORY or a
-    similar variable cannot point the lookup at another repository."""
-    remaining = deadline - time.time()
-    if remaining <= 0:
-        die("the wait window closed before the sha was resolved; pass the full 40-character sha")
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    try:
-        return subprocess.run(
-            ["git", *args], cwd=TOOL_DIR, env=env, input=stdin,
-            capture_output=True, timeout=remaining,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return die("could not run git in the local clone; pass the full 40-character sha")
-
-
-def _hex_names(raw: bytes, prefix: str) -> list:
-    try:
-        names = raw.decode("ascii").split()
-    except UnicodeDecodeError:
-        return die("git returned unreadable object names; pass the full 40-character sha")
-    for name in names:
-        if not (FULL_SHA.fullmatch(name) and name.startswith(prefix)):
-            die("git returned an unexpected object name; pass the full 40-character sha")
-    return names
-
-
-def resolve_sha(sha: str, deadline: float) -> str:
-    """Return the full sha to read. A full 40-character sha is used as given: it names
-    one object, and a sha that is not a commit of the repository fails the API read
-    (exit 3). An abbreviation is refused unless the local clone has exactly one commit
-    whose sha starts with it. Refs are never consulted: --disambiguate lists objects
-    by prefix only, so a branch or tag named like a sha cannot stand in for one, and a
-    tag object is not peeled to the commit it points at. Any failure exits 3; nothing
-    falls back to the value as given."""
-    if FULL_SHA.fullmatch(sha):
-        return sha
-    listed = _git(["rev-parse", f"--disambiguate={sha}"], deadline)
-    if listed.returncode != 0:
-        die(f"could not resolve {sha} in the local clone; pass the full 40-character sha")
-    names = _hex_names(listed.stdout, sha)
-    if not names:
-        die(f"{sha} matches no object in the local clone; pass the full 40-character sha")
-    typed = _git(
-        ["cat-file", "--batch-check=%(objectname) %(objecttype)"], deadline,
-        stdin="".join(f"{name}\n" for name in names).encode("ascii"),
-    )
-    if typed.returncode != 0:
-        die(f"could not read object types for {sha}; pass the full 40-character sha")
-    try:
-        lines = typed.stdout.decode("ascii").splitlines()
-    except UnicodeDecodeError:
-        return die("git returned unreadable object types; pass the full 40-character sha")
-    if len(lines) != len(names):
-        die(f"could not read object types for {sha}; pass the full 40-character sha")
-    commits = []
-    for line in lines:
-        name, _, kind = line.partition(" ")
-        if name not in names:
-            die("git returned an unexpected object name; pass the full 40-character sha")
-        if kind == "commit":
-            commits.append(name)
-    if len(commits) > 1:
-        die(
-            f"{sha} is ambiguous: {len(commits)} commits in the local clone start with it; "
-            "pass the full 40-character sha"
-        )
-    if not commits:
-        die(f"{sha} matches no commit in the local clone; pass the full 40-character sha")
-    return commits[0]
+    if not out:
+        die("could not infer the repository; pass --repo owner/name")
+    return _repo_name(out, "the inferred repository")
 
 
 def _no_duplicate_keys(pairs):
@@ -278,10 +250,7 @@ def read_checks(repo: str, full_sha: str, deadline: float):
     if remaining <= 0:
         raise Unreadable("the wait window closed before the read")
     try:
-        proc = subprocess.run(
-            ["gh", "api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"],
-            capture_output=True, timeout=remaining,
-        )
+        proc = _gh(["api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"], remaining)
     except subprocess.TimeoutExpired as exc:
         raise Unreadable(f"gh api did not return within {int(remaining)} seconds") from exc
     except OSError as exc:
@@ -421,21 +390,18 @@ def report(checks, stream=sys.stdout) -> None:
 
 
 def main() -> int:
-    sha, repo, wait, timeout, interval = parse_args(sys.argv[1:])
-    # Create the deadline before the preflight calls so every child read, including
-    # gh repo view and git rev-parse, is bounded by the wait window.
+    full_sha, repo, wait, timeout, interval = parse_args(sys.argv[1:])
+    # Create the deadline before the preflight call so every child read, including
+    # gh repo view, is bounded by the wait window.
     deadline = time.time() + timeout
-    if repo and not FULL_SHA.fullmatch(sha):
-        die(
-            "an abbreviated sha is resolved in the local clone, which cannot answer for "
-            "another repository; pass the full 40-character sha with --repo"
-        )
-    full_sha = resolve_sha(sha, deadline)
+    # The sha is printed before any gh call, so the caller sees which commit is read
+    # even when the repository lookup fails.
+    sys.stdout.write(f"ci-status: reading checks for commit {full_sha}\n")
+    sys.stdout.flush()
     if not repo:
         repo = infer_repo(deadline - time.time())
-    if full_sha != sha:
-        sys.stdout.write(f"ci-status: resolved {sha} to commit {full_sha} in the local clone\n")
-    sys.stdout.write(f"ci-status: reading checks for commit {full_sha} in {repo}\n")
+    sys.stdout.write(f"ci-status: repository {repo}\n")
+    sys.stdout.flush()
 
     confirming = False
     confirmed_snapshot = None

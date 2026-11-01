@@ -8,5 +8,8 @@
 # and the CI workflows depend on. See ci-status.py for the contract and exit codes:
 #   0 all checks passed (confirmed twice)  1 a check failed  2 still running / timed out
 #   3 unreadable, no checks, or usage error.
-here="$(cd "$(dirname "$0")" && pwd)"
-exec python3 "${here}/ci-status.py" "$@"
+# -I isolates the interpreter: PYTHONPATH, the user site directory and the script
+# directory cannot shadow a standard-library import used by the gate.
+# readlink -f resolves a symlinked wrapper, so the real ci-status.py beside the real file runs.
+here="$(dirname -- "$(readlink -f -- "$0")")"
+exec python3 -I "${here}/ci-status.py" "$@"
