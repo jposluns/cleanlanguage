@@ -66,6 +66,7 @@ They run offline: nothing reaches GitHub or any network.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import re
@@ -687,16 +688,29 @@ VERIFY_BY_DISPATCH = ("To verify the published release, first check that .github
 # It names two pass criteria only and no file name or path inside a zip.
 OLDER_TAG_ADVICE = ("A tag without the step " + PUBLISH + " carries an older workflow that can"
                     " republish a published release, so never dispatch this workflow at such a tag, with or"
-                    " without the force input. Verify that release read-only instead, with gh release view"
-                    " <tag> --json isImmutable,assets and gh release download <tag>: it passes only if"
-                    " isImmutable is true and every zip asset has a published .sha256 asset that passes"
-                    " sha256sum -c in the download directory. If either check fails, cut a corrective new"
-                    " version.")
+                    " without the force input. Verify that release read-only instead: in a new, empty"
+                    " directory, run gh release view <tag> --json isImmutable,assets and gh release download"
+                    " <tag>. If a command cannot run, run it again; that says nothing about the release. The"
+                    " release passes only if isImmutable is true, it has at least one zip, every zip has a"
+                    " .sha256 named after it (its name plus .sha256) and every .sha256 has its zip, each"
+                    " .sha256 names only its own zip, and sha256sum -c passes on each .sha256. If isImmutable"
+                    " is false, turn on immutable releases for the repository, then cut a corrective new"
+                    " version; if any other check fails, cut a corrective new version.")
 NEVER_AT_OLDER_TAG = OLDER_TAG_ADVICE.replace("<tag>", "v1.0.15")
 OLDER_TAG_ECHO = "echo \"${OLDER_TAG_ADVICE//<tag>/${RELEASE_TAG}}\" >" + chr(38) + "2"
-PASS_CRITERIA = ("it passes only if isImmutable is true",
-                 "every zip asset has a published .sha256 asset that passes sha256sum -c in the download"
-                 " directory")
+# Fix round 6: every condition the advice states, each pinned by its words.
+PASS_CRITERIA = (
+    "in a new, empty directory",
+    "If a command cannot run, run it again; that says nothing about the release.",
+    "passes only if isImmutable is true",
+    "it has at least one zip",
+    "every zip has a .sha256 named after it (its name plus .sha256)",
+    "every .sha256 has its zip",
+    "each .sha256 names only its own zip",
+    "sha256sum -c passes on each .sha256",
+    "If isImmutable is false, turn on immutable releases for the repository, then cut a corrective new version",
+    "if any other check fails, cut a corrective new version.",
+)
 # A zip file name, or a path or command that reaches inside a zip.
 NAMES_A_ZIP = re.compile(r"[A-Za-z0-9_${}<>-]\.zip\b|unzip|SKILL\.md|Released:")
 DETERMINE_UNREADABLE = ("Once the release record is readable, check that .github/workflows/release-skill.yml"
@@ -1369,10 +1383,14 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # Fix round 5b: the description ends with the shared advice and then
         # one sentence naming the two remaining cases, so no condition is
         # stated twice.
-        last = ("The same remedy applies if the dispatch at the tag fails its verification, or if the tag"
-                " is no longer on origin.")
+        # Fix round 6: the advice now names two remedies, so the closing
+        # sentence names its remedy rather than pointing back at one.
+        last = ("A corrective new version is also the remedy if the dispatch at the tag fails its"
+                " verification, or if the tag is no longer on origin.")
         self.assertTrue(description.endswith(OLDER_TAG_ADVICE + " " + last), description)
-        self.assertEqual(description.count("corrective new version"), 1, description)
+        self.assertNotIn("The same remedy", description)
+        sentences = [s for s in re.split(r"(?<=[.;])\s+", description) if s]
+        self.assertEqual(len(sentences), len(set(sentences)), sentences)
         self.assertNotIn("only if that verification fails", description)
         self.assertLess(description.index("To verify a release that is already published"),
                         description.index("corrective new version"))
@@ -1434,10 +1452,10 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertIn("has the step " + PUBLISH + ". If it does, dispatch", lines[i])
                 self.assertEqual(lines[i + 1].strip(), OLDER_TAG_ECHO)
 
-    def test_the_older_tag_advice_has_one_source_and_two_pass_criteria(self):
+    def test_the_older_tag_advice_has_one_source_and_its_pass_criteria(self):
         # Fix round 5: the job env declares the advice once, both steps print
         # it through the same line, the description repeats it verbatim, and
-        # it names the two pass criteria and no zip file or in-zip path.
+        # it names its pass criteria and no zip file or in-zip path.
         self.assertEqual(job_env()["OLDER_TAG_ADVICE"], OLDER_TAG_ADVICE)
         for name in (DETERMINE, PUBLISH):
             with self.subTest(name):
@@ -1447,7 +1465,8 @@ class ImmutableReleaseTest(WorkflowStepTest):
             with self.subTest(criterion):
                 self.assertIn(criterion, OLDER_TAG_ADVICE)
         self.assertIn("--json isImmutable,assets", OLDER_TAG_ADVICE)
-        self.assertIn("If either check fails, cut a corrective new version.", OLDER_TAG_ADVICE)
+        sentences = [s for s in re.split(r"(?<=[.;])\s+", OLDER_TAG_ADVICE) if s]
+        self.assertEqual(len(sentences), len(set(sentences)), sentences)
         self.assertIsNone(NAMES_A_ZIP.search(OLDER_TAG_ADVICE))
         for bad in ("cleanlanguage.zip", "clean-language.zip", "x-<version>.zip", "unzip -Z1", "SKILL.md"):
             with self.subTest(probe=bad):
@@ -1584,6 +1603,96 @@ class DetermineStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 1, err)
         self.assertIn("is malformed", err)
+
+
+def stated_verdict(directory: Path, immutable: str) -> str:
+    """Apply the read-only criteria OLDER_TAG_ADVICE states, in its order, to
+    a download directory: "pass", "immutable" (turn on immutable releases,
+    then cut a corrective new version) or "corrective". Each check carries the
+    PASS_CRITERIA words it implements; StatedCriteriaTest requires every one
+    of them in the advice."""
+    if immutable != "true":  # passes only if isImmutable is true
+        return "immutable"
+    names = sorted(path.name for path in directory.iterdir())
+    zips = [name for name in names if name.endswith(".zip")]
+    sums = [name for name in names if name.endswith(".sha256")]
+    if not zips:  # it has at least one zip
+        return "corrective"
+    if any(name + ".sha256" not in sums for name in zips):  # every zip has a .sha256 named after it
+        return "corrective"
+    if any(name[: -len(".sha256")] not in zips for name in sums):  # every .sha256 has its zip
+        return "corrective"
+    for name in sums:  # each .sha256 names only its own zip
+        lines = (directory / name).read_text(encoding="utf-8").splitlines()
+        entries = [re.fullmatch(r"[0-9a-f]{64} [ *](.+)", line) for line in lines]
+        if not entries or any(entry is None or entry.group(1) != name[: -len(".sha256")] for entry in entries):
+            return "corrective"
+    for name in sums:  # sha256sum -c passes on each .sha256
+        if subprocess.run(["sha256sum", "-c", name], cwd=directory, capture_output=True).returncode != 0:
+            return "corrective"
+    return "pass"
+
+
+class StatedCriteriaTest(unittest.TestCase):
+    """Fix round 6: the criteria the read-only advice states, run on a
+    synthetic download of a good release and of each failing case. This
+    proves the stated criteria refuse each case, not what a reader runs."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        for name, data in (("stable.zip", b"zip bytes"), ("stable-1.0.0.zip", b"zip bytes")):
+            (self.dir / name).write_bytes(data)
+            self.manifest(name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def manifest(self, name):
+        # The manifest sha256sum itself writes for the zip, by its bare name.
+        out = subprocess.run(["sha256sum", name], cwd=self.dir, check=True, capture_output=True).stdout
+        (self.dir / (name + ".sha256")).write_bytes(out)
+
+    def test_every_criterion_the_checker_implements_is_in_the_advice(self):
+        for criterion in ("passes only if isImmutable is true", "it has at least one zip",
+                          "every zip has a .sha256 named after it", "every .sha256 has its zip",
+                          "each .sha256 names only its own zip", "sha256sum -c passes on each .sha256"):
+            with self.subTest(criterion):
+                self.assertIn(criterion, OLDER_TAG_ADVICE)
+                self.assertIn("# " + criterion, inspect.getsource(stated_verdict))
+
+    def test_a_good_release_passes(self):
+        self.assertEqual(stated_verdict(self.dir, "true"), "pass")
+
+    def test_a_mutable_release_names_the_immutable_remedy(self):
+        self.assertEqual(stated_verdict(self.dir, "false"), "immutable")
+
+    def test_a_missing_zip_fails(self):
+        (self.dir / "stable-1.0.0.zip").unlink()
+        self.assertEqual(stated_verdict(self.dir, "true"), "corrective")
+
+    def test_no_assets_fails(self):
+        for path in self.dir.iterdir():
+            path.unlink()
+        self.assertEqual(stated_verdict(self.dir, "true"), "corrective")
+
+    def test_a_crossed_manifest_fails_though_sha256sum_alone_passes(self):
+        other = (self.dir / "stable-1.0.0.zip")
+        other.write_bytes(b"other bytes")
+        self.manifest("stable-1.0.0.zip")
+        crossed = (self.dir / "stable-1.0.0.zip.sha256").read_bytes()
+        (self.dir / "stable.zip.sha256").write_bytes(crossed)
+        self.assertEqual(subprocess.run(["sha256sum", "-c", "stable.zip.sha256"], cwd=self.dir,
+                                        capture_output=True).returncode, 0)
+        self.assertEqual(stated_verdict(self.dir, "true"), "corrective")
+
+    def test_a_corrupted_zip_fails(self):
+        (self.dir / "stable.zip").write_bytes(b"zip bytes altered")
+        self.assertEqual(stated_verdict(self.dir, "true"), "corrective")
+
+    def test_a_missing_sha256_fails(self):
+        (self.dir / "stable.zip.sha256").unlink()
+        self.assertEqual(stated_verdict(self.dir, "true"), "corrective")
 
 
 class PackageStepTest(WorkflowStepTest):
