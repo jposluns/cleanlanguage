@@ -1001,25 +1001,86 @@ class ConditionalPassTest(unittest.TestCase):
     def test_readers_fail_closed_on_an_os_or_decode_error(self):
         # U3: an OSError other than a missing gh, or gh output that does not
         # decode, is unverifiable (exit 2), never a traceback read as drift.
+        # DISCOVERY 9 (LOW 1): the report is pinned exactly, including the
+        # OSError or UnicodeError branch of api_status behind release_status
+        # and tag_status.
+        undecodable_error = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        denied_error = PermissionError(13, "Permission denied")
+
         def undecodable(*args, check=True):
-            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+            raise undecodable_error
 
         def denied(*args, check=True):
-            raise PermissionError(13, "Permission denied")
+            raise denied_error
+
+        readers = (
+            ("release_immutable", self._saved[7], "the immutable field of release v1.0.15"),
+            ("release_published_at", self._saved[6], "published_at for release v1.0.15"),
+            ("release_status", self._saved[3], "the release status for v1.0.15"),
+            ("tag_status", self._saved[4], "the tag status for v1.0.15"),
+        )
+        for name, reader, what in readers:
+            for fake, error in ((undecodable, undecodable_error), (denied, denied_error)):
+                with self.subTest(name, error=fake.__name__):
+                    gate.gh = fake
+                    out, err = io.StringIO(), io.StringIO()
+                    with self.assertRaises(SystemExit) as caught, contextlib.redirect_stdout(out), \
+                            contextlib.redirect_stderr(err):
+                        reader("v1.0.15")
+                    self.assertEqual(caught.exception.code, 2)
+                    # Claim 6: the gate output is fully determined, so the exact stdout and
+                    # stderr lines are asserted; each status is reported in exactly one
+                    # line, on stderr, and any further line on either stream, in any
+                    # wording, fails.
+                    self.assertEqual(
+                        err.getvalue().splitlines(), [f"{self.CV}could not read {what}: {error!r}"],
+                        err.getvalue(),
+                    )
+                    self.assertEqual(out.getvalue().splitlines(), [], out.getvalue())
+
+    def test_readers_report_a_missing_gh_in_exactly_one_line(self):
+        # DISCOVERY 9 (LOW 1): a gh that is absent is unverifiable (exit 2) in
+        # every reader, including the FileNotFoundError branch of api_status
+        # behind release_status and tag_status, both through a gh that raises
+        # FileNotFoundError and through the real gh wrapper on an empty PATH.
+        def absent(*args, check=True):
+            raise FileNotFoundError(2, "No such file or directory", "gh")
 
         readers = (
             ("release_immutable", self._saved[7]), ("release_published_at", self._saved[6]),
             ("release_status", self._saved[3]), ("tag_status", self._saved[4]),
         )
+        empty = Path(self._tmp.name) / "empty-path"
+        empty.mkdir()
         for name, reader in readers:
-            for fake in (undecodable, denied):
-                with self.subTest(name, error=fake.__name__):
+            for label, fake in (
+                ("a gh that raises FileNotFoundError", absent),
+                ("the real gh wrapper on an empty PATH", self._saved[5]),
+            ):
+                with self.subTest(name, gh=label):
                     gate.gh = fake
-                    err = io.StringIO()
-                    with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(err):
-                        reader("v1.0.15")
+                    saved_path = os.environ.get("PATH")
+                    os.environ["PATH"] = str(empty)
+                    out, err = io.StringIO(), io.StringIO()
+                    try:
+                        with self.assertRaises(SystemExit) as caught, contextlib.redirect_stdout(out), \
+                                contextlib.redirect_stderr(err):
+                            reader("v1.0.15")
+                    finally:
+                        if saved_path is None:
+                            os.environ.pop("PATH", None)
+                        else:
+                            os.environ["PATH"] = saved_path
                     self.assertEqual(caught.exception.code, 2)
-                    self.assertIn("could not verify: could not read", err.getvalue())
+                    # Claim 6: the gate output is fully determined, so the exact stdout and
+                    # stderr lines are asserted; each status is reported in exactly one
+                    # line, on stderr, and any further line on either stream, in any
+                    # wording, fails.
+                    self.assertEqual(
+                        err.getvalue().splitlines(), [f"{self.CV}the gh CLI is not available"],
+                        err.getvalue(),
+                    )
+                    self.assertEqual(out.getvalue().splitlines(), [], out.getvalue())
 
     def test_undecodable_immutable_read_does_not_hide_checksum_drift(self):
         # U3: the date check stops with exit 2 and the checksum drift is
@@ -1972,6 +2033,65 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(len(attempts), 2)
         self.assertIn("is not published yet", out)
         self.assertNotIn("Nothing to reconcile", out)
+
+    def test_failed_first_load_combines_with_a_drift_or_mismatch_verdict(self):
+        # DISCOVERY 9 (LOW 2): main combines the load result with the check
+        # result through max. The load result is 0 or 3 and a drift or date
+        # mismatch verdict is 1, so a failed first load (3) wins over the
+        # verdict, and a clean load (0) leaves the verdict (1). The check
+        # retries the load, so the verdict is still reached and reported.
+        # This kills code = code, code = load_code and
+        # code = min(load_code, code) at the combining line of main.
+        failed = "could not load skill-release-date.py (the extractor is unavailable): flaky"
+        drift = "Release checksum drift found:"
+        mismatch = "Release date inconsistency found:"
+        for label, site_sum, published_at, flaky_load, expected, reports in (
+            ("failed load beside checksum drift", OTHER_SUM, "2026-11-15T09:30:00Z", True, 3, [drift]),
+            ("failed load beside a date mismatch", ZIP_SUM, "2026-11-16T00:00:01Z", True, 3, [mismatch]),
+            ("failed load beside drift and a date mismatch", OTHER_SUM, "2026-11-16T00:00:01Z", True, 3,
+             [mismatch, drift]),
+            ("clean load beside checksum drift", OTHER_SUM, "2026-11-15T09:30:00Z", False, 1, [drift]),
+            ("clean load beside a date mismatch", ZIP_SUM, "2026-11-16T00:00:01Z", False, 1, [mismatch]),
+        ):
+            with self.subTest(label):
+                self.fixtures(AHEAD, site_sum, AHEAD, "Released: 2026-11-15  ")
+                self.published(published_at)
+                saved = (gate.RELEASE_DATE, gate._load_release_date_tool)
+                real = gate._load_release_date_tool
+                attempts = []
+
+                def flaky():
+                    attempts.append(len(attempts))
+                    if flaky_load and len(attempts) == 1:
+                        gate._unavailable(failed)
+                    return real()
+
+                gate.RELEASE_DATE = None
+                gate._load_release_date_tool = flaky
+                try:
+                    code, out, err = self.main_reports()
+                finally:
+                    gate.RELEASE_DATE, gate._load_release_date_tool = saved
+                self.assertEqual(code, expected, (out, err))
+                self.assertEqual(len(attempts), 2 if flaky_load else 1)
+                self.assertEqual(
+                    err.splitlines(), [f"check-release-checksum-live: {failed}"] if flaky_load else [], err
+                )
+                lines = out.splitlines()
+                self.assertEqual([line for line in lines if line in (drift, mismatch)], reports, out)
+                if mismatch in reports:
+                    start = lines.index(mismatch)
+                    self.assertEqual(
+                        lines[start:start + 5],
+                        self.date_mismatch("2026-11-15", f"v{AHEAD}", "2026-11-16T00:00:01Z", "2026-11-16"),
+                        out,
+                    )
+                if drift in reports:
+                    start = lines.index(drift)
+                    self.assertEqual(lines[start + 1:start + 3], [
+                        f"  - the verify page shows {OTHER_SUM} for version {AHEAD}",
+                        f"  - the published cleanlanguage-{AHEAD}.zip is {ZIP_SUM}",
+                    ], out)
 
     def test_unreleased_version_that_is_not_current_fails(self):
         self.fixtures(BOGUS, OTHER_SUM, CURRENT)
