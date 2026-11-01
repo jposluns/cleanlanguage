@@ -54,8 +54,13 @@
 # errtrace, functrace, noglob, noclobber, keyword, allexport, verbose, xtrace and
 # posix are turned off, extdebug and expand_aliases are unset, aliases are
 # removed, and the EXIT, ERR, DEBUG and RETURN traps are cleared. Its own
-# variables carry the __ci_status_ prefix, and an assignment that fails ends in
-# the cannot-find refusal, never in the exec.
+# variables carry the __ci_status_ prefix. Each assignment is made by declare
+# with a || fallback, because bash abandons the whole command around a plain
+# assignment to a readonly name, fallback included; so a name that cannot be
+# assigned ends in the cannot-find refusal, never in the exec. The resolver
+# capture is the one plain assignment, to a name first assigned by declare, and
+# the checks below refuse its nonzero status; a failed read of the fd 255 flags
+# ends its loop.
 # The wrapper next refuses with status 3 under a restricted shell, which would
 # refuse the redirect and the exec below and exit 1, the code for a failed check.
 # Restricted mode is read from $- as well as from the restricted_shell option,
@@ -160,17 +165,21 @@ __ci_status_refuse() {
 if shopt -q restricted_shell || [[ "$-" == *r* ]]; then
   __ci_status_refuse out "ci-status: ci-status.sh cannot run in a restricted shell ($0)"
 fi
-__ci_status_src="${BASH_SOURCE[0]:-}" || __ci_status_refuse err "ci-status: cannot find ci-status.py beside the real ci-status.sh ()"
-__ci_status_find="ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)" ||
+declare __ci_status_src="${BASH_SOURCE[0]:-}" || __ci_status_refuse err "ci-status: cannot find ci-status.py beside the real ci-status.sh ()"
+declare __ci_status_find="ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)" ||
   __ci_status_refuse err "ci-status: cannot find ci-status.py beside the real ci-status.sh ($__ci_status_src)"
 if [ "$0" != "$__ci_status_src" ]; then __ci_status_refuse err "$__ci_status_find"; fi
-__ci_status_text="$__ci_status_src"; while [[ "$__ci_status_text" == *//* ]]; do __ci_status_text="${__ci_status_text//\/\//\/}"; done
+declare __ci_status_text="$__ci_status_src" || __ci_status_refuse err "$__ci_status_find"
+while [[ "$__ci_status_text" == *//* ]]; do
+  declare __ci_status_text="${__ci_status_text//\/\//\/}" || __ci_status_refuse err "$__ci_status_find"
+done
 case "$__ci_status_text" in
   /dev/fd/* | /proc/*) __ci_status_refuse err "$__ci_status_find" ;;
   */*) ;;
   *) __ci_status_refuse err "$__ci_status_find" ;;
 esac
-__ci_status_rc=0 || __ci_status_refuse err "$__ci_status_find"
+declare __ci_status_rc=0 || __ci_status_refuse err "$__ci_status_find"
+declare __ci_status_here="" || __ci_status_refuse err "$__ci_status_find"
 __ci_status_here="$(python3 -I -c '
 import os, stat, sys
 def via_descriptor(path):
@@ -209,7 +218,7 @@ try:
 except OSError:
     sys.exit(4)
 print(os.path.join(os.path.dirname(wrapper), ""))
-' "$__ci_status_src")" || __ci_status_rc=$?
+' "$__ci_status_src")" || declare __ci_status_rc=$? || __ci_status_refuse err "$__ci_status_find"
 if [ "$__ci_status_rc" = 4 ]; then
   __ci_status_refuse err "ci-status: cannot read ci-status.py beside the real ci-status.sh ($__ci_status_src)"
 fi
@@ -218,10 +227,14 @@ if [ "$__ci_status_rc" != 0 ] || [ -z "$__ci_status_here" ] ||
   ! [ "${__ci_status_here}ci-status.sh" -ef /dev/fd/255 ]; then
   __ci_status_refuse err "$__ci_status_find"
 fi
-__ci_status_flags=""
+declare __ci_status_flags="" || __ci_status_refuse err "$__ci_status_find"
+declare __ci_status_key="" || __ci_status_refuse err "$__ci_status_find"
+declare __ci_status_value="" || __ci_status_refuse err "$__ci_status_find"
 if [ -r "/proc/$$/fdinfo/255" ]; then
   while read -r __ci_status_key __ci_status_value; do
-    if [ "$__ci_status_key" = "flags:" ]; then __ci_status_flags="$__ci_status_value"; fi
+    if [ "$__ci_status_key" = "flags:" ]; then
+      declare __ci_status_flags="$__ci_status_value" || __ci_status_refuse err "$__ci_status_find"
+    fi
   done < "/proc/$$/fdinfo/255"
 fi
 case "$__ci_status_flags" in

@@ -595,6 +595,10 @@ run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT
 # removed, a symlink named ".../h.sh (deleted)" to a decoy copy of the wrapper
 # beside the planted ci-status.py, and bash run on /dev//fd/9 (slashes) or on a
 # symlink to /dev/fd/9 (link); the hold forms also pass fd 255 open on the decoy.
+# roflags and rotext run bash with a BASH_ENV file that marks the wrapper
+# variable __ci_status_flags (with a close-on-exec value) or __ci_status_text
+# (with a passing path) readonly, so the assignment fails: the wrapper must give
+# the cannot-find refusal, never run the gate on the value the caller set.
 # hold255self passes fd 255 open on the real copied wrapper and runs it normally,
 # so only the close-on-exec check can refuse it. dotdotproc and dotdotdevfd
 # open the real copied wrapper as fd 9 and run bash on cwd/L/../fd/9, with L a
@@ -723,6 +727,12 @@ PY
     *" setr "*)
       printf "set -r\n" > "$tmp/setr.sh"
       entry=(env BASH_ENV="$tmp/setr.sh" bash "$tools/ci-status.sh") ;;
+    *" roflags "*)
+      printf "readonly __ci_status_flags=2000000\n" > "$tmp/ro.sh"
+      entry=(env BASH_ENV="$tmp/ro.sh" bash "$tools/ci-status.sh") ;;
+    *" rotext "*)
+      printf "readonly __ci_status_text=/ok/ci-status.sh\n" > "$tmp/ro.sh"
+      entry=(env BASH_ENV="$tmp/ro.sh" bash "$tools/ci-status.sh") ;;
     *" setrsourced "*)
       path="$bin:$tools:$PATH"
       entry=(bash -c 'set -r; . ci-status.sh "$@"; s=$?; printf "after=%s\n" "$s"; exit "$s"' bash) ;;
@@ -799,6 +809,8 @@ run_wrapper_case "descriptor decoy run through a symlink to /dev/fd/9 fails clos
 run_wrapper_case "descriptor decoy as /dev//fd/9 with fd 255 held on the decoy fails closed with exit 3" 3 fdslasheshold
 run_wrapper_case "descriptor decoy through a symlink with fd 255 held on the decoy fails closed with exit 3" 3 fdlinkhold
 run_wrapper_case "fd 255 inherited from the caller fails closed with exit 3" 3 hold255self
+run_wrapper_case "readonly __ci_status_flags from BASH_ENV fails closed with exit 3" 3 roflags
+run_wrapper_case "readonly __ci_status_text from BASH_ENV fails closed with exit 3" 3 rotext
 run_wrapper_case "real wrapper as L/../fd/9 with L to /proc/self/fd fails closed with exit 3" 3 dotdotproc
 run_wrapper_case "real wrapper as L/../fd/9 with L to /dev/fd fails closed with exit 3" 3 dotdotdevfd
 run_wrapper_case "directory descriptor /dev//fd/9/ci-status.sh never runs a planted gate" A dirfd
@@ -919,7 +931,8 @@ else printf "FAIL import failure exits 3 (got %s, want 3)\n" "$import_got"; fail
 # gate runs in process with os.waitpid replaced by one that raises
 # ChildProcessError, as a lost exit status (ECHILD) does. The real gh-running
 # code path must read that as unreadable (exit 3), never as exit 0, whatever
-# CPython subprocess does with ECHILD.
+# CPython subprocess does with ECHILD. The gate is imported under -B, so the
+# run writes no __pycache__ beside the tools under test.
 run_lost_status_case() {
   local name="$1"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -931,7 +944,7 @@ case "\$*" in *check-runs*) cat "$tmp/def.json"; exit 1;; *"repo view"*) printf 
 GH
   chmod +x "$bin/gh"
   local got=0
-  PATH="$bin:$PATH" python3 -I -c 'import importlib.util, os, sys
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, sys
 path = sys.argv[1]
 spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
 mod = importlib.util.module_from_spec(spec)
