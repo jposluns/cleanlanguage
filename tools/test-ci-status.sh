@@ -371,6 +371,103 @@ run_case "zero-timeout wait window fails closed" "$GA_IN_PROGRESS" "" "" 3 --wai
 run_case "real cloudflare-workers-and-pages slug satisfies the required check" "$REAL_CLOUDFLARE" "" "" 0
 run_timed_case "wait stops near the deadline, not a whole interval past it" "$GA_IN_PROGRESS" 4 2 --wait --timeout 2 --interval 5
 
+# Commit sha resolution (backlog row 86). Each case builds a throwaway git
+# repository with fixed identities and dates, so its commit shas are the same on
+# every machine and need no network; copies ci-status.sh and ci-status.py into
+# it, because an abbreviated sha is resolved in the clone that holds the tool;
+# and serves a green reading from a fake gh that logs every call. The case
+# asserts the exit code and the exact check-runs path, or that no check-runs
+# call was made at all when the sha is refused.
+#
+# Fixed commits over the empty tree: message c63 gives 0c83f120..., message c502
+# gives 0c83a6fc..., so the prefix 0c83 is ambiguous between two commits and 0c83f
+# names one. The case fails closed if the shas ever differ from these.
+C63=0c83f120fcc4630694465bcf89f7415a21d54dba
+C502=0c83a6fc66ee370a161052bcdc334a4f86167999
+
+# run_sha_case NAME SHA WANT EXPECTED_PATH_SHA ENV_ASSIGNMENT_OR_DASH [EXTRA ci-status ARGS...]
+# EXPECTED_PATH_SHA is the full sha the check-runs call must use, or "none" when
+# no check-runs call may be made. ENV_ASSIGNMENT, if not "-", is passed to env.
+run_sha_case() {
+  local name="$1" sha="$2" want="$3" expect="$4" extra_env="$5"; shift 5
+  local tmp; tmp="$(mktemp -d)"
+  local repo="$tmp/repo" bin="$tmp/bin"; mkdir -p "$repo/tools" "$bin"
+  cp "${here}/ci-status.sh" "${here}/ci-status.py" "$repo/tools/"
+  local g=(env GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+    GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid
+    GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
+    GIT_AUTHOR_DATE=2000-01-01T00:00:00Z GIT_COMMITTER_DATE=2000-01-01T00:00:00Z
+    git -C "$repo")
+  "${g[@]}" init -q .
+  local tree c63 c502 tag
+  tree="$("${g[@]}" mktree < /dev/null)"
+  c63="$("${g[@]}" commit-tree "$tree" -m c63)"
+  c502="$("${g[@]}" commit-tree "$tree" -m c502)"
+  "${g[@]}" update-ref refs/heads/main "$c63"
+  "${g[@]}" tag deadbeef "$c502"
+  tag="$(printf "object %s\ntype commit\ntag v1\ntagger t <t@example.invalid> 946684800 +0000\n\nv1\n" "$c63" | "${g[@]}" mktag)"
+  if [ "$c63" != "$C63" ] || [ "$c502" != "$C502" ] || [ "${#tag}" -ne 40 ]; then
+    printf "FAIL %s (fixture objects differ: %s %s %s)\n" "$name" "$c63" "$c502" "$tag"
+    fails=$((fails + 1)); rm -rf "$tmp"; return
+  fi
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  : > "$tmp/calls"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+printf "%s\n" "\$*" >> "$tmp/calls"
+case "\$*" in
+  *check-runs*) cat "$tmp/def.json" ;;
+  *"repo view"*) printf "owner/name" ;;
+  *) printf "" ;;
+esac
+GH
+  chmod +x "$bin/gh"
+  # The tag sha is only known after mktag, so the token TAGPREFIX stands for its
+  # first 8 characters.
+  if [ "$sha" = TAGPREFIX ]; then sha="${tag:0:8}"; fi
+  local envset=()
+  if [ "$extra_env" != "-" ]; then envset=("$extra_env"); fi
+  # Run from / so the old behaviour (git rev-parse in the working directory)
+  # cannot find the fixture repository by accident.
+  (cd / || exit 99; env "${envset[@]}" PATH="$bin:$PATH" bash "$repo/tools/ci-status.sh" "$sha" \
+    --interval 1 "$@" > "$tmp/out" 2> "$tmp/err")
+  local got=$? ok=1
+  if [ "$got" -ne "$want" ]; then ok=0; fi
+  local runs; runs="$(grep -c check-runs "$tmp/calls")"
+  if [ "$expect" = none ]; then
+    if [ "$runs" -ne 0 ]; then ok=0; fi
+  else
+    local good; good="$(grep -c -F "repos/owner/name/commits/${expect}/check-runs" "$tmp/calls")"
+    if [ "$good" -lt 1 ] || [ "$good" -ne "$runs" ]; then ok=0; fi
+    if ! grep -q -F "reading checks for commit ${expect}" "$tmp/out"; then ok=0; fi
+  fi
+  if [ "$ok" -eq 1 ]; then
+    printf "ok   %s (exit %s)\n" "$name" "$got"
+  else
+    printf "FAIL %s (got exit %s, want %s, path sha %s)\n" "$name" "$got" "$want" "$expect"
+    fails=$((fails + 1))
+  fi
+  rm -rf "$tmp"
+}
+
+run_sha_case "full sha present locally is used as given" "$C63" 0 "$C63" -
+run_sha_case "full sha not present locally is used as given" 1111111111111111111111111111111111111111 0 1111111111111111111111111111111111111111 -
+run_sha_case "upper-case full sha is folded to lower case" 0C83F120FCC4630694465BCF89F7415A21D54DBA 0 "$C63" -
+run_sha_case "unique abbreviation resolves to its full sha" 0c83f 0 "$C63" -
+run_sha_case "ambiguous abbreviation is refused" 0c83 3 none -
+run_sha_case "unknown abbreviation is refused" 37f36851 3 none -
+run_sha_case "abbreviation of a tree is refused" 4b825dc 3 none -
+run_sha_case "abbreviation of a tag object is not peeled" TAGPREFIX 3 none -
+run_sha_case "tag named like a sha is not used as one" deadbeef 3 none -
+run_sha_case "ref name is refused" HEAD 3 none -
+run_sha_case "revision expression is refused" "0c83f~1" 3 none -
+run_sha_case "non-hex value is refused" zzzz 3 none -
+run_sha_case "path-like value is refused" "0c83f/../x" 3 none -
+run_sha_case "three-character abbreviation is refused" 0c8 3 none -
+run_sha_case "41-character value is refused" "${C63}0" 3 none -
+run_sha_case "abbreviation with --repo is refused" 0c83f 3 none - --repo owner/name
+run_sha_case "ambient GIT_DIR cannot redirect the lookup" 0c83f 0 "$C63" GIT_DIR=/nonexistent
+
 if [ "$fails" -eq 0 ]; then
   printf 'all ci-status github-actions fail-safe tests pass
 '

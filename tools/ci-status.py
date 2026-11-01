@@ -35,6 +35,13 @@ red. A commit that legitimately ran neither is a safe false-red, never a
 false-green. Pointing --repo at a repository that does not run both unconditionally
 would downgrade a legitimate green to pending.
 
+The commit is named by its full 40-character sha, used as given, or by an
+abbreviation of 4 to 39 hexadecimal characters. An abbreviation is accepted only
+when the clone that holds this tool has exactly one commit whose sha starts with
+it; it is then replaced by that full sha before any API call. A ref name such as
+HEAD or main, a revision expression, or any other value is refused (exit 3), so
+the API path is built only from a full sha, and the full sha used is printed.
+
 Usage:
   ci-status.py <sha>                     Report once and exit.
   ci-status.py <sha> --wait              Poll until the checks settle.
@@ -51,12 +58,17 @@ Exit codes:
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 import sys
 import time
 
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
 MAX_DIGITS = 9  # keeps a timeout/interval well inside a machine int, rejecting overflow
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
+MIN_ABBREV = 4  # git rev-parse --disambiguate lists nothing for fewer hex digits
+TOOL_DIR = os.path.dirname(os.path.realpath(__file__))
 
 
 def die(message: str) -> "NoReturn":  # type: ignore[name-defined]
@@ -93,7 +105,18 @@ def parse_args(argv):
         die("usage: ci-status.py <sha> [--wait] [--timeout N] [--interval N] [--repo owner/name]")
     if interval <= 0:
         die("--interval must be above zero")
-    return sha, repo, wait, timeout, interval
+    return _commit_name(sha), repo, wait, timeout, interval
+
+
+def _commit_name(value: str) -> str:
+    """Accept only a hexadecimal object name: a ref name, a revision expression, or
+    a path-like value is refused, so a moving ref is never read as a fixed commit and
+    the API path is built only from hex digits. Upper case is folded to lower case."""
+    if not (value.isascii() and re.fullmatch(r"[0-9A-Fa-f]+", value)):
+        die(f"{ascii(value)} is not a commit sha; pass the full 40-character sha")
+    if not MIN_ABBREV <= len(value) <= 40:
+        die(f"{value} is not 4 to 40 hexadecimal characters; pass the full 40-character sha")
+    return value.lower()
 
 
 def _whole(flag: str, value: str) -> int:
@@ -114,7 +137,7 @@ def infer_repo(timeout: float) -> str:
     try:
         proc = subprocess.run(
             ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
-            capture_output=True, timeout=timeout,
+            cwd=TOOL_DIR, capture_output=True, timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired):
         return die("could not infer the repository; pass --repo owner/name")
@@ -127,23 +150,77 @@ def infer_repo(timeout: float) -> str:
     return out or die("could not infer the repository; pass --repo owner/name")
 
 
-def resolve_sha(sha: str, timeout: float) -> str:
-    # Bounded and byte-decoded like read_checks; a hung or non-UTF-8 git must not
-    # block or crash, so an unresolvable ref simply falls back to the given sha.
-    if timeout <= 0:
-        return sha
+def _git(args, deadline: float, stdin: bytes = b""):
+    """Run git in the clone that holds this tool, bounded by the wait window. Every
+    ambient GIT_ variable is removed first, so GIT_DIR, GIT_OBJECT_DIRECTORY or a
+    similar variable cannot point the lookup at another repository."""
+    remaining = deadline - time.time()
+    if remaining <= 0:
+        die("the wait window closed before the sha was resolved; pass the full 40-character sha")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     try:
-        proc = subprocess.run(
-            ["git", "rev-parse", sha], capture_output=True, timeout=timeout,
+        return subprocess.run(
+            ["git", *args], cwd=TOOL_DIR, env=env, input=stdin,
+            capture_output=True, timeout=remaining,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return sha
-    if proc.returncode != 0:
-        return sha
+        return die("could not run git in the local clone; pass the full 40-character sha")
+
+
+def _hex_names(raw: bytes, prefix: str) -> list:
     try:
-        return proc.stdout.decode("utf-8").strip() or sha
+        names = raw.decode("ascii").split()
     except UnicodeDecodeError:
+        return die("git returned unreadable object names; pass the full 40-character sha")
+    for name in names:
+        if not (FULL_SHA.fullmatch(name) and name.startswith(prefix)):
+            die("git returned an unexpected object name; pass the full 40-character sha")
+    return names
+
+
+def resolve_sha(sha: str, deadline: float) -> str:
+    """Return the full sha to read. A full 40-character sha is used as given: it names
+    one object, and a sha that is not a commit of the repository fails the API read
+    (exit 3). An abbreviation is refused unless the local clone has exactly one commit
+    whose sha starts with it. Refs are never consulted: --disambiguate lists objects
+    by prefix only, so a branch or tag named like a sha cannot stand in for one, and a
+    tag object is not peeled to the commit it points at. Any failure exits 3; nothing
+    falls back to the value as given."""
+    if FULL_SHA.fullmatch(sha):
         return sha
+    listed = _git(["rev-parse", f"--disambiguate={sha}"], deadline)
+    if listed.returncode != 0:
+        die(f"could not resolve {sha} in the local clone; pass the full 40-character sha")
+    names = _hex_names(listed.stdout, sha)
+    if not names:
+        die(f"{sha} matches no object in the local clone; pass the full 40-character sha")
+    typed = _git(
+        ["cat-file", "--batch-check=%(objectname) %(objecttype)"], deadline,
+        stdin="".join(f"{name}\n" for name in names).encode("ascii"),
+    )
+    if typed.returncode != 0:
+        die(f"could not read object types for {sha}; pass the full 40-character sha")
+    try:
+        lines = typed.stdout.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        return die("git returned unreadable object types; pass the full 40-character sha")
+    if len(lines) != len(names):
+        die(f"could not read object types for {sha}; pass the full 40-character sha")
+    commits = []
+    for line in lines:
+        name, _, kind = line.partition(" ")
+        if name not in names:
+            die("git returned an unexpected object name; pass the full 40-character sha")
+        if kind == "commit":
+            commits.append(name)
+    if len(commits) > 1:
+        die(
+            f"{sha} is ambiguous: {len(commits)} commits in the local clone start with it; "
+            "pass the full 40-character sha"
+        )
+    if not commits:
+        die(f"{sha} matches no commit in the local clone; pass the full 40-character sha")
+    return commits[0]
 
 
 def _no_duplicate_keys(pairs):
@@ -348,9 +425,17 @@ def main() -> int:
     # Create the deadline before the preflight calls so every child read, including
     # gh repo view and git rev-parse, is bounded by the wait window.
     deadline = time.time() + timeout
+    if repo and not FULL_SHA.fullmatch(sha):
+        die(
+            "an abbreviated sha is resolved in the local clone, which cannot answer for "
+            "another repository; pass the full 40-character sha with --repo"
+        )
+    full_sha = resolve_sha(sha, deadline)
     if not repo:
         repo = infer_repo(deadline - time.time())
-    full_sha = resolve_sha(sha, deadline - time.time())
+    if full_sha != sha:
+        sys.stdout.write(f"ci-status: resolved {sha} to commit {full_sha} in the local clone\n")
+    sys.stdout.write(f"ci-status: reading checks for commit {full_sha} in {repo}\n")
 
     confirming = False
     confirmed_snapshot = None
