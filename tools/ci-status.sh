@@ -10,14 +10,41 @@
 #   3 unreadable, no checks, or usage error.
 # -I isolates the interpreter: PYTHONPATH, the user site directory and the script
 # directory cannot shadow a standard-library import used by the gate.
-# os.path.realpath resolves a symlinked wrapper without depending on GNU readlink, so
-# the real ci-status.py beside the real file runs. The directory is printed with a
-# trailing slash, so command substitution cannot strip a newline from its name. If
-# the resolution fails, or the resolved directory holds no regular ci-status.py, the
-# wrapper exits 3 rather than run a ci-status.py from the caller working directory.
-here="$(python3 -I -c "import os, sys; print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])), \"\"))" "$0")" || here=""
-if [ -z "$here" ] || [ ! -f "${here}ci-status.py" ]; then
-  printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\n" "$0" >&2
+# The wrapper locates itself from BASH_SOURCE[0], never from $0 alone. It exits
+# 3, and runs no ci-status.py, when it is sourced rather than executed, when it is
+# read from standard input (BASH_SOURCE[0] is empty), when BASH_SOURCE[0] holds no
+# "/" (a bare name is a PATH or working-directory lookup), or when $0 differs from
+# BASH_SOURCE[0] (as in "bash ci-status.sh" found through PATH, where $0 is the
+# bare name even though bash 5.3 sets BASH_SOURCE[0] to the full path). Executed
+# through PATH, it receives its full path as both and runs as usual.
+# os.path.realpath resolves a symlinked wrapper without depending on GNU readlink.
+# The resolved wrapper must be an existing regular file, and the ci-status.py
+# beside it must be a regular file that is not a symlink, or the wrapper exits 3.
+# The directory is printed with a trailing slash, so command substitution cannot
+# strip a newline from its name.
+# Residual: python3, and the gh that ci-status.py runs, are found through PATH, so
+# a different python3 or gh earlier on PATH is outside what this wrapper checks.
+src="${BASH_SOURCE[0]:-}"
+here=""
+if ! (return 0 2>/dev/null) && [ "$0" = "$src" ]; then
+  case "$src" in
+    */*)
+      here="$(python3 -I -c '
+import os, stat, sys
+try:
+    wrapper = os.path.realpath(sys.argv[1])
+    gate = os.path.join(os.path.dirname(wrapper), "ci-status.py")
+    ok = stat.S_ISREG(os.stat(wrapper).st_mode) and stat.S_ISREG(os.lstat(gate).st_mode)
+except OSError:
+    ok = False
+if not ok:
+    sys.exit(1)
+print(os.path.join(os.path.dirname(wrapper), ""))
+' "$src")" || here="" ;;
+  esac
+fi
+if [ -z "$here" ] || [ ! -f "${here}ci-status.py" ] || [ -L "${here}ci-status.py" ]; then
+  printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\n" "$src" >&2
   exit 3
 fi
 exec python3 -I "${here}ci-status.py" "$@"

@@ -396,7 +396,8 @@ NL="$(printf "\n.")"; NL="${NL%.}"
 # to pass the full 40-character sha), link (run ci-status.py through a symlink
 # in another directory instead of through ci-status.sh), wraplink (run
 # ci-status.sh through a symlink named ci-status.sh in another directory that
-# holds no ci-status.py, so only a wrapper that resolves the link finds the gate).
+# holds no ci-status.py, so only a wrapper that resolves the link finds the gate),
+# dup (stderr refuses a repeated --repo, --timeout or --interval).
 run_contract_case() {
   local name="$1" want="$2" expect="$3" repo_want="$4" view="$5" envspec="$6" checks="$7"; shift 7
   local tmp; tmp="$(mktemp -d)"
@@ -469,6 +470,10 @@ GH
         fi ;;
       hint)
         if ! grep -q -F "pass the full 40-character sha" "$tmp/err"; then ok=0; why="$why hint"; fi ;;
+      dup)
+        if ! grep -q -E "more than one --(repo|timeout|interval) given" "$tmp/err"; then
+          ok=0; why="$why dup"
+        fi ;;
       *) ;;
     esac
   done
@@ -532,13 +537,23 @@ run_contract_case "second -- is an operand, not an option" 3 nogh owner/name own
 run_contract_case "PYTHONPATH shadowing does not change the result" 0 "$C1" owner/name owner/name SHADOW - "$C1"
 run_contract_case "symlinked copy binds to the clone that holds the real file" 0 "$C1" owner/name owner/name - "link pwd" "$C1"
 run_contract_case "symlinked wrapper in another directory runs the real ci-status.py" 0 "$C1" owner/name owner/name - "wraplink pwd first" "$C1"
+# A repeated --repo, --timeout or --interval is refused, never silently replaced.
+# run_contract_case already passes --interval 1, so one more --interval repeats it.
+run_contract_case "second --repo is refused" 3 nogh owner/name owner/name - dup --repo owner/name --repo other/name "$C1"
+run_contract_case "second --timeout is refused" 3 nogh owner/name owner/name - dup --wait --timeout 5 --timeout 6 "$C1"
+run_contract_case "second --interval is refused" 3 nogh owner/name owner/name - dup --interval 2 "$C1"
 
 # Wrapper path resolution fails closed (VERIFY 1.1 finding 1). Each case runs
 # ci-status.sh from a working directory that holds a planted ci-status.py, which
 # records that it ran. The planted file must never run. RESOLVE is a space-separated
 # list: noreadlink (a readlink first on PATH that exits 1), nopyresolve (a python3
 # first on PATH that exits 1 for python3 -I -c and runs the real python3 otherwise),
-# nopy (the tools directory holds ci-status.sh only).
+# nopy (the tools directory holds ci-status.sh only). One more token may name how
+# the wrapper is invoked: sourced (bash -c sources it, so $0 is bash), stdin (bash
+# -s reads it from a pipe), barename (bash ci-status.sh, found through PATH),
+# pylink (a copied wrapper beside a ci-status.py that is a symlink to the planted
+# file), or pathexec (ci-status.sh executed through PATH). Without one, the
+# wrapper runs as bash with its absolute path.
 # run_wrapper_case NAME WANT RESOLVE
 run_wrapper_case() {
   local name="$1" want="$2" resolve="$3"
@@ -570,8 +585,25 @@ exec "$real_py" "\$@"
 PY
       chmod +x "$bin/python3" ;;
   esac
-  (cd "$cwd" || exit 99; PATH="$bin:$PATH" bash "$tools/ci-status.sh" \
-    --repo owner/name --interval 1 "$C1" > "$tmp/out" 2> "$tmp/err")
+  local entry=(bash "$tools/ci-status.sh") feed="" path="$bin:$PATH"
+  case " $resolve " in
+    *" sourced "*) entry=(bash -c '. "$1" "${@:2}"' bash "$tools/ci-status.sh") ;;
+    *" stdin "*) feed="$tools/ci-status.sh"; entry=(bash -s --) ;;
+    *" barename "*) path="$bin:$tools:$PATH"; entry=(bash ci-status.sh) ;;
+    *" pylink "*)
+      tools="$tmp/copy"; mkdir -p "$tools"
+      cp "${here}/ci-status.sh" "$tools/"
+      ln -s "$cwd/ci-status.py" "$tools/ci-status.py"
+      entry=(bash "$tools/ci-status.sh") ;;
+    *" pathexec "*)
+      chmod +x "$tools/ci-status.sh"; path="$bin:$tools:$PATH"; entry=(ci-status.sh) ;;
+  esac
+  (cd "$cwd" || exit 99
+    if [ -n "$feed" ]; then
+      cat "$feed" | PATH="$path" "${entry[@]}" --repo owner/name --interval 1 "$C1"
+    else
+      PATH="$path" "${entry[@]}" --repo owner/name --interval 1 "$C1"
+    fi > "$tmp/out" 2> "$tmp/err")
   local got=$? ok=1 why=""
   if [ "$got" -ne "$want" ]; then ok=0; why="$why exit"; fi
   if [ -e "$tmp/planted-ran" ]; then ok=0; why="$why planted-ran"; fi
@@ -595,6 +627,11 @@ run_wrapper_case "failing readlink does not run a planted ./ci-status.py" 0 nore
 run_wrapper_case "failed path resolution fails closed with exit 3" 3 nopyresolve
 run_wrapper_case "failed resolution with failing readlink fails closed with exit 3" 3 "noreadlink nopyresolve"
 run_wrapper_case "wrapper with no ci-status.py beside it fails closed with exit 3" 3 nopy
+run_wrapper_case "sourced wrapper fails closed with exit 3" 3 sourced
+run_wrapper_case "wrapper read from standard input fails closed with exit 3" 3 stdin
+run_wrapper_case "bare wrapper name found through PATH fails closed with exit 3" 3 barename
+run_wrapper_case "symlinked ci-status.py beside a copied wrapper fails closed with exit 3" 3 pylink
+run_wrapper_case "wrapper executed through PATH runs the real gate" 0 pathexec
 
 if [ "$fails" -eq 0 ]; then
   printf 'all ci-status github-actions fail-safe tests pass

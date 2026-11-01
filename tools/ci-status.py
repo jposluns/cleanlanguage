@@ -61,7 +61,13 @@ checkout if there is one; pass --repo for such a copy. Git configuration that gh
 reaches through HOME, XDG_CONFIG_HOME or the system git configuration, such as a
 url.<base>.insteadOf rewrite or a remote.<name>.gh-resolved setting, can still
 redirect the repository that gh infers; passing --repo avoids that inference.
-Other gh configuration, such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged.
+The inferred repository comes from gh repo view run in that directory, so it
+depends on the local git configuration of that clone and on which of its remotes
+gh selects; passing --repo avoids that dependence too. Other gh configuration,
+such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged. python3 and gh are
+found through PATH, so a different python3 or gh earlier on PATH is outside the
+trust boundary of this tool. --timeout, --interval and --repo may each be given
+once; a second use is refused (exit 3).
 
 Usage:
   ci-status.py <sha>                     Report once and exit.
@@ -110,6 +116,7 @@ def parse_args(argv):
     timeout = 900
     interval = 15
     options_ended = False
+    given = set()  # --timeout, --interval and --repo seen so far
     it = iter(argv)
     for arg in it:
         if options_ended or not arg.startswith("-"):
@@ -122,12 +129,17 @@ def parse_args(argv):
             options_ended = True
         elif arg == "--wait":
             wait = True
-        elif arg == "--timeout":
-            timeout = _whole("--timeout", next(it, ""))
-        elif arg == "--interval":
-            interval = _whole("--interval", next(it, ""))
-        elif arg == "--repo":
-            repo = _repo_name(next(it, ""), "--repo")
+        elif arg in ("--timeout", "--interval", "--repo"):
+            # A repeated option would silently replace the earlier value.
+            if arg in given:
+                die(f"more than one {arg} given")
+            given.add(arg)
+            if arg == "--timeout":
+                timeout = _whole("--timeout", next(it, ""))
+            elif arg == "--interval":
+                interval = _whole("--interval", next(it, ""))
+            else:
+                repo = _repo_name(next(it, ""), "--repo")
         else:
             die(f"unknown option {arg}")
     if sha is None:
