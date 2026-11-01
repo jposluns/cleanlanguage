@@ -507,7 +507,9 @@ run_case "empty head_sha -> unreadable" "$(head_runs '""')" "" "" 3
 # "- run: |" the column of run, not of the dash; and comments. Any other line,
 # such as a quoted, anchored, aliased, tagged, explicit or merge key, a flow
 # mapping, a duplicate key, a tab or a non-ASCII character, fails the check and
-# is named by its line number, as does a failure of the checker itself. Within
+# is named by its line number. A failure of the checker itself, or a workflow
+# that is missing or cannot be read as UTF-8 text, also fails the check, and is
+# named shape-check-error or unreadable-workflow, not by a line number. Within
 # that subset the top level holds only name, on, permissions, env and jobs. The
 # on: block holds only a pull_request trigger with nothing under it and a push
 # trigger filtered to main alone. The permissions block is exactly contents:
@@ -530,10 +532,13 @@ run_case "empty head_sha -> unreadable" "$(head_runs '""')" "" "" 3
 # any key or line outside that shape fails here, instead of turning every read
 # into a forever-pending one or a false green. Residual: what the commands the
 # steps run and the pinned actions do, including anything they write for later
-# steps, such as a BASH_ENV line in the GITHUB_ENV file, and the other jobs of
-# the workflow, are not checked, so a step changed to do nothing still reads
-# green.
+# steps, such as a BASH_ENV line in the GITHUB_ENV file, and what the other
+# jobs of the workflow run, are not checked, so a step changed to do nothing
+# still reads green.
 # wf_shape FILE JOB: print a word for each shape problem found, nothing if none.
+# A line outside the subset, or a file that cannot be read as UTF-8, ends the
+# check with that one word; a failure of the checker itself exits non-zero with
+# nothing on standard output.
 wf_shape() {
   python3 -I - "$1" "$2" <<'PY'
 import re
@@ -550,8 +555,8 @@ except (OSError, UnicodeDecodeError):
 KEY = r"[A-Za-z_][A-Za-z0-9_-]*"
 COMMENT = r"(?:\s+#.*)?"
 QUOTED = r"""(?:"[^"\\]*"|'[^']*')"""
-# The values that can change whether or how the steps run, pinned to what the
-# 3 workflows use today.
+# The only forms accepted for the CLAUDE_CODE_VERSION value and for a uses:
+# value, matching what the 3 workflows use today.
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 PINNED_ACTION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*@[0-9a-f]{40}")
 PLAIN = r"[A-Za-z0-9_$./][^#]*?"

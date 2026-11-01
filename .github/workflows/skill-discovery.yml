@@ -23,7 +23,8 @@ name: Skill discovery
 # in the workflow can skip the job or its steps, or pass over a failed step, and
 # still read as passing; any line outside that shape fails the check. What the
 # commands the steps run and the pinned actions do, including anything they
-# write for later steps, and the other jobs of the workflow, are not checked.
+# write for later steps, and what the other jobs of the workflow run, are not
+# checked.
 
 on:
   pull_request:
