@@ -57,8 +57,11 @@ gh call runs with GH_REPO, GH_HOST and every GIT_ variable removed from its
 environment, so none of them can redirect the repository lookup or the API
 call. Residual: gh finds the clone through git, which searches upward from that
 directory, so a copy outside any checkout infers the repository of an enclosing
-checkout if there is one; pass --repo for such a copy. Other gh configuration,
-such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged.
+checkout if there is one; pass --repo for such a copy. Git configuration that gh
+reaches through HOME, XDG_CONFIG_HOME or the system git configuration, such as a
+url.<base>.insteadOf rewrite or a remote.<name>.gh-resolved setting, can still
+redirect the repository that gh infers; passing --repo avoids that inference.
+Other gh configuration, such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged.
 
 Usage:
   ci-status.py <sha>                     Report once and exit.

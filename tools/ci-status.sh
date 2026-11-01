@@ -10,6 +10,14 @@
 #   3 unreadable, no checks, or usage error.
 # -I isolates the interpreter: PYTHONPATH, the user site directory and the script
 # directory cannot shadow a standard-library import used by the gate.
-# readlink -f resolves a symlinked wrapper, so the real ci-status.py beside the real file runs.
-here="$(dirname -- "$(readlink -f -- "$0")")"
-exec python3 -I "${here}/ci-status.py" "$@"
+# os.path.realpath resolves a symlinked wrapper without depending on GNU readlink, so
+# the real ci-status.py beside the real file runs. The directory is printed with a
+# trailing slash, so command substitution cannot strip a newline from its name. If
+# the resolution fails, or the resolved directory holds no regular ci-status.py, the
+# wrapper exits 3 rather than run a ci-status.py from the caller working directory.
+here="$(python3 -I -c "import os, sys; print(os.path.join(os.path.dirname(os.path.realpath(sys.argv[1])), \"\"))" "$0")" || here=""
+if [ -z "$here" ] || [ ! -f "${here}ci-status.py" ]; then
+  printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\n" "$0" >&2
+  exit 3
+fi
+exec python3 -I "${here}ci-status.py" "$@"

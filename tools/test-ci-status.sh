@@ -533,6 +533,69 @@ run_contract_case "PYTHONPATH shadowing does not change the result" 0 "$C1" owne
 run_contract_case "symlinked copy binds to the clone that holds the real file" 0 "$C1" owner/name owner/name - "link pwd" "$C1"
 run_contract_case "symlinked wrapper in another directory runs the real ci-status.py" 0 "$C1" owner/name owner/name - "wraplink pwd first" "$C1"
 
+# Wrapper path resolution fails closed (VERIFY 1.1 finding 1). Each case runs
+# ci-status.sh from a working directory that holds a planted ci-status.py, which
+# records that it ran. The planted file must never run. RESOLVE is a space-separated
+# list: noreadlink (a readlink first on PATH that exits 1), nopyresolve (a python3
+# first on PATH that exits 1 for python3 -I -c and runs the real python3 otherwise),
+# nopy (the tools directory holds ci-status.sh only).
+# run_wrapper_case NAME WANT RESOLVE
+run_wrapper_case() {
+  local name="$1" want="$2" resolve="$3"
+  local tmp; tmp="$(mktemp -d)"
+  local tools="$tmp/repo/tools" bin="$tmp/bin" cwd="$tmp/cwd"; mkdir -p "$tools" "$bin" "$cwd"
+  cp "${here}/ci-status.sh" "$tools/"
+  case " $resolve " in *" nopy "*) ;; *) cp "${here}/ci-status.py" "$tools/" ;; esac
+  printf "import pathlib\npathlib.Path(\"%s\").touch()\n" "$tmp/planted-ran" > "$cwd/ci-status.py"
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in
+  *check-runs*) cat "$tmp/def.json" ;;
+  *) printf "" ;;
+esac
+GH
+  chmod +x "$bin/gh"
+  case " $resolve " in
+    *" noreadlink "*)
+      printf "#!/usr/bin/env bash\nexit 1\n" > "$bin/readlink"; chmod +x "$bin/readlink" ;;
+  esac
+  case " $resolve " in
+    *" nopyresolve "*)
+      local real_py; real_py="$(command -v python3)"
+      cat > "$bin/python3" <<PY
+#!/usr/bin/env bash
+if [ "\${1:-}" = "-I" ] && [ "\${2:-}" = "-c" ]; then exit 1; fi
+exec "$real_py" "\$@"
+PY
+      chmod +x "$bin/python3" ;;
+  esac
+  (cd "$cwd" || exit 99; PATH="$bin:$PATH" bash "$tools/ci-status.sh" \
+    --repo owner/name --interval 1 "$C1" > "$tmp/out" 2> "$tmp/err")
+  local got=$? ok=1 why=""
+  if [ "$got" -ne "$want" ]; then ok=0; why="$why exit"; fi
+  if [ -e "$tmp/planted-ran" ]; then ok=0; why="$why planted-ran"; fi
+  if [ "$want" -eq 3 ] && ! grep -q -F "ci-status: cannot find ci-status.py" "$tmp/err"; then
+    ok=0; why="$why message"
+  fi
+  if [ "$want" -eq 0 ] && ! grep -q -F "reading checks for commit ${C1}" "$tmp/out"; then
+    ok=0; why="$why sha-line"
+  fi
+  if [ "$ok" -eq 1 ]; then
+    printf "ok   %s (exit %s)\n" "$name" "$got"
+  else
+    printf "FAIL %s (got exit %s, want %s;%s)\n" "$name" "$got" "$want" "$why"
+    fails=$((fails + 1))
+  fi
+  rm -rf "$tmp"
+}
+
+run_wrapper_case "normal path runs the real gate, not a planted ./ci-status.py" 0 -
+run_wrapper_case "failing readlink does not run a planted ./ci-status.py" 0 noreadlink
+run_wrapper_case "failed path resolution fails closed with exit 3" 3 nopyresolve
+run_wrapper_case "failed resolution with failing readlink fails closed with exit 3" 3 "noreadlink nopyresolve"
+run_wrapper_case "wrapper with no ci-status.py beside it fails closed with exit 3" 3 nopy
+
 if [ "$fails" -eq 0 ]; then
   printf 'all ci-status github-actions fail-safe tests pass
 '
