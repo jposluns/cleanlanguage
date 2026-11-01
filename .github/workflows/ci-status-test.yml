@@ -2,12 +2,16 @@ name: CI status tests
 
 # Runs the offline tests for tools/ci-status.sh, the tool that reports the CI
 # verdict for a commit. The tests stub the GitHub CLI, so they need no network
-# and no token; they pin the premise-less github-actions fail-safe (TODO 19):
-# a passing commit with no github-actions check, or one that cannot be read, is
-# not reported green; presence is read from the same reading as the verdict (so a
-# forged or injected check name cannot fabricate it); the same set of checks
-# compares equal regardless of API order; and a wait does not overshoot its
-# deadline.
+# and no token; they pin the required-check fail-safe (TODO 19, backlog row 66):
+# a passing commit missing any of the GitHub Actions checks Plugin manifests,
+# Skill discovery and Agent Plugins manifest (each matched by its exact display
+# name and the github-actions app) or the Cloudflare Pages build, or one that
+# cannot be read, is not reported green; presence is read from the same reading
+# as the verdict (so a forged or injected check name cannot fabricate it); the
+# same set of checks compares equal regardless of API order; and a wait does not
+# overshoot its deadline. The 3 workflows that define those jobs are in the
+# paths filters, because the tests check that each job keeps its declared
+# display name and runs on every pull request and every push to main.
 
 on:
   pull_request:
@@ -16,6 +20,9 @@ on:
       - "tools/ci-status.py"
       - "tools/test-ci-status.sh"
       - ".github/workflows/ci-status-test.yml"
+      - ".github/workflows/plugin-validate.yml"
+      - ".github/workflows/skill-discovery.yml"
+      - ".github/workflows/agent-plugin-manifest.yml"
   push:
     branches:
       - main
@@ -24,6 +31,9 @@ on:
       - "tools/ci-status.py"
       - "tools/test-ci-status.sh"
       - ".github/workflows/ci-status-test.yml"
+      - ".github/workflows/plugin-validate.yml"
+      - ".github/workflows/skill-discovery.yml"
+      - ".github/workflows/agent-plugin-manifest.yml"
 
 permissions:
   contents: read

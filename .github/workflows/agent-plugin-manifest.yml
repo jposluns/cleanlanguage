@@ -4,26 +4,19 @@ name: Agent Plugins manifest
 # malformed or drifted root manifest cannot reach main. Structural, offline, and
 # stdlib-only; also runs the gate's own unit tests.
 #
-# The pull_request trigger carries no paths filter, so this gate reports on every
-# pull request and can be a required check: a path-filtered required check never
-# reports on a pull request outside its paths and blocks the merge as
-# forever-pending. The push trigger keeps its paths filter, because a required
-# check is evaluated on the pull request and the paths it lists cover every file
-# the gate and its tests read, so a push touching none of them cannot change the
-# result.
+# Neither trigger carries a paths filter, so this gate reports on every pull
+# request and on every push to main and can be a required check: a
+# path-filtered required check never reports on a pull request outside its
+# paths and blocks the merge as forever-pending. tools/ci-status.sh insists on
+# this check by its display name, so a main commit without a run of it would
+# read as pending; the push trigger therefore runs on every push to main too.
+# tools/test-ci-status.sh fails if a paths filter returns here.
 
 on:
   pull_request:
   push:
     branches:
       - main
-    paths:
-      - "cleanlanguage/plugin.json"
-      - "cleanlanguage/.claude-plugin/plugin.json"
-      - ".claude-plugin/marketplace.json"
-      - "tools/check-agent-plugin-manifest.py"
-      - "tools/test-agent-plugin-manifest.py"
-      - ".github/workflows/agent-plugin-manifest.yml"
 
 permissions:
   contents: read
