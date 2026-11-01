@@ -410,8 +410,9 @@ jobs:
               exit 1
             fi
             if [ "${remote_tag_sha}" = "${built_commit}" ]; then
-              # A re-run at the same commit. The published assets are immutable,
-              # so keep them; but prove the published release is COMPLETE and
+              # A re-run at the same commit. This workflow never changes the
+              # published assets, so keep them (the readback below confirms the
+              # release is immutable); but prove the published release is COMPLETE and
               # SELF-CONSISTENT before the run ends. Each zip is bound to its
               # checksum by hashing the download DIRECTLY, and each manifest must
               # be exactly one 64-hex digest and the matching basename, so a

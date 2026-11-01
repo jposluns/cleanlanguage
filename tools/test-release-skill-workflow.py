@@ -51,8 +51,9 @@ or a write from inside an action) is not detected; the pinned step list and
 key sets are what keep such a step out.
 
 Item 57 removes the path that re-uploaded the assets of a published release.
-A published release is immutable, so the force input is refused against one
-and only moves the tag of a release that is not yet published. The
+This workflow never republishes a published release, so the force input is
+refused against one and only moves the tag of a release that is not yet
+published. The
 ImmutableReleaseTest cases pin that behaviour and the wording of every
 published-release refusal, and a structural check names any return of an
 asset upload, of a clobbering call other than the verification download, of
@@ -611,6 +612,42 @@ class WorkflowStepTest(unittest.TestCase):
         return dict(line.split("=", 1) for line in self.env_file.read_text(encoding="utf-8").splitlines())
 
 
+# Fix round 11: an unconditional claim that a release or its assets are
+# immutable, or that nothing (or no workflow) can republish one.
+IMMUTABILITY_CLAIM = re.compile(
+    r"\b(releases?|assets?)\b[^.;:]*\b(is|are)\s+immutable\b"
+    r"|\b(nothing|no\s+(other\s+)?workflow|no\s+run)\b[^.;]*\brepublish"
+    r"|\bcannot\s+be\s+republished\b",
+    re.IGNORECASE)
+# The printed lines whose truth the workflow establishes first, by their exact
+# text: the readback line printed after the immutable check, the day-mismatch
+# line printed only after it, and the conditional re-stamping line.
+IMMUTABILITY_CLAIM_ALLOWED = (
+    "echo \"$1: release ${RELEASE_TAG} is immutable; it carries no Released line, so no publication day is checked.\"",
+    "echo \"The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished,"
+    " so the remedy is a corrective new version whose Released line names its own publication day;"
+    " tools/check-release-checksum-live.py reports the same disagreement until then.\" >" + chr(38) + "2",
+    "echo \"Re-stamping the Released line cannot fix this: the published zip carries the Released line of the"
+    " commit it was built from, and an immutable release cannot be republished. If the line at this commit"
+    " was edited after the release, restore the value the published zip carries; otherwise the remedy is a"
+    " corrective new version whose Released line names its own publication day.\" >" + chr(38) + "2",
+)
+CLAIM_MUTANT = "echo \"Every published release is immutable, so no workflow can republish it.\" >" + chr(38) + "2"
+
+
+def immutability_claims(text: str) -> list[str]:
+    """The lines of text, comments excluded, that make an immutability claim
+    and are not allowed by their exact text."""
+    found = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped in IMMUTABILITY_CLAIM_ALLOWED:
+            continue
+        if IMMUTABILITY_CLAIM.search(stripped):
+            found.append(stripped)
+    return found
+
+
 def ignore_lookup_failure(script: str) -> str:
     """The mutant that appends || true to the one tag lookup in a step."""
     lookup = [l for l in script.splitlines() if l.strip().startswith("remote_tag_sha=\"$(" + VCS + " ls-remote ")]
@@ -1123,8 +1160,8 @@ class RerunTest(WorkflowStepTest):
 
 
 class ImmutableReleaseTest(WorkflowStepTest):
-    """Item 57: a published release is immutable. The force input is refused
-    against a published release and only moves the tag of a release that is not
+    """Item 57: this workflow never republishes a published release. The force
+    input is refused against a published release and only moves the tag of a release that is not
     yet published; there is no path that re-uploads published assets, and every
     published-release refusal names a corrective new version, never the force
     input as a remedy. The fake gh proves the shell logic only, never what
@@ -1528,16 +1565,28 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertIn(TAG_GONE, err)
 
     def test_no_printed_text_claims_every_published_release_is_immutable(self):
-        # Fix round 10: an older workflow can republish, so no echo, env
-        # value or description says that a published release is immutable
-        # or that nothing republishes it.
-        for number, line in enumerate(WORKFLOW_TEXT.splitlines(), 1):
-            if line.lstrip().startswith("#"):
-                continue
-            with self.subTest(line=number):
-                self.assertNotIn("A published release is immutable", line)
-                self.assertNotIn("nothing republishes it", line)
-                self.assertNotIn("a published release cannot be republished", line)
+        # Fix round 11: an older workflow can republish, so no printed line,
+        # job env value or input description states, unconditionally, that a
+        # release or its assets are immutable, or that nothing (or no
+        # workflow) can republish one. The allowed lines are the ones whose
+        # truth the workflow establishes first (the readback lines after the
+        # immutable check) and the conditional re-stamping line. Residual:
+        # this is a pattern over known phrasings, and another wording (for
+        # example a claim whose subject is "it") can still slip past it.
+        self.assertEqual(immutability_claims(WORKFLOW_TEXT), [])
+        description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
+        for value in list(job_env().values()) + [description]:
+            with self.subTest(value=value[:60]):
+                self.assertEqual(immutability_claims(value), [])
+        anchor = "              published_release_remedy\n"
+        mutant = WORKFLOW_TEXT.replace(anchor, anchor + "              " + CLAIM_MUTANT + "\n", 1)
+        self.assertNotEqual(mutant, WORKFLOW_TEXT)
+        self.assertEqual(len(immutability_claims(mutant)), 1)
+        for probe in ("Every published release is immutable.", "The published assets are immutable.",
+                      "Nothing can republish it.", "No workflow republishes a release.",
+                      "A release cannot be republished."):
+            with self.subTest(probe=probe):
+                self.assertNotEqual(immutability_claims(probe), [])
 
     def test_every_success_path_reads_back(self):
         # One readback per remaining success path, dated or not.
