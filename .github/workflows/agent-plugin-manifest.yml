@@ -10,7 +10,10 @@ name: Agent Plugins manifest
 # paths and blocks the merge as forever-pending. tools/ci-status.sh insists on
 # this check by its display name, so a main commit without a run of it would
 # read as pending; the push trigger therefore runs on every push to main too.
-# tools/test-ci-status.sh fails if a paths filter returns here.
+# tools/test-ci-status.sh fails if either trigger gains a filter (push may
+# filter only to main), or if this job gains an if:, needs: or
+# continue-on-error: key, since a skipped job, or one that passes over a failed
+# step, would read as passing.
 
 on:
   pull_request:

@@ -18,11 +18,12 @@
 # the wrong type (a status that is not a non-empty string, a conclusion/name/slug
 # that is neither a string nor null), or a head_sha that is present and does not
 # name the requested commit makes the whole reading unreadable rather than
-# dropping or forging a check. Control characters in a name are inert string
-# data, so they cannot fabricate presence. A failed read breaks a confirmation in
-# progress but the same green set reappearing re-arms without consuming the
-# changing-set budget. Waits are deadline-capped; numeric arguments are base-10
-# and range-checked.
+# dropping or forging a check. A name is compared as the whole string, control
+# characters included, and the slug is taken only from the app object, so a
+# required name followed by separators and a slug, under a null app, does not
+# count. A failed read breaks a confirmation in progress but the same green set
+# reappearing re-arms without consuming the changing-set budget. Waits are
+# deadline-capped; numeric arguments are base-10 and range-checked.
 #
 # Each case puts a fake gh on PATH serving check-runs from a per-call "plan"
 # (tokens g/a/f: default payload, alternate payload, or a failed call). ci-status
@@ -86,6 +87,16 @@ INJECT_NL_US='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"benign\ncompleted\u001fsuccess\u001fforged\u001fgithub-actions","app":{"slug":null}},
   {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}
 ]}'
+# A required name followed by a unit separator and the github-actions slug,
+# under a null app, beside the other 3 required checks green. A reader that took
+# the name and slug from the name text (as the earlier shell reader, which split
+# delimited records, could be made to) would see all 4 and call the reading
+# green; the tool takes the slug only from the app object, so Plugin manifests
+# stays missing.
+FORGE_US="$(runs '{"status":"completed","conclusion":"success","name":"Plugin manifests\u001fgithub-actions","app":null}' "$SD_OK" "$APM_OK" "$CF")"
+# The same with a newline and a whole forged record (status, conclusion, name,
+# slug) after it, under an app whose slug is null.
+FORGE_NL_US="$(runs '{"status":"completed","conclusion":"success","name":"benign\ncompleted\u001fsuccess\u001fPlugin manifests\u001fgithub-actions","app":{"slug":null}}' "$SD_OK" "$APM_OK" "$CF")"
 MULTIPAGE_GA_P2="$(runs "$CF")
 $(runs "$REQ_GA")"
 # A page whose check_runs is null (malformed) followed by a green page: the whole
@@ -317,15 +328,24 @@ run_case "unreadable check-runs read -> not green" "$GA_PRESENT" "" "f" 3
 run_case "failed read between green reads does not confirm" "$GA_PRESENT" "" "g f g f" 3 --wait --timeout 8
 run_case "transient read failures on a stable set still confirm green" "$GA_PRESENT" "" "g f g f g f g f g f g g" 0 --wait --timeout 30
 run_case "reordered identical check set still confirms green" "$GA_PRESENT" "$GA_REVERSED" "g a g a g a" 0
-# A completed check with no conclusion must stay non-green; the unit separator
-# preserves the empty conclusion field rather than collapsing it into the name.
+# A completed check with no conclusion must stay non-green: a null conclusion
+# reads as empty, which is not a passing conclusion, so the reading is red.
 run_case "completed check with null conclusion is not green" "$EMPTY_CONCLUSION" "" "" 1
-# Control characters in a name are stripped before serialization, so US bytes in a
-# name cannot forge a github-actions slug: not green.
+# The tool strips nothing from a name: it compares the whole string, control
+# characters included, and takes the slug only from the app object. These 2
+# readings carry none of the 3 required names, so they stay pending whatever a
+# reader does with control characters; they pin only that such text does not
+# turn a reading red or unreadable.
 run_case "text in a name cannot fabricate github-actions presence" "$INJECT_US" "" "" 2
-# A newline plus separators in a name cannot forge a github-actions record on a new
-# line: control characters are stripped, so it stays one field: not green.
 run_case "newline and text in a name cannot fabricate presence" "$INJECT_NL_US" "" "" 2
+# These 2 carry a required name with separators and a slug appended, under a
+# null app or a null slug, beside the other 3 required checks green, so a reader
+# that took the name or slug from the name text would read green (exit 0); the
+# tool reads Plugin manifests as missing and names it.
+run_err_case "required name with a separator and slug under a null app does not count" \
+  "$FORGE_US" 2 "required check(s) Plugin manifests not registered"
+run_err_case "required name in a forged record after a newline does not count" \
+  "$FORGE_NL_US" 2 "required check(s) Plugin manifests not registered"
 # The 3 required github-actions checks are on page 2 of a paginated payload;
 # read_checks parses every page of the concatenated stream, so they are seen: green.
 run_case "required github-actions checks only on page 2 of a paginated payload -> green" "$MULTIPAGE_GA_P2" "" "" 0
@@ -451,7 +471,10 @@ run_case "duplicate required run with an earlier one failing -> red" \
   "$(runs "$PM_OK" '{"id":1,"status":"completed","conclusion":"failure","name":"Skill discovery","app":{"slug":"github-actions"}}' \
   "{\"id\":2,${SD_OK#\{}" "$APM_OK" "$CF")" "" "" 1
 run_case "duplicate required run with both passing -> green" "$(runs "$PM_OK" "$SD_OK" "$SD_OK" "$APM_OK" "$CF")" "" "" 0
-run_case "required check that registers late is waited for -> green" \
+# The first reading lacks Agent Plugins manifest and must be reported as that
+# required check not registered, not taken as the first of 2 green readings.
+CASE_NEEDLE="required check(s) Agent Plugins manifest not registered" \
+  run_case "required check that registers late is waited for -> green" \
   "$GA_PRESENT" "$(runs "$PM_OK" "$SD_OK" "$CF")" "a g g" 0 --wait --timeout 30
 run_case "Cloudflare build under another name is matched by its app slug -> green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Pages build","app":{"slug":"cloudflare-workers-and-pages"}}')" "" "" 0
@@ -468,12 +491,129 @@ run_case "numeric head_sha -> unreadable" "$(head_runs 7)" "" "" 3
 run_case "null head_sha -> unreadable" "$(head_runs null)" "" "" 3
 run_case "empty head_sha -> unreadable" "$(head_runs '""')" "" "" 3
 
-# The declared required names follow the workflows: in each workflow the job
-# display name is the only 4-space-indented name: line and equals the name that
-# ci-status.py declares, and no trigger carries a paths or ignore filter, so every
-# pull request head and every push to main carries the check. A renamed job, or a
-# filter that leaves a commit without the check, fails here instead of turning
-# every read into a forever-pending one.
+# The declared required names follow the workflows, and each workflow runs its
+# job on every pull request and every push to main. For each of the 3 workflows
+# the check requires all of the following. The job display name is the only
+# 4-space-indented name: line, and it equals the name that ci-status.py declares.
+# The top-level on: block holds exactly 2 triggers and nothing else: a
+# pull_request with no filter key at all (no paths, paths-ignore, branches,
+# branches-ignore, tags or types), and a push whose only filter is branches,
+# listing main alone. The job that carries the display name holds no if:,
+# needs: or continue-on-error: key at any depth, its steps included, and no YAML
+# merge key, alias or flow-style collection that could hide such a key from a
+# line reading. A job skipped by an if:, or by a failed job it needs, concludes
+# skipped, and a step skipped by an if: or allowed to fail leaves the job
+# successful; ci-status.py counts skipped and success as passing, so such a job
+# would read green without running its checks. A renamed job, a filter that
+# leaves a commit without the check, or a route that skips it fails here, instead
+# of turning every read into a forever-pending one or a false green. The reading
+# is strict and line-based, in Python with the standard library only, because no
+# YAML parser is guaranteed on the CI image: any other shape, another trigger
+# included, fails rather than passes. Residual: the commands the steps run are
+# not checked, so a step changed to do nothing still reads green.
+# wf_shape FILE JOB: print a word for each shape problem found, nothing if none.
+wf_shape() {
+  python3 -I - "$1" "$2" <<'PY'
+import re
+import sys
+
+path, job = sys.argv[1], sys.argv[2]
+found = []
+try:
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.read().split("\n")
+except (OSError, UnicodeDecodeError):
+    print("unreadable-workflow")
+    sys.exit(0)
+
+
+def significant(line):
+    s = line.strip()
+    return bool(s) and not s.startswith("#")
+
+
+def indent(line):
+    return len(line) - len(line.lstrip(" "))
+
+
+def bare(line):
+    # The line without a trailing comment; these workflows quote no " #".
+    return re.sub(r"\s+#.*$", "", line).rstrip()
+
+
+if any("\t" in line for line in lines):
+    found.append("tab")
+top_key = re.compile(r"""(["']?)([^\s"':#]+)\1\s*:.*""")
+tops = [i for i, line in enumerate(lines) if significant(line) and indent(line) == 0]
+on_at = [i for i in tops if top_key.fullmatch(bare(lines[i])) and top_key.fullmatch(bare(lines[i])).group(2) == "on"]
+if len(on_at) != 1 or bare(lines[on_at[0]]) != "on:":
+    found.append("on-block")
+else:
+    triggers, current, shape_ok = {}, None, True
+    for line in lines[on_at[0] + 1:]:
+        if not significant(line):
+            continue
+        if indent(line) == 0:
+            break
+        line = bare(line)
+        if indent(line) == 2:
+            m = re.fullmatch(r"  ([a-z_]+):", line)
+            if not m or m.group(1) in triggers:
+                shape_ok = False
+                break
+            current = m.group(1)
+            triggers[current] = []
+        elif current is None:
+            shape_ok = False
+            break
+        else:
+            triggers[current].append(line)
+    if not shape_ok or set(triggers) != {"pull_request", "push"}:
+        found.append("on-block")
+    else:
+        if triggers["pull_request"]:
+            found.append("pull-request-filter")
+        push = triggers["push"]
+        flow = len(push) == 1 and re.fullmatch(r"""    branches:\s*\[\s*(["']?)main\1\s*\]""", push[0])
+        listed = (len(push) == 2 and push[0] == "    branches:"
+                  and re.fullmatch(r"""      - (["']?)main\1""", push[1]))
+        if not (flow or listed):
+            found.append("push-filter")
+names = [i for i, line in enumerate(lines) if bare(line) == "    name: " + job]
+key = top = None
+if len(names) == 1:
+    above = [i for i in range(names[0] - 1, -1, -1) if significant(lines[i])]
+    key = next((i for i in above if indent(lines[i]) <= 2), None)
+    top = next((i for i in above if indent(lines[i]) == 0), None)
+if (key is None or top is None or indent(lines[key]) != 2
+        or not re.fullmatch(r"  [A-Za-z_][A-Za-z0-9_-]*:", bare(lines[key]))
+        or bare(lines[top]) != "jobs:"):
+    found.append("job-block")
+else:
+    scalar = None  # indent of a line that opened a block scalar
+    for line in lines[key + 1:]:
+        if not line.strip():
+            continue
+        if scalar is not None and indent(line) > scalar:
+            continue  # block scalar content, such as a run: | script
+        scalar = None
+        if line.strip().startswith("#"):
+            continue
+        if indent(line) <= 2:
+            break
+        b = bare(line)
+        m = re.match(r"""\s*(?:-\s+)?(["']?)(if|needs|continue-on-error)\1\s*:""", b)
+        if m:
+            found.append({"if": "job-if", "needs": "job-needs"}.get(m.group(2), m.group(2)))
+        if re.search(r"<<\s*:", b):
+            found.append("merge-key")
+        if re.search(r"(?:^\s*-\s*|:\s+)[\[{*]", b):
+            found.append("flow-or-alias")
+        if re.search(r":\s*[|>][-+0-9]*$", b):
+            scalar = indent(line)
+print(" ".join(dict.fromkeys(found)))
+PY
+}
 wf_dir="${here}/../.github/workflows"
 for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill discovery" \
   "agent-plugin-manifest.yml:Agent Plugins manifest"; do
@@ -483,6 +623,8 @@ for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill di
   else
     if [ "$(grep -E '^    name: ' "$wf_dir/$wf")" != "    name: $job" ]; then why="$why job-name"; fi
     if grep -q -E '^[[:space:]]*(paths|paths-ignore|branches-ignore):' "$wf_dir/$wf"; then why="$why trigger-filter"; fi
+    shape="$(wf_shape "$wf_dir/$wf" "$job")" || why="$why shape-check-error"
+    if [ -n "$shape" ]; then why="$why $shape"; fi
   fi
   if [ "$(grep -c -F "_actions_job(\"$job\")" "${here}/ci-status.py")" != 1 ]; then why="$why declared"; fi
   if [ -z "$why" ]; then

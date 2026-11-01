@@ -71,6 +71,11 @@ produced a run, so a pull request that deletes one of those workflows and adds
 another job with the same display name satisfies the check; GitHub's own
 app-pinned required check has the same limit. Pointing --repo at a repository that
 does not run all 4 unconditionally would downgrade a legitimate green to pending.
+Residual: a required check that concludes skipped or neutral counts as passed, as
+GitHub counts it for a required check, so a job skipped without running its steps
+reads green. For the 3 Actions jobs, tools/test-ci-status.sh guards the job-level
+if: route: it fails if the job that carries a required display name holds an if:,
+needs: or continue-on-error: key, its steps included.
 
 The commit is named only by its full 40-character hexadecimal sha, folded to
 lower case and used as given. Every other value, an abbreviation of any length,
