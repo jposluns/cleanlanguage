@@ -109,7 +109,8 @@ it.
 Separation is not a sandbox. What it does
 not close: the child runs with the uid, filesystem, and network of the gate,
 so extractor code can still write files, reach the network, and start a
-process that leaves the process group (setsid) and outlives the gate; within
+process that leaves the process group (through setsid, or setpgid into a new
+group) and outlives the gate; within
 CHILD_TIMEOUT_SECONDS it can use CPU and fill the stdout and stderr temporary
 files on disk, of which the gate reads only a bounded part (see
 RESULT_LIMIT); if the gate itself is killed while it waits, the child,
@@ -287,8 +288,9 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     normal end, a timeout, or an exception while waiting, the process group
     is killed before the child is reaped, so a process the child started
     that stays in its group, directly or through a double fork, is killed
-    when the child ends, while one that leaves the group (setsid) can
-    outlive the gate. After that, a KeyboardInterrupt while waiting is
+    when the child ends, while one that leaves the group (through setsid,
+    or setpgid into a new group) can outlive the gate. After that, a
+    KeyboardInterrupt while waiting is
     re-raised unchanged, unless the group could not be killed. A wait that
     reports the child is no longer a child of the gate signals nothing, as
     its pid may be reused. A reply is accepted only when the child exits 0

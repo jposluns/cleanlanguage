@@ -2226,6 +2226,48 @@ class ConditionalPassTest(unittest.TestCase):
                             if b"time.sleep(300)" in command or str(tool).encode() in command:
                                 os.kill(pid, signal.SIGKILL)
 
+    def test_a_process_that_leaves_the_group_outlives_the_gate(self):
+        # Fix round 2 (VERIFY 1.1): the disclosed residual, observed. A
+        # process the child started that calls setpgid into a new group
+        # leaves the group of the child, so the group kill does not reach it
+        # and it is still running after the gate has returned its reply.
+        tool = self.fake_extractor(extractor_with(
+            "_real_extract = extract\n"
+            "def extract(text):\n"
+            "    import os, time\n"
+            "    read, write = os.pipe()\n"
+            "    pid = os.fork()\n"
+            "    if pid == 0:\n"
+            "        os.setpgid(0, 0)\n"
+            "        os.write(write, b\"left\")\n"
+            "        time.sleep(300)\n"
+            "        os._exit(0)\n"
+            "    os.close(write)\n"
+            "    with open(Path(__file__).resolve().parent / \"leaver.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
+            "        handle.write(str(pid))\n"
+            "    assert os.read(read, 64) == b\"left\"\n"
+            "    return _real_extract(text)\n"
+        ))
+        pid_file = tool.parent / "leaver.pid"
+        try:
+            result, err = self.call_reports("extract", self.ARGS["extract"])
+            self.assertEqual((result, err), (("value", "2026-11-15"), ""))
+            pid = int(pid_file.read_text(encoding="utf-8"))
+            time.sleep(0.5)
+            self.assertEqual(process_state(pid), "S", f"the process {pid} that left the group did not outlive the gate")
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+            self.assertEqual(int(stat.rsplit(")", 1)[1].split()[2]), pid, "the process did not lead a new group")
+        finally:
+            # Kill the process on every path, but only while it is still the
+            # one this test started: it leads its own group and runs the fake
+            # extractor.
+            with contextlib.suppress(OSError, ValueError):
+                pid = int(pid_file.read_text(encoding="utf-8"))
+                command = Path(f"/proc/{pid}/cmdline").read_bytes()
+                stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+                if int(stat.rsplit(")", 1)[1].split()[2]) == pid and str(tool).encode() in command:
+                    os.killpg(pid, signal.SIGKILL)
+
     def test_a_group_that_cannot_be_killed_exits_3(self):
         # Fix round 1 (finding 3): an OSError other than ProcessLookupError
         # from the group kill exits 3 naming it, after the child is killed
