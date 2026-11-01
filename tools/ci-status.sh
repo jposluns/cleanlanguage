@@ -60,7 +60,10 @@
 # assigned ends in the cannot-find refusal, never in the exec. The resolver
 # capture is the one plain assignment, to a name first assigned by declare, and
 # the checks below refuse its nonzero status; a failed read of the fd 255 flags
-# ends its loop.
+# ends its loop. The refusal function __ci_status_refuse is defined with a ||
+# fallback too: a caller that marks it readonly (readonly -f) makes bash keep
+# the version of the caller, and the fallback then prints the cannot-find
+# refusal and exits 3.
 # The wrapper next refuses with status 3 under a restricted shell, which would
 # refuse the redirect and the exec below and exit 1, the code for a failed check.
 # Restricted mode is read from $- as well as from the restricted_shell option,
@@ -160,6 +163,9 @@ __ci_status_refuse() {
   else
     (trap "" PIPE; printf "%s\n" "$2" >&2) || :
   fi
+  exit 3
+} || {
+  (trap "" PIPE; printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\n" "${BASH_SOURCE[0]:-}" >&2) || :
   exit 3
 }
 if shopt -q restricted_shell || [[ "$-" == *r* ]]; then

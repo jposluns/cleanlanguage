@@ -599,6 +599,10 @@ run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT
 # variable __ci_status_flags (with a close-on-exec value) or __ci_status_text
 # (with a passing path) readonly, so the assignment fails: the wrapper must give
 # the cannot-find refusal, never run the gate on the value the caller set.
+# rorefuse runs a hard link to the copied wrapper, placed beside the planted
+# ci-status.py, with a BASH_ENV file that defines __ci_status_refuse as a no-op
+# and marks it readonly (readonly -f), so the wrapper cannot redefine it: the
+# wrapper must still give the cannot-find refusal, never run the planted file.
 # hold255self passes fd 255 open on the real copied wrapper and runs it normally,
 # so only the close-on-exec check can refuse it. dotdotproc and dotdotdevfd
 # open the real copied wrapper as fd 9 and run bash on cwd/L/../fd/9, with L a
@@ -733,6 +737,10 @@ PY
     *" rotext "*)
       printf "readonly __ci_status_text=/ok/ci-status.sh\n" > "$tmp/ro.sh"
       entry=(env BASH_ENV="$tmp/ro.sh" bash "$tools/ci-status.sh") ;;
+    *" rorefuse "*)
+      ln "$tools/ci-status.sh" "$cwd/ci-status.sh"
+      printf "__ci_status_refuse() { :; }\nreadonly -f __ci_status_refuse\n" > "$tmp/ro.sh"
+      entry=(env BASH_ENV="$tmp/ro.sh" bash "$cwd/ci-status.sh") ;;
     *" setrsourced "*)
       path="$bin:$tools:$PATH"
       entry=(bash -c 'set -r; . ci-status.sh "$@"; s=$?; printf "after=%s\n" "$s"; exit "$s"' bash) ;;
@@ -811,6 +819,7 @@ run_wrapper_case "descriptor decoy through a symlink with fd 255 held on the dec
 run_wrapper_case "fd 255 inherited from the caller fails closed with exit 3" 3 hold255self
 run_wrapper_case "readonly __ci_status_flags from BASH_ENV fails closed with exit 3" 3 roflags
 run_wrapper_case "readonly __ci_status_text from BASH_ENV fails closed with exit 3" 3 rotext
+run_wrapper_case "readonly __ci_status_refuse from BASH_ENV with a hard-linked wrapper fails closed with exit 3" 3 rorefuse
 run_wrapper_case "real wrapper as L/../fd/9 with L to /proc/self/fd fails closed with exit 3" 3 dotdotproc
 run_wrapper_case "real wrapper as L/../fd/9 with L to /dev/fd fails closed with exit 3" 3 dotdotdevfd
 run_wrapper_case "directory descriptor /dev//fd/9/ci-status.sh never runs a planted gate" A dirfd
