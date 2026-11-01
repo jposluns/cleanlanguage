@@ -507,11 +507,13 @@ run_case "empty head_sha -> unreadable" "$(head_runs '""')" "" "" 3
 # "- run: |" the column of run, not of the dash; and comments. Any other line,
 # such as a quoted, anchored, aliased, tagged, explicit or merge key, a flow
 # mapping, a duplicate key, a tab or a non-ASCII character, fails the check and
-# is named by its line number. A failure of the checker itself, or a workflow
-# that is missing or cannot be read as UTF-8 text, also fails the check, and is
-# named shape-check-error or unreadable-workflow, not by a line number. Within
-# that subset the top level holds only name, on, permissions, env and jobs. The
-# on: block holds only a pull_request trigger with nothing under it and a push
+# is named by its line number. A failure of the checker itself, a workflow that
+# is missing or cannot be read as UTF-8 text, or a workflow with no line other
+# than blank lines and comments, also fails the check, and is named
+# shape-check-error, unreadable-workflow or empty-workflow, not by a line number,
+# so no report names a line past the end of the file. Within that subset the
+# top level holds only name, on, permissions, env and jobs. The on: block holds
+# only a pull_request trigger with nothing under it and a push
 # trigger filtered to main alone. The permissions block is exactly contents:
 # read. A top-level env, if present, holds only CLAUDE_CODE_VERSION, set to a
 # dotted version number such as 2.1.310, which cannot change whether or how a
@@ -536,9 +538,9 @@ run_case "empty head_sha -> unreadable" "$(head_runs '""')" "" "" 3
 # jobs of the workflow run, are not checked, so a step changed to do nothing
 # still reads green.
 # wf_shape FILE JOB: print a word for each shape problem found, nothing if none.
-# A line outside the subset, or a file that cannot be read as UTF-8, ends the
-# check with that one word; a failure of the checker itself exits non-zero with
-# nothing on standard output.
+# A line outside the subset, a file that cannot be read as UTF-8, or a file with
+# no line other than blank lines and comments, ends the check with that one word;
+# a failure of the checker itself exits non-zero with nothing on standard output.
 wf_shape() {
   python3 -I - "$1" "$2" <<'PY'
 import re
@@ -684,7 +686,12 @@ try:
         if re.search(r"[^\x20-\x7e]", line):
             reader.i = n
             reader.fail("character-line")
-    if reader.peek() != 0:
+    # peek() runs off the end of a file holding only blank lines and comments,
+    # so name that case rather than cite a line past the end of the file.
+    first = reader.peek()
+    if first is None:
+        raise Refused("empty-workflow")
+    if first != 0:
         reader.fail()
     tree = reader.mapping(0, {})
     if reader.peek() is not None:
@@ -774,6 +781,25 @@ for pair in "plugin-validate.yml:Plugin manifests" "skill-discovery.yml:Skill di
     printf 'FAIL required check %s follows %s (%s)\n' "$job" "$wf" "${why# }"; fails=$((fails + 1))
   fi
 done
+
+# A workflow with no line other than blank lines and comments is named
+# empty-workflow, never by a line number past the end of the file.
+# run_empty_shape_case NAME CONTENT: wf_shape on a file holding exactly CONTENT
+# (printf format) must print empty-workflow and nothing else.
+run_empty_shape_case() {
+  local name="$1" tmp got
+  tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  printf "$2" > "$tmp/wf.yml"
+  if got="$(wf_shape "$tmp/wf.yml" "Skill discovery")" && [ "$got" = "empty-workflow" ]; then
+    printf 'ok   %s\n' "$name"
+  else
+    printf 'FAIL %s (got %s)\n' "$name" "$got"; fails=$((fails + 1))
+  fi
+  rm -rf "$tmp"
+}
+run_empty_shape_case "an empty workflow file is named empty-workflow" ""
+run_empty_shape_case "a workflow of one blank line is named empty-workflow" "\n"
+run_empty_shape_case "a workflow of blank lines and comments is named empty-workflow" "\n# a comment\n  \n"
 
 # Commit sha and repository contract (backlog row 86). The tool accepts only a
 # full 40-character hexadecimal sha and makes no local git call, so no case needs

@@ -70,8 +70,14 @@ never a false-green. Residual: a name and an app cannot tell which workflow
 produced a run, so a pull request that deletes one of those workflows and adds
 another job with the same display name satisfies the check; GitHub's own
 app-pinned required check has the same limit. Within the same residual, another job
-in one of the 3 workflows can carry one of the 3 display names in a form the check
-does not compare, such as a block scalar indented more than 4 spaces (see below).
+in one of the 3 workflows can carry one of the 3 display names under a name: key
+indented other than the 4 spaces of a job's own keys. tools/test-ci-status.sh
+compares every name: line indented exactly 4 spaces, whatever form its value takes,
+but compares a job's name: key at any other indent only by its plain or quoted
+text, and only with the display name of that workflow's own job, so such a key
+passes when it carries another workflow's display name in any form, or its own
+workflow's display name in a form whose text differs from that name, such as a
+block scalar or an expression.
 The tool reads the check runs the API
 returns under its default filter, the latest runs, so whether such a job can take
 the place of a failed run of the real job in a reading depends on how the API
