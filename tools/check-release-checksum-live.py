@@ -192,7 +192,7 @@ def _api_kind_ok(value, kind: str) -> bool:
 def _plain_exception_class(value) -> bool:
     """True only when ``value`` is a class whose own type is exactly the
     builtin type, that subclasses Exception (fix round 5), and every class on
-    whose real MRO subclasses Exception or is BaseException or object (fix
+    its real MRO subclasses Exception or is BaseException or object (fix
     round 10), so it is not also a SystemExit, a KeyboardInterrupt, or any
     other BaseException that is not an Exception. type() reads the real type,
     so a value that only claims to be a class through a __class__ property,

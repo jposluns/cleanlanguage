@@ -1345,28 +1345,45 @@ class ConditionalPassTest(unittest.TestCase):
         # Fix round 9: the Malformed class is checked again when the error is
         # classified, so extractor code that reassigns its __bases__ during
         # the call, leaving it no Exception, gets no content verdict.
-        with self.subTest("a Malformed whose bases the call reassigns"):
-            class Shifting(ValueError):
-                pass
+        # Fix round 11: it must also stay free of non-Exception bases even
+        # when it still subclasses Exception (verdict-time mutant B2).
+        for bases in (
+            (BaseException,),
+            (ValueError, KeyboardInterrupt),
+            (ValueError, SystemExit),
+            (ValueError, GeneratorExit),
+        ):
+            with self.subTest("a Malformed whose bases the call reassigns", bases=bases):
+                class Shifting(ValueError):
+                    pass
 
-            def shift_and_raise(*args, **kwargs):
-                Shifting.__bases__ = (BaseException,)
-                raise Shifting("boom")
+                shifted = False
 
-            saved_day = gate.RELEASE_DATE.release_day_from_published_at
-            saved_malformed = gate.RELEASE_DATE.Malformed
-            gate.RELEASE_DATE.release_day_from_published_at = shift_and_raise
-            gate.RELEASE_DATE.Malformed = Shifting
-            try:
-                self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
-                self.published("2026-11-15T09:30:00Z")
-                code, out, err = self.main_reports()
-            finally:
-                gate.RELEASE_DATE.release_day_from_published_at = saved_day
-                gate.RELEASE_DATE.Malformed = saved_malformed
-            self.assertEqual(code, 3, (out, err))
-            self.assertIn(failed + ": Shifting: boom", err)
-            self.assertNotIn("is unusable", err)
+                def shift_and_raise(*args, **kwargs):
+                    nonlocal shifted
+                    Shifting.__bases__ = bases
+                    shifted = True
+                    raise Shifting("boom")
+
+                saved_day = gate.RELEASE_DATE.release_day_from_published_at
+                saved_malformed = gate.RELEASE_DATE.Malformed
+                gate.RELEASE_DATE.release_day_from_published_at = shift_and_raise
+                gate.RELEASE_DATE.Malformed = Shifting
+                try:
+                    self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+                    self.published("2026-11-15T09:30:00Z")
+                    code, out, err = self.main_reports()
+                finally:
+                    gate.RELEASE_DATE.release_day_from_published_at = saved_day
+                    gate.RELEASE_DATE.Malformed = saved_malformed
+                self.assertEqual(code, 3, (out, err))
+                if shifted:
+                    self.assertIn(failed + ": Shifting: boom", err)
+                else:
+                    # CPython refuses the larger SystemExit object layout.
+                    self.assertEqual(bases, (ValueError, SystemExit))
+                    self.assertIn(failed + ": TypeError: __bases__ assignment:", err)
+                self.assertNotIn("is unusable", err)
         # The control: a genuine Malformed verdict is still a content verdict.
         with self.subTest("a genuine Malformed verdict"):
             self.assert_verdict(_REAL_MALFORMED("bad stamp"), None, 2,
