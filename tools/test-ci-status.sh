@@ -552,7 +552,8 @@ run_contract_case "second --interval is refused" 3 nogh owner/name owner/name - 
 # the wrapper is invoked: sourced (bash -c sources it, so $0 is bash), stdin (bash
 # -s reads it from a pipe), barename (bash ci-status.sh, found through PATH),
 # pylink (a copied wrapper beside a ci-status.py that is a symlink to the planted
-# file), or pathexec (ci-status.sh executed through PATH). Without one, the
+# file), pathexec (ci-status.sh executed through PATH), or posixsh (the wrapper
+# run by dash, or by sh when dash is absent, rather than bash). Without one, the
 # wrapper runs as bash with its absolute path.
 # run_wrapper_case NAME WANT RESOLVE
 run_wrapper_case() {
@@ -595,6 +596,9 @@ PY
       cp "${here}/ci-status.sh" "$tools/"
       ln -s "$cwd/ci-status.py" "$tools/ci-status.py"
       entry=(bash "$tools/ci-status.sh") ;;
+    *" posixsh "*)
+      local posix_sh; posix_sh="$(command -v dash || command -v sh)"
+      entry=("$posix_sh" "$tools/ci-status.sh") ;;
     *" pathexec "*)
       chmod +x "$tools/ci-status.sh"; path="$bin:$tools:$PATH"; entry=(ci-status.sh) ;;
   esac
@@ -632,6 +636,7 @@ run_wrapper_case "wrapper read from standard input fails closed with exit 3" 3 s
 run_wrapper_case "bare wrapper name found through PATH fails closed with exit 3" 3 barename
 run_wrapper_case "symlinked ci-status.py beside a copied wrapper fails closed with exit 3" 3 pylink
 run_wrapper_case "wrapper executed through PATH runs the real gate" 0 pathexec
+run_wrapper_case "wrapper run by a non-bash shell fails closed with exit 3" 3 posixsh
 
 if [ "$fails" -eq 0 ]; then
   printf 'all ci-status github-actions fail-safe tests pass

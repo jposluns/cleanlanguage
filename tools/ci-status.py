@@ -64,10 +64,14 @@ redirect the repository that gh infers; passing --repo avoids that inference.
 The inferred repository comes from gh repo view run in that directory, so it
 depends on the local git configuration of that clone and on which of its remotes
 gh selects; passing --repo avoids that dependence too. Other gh configuration,
-such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged. python3 and gh are
-found through PATH, so a different python3 or gh earlier on PATH is outside the
-trust boundary of this tool. --timeout, --interval and --repo may each be given
-once; a second use is refused (exit 3).
+such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged. The caller
+environment, including PATH, BASH_ENV and exported shell functions, is outside
+the trust boundary of this tool: PATH chooses python3 and gh, BASH_ENV runs code
+before ci-status.sh, and an exported function such as python3 replaces what
+ci-status.sh runs, so a planted ci-status.py can run and exit 0. ci-status.sh
+defends only against a planted ci-status.py in the working directory and against
+a symlinked or misplaced gate. --timeout, --interval and --repo may each be
+given once; a second use is refused (exit 3).
 
 Usage:
   ci-status.py <sha>                     Report once and exit.

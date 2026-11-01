@@ -10,6 +10,10 @@
 #   3 unreadable, no checks, or usage error.
 # -I isolates the interpreter: PYTHONPATH, the user site directory and the script
 # directory cannot shadow a standard-library import used by the gate.
+# The wrapper first exits 3 when it runs under a shell other than bash, such as
+# sh where /bin/sh is dash. That check is POSIX, so it runs before any bash-only
+# syntax, which a non-bash shell would otherwise fail with exit 2, the code the
+# contract reserves for checks still running or timed out.
 # The wrapper locates itself from BASH_SOURCE[0], never from $0 alone. It exits
 # 3, and runs no ci-status.py, when it is sourced rather than executed, when it is
 # read from standard input (BASH_SOURCE[0] is empty), when BASH_SOURCE[0] holds no
@@ -22,8 +26,16 @@
 # beside it must be a regular file that is not a symlink, or the wrapper exits 3.
 # The directory is printed with a trailing slash, so command substitution cannot
 # strip a newline from its name.
-# Residual: python3, and the gh that ci-status.py runs, are found through PATH, so
-# a different python3 or gh earlier on PATH is outside what this wrapper checks.
+# Residual: the caller environment, including PATH, BASH_ENV and exported shell
+# functions, is outside the trust boundary. PATH chooses the python3 and the gh
+# that ci-status.py runs, BASH_ENV runs code before this wrapper, and an exported
+# function such as python3 replaces the resolver below; any of them can run a
+# planted ci-status.py that exits 0. The wrapper defends only against a planted
+# ci-status.py in the working directory and against a symlinked or misplaced gate.
+if [ -z "${BASH_VERSION:-}" ]; then
+  printf "ci-status: cannot find ci-status.py: ci-status.sh must run under bash (%s)\n" "$0" >&2
+  exit 3
+fi
 src="${BASH_SOURCE[0]:-}"
 here=""
 if ! (return 0 2>/dev/null) && [ "$0" = "$src" ]; then
