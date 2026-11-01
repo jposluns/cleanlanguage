@@ -78,7 +78,9 @@ Exit codes:
   3  a required file could not be read, the SKILL.md Released line is
      malformed, or tools/skill-release-date.py could not be run, failed, was
      killed, did not finish within CHILD_TIMEOUT_SECONDS, or did not print a
-     result that matches the JSON contract (see run_release_date_child)
+     result that matches the JSON contract, or the gate could not prepare,
+     wait for, or read its child, or kill the process group of its child (see
+     run_release_date_child)
 
 The release-date check and the site-checksum comparison both run and both
 are reported when the release the site names is published, including when its
@@ -100,13 +102,17 @@ its own process, a hang, a rewritten global, or a KeyboardInterrupt it raises
 ends or stalls only the child, and the gate reads one exit status and one
 bounded stdout, accepting a result only when the exit is 0 and the stdout is
 exactly one JSON object that matches the contract; everything else exits 3
-with its report, never 2, 1, or 0. Separation is not a sandbox. What it does
+with its report, never 2, 1, or 0. The process group of the child is killed
+before the gate reaps the child, so a process it started that stays in the
+group, directly or through a double fork (which keeps the group), ends with
+it.
+Separation is not a sandbox. What it does
 not close: the child runs with the uid, filesystem, and network of the gate,
 so extractor code can still write files, reach the network, and start a
-process that leaves the process group (setsid, a double fork) and outlives
-the gate; within CHILD_TIMEOUT_SECONDS it can use CPU and fill the stdout and
-stderr temporary files on disk, of which the gate reads only RESULT_LIMIT and
-STDERR_LIMIT bytes; if the gate itself is killed while it waits, the child,
+process that leaves the process group (setsid) and outlives the gate; within
+CHILD_TIMEOUT_SECONDS it can use CPU and fill the stdout and stderr temporary
+files on disk, of which the gate reads only a bounded part (see
+RESULT_LIMIT); if the gate itself is killed while it waits, the child,
 in its own session, runs on until it ends; the child reads the extractor file
 afresh on each call, so a file replaced during a run can give different calls
 different code, where the module was read once before; and the extractor
@@ -127,6 +133,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -147,11 +154,18 @@ VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
 RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 
 # Row 80: the bounds on one extractor child. A child that has not ended within
-# CHILD_TIMEOUT_SECONDS is killed with its process group, and at most
-# RESULT_LIMIT bytes of its stdout and STDERR_LIMIT bytes of its stderr are
-# read, so the memory of the gate is bounded whatever the child prints.
+# CHILD_TIMEOUT_SECONDS is killed with its process group. At most
+# STDERR_LIMIT bytes of its stderr are read, and at most RESULT_LIMIT bytes of
+# its stdout plus ECHO_BYTES_PER_CHARACTER bytes for each character of the
+# request argument: a malformed message echoes at most the argument once,
+# through repr and then ASCII JSON, which takes at most 12 bytes for one
+# character (a printable character outside the basic plane becomes a
+# surrogate pair of two \uXXXX escapes), so a reply that echoes a long
+# argument keeps its verdict, and the memory of the gate stays bounded by the
+# request it already holds, whatever the child prints.
 CHILD_TIMEOUT_SECONDS = 20
 RESULT_LIMIT = 65536
+ECHO_BYTES_PER_CHARACTER = 12
 STDERR_LIMIT = 4096
 
 # The exit code of an internal failure of the extractor itself.
@@ -202,14 +216,60 @@ class ReleaseDateMalformed(Exception):
     class this gate owns, so no caller looks the extractor class up."""
 
 
-def _kill_group(proc: subprocess.Popen) -> None:
+class _RepeatedKey(Exception):
+    """A JSON object in a reply names one key more than once."""
+
+
+def _object_without_repeated_keys(pairs: list) -> dict:
+    """Build a JSON object from its ``pairs``, refusing a repeated key, so
+    a reply is never read with the last of two values winning."""
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise _RepeatedKey()
+    return dict(pairs)
+
+
+def _wait_unreaped(proc: subprocess.Popen, timeout: float) -> bool:
+    """Wait up to ``timeout`` seconds for the child ``proc`` to end, without
+    reaping it (os.waitid with WNOWAIT), so neither its pid nor the group id
+    it leads can be reused while the gate may still signal them. Returns
+    True when the child has ended and False on a timeout. WNOHANG with a
+    short sleep bounds the wait, as Popen.wait does with a timeout."""
+    deadline = time.monotonic() + timeout
+    delay = 0.0005
+    while os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        delay = min(delay * 2, remaining, 0.05)
+        time.sleep(delay)
+    return True
+
+
+def _kill_group(proc: subprocess.Popen, ended: bool) -> str | None:
     """Kill the process group of the child ``proc``, which has not been
     reaped yet, so neither its pid nor the group id it leads can have been
-    reused."""
+    reused, and then reap the child; ``ended`` is whether the child has
+    already ended. Returns None, or the reason when the group could not be
+    killed: the child itself is then killed directly when it still runs,
+    and it is reaped only when it has ended or that kill succeeded, so the
+    gate never waits on a child it could not kill."""
     try:
         os.killpg(proc.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+    except OSError as error:
+        problem = f"could not kill the process group of its child ({type(error).__name__}: {error})"
+        if not ended:
+            try:
+                os.kill(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.poll()
+                return problem
+        proc.wait()
+        return problem
+    proc.wait()
+    return None
 
 
 def run_release_date_child(op: str, arg: str | None = None) -> dict:
@@ -219,18 +279,27 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     REPLY_KEYS).
 
     The child gets an empty environment, the tool directory as its working
-    directory, and its own session, so it and anything it forks share a
-    process group the gate can kill. The request is written to a temporary
-    file that is its stdin, and its stdout and stderr go to temporary files,
-    so the gate never blocks on a pipe and reads only a bounded part of each.
-    The wait is bounded by CHILD_TIMEOUT_SECONDS; on a timeout, or on any
-    exception while waiting (which is then re-raised unchanged), the process
-    group is killed before the child is reaped. A reply is accepted only when
-    the child exits 0 and its stdout, at most RESULT_LIMIT bytes, is exactly
-    one ASCII JSON object that matches the contract; every other outcome
-    exits 3 as unavailable, naming the reason and relaying at most
-    STDERR_LIMIT bytes of the child stderr, never a content verdict, a pass,
-    or a drift."""
+    directory, and its own session, so it leads a process group of its own.
+    The request is written to a temporary file that is its stdin, and its
+    stdout and stderr go to temporary files, so the gate never blocks on a
+    pipe and reads only a bounded part of each. The wait, bounded by
+    CHILD_TIMEOUT_SECONDS, leaves the child unreaped; then, on every path, a
+    normal end, a timeout, or an exception while waiting, the process group
+    is killed before the child is reaped, so a process the child started
+    that stays in its group, directly or through a double fork, is killed
+    when the child ends, while one that leaves the group (setsid) can
+    outlive the gate. After that, a KeyboardInterrupt while waiting is
+    re-raised unchanged, unless the group could not be killed. A wait that
+    reports the child is no longer a child of the gate signals nothing, as
+    its pid may be reused. A reply is accepted only when the child exits 0
+    and its stdout, at most RESULT_LIMIT bytes plus ECHO_BYTES_PER_CHARACTER
+    for each character of ``arg``, is exactly one ASCII JSON object, with no
+    key repeated, that matches the contract. Every other outcome exits 3 as
+    unavailable, naming the reason and relaying at most STDERR_LIMIT bytes of
+    the child stderr, never a content verdict, a pass, or a drift: so does
+    any exception other than SystemExit raised while the gate creates the
+    temporary files, writes the request, starts, waits for, or kills the
+    child, or reads its output, and a process group that cannot be killed."""
 
     def fail(reason: str, printed: bytes = b"") -> None:
         message = f"{RELEASE_DATE_TOOL.name} {reason} in {op}, so the extractor is unavailable"
@@ -243,35 +312,45 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     if not executable or not os.path.isabs(executable):
         fail(f"could not run (the interpreter path {executable!r} is not absolute)")
     request = {"op": op} if arg is None else {"op": op, "arg": arg}
-    with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, \
-            tempfile.TemporaryFile() as stderr:
-        stdin.write(json.dumps(request, ensure_ascii=True).encode("ascii"))
-        stdin.seek(0)
-        try:
-            proc = subprocess.Popen(
-                [executable, "-I", str(RELEASE_DATE_TOOL), "--json"],
-                stdin=stdin, stdout=stdout, stderr=stderr, env={},
-                cwd=RELEASE_DATE_TOOL.parent, start_new_session=True,
-            )
-        except OSError as error:
-            fail(f"could not run ({type(error).__name__}: {error})")
-        timed_out = False
-        try:
-            proc.wait(timeout=CHILD_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            _kill_group(proc)
-            proc.wait()
-            timed_out = True
-        except BaseException:
-            _kill_group(proc)
-            proc.wait()
-            raise
-        stderr.seek(0)
-        printed = stderr.read(STDERR_LIMIT)
-        stdout.seek(0)
-        data = stdout.read(RESULT_LIMIT + 1)
+    limit = RESULT_LIMIT + ECHO_BYTES_PER_CHARACTER * (0 if arg is None else len(arg))
+    try:
+        with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, \
+                tempfile.TemporaryFile() as stderr:
+            stdin.write(json.dumps(request, ensure_ascii=True).encode("ascii"))
+            stdin.seek(0)
+            try:
+                proc = subprocess.Popen(
+                    [executable, "-I", str(RELEASE_DATE_TOOL), "--json"],
+                    stdin=stdin, stdout=stdout, stderr=stderr, env={},
+                    cwd=RELEASE_DATE_TOOL.parent, start_new_session=True,
+                )
+            except OSError as error:
+                fail(f"could not run ({type(error).__name__}: {error})")
+            try:
+                ended = _wait_unreaped(proc, CHILD_TIMEOUT_SECONDS)
+            except ChildProcessError:
+                # The child is no longer a child of the gate, so its pid and
+                # group id may already be reused: neither is signalled.
+                raise
+            except BaseException:
+                problem = _kill_group(proc, ended=False)
+                if problem is not None:
+                    fail(problem)
+                raise
+            problem = _kill_group(proc, ended)
+            if problem is not None:
+                fail(problem)
+            stderr.seek(0)
+            printed = stderr.read(STDERR_LIMIT)
+            stdout.seek(0)
+            data = stdout.read(limit + 1)
+    except Exception as error:
+        # Any failure of the machinery of the gate itself, never a
+        # traceback read as drift (exit 1); SystemExit from fail and a
+        # KeyboardInterrupt pass through unchanged.
+        fail(f"could not be run, waited for, or read ({type(error).__name__}: {error})")
     code = proc.returncode
-    if timed_out:
+    if not ended:
         fail(f"did not finish within {CHILD_TIMEOUT_SECONDS} seconds", printed)
     if code < 0:
         try:
@@ -283,16 +362,18 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
         fail("failed unexpectedly (internal error)", printed)
     if code != 0:
         fail(f"exited {code}", printed)
-    if len(data) > RESULT_LIMIT:
-        fail(f"printed more than {RESULT_LIMIT} bytes", printed)
-    try:
-        reply = json.loads(data.decode("ascii"))
-    except (ValueError, RecursionError):
-        fail("did not print a JSON result", printed)
+    if len(data) > limit:
+        fail(f"printed more than {limit} bytes", printed)
 
     def breach(rule: str) -> None:
         fail(f"printed a result that does not match the contract ({rule})", printed)
 
+    try:
+        reply = json.loads(data.decode("ascii"), object_pairs_hook=_object_without_repeated_keys)
+    except _RepeatedKey:
+        breach("a key appears more than once")
+    except (ValueError, RecursionError):
+        fail("did not print a JSON result", printed)
     if type(reply) is not dict:
         breach("not a JSON object")
     outcome = reply.get("outcome")

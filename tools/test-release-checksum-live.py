@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import errno
 import hashlib
 import importlib.util
 import io
@@ -42,6 +43,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 from pathlib import Path
 
@@ -1952,33 +1954,36 @@ class ConditionalPassTest(unittest.TestCase):
         # Row 80: any exception while the gate waits, a real Ctrl-C among
         # them, kills the child group, reaps the child, and propagates
         # unchanged.
+        # Fix round 1: the gate waits with os.waitid, so the interrupt is
+        # raised from there.
         self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
         procs, kills = [], []
         real_popen = subprocess.Popen
         real_killpg = os.killpg
+        real_waitid = os.waitid
 
-        class Interrupted(real_popen):
+        class Recording(real_popen):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, **kwargs)
                 procs.append(self)
-
-            def wait(self, timeout=None):
-                if timeout is not None:
-                    raise KeyboardInterrupt()
-                return super().wait()
 
         def recording(pgid, sig):
             kills.append((pgid, sig))
             real_killpg(pgid, sig)
 
-        gate.subprocess.Popen = Interrupted
+        def interrupted(*args):
+            raise KeyboardInterrupt()
+
+        gate.subprocess.Popen = Recording
         gate.os.killpg = recording
+        gate.os.waitid = interrupted
         try:
             with self.assertRaises(KeyboardInterrupt):
                 gate.release_date_call("extract", "x")
         finally:
             gate.subprocess.Popen = real_popen
             gate.os.killpg = real_killpg
+            gate.os.waitid = real_waitid
         self.assertEqual(len(procs), 1)
         self.assertEqual(kills, [(procs[0].pid, signal.SIGKILL)])
         self.assertEqual(procs[0].returncode, -signal.SIGKILL)
@@ -2004,6 +2009,369 @@ class ConditionalPassTest(unittest.TestCase):
         ], out)
 
 
+    # --- Row 80 fix round 1: the child machinery, its group, its bound -------
+
+    MACHINERY = "could not be run, waited for, or read"
+
+    def recording_popen(self, procs):
+        """A Popen subclass that appends each child it starts to ``procs``."""
+
+        class Recording(subprocess.Popen):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                procs.append(self)
+
+        return Recording
+
+    def test_a_failure_in_the_child_machinery_exits_3(self):
+        # Fix round 1 (finding 1): an exception other than SystemExit raised
+        # while the gate creates the temporary files, writes or rewinds the
+        # request, or rewinds or reads the output exits 3 naming it, never a
+        # traceback (exit 1), and leaves no child unreaped.
+        real_temporary_file = tempfile.TemporaryFile
+        real_popen = subprocess.Popen
+
+        class Faulty:
+            """A temporary file whose method ``method`` raises ``error``."""
+
+            def __init__(self, real, method, error):
+                self._real, self._method, self._error = real, method, error
+
+            def __getattr__(self, name):
+                if name == self._method:
+                    def raising(*args, **kwargs):
+                        raise self._error
+                    return raising
+                return getattr(self._real, name)
+
+            def __enter__(self):
+                self._real.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                return self._real.__exit__(*exc)
+
+        too_many = (OSError(errno.EMFILE, "Too many open files"), "OSError: [Errno 24] Too many open files")
+        no_space = (OSError(errno.ENOSPC, "No space left on device"), "OSError: [Errno 28] No space left on device")
+        io_error = (OSError(errno.EIO, "Input/output error"), "OSError: [Errno 5] Input/output error")
+        # (label, the file: 0 stdin, 1 stdout, 2 stderr, the method that
+        # fails or None for its creation, the error and how it is named)
+        cases = (
+            ("the first temporary file cannot be created", 0, None, too_many),
+            ("the last temporary file cannot be created", 2, None, too_many),
+            ("the request cannot be written", 0, "write", no_space),
+            ("the request cannot be rewound", 0, "seek", io_error),
+            ("the stderr cannot be rewound", 2, "seek", io_error),
+            ("the stderr cannot be read", 2, "read", io_error),
+            ("the stdout cannot be read", 1, "read", io_error),
+            ("an error that is not an OSError", 1, "read", (RuntimeError("boom"), "RuntimeError: boom")),
+        )
+        for label, index, method, (error, named) in cases:
+            with self.subTest(label):
+                made, procs = [], []
+
+                def factory(*args, **kwargs):
+                    position = len(made)
+                    made.append(position)
+                    if position == index and method is None:
+                        raise error
+                    real = real_temporary_file(*args, **kwargs)
+                    return Faulty(real, method, error) if position == index else real
+
+                gate.tempfile = types.SimpleNamespace(TemporaryFile=factory)
+                gate.subprocess.Popen = self.recording_popen(procs)
+                try:
+                    result, err = self.call_reports("baseline")
+                finally:
+                    gate.tempfile = tempfile
+                    gate.subprocess.Popen = real_popen
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(f"{self.MACHINERY} ({named})", "baseline")])
+                self.assertTrue(all(proc.returncode is not None for proc in procs), "a child was left unreaped")
+
+    def test_a_failure_while_waiting_kills_and_reaps_the_child_and_exits_3(self):
+        # Fix round 1 (finding 1): an exception other than SystemExit while
+        # the gate waits kills the child group while the child is unreaped,
+        # reaps the child, and exits 3 naming the exception.
+        self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        real_popen, real_killpg, real_waitid = subprocess.Popen, os.killpg, os.waitid
+        for label, error, named in (
+            ("an OSError", OSError(errno.EINVAL, "Invalid argument"), "OSError: [Errno 22] Invalid argument"),
+            ("an error that is not an OSError", RuntimeError("boom"), "RuntimeError: boom"),
+        ):
+            with self.subTest(label):
+                procs, kills = [], []
+
+                def recording(pgid, sig):
+                    kills.append((pgid, sig, process_state(pgid)))
+                    real_killpg(pgid, sig)
+
+                def failing(*args):
+                    raise error
+
+                gate.subprocess.Popen = self.recording_popen(procs)
+                gate.os.killpg = recording
+                gate.os.waitid = failing
+                try:
+                    result, err = self.call_reports("extract", "x")
+                finally:
+                    gate.subprocess.Popen = real_popen
+                    gate.os.killpg = real_killpg
+                    gate.os.waitid = real_waitid
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(f"{self.MACHINERY} ({named})", "extract")])
+                self.assertEqual(len(procs), 1)
+                self.assertEqual([(pgid, sig) for pgid, sig, _ in kills], [(procs[0].pid, signal.SIGKILL)])
+                self.assertIsNotNone(kills[0][2], "the child was reaped before its group was killed")
+                self.assertEqual(procs[0].returncode, -signal.SIGKILL)
+
+    def test_a_child_reaped_elsewhere_is_never_signalled(self):
+        # Fix round 1 (finding 1): when the wait reports that the child is
+        # no longer a child of the gate, its pid and group id may already be
+        # reused, so the gate signals neither and exits 3 naming the error.
+        self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        real_popen, real_killpg, real_waitid = subprocess.Popen, os.killpg, os.waitid
+        procs, kills = [], []
+
+        def recording(pgid, sig):
+            kills.append((pgid, sig))
+            real_killpg(pgid, sig)
+
+        def gone(*args):
+            raise ChildProcessError(errno.ECHILD, "No child processes")
+
+        gate.subprocess.Popen = self.recording_popen(procs)
+        gate.os.killpg = recording
+        gate.os.waitid = gone
+        try:
+            result, err = self.call_reports("extract", "x")
+        finally:
+            gate.subprocess.Popen = real_popen
+            gate.os.killpg = real_killpg
+            gate.os.waitid = real_waitid
+            for proc in procs:
+                if proc.returncode is None:
+                    proc.kill()
+                    proc.wait()
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            f"{self.MACHINERY} (ChildProcessError: [Errno 10] No child processes)", "extract"
+        )])
+        self.assertEqual(kills, [])
+
+    def test_what_a_child_forked_ends_with_it_when_it_exits_normally(self):
+        # Fix round 1 (finding 2): a process the child started that stays in
+        # its group, directly or through a double fork (which keeps the
+        # group), is killed once the child has ended normally, and the group
+        # is killed while the ended child is still unreaped.
+        direct = (
+            "    grandchild = subprocess.Popen([sys.executable, \"-I\", \"-c\", \"import time; time.sleep(300)\"])\n"
+            "    pid = grandchild.pid\n"
+        )
+        double = (
+            "    read, write = os.pipe()\n"
+            "    first = os.fork()\n"
+            "    if first == 0:\n"
+            "        second = os.fork()\n"
+            "        if second == 0:\n"
+            "            time.sleep(300)\n"
+            "            os._exit(0)\n"
+            "        os.write(write, str(second).encode(\"ascii\"))\n"
+            "        os._exit(0)\n"
+            "    os.close(write)\n"
+            "    os.waitpid(first, 0)\n"
+            "    pid = int(os.read(read, 64))\n"
+        )
+        real_killpg = os.killpg
+        for label, start in (("a direct child", direct), ("a double fork", double)):
+            with self.subTest(label):
+                tool = self.fake_extractor(extractor_with(
+                    "_real_extract = extract\n"
+                    "def extract(text):\n"
+                    "    import os, subprocess, time\n"
+                    + start +
+                    "    with open(Path(__file__).resolve().parent / \"grandchild.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
+                    "        handle.write(str(pid))\n"
+                    "    return _real_extract(text)\n"
+                ))
+                kills = []
+
+                def recording(pgid, sig):
+                    kills.append((pgid, sig, process_state(pgid)))
+                    real_killpg(pgid, sig)
+
+                gate.os.killpg = recording
+                try:
+                    result, err = self.call_reports("extract", self.ARGS["extract"])
+                finally:
+                    gate.os.killpg = real_killpg
+                pid = int((tool.parent / "grandchild.pid").read_text(encoding="utf-8"))
+                deadline = time.monotonic() + 10
+                state = process_state(pid)
+                while state not in (None, "Z") and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                    state = process_state(pid)
+                try:
+                    self.assertEqual((result, err), (("value", "2026-11-15"), ""))
+                    self.assertIn(state, (None, "Z"), f"the grandchild {pid} is still {state}")
+                    self.assertEqual(len(kills), 1, kills)
+                    self.assertEqual(kills[0][1], signal.SIGKILL)
+                    self.assertEqual(kills[0][2], "Z", "the group was not killed while the ended child was unreaped")
+                finally:
+                    if state not in (None, "Z"):
+                        with contextlib.suppress(OSError):
+                            command = Path(f"/proc/{pid}/cmdline").read_bytes()
+                            if b"time.sleep(300)" in command or str(tool).encode() in command:
+                                os.kill(pid, signal.SIGKILL)
+
+    def test_a_group_that_cannot_be_killed_exits_3(self):
+        # Fix round 1 (finding 3): an OSError other than ProcessLookupError
+        # from the group kill exits 3 naming it, after the child is killed
+        # directly where it still runs and reaped where it can be; a child
+        # that cannot be killed either is not waited for.
+        hung = extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n")
+        denied = PermissionError(errno.EPERM, "Operation not permitted")
+        named = "PermissionError: [Errno 1] Operation not permitted"
+        real_popen, real_killpg, real_kill = subprocess.Popen, os.killpg, os.kill
+        for label, body, op, arg, error, detail, kill_fails, returncode in (
+            ("after a normal exit", None, "baseline", None, denied, named, False, 0),
+            ("after a timeout", hung, "extract", "x", denied, named, False, -signal.SIGKILL),
+            ("another OSError after a timeout", hung, "extract", "x", OSError(errno.EINVAL, "Invalid argument"),
+             "OSError: [Errno 22] Invalid argument", False, -signal.SIGKILL),
+            ("after a timeout, with a child that cannot be killed either", hung, "extract", "x", denied, named,
+             True, None),
+        ):
+            with self.subTest(label):
+                if body is None:
+                    gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
+                else:
+                    self.fake_extractor(body)
+                gate.CHILD_TIMEOUT_SECONDS = 1
+                procs = []
+
+                def failing(*args):
+                    raise error
+
+                def kill_denied(*args):
+                    raise denied
+
+                gate.subprocess.Popen = self.recording_popen(procs)
+                gate.os.killpg = failing
+                if kill_fails:
+                    gate.os.kill = kill_denied
+                try:
+                    started = time.monotonic()
+                    result, err = self.call_reports(op, arg)
+                    elapsed = time.monotonic() - started
+                    returncodes = [proc.returncode for proc in procs]
+                finally:
+                    gate.subprocess.Popen = real_popen
+                    gate.os.killpg = real_killpg
+                    gate.os.kill = real_kill
+                    for proc in procs:
+                        if proc.returncode is None:
+                            proc.kill()
+                            proc.wait()
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(
+                    f"could not kill the process group of its child ({detail})", op
+                )])
+                self.assertEqual(returncodes, [returncode])
+                self.assertLess(elapsed, 10)
+
+    def test_an_echoed_request_of_any_size_keeps_its_verdict(self):
+        # Fix round 1 (finding 4): the stdout bound grows with the request,
+        # so a malformed message that echoes a long argument, enlarged by
+        # repr and by ASCII JSON escaping, keeps the verdict and the message
+        # the extractor gives, as the in-process gate did.
+        published = "\u00e9" * 12000
+        line = "Released: " + "\u00e9" * 12000
+        try:
+            REFERENCE.release_day_from_published_at(published)
+        except REFERENCE.Malformed as error:
+            published_message = str(error)
+        text = f"Version: {AHEAD}\n{line}\n"
+        try:
+            REFERENCE.extract(text)
+        except REFERENCE.Malformed as error:
+            line_message = str(error)
+        self.assertEqual(self.call_reports("release_day_from_published_at", published),
+                         (("malformed", published_message), ""))
+        self.assertEqual(self.call_reports("extract", text), (("malformed", line_message), ""))
+        # The worst case per character: each of these, repeated, is echoed
+        # through repr and ASCII JSON at its largest.
+        for character in ("\u00e9", "\U0001f600", "\x00", "\\", "\U000e0001", "'", "\"", "\t", "\u2028"):
+            for op, arg in (
+                ("release_day_from_published_at", character * 20000),
+                ("extract", f"Version: {AHEAD}\nReleased: " + character * 20000 + "\n"),
+            ):
+                with self.subTest(op=op, character=character):
+                    function = getattr(REFERENCE, op)
+                    try:
+                        expected = ("value", function(arg))
+                    except REFERENCE.Malformed as error:
+                        expected = ("malformed", str(error))
+                    self.assertEqual(self.call_reports(op, arg), (expected, ""))
+        # Through the whole gate: the published_at verdict stays 2 with its
+        # message, and the Released line verdict stays 3 with its message.
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published(published)
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        self.assertEqual(err.splitlines(), [f"{self.CV}the published_at of release v{AHEAD} is unusable: {published_message}"])
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
+        try:
+            REFERENCE.extract(gate.SKILL.read_text(encoding="utf-8"))
+        except REFERENCE.Malformed as error:
+            skill_message = str(error)
+        self.published("2026-11-15T09:30:00Z")
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 3, (out, err))
+        self.assertEqual(err.splitlines(), [
+            f"check-release-checksum-live: the Released line in {self.SHOWN} is malformed: {skill_message}"
+        ])
+
+    def test_the_stdout_bound_of_a_call_with_an_argument_grows_with_it(self):
+        # Fix round 1 (finding 4): the bound is RESULT_LIMIT plus 12 bytes
+        # for each character of the argument; a reply of exactly that size is
+        # accepted and one byte more is refused, naming the bound.
+        valid = b'{"op": "extract", "outcome": "absent"}'
+        limit = gate.RESULT_LIMIT + 12 * len("xy")
+        padded = valid + b" " * (limit - len(valid))
+        for label, output, expected in (
+            ("a reply of exactly the bound", padded, (("value", None), "")),
+            ("a reply one byte over the bound", padded + b" ", None),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"extract": output}))
+                result = self.call_reports("extract", "xy")
+                if expected is None:
+                    self.assertEqual(result[0], ("exit", 3), result[1])
+                    self.assertEqual(result[1].splitlines(), [self.unavailable(
+                        f"printed more than {limit} bytes", "extract"
+                    )])
+                else:
+                    self.assertEqual(result, expected)
+
+    def test_a_reply_with_a_repeated_key_exits_3(self):
+        # Fix round 1 (finding 5): a reply is exactly one JSON object that
+        # matches the contract, so a key given twice is refused, never read
+        # with the last value winning.
+        rule = "printed a result that does not match the contract (a key appears more than once)"
+        for label, output in (
+            ("a repeated value", b'{"op": "extract", "outcome": "value", "value": "2026-11-15", "value": "2026-11-16"}\n'),
+            ("a repeated outcome", b'{"op": "extract", "outcome": "malformed", "outcome": "absent"}\n'),
+            ("a repeated op with the same value", b'{"op": "extract", "op": "extract", "outcome": "absent"}\n'),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"extract": output}))
+                result, err = self.call_reports("extract", "x")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(rule, "extract")])
+
+
 class ModuleLoadTest(unittest.TestCase):
     """F5: the gate exits 3 (unavailable), not 1 (drift), when the extractor
     cannot be run or its child fails, whatever the reason. Row 80: each test
@@ -2017,7 +2385,9 @@ class ModuleLoadTest(unittest.TestCase):
         script, with the path of the gate copy as its first argument;
         ``inspect``, when given, is called with the tools directory after the
         run, before it is removed, and its result is returned third. An outer
-        timeout of 120 seconds makes a gate that hangs fail the test."""
+        timeout of 120 seconds makes a gate that hangs fail the test. The gate
+        runs with only PATH, an empty directory, and TMPDIR, a directory inside
+        the temporary directory of the test."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             tools = root / "tools"
@@ -2036,12 +2406,16 @@ class ModuleLoadTest(unittest.TestCase):
             skill.write_text(f"Version: {AHEAD}\n", encoding="utf-8")
             empty = root / "empty-path"
             empty.mkdir()
+            # Fix round 1: a TMPDIR inside this directory, so the temporary
+            # files of the gate and of its children never go to bare /tmp.
+            scratch = root / "tmp"
+            scratch.mkdir()
             if wrapper is None:
                 command = [sys.executable, "-I", str(tools / MODULE_PATH.name)]
             else:
                 command = [sys.executable, "-I", "-c", wrapper, str(tools / MODULE_PATH.name)]
             proc = subprocess.run(
-                command, capture_output=True, text=True, env={"PATH": str(empty)}, timeout=120,
+                command, capture_output=True, text=True, env={"PATH": str(empty), "TMPDIR": str(scratch)}, timeout=120,
             )
             inspected = inspect(tools) if inspect is not None else None
         if inspect is not None:
@@ -2325,6 +2699,69 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertEqual(code, 3, err)
                 self.assertIn(f"skill-release-date.py {reason} in extract, so the extractor is unavailable", err)
                 self.assertIn("the gh CLI is not available", err)
+
+
+    def test_the_gate_keeps_its_temporary_files_in_the_test_directory(self):
+        # Fix round 1 addition: a gate run in this suite is given a TMPDIR
+        # inside the test's own temporary directory, so no temporary file
+        # of the gate, and so none its child writes to, goes to bare /tmp.
+        # An audit hook records where each temporary file is made.
+        wrapper = (
+            "import importlib.util, json, os, sys\n"
+            "made = []\n"
+            "def hook(event, args):\n"
+            "    if event in (\"tempfile.mkstemp\", \"tempfile.mkdtemp\"):\n"
+            "        made.append(os.fsdecode(args[0]))\n"
+            "    elif event == \"open\" and hasattr(os, \"O_TMPFILE\") and type(args[2]) is int \\\n"
+            "            and args[2] & os.O_TMPFILE == os.O_TMPFILE:\n"
+            "        made.append(os.fsdecode(args[0]))\n"
+            "sys.addaudithook(hook)\n"
+            "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+            "gate = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(gate)\n"
+            "try:\n"
+            "    code = gate.main()\n"
+            "except SystemExit as stop:\n"
+            "    code = stop.code\n"
+            "with open(os.path.join(os.path.dirname(sys.argv[1]), \"temporary-paths.json\"), \"w\") as handle:\n"
+            "    json.dump(made, handle)\n"
+            "sys.exit(code)\n"
+        )
+
+        def outside(tools):
+            root = tools.parent.resolve()
+            made = json.loads((tools / "temporary-paths.json").read_text(encoding="utf-8"))
+            return made, [path for path in made if not Path(path).resolve().is_relative_to(root)]
+
+        code, err, (made, stray) = self.run_with_extractor(
+            EXTRACTOR_PATH.read_text(encoding="utf-8"), wrapper=wrapper, inspect=outside,
+        )
+        # With gh absent the release status cannot be read (2); the
+        # Released line is then checked offline.
+        self.assertEqual(code, 2, err)
+        # The probe and the offline extract each make three temporary files.
+        self.assertGreaterEqual(len(made), 6, made)
+        self.assertEqual(stray, [], f"temporary files made outside the test directory: {stray}")
+
+    def test_too_few_file_descriptors_exits_3_with_no_traceback(self):
+        # Fix round 1 (finding 1): with the open-file limit so low that the
+        # temporary files of a child cannot all be created, every call exits
+        # 3 naming the error, and the gate exits 3, never a traceback (exit 1).
+        wrapper = (
+            "import importlib.util, os, resource, sys\n"
+            "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+            "gate = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(gate)\n"
+            "highest = max(int(name) for name in os.listdir(\"/proc/self/fd\"))\n"
+            "resource.setrlimit(resource.RLIMIT_NOFILE, (highest + 1, resource.getrlimit(resource.RLIMIT_NOFILE)[1]))\n"
+            "sys.exit(gate.main())\n"
+        )
+        code, err = self.run_with_extractor(EXTRACTOR_PATH.read_text(encoding="utf-8"), wrapper=wrapper)
+        self.assertEqual(code, 3, err)
+        self.assertIn("skill-release-date.py could not be run, waited for, or read (OSError: [Errno 24] "
+                      "Too many open files", err)
+        self.assertIn(" in baseline, so the extractor is unavailable", err)
+        self.assertNotIn("Traceback", err)
 
 
 class ContractRoutingTest(unittest.TestCase):
