@@ -550,12 +550,16 @@ run_contract_case "second --interval is refused" 3 nogh owner/name owner/name - 
 # list: noreadlink (a readlink first on PATH that exits 1), nopyresolve (a python3
 # first on PATH that exits 1 for python3 -I -c and runs the real python3 otherwise),
 # nopy (the tools directory holds ci-status.sh only). One more token may name how
-# the wrapper is invoked: sourced (bash -c sources it, so $0 is bash), stdin (bash
+# the wrapper is invoked: sourced (bash -c sources it, so $0 is bash, then prints
+# after=<status>; the caller must keep running and see status 3), stdin (bash
 # -s reads it from a pipe), barename (bash ci-status.sh, found through PATH),
 # pylink (a copied wrapper beside a ci-status.py that is a symlink to the planted
 # file), pathexec (ci-status.sh executed through PATH), posixsh (the wrapper run
 # by the first of dash, sh, ksh, mksh or posh that a probe confirms is not bash;
-# skipped when there is none), restricted (bash -r), or noread (the ci-status.py
+# skipped when there is none), restricted (bash -r), setr (bash run with a
+# BASH_ENV file that runs set -r), setrsourced (bash -c runs set -r, then sources
+# ci-status.sh found through PATH, then prints after=<status>; the caller must
+# keep running and see status 3), or noread (the ci-status.py
 # beside the wrapper has mode 000; skipped as root, where mode 000 is readable).
 # Without one, the wrapper runs as bash with its absolute path. Each refusal has
 # its own message, which the case checks.
@@ -613,7 +617,8 @@ PY
   esac
   local entry=(bash "$tools/ci-status.sh") feed="" path="$bin:$PATH"
   case " $resolve " in
-    *" sourced "*) entry=(bash -c '. "$1" "${@:2}"' bash "$tools/ci-status.sh") ;;
+    *" sourced "*)
+      entry=(bash -c '. "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; exit "$s"' bash "$tools/ci-status.sh") ;;
     *" stdin "*) feed="$tools/ci-status.sh"; entry=(bash -s --) ;;
     *" barename "*) path="$bin:$tools:$PATH"; entry=(bash ci-status.sh) ;;
     *" pylink "*)
@@ -623,6 +628,12 @@ PY
       entry=(bash "$tools/ci-status.sh") ;;
     *" posixsh "*) entry=("$posix_sh" "$tools/ci-status.sh") ;;
     *" restricted "*) entry=(bash -r "$tools/ci-status.sh") ;;
+    *" setr "*)
+      printf "set -r\n" > "$tmp/setr.sh"
+      entry=(env BASH_ENV="$tmp/setr.sh" bash "$tools/ci-status.sh") ;;
+    *" setrsourced "*)
+      path="$bin:$tools:$PATH"
+      entry=(bash -c 'set -r; . ci-status.sh "$@"; s=$?; printf "after=%s\n" "$s"; exit "$s"' bash) ;;
     *" noread "*) chmod 000 "$tools/ci-status.py" ;;
     *" pathexec "*)
       chmod +x "$tools/ci-status.sh"; path="$bin:$tools:$PATH"; entry=(ci-status.sh) ;;
@@ -639,7 +650,8 @@ PY
   local msg="ci-status: cannot find ci-status.py beside the real ci-status.sh" msgfile="$tmp/err"
   case " $resolve " in
     *" posixsh "*) msg="ci-status: ci-status.sh must run under bash, not another shell" ;;
-    *" restricted "*) msg="ci-status: ci-status.sh cannot run in a restricted shell"; msgfile="$tmp/out" ;;
+    *" restricted "*|*" setr "*|*" setrsourced "*)
+      msg="ci-status: ci-status.sh cannot run in a restricted shell"; msgfile="$tmp/out" ;;
     *" noread "*) msg="ci-status: cannot read ci-status.py beside the real ci-status.sh" ;;
   esac
   if [ "$want" -eq 3 ] && ! grep -q -F "$msg" "$msgfile"; then
@@ -648,6 +660,10 @@ PY
   if [ "$want" -eq 0 ] && ! grep -q -F "reading checks for commit ${C1}" "$tmp/out"; then
     ok=0; why="$why sha-line"
   fi
+  case " $resolve " in
+    *" sourced "*|*" setrsourced "*)
+      if ! grep -q -x -F "after=3" "$tmp/out"; then ok=0; why="$why caller-status"; fi ;;
+  esac
   if [ "$ok" -eq 1 ]; then
     printf "ok   %s (exit %s)\n" "$name" "$got"
   else
@@ -662,7 +678,7 @@ run_wrapper_case "failing readlink does not run a planted ./ci-status.py" 0 nore
 run_wrapper_case "failed path resolution fails closed with exit 3" 3 nopyresolve
 run_wrapper_case "failed resolution with failing readlink fails closed with exit 3" 3 "noreadlink nopyresolve"
 run_wrapper_case "wrapper with no ci-status.py beside it fails closed with exit 3" 3 nopy
-run_wrapper_case "sourced wrapper fails closed with exit 3" 3 sourced
+run_wrapper_case "sourced wrapper returns status 3 to the caller" 3 sourced
 run_wrapper_case "wrapper read from standard input fails closed with exit 3" 3 stdin
 run_wrapper_case "bare wrapper name found through PATH fails closed with exit 3" 3 barename
 run_wrapper_case "symlinked ci-status.py beside a copied wrapper fails closed with exit 3" 3 pylink
@@ -670,9 +686,17 @@ run_wrapper_case "wrapper executed through PATH runs the real gate" 0 pathexec
 run_wrapper_case "wrapper run by a non-bash shell fails closed with exit 3" 3 posixsh
 run_wrapper_case "wrapper run by a restricted shell fails closed with exit 3" 3 restricted
 run_wrapper_case "unreadable ci-status.py fails closed with exit 3" 3 noread
+run_wrapper_case "wrapper executed in a shell restricted by set -r fails closed with exit 3" 3 setr
+run_wrapper_case "wrapper sourced after set -r returns status 3 to the caller" 3 setrsourced
 
+# A skipped case is not verified, so any skip makes the suite incomplete and
+# nonzero; the final line then names the count.
 if [ "$skips" -gt 0 ]; then
-  printf "%s ci-status test(s) skipped\n" "$skips"
+  if [ "$fails" -gt 0 ]; then
+    printf "%s ci-status test(s) failed\n" "$fails"
+  fi
+  printf "ci-status suite incomplete: %s test(s) skipped\n" "$skips"
+  exit 1
 fi
 if [ "$fails" -eq 0 ]; then
   printf 'all ci-status github-actions fail-safe tests pass
