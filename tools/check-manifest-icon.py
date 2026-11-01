@@ -28,10 +28,9 @@ What it checks:
       such manifest is itself declared in MANIFESTS, and a run that checks no icon
       field at all fails as vacuous;
   P1  the icon value is a string with non-whitespace content;
-  P2  it holds no character of Unicode category Cc (a control, including NUL), Cf
-      (format), Cs (a surrogate), Zl (line separator), Zp (paragraph separator), or
-      Cn (unassigned, since a later Unicode release can assign it as Cf), and no
-      backslash: no character that can alter how a log line or terminal renders;
+  P2  every character of the icon value is printable ASCII, 0x21 to 0x7E, other
+      than the backslash: an allowlist, so no character outside that range, and
+      none that can alter how a log line or terminal renders, can pass;
   P3  it is a canonical "./" relative path: every component after the "./" prefix is
       non-empty and neither "." nor "..", with no trailing slash, so an absolute or
       traversing path is refused before any filesystem call;
@@ -93,6 +92,7 @@ What it checks:
 
 Repository-policy checks (taken from the row 64 brief and plan, not from a verified
 Claude Code specification, so labelled as such):
+  P2  the printable ASCII allowlist (0x21 to 0x7E, other than the backslash);
   P3  the "./" prefix and the canonical-path form;
   I2  the lower-cased file extension is consistent with the signature (.png for a
       PNG; .jpg or .jpeg for a JPEG); the signature decides the format and the
@@ -234,7 +234,6 @@ import os
 import stat
 import struct
 import sys
-import unicodedata
 import zlib
 from pathlib import Path
 from typing import NoReturn, Sequence
@@ -694,14 +693,10 @@ def check_path_syntax(where: str, icon: object) -> list[str]:
     """P1-P3: return the components after the ./ prefix."""
     if not isinstance(icon, str) or not icon.strip():
         die(f"{where} must be a non-empty string, got {icon!r}")
-    if any(
-        unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp", "Cn") or ch == "\\"
-        for ch in icon
-    ):
+    if any(not "\x21" <= ch <= "\x7e" or ch == "\\" for ch in icon):
         die(
-            f"{where} value {icon!r} contains a control, format, surrogate, line "
-            "separator, paragraph separator, unassigned, or backslash character "
-            "(Unicode category Cc, Cf, Cs, Zl, Zp, or Cn)"
+            f"{where} value {icon!r} must hold only printable ASCII characters, "
+            "0x21 to 0x7E, other than the backslash"
         )
     rest = icon[2:] if icon.startswith("./") else ""
     parts = rest.split("/")

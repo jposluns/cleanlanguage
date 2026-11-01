@@ -645,7 +645,7 @@ class ManifestIconTest(unittest.TestCase):
 
     def test_icon_nul_fails(self):
         self.set_icon_value("./assets/CL_icon.png\x00")
-        self.expect_exit(1, "contains a control, format, surrogate")
+        self.expect_exit(1, "must hold only printable ASCII characters")
 
     def test_icon_control_and_surrogate_fail(self):
         for value in ("./assets/CL\x01icon.png", "./assets/CL\x7ficon.png",
@@ -655,17 +655,15 @@ class ManifestIconTest(unittest.TestCase):
                 self.set_icon_value(value)
                 self.expect_exit(
                     1,
-                    "contains a control, format, surrogate, line separator, paragraph "
-                    "separator, unassigned, or backslash character (Unicode category "
-                    "Cc, Cf, Cs, Zl, Zp, or Cn)",
+                    "must hold only printable ASCII characters, 0x21 to 0x7E, other "
+                    "than the backslash",
                 )
 
     def test_icon_format_and_separator_characters_fail(self):
         # U+009B (CSI) and U+0085 (NEL) are C1 controls, U+202E is the
         # right-to-left override, U+2028 and U+2029 are the line and paragraph
         # separators; each can alter how a log line or terminal renders, so each
-        # is refused even when the file it names exists. U+0378 is unassigned (Cn),
-        # which a later Unicode release could assign as a format character.
+        # is refused even when the file it names exists. U+0378 is unassigned.
         for name in ("CL\x9bicon.png", "CL\x85icon.png",
                      "CL\N{RIGHT-TO-LEFT OVERRIDE}icon.png",
                      "CL\N{LINE SEPARATOR}icon.png",
@@ -673,7 +671,32 @@ class ManifestIconTest(unittest.TestCase):
                      "CL\u0378icon.png"):
             with self.subTest(name=ascii(name)):
                 self.set_icon(name, make_png(512, 512))
-                self.expect_exit(1, "contains a control, format, surrogate, line separator")
+                self.expect_exit(1, "must hold only printable ASCII characters")
+
+    def test_icon_characters_outside_the_allowlist_fail(self):
+        # P2 is an allowlist, every character printable ASCII 0x21 to 0x7E other
+        # than the backslash: a space (0x20), a non-breaking space (U+00A0), a
+        # combining mark (U+0336), and a private-use character (U+E000) are all
+        # refused even when the file each names exists. The last three passed a
+        # category denylist (Zs, Mn, Co). Each character is built with chr() so
+        # this file stays ASCII.
+        for code in (0x20, 0xA0, 0x336, 0xE000):
+            name = "CL" + chr(code) + "icon.png"
+            with self.subTest(name=ascii(name)):
+                self.set_icon(name, make_png(512, 512))
+                self.expect_exit(1, "must hold only printable ASCII characters")
+
+    def test_icon_refused_character_outside_the_file_name_fails(self):
+        # The refusal reads the whole value, not only the file name: a refused
+        # character in a directory component or in the "./" prefix region is
+        # refused the same way.
+        for value in ("./as" + chr(0x336) + "sets/CL_icon.png",
+                      "." + chr(0xA0) + "/assets/CL_icon.png",
+                      chr(0x2044) + "/assets/CL_icon.png",
+                      ". /assets/CL_icon.png"):
+            with self.subTest(value=ascii(value)):
+                self.set_icon_value(value)
+                self.expect_exit(1, "must hold only printable ASCII characters")
 
     # Filesystem (F1-F5).
 
@@ -1420,100 +1443,82 @@ class ManifestIconTest(unittest.TestCase):
         self.assertTrue(err.startswith(f"check-manifest-icon: {CLAUDE} field icon: "), err)
 
 
-def trigger_block_lines(text: str, key: str) -> list[str]:
-    """Return the raw lines of one trigger block of a workflow, exactly as written.
-
-    The block is the key line (for example "  push:") and every following line up
-    to the next line that is non-blank and indented two columns or less, with
-    trailing blank lines trimmed. The key line must appear exactly once in the
-    text, else ValueError, so a second trigger of the same name cannot hide a
-    different block. No entry is decoded: a caller compares the lines byte for
-    byte against one expected block, so an added, removed, reordered, escaped,
-    re-quoted or otherwise altered line fails the comparison.
-    """
-    lines = text.split("\n")
-    if lines.count(key) != 1:
-        raise ValueError(f"the workflow must hold exactly one {key.strip()!r} line")
-    start = lines.index(key)
-    end = start + 1
-    while end < len(lines) and (not lines[end].strip() or lines[end].startswith("   ")):
-        end += 1
-    block = lines[start:end]
-    while block and not block[-1].strip():
-        block.pop()
-    return block
-
-
-class WorkflowPathsTest(unittest.TestCase):
-    """The push block matches one pinned text and pull_request carries no filter."""
+class WorkflowTextTest(unittest.TestCase):
+    """The workflow file matches one pinned text, byte for byte."""
 
     WORKFLOW = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "manifest-icon.yml"
 
-    # The complete push block of the workflow, byte for byte. A push filter is an
-    # exact, reviewed list: any change to it, including an escaped or re-quoted
-    # entry that decodes in YAML to something this text does not show, must fail
-    # here and be made in both places deliberately.
-    PUSH_BLOCK = [
-        "  push:",
-        "    branches:",
-        "      - main",
-        "    paths:",
-        "      - \"**/plugin.json\"",
-        "      - \"**/marketplace.json\"",
-        "      - \".claude-plugin/marketplace.json\"",
-        "      - \"cleanlanguage/.claude-plugin/plugin.json\"",
-        "      - \"cleanlanguage/plugin.json\"",
-        "      - \"plugin/.claude-plugin/marketplace.json\"",
-        "      - \"plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json\"",
-        "      - \"cleanlanguage/assets\"",
-        "      - \"cleanlanguage/assets/**\"",
-        "      - \".gitattributes\"",
-        "      - \"**/.gitattributes\"",
-        "      - \"tools/check-manifest-icon.py\"",
-        "      - \"tools/test-manifest-icon.py\"",
-        "      - \".github/workflows/manifest-icon.yml\"",
-    ]
+    # The whole workflow file, byte for byte: any edit to the workflow, however
+    # small, must update this text in the same change. A whole-file comparison
+    # has no block boundary to miss, so a comment line, a blank line, a
+    # duplicate key, or an escaped or re-quoted entry cannot hide from it.
+    EXPECTED = """\
+name: Manifest icon
 
-    def workflow_text(self) -> str:
-        return self.WORKFLOW.read_text(encoding="ascii")
+# Validate every plugin manifest icon field, so a missing, unreadable, or
+# out-of-bounds icon cannot reach main: each icon names an existing regular file
+# inside the repository, reached without symlinks, a PNG or JPEG by file
+# signature, square, 512 to 2048 pixels per side, and under 2 MB, failing closed
+# on an unreadable or unparseable input. Structural, offline, and stdlib-only;
+# also runs the gate tests. The pinned CLI validator (plugin-validate.yml) stays
+# the authority on what Claude Code accepts; this gate is the repository floor.
+#
+# The pull_request trigger carries no paths filter, so this gate reports on every
+# pull request and can be a required check: a path-filtered required check never
+# reports on a pull request outside its paths and blocks the merge as
+# forever-pending. The push trigger keeps its paths filter, because a required
+# check is evaluated on the pull request and the paths it lists cover every file
+# the gate and its tests read, so a push touching none of them cannot change the
+# result. The gate walks the whole tree for manifests, so the two globs cover a
+# manifest added anywhere, and the five declared manifests are also listed by
+# name. The icon paths it reads today lie under cleanlanguage/assets; a manifest
+# that later points an icon elsewhere must extend this filter in the same change.
+# Checkout attributes are an input too: a .gitattributes file anywhere can change
+# the bytes git writes for the icon and the manifests, so both forms are listed.
 
-    def test_push_block_is_byte_exact(self):
-        self.assertEqual(trigger_block_lines(self.workflow_text(), "  push:"), self.PUSH_BLOCK)
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    paths:
+      - "**/plugin.json"
+      - "**/marketplace.json"
+      - ".claude-plugin/marketplace.json"
+      - "cleanlanguage/.claude-plugin/plugin.json"
+      - "cleanlanguage/plugin.json"
+      - "plugin/.claude-plugin/marketplace.json"
+      - "plugin/aiqt-guardrails-hooks/.claude-plugin/plugin.json"
+      - "cleanlanguage/assets"
+      - "cleanlanguage/assets/**"
+      - ".gitattributes"
+      - "**/.gitattributes"
+      - "tools/check-manifest-icon.py"
+      - "tools/test-manifest-icon.py"
+      - ".github/workflows/manifest-icon.yml"
 
-    def test_pull_request_carries_no_filter(self):
-        # A path-filtered required check never reports on a pull request outside
-        # its paths, so the pull_request trigger must stay a bare key line.
-        self.assertEqual(
-            trigger_block_lines(self.workflow_text(), "  pull_request:"), ["  pull_request:"]
-        )
+permissions:
+  contents: read
 
-    def test_escaped_or_requoted_entry_is_refused(self):
-        # A reader that strips quotes and checks the undecoded text for a leading
-        # exclamation mark accepts both of these; the first decodes in YAML to an
-        # exclusion ("\x21" is "!") and the second re-quotes a listed entry. The
-        # byte-exact comparison refuses both.
-        plain = "      - \"cleanlanguage/assets/**\""
-        for mutated in ("      - \"\\x21cleanlanguage/assets/**\"",
-                        "      - 'cleanlanguage/assets/**'"):
-            with self.subTest(entry=mutated.strip()):
-                block = list(self.PUSH_BLOCK)
-                block[block.index(plain)] = mutated
-                text = "on:\n  pull_request:\n" + "\n".join(block) + "\n\npermissions:\n"
-                self.assertNotEqual(trigger_block_lines(text, "  push:"), self.PUSH_BLOCK)
+jobs:
+  check:
+    # A unique display name, so a required status check names this job alone
+    # and no other workflow job called check can satisfy it.
+    name: Manifest icon
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Run the manifest-icon tests
+        shell: bash
+        run: python3 -I tools/test-manifest-icon.py
+      - name: Validate the manifest icons
+        shell: bash
+        run: python3 -I tools/check-manifest-icon.py
+""".encode("ascii")
 
-    def test_push_block_covers_checkout_attributes(self):
-        # A .gitattributes file anywhere can change the bytes git writes for
-        # the icon and the manifests, so a push touching only one must run.
-        self.assertIn("      - \".gitattributes\"", self.PUSH_BLOCK)
-        self.assertIn("      - \"**/.gitattributes\"", self.PUSH_BLOCK)
-
-    def test_push_block_text_carries_no_exclusion(self):
-        # A YAML entry can only decode to a leading exclamation mark through a
-        # literal one or a double-quoted backslash escape; the pinned block, which
-        # the workflow must equal byte for byte, carries neither character.
-        for line in self.PUSH_BLOCK:
-            self.assertNotIn("!", line)
-            self.assertNotIn("\\", line)
+    def test_workflow_file_is_byte_exact(self):
+        self.assertEqual(self.WORKFLOW.read_bytes(), self.EXPECTED)
 
 
 if __name__ == "__main__":
