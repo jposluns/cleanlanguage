@@ -21,11 +21,12 @@ an accepted false failure listed below. Docstrings are found with ast.get_docstr
 docstring of a one-line suite counts too, and a string statement may be a plain, f-string,
 template string or bytes literal. Its prose is read from the parsed literal, never cut from the
 source: the decoded text of a plain or bytes literal, and only the top-level literal text of an
-f-string or template string, whose replacement fields, with any format spec or nested literal, are
+f-string or template string, whose replacement fields, with any format spec, nested literal or the
+text before the = of a self-documenting field such as {x=}, which Python puts into the value, are
 code and each read as one space. Each part of an implicitly concatenated literal is read from its
 own delimiter, with its own prefix, and joined to the next part as Python joins them, with nothing
 between, and a backslash that ends a line of a part joins the next line with nothing between, while
-a backslash just before a replacement field, which escapes nothing, stays the backslash Python
+a lone backslash just before a replacement field, which escapes nothing, stays the backslash Python
 keeps; a line break inside one part, written or escaped, is the newline it is, with the space around
 it stripped. Every pattern but the round number pattern reads a line break, in a string value or
 between the lines of a comment run or paragraph, as one space; the round number pattern keeps it, so
