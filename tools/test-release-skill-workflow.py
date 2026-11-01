@@ -675,7 +675,7 @@ VERIFY_BY_DISPATCH = ("To verify the published release, first check that .github
 NEVER_AT_OLDER_TAG = ("If it does not, the tag carries an older workflow that can republish a published"
                       " release: never dispatch this workflow at that tag, with or without the force input."
                       " Verify the release read-only instead (gh release view v1.0.15 --json"
-                      " immutable,publishedAt,assets; gh release download v1.0.15; sha256sum -c on each"
+                      " isImmutable,publishedAt,assets; gh release download v1.0.15; sha256sum -c on each"
                       " .sha256 asset; cmp cleanlanguage.zip cleanlanguage-1.0.15.zip, which must report no"
                       " difference; and unzip -p cleanlanguage.zip SKILL.md | grep ^Released:, which for a"
                       " dated release must name the UTC day of publishedAt)")
@@ -1265,7 +1265,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # remedy phrased without either word is neither counted nor checked.
         echoes = [line for line in WORKFLOW_TEXT.splitlines() if "echo " in line]
         remedies = [line for line in echoes if "corrective" in line or "new version" in line]
-        self.assertEqual(len(remedies), 10, remedies)
+        self.assertEqual(len(remedies), 11, remedies)
         for line in echoes:
             with self.subTest(line.strip()):
                 self.assertNotRegex(line, r"(?<!corrective )new version")
@@ -1372,10 +1372,18 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertIn("A tag without that step carries an older workflow that can republish a published"
                       " release, so never dispatch this workflow at such a tag, with or without this input;"
                       " verify that release read-only instead: gh release view <tag> --json"
-                      " immutable,publishedAt,assets; gh release download <tag>; sha256sum -c on each .sha256"
-                      " asset; cmp cleanlanguage.zip cleanlanguage-<version>.zip, which must report no"
-                      " difference; and unzip -p cleanlanguage.zip SKILL.md | grep ^Released:, which for a"
-                      " dated release must name the UTC day of publishedAt.", description)
+                      " isImmutable,publishedAt,assets; gh release download <tag>; sha256sum -c on each"
+                      " .sha256 asset; where the release has both a stable zip and a version-named zip, cmp"
+                      " the two, which must report no difference; and for a dated release, find SKILL.md in"
+                      " the zip with unzip -Z1 <zip>, then unzip -p <zip> <that entry> | grep ^Released:,"
+                      " which must name the UTC day of publishedAt.", description)
+        # Fix round 4: the description covers every era of tag, so it names
+        # no asset file and no fixed path inside the zip.
+        self.assertNotIn("cleanlanguage.zip", description)
+        self.assertNotIn("clean-language", description)
+        self.assertNotIn("unzip -p cleanlanguage.zip SKILL.md", description)
+        # gh release view names the field isImmutable; immutable is the REST field.
+        self.assertNotIn("--json immutable", WORKFLOW_TEXT)
         self.assertNotIn("failed before it published, dispatch this workflow again with the tag", description)
         extractor = EXTRACTOR.read_text(encoding="utf-8")
         for stale in ("release upload", "force dispatch", "--clobber"):
@@ -1449,15 +1457,27 @@ class DetermineStepTest(WorkflowStepTest):
     def test_unreadable_published_at_names_the_verifying_dispatch(self):
         # Row 78: like the publish-step readback refusals, the refusal names
         # the next step.
-        self.set_state(status="200", published_at="FAIL")
+        self.set_state(status="200", published_at="FAIL", remote_tag=COMMIT)
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 1, err)
         self.assertIn("Could not read published_at for the existing release v1.0.15.", err)
+        self.assertNotIn(TAG_GONE, err)
         # Fix round 3: this step may run away from the tag, so the dispatch
         # at the tag is named only for a tag carrying this workflow.
         self.assertIn(DETERMINE_UNREADABLE, err)
         self.assertIn(NEVER_AT_OLDER_TAG + ".", err)
         self.assertNotIn(REMEDY_UNREADABLE, err)
+
+    def test_unreadable_published_at_with_the_tag_gone_names_a_corrective_new_version(self):
+        # Fix round 4: as in the publish step, a tag gone from origin cannot
+        # be selected as the run ref, so no dispatch is named.
+        self.set_state(status="200", published_at="FAIL", remote_tag="")
+        code, _out, err = self.run_step(DETERMINE)
+        self.assertEqual(code, 1, err)
+        self.assertIn("Could not read published_at for the existing release v1.0.15.", err)
+        self.assertIn(TAG_GONE, err)
+        self.assertNotIn("dispatch this workflow", err)
+        self.assertTrue(any(c[0] == VCS and c[1][:1] == ["ls-remote"] for c in self.calls()), self.calls())
 
     def test_published_release_on_another_day_names_a_corrective_new_version(self):
         # Fix round 3: the UTC day rolled over between the window check and
