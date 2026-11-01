@@ -16,23 +16,31 @@
 # contract reserves for checks still running or timed out. The check reads
 # BASH_VERSION, so a caller that exports BASH_VERSION into a non-bash shell passes
 # it and fails later with exit 2; that falls under the caller-environment residual
-# below. The wrapper next refuses with status 3 under a restricted shell, which
-# would refuse the redirect and the exec below and exit 1, the code for a failed
-# check. Restricted mode is read from $- as well as from the restricted_shell
-# option, which is on only when bash starts restricted (bash -r or rbash), so a
-# shell restricted later by set -r, for example from BASH_ENV, is refused too.
-# Every refusal after the bash check ends the same way: when the wrapper is
-# sourced (BASH_SOURCE[0] differs from $0) it returns 3 to the caller, which keeps
-# running with status 3, and otherwise it exits 3. Where BASH_SOURCE[0] differs
-# from $0 but the wrapper was executed (a bare name found through PATH, or a
-# script read from standard input), the return fails and the exit 3 runs. The
-# non-bash refusal cannot read BASH_SOURCE, so it always exits 3, which ends a
-# caller that sourced the wrapper into a non-bash shell, still with status 3.
-# The restricted refusal is printed to standard output: bash 5.3 accepts the
-# >&2 duplication there, but the restricted shell is documented to refuse
-# output redirection, so this message, and the return that follows it, use none.
-# The other refusals run where redirection works, so their return discards the
-# error bash prints when the wrapper was executed rather than sourced.
+# below. The non-bash refusal cannot tell whether it was sourced, so it always
+# exits 3, which ends a caller that sourced the wrapper into a non-bash shell,
+# still with status 3.
+# The wrapper then decides once whether it is sourced: return succeeds in a
+# subshell only when the wrapper is sourced. That test closes standard error with
+# 2>&- rather than redirecting it to a file, and bash 5.3 accepts that in a
+# restricted shell, so the one test serves every refusal. Every later refusal
+# returns 3 to a caller that sourced the wrapper, which keeps running with status
+# 3, and otherwise exits 3. Each refusal message ignores a write failure, so a
+# closed output or errexit in a sourcing caller cannot end the wrapper before it
+# returns or exits 3.
+# When executed, the wrapper next resets the inherited shell state that could
+# change its exit status or skip its checks: errexit, nounset, pipefail,
+# errtrace, functrace, noglob, noclobber, keyword, allexport, verbose, xtrace and
+# posix are turned off, extdebug and expand_aliases are unset, aliases are
+# removed, and the EXIT, ERR, DEBUG and RETURN traps are cleared. When sourced,
+# it changes none of the shell state of the caller and only refuses.
+# The wrapper next refuses with status 3 under a restricted shell, which would
+# refuse the redirect and the exec below and exit 1, the code for a failed check.
+# Restricted mode is read from $- as well as from the restricted_shell option,
+# which is on only when bash starts restricted (bash -r or rbash), so a shell
+# restricted later by set -r, for example from BASH_ENV, is refused too. The
+# restricted refusal is printed to standard output: bash 5.3 accepts the >&2
+# duplication there, but the restricted shell is documented to refuse output
+# redirection, so this message uses none.
 # The wrapper locates itself from BASH_SOURCE[0], never from $0 alone. It exits
 # 3, and runs no ci-status.py, when it is sourced rather than executed, when it is
 # read from standard input (BASH_SOURCE[0] is empty), when BASH_SOURCE[0] holds no
@@ -43,7 +51,8 @@
 # os.path.realpath resolves a symlinked wrapper without depending on GNU readlink.
 # The resolved wrapper must be an existing regular file, and the ci-status.py
 # beside it must be a regular file that is not a symlink and that the resolver can
-# open for reading, or the wrapper exits 3.
+# open for reading, or the wrapper exits 3. The resolver status is captured
+# directly, so no shell option can turn its failure into another exit status.
 # The directory is printed with a trailing slash, so command substitution cannot
 # strip a newline from its name.
 # Residual: the caller environment, including PATH, BASH_ENV and exported shell
@@ -54,25 +63,39 @@
 # ci-status.py in the working directory and against a symlinked or misplaced gate.
 # The checks run before the exec, so a ci-status.py removed or changed between the
 # check and the exec is not caught.
+# Shell invocation options that act before the wrapper code runs are outside what
+# it can check: bash -n reads the wrapper, runs nothing and exits 0, and bash -t
+# runs only its first command, the bash check, and exits 0. A restricted caller
+# that names the wrapper by path is refused by bash, with status 1, before the
+# wrapper runs. When the wrapper is sourced, the options and traps of the caller,
+# such as a DEBUG trap under extdebug, stay in force and are outside its reset.
 # A BASH_VERSION exported into a non-bash shell passes this check (see above).
 if [ -z "${BASH_VERSION:-}" ]; then
-  printf "ci-status: ci-status.sh must run under bash, not another shell (%s)\n" "$0" >&2
+  printf "ci-status: ci-status.sh must run under bash, not another shell (%s)\n" "$0" >&2 || :
   exit 3
+fi
+if (return 0 2>&-); then sourced=1; else sourced=0; fi
+if [ "$sourced" -eq 0 ]; then
+  set +e +u +E +T +f +C +k +a +v +x +o pipefail +o posix
+  shopt -u extdebug expand_aliases
+  unalias -a
+  trap - EXIT ERR DEBUG RETURN
 fi
 restricted=0
 case "$-" in *r*) restricted=1 ;; esac
 if shopt -q restricted_shell; then restricted=1; fi
 if [ "$restricted" -eq 1 ]; then
-  printf "ci-status: ci-status.sh cannot run in a restricted shell (%s)\n" "$0"
-  if [ "${BASH_SOURCE[0]:-}" != "$0" ]; then return 3; fi
+  printf "ci-status: ci-status.sh cannot run in a restricted shell (%s)\n" "$0" || :
+  if [ "$sourced" -eq 1 ]; then return 3; fi
   exit 3
 fi
 src="${BASH_SOURCE[0]:-}"
 here=""
 cause=find
-if ! (return 0 2>/dev/null) && [ "$0" = "$src" ]; then
+if [ "$sourced" -eq 0 ] && [ "$0" = "$src" ]; then
   case "$src" in
     */*)
+      rc=0
       here="$(python3 -I -c '
 import os, stat, sys
 try:
@@ -88,20 +111,19 @@ try:
 except OSError:
     sys.exit(4)
 print(os.path.join(os.path.dirname(wrapper), ""))
-' "$src")"
-      rc=$?
+' "$src")" || rc=$?
       if [ "$rc" -ne 0 ]; then here=""; fi
       if [ "$rc" -eq 4 ]; then cause=read; fi ;;
   esac
 fi
 if [ "$cause" = read ]; then
-  printf "ci-status: cannot read ci-status.py beside the real ci-status.sh (%s)\n" "$src" >&2
-  if [ "${BASH_SOURCE[0]:-}" != "$0" ]; then return 3 2>/dev/null; fi
+  printf "ci-status: cannot read ci-status.py beside the real ci-status.sh (%s)\n" "$src" >&2 || :
+  if [ "$sourced" -eq 1 ]; then return 3; fi
   exit 3
 fi
 if [ -z "$here" ] || [ ! -f "${here}ci-status.py" ] || [ -L "${here}ci-status.py" ]; then
-  printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\n" "$src" >&2
-  if [ "${BASH_SOURCE[0]:-}" != "$0" ]; then return 3 2>/dev/null; fi
+  printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\n" "$src" >&2 || :
+  if [ "$sourced" -eq 1 ]; then return 3; fi
   exit 3
 fi
 exec python3 -I "${here}ci-status.py" "$@"

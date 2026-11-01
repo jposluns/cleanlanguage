@@ -73,6 +73,14 @@ defends only against a planted ci-status.py in the working directory and against
 a symlinked or misplaced gate. --timeout, --interval and --repo may each be
 given once; a second use is refused (exit 3).
 
+Output is part of the result. A standard output or standard error that is
+closed at start or not open for writing (bash, started with a standard stream
+closed, can pass that descriptor on open read-only on its own script), a write
+or flush that fails (a full device or a closed pipe), and any other unexpected
+exception end the tool with exit 3, so a lost report is never read as a verdict
+and a crash never reads as a failed check (exit 1). When output works, the exit
+status is the verdict of main unchanged.
+
 Usage:
   ci-status.py <sha>                     Report once and exit.
   ci-status.py <sha> --wait              Poll until the checks settle.
@@ -84,11 +92,13 @@ Exit codes:
   0  every check passed, confirmed across two consecutive readings
   1  at least one check failed, was cancelled, or timed out
   2  checks are still running, or --wait hit its timeout
-  3  the result could not be read, no checks exist, or usage was wrong
+  3  the result could not be read, no checks exist, usage was wrong, or output
+     failed
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -562,5 +572,50 @@ def main() -> int:
         nap()
 
 
+def _note(message: str) -> None:
+    """Write a message to standard error, ignoring any failure to do so."""
+    try:
+        sys.stderr.write(message)
+        sys.stderr.flush()
+    except Exception:  # the stream itself may be the failure being reported
+        pass
+
+
+def _writable(stream) -> bool:
+    """True when the stream exists and its descriptor is open for writing."""
+    if stream is None:
+        return False
+    try:
+        mode = fcntl.fcntl(stream.fileno(), fcntl.F_GETFL) & os.O_ACCMODE
+    except (OSError, ValueError, AttributeError):
+        return False
+    return mode in (os.O_WRONLY, os.O_RDWR)
+
+
+def run() -> int:
+    """Run main and return its exit status, or 3 when output fails or an
+    unexpected exception escapes, so neither can become a verdict."""
+    if not (_writable(sys.stdout) and _writable(sys.stderr)):
+        _note("ci-status: standard output or standard error cannot be written\n")
+        return 3
+    try:
+        code = main()
+    except SystemExit as exc:
+        code = exc.code
+    except Exception as exc:
+        _note(f"ci-status: unexpected error ({type(exc).__name__}: {exc}); treating the result as unreadable\n")
+        return 3
+    if not isinstance(code, int) or isinstance(code, bool):
+        return 3
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            return 3
+    return code
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    # os._exit skips the interpreter shutdown flush, whose failure would otherwise
+    # replace the status with 120; run has already flushed both streams.
+    os._exit(run())

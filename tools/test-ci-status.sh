@@ -561,8 +561,11 @@ run_contract_case "second --interval is refused" 3 nogh owner/name owner/name - 
 # ci-status.sh found through PATH, then prints after=<status>; the caller must
 # keep running and see status 3), or noread (the ci-status.py
 # beside the wrapper has mode 000; skipped as root, where mode 000 is readable).
-# Without one, the wrapper runs as bash with its absolute path. Each refusal has
-# its own message, which the case checks.
+# sourcedself (bash -c sources it with $0 set to the wrapper path, then prints
+# after=<status>; the caller must keep running and see status 3). Without one,
+# the wrapper runs as bash with its absolute path. A shell option token, errexit
+# (bash -e), nounset (bash -u) or pipefail (bash -o pipefail), runs that bash
+# with the option set. Each refusal has its own message, which the case checks.
 # non_bash_shell prints the path of a shell whose BASH_VERSION is unset, or fails.
 non_bash_shell() {
   local cand found
@@ -615,7 +618,13 @@ exec "$real_py" "\$@"
 PY
       chmod +x "$bin/python3" ;;
   esac
-  local entry=(bash "$tools/ci-status.sh") feed="" path="$bin:$PATH"
+  local bflags=()
+  case " $resolve " in
+    *" errexit "*) bflags=(-e) ;;
+    *" nounset "*) bflags=(-u) ;;
+    *" pipefail "*) bflags=(-o pipefail) ;;
+  esac
+  local entry=(bash "${bflags[@]}" "$tools/ci-status.sh") feed="" path="$bin:$PATH"
   case " $resolve " in
     *" sourced "*)
       entry=(bash -c '. "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; exit "$s"' bash "$tools/ci-status.sh") ;;
@@ -625,7 +634,9 @@ PY
       tools="$tmp/copy"; mkdir -p "$tools"
       cp "${here}/ci-status.sh" "$tools/"
       ln -s "$cwd/ci-status.py" "$tools/ci-status.py"
-      entry=(bash "$tools/ci-status.sh") ;;
+      entry=(bash "${bflags[@]}" "$tools/ci-status.sh") ;;
+    *" sourcedself "*)
+      entry=(bash -c '. "$0" "$@"; s=$?; printf "after=%s\n" "$s"; exit "$s"' "$tools/ci-status.sh") ;;
     *" posixsh "*) entry=("$posix_sh" "$tools/ci-status.sh") ;;
     *" restricted "*) entry=(bash -r "$tools/ci-status.sh") ;;
     *" setr "*)
@@ -661,7 +672,7 @@ PY
     ok=0; why="$why sha-line"
   fi
   case " $resolve " in
-    *" sourced "*|*" setrsourced "*)
+    *" sourced "*|*" setrsourced "*|*" sourcedself "*)
       if ! grep -q -x -F "after=3" "$tmp/out"; then ok=0; why="$why caller-status"; fi ;;
   esac
   if [ "$ok" -eq 1 ]; then
@@ -688,6 +699,47 @@ run_wrapper_case "wrapper run by a restricted shell fails closed with exit 3" 3 
 run_wrapper_case "unreadable ci-status.py fails closed with exit 3" 3 noread
 run_wrapper_case "wrapper executed in a shell restricted by set -r fails closed with exit 3" 3 setr
 run_wrapper_case "wrapper sourced after set -r returns status 3 to the caller" 3 setrsourced
+run_wrapper_case "wrapper sourced with \$0 set to its own path returns status 3 to the caller" 3 sourcedself
+# Inherited shell options never change a refusal: each runs with no gate, a
+# symlinked gate and an unreadable gate, and must refuse with status 3.
+for opt in errexit nounset pipefail; do
+  run_wrapper_case "$opt: wrapper with no ci-status.py beside it fails closed with exit 3" 3 "$opt nopy"
+  run_wrapper_case "$opt: symlinked ci-status.py beside a copied wrapper fails closed with exit 3" 3 "$opt pylink"
+  run_wrapper_case "$opt: unreadable ci-status.py fails closed with exit 3" 3 "$opt noread"
+done
+
+# run_output_case NAME WANT STREAM KIND: run ci-status.sh with standard output
+# closed (out), standard error closed (err) or standard output on /dev/full
+# (full), for a green reading (green) or a usage error (usage, an abbreviated
+# sha). A failed or impossible write must end the tool with exit 3, never with a
+# verdict or a crash status.
+run_output_case() {
+  local name="$1" want="$2" stream="$3" kind="$4"
+  local tmp; tmp="$(mktemp -d)"; local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in *check-runs*) cat "$tmp/def.json";; *"repo view"*) printf "owner/name";; *) printf "";; esac
+GH
+  chmod +x "$bin/gh"
+  local sha="$C1"
+  if [ "$kind" = usage ]; then sha="${C1:0:7}"; fi
+  case "$stream" in
+    out) PATH="$bin:$PATH" bash "$ci" --repo owner/name --interval 1 "$sha" >&- 2> "$tmp/err" ;;
+    err) PATH="$bin:$PATH" bash "$ci" --repo owner/name --interval 1 "$sha" > "$tmp/out" 2>&- ;;
+    full) PATH="$bin:$PATH" bash "$ci" --repo owner/name --interval 1 "$sha" > /dev/full 2> "$tmp/err" ;;
+  esac
+  local got=$?
+  if [ "$got" -eq "$want" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want %s)\n" "$name" "$got" "$want"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_output_case "green reading with standard output closed exits 3" 3 out green
+run_output_case "green reading with standard error closed exits 3" 3 err green
+run_output_case "usage error with standard output closed exits 3" 3 out usage
+run_output_case "usage error with standard error closed exits 3" 3 err usage
+run_output_case "green reading with standard output on a full device exits 3" 3 full green
 
 # A skipped case is not verified, so any skip makes the suite incomplete and
 # nonzero; the final line then names the count.
