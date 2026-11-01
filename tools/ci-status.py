@@ -1,27 +1,31 @@
 #!/usr/bin/env python3
 """Report the CI verdict for one commit, exiting non-zero unless every check passed.
 
-Guarantees. Property A: through tools/ci-status.sh, no ci-status.py other than the
-real one beside the real wrapper runs. Property B: the tool exits 0 only when this
-gate ran and every check passed. Under supported invocations (tools/ci-status.sh
-executed, run as bash tools/ci-status.sh, by absolute path or through PATH, from
-an ordinary shell with ordinary process state) the exit status follows the codes
-below exactly. Under any other caller state the status may be any nonzero code,
-which still keeps property B: resource exhaustion (a failed fork, a MemoryError
-during import), a signal that ends the process, and a syntax error in this file
-are outside the exact-code contract. An import failure that raises an exception
+Trust boundary. The caller is trusted, together with all of its process state;
+environment variables (PATH, BASH_ENV, SHELLOPTS, BASHOPTS, exported functions),
+open descriptors, signal state, resource limits, tracers, seccomp filters and the
+mount namespace are examples, not a closed list, and a caller with that control
+can forge any outcome. ci-status.sh and this tool defend against untrusted files
+at the paths they resolve: a planted ci-status.py in the working directory, a
+misplaced, symlinked or hard-linked gate, and a decoy reached through a
+descriptor path. Within that boundary, property A: through tools/ci-status.sh,
+no ci-status.py other than the real one beside the real wrapper runs. Property
+B: the tool exits 0 only when this gate ran and every check passed. Under
+supported invocations (tools/ci-status.sh executed, run as bash
+tools/ci-status.sh, by absolute path or through PATH, from an ordinary shell)
+the exit status follows the codes below exactly. Otherwise the status may be any
+nonzero code, which still keeps property B: resource exhaustion (a failed fork,
+a MemoryError during import), a signal that ends the process, and a syntax error
+in this file are outside the exact-code contract. An import failure that raises an exception
 exits 3. A gh exit status that cannot be observed is unreadable (exit 3), never
 success: the tool reaps gh itself with os.waitpid, because CPython subprocess
 reads a lost status (ECHILD from the wait) as 0, and it resets SIGCHLD to its
 default disposition before any gh call, because an ignored SIGCHLD, inherited
-from the caller, makes the system reap gh and lose its status. Both properties
-assume no caller control of the process view: no tracer (ptrace) or seccomp
-filter that alters system call results, and no bind mount or other
-mount-namespace control that presents the real wrapper beside a planted gate.
-The whole caller environment, every environment variable, including PATH,
-BASH_ENV, SHELLOPTS, BASHOPTS and exported shell functions, is outside the trust
-boundary and can defeat both properties; for example, SHELLOPTS with noexec or
-onecmd makes bash run nothing and exit 0 before ci-status.sh runs.
+from the caller, makes the system reap gh and lose its status. Known channels of
+the trusted caller state, as examples: a tracer (ptrace) or seccomp filter can
+alter any system call result, a bind mount can present the real wrapper beside a
+planted gate, and SHELLOPTS with noexec or onecmd makes bash run nothing and exit
+0 before ci-status.sh runs.
 
 The verdict comes from the check-runs API, the only endpoint that sees every
 required check: the Cloudflare Pages build (this repository's required check per
@@ -86,15 +90,11 @@ redirect the repository that gh infers; passing --repo avoids that inference.
 The inferred repository comes from gh repo view run in that directory, so it
 depends on the local git configuration of that clone and on which of its remotes
 gh selects; passing --repo avoids that dependence too. Other gh configuration,
-such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged. The whole caller
-environment, every environment variable, including PATH, BASH_ENV, SHELLOPTS,
-BASHOPTS and exported shell functions, is outside the trust boundary of this
-tool: PATH chooses python3 and gh, BASH_ENV runs code
-before ci-status.sh, and an exported function such as python3 replaces what
-ci-status.sh runs, so a planted ci-status.py can run and exit 0. ci-status.sh
-defends only against a planted ci-status.py in the working directory and against
-a symlinked or misplaced gate. --timeout, --interval and --repo may each be
-given once; a second use is refused (exit 3).
+such as GH_CONFIG_DIR and GH_TOKEN, reaches gh unchanged; like the rest of the
+caller environment it is trusted: PATH chooses python3 and gh, BASH_ENV runs
+code before ci-status.sh, and an exported function such as python3 replaces what
+ci-status.sh runs, so a planted ci-status.py can run and exit 0. --timeout,
+--interval and --repo may each be given once; a second use is refused (exit 3).
 
 Output is part of the result. A standard output or standard error that is
 closed at start or not open for writing (bash, started with a standard stream

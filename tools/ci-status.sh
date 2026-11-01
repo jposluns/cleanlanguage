@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
 #
-# Guarantees. Property A: no ci-status.py other than the real one beside the real
-# wrapper ever runs through this wrapper. Property B: the wrapper exits 0 only when
-# that gate ran and every check passed. Under supported invocations (executed as
-# tools/ci-status.sh, run as bash tools/ci-status.sh, by absolute path or through
-# PATH, from an ordinary shell with ordinary process state) the exit status
-# follows the 0 to 3 contract below exactly. Under any other caller state the
-# status may be any nonzero code. The exceptions, all disclosed below, are: the
-# whole caller environment, every environment variable, including PATH,
-# BASH_ENV, SHELLOPTS (noexec or onecmd there makes bash run nothing and exit 0),
-# BASHOPTS and exported functions, which can defeat both properties; bash -n,
-# bash -t and the startup files that bash runs first, which can exit 0 without
-# running the wrapper code as written; and caller control of the process view, a
-# tracer (ptrace) or seccomp filter that can alter any system call result, or a
-# bind mount or other mount-namespace control that can present the real wrapper
-# beside a planted gate, so both properties assume no such control. A copy of
-# the wrapper runs the ci-status.py beside that copy by design: it is the real
+# Trust boundary. The caller is trusted, together with all of its process state;
+# environment variables (PATH, BASH_ENV, SHELLOPTS, BASHOPTS, exported functions),
+# open descriptors, signal state, resource limits, tracers, seccomp filters, the
+# mount namespace and the bash invocation itself (bash -n, bash -t, startup
+# files) are examples, not a closed list. A caller with that control can forge
+# any outcome. The wrapper defends against untrusted files at the paths it
+# resolves: a planted ci-status.py in the working directory, a misplaced,
+# symlinked or hard-linked gate, and a decoy reached through a descriptor path.
+# Within that boundary it guarantees property A, that no ci-status.py other than
+# the real one beside the real wrapper runs, and property B, that it exits 0 only
+# when that gate ran and every check passed. Under supported invocations
+# (executed as tools/ci-status.sh, run as bash tools/ci-status.sh, by absolute
+# path or through PATH, from an ordinary shell) the exit status follows the 0 to
+# 3 contract below exactly; otherwise it may be any nonzero code. A copy of the
+# wrapper runs the ci-status.py beside that copy by design: it is the real
 # wrapper of its own directory.
 #
 # Thin wrapper: the CI verdict logic lives in ci-status.py, a Python rewrite that
@@ -73,7 +72,10 @@
 # 5.3 sets BASH_SOURCE[0] to the full path). Executed through PATH, it receives
 # its full path as both and runs as usual.
 # A source path under /dev/fd/ or /proc/ is refused at once: it names an open
-# descriptor, whose resolved name a caller can imitate with a decoy file.
+# descriptor, whose resolved name a caller can imitate with a decoy file. The
+# resolver repeats that test on the resolved source: it follows the directory and
+# every symlink of the source and refuses when any step lies under /proc or
+# /dev/fd, so /dev//fd/9 and a symlink to /dev/fd/9 are refused too.
 # os.path.realpath resolves a symlinked wrapper without depending on GNU readlink.
 # The resolved wrapper must be an existing regular file and the same file (device
 # and inode) as the ci-status.sh in its directory, which must have exactly 1
@@ -89,16 +91,18 @@
 # executed directly. So the gate is bound to the file bash is running, not to a
 # path string: a directory symlink swapped after bash opened the wrapper, or a
 # decoy named like a deleted file, resolves to a directory whose ci-status.sh is
-# a different file, and the wrapper refuses. If fd 255 is not the script, for
-# example because the caller holds fd 255 open, the test fails and the wrapper
-# refuses.
-# Residual: the whole caller environment, every environment variable, including
-# PATH, BASH_ENV, SHELLOPTS, BASHOPTS and exported shell functions, is outside the
-# trust boundary. PATH chooses the python3 and the gh
-# that ci-status.py runs, BASH_ENV runs code before this wrapper, and an exported
-# function such as python3 replaces the resolver below; any of them can run a
-# planted ci-status.py that exits 0. The wrapper defends only against a planted
-# ci-status.py in the working directory and against a symlinked or misplaced gate.
+# a different file, and the wrapper refuses. fd 255 must also carry close-on-exec
+# (O_CLOEXEC, 02000000, in the flags of /proc/$$/fdinfo/255): bash 5.3 sets it on
+# the script descriptor it opens itself, whether run as bash FILE, directly or
+# through PATH, and a descriptor the caller passed in lacks it, so a caller that
+# holds fd 255 open, on a decoy or on anything else, is refused. Where
+# /proc/$$/fdinfo is not available (a system other than Linux) this check cannot
+# run, and the wrapper refuses.
+# Known channels of the trusted caller state, as examples: PATH chooses the
+# python3 and the gh that ci-status.py runs, BASH_ENV runs code before this
+# wrapper, SHELLOPTS with noexec or onecmd makes bash run nothing and exit 0, and
+# an exported function such as python3 replaces the resolver below; any of them
+# can run a planted ci-status.py that exits 0.
 # The checks run before the exec, so a ci-status.py removed or changed between the
 # check and the exec is not caught.
 # Shell invocation options that act before the wrapper code runs are outside what
@@ -155,7 +159,23 @@ esac
 __ci_status_rc=0 || __ci_status_refuse err "$__ci_status_find"
 __ci_status_here="$(python3 -I -c '
 import os, stat, sys
+def via_descriptor(path):
+    # Follow the directory and every symlink of path; True when any step lies
+    # under /proc or /dev/fd, or the chain does not end within 40 links.
+    p = os.path.abspath(path)
+    for _ in range(40):
+        d = os.path.realpath(os.path.dirname(p))
+        for top in ("/proc", "/dev/fd"):
+            if d == top or d.startswith(top + "/"):
+                return True
+        q = os.path.join(d, os.path.basename(p))
+        if not os.path.islink(q):
+            return False
+        p = os.path.join(d, os.readlink(q))
+    return True
 try:
+    if via_descriptor(sys.argv[1]):
+        sys.exit(1)
     wrapper = os.path.realpath(sys.argv[1])
     named = os.path.join(os.path.dirname(wrapper), "ci-status.sh")
     gate = os.path.join(os.path.dirname(wrapper), "ci-status.py")
@@ -180,6 +200,18 @@ fi
 if [ "$__ci_status_rc" != 0 ] || [ -z "$__ci_status_here" ] ||
   [ ! -f "${__ci_status_here}ci-status.py" ] || [ -L "${__ci_status_here}ci-status.py" ] ||
   ! [ "${__ci_status_here}ci-status.sh" -ef /dev/fd/255 ]; then
+  __ci_status_refuse err "$__ci_status_find"
+fi
+__ci_status_flags=""
+if [ -r "/proc/$$/fdinfo/255" ]; then
+  while read -r __ci_status_key __ci_status_value; do
+    if [ "$__ci_status_key" = "flags:" ]; then __ci_status_flags="$__ci_status_value"; fi
+  done < "/proc/$$/fdinfo/255"
+fi
+case "$__ci_status_flags" in
+  "" | *[!0-7]*) __ci_status_refuse err "$__ci_status_find" ;;
+esac
+if (( (8#$__ci_status_flags & 8#2000000) == 0 )); then
   __ci_status_refuse err "$__ci_status_find"
 fi
 exec python3 -I "${__ci_status_here}ci-status.py" "$@"

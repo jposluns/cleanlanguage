@@ -589,8 +589,15 @@ run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT
 # regular decoy file named as /proc/self/fd/9 then reads (".../h.sh (deleted)"),
 # and runs bash /dev/fd/9. dirswap runs the wrapper through a directory symlink
 # that a python3 first on PATH retargets, just before the resolver runs, to a
-# directory holding a copy of the wrapper and the planted ci-status.py. Each
-# refusal has its own message, which the case checks.
+# directory holding a copy of the wrapper and the planted ci-status.py.
+# fdslashes, fdlink, fdslasheshold and fdlinkhold build the descriptor decoy of
+# the round 8 seat driver: a hard link to the copied wrapper opened as fd 9 and
+# removed, a symlink named ".../h.sh (deleted)" to a decoy copy of the wrapper
+# beside the planted ci-status.py, and bash run on /dev//fd/9 (slashes) or on a
+# symlink to /dev/fd/9 (link); the hold forms also pass fd 255 open on the decoy.
+# hold255self passes fd 255 open on the real copied wrapper and runs it normally,
+# so only the close-on-exec check can refuse it. Each refusal has its own
+# message, which the case checks.
 # non_bash_shell prints the path of a shell whose BASH_VERSION is unset, or fails.
 non_bash_shell() {
   local cand found
@@ -681,6 +688,17 @@ PY
       chmod +x "$tmp/swapbin/python3"
       path="$tmp/swapbin:$bin:$PATH"
       entry=(bash "$tmp/link/ci-status.sh") ;;
+    *" fdslashes "*|*" fdlink "*|*" fdslasheshold "*|*" fdlinkhold "*)
+      cp "${here}/ci-status.sh" "$cwd/ci-status.sh"
+      ln "$tools/ci-status.sh" "$cwd/h.sh"
+      local fd_hold=nohold fd_target="/dev//fd/9"
+      case " $resolve " in *" fdslasheshold "*|*" fdlinkhold "*) fd_hold=hold ;; esac
+      case " $resolve " in
+        *" fdlink "*|*" fdlinkhold "*) ln -s /dev/fd/9 "$cwd/l.sh"; fd_target="$cwd/l.sh" ;;
+      esac
+      entry=(bash -c 'exec 9<"$1" || exit 98; rm -f "$1"; ln -s ci-status.sh "$1 (deleted)"; if [ "$2" = hold ]; then exec 255<"$3" || exit 98; fi; t="$4"; shift 4; exec bash "$t" "$@"' _ "$cwd/h.sh" "$fd_hold" "$cwd/ci-status.sh" "$fd_target") ;;
+    *" hold255self "*)
+      entry=(bash -c 'exec 255<"$1" || exit 98; exec bash "$@"' _ "$tools/ci-status.sh") ;;
     *" hardlink "*)
       ln "$tools/ci-status.sh" "$cwd/ci-status.sh"
       entry=(bash "$cwd/ci-status.sh") ;;
@@ -758,6 +776,11 @@ run_wrapper_case "sourced wrapper with readonly caller variables still refuses a
 run_wrapper_case "hard link to the wrapper beside a planted ci-status.py fails closed with exit 3" 3 hardlink
 run_wrapper_case "wrapper run as /dev/fd/N with a deleted-file decoy fails closed with exit 3" 3 fddecoy
 run_wrapper_case "directory symlink swapped before the resolver runs fails closed with exit 3" 3 dirswap
+run_wrapper_case "descriptor decoy run as /dev//fd/9 fails closed with exit 3" 3 fdslashes
+run_wrapper_case "descriptor decoy run through a symlink to /dev/fd/9 fails closed with exit 3" 3 fdlink
+run_wrapper_case "descriptor decoy as /dev//fd/9 with fd 255 held on the decoy fails closed with exit 3" 3 fdslasheshold
+run_wrapper_case "descriptor decoy through a symlink with fd 255 held on the decoy fails closed with exit 3" 3 fdlinkhold
+run_wrapper_case "fd 255 inherited from the caller fails closed with exit 3" 3 hold255self
 # Inherited shell options never change a refusal: each runs with no gate, a
 # symlinked gate and an unreadable gate, and must refuse with status 3.
 for opt in errexit nounset pipefail; do
