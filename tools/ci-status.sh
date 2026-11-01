@@ -8,8 +8,12 @@
 # follows the 0 to 3 contract below exactly. Under any other caller state the
 # status may be any nonzero code. The exceptions, all disclosed below, are the
 # caller environment (PATH, BASH_ENV and exported functions), which can defeat
-# both properties, and bash -n and bash -t, which exit 0 without running the
-# wrapper code as written.
+# both properties; bash -n, bash -t and the startup files that bash runs first,
+# which can exit 0 without running the wrapper code as written; and a tracer
+# (ptrace) or seccomp filter set up by the caller, which can alter any system
+# call result, so both properties assume no such control. A copy of the wrapper
+# runs the ci-status.py beside that copy by design: it is the real wrapper of its
+# own directory.
 #
 # Thin wrapper: the CI verdict logic lives in ci-status.py, a Python rewrite that
 # parses the check-runs JSON structurally and fail-closed. Serializing checks to
@@ -39,8 +43,10 @@
 # restricted shell, so the one test serves every case. When sourced, the wrapper
 # assigns no variable and changes no shell state of the caller: it prints its
 # refusal (the restricted refusal in a restricted shell, otherwise the cannot-find
-# refusal) and returns 3, so the caller keeps running with status 3. A readonly
-# or otherwise unassignable caller variable therefore cannot change its path.
+# refusal) and returns 3, so the caller keeps running with status 3; if return
+# fails, because the test misread an executed wrapper as sourced (a tracer can
+# make that happen), the block exits 3 rather than fall through to the gate. A
+# readonly or otherwise unassignable caller variable cannot change its path.
 # When executed, the wrapper next resets the inherited shell state that could
 # change its exit status or skip its checks: errexit, nounset, pipefail,
 # errtrace, functrace, noglob, noclobber, keyword, allexport, verbose, xtrace and
@@ -66,7 +72,9 @@
 # os.path.realpath resolves a symlinked wrapper without depending on GNU readlink.
 # The resolved wrapper must be an existing regular file, and the ci-status.py
 # beside it must be a regular file that is not a symlink and that the resolver can
-# open for reading, or the wrapper exits 3. Any nonzero resolver status is a
+# open for reading, or the wrapper exits 3. The resolved wrapper must also have
+# exactly 1 link, so a hard link to the real wrapper placed beside a planted
+# ci-status.py is refused with the cannot-find refusal. Any nonzero resolver status is a
 # refusal, and an empty resolver answer is one too, so a lost status cannot reach
 # the exec. The directory is printed with a trailing slash, so command
 # substitution cannot strip a newline from its name.
@@ -80,9 +88,12 @@
 # check and the exec is not caught.
 # Shell invocation options that act before the wrapper code runs are outside what
 # it can check: bash -n reads the wrapper, runs nothing and exits 0, and bash -t
-# runs only its first command, the bash check, and exits 0. A restricted caller
-# that names the wrapper by path is refused by bash, with status 1, before the
-# wrapper runs. When the wrapper is sourced, the options and traps of the caller,
+# runs only its first command, the bash check, and exits 0. The startup files that
+# bash reads before the wrapper, a file named by --rcfile or --init-file with -i,
+# and the interactive or login startup files (such as ~/.bashrc, ~/.bash_profile
+# and /etc/profile) run first and can exit 0 before the wrapper runs. A
+# restricted caller that names the wrapper by path is refused by bash, with
+# status 1, before the wrapper runs. When the wrapper is sourced, the options and traps of the caller,
 # such as a DEBUG trap under extdebug, stay in force and are outside its reset.
 # Resource exhaustion (a failed fork, for which bash exits 254) and a signal that
 # ends the process are outside the exact-code contract; both give a nonzero
@@ -99,6 +110,7 @@ if (return 0 2>&-); then
     (trap "" PIPE; printf "ci-status: cannot find ci-status.py beside the real ci-status.sh (%s)\n" "${BASH_SOURCE[0]:-}" >&2) || :
   fi
   return 3
+  exit 3  # never fall through to the gate if return fails
 fi
 set +e +u +E +T +f +C +k +a +v +x +o pipefail +o posix
 shopt -u extdebug expand_aliases
@@ -130,7 +142,8 @@ import os, stat, sys
 try:
     wrapper = os.path.realpath(sys.argv[1])
     gate = os.path.join(os.path.dirname(wrapper), "ci-status.py")
-    ok = stat.S_ISREG(os.stat(wrapper).st_mode) and stat.S_ISREG(os.lstat(gate).st_mode)
+    st = os.stat(wrapper)
+    ok = stat.S_ISREG(st.st_mode) and st.st_nlink == 1 and stat.S_ISREG(os.lstat(gate).st_mode)
 except OSError:
     ok = False
 if not ok:

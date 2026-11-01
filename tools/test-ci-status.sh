@@ -582,7 +582,10 @@ run_timed_case "--interval above the 86400-second bound is refused" "$GA_PRESENT
 # with the option set. sourcedvars sources it from a caller that holds here, src,
 # cause, sourced and restricted, which must be left unchanged; sourcedro does the
 # same with those names (and rc) readonly, which must not turn the sourced path
-# into the executed one. Each refusal has its own message, which the case checks.
+# into the executed one. hardlink runs a hard link to the copied wrapper placed
+# in the working directory, beside the planted ci-status.py, which must be
+# refused because the wrapper then has 2 links. Each refusal has its own message,
+# which the case checks.
 # non_bash_shell prints the path of a shell whose BASH_VERSION is unset, or fails.
 non_bash_shell() {
   local cand found
@@ -656,6 +659,9 @@ PY
       entry=(bash -c '. "$0" "$@"; s=$?; printf "after=%s\n" "$s"; exit "$s"' "$tools/ci-status.sh") ;;
     *" sourcedvars "*)
       entry=(bash -c 'here=keep src=keep cause=keep sourced=keep restricted=keep; . "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; printf "vars=%s,%s,%s,%s,%s\n" "$here" "$src" "$cause" "$sourced" "$restricted"; exit "$s"' bash "$tools/ci-status.sh") ;;
+    *" hardlink "*)
+      ln "$tools/ci-status.sh" "$cwd/ci-status.sh"
+      entry=(bash "$cwd/ci-status.sh") ;;
     *" sourcedro "*)
       entry=(bash -c 'readonly here=keep src=keep cause=keep sourced=0 restricted=0 rc=0; . "$1" "${@:2}"; s=$?; printf "after=%s\n" "$s"; exit "$s"' bash "$tools/ci-status.sh") ;;
     *" posixsh "*) entry=("$posix_sh" "$tools/ci-status.sh") ;;
@@ -727,6 +733,7 @@ run_wrapper_case "wrapper sourced after set -r returns status 3 to the caller" 3
 run_wrapper_case "wrapper sourced with \$0 set to its own path returns status 3 to the caller" 3 sourcedself
 run_wrapper_case "sourced wrapper leaves the variables of the caller unchanged" 3 sourcedvars
 run_wrapper_case "sourced wrapper with readonly caller variables still refuses as sourced" 3 sourcedro
+run_wrapper_case "hard link to the wrapper beside a planted ci-status.py fails closed with exit 3" 3 hardlink
 # Inherited shell options never change a refusal: each runs with no gate, a
 # symlinked gate and an unreadable gate, and must refuse with status 3.
 for opt in errexit nounset pipefail; do
@@ -839,6 +846,39 @@ exec(compile(open(path).read(), path, "exec"), {"__name__": "__main__", "__file_
   "${here}/ci-status.py" > /dev/null 2>&1 || import_got=$?
 if [ "$import_got" -eq 3 ]; then printf "ok   import failure exits 3 (exit %s)\n" "$import_got";
 else printf "FAIL import failure exits 3 (got %s, want 3)\n" "$import_got"; fails=$((fails + 1)); fi
+
+# run_lost_status_case NAME: a fake gh prints a green body and exits 1, and the
+# gate runs in process with os.waitpid replaced by one that raises
+# ChildProcessError, as a lost exit status (ECHILD) does. The real gh-running
+# code path must read that as unreadable (exit 3), never as exit 0, whatever
+# CPython subprocess does with ECHILD.
+run_lost_status_case() {
+  local name="$1"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in *check-runs*) cat "$tmp/def.json"; exit 1;; *"repo view"*) printf "owner/name";; *) printf "";; esac
+GH
+  chmod +x "$bin/gh"
+  local got=0
+  PATH="$bin:$PATH" python3 -I -c 'import importlib.util, os, sys
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+def lost(*args, **kwargs):
+    raise ChildProcessError(10, "No child processes")
+os.waitpid = lost
+sys.argv = [path, "--repo", "owner/name", "--interval", "1", sys.argv[2]]
+sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > /dev/null 2>&1 || got=$?
+  if [ "$got" -eq 3 ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want 3)\n" "$name" "$got"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 
 # A skipped case is not verified, so any skip makes the suite incomplete and
 # nonzero; the final line then names the count.

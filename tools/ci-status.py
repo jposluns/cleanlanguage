@@ -10,9 +10,13 @@ below exactly. Under any other caller state the status may be any nonzero code,
 which still keeps property B: resource exhaustion (a failed fork, a MemoryError
 during import), a signal that ends the process, and a syntax error in this file
 are outside the exact-code contract. An import failure that raises an exception
-exits 3. The tool resets SIGCHLD to its default disposition before any gh call,
-because an ignored SIGCHLD, inherited from the caller, makes the system reap gh
-itself, so its exit status is lost and a failed gh would read as success.
+exits 3. A gh exit status that cannot be observed is unreadable (exit 3), never
+success: the tool reaps gh itself with os.waitpid, because CPython subprocess
+reads a lost status (ECHILD from the wait) as 0, and it resets SIGCHLD to its
+default disposition before any gh call, because an ignored SIGCHLD, inherited
+from the caller, makes the system reap gh and lose its status. Both properties
+assume that no tracer (ptrace) or seccomp filter set up by the caller alters
+system call results, since such control can change any result the tool sees.
 
 The verdict comes from the check-runs API, the only endpoint that sees every
 required check: the Cloudflare Pages build (this repository's required check per
@@ -119,6 +123,7 @@ try:
     import signal
     import subprocess
     import sys
+    import tempfile
     import time
 except Exception:  # an import failure must never read as a verdict (exit 1)
     raise SystemExit(3)
@@ -218,14 +223,42 @@ def _gh(args, timeout: float):
     """Run gh in the directory that holds this file, resolved through symlinks, with
     GH_REPO, GH_HOST and every GIT_ variable removed from its environment, so an
     ambient value cannot point the repository lookup or the API call elsewhere.
-    OSError and TimeoutExpired reach the caller."""
+
+    The child is reaped here with os.waitpid rather than through subprocess,
+    because CPython subprocess reads a lost exit status (ECHILD from the wait) as
+    exit 0. A status that cannot be observed raises ChildProcessError, an OSError,
+    and an end other than a normal exit gives returncode -1, so neither can read
+    as success. Output goes to unnamed temporary files, so gh never blocks on a
+    full pipe while it is polled. OSError and TimeoutExpired reach the caller."""
     env = {
         k: v for k, v in os.environ.items()
         if not (k.startswith("GIT_") or k in GH_REDIRECTS)
     }
-    return subprocess.run(
-        ["gh", *args], cwd=TOOL_DIR, env=env, capture_output=True, timeout=timeout,
-    )
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(["gh", *args], cwd=TOOL_DIR, env=env, stdout=out, stderr=err)
+        end = time.monotonic() + timeout
+        while True:
+            try:
+                pid, status = os.waitpid(proc.pid, os.WNOHANG)
+            except ChildProcessError as exc:
+                proc.returncode = -1  # the child is gone; Popen must not wait for it
+                raise ChildProcessError("the exit status of gh was lost") from exc
+            if pid == proc.pid:
+                break
+            if time.monotonic() >= end:
+                os.kill(proc.pid, signal.SIGKILL)
+                try:
+                    os.waitpid(proc.pid, 0)
+                except ChildProcessError:
+                    pass
+                proc.returncode = -1
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            time.sleep(0.02)
+        code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+        proc.returncode = code
+        out.seek(0)
+        err.seek(0)
+        return subprocess.CompletedProcess(proc.args, code, out.read(), err.read())
 
 
 def infer_repo(timeout: float) -> str:
