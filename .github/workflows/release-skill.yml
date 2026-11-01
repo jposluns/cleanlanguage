@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       force:
-        description: "Move the tag of a release that is not yet published to this commit. This workflow never republishes a published release, so this input never overwrites one. Leave it unchecked. To finish a run that failed before it published, re-run it only if its commit carries the step Create or verify GitHub Release, and otherwise dispatch this workflow again from main with the same tag. If that tag is already on origin at another commit, for example because the failed run pushed it and main has moved since, check this input on that dispatch from main. To verify a release that is already published, first check that .github/workflows/release-skill.yml at the tag has the step Create or verify GitHub Release; if it does, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs. A tag without the step Create or verify GitHub Release carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, or repeat any of its runs, with or without the force input; its step texts that advise a republish do not apply. Check such a release by hand, read-only: it passes only if it is immutable, it has every asset the workflow at that tag publishes, each published checksum matches its asset, and each asset passes the checks that workflow made on it, in its packaging steps as well as its release step. The check is against what that workflow verified when it published, never against a fresh rebuild: a rebuild with another toolchain can differ, so a mismatch proves nothing. A command that fails to run is run again and says nothing about the release. If the release fails that check, turn on immutable releases if they are off, then cut a corrective new version. A corrective new version is also the remedy if the dispatch at the tag fails its verification, or if the tag is no longer on origin."
+        description: "Move the tag of a release that is not yet published to this commit. This workflow never republishes a published release, so this input never overwrites one. Leave it unchecked. To finish a run that failed before it published, re-run it only if its commit carries the step Create or verify GitHub Release, and otherwise dispatch this workflow again from main with the same tag. If that tag is already on origin at another commit, for example because the failed run pushed it and main has moved since, check this input on that dispatch from main. To verify a release that is already published, first check that .github/workflows/release-skill.yml at the tag has the step Create or verify GitHub Release; if it does, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs. A tag without the step Create or verify GitHub Release carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, or repeat any of its runs, with or without the force input; its step texts that advise a republish do not apply. Check such a release by hand, read-only: it passes only if it is immutable, it has every asset the workflow at that tag publishes, each published checksum matches its asset, and each asset passes the checks that workflow made on it, in its packaging steps as well as its release step. The check is against what that workflow verified when it published, never against a fresh rebuild: a rebuild with another toolchain can differ, so a mismatch proves nothing. A command that fails to run is run again and says nothing about the release. If the release fails that check, turn on immutable releases if they are off, then cut a corrective new version. A corrective new version is also the remedy if the dispatch at the tag fails its verification, or if the tag is no longer on origin. A corrective new version repairs only the latest release. If a later version supersedes the release that failed, report the failure of that older release to the maintainer."
         required: false
         default: false
         type: boolean
@@ -50,6 +50,12 @@ jobs:
       # What both steps print when the tag of a published release is no
       # longer on origin, with <tag> replaced by the release tag.
       TAG_GONE_ADVICE: "The tag <tag> is no longer on origin, so no dispatch can select it as the run ref to verify the published release; cut a corrective new version."
+      # Row 88: what every corrective-version remedy that a run can reach
+      # for an older release prints after it, from one source. Both steps
+      # print this value after each such remedy, and the force input
+      # description ends with it verbatim. It is conditional in its own
+      # words, so the readback prints it at a first publication too.
+      SUPERSEDED_RELEASE_ADVICE: "A corrective new version repairs only the latest release. If a later version supersedes the release that failed, report the failure of that older release to the maintainer."
 
     steps:
       - name: Check out repository
@@ -196,10 +202,12 @@ jobs:
                 remote_tag_sha="$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" "refs/tags/${RELEASE_TAG}" | awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { plain=$1 } END { print (peeled != "" ? peeled : plain) }')"
                 if [ -z "${remote_tag_sha}" ]; then
                   echo "${TAG_GONE_ADVICE//<tag>/${RELEASE_TAG}}" >&2
+                  echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
                   exit 1
                 fi
                 echo "Once the release record is readable, check that .github/workflows/release-skill.yml at the tag ${RELEASE_TAG} has the step Create or verify GitHub Release. If it does, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main, to verify the published release; cut a corrective new version only if that verification fails." >&2
                 echo "${OLDER_TAG_ADVICE}" >&2
+                echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
                 exit 1
               fi
               rc=0
@@ -218,6 +226,7 @@ jobs:
               if [ -n "${released}" ] && [ "${released}" != "${release_date}" ]; then
                 echo "Release ${RELEASE_TAG} IS PUBLISHED on ${release_date} (UTC, published_at ${published_at}), but the Released line at this commit names ${released}." >&2
                 echo "Re-stamping the Released line cannot fix this: the published zip carries the Released line of the commit it was built from, and an immutable release cannot be republished. If the line at this commit was edited after the release, restore the value the published zip carries; otherwise the remedy is a corrective new version whose Released line names its own publication day." >&2
+                echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
                 exit 1
               fi
               ;;
@@ -313,6 +322,7 @@ jobs:
             if [ "${immutable}" != "true" ]; then
               echo "::error::Release ${RELEASE_TAG} is published, but its immutable field reads ${immutable:-empty}, not true, so its published_at could later be replaced and cannot be relied on." >&2
               echo "Turn on immutable releases for the repository, then cut a corrective new version." >&2
+              echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
               exit 1
             fi
             if [ "${RELEASE_DATED}" != "1" ]; then
@@ -331,6 +341,7 @@ jobs:
               5)
                 echo "::error::Release ${RELEASE_TAG} IS PUBLISHED on a different UTC day from its Released line: Released ${RELEASE_DATE}, published_at ${published_at} (see the days above)." >&2
                 echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day; tools/check-release-checksum-live.py reports the same disagreement until then." >&2
+                echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
                 exit 1
                 ;;
               1)
@@ -398,9 +409,11 @@ jobs:
           published_release_remedy() {
             if [ -z "${remote_tag_sha}" ]; then
               echo "${TAG_GONE_ADVICE//<tag>/${RELEASE_TAG}}" >&2
+              echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
             else
               echo "To verify the published release, first check that .github/workflows/release-skill.yml at the tag ${RELEASE_TAG} has the step Create or verify GitHub Release. If it does, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main; cut a corrective new version only if that verification fails." >&2
               echo "${OLDER_TAG_ADVICE}" >&2
+              echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
             fi
           }
           if [ "${release_exists}" -eq 1 ]; then
@@ -429,6 +442,7 @@ jobs:
                 grep -qxF -- "${asset}" <<< "${published_assets}" || {
                   echo "Published release ${RELEASE_TAG} is missing the asset ${asset}." >&2
                   echo "This workflow never changes a published release, so it cannot be completed in place; cut a corrective new version." >&2
+                  echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
                   exit 1
                 }
               done
@@ -460,11 +474,11 @@ jobs:
                 return 0
               }
               verify_published_asset cleanlanguage.zip cleanlanguage.zip.sha256 \
-                || { echo "The published release ${RELEASE_TAG} fails verification against its own published checksums. This workflow never republishes a published release; cut a corrective new version." >&2; exit 1; }
+                || { echo "The published release ${RELEASE_TAG} fails verification against its own published checksums. This workflow never republishes a published release; cut a corrective new version." >&2; echo "${SUPERSEDED_RELEASE_ADVICE}" >&2; exit 1; }
               verify_published_asset "cleanlanguage-${VERSION}.zip" "cleanlanguage-${VERSION}.zip.sha256" \
-                || { echo "The published release ${RELEASE_TAG} fails verification against its own published checksums. This workflow never republishes a published release; cut a corrective new version." >&2; exit 1; }
+                || { echo "The published release ${RELEASE_TAG} fails verification against its own published checksums. This workflow never republishes a published release; cut a corrective new version." >&2; echo "${SUPERSEDED_RELEASE_ADVICE}" >&2; exit 1; }
               cmp -s "${verify_dir}/cleanlanguage.zip" "${verify_dir}/cleanlanguage-${VERSION}.zip" \
-                || { echo "The published stable and version-named zips of ${RELEASE_TAG} differ. This workflow never republishes a published release; cut a corrective new version." >&2; exit 1; }
+                || { echo "The published stable and version-named zips of ${RELEASE_TAG} differ. This workflow never republishes a published release; cut a corrective new version." >&2; echo "${SUPERSEDED_RELEASE_ADVICE}" >&2; exit 1; }
               rm -rf "${verify_dir}"; trap - EXIT
               # Item 26 (G3), item 57: a re-run ends green only on the same
               # readback as the first publication, dated or not.
