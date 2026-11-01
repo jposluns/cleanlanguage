@@ -122,7 +122,7 @@ STEP_KEYS = {
 
 # The env: keys the job and each modelled step declare, and the keys the
 # steps before each named step write to GITHUB_ENV.
-JOB_ENV_KEYS = {"RELEASE_TAG"}
+JOB_ENV_KEYS = {"RELEASE_TAG", "OLDER_TAG_ADVICE"}
 STEP_ENV_KEYS = {VALIDATE: set(), DETERMINE: {"GH_TOKEN"}, PACKAGE: set(), PUBLISH: {"GH_TOKEN", "FORCE"}}
 GITHUB_ENV_WRITES = {
     VALIDATE: set(),
@@ -439,6 +439,9 @@ FAKE_VCS = FAKE_COMMON + """
 if ARGS[:1] == ["rev-parse"]:
     print(read("commit"))
 elif ARGS[:1] == ["ls-remote"]:
+    # The state file "ls_remote" set to FAIL makes the lookup itself fail.
+    if read("ls_remote") == "FAIL":
+        sys.exit(128)
     tag = read("remote_tag")
     if tag:
         print(tag + "\\trefs/tags/" + os.environ["RELEASE_TAG"])
@@ -576,11 +579,11 @@ class WorkflowStepTest(unittest.TestCase):
         env.update({key: value for key, value in self.carried.items() if key in written})
         return env
 
-    def run_step(self, name: str):
+    def run_step(self, name: str, script_text: str | None = None):
         env = self.step_environment(name)
         self.env_file.write_text("", encoding="utf-8")
         script = self.state / "step.sh"
-        script.write_text(step_script(name), encoding="utf-8")
+        script.write_text(step_script(name) if script_text is None else script_text, encoding="utf-8")
         proc = subprocess.run(
             ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)],
             cwd=self.work, env=env, capture_output=True, text=True,
@@ -606,6 +609,13 @@ class WorkflowStepTest(unittest.TestCase):
 
     def env_values(self):
         return dict(line.split("=", 1) for line in self.env_file.read_text(encoding="utf-8").splitlines())
+
+
+def ignore_lookup_failure(script: str) -> str:
+    """The mutant that appends || true to the one tag lookup in a step."""
+    lookup = [l for l in script.splitlines() if l.strip().startswith("remote_tag_sha=\"$(" + VCS + " ls-remote ")]
+    assert len(lookup) == 1, lookup
+    return script.replace(lookup[0], lookup[0] + " || true", 1)
 
 
 def is_push(call):
@@ -672,17 +682,28 @@ VERIFY_BY_DISPATCH = ("To verify the published release, first check that .github
 # verifying dispatch only for a tag carrying that step, and for any other tag
 # forbid a dispatch at it and name a read-only check. The readback refusals
 # (REMEDY_UNREADABLE) run at the tag commit, which carries this workflow.
-NEVER_AT_OLDER_TAG = ("If it does not, the tag carries an older workflow that can republish a published"
-                      " release: never dispatch this workflow at that tag, with or without the force input."
-                      " Verify the release read-only instead (gh release view v1.0.15 --json"
-                      " isImmutable,publishedAt,assets; gh release download v1.0.15; sha256sum -c on each"
-                      " .sha256 asset; cmp cleanlanguage.zip cleanlanguage-1.0.15.zip, which must report no"
-                      " difference; and unzip -p cleanlanguage.zip SKILL.md | grep ^Released:, which for a"
-                      " dated release must name the UTC day of publishedAt)")
+# Fix round 5: the one advice for such a tag, declared once in the job env and
+# printed by both sites with <tag> replaced, and repeated in the description.
+# It names two pass criteria only and no file name or path inside a zip.
+OLDER_TAG_ADVICE = ("A tag without the step " + PUBLISH + " carries an older workflow that can"
+                    " republish a published release, so never dispatch this workflow at such a tag, with or"
+                    " without the force input. Verify that release read-only instead, with gh release view"
+                    " <tag> --json isImmutable,assets and gh release download <tag>: it passes only if"
+                    " isImmutable is true and every zip asset has a published .sha256 asset that passes"
+                    " sha256sum -c in the download directory. If either check fails, cut a corrective new"
+                    " version.")
+NEVER_AT_OLDER_TAG = OLDER_TAG_ADVICE.replace("<tag>", "v1.0.15")
+OLDER_TAG_ECHO = "echo \"${OLDER_TAG_ADVICE//<tag>/${RELEASE_TAG}}\" >" + chr(38) + "2"
+PASS_CRITERIA = ("it passes only if isImmutable is true",
+                 "every zip asset has a published .sha256 asset that passes sha256sum -c in the download"
+                 " directory")
+# A zip file name, or a path or command that reaches inside a zip.
+NAMES_A_ZIP = re.compile(r"[A-Za-z0-9_${}<>-]\.zip\b|unzip|SKILL\.md|Released:")
 DETERMINE_UNREADABLE = ("Once the release record is readable, check that .github/workflows/release-skill.yml"
                         " at the tag v1.0.15 has the step " + PUBLISH + ". If it does, dispatch this"
                         " workflow again with the force input unchecked and the tag v1.0.15 itself selected"
-                        " as the run ref, not main, to verify the published release.")
+                        " as the run ref, not main, to verify the published release; cut a corrective"
+                        " new version only if that verification fails.")
 
 # Fix round 3: a published release whose publication day is not its Released
 # day is refused in the determine step, naming the remedy, not the packager
@@ -725,7 +746,7 @@ class HarnessTest(WorkflowStepTest):
                 self.step_environment(name)
 
     def test_the_declarations_the_steps_rely_on_are_in_the_workflow(self):
-        self.assertEqual(set(job_env()), {"RELEASE_TAG"})
+        self.assertEqual(set(job_env()), {"RELEASE_TAG", "OLDER_TAG_ADVICE"})
         self.assertEqual(set(step_env(VALIDATE)), set())
         self.assertEqual(set(step_env(DETERMINE)), {"GH_TOKEN"})
         self.assertEqual(set(step_env(PACKAGE)), set())
@@ -1105,7 +1126,8 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # published release.
         self.assertIn(VERIFY_BY_DISPATCH, err)
         # Fix round 3: only at a tag carrying this workflow.
-        self.assertIn(NEVER_AT_OLDER_TAG + ", and cut a corrective new version only if that check fails.", err)
+        self.assertIn(NEVER_AT_OLDER_TAG, err)
+        self.assertIsNone(NAMES_A_ZIP.search(err), err)
         # Row 71: a re-run keeps the force input, so no re-run is advised.
         self.assertNotIn("re-run", err.lower())
         self.assertNotIn("to verify this one", err)
@@ -1236,7 +1258,8 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # it is probably correct, so the refusal names the verifying dispatch
         # first, and a corrective new version only if that verification fails.
         self.assertIn(VERIFY_BY_DISPATCH, err)
-        self.assertIn(NEVER_AT_OLDER_TAG + ", and cut a corrective new version only if that check fails.", err)
+        self.assertIn(NEVER_AT_OLDER_TAG, err)
+        self.assertIsNone(NAMES_A_ZIP.search(err), err)
         self.assertNotIn("with or without the force input; cut a corrective new version", err)
         self.assertNotIn("to overwrite", err)
         self.assertNotIn("Refusing the force input", err)
@@ -1343,9 +1366,14 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # verifying dispatch first, and a corrective new version only if that
         # verification fails or the tag is gone.
         self.assertNotIn("the remedy for a published release is a corrective new version", description)
-        last = ("Cut a corrective new version only if that verification fails, or if the tag is no longer"
-                " on origin.")
-        self.assertTrue(description.endswith(last), description)
+        # Fix round 5b: the description ends with the shared advice and then
+        # one sentence naming the two remaining cases, so no condition is
+        # stated twice.
+        last = ("The same remedy applies if the dispatch at the tag fails its verification, or if the tag"
+                " is no longer on origin.")
+        self.assertTrue(description.endswith(OLDER_TAG_ADVICE + " " + last), description)
+        self.assertEqual(description.count("corrective new version"), 1, description)
+        self.assertNotIn("only if that verification fails", description)
         self.assertLess(description.index("To verify a release that is already published"),
                         description.index("corrective new version"))
         # Row 78: a run that failed before it published is finished by a
@@ -1369,19 +1397,14 @@ class ImmutableReleaseTest(WorkflowStepTest):
                       " .github/workflows/release-skill.yml at the tag has the step " + PUBLISH + "; if it"
                       " does, dispatch this workflow again with this input unchecked and the tag itself"
                       " selected as the run ref, not main", description)
-        self.assertIn("A tag without that step carries an older workflow that can republish a published"
-                      " release, so never dispatch this workflow at such a tag, with or without this input;"
-                      " verify that release read-only instead: gh release view <tag> --json"
-                      " isImmutable,publishedAt,assets; gh release download <tag>; sha256sum -c on each"
-                      " .sha256 asset; where the release has both a stable zip and a version-named zip, cmp"
-                      " the two, which must report no difference; and for a dated release, find SKILL.md in"
-                      " the zip with unzip -Z1 <zip>, then unzip -p <zip> <that entry> | grep ^Released:,"
-                      " which must name the UTC day of publishedAt.", description)
+        # Fix round 5: the description carries the shared advice verbatim.
+        self.assertIn(OLDER_TAG_ADVICE, description)
         # Fix round 4: the description covers every era of tag, so it names
         # no asset file and no fixed path inside the zip.
         self.assertNotIn("cleanlanguage.zip", description)
         self.assertNotIn("clean-language", description)
         self.assertNotIn("unzip -p cleanlanguage.zip SKILL.md", description)
+        self.assertIsNone(NAMES_A_ZIP.search(description), description)
         # gh release view names the field isImmutable; immutable is the REST field.
         self.assertNotIn("--json immutable", WORKFLOW_TEXT)
         self.assertNotIn("failed before it published, dispatch this workflow again with the tag", description)
@@ -1409,8 +1432,42 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 continue
             with self.subTest(line=i + 1):
                 self.assertIn("has the step " + PUBLISH + ". If it does, dispatch", lines[i])
-                self.assertIn("never dispatch this workflow at that tag, with or without the force input",
-                              lines[i + 1])
+                self.assertEqual(lines[i + 1].strip(), OLDER_TAG_ECHO)
+
+    def test_the_older_tag_advice_has_one_source_and_two_pass_criteria(self):
+        # Fix round 5: the job env declares the advice once, both steps print
+        # it through the same line, the description repeats it verbatim, and
+        # it names the two pass criteria and no zip file or in-zip path.
+        self.assertEqual(job_env()["OLDER_TAG_ADVICE"], OLDER_TAG_ADVICE)
+        for name in (DETERMINE, PUBLISH):
+            with self.subTest(name):
+                self.assertEqual([l.strip() for l in step_script(name).splitlines()].count(OLDER_TAG_ECHO), 1)
+                self.assertNotIn("older workflow", step_script(name))
+        for criterion in PASS_CRITERIA:
+            with self.subTest(criterion):
+                self.assertIn(criterion, OLDER_TAG_ADVICE)
+        self.assertIn("--json isImmutable,assets", OLDER_TAG_ADVICE)
+        self.assertIn("If either check fails, cut a corrective new version.", OLDER_TAG_ADVICE)
+        self.assertIsNone(NAMES_A_ZIP.search(OLDER_TAG_ADVICE))
+        for bad in ("cleanlanguage.zip", "clean-language.zip", "x-<version>.zip", "unzip -Z1", "SKILL.md"):
+            with self.subTest(probe=bad):
+                self.assertIsNotNone(NAMES_A_ZIP.search(bad))
+
+    def test_a_failed_tag_lookup_stops_the_publish_step_with_no_tag_gone_advice(self):
+        # Fix round 5: a failed lookup is not a tag gone from origin. The
+        # mutant that ignores the failure (|| true) reads it as gone, so this
+        # test distinguishes the two.
+        self.published()
+        self.set_state(ls_remote="FAIL")
+        code, _out, err = self.run_step(PUBLISH)
+        self.assertNotEqual(code, 0, err)
+        self.assertNotIn(TAG_GONE, err)
+        self.assertNotIn("dispatch this workflow", err)
+        self.assert_no_mutation(self.calls())
+        self.reset_calls()
+        code, _out, err = self.run_step(PUBLISH, ignore_lookup_failure(step_script(PUBLISH)))
+        self.assertEqual(code, 1, err)
+        self.assertIn(TAG_GONE, err)
 
     def test_every_success_path_reads_back(self):
         # One readback per remaining success path, dated or not.
@@ -1465,7 +1522,8 @@ class DetermineStepTest(WorkflowStepTest):
         # Fix round 3: this step may run away from the tag, so the dispatch
         # at the tag is named only for a tag carrying this workflow.
         self.assertIn(DETERMINE_UNREADABLE, err)
-        self.assertIn(NEVER_AT_OLDER_TAG + ".", err)
+        self.assertIn(NEVER_AT_OLDER_TAG, err)
+        self.assertIsNone(NAMES_A_ZIP.search(err), err)
         self.assertNotIn(REMEDY_UNREADABLE, err)
 
     def test_unreadable_published_at_with_the_tag_gone_names_a_corrective_new_version(self):
@@ -1478,6 +1536,19 @@ class DetermineStepTest(WorkflowStepTest):
         self.assertIn(TAG_GONE, err)
         self.assertNotIn("dispatch this workflow", err)
         self.assertTrue(any(c[0] == VCS and c[1][:1] == ["ls-remote"] for c in self.calls()), self.calls())
+
+    def test_a_failed_tag_lookup_stops_the_determine_step_with_no_tag_gone_advice(self):
+        # Fix round 5: as in the publish step, and the || true mutant is killed.
+        self.set_state(status="200", published_at="FAIL", ls_remote="FAIL")
+        code, _out, err = self.run_step(DETERMINE)
+        self.assertNotEqual(code, 0, err)
+        self.assertIn("Could not read published_at for the existing release v1.0.15.", err)
+        self.assertNotIn(TAG_GONE, err)
+        self.assertNotIn("dispatch this workflow", err)
+        self.assertEqual(self.env_values(), {})
+        code, _out, err = self.run_step(DETERMINE, ignore_lookup_failure(step_script(DETERMINE)))
+        self.assertEqual(code, 1, err)
+        self.assertIn(TAG_GONE, err)
 
     def test_published_release_on_another_day_names_a_corrective_new_version(self):
         # Fix round 3: the UTC day rolled over between the window check and

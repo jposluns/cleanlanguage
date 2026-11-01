@@ -11,7 +11,7 @@ on:
         required: true
         type: string
       force:
-        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one. Leave it unchecked. To finish a run that failed before it published, re-run it or dispatch this workflow again from main with the same tag. If that tag is already on origin at another commit, for example because the failed run pushed it and main has moved since, check this input on that dispatch from main. To verify a release that is already published, first check that .github/workflows/release-skill.yml at the tag has the step Create or verify GitHub Release; if it does, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs. A tag without that step carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, with or without this input; verify that release read-only instead: gh release view <tag> --json isImmutable,publishedAt,assets; gh release download <tag>; sha256sum -c on each .sha256 asset; where the release has both a stable zip and a version-named zip, cmp the two, which must report no difference; and for a dated release, find SKILL.md in the zip with unzip -Z1 <zip>, then unzip -p <zip> <that entry> | grep ^Released:, which must name the UTC day of publishedAt. Cut a corrective new version only if that verification fails, or if the tag is no longer on origin."
+        description: "Move the tag of a release that is not yet published to this commit. A published release is immutable and cannot be republished, so this input never overwrites one. Leave it unchecked. To finish a run that failed before it published, re-run it or dispatch this workflow again from main with the same tag. If that tag is already on origin at another commit, for example because the failed run pushed it and main has moved since, check this input on that dispatch from main. To verify a release that is already published, first check that .github/workflows/release-skill.yml at the tag has the step Create or verify GitHub Release; if it does, dispatch this workflow again with this input unchecked and the tag itself selected as the run ref, not main; a re-run keeps the original run ref and inputs. A tag without the step Create or verify GitHub Release carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, with or without the force input. Verify that release read-only instead, with gh release view <tag> --json isImmutable,assets and gh release download <tag>: it passes only if isImmutable is true and every zip asset has a published .sha256 asset that passes sha256sum -c in the download directory. If either check fails, cut a corrective new version. The same remedy applies if the dispatch at the tag fails its verification, or if the tag is no longer on origin."
         required: false
         default: false
         type: boolean
@@ -34,6 +34,16 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      # Fix round 5: the advice for a published release whose tag lacks the
+      # publish step, shared by the determine and publish steps (each prints
+      # it with <tag> replaced by the release tag) and repeated verbatim in
+      # the force input description, so the three cannot drift. It names two
+      # pass criteria only, immutability and each zip against its published
+      # checksum. It omits the Released day, because every tag without the
+      # step is v1.0.14 or older and so undated (the undated baseline is
+      # 1.0.14), and it omits comparing zips and any file name or path inside
+      # a zip, because the asset names and the zip layout vary by era.
+      OLDER_TAG_ADVICE: "A tag without the step Create or verify GitHub Release carries an older workflow that can republish a published release, so never dispatch this workflow at such a tag, with or without the force input. Verify that release read-only instead, with gh release view <tag> --json isImmutable,assets and gh release download <tag>: it passes only if isImmutable is true and every zip asset has a published .sha256 asset that passes sha256sum -c in the download directory. If either check fails, cut a corrective new version."
 
     steps:
       - name: Check out repository
@@ -179,8 +189,8 @@ jobs:
                   echo "The tag ${RELEASE_TAG} is no longer on origin, so no dispatch can select it as the run ref to verify the published release; cut a corrective new version." >&2
                   exit 1
                 fi
-                echo "Once the release record is readable, check that .github/workflows/release-skill.yml at the tag ${RELEASE_TAG} has the step Create or verify GitHub Release. If it does, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main, to verify the published release." >&2
-                echo "If it does not, the tag carries an older workflow that can republish a published release: never dispatch this workflow at that tag, with or without the force input. Verify the release read-only instead (gh release view ${RELEASE_TAG} --json isImmutable,publishedAt,assets; gh release download ${RELEASE_TAG}; sha256sum -c on each .sha256 asset; cmp cleanlanguage.zip cleanlanguage-${VERSION}.zip, which must report no difference; and unzip -p cleanlanguage.zip SKILL.md | grep ^Released:, which for a dated release must name the UTC day of publishedAt)." >&2
+                echo "Once the release record is readable, check that .github/workflows/release-skill.yml at the tag ${RELEASE_TAG} has the step Create or verify GitHub Release. If it does, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main, to verify the published release; cut a corrective new version only if that verification fails." >&2
+                echo "${OLDER_TAG_ADVICE//<tag>/${RELEASE_TAG}}" >&2
                 exit 1
               fi
               rc=0
@@ -380,7 +390,7 @@ jobs:
               echo "The tag ${RELEASE_TAG} is no longer on origin, so no dispatch can select it as the run ref to verify the published release; cut a corrective new version." >&2
             else
               echo "To verify the published release, first check that .github/workflows/release-skill.yml at the tag ${RELEASE_TAG} has the step Create or verify GitHub Release. If it does, dispatch this workflow again with the force input unchecked and the tag ${RELEASE_TAG} itself selected as the run ref, not main; cut a corrective new version only if that verification fails." >&2
-              echo "If it does not, the tag carries an older workflow that can republish a published release: never dispatch this workflow at that tag, with or without the force input. Verify the release read-only instead (gh release view ${RELEASE_TAG} --json isImmutable,publishedAt,assets; gh release download ${RELEASE_TAG}; sha256sum -c on each .sha256 asset; cmp cleanlanguage.zip cleanlanguage-${VERSION}.zip, which must report no difference; and unzip -p cleanlanguage.zip SKILL.md | grep ^Released:, which for a dated release must name the UTC day of publishedAt), and cut a corrective new version only if that check fails." >&2
+              echo "${OLDER_TAG_ADVICE//<tag>/${RELEASE_TAG}}" >&2
             fi
           }
           if [ "${release_exists}" -eq 1 ]; then
