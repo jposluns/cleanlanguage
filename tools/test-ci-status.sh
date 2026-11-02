@@ -506,14 +506,23 @@ run_err_case "a head_sha of another commit is named on standard error" \
   "$(runs "{\"head_sha\":\"$C2\",${PM_OK#\{}" "$SD_OK" "$APM_OK" "$CF")" 3 \
   "check read failed for 0000000000000000000000000000000000000000: check run head_sha '$C2' is not the requested commit 0000000000000000000000000000000000000000"
 # head_sha is compared as the whole 40-character sha, folded to lower case and
-# nothing else: an abbreviation, a padded value, and a value that has the commit
-# as a prefix or a suffix each name another value, so the reading is unreadable.
+# nothing else: an abbreviation, a trailing or middle slice, a value padded on
+# both sides or on one, and a value that has the commit as a prefix or a suffix
+# each name another value, so the reading is unreadable.
 CASE_SHA="$C1" run_case "head_sha abbreviated to 7 characters -> unreadable" "$(head_runs "\"${C1:0:7}\"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha abbreviated to 39 characters -> unreadable" "$(head_runs "\"${C1:0:39}\"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha padded with spaces -> unreadable" "$(head_runs "\" $C1 \"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha with a trailing newline -> unreadable" "$(head_runs "\"$C1\\n\"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha with the commit as a prefix -> unreadable" "$(head_runs "\"${C1}0\"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha with the commit as a suffix -> unreadable" "$(head_runs "\"0${C1}\"")" "" "" 3
+CASE_SHA="$C1" run_case "head_sha with a leading space only -> unreadable" "$(head_runs "\" $C1\"")" "" "" 3
+CASE_SHA="$C1" run_case "head_sha holding the last 7 characters -> unreadable" "$(head_runs "\"${C1:33}\"")" "" "" 3
+CASE_SHA="$C1" run_case "head_sha holding a middle slice -> unreadable" "$(head_runs "\"${C1:10:20}\"")" "" "" 3
+# U+FB00, the ff ligature, is the one character whose upper case (FF) or case fold
+# (ff) is hexadecimal while its lower case is not, so a head_sha that spells ff
+# with it names another value only when head_sha is folded to lower case.
+CASE_SHA="ff${C1:2}" run_case "head_sha spelling ff with the U+FB00 ligature -> unreadable" \
+  "$(head_runs "\"\\ufb00${C1:2}\"")" "" "" 3
 # The status field is required: an absent status and a present null status are
 # each named for what they are, as are an empty status and a non-string
 # conclusion or app slug.
@@ -533,6 +542,31 @@ run_err_case "a non-string name is named on standard error" \
 run_err_case "a non-string app slug is named on standard error" \
   '{"check_runs":[{"status":"completed","conclusion":"success","name":"x","app":{"slug":7}}]}' 3 \
   "check read failed for 0000000000000000000000000000000000000000: non-string check field app.slug"
+# conclusion, name, app.slug and the app object are nullable: each, null or absent
+# on an extra run beside the 4 green required checks, reads as an empty value,
+# never as a malformed reading. A completed run with no conclusion is a failure,
+# so the conclusion cases use an unfinished run, which reads pending (exit 2).
+run_case "extra run with a null name -> green" \
+  "$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"success","name":null,"app":{"slug":"github-actions"}}')" "" "" 0
+run_case "extra run with no name -> green" \
+  "$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"success","app":{"slug":"github-actions"}}')" "" "" 0
+run_case "extra run with a null app slug -> green" \
+  "$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"success","name":"x","app":{"slug":null}}')" "" "" 0
+run_case "extra run with no app slug -> green" \
+  "$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"success","name":"x","app":{}}')" "" "" 0
+run_case "extra run with a null app -> green" \
+  "$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"success","name":"x","app":null}')" "" "" 0
+run_case "extra run with no app -> green" \
+  "$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"success","name":"x"}')" "" "" 0
+run_case "unfinished extra run with a null conclusion -> not green" \
+  "$(runs "$REQ_GA" "$CF" '{"status":"in_progress","conclusion":null,"name":"x","app":{"slug":"github-actions"}}')" "" "" 2
+run_case "unfinished extra run with no conclusion -> not green" \
+  "$(runs "$REQ_GA" "$CF" '{"status":"queued","name":"x","app":{"slug":"github-actions"}}')" "" "" 2
+# A Plugin manifests run whose name is null reads as an unnamed run, so the
+# required check is missing rather than the reading malformed.
+CASE_NEEDLE="required check(s) Plugin manifests not registered" \
+  run_case "Plugin manifests run with a null name does not count -> not green" \
+  "$(runs '{"status":"completed","conclusion":"success","name":null,"app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 2
 
 # Exact matching of each required Actions job: a run counts only when its name is
 # the whole display name and its app slug is the whole github-actions slug. Each
