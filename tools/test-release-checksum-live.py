@@ -1812,6 +1812,8 @@ class ConditionalPassTest(unittest.TestCase):
             ("a null day", "extract", {"op": "extract", "outcome": "value", "value": None}, day_form),
             ("a published day not in the day form", "release_day_from_published_at",
              {"op": "release_day_from_published_at", "outcome": "value", "value": "2026-11-1x"}, day_form),
+            ("a published day with trailing text", "release_day_from_published_at",
+             {"op": "release_day_from_published_at", "outcome": "value", "value": day + "x"}, day_form),
             ("requires_release_date 1", "requires_release_date",
              {"op": "requires_release_date", "outcome": "value", "value": 1}, flag),
             ("requires_release_date 0", "requires_release_date",
@@ -1822,6 +1824,10 @@ class ConditionalPassTest(unittest.TestCase):
              "the message is not a string"),
             ("baseline 1.0", "baseline", {"op": "baseline", "outcome": "value", "value": "1.0"}, version),
             ("baseline a number", "baseline", {"op": "baseline", "outcome": "value", "value": 14}, version),
+            ("baseline with trailing text", "baseline", {"op": "baseline", "outcome": "value", "value": "1.0.14x"},
+             version),
+            ("baseline with a trailing newline", "baseline",
+             {"op": "baseline", "outcome": "value", "value": "1.0.14\n"}, version),
         )
         for label, op, reply, rule in cases:
             with self.subTest(label):
@@ -1862,6 +1868,24 @@ class ConditionalPassTest(unittest.TestCase):
                 result, err = self.call_reports("baseline")
                 self.assertEqual(result, ("exit", 3), err)
                 self.assertEqual(err.splitlines(), [self.unavailable(reason, "baseline")])
+
+    def test_the_relayed_stderr_is_stripped(self):
+        # Fix round 8: the relayed stderr is stripped, so a trailing newline
+        # adds no blank line, and stderr of only whitespace relays nothing.
+        for label, printed, expected in (
+            ("a trailing newline", b"boom\n", self.unavailable("exited 1", "baseline") + "; it printed: boom\n"),
+            ("only whitespace", b"\n", self.unavailable("exited 1", "baseline") + "\n"),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(extractor_with(
+                    "def json_main():\n"
+                    "    sys.stdin.buffer.read()\n"
+                    f"    sys.stderr.buffer.write({printed!r})\n"
+                    "    return 1\n"
+                ))
+                result, err = self.call_reports("baseline")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err, expected)
 
     def test_extractor_code_cannot_rewrite_the_gate_state(self):
         # Row 80: extractor code runs in the child, so a search of the live
@@ -2354,7 +2378,9 @@ class ConditionalPassTest(unittest.TestCase):
             self.assertEqual((result, err), (("value", "2026-11-15"), ""))
             pid = int(pid_file.read_text(encoding="utf-8"))
             time.sleep(0.5)
-            self.assertEqual(process_state(pid), "S", f"the process {pid} that left the group did not outlive the gate")
+            # Any live state counts, so the check does not depend on whether
+            # the process is sleeping or still runnable when it is read.
+            self.assertNotIn(process_state(pid), (None, "Z"), f"the process {pid} that left the group did not outlive the gate")
             stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
             self.assertEqual(int(stat.rsplit(")", 1)[1].split()[2]), pid, "the process did not lead a new group")
         finally:
