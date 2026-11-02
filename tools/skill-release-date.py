@@ -63,6 +63,22 @@ Input modes:
   ``--confirm-published EXPECTED PUBLISHED_AT`` checks, after a release is
   created, that its ``published_at`` falls on the day ``EXPECTED`` and prints
   that day; a different day is refused with exit 5, naming both days.
+  ``--json`` reads one JSON request object from stdin and prints one JSON
+  reply object. Its caller is ``tools/check-release-checksum-live.py``, which
+  runs this file as a separate ``python3 -I`` child. The request is
+  ``{"op": "baseline"}``, or ``{"op": OP, "arg": TEXT}`` for the ops
+  ``extract`` (``TEXT`` is the decoded content), ``requires_release_date``
+  (``TEXT`` is a version) and ``release_day_from_published_at`` (``TEXT`` is
+  a ``published_at`` value), with no other key. The reply echoes ``op`` and
+  carries ``outcome``: ``value`` with ``value`` (a day, a JSON ``true`` or
+  ``false``, or the baseline version), ``absent`` with no further key
+  (``extract`` only: no line looks like the key), or ``malformed`` with
+  ``message`` (the text of the ``Malformed`` verdict). It is printed as ASCII
+  JSON with sorted keys and one trailing newline. This mode is designed to
+  exit 0 when it has delivered a reply, whatever its outcome, 2 on a bad
+  request, and 6 on an internal error; any other exit, whatever its cause, is
+  a failure of the child too, and the gate reads every exit other than 0 as a
+  failure of the child, whatever stdout holds.
 
 Exit codes:
   0  success; the requested value is printed to stdout
@@ -75,12 +91,15 @@ Exit codes:
   6  the extractor itself failed unexpectedly (an internal error); every
      caller reports this as the extractor failing, never as a content verdict
      or as unreadable input
+  Under ``--json``, 0 means a reply was delivered, 2 a bad request, and 6 an
+  internal error (see Input modes).
 """
 
 from __future__ import annotations
 
 import datetime
 import io
+import json
 import re
 import sys
 import unicodedata
@@ -286,11 +305,64 @@ USAGE = (
     f"usage: {PROG} [FILE|-] | --baseline | --requires-date VERSION"
     f" | --check-date YYYY-MM-DD | --published-day PUBLISHED_AT"
     f" | --publish-window YYYY-MM-DD NOW | --confirm-published YYYY-MM-DD PUBLISHED_AT"
+    f" | --json"
 )
+
+# Row 80: the ops of the --json mode, named after the functions they run.
+JSON_OPS = ("extract", "requires_release_date", "release_day_from_published_at", "baseline")
+
+
+def json_main() -> int:
+    """Answer one JSON request from stdin with one JSON reply on stdout (see
+    ``--json`` in the module docstring). A bad request exits 2 with nothing on
+    stdout; only ``Malformed``, or a subclass of it, is a ``malformed``
+    reply, as in every other mode, and an Exception that the internal-error
+    guard catches exits 6 instead of a reply. The mode is designed to exit
+    0, 2, or 6; any other exit, or any other end of the child, whatever its
+    cause, is a failure of the child, which the gate treats as such."""
+    data = sys.stdin.buffer.read()
+    try:
+        request = json.loads(data.decode("utf-8"))
+    except (ValueError, RecursionError) as error:
+        die(f"--json: the request is not a UTF-8 JSON value: {error}", 2)
+    if type(request) is not dict:
+        die("--json: the request is not a JSON object", 2)
+    op = request.get("op")
+    if type(op) is not str or op not in JSON_OPS:
+        die(f"--json: the request names no known op: {op!r}", 2)
+    keys = {"op"} if op == "baseline" else {"op", "arg"}
+    if set(request) != keys:
+        die(f"--json: a request for {op} has exactly the keys {', '.join(sorted(keys))}", 2)
+    arg = request.get("arg")
+    if op != "baseline" and type(arg) is not str:
+        die(f"--json: the arg of a request for {op} is not a string", 2)
+    reply = {"op": op}
+    try:
+        if op == "baseline":
+            value = BASELINE_VERSION
+        elif op == "extract":
+            value = extract(arg)
+        elif op == "requires_release_date":
+            value = requires_release_date(arg)
+        else:
+            value = release_day_from_published_at(arg)
+    except Malformed as error:
+        reply["outcome"] = "malformed"
+        reply["message"] = str(error)
+    else:
+        if value is None:
+            reply["outcome"] = "absent"
+        else:
+            reply["outcome"] = "value"
+            reply["value"] = value
+    print(json.dumps(reply, ensure_ascii=True, sort_keys=True))
+    return 0
 
 
 def main(argv: list[str]) -> int:
     args = argv[1:]
+    if args == ["--json"]:
+        return json_main()
     if args == ["--baseline"]:
         print(BASELINE_VERSION)
         return 0

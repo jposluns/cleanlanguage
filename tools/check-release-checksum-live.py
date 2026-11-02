@@ -76,9 +76,10 @@ Exit codes:
      not exactly true, the release SKILL.md names returns a status other than
      200 or 404, or the tag exists with no published release)
   3  a required file could not be read, the SKILL.md Released line is
-     malformed, or tools/skill-release-date.py could not be loaded, lacks a
-     usable attribute this gate uses (see RELEASE_DATE_API), failed
-     unexpectedly, or returned a value of a type the gate does not expect
+     malformed, a call of tools/skill-release-date.py, which runs in a
+     child process, did not give a result the gate could accept (see
+     run_release_date_child), or SIGCHLD could not be reset to its default
+     disposition (see reset_sigchld)
 
 The release-date check and the site-checksum comparison both run and both
 are reported when the release the site names is published, including when its
@@ -89,65 +90,71 @@ read while SKILL.md names a different version, and when the site names an
 unreleased version that is not the current skill version, so neither failure
 hides the other. Within the date check of a published release, a Released line
 missing above the undated baseline does not hide an immutable field that is not
-exactly true: both are reported and the more severe 2 wins. The extractor is loaded inside main, not at import, so a load
-failure is reported and contributes exit 3 while the checksum comparison still
-runs and reports. The gate then exits with the most severe code, the highest
+exactly true: both are reported and the more severe 2 wins. The extractor is probed inside main, not at import, so a
+probe that ends in exit 3 is reported and contributes 3 while the checksum
+comparison still runs and reports. The gate then exits with the most severe code, the highest
 one (3 over 2 over 1 over 0), since 2 and 3 mean a check could not complete.
 
-The extractor runs in this process, so every call the gate makes into
-extractor-defined code is guarded: loading the module, each attribute lookup
-and its validation, each function call, the Malformed class checks, and the
-class name and text of a caught error. Every classification or type decision
-the gate makes from an object the extractor provides reads only what that code
-cannot fake: the real type of the object, through type(), never its __class__,
-and exact builtin types, with no isinstance or issubclass call that could run an
-extractor hook. The Malformed class must be a class whose own type is exactly
-the builtin type, that subclasses Exception, and whose real MRO holds no class
-that is not an Exception but BaseException and object, so it is not also a
-SystemExit or a KeyboardInterrupt (see _plain_exception_class), and a caught
-error is a content
-verdict only when its own class is exactly that Malformed class, and that class
-passes that check, both before and after its text is read, so no extractor
-code runs between the last check and the verdict (see _malformed_verdict); a
-subclass of Malformed is not a verdict, since the
-extractor raises only Malformed itself. Anything else exits 3, never 2. A
-caught error is described only
-through _describe, never by its repr, and a returned value and
-BASELINE_VERSION must be of the exact built-in type the gate expects, so no
-extractor method of theirs runs later. Whatever that code raises, a SystemExit
-of any code or any other exception, exits 3 with its report, with one
-exception: a KeyboardInterrupt is let through as an interrupt, because the
-gate cannot tell one the extractor raises from a real Ctrl-C by its type. It
-is let through only when its class is exactly KeyboardInterrupt, the class a
-real Ctrl-C raises (see _is_interrupt). Every other error, a subclass of
-KeyboardInterrupt included, exits 3 with its report like any other error, so
-no interrupt the gate lets through can also be a SystemExit,
-ReleaseDateMalformed, or any other class a handler of the gate would read as
-a result of the gate. The residual the gate cannot close in-process:
-extractor code that calls os._exit, signals its own process, never returns,
-or changes the interpreter state the gate relies on (its globals, sys,
-builtins, or a thread, finalizer, or exit handler it leaves behind) acts
-outside any handler, so it can still end the gate with another code. So does
-an extractor that raises KeyboardInterrupt itself, at load or in a call: the
-gate ends as an interrupt, with the SIGINT status (130 in a shell), not 3;
-raised at load, it ends the gate before the checksum comparison runs or
-reports; and the interpreter prints its text in the
-traceback outside any guard, so an extractor-defined str runs unguarded
-there. That status is never 0 or 1 unless that unguarded code itself calls
-os._exit, the residual above.
-Only running the extractor in a separate process would close that residual,
-and the gate does not.
+Before it starts any child, main resets SIGCHLD to its default
+disposition (reset_sigchld), because an ignored SIGCHLD, inherited across
+exec from the caller, makes the kernel reap each child as it ends, so the gate
+could not see an extractor child end, and the exit status of a gh child would
+be lost. The verdict therefore does not depend on that inherited state; when
+the reset fails, the gate exits 3 before it starts any child.
+
+The extractor runs in a separate python3 -I child for each call
+(run_release_date_child), so extractor code never runs in this process, and
+what it does to its own process, such as exiting, raising, rewriting a
+global, or signalling itself, acts on the child. The timeout applies to each
+child: a gate run starts several children, and the gate waits for each child
+for up to CHILD_TIMEOUT_SECONDS and then, after a kill, for up to
+REAP_GRACE_SECONDS more before it reaps the child, so these waits can hold
+the gate for up to their sum on each call (the residual below is outside
+these bounds). The gate takes a result from a child only when the child
+exits 0 and prints exactly one JSON object that matches the contract, and
+it reads only a bounded part of what the child prints (see RESULT_LIMIT).
+Every other outcome of a child that the gate observes exits 3 with its
+report, never 2, 1, or 0. On a normal end and on a timeout, the gate kills
+the process group of the child before it reaps the child, or exits 3 when it
+cannot; on the other paths described in run_release_date_child it may
+not. The gate reaps a child only once it has seen that child end, and when
+it sees no end within REAP_GRACE_SECONDS of a kill, it exits 3 and leaves
+the child unreaped. A process the child started is killed with the group
+only while it is in the group: a process that leaves the child's process
+group, by any means, can outlive the gate.
+Separation is not a sandbox. The child runs with the uid, filesystem, and
+network of the gate, so extractor code can do whatever that uid can do,
+including writing files, reaching the network, using CPU, memory, and disk,
+and signalling the gate. A signal it sends to the gate acts on the gate as
+that signal acts on any process: it can interrupt, stop, or end the gate
+outside the exit codes above, and no bound of the gate limits its effect.
+More generally, extractor code can act on the gate and on its own children
+through the uid, by signals, tracing, resource limits, or any other means
+that uid has, and so can hold, stop, or end the gate, or keep from the gate
+what a child does, beyond any bound of the gate and outside the exit codes
+above. A report of the gate states what the gate saw, which such action can
+make differ from what the child did. If the gate is killed while it waits,
+the child, in its own session, can be left running. Each call reads the
+extractor file afresh, so a file replaced during a run can give different
+calls different code. The extractor remains the authority on content, so
+changed extractor code that returns a wrong but well-formed answer, or
+classifies a value as malformed, is not detectable here, as it never was;
+the stderr the gate relays on a failure is extractor-controlled text, as the
+error text it reported was before.
 """
 
 from __future__ import annotations
 
 import hashlib
-import importlib.util
+import json
+import os
 import re
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -161,72 +168,69 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
 VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
 
-# The one shared strict Released-line extractor (item 26), loaded as a module
+# The one shared strict Released-line extractor (item 26), run as a separate
+# python3 -I child with a JSON request and reply (see run_release_date_child)
 # so this gate applies the same grammar, the same baseline, and the same single
 # published_at interpretation as every other caller.
 RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 
-# Every attribute of the loaded extractor this gate uses, with the kind it must
-# be. The gate reads the module only through release_date_attr and
-# release_date_call, by these names, and the loader validates all of them, so
-# an incomplete or incompatible extractor exits 3 (unavailable) naming the
-# attribute, never surfacing later as a stray AttributeError (exit 1, drift).
-RELEASE_DATE_API = (
-    ("extract", "a function"),
-    ("requires_release_date", "a function"),
-    ("release_day_from_published_at", "a function"),
-    ("Malformed", "an exception class"),
-    ("BASELINE_VERSION", "a bare X.Y.Z version string"),
-)
+# Row 80: the bounds on one extractor child. CHILD_TIMEOUT_SECONDS applies to
+# each child separately (see the module docstring); on a timeout the gate
+# kills the process group of the child where it can, and exits 3. After a
+# kill, the gate waits at most REAP_GRACE_SECONDS to see the child end before
+# it reaps it, and exits 3, leaving it unreaped, when it sees no end, so no
+# reap blocks the gate (DISCOVERY round 4, finding 1). Of what the
+# child prints, the gate reads at most STDERR_LIMIT bytes of stderr and one
+# byte more than the stdout bound, which is RESULT_LIMIT bytes plus
+# ECHO_BYTES_PER_CHARACTER bytes for each character of the request argument,
+# so a longer stdout is refused and the memory a reply takes stays bounded by
+# the request the gate already holds. ECHO_BYTES_PER_CHARACTER is the most
+# bytes one character can take through repr and then ASCII JSON (a printable
+# character outside the basic plane becomes a surrogate pair of two \uXXXX
+# escapes, 12 bytes); the allowance is there so that a malformed message that
+# echoes the argument keeps its verdict (see
+# test_an_echoed_request_of_any_size_keeps_its_verdict).
+CHILD_TIMEOUT_SECONDS = 20
+REAP_GRACE_SECONDS = 5
+RESULT_LIMIT = 65536
+ECHO_BYTES_PER_CHARACTER = 12
+STDERR_LIMIT = 4096
+
+# The exit code of an internal failure of the extractor itself.
+EXTRACTOR_INTERNAL_ERROR = 6
+
+DAY_FORM = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+BASELINE_FORM = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 
 
-def _api_kind_ok(value, kind: str) -> bool:
-    # The version must be an exact str, not a subclass, so formatting it in a
-    # report runs no extractor-defined method (fix round 4, F1).
-    if kind == "a function":
-        return callable(value)
-    if kind == "an exception class":
-        return _plain_exception_class(value)
-    return type(value) is str and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is not None
+def _is_day(value) -> bool:
+    return type(value) is str and DAY_FORM.fullmatch(value) is not None
 
 
-def _plain_exception_class(value) -> bool:
-    """True only when ``value`` is a class whose own type is exactly the
-    builtin type, that subclasses Exception (fix round 5), and every class on
-    its real MRO subclasses Exception or is BaseException or object (fix
-    round 10), so it is not also a SystemExit, a KeyboardInterrupt, or any
-    other BaseException that is not an Exception. type() reads the real type,
-    so a value that only claims to be a class through a __class__ property,
-    or a class with a custom metaclass, whose instance, subclass, or mro hooks
-    would then decide the Malformed classification, is refused; once its own
-    type is exactly the builtin type, its __mro__ is the real one. issubclass
-    against the builtin Exception, itself of exactly the builtin type, takes
-    the builtin subtype path over the real MRO, and the other tests are by
-    identity, so it runs no extractor hook."""
-    return type(value) is type and issubclass(value, Exception) and all(
-        issubclass(base, Exception) or base is BaseException or base is object for base in value.__mro__
-    )
+def _is_flag(value) -> bool:
+    return type(value) is bool
 
 
-def _is_interrupt(error: BaseException) -> bool:
-    """True only when the caught ``error`` is let through as an interrupt:
-    its class is exactly KeyboardInterrupt, the class a real Ctrl-C raises
-    (fix round 9). type() reads the real class and the identity test runs no
-    extractor hook. Every other error, a subclass of KeyboardInterrupt
-    included, is handled by the caller as any other error, so the gate
-    reports it and exits 3; no interrupt it lets through can also be a
-    SystemExit, ReleaseDateMalformed, or any other class that a handler of
-    the gate would read as a result of the gate."""
-    return type(error) is KeyboardInterrupt
+def _is_version(value) -> bool:
+    return type(value) is str and BASELINE_FORM.fullmatch(value) is not None
 
 
-# The exact built-in types each extractor function may return. Checked by
-# identity, so no extractor-defined method of a returned value (its bool,
-# comparison, or format) runs later in the gate (fix round 4, F1).
-RELEASE_DATE_RESULTS = {
-    "extract": ((str, type(None)), "a str or None"),
-    "requires_release_date": ((bool,), "a bool"),
-    "release_day_from_published_at": ((str,), "a str"),
+# The JSON contract of the extractor --json mode: for each op, the check its
+# value must pass, what that check requires (for the report), and the outcomes
+# the op may reply with. Types are checked by identity, so 0, 1, or "true" is
+# never read as a bool.
+RELEASE_DATE_CONTRACT = {
+    "extract": (_is_day, "a YYYY-MM-DD string", ("value", "absent", "malformed")),
+    "requires_release_date": (_is_flag, "a JSON true or false", ("value", "malformed")),
+    "release_day_from_published_at": (_is_day, "a YYYY-MM-DD string", ("value", "malformed")),
+    "baseline": (_is_version, "a bare X.Y.Z version string", ("value",)),
+}
+
+# The exact key set of a reply with each outcome.
+REPLY_KEYS = {
+    "value": frozenset({"op", "outcome", "value"}),
+    "absent": frozenset({"op", "outcome"}),
+    "malformed": frozenset({"op", "outcome", "message"}),
 }
 
 
@@ -235,171 +239,263 @@ def _unavailable(message: str) -> None:
     raise SystemExit(3)
 
 
-def _guarded_text(read, fallback):
-    """Return what ``read()`` gives when it is an exact str, else
-    ``fallback``. ``read`` runs extractor-defined code (a str or a class-name
-    lookup), so anything it raises, a SystemExit included, gives the fallback;
-    only a KeyboardInterrupt that _is_interrupt lets through propagates."""
-    try:
-        text = read()
-    except BaseException as error:
-        if _is_interrupt(error):
-            raise
-        return fallback
-    return text if type(text) is str else fallback
-
-
-def _describe(error: BaseException) -> str:
-    """Describe an error raised by extractor code by its class name and its
-    text, each read under _guarded_text, so describing it can neither raise
-    nor exit. The repr is never used: it would run extractor code (an
-    extractor-defined repr, or the repr of a SystemExit code) unguarded."""
-    name = _guarded_text(lambda: type(error).__name__, "an error whose class name could not be read")
-    text = _guarded_text(lambda: str(error), "(its message could not be read)")
-    return f"{name}: {text}" if text else name
-
-
-def _malformed_verdict(error: BaseException, malformed):
-    """Return the text of the extractor Malformed verdict ``error``, or None
-    when it is not one, and the caller then reports the extractor as failed
-    (exit 3). The verdict is decided only from what extractor code cannot fake
-    (fix round 9): the real class of ``error``, read with type(), never its
-    __class__, must be exactly ``malformed`` by identity, so no isinstance
-    call honours a __class__ property, no metaclass hook runs, and a subclass
-    of Malformed, a SystemExit or other BaseException that also inherits it
-    among them, is never a verdict; and ``malformed`` must still pass
-    _plain_exception_class, since extractor code that ran in the call may have
-    reassigned its __bases__ so that it no longer subclasses Exception. Both
-    checks read only the real type and the builtin subtype path, so neither
-    can raise or run extractor code. The text is read under _guarded_text: a
-    verdict whose text is not an exact str is not trusted as a content
-    verdict. Reading the text runs extractor code (its str), which can
-    reassign the class of ``error`` or the __bases__ of ``malformed``, so
-    the checks run twice: before the text is read, so that an error that was
-    not a verdict when it was caught never becomes one, and again after it
-    (fix round 12), so that no extractor code runs between the last check
-    and the verdict."""
-    if not _verdict_class(error, malformed):
-        return None
-    text = _guarded_text(lambda: str(error), None)
-    if not _verdict_class(error, malformed):
-        return None
-    return text
-
-
-def _verdict_class(error: BaseException, malformed) -> bool:
-    """The class checks of _malformed_verdict: the real class of ``error`` is
-    exactly ``malformed``, and ``malformed`` passes _plain_exception_class."""
-    return type(error) is malformed and _plain_exception_class(malformed)
-
-
-def _load_release_date_tool():
-    # Any failure to load, a missing or unreadable file, a SyntaxError, or an
-    # exception raised while the module runs, SystemExit included, means the
-    # extractor is unavailable: exit 3, never the drift exit 1 a stray
-    # traceback would give, nor the code a SystemExit carries (row 58).
-    # Fix round 4 (F1): any BaseException but an interrupt, and the report
-    # describes the error through _describe, never its repr. Fix round 8: an
-    # interrupt is only what _is_interrupt lets through.
-    try:
-        spec = importlib.util.spec_from_file_location("skill_release_date", RELEASE_DATE_TOOL)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    except BaseException as error:
-        if _is_interrupt(error):
-            raise
-        _unavailable(f"could not load {RELEASE_DATE_TOOL.name} (the extractor is unavailable): {_describe(error)}")
-    for name, kind in RELEASE_DATE_API:
-        try:
-            usable = _api_kind_ok(getattr(module, name), kind)
-        except BaseException as error:
-            if _is_interrupt(error):
-                raise
-            usable = False
-        if not usable:
-            _unavailable(
-                f"{RELEASE_DATE_TOOL.name} lacks a usable {name} (expected {kind}), "
-                f"so the extractor is unavailable"
-            )
-    return module
-
-
-# None until load_release_date_tool runs inside main: loading at import would
-# exit 3 before main, so a load failure would hide the checksum comparison.
-RELEASE_DATE = None
-
-
-def load_release_date_tool() -> int:
-    """Load the extractor if it is not loaded yet. Returns 0, or 3 after
-    reporting why the extractor is unavailable; a failed load is retried at
-    the next use."""
-    global RELEASE_DATE
-    if RELEASE_DATE is None:
-        try:
-            RELEASE_DATE = _load_release_date_tool()
-        except SystemExit as stop:
-            if stop.code != 3:
-                raise
-            return 3
-    return 0
-
-
 class ReleaseDateMalformed(Exception):
     """The extractor's ``Malformed`` verdict on content, re-raised under a
     class this gate owns, so no caller looks the extractor class up."""
 
 
-def release_date_attr(name: str):
-    """Return the attribute ``name`` of the loaded extractor, validated again
-    against its declared kind, since the module can change after it loads. A
-    lookup or validation that fails, a value no longer of its kind, or an
-    extractor that cannot be loaded, exits 3 as unavailable, never as a
-    drift."""
-    if load_release_date_tool() != 0:
-        raise SystemExit(3)
-    kind = dict(RELEASE_DATE_API)[name]
-    try:
-        value = getattr(RELEASE_DATE, name)
-        usable = _api_kind_ok(value, kind)
-    except BaseException as error:
-        if _is_interrupt(error):
-            raise
-        _unavailable(f"{RELEASE_DATE_TOOL.name} lacks {name}: {_describe(error)}")
-    if not usable:
-        _unavailable(
-            f"{RELEASE_DATE_TOOL.name} lacks a usable {name} (expected {kind}), "
-            f"so the extractor is unavailable"
+class _RepeatedKey(Exception):
+    """A JSON object in a reply names one key more than once."""
+
+
+def _object_without_repeated_keys(pairs: list) -> dict:
+    """Build a JSON object from its ``pairs``, refusing a repeated key, so
+    a reply is never read with the last of two values winning."""
+    keys = [key for key, _ in pairs]
+    if len(set(keys)) != len(keys):
+        raise _RepeatedKey()
+    return dict(pairs)
+
+
+def _wait_unreaped(proc: subprocess.Popen, timeout: float) -> bool:
+    """Wait up to ``timeout`` seconds for the child ``proc`` to end, without
+    reaping it (os.waitid with WNOWAIT), so neither its pid nor the group id
+    it leads can be reused while the gate may still signal them. Returns
+    True when the child has ended and False on a timeout. WNOHANG with a
+    short sleep bounds the wait, as Popen.wait does with a timeout."""
+    deadline = time.monotonic() + timeout
+    delay = 0.0005
+    while os.waitid(os.P_PID, proc.pid, os.WEXITED | os.WNOWAIT | os.WNOHANG) is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        delay = min(delay * 2, remaining, 0.05)
+        time.sleep(delay)
+    return True
+
+
+def _reap(proc: subprocess.Popen) -> str | None:
+    """Reap the child ``proc`` once the gate sees it end, waiting at most
+    REAP_GRACE_SECONDS for that with the same non-blocking poll as the main
+    wait (_wait_unreaped), so the reap never blocks the gate. Returns None
+    once the child is reaped, or the reason when the gate saw no end within
+    that grace; the child is then left unreaped."""
+    if not _wait_unreaped(proc, REAP_GRACE_SECONDS):
+        return (
+            f"could not be reaped (the gate saw no end of it within "
+            f"{REAP_GRACE_SECONDS} seconds after its kill)"
         )
-    return value
+    proc.wait()
+    return None
+
+
+def _kill_group(proc: subprocess.Popen, ended: bool) -> str | None:
+    """Kill the process group of the child ``proc``, which has not been
+    reaped yet, so neither its pid nor the group id it leads can have been
+    reused, and then reap the child (see _reap); ``ended`` is whether the
+    child has already ended. Returns None, or the reason when the group
+    could not be killed or the child could not be reaped: when the group
+    could not be killed, the gate tries to kill the child itself when
+    ``ended`` is false, and reaps the child only when it has ended or that
+    kill succeeded, so it never waits on a child it could not kill."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError as error:
+        problem = f"could not kill the process group of its child ({type(error).__name__}: {error})"
+        if not ended:
+            try:
+                os.kill(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.poll()
+                return problem
+        unreaped = _reap(proc)
+        return problem if unreaped is None else f"{problem}, and {unreaped}"
+    return _reap(proc)
+
+
+def run_release_date_child(op: str, arg: str | None = None) -> dict:
+    """Run the extractor once, as ``skill-release-date.py --json`` under
+    ``sys.executable -I``, for the op ``op`` with ``arg``, and return its
+    reply, checked against the contract (RELEASE_DATE_CONTRACT and
+    REPLY_KEYS).
+
+    The child gets an empty environment, the tool directory as its working
+    directory, and its own session, so it leads a process group of its own.
+    The request is written to a temporary file that is its stdin, and its
+    stdout and stderr go to temporary files, so the gate never blocks on a
+    pipe and reads only a bounded part of each. The wait, bounded by
+    CHILD_TIMEOUT_SECONDS for this child, leaves the child unreaped. On a
+    normal end and on a timeout, the process group of the child is then
+    killed before the child is reaped, or the call exits 3 when the group
+    cannot be killed; on the other paths this docstring describes it may not
+    be. The child is reaped only once the gate sees it end, and when the
+    gate sees no end within REAP_GRACE_SECONDS of the kill, the call exits 3
+    and leaves the child unreaped (see _reap). A process the child started
+    is killed with the group only while it is in the group, so a process
+    that leaves the child's process group, by any means, can outlive the
+    gate. A wait that reports the child is no longer a child of the gate
+    (ChildProcessError) signals nothing, as its pid may be reused, and
+    exits 3.
+
+    This function returns only a reply from a child that exits 0 and whose
+    stdout, within the bound (see RESULT_LIMIT), is exactly one ASCII JSON
+    object, with no key repeated, that matches the contract. When it does
+    not return, it exits 3 as unavailable, naming the reason and relaying at
+    most STDERR_LIMIT bytes of the child stderr, or an exception passes
+    through it; it never gives a content verdict, a pass, or a drift for any
+    other outcome. Every Exception raised while the gate prepares, starts,
+    waits for, kills, reaps, or reads its child exits 3 that way.
+
+    A BaseException that is not an Exception, such as a KeyboardInterrupt,
+    is not caught that way. When one reaches the gate while it waits, the
+    gate kills the group and reaps the child before it passes on, or exits 3
+    when the group cannot be killed or the child cannot be reaped; one
+    raised anywhere else, including during that kill, passes on at once,
+    and a child already started may then be left unkilled, unreaped, or
+    both."""
+
+    def fail(reason: str, printed: bytes = b"") -> None:
+        message = f"{RELEASE_DATE_TOOL.name} {reason} in {op}, so the extractor is unavailable"
+        shown = printed.decode("utf-8", errors="replace").strip()
+        if shown:
+            message += f"; it printed: {shown}"
+        _unavailable(message)
+
+    executable = sys.executable
+    if not executable or not os.path.isabs(executable):
+        fail(f"could not run (the interpreter path {executable!r} is not absolute)")
+    request = {"op": op} if arg is None else {"op": op, "arg": arg}
+    limit = RESULT_LIMIT + ECHO_BYTES_PER_CHARACTER * (0 if arg is None else len(arg))
+    try:
+        with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, \
+                tempfile.TemporaryFile() as stderr:
+            stdin.write(json.dumps(request, ensure_ascii=True).encode("ascii"))
+            stdin.seek(0)
+            try:
+                proc = subprocess.Popen(
+                    [executable, "-I", str(RELEASE_DATE_TOOL), "--json"],
+                    stdin=stdin, stdout=stdout, stderr=stderr, env={},
+                    cwd=RELEASE_DATE_TOOL.parent, start_new_session=True,
+                )
+            except OSError as error:
+                fail(f"could not run ({type(error).__name__}: {error})")
+            try:
+                ended = _wait_unreaped(proc, CHILD_TIMEOUT_SECONDS)
+            except ChildProcessError:
+                # The child is no longer a child of the gate, so its pid and
+                # group id may already be reused: neither is signalled.
+                raise
+            except BaseException:
+                problem = _kill_group(proc, ended=False)
+                if problem is not None:
+                    fail(problem)
+                raise
+            problem = _kill_group(proc, ended)
+            if problem is not None:
+                fail(problem)
+            stderr.seek(0)
+            printed = stderr.read(STDERR_LIMIT)
+            stdout.seek(0)
+            data = stdout.read(limit + 1)
+    except Exception as error:
+        # An Exception from the machinery of the gate itself exits 3, never
+        # a traceback read as drift (exit 1); a BaseException that is not an
+        # Exception, SystemExit from fail among them, passes through.
+        fail(f"could not be run, waited for, or read ({type(error).__name__}: {error})")
+    code = proc.returncode
+    if not ended:
+        # Only what the gate saw is reported: it saw no end of the child
+        # within the timeout, which is not proof that the child was running.
+        fail(f"was not seen to end within {CHILD_TIMEOUT_SECONDS} seconds", printed)
+    if code < 0:
+        try:
+            name = signal.Signals(-code).name
+        except ValueError:
+            name = str(-code)
+        fail(f"was killed by signal {name}", printed)
+    if code == EXTRACTOR_INTERNAL_ERROR:
+        fail("failed unexpectedly (internal error)", printed)
+    if code != 0:
+        fail(f"exited {code}", printed)
+    if len(data) > limit:
+        fail(f"printed more than {limit} bytes", printed)
+
+    def breach(rule: str) -> None:
+        fail(f"printed a result that does not match the contract ({rule})", printed)
+
+    try:
+        reply = json.loads(data.decode("ascii"), object_pairs_hook=_object_without_repeated_keys)
+    except _RepeatedKey:
+        breach("a key appears more than once")
+    except (ValueError, RecursionError):
+        fail("did not print a JSON result", printed)
+    if type(reply) is not dict:
+        breach("not a JSON object")
+    outcome = reply.get("outcome")
+    if type(outcome) is not str or outcome not in REPLY_KEYS:
+        breach("its outcome is not value, absent, or malformed")
+    if set(reply) != REPLY_KEYS[outcome]:
+        breach(f"a result with outcome {outcome} has exactly the keys {', '.join(sorted(REPLY_KEYS[outcome]))}")
+    if type(reply["op"]) is not str or reply["op"] != op:
+        breach(f"it answers an op other than {op}")
+    check, expected, outcomes = RELEASE_DATE_CONTRACT[op]
+    if outcome not in outcomes:
+        breach(f"{outcome} is not a result of {op}")
+    if outcome == "value" and not check(reply["value"]):
+        breach(f"the value is not {expected}")
+    if outcome == "malformed" and type(reply["message"]) is not str:
+        breach("the message is not a string")
+    return reply
 
 
 def release_date_call(name: str, *args):
-    """Call the function ``name`` of the loaded extractor, resolving it here.
+    """Run the extractor op ``name`` with ``args`` in a child of its own (see
+    run_release_date_child) and map its reply: a ``value`` reply returns the
+    value, an ``absent`` reply returns None, and a ``malformed`` reply, the
+    extractor's ``Malformed`` verdict on content, is raised as
+    ``ReleaseDateMalformed`` with its message. run_release_date_child
+    returns only a reply that matches the contract, so no other outcome of
+    a child reaches this mapping (see run_release_date_child for what it
+    does instead)."""
+    reply = run_release_date_child(name, *args)
+    if reply["outcome"] == "malformed":
+        raise ReleaseDateMalformed(reply["message"])
+    if reply["outcome"] == "absent":
+        return None
+    return reply["value"]
 
-    Its ``Malformed`` verdict on content is raised as ``ReleaseDateMalformed``;
-    any other exception or SystemExit, including a function or class that has
-    gone missing or is not callable, means the extractor itself failed, which
-    exits 3 as unavailable, never as a content verdict, a pass, or a drift.
-    So does a returned value not of the exact type RELEASE_DATE_RESULTS
-    names, and the handler runs extractor code only under a guard."""
-    function = release_date_attr(name)
-    malformed = release_date_attr("Malformed")
+
+def reset_sigchld() -> None:
+    """Reset SIGCHLD to its default disposition before the gate starts any
+    child. An ignored SIGCHLD, inherited across exec from the caller, makes
+    the kernel reap each child as it ends, so os.waitid would report ECHILD
+    for every extractor child and the exit status of a gh child would be
+    lost. Exits 3 when the disposition cannot be reset, as in a thread other
+    than the main thread (ValueError) or on an OSError."""
     try:
-        result = function(*args)
-    except BaseException as error:
-        if _is_interrupt(error):
-            raise
-        verdict = _malformed_verdict(error, malformed)
-        if verdict is not None:
-            raise ReleaseDateMalformed(verdict) from None
-        _unavailable(f"{RELEASE_DATE_TOOL.name} failed unexpectedly in {name}: {_describe(error)}")
-    allowed, expected = RELEASE_DATE_RESULTS[name]
-    if not any(type(result) is kind for kind in allowed):
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    except (OSError, ValueError) as error:
         _unavailable(
-            f"{RELEASE_DATE_TOOL.name} returned an unusable result from {name} "
-            f"(expected {expected}), so the extractor is unavailable"
+            f"could not reset SIGCHLD to its default disposition ({type(error).__name__}: {error}), "
+            f"so the end of a child could be lost"
         )
-    return result
+
+
+def probe_release_date_tool() -> int:
+    """Run the extractor once, for its baseline, before the checks. Returns 0,
+    or 3 after reporting why the extractor is unavailable. Each later call
+    runs a child of its own, so a failure here is reported once and stays in
+    effect through the load_code main combines, even when a later call
+    succeeds, while each later call stands on its own."""
+    try:
+        release_date_call("baseline")
+    except SystemExit as stop:
+        if stop.code != 3:
+            raise
+        return 3
+    return 0
 
 
 def die(message: str) -> None:
@@ -541,7 +637,7 @@ def released_line(current: str) -> tuple[str | None, bool]:
 def report_missing_released_line(current: str, situation: str) -> None:
     """Report a Released line missing above the undated baseline for version
     ``current``; ``situation`` states the release state the gate observed."""
-    baseline = release_date_attr("BASELINE_VERSION")
+    baseline = release_date_call("baseline")
     print("Release date inconsistency found:")
     print(f"  - {situation}")
     print(
@@ -738,12 +834,12 @@ def check_site_checksum(load_code: int = 0) -> int:
     """Check the site checksum and the release date, returning the most
     severe code of the checks that ran (0 to 3), or stopping with 2 or 3 when
     the gate cannot go on; main combines it with ``load_code``, the result of
-    its extractor load, which the pre-tag window also reads so that it says
+    its extractor probe, which the pre-tag window also reads so that it says
     there is nothing to reconcile only when the gate passes."""
     require_regular_file(VERIFY_PAGE, str(VERIFY_PAGE.relative_to(REPO_ROOT)))
     # A required file that cannot be read or decoded exits 3, never an
     # uncaught traceback (exit 1, drift); main still combines it with the
-    # extractor load result.
+    # extractor probe result.
     try:
         verify = VERIFY_PAGE.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
@@ -838,7 +934,7 @@ def check_site_checksum(load_code: int = 0) -> int:
         # is checked offline: a malformed line, or one missing above the
         # undated baseline, is still reported in this window. Fix round 8:
         # the window says there is nothing to reconcile only when that check
-        # and the extractor load both pass, so the gate then exits 0.
+        # and the extractor probe both pass, so the gate then exits 0.
         code = offline_release_line_code(f"release {tag} is not published yet and its tag does not exist")
         if max(load_code, code) == 0:
             print("Nothing to reconcile.")
@@ -901,14 +997,13 @@ def check_site_checksum(load_code: int = 0) -> int:
 
 
 def main() -> int:
-    """Run the gate. The extractor is loaded here, inside the protected path,
-    so a load failure contributes exit 3 while the checksum comparison still
-    runs and reports; the most severe code wins (3 over 2 over 1 over 0). The
-    exception is a KeyboardInterrupt the extractor raises while it loads that
-    _is_interrupt lets through as an interrupt, so the gate ends with the
-    SIGINT status before the comparison runs (see the residual in the module
-    docstring)."""
-    load_code = load_release_date_tool()
+    """Run the gate. SIGCHLD is reset first, before any child starts (see
+    reset_sigchld). The extractor is then probed here, inside the protected
+    path, so a probe that ends in exit 3 contributes 3 while the checksum
+    comparison still runs and reports; the most severe code wins (3 over 2
+    over 1 over 0)."""
+    reset_sigchld()
+    load_code = probe_release_date_tool()
     try:
         code = check_site_checksum(load_code)
     except SystemExit as stop:
