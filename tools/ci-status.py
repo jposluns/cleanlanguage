@@ -61,11 +61,13 @@ the check GitHub requires today. The tool insists on all 4, ahead of the branch
 ruleset listing the 3 Actions jobs. Each Actions job is matched by its exact display
 name (case-sensitive and untrimmed) together with the github-actions app slug, so a
 run of the same name from another app, or an unnamed github-actions job such as the
-sitemap check, never satisfies one; the Cloudflare build is matched by its app slug
-alone. A passing reading missing any of the 4 means that check has not registered
-(a malformed branch, a head whose commit message carries a skip marker, or the
-external check still building); such a reading is downgraded from pass to pending,
-never to a red. A commit that legitimately ran none of them is a safe false-red,
+sitemap check, never satisfies one; the Cloudflare build is matched by the
+cloudflare prefix of its app slug alone, so any app whose slug starts with
+cloudflare satisfies it (disclosed). A passing reading missing any of the 4 means
+that check has not registered (a malformed branch, a head whose commit message
+carries a skip marker, or the external check still building); such a reading is
+downgraded from pass to pending, never to a red. A commit that legitimately ran
+none of them is a safe false-red,
 never a false-green. Residual: a name and an app cannot tell which workflow
 produced a run, so a pull request that deletes one of those workflows and adds
 another job with the same display name satisfies the check; GitHub's own

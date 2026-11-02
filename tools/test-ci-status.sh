@@ -9,31 +9,34 @@
 # The gate reports a pass only after two identical readings. It insists on 4
 # checks: the GitHub Actions jobs Plugin manifests, Skill discovery and Agent
 # Plugins manifest, each matched by its exact display name together with the
-# github-actions app slug, and the external Cloudflare Pages build, matched by its
-# app slug. A passing reading missing any of them is downgraded to pending, never
-# a red; an unnamed or differently named github-actions run, or a required name
-# posted by another app, does not count. Presence is read from the same reading
-# as the verdict, and the reading is FAIL-CLOSED: a malformed page (non-object,
-# or check_runs that is not a list), a check that is not an object, any field of
-# the wrong type (a status that is not a non-empty string, a conclusion/name/slug
-# that is neither a string nor null), or a head_sha that is present and does not
-# name the requested commit makes the whole reading unreadable rather than
-# dropping or forging a check. A name and the github-actions slug are each
-# compared as the whole string, control characters included, with no trimming,
-# case folding or partial match, and a present head_sha as the whole commit sha
-# in either letter case. The slug is taken only from the app object, so a
-# required name followed by separators and a slug, under a null app, does not
-# count. A failed read breaks a confirmation in progress but the same green set
-# reappearing re-arms without consuming the changing-set budget. Waits are
-# deadline-capped; numeric arguments are base-10 and range-checked.
+# github-actions app slug, and the external Cloudflare Pages build, matched by the
+# cloudflare prefix of its app slug alone, so any app whose slug starts with
+# cloudflare satisfies it. A passing reading missing any of them is downgraded to
+# pending, never a red; an unnamed or differently named github-actions run, or a
+# required name posted by another app, does not count. Presence is read from the
+# same reading as the verdict, and the reading is FAIL-CLOSED: a malformed page
+# (non-object, or check_runs that is not a list), a check that is not an object,
+# any field of the wrong type (a status that is not a non-empty string, a
+# conclusion/name/slug that is neither a string nor null), or a head_sha that is
+# present and does not name the requested commit makes the whole reading
+# unreadable rather than dropping or forging a check. A name and the
+# github-actions slug are each compared as the whole string, control characters
+# included, with no trimming, case folding or partial match, and a present
+# head_sha as the whole commit sha in either letter case. The slug is taken only
+# from the app object, so a required name followed by separators and a slug, under
+# a null app, does not count. A failed read breaks a confirmation in progress but
+# the same green set reappearing re-arms without consuming the changing-set
+# budget. Waits are deadline-capped; numeric arguments are base-10 and
+# range-checked.
 #
 # Each reading case puts a fake gh on PATH serving check-runs from a per-call
 # "plan" (tokens g/a/f: default payload, alternate payload, or a failed call),
 # runs ci-status and asserts its exit code. Many cases also assert a fixed
 # string on standard error (CASE_NEEDLE and run_err_case), such as the required
-# check named as missing, the malformed field, or a line of the report, and
-# some assert that the only gh call made is the paginated check-runs read of
-# the commit (CASE_ONLY_CALLS and run_log_case). The timed cases also bound
+# check named as missing, the malformed field, or a line of the report; some
+# assert that a fixed string is absent from it (CASE_ABSENT); and some assert
+# that the only gh call made is the paginated check-runs read of the commit
+# (CASE_ONLY_CALLS and run_log_case). The timed cases also bound
 # the elapsed time, and the paginate case serves page 2 only to a --paginate
 # call. The later sections, the workflow shape check, the commit sha and
 # repository contract, the wrapper path resolution, and the output, signal,
@@ -133,6 +136,8 @@ NONARRAY='{"check_runs":{"only":{"status":"completed","conclusion":"success","na
 # is set, every gh call must be exactly the paginated check-runs read of that
 # commit. The fake gh logs every call and answers a commit-status route with a
 # green body, so a tool that consulted commit statuses would see a pass there.
+# When CASE_ABSENT is set, standard error must not contain it as a fixed
+# string, and an error file that grep cannot search fails the case.
 run_case() {
   local name="$1" def="$2" alt="$3" plan="$4" want="$5"; shift 5
   local sha="${CASE_SHA:-0000000000000000000000000000000000000000}"
@@ -175,6 +180,10 @@ GH
   if [ "$got" -ne "$want" ]; then why="$why exit"; fi
   if [ -n "${CASE_NEEDLE:-}" ] && ! grep -q -F -- "$CASE_NEEDLE" "$tmp/err"; then
     why="$why message"
+  fi
+  if [ -n "${CASE_ABSENT:-}" ]; then
+    grep -q -F -- "$CASE_ABSENT" "$tmp/err"
+    case $? in 1) ;; *) why="$why absent" ;; esac
   fi
   if [ -n "${CASE_ONLY_CALLS:-}" ]; then
     local only="api repos/owner/name/commits/${sha}/check-runs --paginate"
@@ -311,15 +320,16 @@ GH
   rm -rf "$tmp"
 }
 
-# run_rc_case NAME WANT: fake gh emits a GREEN body but exits nonzero; the
-# returncode guard must reject it (exit 3), not parse the body as green.
+# run_rc_case NAME WANT [END]: fake gh emits a GREEN body, then runs END (exit 1
+# when END is not given); the returncode guard must reject it (exit 3), not
+# parse the body as green.
 run_rc_case() {
-  local name="$1" want="$2"
+  local name="$1" want="$2" end="${3:-exit 1}"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$GA_PRESENT" > "$tmp/def.json"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
-case "\$*" in *check-runs*) cat "$tmp/def.json"; exit 1;; *"repo view"*) printf 'owner/name';; *) printf '';; esac
+case "\$*" in *check-runs*) cat "$tmp/def.json"; ${end};; *"repo view"*) printf 'owner/name';; *) printf '';; esac
 GH
   chmod +x "$bin/gh"
   PATH="$bin:$PATH" bash "$ci" 0000000000000000000000000000000000000000 --repo owner/name >/dev/null 2>&1
@@ -343,6 +353,13 @@ CASE_NEEDLE="simulated check-runs read failure" \
 CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000: gh api failed" \
   run_case "a failed read gives gh api failed as the reason" "$GA_PRESENT" "" "f" 3
 run_case "failed read between green reads does not confirm" "$GA_PRESENT" "" "g f g f" 3 --wait --timeout 8
+# A pending reading between 2 green readings restarts the confirmation: the
+# green reading after it is a first reading again, not the second of a pair.
+# Here the reading after that fails, so the tool never confirms and exits 3 when
+# the window closes; a reader that kept the earlier green reading would confirm
+# on the third reading (exit 0).
+run_case "pending reading between green readings restarts the confirmation" \
+  "$GA_PRESENT" "$GA_IN_PROGRESS" "g a g f" 3 --wait --timeout 5
 run_case "transient read failures on a stable set still confirm green" "$GA_PRESENT" "" "g f g f g f g f g f g g" 0 --wait --timeout 30
 run_case "reordered identical check set still confirms green" "$GA_PRESENT" "$GA_REVERSED" "g a g a g a" 0
 # A completed check with no conclusion must stay non-green: a null conclusion
@@ -457,6 +474,9 @@ run_err_case "an unencodable name is named on standard error" "$SURROGATE" 3 \
   "check read failed for 0000000000000000000000000000000000000000: check field name is not encodable text"
 # A nonzero gh exit with a green body on stdout is rejected by the returncode guard.
 run_rc_case "green body with nonzero gh exit is rejected fail-closed" 3
+# A gh that writes a green body and is then ended by a signal has no exit
+# status; the tool reads that as returncode -1, which is never success.
+run_rc_case "green body from a gh ended by a signal is rejected fail-closed" 3 'kill -KILL $$'
 # In --wait mode a changing-but-green set must NOT give up at the changing-set cap
 # while time remains; it keeps going and confirms once the set settles.
 run_case "wait does not give up early on a changing green set" "$GA_PRESENT" "$GA_PLUS_EXTRA" "g a g a g a g g" 0 --wait --timeout 30
@@ -480,6 +500,30 @@ CASE_NEEDLE="$changing" run_case "readings differing only in a name do not confi
 CASE_NEEDLE="$changing" run_case "readings differing only in an app slug do not confirm" \
   "$(runs "$REQ_GA" "$CF" "$(extra_run success extra github-actions)")" \
   "$(runs "$REQ_GA" "$CF" "$(extra_run success extra other-app)")" "g a g a g a" 2
+# A run that appears twice is in the set twice: a reading with a run duplicated
+# and one with that run once are different sets, so they never confirm. A
+# reader that compared the sets without duplicates would read green (exit 0).
+CASE_NEEDLE="$changing" run_case "readings differing only in a duplicated run do not confirm" \
+  "$(runs "$REQ_GA" "$CF" "$(extra_run success extra github-actions)" "$(extra_run success extra github-actions)")" \
+  "$(runs "$REQ_GA" "$CF" "$(extra_run success extra github-actions)")" "g a g a g a" 2
+# A nullable field that is null or absent reads as the empty string, so a
+# reading that carries it and one that carries the empty string instead are the
+# same set and confirm green (exit 0). A reader that read null as any other text
+# would see the set change on every reading and give up (exit 2).
+null_forms=(
+  'a null name|"name":null,"app":{"slug":"github-actions"}|"name":"","app":{"slug":"github-actions"}'
+  'no name|"app":{"slug":"github-actions"}|"name":"","app":{"slug":"github-actions"}'
+  'a null app slug|"name":"x","app":{"slug":null}|"name":"x","app":{"slug":""}'
+  'no app slug|"name":"x","app":{}|"name":"x","app":{"slug":""}'
+  'a null app|"name":"x","app":null|"name":"x","app":{"slug":""}'
+  'no app|"name":"x"|"name":"x","app":{"slug":""}'
+)
+for form in "${null_forms[@]}"; do
+  IFS='|' read -r what as_null as_empty <<<"$form"
+  run_case "an extra run with $what confirms against the empty value -> green" \
+    "$(runs "$REQ_GA" "$CF" "{\"status\":\"completed\",\"conclusion\":\"success\",$as_null}")" \
+    "$(runs "$REQ_GA" "$CF" "{\"status\":\"completed\",\"conclusion\":\"success\",$as_empty}")" "g a g a g a" 0
+done
 # The report on standard error gives a completed run its conclusion and an
 # unfinished run its status.
 CASE_NEEDLE="$(printf '  %-28s %s' extra neutral)" \
@@ -549,6 +593,13 @@ CASE_NEEDLE="required check(s) Plugin manifests not registered" \
 CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
   run_case "Cloudflare build missing from later readings of a wait -> not green" \
   "$GA_PRESENT" "$(runs "$REQ_GA")" "g a a" 2 --wait --timeout 4
+# The missing-check message belongs to a passing reading alone: a pending or red
+# reading that also lacks a required check is reported as pending or red, and
+# the message is not written.
+CASE_ABSENT="not registered" run_case "pending reading lacking a required check does not name it" \
+  "$(runs '{"status":"in_progress","conclusion":null,"name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK")" "" "" 2
+CASE_ABSENT="not registered" run_case "red reading lacking a required check does not name it" \
+  "$(runs '{"status":"completed","conclusion":"failure","name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK")" "" "" 1
 # The downgrade holds at every reading size: a reading of 6, 12, 100 or 300
 # runs, the extra runs all green, still lacks Plugin manifests and is not green.
 # many_runs N: Skill discovery, Agent Plugins manifest and the Cloudflare build,
@@ -564,7 +615,7 @@ for size in 6 12 100 300; do
   CASE_NEEDLE="required check(s) Plugin manifests not registered" \
     run_case "reading of $size runs missing a required check -> not green" "$(many_runs "$size")" "" "" 2
 done
-run_case "Cloudflare build under another name is matched by its app slug -> green" \
+run_case "Cloudflare build under another name is matched by the cloudflare prefix of its app slug -> green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Pages build","app":{"slug":"cloudflare-workers-and-pages"}}')" "" "" 0
 # A green commit status is never read: the only gh call is the check-runs read.
 run_log_case "a green commit status never stands in for a missing required check" "$(runs "$SD_OK" "$APM_OK" "$CF")" 2
@@ -728,8 +779,9 @@ for bad in '[]' '{}' '["completed"]'; do
     "$read_failed: non-string check field status"
 done
 # Only success, neutral and skipped pass: a required check that concludes
-# cancelled, stale, action_required or timed_out is red, never green.
-for concl in cancelled stale action_required timed_out; do
+# cancelled, stale, action_required, timed_out or startup_failure is red, never
+# green.
+for concl in cancelled stale action_required timed_out startup_failure; do
   run_case "required check concluding $concl -> red" "$(bad_at conclusion "\"$concl\"" 0)" "" "" 1
 done
 # A required check that concludes skipped or neutral passes, as GitHub counts it
@@ -761,6 +813,143 @@ run_err_case "empty check_runs is unreadable and says no checks are recorded" '{
 run_err_case "empty check_runs is not treated as a pass" '{"total_count":0,"check_runs":[]}' 3 \
   "ci-status: treating absent checks as unreadable, not as a pass"
 
+# Every computation over the runs of a reading covers every run, wherever it
+# sits: not only the first runs, the last runs, or the first page. The 5-run
+# bad_at fixture above covers each index of a small reading; the cases below put
+# one decisive run at late positions of a 300-run reading served as 1 page and
+# as 3 pages of 100: runs 0, 5, 49, 50, 99, 100, 101 and 299 of the 1-page
+# reading, and runs 100 and 199 (the first and last of page 2) and 200 and 299
+# (the first and last of page 3) of the 3-page reading. The 4 green required
+# checks are runs 1 to 4. At each position the decisive run is, in turn, a
+# head_sha of another commit, each malformed field, a check run that is not an
+# object, an id that is not an integer, a repeat of the id of run 1 (at every
+# position but run 0), a failed run (red), an unfinished run (pending, and no
+# required check is named as missing), and one of the 4 required checks moved
+# there from its own run (green); 2 readings that differ only in the conclusion
+# of that run do not confirm (the second differs from the first, so the tool
+# reads again, and that third read fails: exit 3, where a reader that compared
+# only some runs would confirm on the second reading, exit 0); and an
+# unfinished run there is named in the report when the wait window closes. A
+# page 2 or 3 that is malformed makes the whole reading unreadable. A reader that checked only some runs or pages would read
+# such a reading green or pending, or fail with another message. Residual: the
+# positions are a sample, so a reader that skipped one other run of a large
+# reading is not caught.
+# big_reading SIZE PAGES [WHERE=RAW]...: SIZE green github-actions runs named
+# extra 0 to extra SIZE - 1, split in order into PAGES pages of equal size, with
+# the run at index WHERE replaced by the raw JSON RAW, or, for WHERE pN, page N
+# (counted from 1) replaced whole by RAW. A WHERE out of range or given twice,
+# or a SIZE that PAGES does not divide, prints nothing and fails, so the case
+# built on it fails.
+big_reading() {
+  python3 -I - "$@" <<'PY'
+import sys
+
+size, pages = int(sys.argv[1]), int(sys.argv[2])
+if pages < 1 or size % pages:
+    sys.exit(f"big_reading: {pages} pages do not divide {size} runs")
+runs = ['{"status":"completed","conclusion":"success","name":"extra %d","app":{"slug":"github-actions"}}' % i
+        for i in range(size)]
+whole, seen = {}, set()
+for spec in sys.argv[3:]:
+    where, sep, raw = spec.partition("=")
+    if not sep or where in seen:
+        sys.exit(f"big_reading: bad or repeated placement {where!r}")
+    seen.add(where)
+    if where[:1] == "p" and where[1:].isdigit() and 1 <= int(where[1:]) <= pages:
+        whole[int(where[1:])] = raw
+    elif where.isdigit() and int(where) < size:
+        runs[int(where)] = raw
+    else:
+        sys.exit(f"big_reading: placement {where!r} is out of range")
+per = size // pages
+sys.stdout.write("\n".join(
+    whole.get(p + 1, '{"check_runs":[%s]}' % ",".join(runs[p * per:(p + 1) * per]))
+    for p in range(pages)
+))
+PY
+}
+# big_bad FIELD VALUE INDEX: the green extra run of index INDEX with FIELD set to
+# the raw JSON VALUE. FIELD is status, conclusion, name, app.slug, app (the whole
+# app object), or head_sha or id, which is added to that run alone; any other
+# FIELD prints nothing and fails.
+big_bad() {
+  local st='"completed"' cn='"success"' nm="\"extra $3\"" app='{"slug":"github-actions"}' pre=""
+  case "$1" in
+    status) st="$2" ;;
+    conclusion) cn="$2" ;;
+    name) nm="$2" ;;
+    app.slug) app="{\"slug\":$2}" ;;
+    app) app="$2" ;;
+    head_sha | id) pre="\"$1\":$2," ;;
+    *) return 1 ;;
+  esac
+  printf '{%s"status":%s,"conclusion":%s,"name":%s,"app":%s}' "$pre" "$st" "$cn" "$nm" "$app"
+}
+big_req=("1=$PM_OK" "2=$SD_OK" "3=$APM_OK" "4=$CF")
+req_json=("$PM_OK" "$SD_OK" "$APM_OK" "$CF")
+req_names=("Plugin manifests" "Skill discovery" "Agent Plugins manifest" "Cloudflare Pages")
+# big_one PAGES INDEX RAW: the 300-run reading in PAGES pages, with the 4 green
+# required checks at runs 1 to 4 and the run at INDEX replaced by RAW.
+big_one() { big_reading 300 "$1" "${big_req[@]}" "$2=$3"; }
+# big_where PAGES INDEX: that position in words.
+big_where() { printf 'run %s of 300 on page %s of %s' "$2" "$(( $2 / (300 / $1) + 1 ))" "$1"; }
+for pages in 1 3; do
+  run_case "a reading of 300 runs on $pages page(s) with no run changed -> green" \
+    "$(big_reading 300 "$pages" "${big_req[@]}")" "" "" 0
+done
+moved_n=0
+for at in 1:0 1:5 1:49 1:50 1:99 1:100 1:101 1:299 3:100 3:199 3:200 3:299; do
+  pages="${at%%:*}" idx="${at#*:}"
+  where="$(big_where "$pages" "$idx")"
+  run_err_case "head_sha of another commit on $where alone -> unreadable" \
+    "$(big_one "$pages" "$idx" "$(big_bad head_sha "\"$C2\"" "$idx")")" 3 \
+    "$read_failed: check run head_sha '$C2' is not the requested commit 0000000000000000000000000000000000000000"
+  run_err_case "null status on $where alone -> unreadable" \
+    "$(big_one "$pages" "$idx" "$(big_bad status null "$idx")")" 3 "$read_failed: check field status is null"
+  run_err_case "non-string conclusion on $where alone -> unreadable" \
+    "$(big_one "$pages" "$idx" "$(big_bad conclusion 1 "$idx")")" 3 "$read_failed: non-string check field conclusion"
+  run_err_case "non-string name on $where alone -> unreadable" \
+    "$(big_one "$pages" "$idx" "$(big_bad name 7 "$idx")")" 3 "$read_failed: non-string check field name"
+  run_err_case "non-string app slug on $where alone -> unreadable" \
+    "$(big_one "$pages" "$idx" "$(big_bad app.slug 7 "$idx")")" 3 "$read_failed: non-string check field app.slug"
+  run_err_case "non-object app on $where alone -> unreadable" \
+    "$(big_one "$pages" "$idx" "$(big_bad app '[]' "$idx")")" 3 "$read_failed: check run app is not an object"
+  run_err_case "check run that is not an object as $where -> unreadable" \
+    "$(big_one "$pages" "$idx" '"completed"')" 3 "$read_failed: a check run is not an object"
+  run_err_case "non-integer id on $where alone -> unreadable" \
+    "$(big_one "$pages" "$idx" "$(big_bad id '"7"' "$idx")")" 3 "$read_failed: check run id is not an integer"
+  if [ "$idx" -ne 0 ]; then
+    run_err_case "id of run 1 repeated on $where -> unreadable" \
+      "$(big_reading 300 "$pages" "1={\"id\":7,${PM_OK#\{}" "2=$SD_OK" "3=$APM_OK" "4=$CF" "$idx=$(big_bad id 7 "$idx")")" 3 \
+      "$read_failed: duplicate check run id"
+  fi
+  run_case "failed run on $where alone -> red" \
+    "$(big_one "$pages" "$idx" "$(big_bad conclusion '"failure"' "$idx")")" "" "" 1
+  CASE_ABSENT="not registered" run_case "unfinished run on $where alone -> not green" \
+    "$(big_one "$pages" "$idx" "$(big_bad status '"in_progress"' "$idx")")" "" "" 2
+  # One of the 4 required checks, in turn, moved here from its own run, which is
+  # left a green extra run.
+  k=$(( moved_n % 4 )); moved_n=$(( moved_n + 1 ))
+  moved=()
+  for j in 0 1 2 3; do
+    if [ "$j" -eq "$k" ]; then moved+=("$idx=${req_json[j]}"); else moved+=("$(( j + 1 ))=${req_json[j]}"); fi
+  done
+  run_case "required check ${req_names[k]} as $where is seen -> green" \
+    "$(big_reading 300 "$pages" "${moved[@]}")" "" "" 0
+  CASE_NEEDLE="$read_failed: gh api failed" run_case "readings differing only on $where do not confirm" \
+    "$(big_reading 300 "$pages" "${big_req[@]}")" \
+    "$(big_one "$pages" "$idx" "$(big_bad conclusion '"neutral"' "$idx")")" "g a f" 3
+  CASE_NEEDLE="$(printf '  %-28s %s' "extra $idx" in_progress)" \
+    run_case "the report names the unfinished $where" \
+    "$(big_one "$pages" "$idx" "$(big_bad status '"in_progress"' "$idx")")" "" "" 2 --wait --timeout 1
+done
+for p in 2 3; do
+  run_err_case "page $p of 3 that is not an object -> unreadable" \
+    "$(big_reading 300 3 "${big_req[@]}" "p$p=[]")" 3 "$read_failed: check-runs page is not an object"
+  run_err_case "page $p of 3 whose check_runs is null -> unreadable" \
+    "$(big_reading 300 3 "${big_req[@]}" "p$p={\"check_runs\":null}")" 3 "$read_failed: check_runs is not an array"
+done
+
 # Exact matching of each required Actions job: a run counts only when its name is
 # the whole display name and its app slug is the whole github-actions slug. Each
 # near miss below replaces Plugin manifests beside the other 3 required checks
@@ -789,9 +978,10 @@ for near in "xcloudflare-pages" " cloudflare-pages" "Cloudflare-pages" "pages-cl
     run_case "near Cloudflare slug [$near] does not count -> not green" \
     "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"$near\"}}")" "" "" 2
 done
-# The Cloudflare build is matched by its app slug alone: a run with an empty
-# name, or with the slug cloudflare and nothing after it, counts.
-run_case "Cloudflare build with an empty name is matched by its app slug -> green" \
+# The Cloudflare build is matched by the cloudflare prefix of its app slug
+# alone, so any app whose slug starts with cloudflare satisfies it: a run with
+# an empty name, or with the slug cloudflare and nothing after it, counts.
+run_case "Cloudflare build with an empty name is matched by the cloudflare prefix of its app slug -> green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"","app":{"slug":"cloudflare-workers-and-pages"}}')" "" "" 0
 run_case "Cloudflare app slug of exactly cloudflare counts -> green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare"}}')" "" "" 0
