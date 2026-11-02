@@ -73,9 +73,17 @@ DECORATED = (
 )
 
 # Decorations outside the rule, which the docstring states are not detected.
+# Fix round 11 (DISCOVERY round 9, finding 1): a list marker with no number,
+# a list number of another script's digits, and a no-break space before the
+# colon are outside it too, as the key pattern takes only ASCII digits and
+# only spaces, tabs and emphasis markers between the word and the colon.
 UNDETECTED = (
     ("inline code", "`Released: 2026-11-01`"),
     ("HTML tag", "<b>Released:</b> 2026-11-01"),
+    ("a parenthesis with no number", ") Released: 2026-11-01"),
+    ("a dot with no number", ". Released: 2026-11-01"),
+    ("a list number of non-ASCII digits", "\u0661. Released: 2026-11-01"),
+    ("a no-break space before the colon", "Released\u00a0: 2026-11-01"),
 )
 
 # Runs the real extractor as a script with its input decoding made to crash,
@@ -178,6 +186,15 @@ class ExtractorCliTest(unittest.TestCase):
     def test_no_trailing_spaces_is_read(self):
         # The hand-maintained renderings carry no Markdown hard break.
         self.assertAccepts(HEAD + "Version: 1.0.15\nReleased: 2026-11-15\n" + TAIL)
+
+    def test_a_dash_reads_stdin(self):
+        # Fix round 11 (DISCOVERY round 9, finding 5): "-" names standard
+        # input, as the module docstring states, never a usage error.
+        self.assertEqual(run(VALID.encode("utf-8"), "-", stdin=True), (0, "2026-11-15\n", ""))
+        self.assertEqual(
+            run((HEAD + VERSION + TAIL).encode("utf-8"), "-", stdin=True),
+            (3, "", "skill-release-date: no Released: line found\n"),
+        )
 
     def test_absent_line_exits_3(self):
         self.assertRejects(HEAD + VERSION + TAIL, "no Released: line found", 3)
@@ -558,6 +575,13 @@ class JsonModeTest(unittest.TestCase):
             ("an encoded surrogate inside a JSON string", b'{"op": "extract", "arg": "\xed\xa0\x80"}', None),
             ("a byte order mark before the request", b"\xef\xbb\xbf" + request("baseline"), None),
             ("a UTF-16 request", '{"op": "baseline"}'.encode("utf-16"), None),
+            # Fix round 11 (DISCOVERY round 9, finding 4): the request is
+            # parsed as sent, never stripped, so a vertical tab or a form
+            # feed, which JSON does not count as whitespace, makes it no JSON
+            # value; and an empty object names no op.
+            ("a request wrapped in vertical tabs", b"\x0b" + request("baseline") + b"\x0b", None),
+            ("a request wrapped in form feeds", b"\x0c" + request("baseline") + b"\x0c", None),
+            ("an empty object", b"{}", "the request names no known op: None"),
             ("a list", b"[]", "the request is not a JSON object"),
             ("a string", b"\"extract\"", "the request is not a JSON object"),
             ("unknown op", request("nope", "x"), "the request names no known op: 'nope'"),
@@ -657,6 +681,174 @@ class JsonModeTest(unittest.TestCase):
         self.assertEqual(
             proc.stderr,
             b"skill-release-date: internal error: RuntimeError(\"--json: no branch answers the op 'unrouted'\")\n",
+        )
+
+
+class PatternPinTest(unittest.TestCase):
+    """Fix round 11 (DISCOVERY round 9, finding 1): every character class,
+    width and anchor of every pattern of the extractor is pinned by inputs
+    that the shipped pattern and a pattern with that part changed answer
+    differently, with the exact message where one is given. The digits of
+    every pattern are ASCII digits only, so a digit of another script fails
+    the pattern itself; each part has its exact width; and the blanks of
+    the Released and Version line patterns are spaces and tabs only, so a
+    no-break space, a form feed or a vertical tab is not one."""
+
+    def malformed(self, function, value):
+        with self.assertRaises(srd.Malformed) as caught:
+            function(value)
+        return str(caught.exception)
+
+    def test_a_list_number_of_any_width_marks_a_key_like_line(self):
+        # RELEASED_KEY_LIKE: an ordered-list number has one or more digits,
+        # so a stale copy behind "10." is still a second Released line.
+        for line in ("10. Released: 2025-01-01", "10) Released: 2025-01-01", "123. Released: 2025-01-01"):
+            with self.subTest(line):
+                text = VALID + line + "\n"
+                self.assertEqual(self.malformed(srd.extract, text), "more than one Released line (lines 4, 9)")
+                self.assertEqual(
+                    run(text.encode("utf-8")), (1, "", "skill-release-date: more than one Released line (lines 4, 9)\n")
+                )
+
+    def test_the_duplicate_message_names_one_based_line_numbers(self):
+        self.assertEqual(
+            self.malformed(srd.extract, VALID + "Released: 2026-11-16\n"), "more than one Released line (lines 4, 9)"
+        )
+        self.assertEqual(
+            self.malformed(srd.extract, VALID + "x\nReleased: 2026-11-16\n> Released: 2026-11-17\n"),
+            "more than one Released line (lines 4, 10, 11)",
+        )
+
+    def test_the_released_line_takes_any_run_of_spaces_and_tabs_only(self):
+        # RELEASED_LINE: any run of spaces and tabs, none included, after the
+        # colon and after the date.
+        for line in (
+            "Released:2026-11-15", "Released:\t2026-11-15", "Released:  2026-11-15", "Released: \t 2026-11-15",
+            "Released: 2026-11-15\t", "Released: 2026-11-15 \t ",
+        ):
+            with self.subTest(line):
+                self.assertEqual(srd.extract(HEAD + VERSION + line + "\n" + TAIL), "2026-11-15")
+        for line in (
+            "Released:\u00a02026-11-15", "Released:\x0c2026-11-15", "Released:\x0b2026-11-15",
+            "Released: \u00a02026-11-15", "Released: 2026-11-15\x0b",
+        ):
+            with self.subTest(line):
+                self.assertEqual(
+                    self.malformed(srd.extract, HEAD + VERSION + line + "\n" + TAIL),
+                    f"the first Released line is not a bare YYYY-MM-DD date: {line!r}",
+                )
+        line = "Released:\u00a02026-11-15"
+        self.assertEqual(
+            run((HEAD + VERSION + line + "\n" + TAIL).encode("utf-8")),
+            (1, "", f"skill-release-date: the first Released line is not a bare YYYY-MM-DD date: {line!r}\n"),
+        )
+
+    def test_the_released_date_is_four_two_and_two_ascii_digits(self):
+        # RELEASED_LINE: the date has exactly 4, 2 and 2 ASCII digits joined
+        # by hyphens, so any other date fails the line pattern itself, with
+        # its own message, before the date is checked on its own.
+        for value in (
+            "02026-11-15", "202-11-15", "2026-011-15", "2026-1-15", "2026-11-015", "2026-11-5",
+            "\u0662\u0660\u0662\u0666-11-15", "2026-\u0661\u0661-15", "2026-11-\u0661\u0665",
+            "2026/11/15", "2026-11/15", "2026.11.15",
+        ):
+            line = "Released: " + value
+            with self.subTest(value):
+                self.assertEqual(
+                    self.malformed(srd.extract, HEAD + VERSION + line + "\n" + TAIL),
+                    f"the first Released line is not a bare YYYY-MM-DD date: {line!r}",
+                )
+
+    def test_a_bare_date_is_four_two_and_two_ascii_digits(self):
+        # DATE_FORM: the whole value, exactly 4, 2 and 2 ASCII digits joined
+        # by hyphens, so any other value fails the form, never the calendar.
+        for value in (
+            "02026-11-15", "202-11-15", "2026-011-15", "2026-11-015",
+            "\u0662\u0660\u0662\u0666-11-15", "2026-\u0661\u0661-15", "2026-11-\u0661\u0665",
+            "2026/11/15", "2026-11/15", "2026-11-15 ", " 2026-11-15", "2026-11-15\n",
+        ):
+            with self.subTest(value):
+                self.assertEqual(self.malformed(srd.parse_date, value), f"not a bare YYYY-MM-DD date: {value!r}")
+        self.assertEqual(
+            run(None, "--check-date", "02026-11-15"),
+            (1, "", "skill-release-date: not a bare YYYY-MM-DD date: '02026-11-15'\n"),
+        )
+
+    def test_a_bare_version_is_three_runs_of_ascii_digits(self):
+        # BARE_VERSION: each part one or more ASCII digits, joined by dots.
+        for value in (
+            "\u0661.0.15", "1.\u0660.15", "1.0.\u0661\u0665", "\uff11.0.15", "1x0x15", "1x0.15", "1.0x15",
+            " 1.0.15", "1.0.15\n",
+        ):
+            with self.subTest(value):
+                self.assertEqual(
+                    self.malformed(srd.requires_release_date, value), f"not a bare X.Y.Z version: {value!r}"
+                )
+        self.assertEqual(
+            run(request("requires_release_date", "\u0661.0.15"), "--json", stdin=True),
+            (0, reply_bytes({"op": "requires_release_date", "outcome": "malformed",
+                             "message": "not a bare X.Y.Z version: '\u0661.0.15'"}), ""),
+        )
+
+    def test_an_instant_is_two_ascii_digits_per_field_with_t_and_z(self):
+        # PUBLISHED_AT_FORM: 4 ASCII digits for the year and exactly 2 for
+        # each other field, an upper-case T and Z, hyphens and colons, so
+        # any other value fails the form, never the strptime check, which
+        # would accept a one-digit field or another script's digits.
+        for value in (
+            "2026-01-01T1:00:00Z", "2026-1-01T00:00:00Z", "2026-01-1T00:00:00Z", "2026-01-01T00:1:00Z",
+            "2026-01-01T00:00:1Z", "202-01-01T00:00:00Z", "02026-01-01T00:00:00Z", "2026-001-01T00:00:00Z",
+            "2026-01-001T00:00:00Z", "2026-01-01T000:00:00Z", "2026-01-01T00:000:00Z", "2026-01-01T00:00:000Z",
+            "\u0662\u0660\u0662\u0666-01-01T00:00:00Z", "2026-\u0660\u0661-01T00:00:00Z",
+            "2026-01-\u0660\u0661T00:00:00Z", "2026-01-01T\u0660\u0661:00:00Z", "2026-01-01T00:\u0660\u0661:00Z",
+            "2026-01-01T00:00:\u0660\u0661Z", "2026-01-01 00:00:00Z", "2026-01-01t00:00:00Z",
+            "2026-01-01T00:00:00z", "2026/01/01T00:00:00Z", "2026-01-01T00-00-00Z", "2026-01-01T00:00:00Z ",
+        ):
+            with self.subTest(value):
+                self.assertEqual(
+                    self.malformed(srd.release_day_from_published_at, value),
+                    f"published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: {value!r}",
+                )
+        self.assertEqual(
+            run(None, "--published-day", "2026-01-01T1:00:00Z"),
+            (1, "", "skill-release-date: published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: '2026-01-01T1:00:00Z'\n"),
+        )
+        self.assertEqual(
+            run(None, "--publish-window", "2026-01-01", "2026-01-01T1:00:00Z"),
+            (1, "", "skill-release-date: the current instant is not a YYYY-MM-DDTHH:MM:SSZ instant: "
+                    "'2026-01-01T1:00:00Z'\n"),
+        )
+        value = "2026-01-01T\u0660\u0661:00:00Z"
+        self.assertEqual(
+            run(request("release_day_from_published_at", value), "--json", stdin=True),
+            (0, reply_bytes({"op": "release_day_from_published_at", "outcome": "malformed",
+                             "message": f"published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: {value!r}"}), ""),
+        )
+
+    def test_the_version_line_takes_any_run_of_spaces_and_tabs_only(self):
+        # VERSION_LINE: any run of spaces and tabs, none included, after the
+        # colon and after the version, which is three runs of ASCII digits
+        # joined by dots.
+        for line in (
+            "Version:1.0.15", "Version:\t1.0.15", "Version:  1.0.15", "Version: 1.0.15 ", "Version: 1.0.15\t",
+            "Version: 1.0.15 \t ",
+        ):
+            with self.subTest(line):
+                self.assertEqual(srd.extract(HEAD + line + "\n" + RELEASED + TAIL), "2026-11-15")
+        for line in (
+            "Version: 1.0.15\u00a0", "Version: 1.0.15\x0c", "Version: 1.0.15\x0b", "Version:\x0c1.0.15",
+            "Version:\x0b1.0.15", "Version: \u0661.0.15", "Version: 1.\u0660.15", "Version: 1.0.\u0661\u0665",
+            "Version: .0.15", "Version: 1..15", "Version: 1.0.", "Version: 1x0x15", "Version: 1.0x15",
+        ):
+            with self.subTest(line):
+                self.assertEqual(
+                    self.malformed(srd.extract, HEAD + line + "\n" + RELEASED + TAIL),
+                    f"the first Version: line (line 3) is not a bare X.Y.Z version: {line!r}",
+                )
+        line = "Version: 1.0.15\u00a0"
+        self.assertEqual(
+            run((HEAD + line + "\n" + RELEASED + TAIL).encode("utf-8")),
+            (1, "", f"skill-release-date: the first Version: line (line 3) is not a bare X.Y.Z version: {line!r}\n"),
         )
 
 

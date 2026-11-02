@@ -47,6 +47,7 @@ import time
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parent / "check-release-checksum-live.py"
 spec = importlib.util.spec_from_file_location("check_release_checksum_live", MODULE_PATH)
@@ -198,10 +199,13 @@ class ReverseSortedKeys(frozenset):
 
 
 def process_state(pid: int) -> str | None:
-    """The State letter of process ``pid``, or None when it does not exist."""
+    """The State letter of process ``pid``, or None when it does not exist.
+    Fix round 11 (mutation sweep): a process reaped between the open and the
+    read of its status file makes the read fail with ESRCH
+    (ProcessLookupError), which also means it no longer exists."""
     try:
         status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
     for line in status.splitlines():
         if line.startswith("State:"):
@@ -1892,6 +1896,60 @@ class ConditionalPassTest(unittest.TestCase):
                 result, err = self.call_reports("baseline")
                 self.assertEqual(result, ("exit", 3), err)
                 self.assertEqual(err.splitlines(), [self.unavailable(reason, "baseline")])
+
+    def test_a_nonzero_exit_is_reported_before_an_oversized_stdout(self):
+        # Fix round 11 (DISCOVERY round 9, finding 3): the exit code is
+        # checked before the size of stdout, so a child that exits 1 with
+        # more than the bound on stdout is reported as exiting 1.
+        self.assertEqual(gate.RESULT_LIMIT, 65536)
+        self.fake_extractor(forging({"baseline": b" " * 65537}, code=1))
+        result, err = self.call_reports("baseline")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err, self.unavailable("exited 1", "baseline") + "\n")
+
+    def test_a_reply_followed_by_a_form_feed_or_a_vertical_tab_is_not_json(self):
+        # Fix round 11 (DISCOVERY round 9, finding 2): the reply is parsed
+        # as printed, never stripped first, so a valid reply followed by a
+        # character that JSON does not count as whitespace is no JSON
+        # result.
+        valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}'
+        for label, output in (
+            ("a form feed and a newline", valid + b"\x0c\n"),
+            ("a vertical tab", valid + b"\x0b"),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"baseline": output}))
+                result, err = self.call_reports("baseline")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err, self.unavailable("did not print a JSON result", "baseline") + "\n")
+
+    def test_a_malformed_message_reaches_the_caller_unchanged(self):
+        # Fix round 11 (mutation sweep): the message of a malformed reply
+        # is raised exactly as the child printed it, never stripped, so a
+        # report quotes the verdict of the extractor as it was given.
+        message = "  padded verdict \n"
+        self.fake_extractor(forging({"extract": json.dumps(
+            {"op": "extract", "outcome": "malformed", "message": message}
+        ).encode("ascii") + b"\n"}))
+        self.assertEqual(self.call_reports("extract", "x"), (("malformed", message), ""))
+
+    def test_a_sigchld_reset_that_raises_oserror_exits_3_before_any_child(self):
+        # Fix round 11 (DISCOVERY round 9, finding 6): an OSError from the
+        # reset of SIGCHLD, which Linux gives only under a mock, exits 3
+        # naming it, as a ValueError does, and no child is started.
+        tool = self.fake_extractor(logging_extractor(fail_first=False))
+        refused = OSError(errno.EINVAL, "Invalid argument")
+        err = io.StringIO()
+        with mock.patch.object(gate.signal, "signal", side_effect=refused) as reset, \
+                contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+            gate.main()
+        self.assertEqual(stop.exception.code, 3)
+        reset.assert_called_once_with(signal.SIGCHLD, signal.SIG_DFL)
+        self.assertEqual(err.getvalue(), (
+            "check-release-checksum-live: could not reset SIGCHLD to its default disposition "
+            "(OSError: [Errno 22] Invalid argument), so the end of a child could be lost\n"
+        ))
+        self.assertFalse((tool.parent / "runs.log").exists(), "a child was started")
 
     def test_the_relayed_stderr_is_stripped(self):
         # Fix round 8: the relayed stderr is stripped, so a trailing newline

@@ -67,9 +67,12 @@ Input modes:
   reply object. Its caller is ``tools/check-release-checksum-live.py``, which
   runs this file as a separate ``python3 -I`` child. The request is
   ``{"op": "baseline"}``, or ``{"op": OP, "arg": TEXT}`` for the ops
-  ``extract`` (``TEXT`` is the decoded content), ``requires_release_date``
-  (``TEXT`` is a version) and ``release_day_from_published_at`` (``TEXT`` is
-  a ``published_at`` value), with no other key. The reply echoes ``op`` and
+  ``extract`` (``TEXT`` is the content as read with universal newlines, as
+  the gate reads it with ``Path.read_text``; it is passed to ``extract``
+  unchanged, so a ``CR`` left in it is part of its line, not a line ending),
+  ``requires_release_date`` (``TEXT`` is a version) and
+  ``release_day_from_published_at`` (``TEXT`` is a ``published_at`` value),
+  with no other key. The reply echoes ``op`` and
   carries ``outcome``: ``value`` with ``value`` (a day, a JSON ``true`` or
   ``false``, or the baseline version), ``absent`` with no further key
   (``extract`` only: no line looks like the key), or ``malformed`` with
