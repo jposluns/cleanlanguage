@@ -187,6 +187,16 @@ def logged_runs(tool: Path) -> list[str]:
     return (tool.parent / "runs.log").read_text(encoding="utf-8").splitlines()
 
 
+class ReverseSortedKeys(frozenset):
+    """A key set of REPLY_KEYS that iterates in reverse sorted order. Fix
+    round 10: a report that lists the keys of a set without sorting them
+    then differs from the sorted list under every hash seed, not only under
+    some, so a test that pins the sorted list fails without the sort."""
+
+    def __iter__(self):
+        return iter(sorted(frozenset.__iter__(self), reverse=True))
+
+
 def process_state(pid: int) -> str | None:
     """The State letter of process ``pid``, or None when it does not exist."""
     try:
@@ -1773,7 +1783,12 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_a_reply_that_breaks_the_contract_exits_3(self):
         # Row 80 (2.4): each rule of the contract is checked, by exact type
-        # and exact key set, and a breach exits 3 naming the rule.
+        # and exact key set, and a breach exits 3 naming the rule. Fix round
+        # 10: the key sets iterate in reverse sorted order here, so the
+        # sorted key list of each report is pinned under every hash seed.
+        self.addCleanup(setattr, gate, "REPLY_KEYS", gate.REPLY_KEYS)
+        gate.REPLY_KEYS = {outcome: ReverseSortedKeys(keys) for outcome, keys in gate.REPLY_KEYS.items()}
+        self.assertEqual(list(gate.REPLY_KEYS["value"]), ["value", "outcome", "op"])
         day = "2026-11-15"
         value_keys = "a result with outcome value has exactly the keys op, outcome, value"
         day_form = "the value is not a YYYY-MM-DD string"
@@ -1808,6 +1823,10 @@ class ConditionalPassTest(unittest.TestCase):
             ("a day not in the day form", "extract", {"op": "extract", "outcome": "value", "value": "2026-11-1x"},
              day_form),
             ("a day with trailing text", "extract", {"op": "extract", "outcome": "value", "value": day + "\n"},
+             day_form),
+            ("a day with a three-digit year", "extract", {"op": "extract", "outcome": "value", "value": day[1:]},
+             day_form),
+            ("a day with a five-digit year", "extract", {"op": "extract", "outcome": "value", "value": "2" + day},
              day_form),
             ("a null day", "extract", {"op": "extract", "outcome": "value", "value": None}, day_form),
             ("a published day not in the day form", "release_day_from_published_at",
@@ -1862,7 +1881,12 @@ class ConditionalPassTest(unittest.TestCase):
     def test_a_valid_reply_with_a_nonzero_exit_exits_3(self):
         # Row 80: a reply counts only when the child exits 0.
         valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}\n'
-        for exit_code, reason in ((1, "exited 1"), (2, "exited 2"), (6, "failed unexpectedly (internal error)")):
+        # Fix round 10 (mutation sweep): the codes on each side of the
+        # internal-error code are plain exits.
+        for exit_code, reason in (
+            (1, "exited 1"), (2, "exited 2"), (5, "exited 5"), (6, "failed unexpectedly (internal error)"),
+            (7, "exited 7"),
+        ):
             with self.subTest(exit_code=exit_code):
                 self.fake_extractor(forging({"baseline": valid}, code=exit_code))
                 result, err = self.call_reports("baseline")
@@ -1948,6 +1972,46 @@ class ConditionalPassTest(unittest.TestCase):
                     f"could not download cleanlanguage-{AHEAD}.zip / cleanlanguage-{AHEAD}.zip.sha256 "
                     f"from v{AHEAD}: HTTP 502\n"
                 ))
+
+    def test_the_verify_page_must_show_a_bare_checksum_and_version(self):
+        # Fix round 10 (mutation sweep): the verify page is read by exact
+        # patterns. An empty checksum block, a checksum one digit short, and
+        # a version that does not start with a digit each exit 3 with their
+        # own report, before any release is read.
+        short = ZIP_SUM[:63]
+        sha = "is not a 64 character lower-case SHA-256"
+        for label, version, checksum, report in (
+            ("an empty checksum block", CURRENT, "", f"the displayed checksum '' {sha}"),
+            ("a checksum one digit short", CURRENT, short, f"the displayed checksum {short!r} {sha}"),
+            ("a version that starts with a dot", "." + CURRENT, ZIP_SUM,
+             "the verify page does not state which version its checksum belongs to"),
+        ):
+            with self.subTest(label):
+                self.fixtures(version, checksum, CURRENT)
+                self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {report}\n"))
+
+    def test_a_manifest_digest_one_digit_short_is_unverifiable(self):
+        # Fix round 10 (mutation sweep): the digest of the manifest has
+        # exactly 64 hex digits; one digit short fails its form, before the
+        # zip is hashed.
+        short = ZIP_SUM[:63]
+
+        def short_manifest(*args, check=True):
+            self.fake_download(*args, check=check)
+            target = Path(args[args.index("--dir") + 1])
+            (target / f"cleanlanguage-{AHEAD}.zip.sha256").write_text(
+                f"{short}  cleanlanguage-{AHEAD}.zip", encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        gate.gh = short_manifest
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+            gate.published_digest(f"v{AHEAD}", f"cleanlanguage-{AHEAD}.zip", f"cleanlanguage-{AHEAD}.zip.sha256")
+        self.assertEqual(stop.exception.code, 2)
+        self.assertEqual(err.getvalue(), self.CV + (
+            f"cleanlanguage-{AHEAD}.zip.sha256 is not '<digest>  cleanlanguage-{AHEAD}.zip'\n"
+        ))
 
     def test_a_refused_stdout_relays_the_stderr(self):
         # Fix round 9 (mutation sweep): a child that exits 0 but prints a
@@ -3216,6 +3280,25 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(result, ("exit", 3), err)
         self.assertEqual(err.splitlines(), [self.unavailable("was killed by signal 40", "extract")])
 
+    def test_a_child_ended_by_signal_1_exits_3_naming_it(self):
+        # Fix round 10 (mutation sweep): signal 1 (SIGHUP), the lowest
+        # signal number, is a signal end like any other, reported by its
+        # name with what the child printed, never as an exit. The child
+        # restores the default action first, as an ignored SIGHUP (under
+        # nohup, for one) is inherited across exec.
+        self.assertEqual(signal.SIGHUP.value, 1)
+        self.fake_extractor(extractor_with(
+            "def extract(text):\n"
+            "    import os, signal\n"
+            "    sys.stderr.write(\"hung up\\n\")\n"
+            "    sys.stderr.flush()\n"
+            "    signal.signal(signal.SIGHUP, signal.SIG_DFL)\n"
+            "    os.kill(os.getpid(), signal.SIGHUP)\n"
+        ))
+        result, err = self.call_reports("extract", "x")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err, self.unavailable("was killed by signal SIGHUP", "extract") + "; it printed: hung up\n")
+
 
 class ModuleLoadTest(unittest.TestCase):
     """F5: the gate exits 3 (unavailable), not 1 (drift), when the extractor
@@ -3732,6 +3815,35 @@ class ModuleLoadTest(unittest.TestCase):
                       "Too many open files", err)
         self.assertIn(" in baseline, so the extractor is unavailable", err)
         self.assertNotIn("Traceback", err)
+
+
+class ControlConstantTest(unittest.TestCase):
+    """Fix round 10 (mutation sweep): every control constant of the gate,
+    each bound, timeout, exit code, and table of the extractor contract,
+    is pinned at its shipped value, as a test that shortens or widens one
+    for its own purpose cannot show that the shipped value is the one
+    stated."""
+
+    def test_the_child_bounds_keep_their_shipped_values(self):
+        self.assertEqual(gate.CHILD_TIMEOUT_SECONDS, 20)
+        self.assertEqual(gate.REAP_GRACE_SECONDS, 5)
+        self.assertEqual(gate.RESULT_LIMIT, 65536)
+        self.assertEqual(gate.ECHO_BYTES_PER_CHARACTER, 12)
+        self.assertEqual(gate.STDERR_LIMIT, 4096)
+        self.assertEqual(gate.EXTRACTOR_INTERNAL_ERROR, 6)
+
+    def test_the_contract_tables_keep_their_shipped_values(self):
+        self.assertEqual(gate.REPLY_KEYS, {
+            "value": frozenset({"op", "outcome", "value"}),
+            "absent": frozenset({"op", "outcome"}),
+            "malformed": frozenset({"op", "outcome", "message"}),
+        })
+        self.assertEqual(gate.RELEASE_DATE_CONTRACT, {
+            "extract": (gate._is_day, "a YYYY-MM-DD string", ("value", "absent", "malformed")),
+            "requires_release_date": (gate._is_flag, "a JSON true or false", ("value", "malformed")),
+            "release_day_from_published_at": (gate._is_day, "a YYYY-MM-DD string", ("value", "malformed")),
+            "baseline": (gate._is_version, "a bare X.Y.Z version string", ("value",)),
+        })
 
 
 class ContractRoutingTest(unittest.TestCase):

@@ -317,9 +317,12 @@ def json_main() -> int:
     ``--json`` in the module docstring). A bad request exits 2 with nothing on
     stdout; only ``Malformed``, or a subclass of it, is a ``malformed``
     reply, as in every other mode, and an Exception that the internal-error
-    guard catches exits 6 instead of a reply. The mode is designed to exit
-    0, 2, or 6; any other exit, or any other end of the child, whatever its
-    cause, is a failure of the child, which the gate treats as such."""
+    guard catches exits 6 instead of a reply. Each op is answered by its own
+    branch, and an op in JSON_OPS that no branch answers raises such an
+    Exception, so it is never answered as another op. The mode is designed
+    to exit 0, 2, or 6; any other exit, or any other end of the child,
+    whatever its cause, is a failure of the child, which the gate treats as
+    such."""
     data = sys.stdin.buffer.read()
     try:
         request = json.loads(data.decode("utf-8"))
@@ -344,8 +347,10 @@ def json_main() -> int:
             value = extract(arg)
         elif op == "requires_release_date":
             value = requires_release_date(arg)
-        else:
+        elif op == "release_day_from_published_at":
             value = release_day_from_published_at(arg)
+        else:
+            raise RuntimeError(f"--json: no branch answers the op {op!r}")
     except Malformed as error:
         reply["outcome"] = "malformed"
         reply["message"] = str(error)

@@ -246,6 +246,14 @@ class ExtractorCliTest(unittest.TestCase):
         self.assertRejects(HEAD + VERSION + "  Released: 2026-11-15\n" + TAIL, "not spelled exactly")
         self.assertRejects(HEAD + VERSION + "Released : 2026-11-15\n" + TAIL, "not spelled exactly")
 
+    def test_trailing_non_blank_space_is_rejected(self):
+        # Fix round 10 (mutation sweep): only spaces and tabs may follow the
+        # date; a no-break space or a form feed is trailing text.
+        for space in ("\u00a0", "\x0c"):
+            with self.subTest(space=space):
+                self.assertRejects(HEAD + VERSION + "Released: 2026-11-15" + space + "\n" + TAIL,
+                                   "is not a bare YYYY-MM-DD date")
+
     def test_trailing_text_is_rejected(self):
         self.assertRejects(HEAD + VERSION + "Released: 2026-11-15 (draft)\n" + TAIL, "not a bare YYYY-MM-DD")
 
@@ -288,10 +296,19 @@ class ExtractorCliTest(unittest.TestCase):
         for value in ("2026-02-30", "2026-11-15 ", "2026-1-15", "", "today"):
             with self.subTest(value):
                 self.assertEqual(run(None, "--check-date", value)[0], 1)
+        # Fix round 10 (mutation sweep): a month or day of one digit fails
+        # the date form itself, before any calendar check.
+        for value in ("2026-11-5", "2026-1-15"):
+            with self.subTest(value):
+                self.assertEqual(
+                    run(None, "--check-date", value),
+                    (1, "", f"skill-release-date: not a bare YYYY-MM-DD date: {value!r}\n"),
+                )
 
     def test_released_beside_a_malformed_version_line_is_rejected(self):
         # F12: the Version line value is validated before the placement rule.
-        for version in ("Version: draft", "Version: 1.0", "Version: 1.0.15 beta"):
+        # Fix round 10 (mutation sweep): a no-break space is not a blank.
+        for version in ("Version: draft", "Version: 1.0", "Version: 1.0.15 beta", "Version:\u00a01.0.15"):
             with self.subTest(version):
                 self.assertRejects(HEAD + version + "\n" + RELEASED + TAIL, "is not a bare X.Y.Z version")
         self.assertRejects(HEAD + "Version: draft\nAuthor: x\n" + RELEASED, "is not a bare X.Y.Z version")
@@ -313,6 +330,14 @@ class ExtractorCliTest(unittest.TestCase):
         for value in ("1.0", "v1.0.15", ""):
             with self.subTest(value):
                 self.assertEqual(run(None, "--requires-date", value)[0], 1)
+        # Fix round 10 (mutation sweep): an empty part is malformed (exit 1),
+        # never an internal error.
+        for value in ("1.0.", "1..15", ".0.15"):
+            with self.subTest(value):
+                self.assertEqual(
+                    run(None, "--requires-date", value),
+                    (1, "", f"skill-release-date: not a bare X.Y.Z version: {value!r}\n"),
+                )
 
     def test_publish_window(self):
         # F1: same UTC day with at least 10 minutes left passes; anything else
@@ -357,6 +382,13 @@ class ExtractorCliTest(unittest.TestCase):
         ):
             with self.subTest(value):
                 self.assertEqual(run(None, "--published-day", value)[0], 1)
+        # Fix round 10 (mutation sweep): an instant with no Z fails the
+        # instant form itself.
+        value = "2026-11-15T09:30:00"
+        self.assertEqual(
+            run(None, "--published-day", value),
+            (1, "", f"skill-release-date: published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: {value!r}\n"),
+        )
 
 
 class FunctionTest(unittest.TestCase):
@@ -365,6 +397,16 @@ class FunctionTest(unittest.TestCase):
 
     def test_internal_error_exit_constant(self):
         self.assertEqual(srd.INTERNAL_ERROR_EXIT, 6)
+
+    def test_publish_margin_constant(self):
+        # Fix round 10 (mutation sweep): every control constant is pinned
+        # at its shipped value.
+        self.assertEqual(srd.PUBLISH_MARGIN_SECONDS, 600)
+
+    def test_json_ops_constant(self):
+        self.assertEqual(
+            srd.JSON_OPS, ("extract", "requires_release_date", "release_day_from_published_at", "baseline")
+        )
 
     def test_requires_release_date_sorts_numerically(self):
         self.assertFalse(srd.requires_release_date("1.0.14"))
@@ -592,6 +634,30 @@ class JsonModeTest(unittest.TestCase):
             self.assertTrue(err.startswith("skill-release-date: internal error: ValueError("), err)
             cli_code, cli_out, cli_err = run(None, "--requires-date", version)
             self.assertEqual((cli_code, cli_out, cli_err), (code, out, err))
+
+    def test_an_op_with_no_branch_is_an_internal_error(self):
+        # Fix round 10: each op in JSON_OPS is answered by its own branch, so
+        # an op added to JSON_OPS without one exits 6 with nothing on stdout,
+        # never answered as another op. A copy of the extractor with such an
+        # op added to JSON_OPS, just before its __main__ guard, shows it; the
+        # argument is one release_day_from_published_at would answer.
+        guard = '\nif __name__ == "__main__":\n'
+        source = EXTRACTOR.read_text(encoding="utf-8")
+        self.assertEqual(source.count(guard), 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "skill-release-date.py"
+            copy.write_text(
+                source.replace(guard, '\nJSON_OPS = JSON_OPS + ("unrouted",)\n' + guard, 1), encoding="utf-8"
+            )
+            proc = subprocess.run(
+                [sys.executable, "-I", str(copy), "--json"],
+                input=request("unrouted", "2026-11-15T23:59:59Z"), capture_output=True,
+            )
+        self.assertEqual((proc.returncode, proc.stdout), (6, b""), proc.stderr)
+        self.assertEqual(
+            proc.stderr,
+            b"skill-release-date: internal error: RuntimeError(\"--json: no branch answers the op 'unrouted'\")\n",
+        )
 
 
 class BuilderCarriesReleasedTest(unittest.TestCase):
