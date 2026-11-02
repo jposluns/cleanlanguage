@@ -1872,9 +1872,13 @@ class ConditionalPassTest(unittest.TestCase):
     def test_the_relayed_stderr_is_stripped(self):
         # Fix round 8: the relayed stderr is stripped, so a trailing newline
         # adds no blank line, and stderr of only whitespace relays nothing.
+        # Fix round 9: it is stripped at both ends, so leading spaces or a
+        # leading newline add nothing before the text either.
         for label, printed, expected in (
             ("a trailing newline", b"boom\n", self.unavailable("exited 1", "baseline") + "; it printed: boom\n"),
             ("only whitespace", b"\n", self.unavailable("exited 1", "baseline") + "\n"),
+            ("leading spaces", b"  boom\n", self.unavailable("exited 1", "baseline") + "; it printed: boom\n"),
+            ("a leading newline", b"\nboom", self.unavailable("exited 1", "baseline") + "; it printed: boom\n"),
         ):
             with self.subTest(label):
                 self.fake_extractor(extractor_with(
@@ -1886,6 +1890,88 @@ class ConditionalPassTest(unittest.TestCase):
                 result, err = self.call_reports("baseline")
                 self.assertEqual(result, ("exit", 3), err)
                 self.assertEqual(err, expected)
+
+    def test_the_relayed_stderr_is_decoded_as_utf_8(self):
+        # Fix round 9 (mutation sweep): the relayed stderr is decoded as
+        # UTF-8, so a character outside ASCII is relayed as itself, never
+        # replaced or read as Latin-1.
+        self.fake_extractor(extractor_with(
+            "def json_main():\n"
+            "    sys.stdin.buffer.read()\n"
+            "    sys.stderr.buffer.write(\"\\u00e9chec\\n\".encode(\"utf-8\"))\n"
+            "    return 1\n"
+        ))
+        result, err = self.call_reports("baseline")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err, self.unavailable("exited 1", "baseline") + "; it printed: \u00e9chec\n")
+
+    def test_a_child_that_prints_and_hangs_relays_its_stderr(self):
+        # Fix round 9 (mutation sweep): when the gate sees no end of the
+        # child within the timeout, the report relays what the child
+        # printed to stderr, as it does for every other failure of a child
+        # that ran. The 1 second timeout starts only once the child has
+        # printed and is ready (timeout_when_ready).
+        tool = self.fake_extractor(extractor_with(
+            "def extract(text):\n"
+            "    import time\n"
+            "    sys.stderr.write(\"stuck\\n\")\n"
+            "    sys.stderr.flush()\n"
+            + SAY_READY +
+            "    time.sleep(300)\n"
+        ))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        with self.timeout_when_ready(tool.parent / "ready"):
+            result, err = self.call_reports("extract", "x")
+        self.assertTrue((tool.parent / "ready").exists(), "the extract child did not get ready")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err, self.unavailable("was not seen to end within 1 seconds", "extract")
+                         + "; it printed: stuck\n")
+
+    def test_the_relayed_gh_stderr_is_stripped(self):
+        # Fix round 9 (mutation sweep): a failed download relays the gh
+        # stderr stripped at both ends, so leading or trailing whitespace
+        # adds nothing to the report line.
+        for label, printed in (
+            ("surrounding spaces and a newline", "  HTTP 502\n"),
+            ("a leading newline", "\nHTTP 502"),
+        ):
+            with self.subTest(label):
+                def failed(*args, check=True):
+                    raise subprocess.CalledProcessError(1, ["gh", *args], "", printed)
+
+                gate.gh = failed
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+                    gate.published_digest(f"v{AHEAD}", f"cleanlanguage-{AHEAD}.zip", f"cleanlanguage-{AHEAD}.zip.sha256")
+                self.assertEqual(stop.exception.code, 2)
+                self.assertEqual(err.getvalue(), self.CV + (
+                    f"could not download cleanlanguage-{AHEAD}.zip / cleanlanguage-{AHEAD}.zip.sha256 "
+                    f"from v{AHEAD}: HTTP 502\n"
+                ))
+
+    def test_a_refused_stdout_relays_the_stderr(self):
+        # Fix round 9 (mutation sweep): a child that exits 0 but prints a
+        # stdout the gate refuses, one over the bound, one that is not JSON,
+        # or one that breaks the contract, relays what it printed to stderr
+        # with the reason, as every other failure of a child that ran does.
+        self.assertEqual(gate.RESULT_LIMIT, 65536)
+        for label, output, reason in (
+            ("over the bound", "b\" \" * 65537", "printed more than 65536 bytes"),
+            ("not JSON", "b\"not json\\n\"", "did not print a JSON result"),
+            ("against the contract", "b\"[]\\n\"",
+             "printed a result that does not match the contract (not a JSON object)"),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(extractor_with(
+                    "def json_main():\n"
+                    "    sys.stdin.buffer.read()\n"
+                    f"    sys.stdout.buffer.write({output})\n"
+                    "    sys.stderr.buffer.write(b\"warned\\n\")\n"
+                    "    return 0\n"
+                ))
+                result, err = self.call_reports("baseline")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err, self.unavailable(reason, "baseline") + "; it printed: warned\n")
 
     def test_extractor_code_cannot_rewrite_the_gate_state(self):
         # Row 80: extractor code runs in the child, so a search of the live
