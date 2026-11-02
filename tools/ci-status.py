@@ -349,19 +349,28 @@ def _iter_json_values(text: str):
         yield obj
 
 
+# Passed to _field in place of a value when the field is absent from the run, so an
+# absent field and a present null are reported differently.
+_ABSENT = object()
+
+
 def _field(value, allow_empty: bool, field: str):
-    """A field must be a string. null is allowed only for a nullable field (becomes '');
-    a bool or number is rejected (a bool is not a valid string even though `x or ''`
-    would hide it); an empty string is rejected for a required field. Anything else
-    makes the whole reading fail-closed. Each message names FIELD."""
-    if value is None:
+    """A field must be a string. null, or an absent field (passed as _ABSENT), is
+    allowed only for a nullable field (becomes ''); a bool or number is rejected (a
+    bool is not a valid string even though `x or ''` would hide it); an empty string
+    is rejected for a field that is not nullable. Anything else makes the whole
+    reading fail-closed. Each message names FIELD and says what is wrong with it:
+    absent, null, not a string, empty, or not encodable."""
+    if value is _ABSENT or value is None:
         if allow_empty:
             return ""
-        raise Unreadable(f"missing required field {field}")
+        if value is _ABSENT:
+            raise Unreadable(f"missing required field {field}")
+        raise Unreadable(f"check field {field} is null")
     if isinstance(value, bool) or not isinstance(value, str):
         raise Unreadable(f"non-string check field {field}")
     if value == "" and not allow_empty:
-        raise Unreadable(f"empty required field {field}")
+        raise Unreadable(f"check field {field} is empty")
     try:
         # A lone surrogate is a valid str but cannot be encoded or printed; reject it
         # so it fails closed here rather than crashing the report later.
@@ -467,7 +476,7 @@ def read_checks(repo: str, full_sha: str, deadline: float):
                 if head.lower() != full_sha:
                     raise Unreadable(f"check run head_sha {head!r} is not the requested commit {full_sha}")
             checks.append({
-                "status": _field(run.get("status"), allow_empty=False, field="status"),
+                "status": _field(run.get("status", _ABSENT), allow_empty=False, field="status"),
                 "conclusion": _field(run.get("conclusion"), allow_empty=True, field="conclusion"),
                 "name": _field(run.get("name"), allow_empty=True, field="name"),
                 "slug": _field(slug, allow_empty=True, field="app.slug"),

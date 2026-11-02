@@ -18,8 +18,10 @@
 # the wrong type (a status that is not a non-empty string, a conclusion/name/slug
 # that is neither a string nor null), or a head_sha that is present and does not
 # name the requested commit makes the whole reading unreadable rather than
-# dropping or forging a check. A name is compared as the whole string, control
-# characters included, and the slug is taken only from the app object, so a
+# dropping or forging a check. A name and the github-actions slug are each
+# compared as the whole string, control characters included, with no trimming,
+# case folding or partial match, and a present head_sha as the whole commit sha
+# in either letter case. The slug is taken only from the app object, so a
 # required name followed by separators and a slug, under a null app, does not
 # count. A failed read breaks a confirmation in progress but the same green set
 # reappearing re-arms without consuming the changing-set budget. Waits are
@@ -491,9 +493,80 @@ CASE_SHA="$C1_UPPER" run_case "head_sha matches an upper-case sha argument -> gr
 CASE_SHA="$C1" run_case "upper-case head_sha matches the commit read -> green" "$(head_runs "\"$C1_UPPER\"")" "" "" 0
 run_case "numeric head_sha -> unreadable" "$(head_runs 7)" "" "" 3
 run_case "null head_sha -> unreadable" "$(head_runs null)" "" "" 3
+# head_sha is not a required field (its absence is tolerated), so a present null
+# or empty head_sha is reported as null or empty, never as a missing required field.
 run_err_case "a null head_sha is named on standard error" "$(head_runs null)" 3 \
-  "check read failed for 0000000000000000000000000000000000000000: missing required field head_sha"
+  "check read failed for 0000000000000000000000000000000000000000: check field head_sha is null"
 run_case "empty head_sha -> unreadable" "$(head_runs '""')" "" "" 3
+run_err_case "an empty head_sha is named on standard error" "$(head_runs '""')" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: check field head_sha is empty"
+run_err_case "a numeric head_sha is named on standard error" "$(head_runs 7)" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: non-string check field head_sha"
+run_err_case "a head_sha of another commit is named on standard error" \
+  "$(runs "{\"head_sha\":\"$C2\",${PM_OK#\{}" "$SD_OK" "$APM_OK" "$CF")" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: check run head_sha '$C2' is not the requested commit 0000000000000000000000000000000000000000"
+# head_sha is compared as the whole 40-character sha, folded to lower case and
+# nothing else: an abbreviation, a padded value, and a value that has the commit
+# as a prefix or a suffix each name another value, so the reading is unreadable.
+CASE_SHA="$C1" run_case "head_sha abbreviated to 7 characters -> unreadable" "$(head_runs "\"${C1:0:7}\"")" "" "" 3
+CASE_SHA="$C1" run_case "head_sha abbreviated to 39 characters -> unreadable" "$(head_runs "\"${C1:0:39}\"")" "" "" 3
+CASE_SHA="$C1" run_case "head_sha padded with spaces -> unreadable" "$(head_runs "\" $C1 \"")" "" "" 3
+CASE_SHA="$C1" run_case "head_sha with a trailing newline -> unreadable" "$(head_runs "\"$C1\\n\"")" "" "" 3
+CASE_SHA="$C1" run_case "head_sha with the commit as a prefix -> unreadable" "$(head_runs "\"${C1}0\"")" "" "" 3
+CASE_SHA="$C1" run_case "head_sha with the commit as a suffix -> unreadable" "$(head_runs "\"0${C1}\"")" "" "" 3
+# The status field is required: an absent status and a present null status are
+# each named for what they are, as are an empty status and a non-string
+# conclusion or app slug.
+run_err_case "an absent status is named as a missing required field" \
+  '{"check_runs":[{"conclusion":"success","name":"x","app":{"slug":"github-actions"}}]}' 3 \
+  "check read failed for 0000000000000000000000000000000000000000: missing required field status"
+run_err_case "a null status is named as null" "$NULL_STATUS" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: check field status is null"
+run_err_case "an empty status is named as empty" "$EMPTY_STATUS" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: check field status is empty"
+run_err_case "a non-string conclusion is named on standard error" \
+  '{"check_runs":[{"status":"completed","conclusion":1,"name":"x","app":{"slug":"github-actions"}}]}' 3 \
+  "check read failed for 0000000000000000000000000000000000000000: non-string check field conclusion"
+run_err_case "a non-string name is named on standard error" \
+  '{"check_runs":[{"status":"completed","conclusion":"success","name":7,"app":{"slug":"github-actions"}}]}' 3 \
+  "check read failed for 0000000000000000000000000000000000000000: non-string check field name"
+run_err_case "a non-string app slug is named on standard error" \
+  '{"check_runs":[{"status":"completed","conclusion":"success","name":"x","app":{"slug":7}}]}' 3 \
+  "check read failed for 0000000000000000000000000000000000000000: non-string check field app.slug"
+
+# Exact matching of each required Actions job: a run counts only when its name is
+# the whole display name and its app slug is the whole github-actions slug. Each
+# near miss below replaces Plugin manifests beside the other 3 required checks
+# green, so a relaxed comparison (prefix, suffix, substring, trimmed or folded)
+# would read green (exit 0); the exact comparison reads it missing (exit 2).
+# near_pm NAME SLUG: that reading, with the Plugin manifests run named NAME under
+# app slug SLUG.
+near_pm() {
+  runs "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"$1\",\"app\":{\"slug\":\"$2\"}}" "$SD_OK" "$APM_OK" "$CF"
+}
+for near in "Plugin manifest" "Plugin" "Plugin manifests (pull_request)" "Plugin manifestsx" \
+  "xPlugin manifests" "lugin manifests" "Validate Plugin manifests" " Plugin manifests" \
+  "Plugin manifests\\t" "The Plugin manifests job" "PLUGIN MANIFESTS" "Plugin  manifests"; do
+  CASE_NEEDLE="required check(s) Plugin manifests not registered" \
+    run_case "near name [$near] does not count -> not green" "$(near_pm "$near" github-actions)" "" "" 2
+done
+for near in "github-actions-x" "xgithub-actions" "github-action" "ithub-actions" "x-github-actions-x" \
+  " github-actions" "github-actions " "GitHub-Actions" "GITHUB-ACTIONS"; do
+  CASE_NEEDLE="required check(s) Plugin manifests not registered" \
+    run_case "near slug [$near] does not count -> not green" "$(near_pm "Plugin manifests" "$near")" "" "" 2
+done
+# The Cloudflare build is matched by the cloudflare prefix of its app slug, so a
+# slug with the word elsewhere, padded, or in another letter case does not count.
+for near in "xcloudflare-pages" " cloudflare-pages" "Cloudflare-pages" "pages-cloudflare" "cloudflar"; do
+  CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
+    run_case "near Cloudflare slug [$near] does not count -> not green" \
+    "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"$near\"}}")" "" "" 2
+done
+# Every required check missing: the message names all 4, in their declared order,
+# and the commit read.
+run_err_case "every missing required check is named, in order" \
+  '{"check_runs":[{"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}}]}' 2 \
+  "required check(s) Plugin manifests, Skill discovery, Agent Plugins manifest, Cloudflare Pages not registered for 0000000000000000000000000000000000000000 though they run on every PR and push here; not green"
 
 # The declared required names follow the workflows, and each workflow runs its
 # job on every pull request and every push to main. wf_shape reads each of the 3
