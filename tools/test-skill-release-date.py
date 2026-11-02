@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -70,6 +71,23 @@ DECORATED = (
     ("bracket", "[Released: 2026-11-01]"),
     ("full-width colon", "Released\uff1a 2026-11-01"),
     ("table row with a full-width colon", "| Released\uff1a2026-11-01 |"),
+    # Fix round 12 (VERIFY round 9.1, finding 1): emphasis markers and
+    # blanks after the word, a leading form feed or ideographic space, and a
+    # list number of 0.
+    ("underscore emphasis after the key", "__Released__: 2026-11-01"),
+    ("space before the colon", "Released : 2026-11-01"),
+    ("tab before the colon", "Released\t: 2026-11-01"),
+    ("form feed", "\x0cReleased: 2026-11-01"),
+    ("ideographic space", "\u3000Released: 2026-11-01"),
+    ("ordered list from zero", "0. Released: 2026-11-01"),
+)
+
+# Fix round 12 (VERIFY round 9.1, finding 1): every character the leading
+# \s of the key pattern matches, other than the newline that ends a line.
+LEADING_WHITESPACE = (
+    "\t", "\x0b", "\x0c", "\r", "\x1c", "\x1d", "\x1e", "\x1f", " ", "\x85", "\xa0", "\u1680",
+    "\u2000", "\u2001", "\u2002", "\u2003", "\u2004", "\u2005", "\u2006", "\u2007", "\u2008", "\u2009",
+    "\u200a", "\u2028", "\u2029", "\u202f", "\u205f", "\u3000",
 )
 
 # Decorations outside the rule, which the docstring states are not detected.
@@ -84,6 +102,10 @@ UNDETECTED = (
     ("a dot with no number", ". Released: 2026-11-01"),
     ("a list number of non-ASCII digits", "\u0661. Released: 2026-11-01"),
     ("a no-break space before the colon", "Released\u00a0: 2026-11-01"),
+    # Fix round 12 (VERIFY round 9.1, class sweep): a colon other than the
+    # two the rule names, and an angle bracket before the word.
+    ("a small colon", "Released\ufe55 2026-11-01"),
+    ("an angle bracket", "<Released: 2026-11-01"),
 )
 
 # Runs the real extractor as a script with its input decoding made to crash,
@@ -195,6 +217,40 @@ class ExtractorCliTest(unittest.TestCase):
             run((HEAD + VERSION + TAIL).encode("utf-8"), "-", stdin=True),
             (3, "", "skill-release-date: no Released: line found\n"),
         )
+
+    def test_the_input_is_read_as_given_never_stripped(self):
+        # Fix round 12 (VERIFY round 9.1, class sweep): a file and stdin are
+        # read whole and decoded as Path.read_text(encoding="utf-8") reads
+        # them, never stripped and with no byte order mark removed, so a
+        # blank line before the content keeps the line numbers, a form feed
+        # at the very end stays in the last line, and a byte order mark
+        # before the Version line keeps it from being one.
+        last = "Released: 2026-11-15\x0c"
+        for label, text, expected in (
+            ("a blank first line", "\n" + VALID + "Released: 2026-11-16\n",
+             "more than one Released line (lines 5, 10)"),
+            ("a form feed at the end", HEAD + VERSION + last,
+             f"the first Released line is not a bare YYYY-MM-DD date: {last!r}"),
+            ("a byte order mark before the Version line", "\ufeffVersion: 1.0.15\nReleased: 2026-11-15\n",
+             "a Released line is present but there is no Version: line"),
+        ):
+            for stdin in (False, True):
+                with self.subTest(label, stdin=stdin):
+                    self.assertEqual(
+                        run(text.encode("utf-8"), stdin=stdin), (1, "", f"skill-release-date: {expected}\n")
+                    )
+
+    def test_an_argument_with_one_leading_dash_is_a_file(self):
+        # Fix round 12 (VERIFY round 9.1, mutant X23): only an argument that
+        # starts with "--" is an option, so any other argument, one that
+        # starts with a single "-" included, names a file.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "-SKILL.md").write_text(VALID, encoding="utf-8")
+            proc = subprocess.run([sys.executable, "-I", str(EXTRACTOR), "-SKILL.md"], cwd=tmp, capture_output=True)
+            self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, b"2026-11-15\n", b""))
+            proc = subprocess.run([sys.executable, "-I", str(EXTRACTOR), "-x"], cwd=tmp, capture_output=True)
+        self.assertEqual((proc.returncode, proc.stdout), (4, b""), proc.stderr)
+        self.assertTrue(proc.stderr.startswith(b"skill-release-date: could not read -x: "), proc.stderr)
 
     def test_absent_line_exits_3(self):
         self.assertRejects(HEAD + VERSION + TAIL, "no Released: line found", 3)
@@ -581,6 +637,12 @@ class JsonModeTest(unittest.TestCase):
             # value; and an empty object names no op.
             ("a request wrapped in vertical tabs", b"\x0b" + request("baseline") + b"\x0b", None),
             ("a request wrapped in form feeds", b"\x0c" + request("baseline") + b"\x0c", None),
+            # Fix round 12 (VERIFY round 9.1, finding 4): one such character
+            # on either side alone is enough.
+            ("a request followed by a vertical tab", request("baseline") + b"\x0b", None),
+            ("a request followed by a form feed", request("baseline") + b"\x0c", None),
+            ("a request behind a vertical tab", b"\x0b" + request("baseline"), None),
+            ("a request behind a form feed", b"\x0c" + request("baseline"), None),
             ("an empty object", b"{}", "the request names no known op: None"),
             ("a list", b"[]", "the request is not a JSON object"),
             ("a string", b"\"extract\"", "the request is not a JSON object"),
@@ -710,6 +772,55 @@ class PatternPinTest(unittest.TestCase):
                     run(text.encode("utf-8")), (1, "", "skill-release-date: more than one Released line (lines 4, 9)\n")
                 )
 
+    def test_every_unicode_whitespace_may_lead_a_key_like_line(self):
+        # Fix round 12 (VERIFY round 9.1, finding 1): the leading blanks of
+        # the key pattern are every character \s matches, so a stale copy
+        # behind any one of them is still a second Released line, and a first
+        # key-like line behind one is malformed. The list is checked against
+        # every code point, so it cannot miss one. A file or stdin read ends
+        # a line at a carriage return, which reaches extract only through
+        # --json, so it is checked through the function alone.
+        self.assertEqual(
+            LEADING_WHITESPACE,
+            tuple(ch for ch in map(chr, range(sys.maxunicode + 1)) if ch != "\n" and re.fullmatch(r"\s", ch)),
+        )
+        for space in LEADING_WHITESPACE:
+            with self.subTest(space=space):
+                text = VALID + space + "Released: 2025-01-01\n"
+                self.assertEqual(self.malformed(srd.extract, text), "more than one Released line (lines 4, 9)")
+                line = space + "Released: 2025-01-01"
+                self.assertEqual(
+                    self.malformed(srd.extract, HEAD + line + "\n" + VERSION + RELEASED + TAIL),
+                    f"the first Released line is not spelled exactly Released: {line!r}",
+                )
+                if space != "\r":
+                    self.assertEqual(
+                        run(text.encode("utf-8")),
+                        (1, "", "skill-release-date: more than one Released line (lines 4, 9)\n"),
+                    )
+
+    def test_each_leading_marker_and_each_mark_before_the_colon_is_key_like(self):
+        # Fix round 12 (VERIFY round 9.1, finding 1): each leading Markdown
+        # marker, alone and with no blank after it, and each blank and
+        # emphasis marker between the word and the colon, alone and in a
+        # run, marks a key-like line, in any case and with either colon.
+        for line in (
+            ">Released: 2025-01-01", "#Released: 2025-01-01", "*Released: 2025-01-01", "_Released: 2025-01-01",
+            "+Released: 2025-01-01", "|Released: 2025-01-01", "[Released: 2025-01-01", "-Released: 2025-01-01",
+            "0.Released: 2025-01-01", "9)Released: 2025-01-01", "> - 12. [**Released:** 2025-01-01",
+            "Released : 2025-01-01", "Released\t: 2025-01-01", "Released*: 2025-01-01", "Released_: 2025-01-01",
+            "Released \t*_ : 2025-01-01", "RELEASED: 2025-01-01", "rElEaSeD\uff1a 2025-01-01",
+        ):
+            with self.subTest(line):
+                self.assertEqual(
+                    self.malformed(srd.extract, VALID + line + "\n"), "more than one Released line (lines 4, 9)"
+                )
+        line = "Released\t: 2025-01-01"
+        self.assertEqual(
+            run((VALID + line + "\n").encode("utf-8")),
+            (1, "", "skill-release-date: more than one Released line (lines 4, 9)\n"),
+        )
+
     def test_the_duplicate_message_names_one_based_line_numbers(self):
         self.assertEqual(
             self.malformed(srd.extract, VALID + "Released: 2026-11-16\n"), "more than one Released line (lines 4, 9)"
@@ -751,6 +862,8 @@ class PatternPinTest(unittest.TestCase):
             "02026-11-15", "202-11-15", "2026-011-15", "2026-1-15", "2026-11-015", "2026-11-5",
             "\u0662\u0660\u0662\u0666-11-15", "2026-\u0661\u0661-15", "2026-11-\u0661\u0665",
             "2026/11/15", "2026-11/15", "2026.11.15",
+            # Fix round 12 (VERIFY round 9.1, finding 6): no hyphen, or one.
+            "20261115", "2026-1115", "202611-15",
         ):
             line = "Released: " + value
             with self.subTest(value):
@@ -766,6 +879,7 @@ class PatternPinTest(unittest.TestCase):
             "02026-11-15", "202-11-15", "2026-011-15", "2026-11-015",
             "\u0662\u0660\u0662\u0666-11-15", "2026-\u0661\u0661-15", "2026-11-\u0661\u0665",
             "2026/11/15", "2026-11/15", "2026-11-15 ", " 2026-11-15", "2026-11-15\n",
+            "20261115", "2026-1115", "202611-15",
         ):
             with self.subTest(value):
                 self.assertEqual(self.malformed(srd.parse_date, value), f"not a bare YYYY-MM-DD date: {value!r}")
@@ -773,6 +887,18 @@ class PatternPinTest(unittest.TestCase):
             run(None, "--check-date", "02026-11-15"),
             (1, "", "skill-release-date: not a bare YYYY-MM-DD date: '02026-11-15'\n"),
         )
+        # Fix round 12 (VERIFY round 9.1, finding 2): a date with no hyphen
+        # or one hyphen fails the form, so date.fromisoformat, which takes
+        # the basic form 20261115, never sees it, in every mode that takes a
+        # bare date.
+        for value in ("20261115", "2026-1115", "202611-15"):
+            message = f"skill-release-date: not a bare YYYY-MM-DD date: {value!r}\n"
+            for args in (
+                ("--check-date", value), ("--confirm-published", value, "2026-11-15T09:30:00Z"),
+                ("--publish-window", value, "2026-11-15T09:30:00Z"),
+            ):
+                with self.subTest(args):
+                    self.assertEqual(run(None, *args), (1, "", message))
 
     def test_a_bare_version_is_three_runs_of_ascii_digits(self):
         # BARE_VERSION: each part one or more ASCII digits, joined by dots.
@@ -803,6 +929,11 @@ class PatternPinTest(unittest.TestCase):
             "2026-01-\u0660\u0661T00:00:00Z", "2026-01-01T\u0660\u0661:00:00Z", "2026-01-01T00:\u0660\u0661:00Z",
             "2026-01-01T00:00:\u0660\u0661Z", "2026-01-01 00:00:00Z", "2026-01-01t00:00:00Z",
             "2026-01-01T00:00:00z", "2026/01/01T00:00:00Z", "2026-01-01T00-00-00Z", "2026-01-01T00:00:00Z ",
+            # Fix round 12 (VERIFY round 9.1, finding 6): no hyphen or one,
+            # no colon or one, fractional seconds, and a leading blank.
+            "20260101T00:00:00Z", "2026-0101T00:00:00Z", "202601-01T00:00:00Z", "2026-01-01T000000Z",
+            "2026-01-01T0000:00Z", "2026-01-01T00:0000Z", "2026-01-01T00:00:00.123Z", "2026-01-01T00:00:00.5Z",
+            " 2026-01-01T00:00:00Z",
         ):
             with self.subTest(value):
                 self.assertEqual(
@@ -818,6 +949,11 @@ class PatternPinTest(unittest.TestCase):
             (1, "", "skill-release-date: the current instant is not a YYYY-MM-DDTHH:MM:SSZ instant: "
                     "'2026-01-01T1:00:00Z'\n"),
         )
+        for value in ("20260101T00:00:00Z", "2026-01-01T00:00:00.123Z"):
+            with self.subTest(value):
+                message = f"skill-release-date: published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: {value!r}\n"
+                self.assertEqual(run(None, "--published-day", value), (1, "", message))
+                self.assertEqual(run(None, "--confirm-published", "2026-01-01", value), (1, "", message))
         value = "2026-01-01T\u0660\u0661:00:00Z"
         self.assertEqual(
             run(request("release_day_from_published_at", value), "--json", stdin=True),
@@ -832,6 +968,9 @@ class PatternPinTest(unittest.TestCase):
         for line in (
             "Version:1.0.15", "Version:\t1.0.15", "Version:  1.0.15", "Version: 1.0.15 ", "Version: 1.0.15\t",
             "Version: 1.0.15 \t ",
+            # Fix round 12 (VERIFY round 9.1, finding 5): a part of any
+            # width.
+            "Version: 1.0.100", "Version: 100.0.15", "Version: 1.100.15", "Version: 1234.5678.9012",
         ):
             with self.subTest(line):
                 self.assertEqual(srd.extract(HEAD + line + "\n" + RELEASED + TAIL), "2026-11-15")
@@ -839,6 +978,8 @@ class PatternPinTest(unittest.TestCase):
             "Version: 1.0.15\u00a0", "Version: 1.0.15\x0c", "Version: 1.0.15\x0b", "Version:\x0c1.0.15",
             "Version:\x0b1.0.15", "Version: \u0661.0.15", "Version: 1.\u0660.15", "Version: 1.0.\u0661\u0665",
             "Version: .0.15", "Version: 1..15", "Version: 1.0.", "Version: 1x0x15", "Version: 1.0x15",
+            # Fix round 12 (VERIFY round 9.1, class sweep): each dot alone.
+            "Version: 1x0.15",
         ):
             with self.subTest(line):
                 self.assertEqual(

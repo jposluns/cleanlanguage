@@ -31,12 +31,14 @@ the network gate cannot.
 from __future__ import annotations
 
 import ast
+import codecs
 import contextlib
 import errno
 import hashlib
 import importlib.util
 import io
 import json
+import locale
 import os
 import shutil
 import signal
@@ -523,6 +525,64 @@ class ConditionalPassTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             gate.release_immutable("v1.0.15")
         self.assertEqual(caught.exception.code, 2)
+
+    def test_readers_remove_only_one_final_newline(self):
+        # Fix round 12 (VERIFY round 9.1, class sweep): each record reader
+        # returns what gh printed with only one final newline removed, so a
+        # second newline, a carriage return, or a blank on either side stays
+        # in the value and reaches the check that refuses it.
+        for name, reader, field in (
+            ("release_published_at", self._saved[6], "2026-11-15T09:30:00Z"),
+            ("release_immutable", self._saved[7], "true"),
+        ):
+            for printed, expected in (
+                (field + "\n", field), (field, field), (field + "\n\n", field + "\n"), (field + "\r\n", field + "\r"),
+                (" " + field + "\n", " " + field), (field + " \n", field + " "), (field + "\t\n", field + "\t"),
+            ):
+                with self.subTest(name, printed=printed):
+                    gate.gh = lambda *args, check=True, out=printed: subprocess.CompletedProcess(args, 0, out, "")
+                    self.assertEqual(reader("v1.0.15"), expected)
+
+    def test_the_real_gh_wrapper_fails_closed_on_output_that_does_not_decode(self):
+        # Fix round 12 (VERIFY round 9.1, class sweep): the real gh wrapper
+        # decodes what gh prints strictly, so a byte that is not UTF-8 is
+        # unverifiable (exit 2) in every reader, never replaced or read in
+        # another encoding. The wrapper decodes with the locale encoding,
+        # which this test requires to be UTF-8.
+        self.assertEqual(codecs.lookup(locale.getpreferredencoding(False)).name, "utf-8")
+        bindir = Path(self._tmp.name) / "undecodable-gh"
+        bindir.mkdir()
+        fake = bindir / "gh"
+        fake.write_text("#!/bin/sh\nprintf 'HTTP/2.0 200 OK\\n\\377\\n'\n", encoding="ascii")
+        fake.chmod(0o755)
+        readers = (
+            ("release_immutable", self._saved[7], "the immutable field of release v1.0.15"),
+            ("release_published_at", self._saved[6], "published_at for release v1.0.15"),
+            ("release_status", self._saved[3], "the release status for v1.0.15"),
+            ("tag_status", self._saved[4], "the tag status for v1.0.15"),
+        )
+        for name, reader, what in readers:
+            with self.subTest(name):
+                gate.gh = self._saved[5]
+                saved_path = os.environ.get("PATH")
+                os.environ["PATH"] = str(bindir)
+                out, err = io.StringIO(), io.StringIO()
+                try:
+                    with self.assertRaises(SystemExit) as caught, contextlib.redirect_stdout(out), \
+                            contextlib.redirect_stderr(err):
+                        reader("v1.0.15")
+                finally:
+                    if saved_path is None:
+                        os.environ.pop("PATH", None)
+                    else:
+                        os.environ["PATH"] = saved_path
+                self.assertEqual(caught.exception.code, 2)
+                lines = err.getvalue().splitlines()
+                self.assertEqual(len(lines), 1, err.getvalue())
+                self.assertTrue(
+                    lines[0].startswith(f"{self.CV}could not read {what}: UnicodeDecodeError("), err.getvalue()
+                )
+                self.assertEqual(out.getvalue(), "")
 
     def test_undated_release_reads_no_record_field(self):
         # F9: an undated release at or below the baseline reads neither field.
@@ -1916,6 +1976,21 @@ class ConditionalPassTest(unittest.TestCase):
         for label, output in (
             ("a form feed and a newline", valid + b"\x0c\n"),
             ("a vertical tab", valid + b"\x0b"),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"baseline": output}))
+                result, err = self.call_reports("baseline")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err, self.unavailable("did not print a JSON result", "baseline") + "\n")
+
+    def test_a_reply_preceded_by_a_form_feed_or_a_vertical_tab_is_not_json(self):
+        # Fix round 12 (VERIFY round 9.1, finding 3): the reply is not
+        # stripped on the left either, so a valid reply behind a character
+        # that JSON does not count as whitespace is no JSON result.
+        valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}\n'
+        for label, output in (
+            ("a form feed", b"\x0c" + valid),
+            ("a vertical tab", b"\x0b" + valid),
         ):
             with self.subTest(label):
                 self.fake_extractor(forging({"baseline": output}))
