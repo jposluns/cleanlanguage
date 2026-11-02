@@ -95,6 +95,40 @@ TIMEOUT_WRAPPER = (
     "sys.exit(gate.main())\n"
 )
 
+# Row 80, fix round 7: TIMEOUT_WRAPPER, except that the first wait of the
+# gate for each child, the one CHILD_TIMEOUT_SECONDS bounds, starts only once
+# the child has ended or a file named "ready" exists beside the gate copy,
+# polled for at most READY_SECONDS. The fake extractor writes that file only
+# after it has written every file the test reads, so a busy host can slow
+# the child down but cannot make the 1 second timeout fire before the child
+# is ready. The wait the gate then makes, its kill, its reap and its report
+# are the real ones.
+READY_SECONDS = 60
+READY_TIMEOUT_WRAPPER = (
+    "import importlib.util, os, sys, time\n"
+    "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+    "gate = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(gate)\n"
+    "gate.CHILD_TIMEOUT_SECONDS = 1\n"
+    "ready = os.path.join(os.path.dirname(sys.argv[1]), \"ready\")\n"
+    "real_wait = gate._wait_unreaped\n"
+    "seen = set()\n"
+    "def wait_when_ready(proc, timeout):\n"
+    "    if proc.pid not in seen:\n"
+    "        seen.add(proc.pid)\n"
+    f"        deadline = time.monotonic() + {READY_SECONDS}\n"
+    "        while not os.path.exists(ready) and time.monotonic() < deadline:\n"
+    "            if real_wait(proc, 0.05):\n"
+    "                return True\n"
+    "    return real_wait(proc, timeout)\n"
+    "gate._wait_unreaped = wait_when_ready\n"
+    "sys.exit(gate.main())\n"
+)
+
+# The source a fake extractor runs to say it is ready (see
+# READY_TIMEOUT_WRAPPER), indented for the body of a function.
+SAY_READY = "    (Path(__file__).resolve().parent / \"ready\").write_text(\"ready\", encoding=\"utf-8\")\n"
+
 
 def extractor_with(extra: str) -> str:
     """Return the real extractor source with ``extra`` inserted just before
@@ -201,6 +235,39 @@ class ConditionalPassTest(unittest.TestCase):
         (gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS,
          gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT) = self._saved_child
         self._tmp.cleanup()
+
+    @contextlib.contextmanager
+    def timeout_when_ready(self, ready: Path):
+        """Within the block, the first wait of the gate for each child, the
+        one CHILD_TIMEOUT_SECONDS bounds, starts only once the child has
+        ended or ``ready`` exists, polled for at most READY_SECONDS, as
+        READY_TIMEOUT_WRAPPER does for a gate in a process of its own; every
+        later wait, and the kill, the reap and the report, are the real
+        ones. Fix round 7: a busy host can then slow a child down without a
+        short timeout firing before the child has reached the state a test
+        needs."""
+        real_wait = gate._wait_unreaped
+        seen = set()
+        # The monotonic time at which the gate first found ``ready``, so a
+        # test can bound the time the gate takes from then on.
+        state = {}
+
+        def wait_when_ready(proc, timeout):
+            if proc.pid not in seen:
+                seen.add(proc.pid)
+                deadline = time.monotonic() + READY_SECONDS
+                while not ready.exists() and time.monotonic() < deadline:
+                    if real_wait(proc, 0.05):
+                        return True
+                if ready.exists():
+                    state.setdefault("ready_at", time.monotonic())
+            return real_wait(proc, timeout)
+
+        gate._wait_unreaped = wait_when_ready
+        try:
+            yield state
+        finally:
+            gate._wait_unreaped = real_wait
 
     def fake_extractor(self, body):
         """Write the extractor source ``body`` into a fresh directory and
@@ -2323,7 +2390,9 @@ class ConditionalPassTest(unittest.TestCase):
                     gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
                 else:
                     self.fake_extractor(body)
-                gate.CHILD_TIMEOUT_SECONDS = 1
+                # Fix round 7: only a subtest that times out shortens the
+                # timeout, so a normal end on a busy host never races it.
+                gate.CHILD_TIMEOUT_SECONDS = self._saved_child[1] if body is None else 1
                 procs = []
 
                 def failing(*args):
@@ -2354,7 +2423,10 @@ class ConditionalPassTest(unittest.TestCase):
                     f"could not kill the process group of its child ({detail})", op
                 )])
                 self.assertEqual(returncodes, [returncode])
-                self.assertLess(elapsed, 10)
+                # Fix round 7: far below the 300 seconds the hung child
+                # sleeps, so a gate that waited for it still fails, with room
+                # for a busy host to start and end a child.
+                self.assertLess(elapsed, 60)
 
     def test_an_echoed_request_of_any_size_keeps_its_verdict(self):
         # Fix round 1 (finding 4): the stdout bound grows with the request,
@@ -2450,7 +2522,11 @@ class ConditionalPassTest(unittest.TestCase):
     # seize the child with ptrace (the child names it its tracer first), so
     # the end of the child is reported to that tracer, which holds it for
     # HOLD seconds, and not to the gate; the child writes the tracer pid to
-    # tracer.pid beside it and exits 9 when the seize is refused.
+    # tracer.pid beside it and exits 9 when the seize is refused. Fix round
+    # 7: the tracer closes its own copy of the go pipe, so when the child
+    # ends before it says go (as when it is killed first) the tracer reads
+    # the end of the pipe and exits at once instead of waiting for ever in
+    # a session of its own, where no kill of the child group reaches it.
     TRACED = (
         "_real_extract = extract\n"
         "def extract(text):\n"
@@ -2464,7 +2540,9 @@ class ConditionalPassTest(unittest.TestCase):
         "    tracer = os.fork()\n"
         "    if tracer == 0:\n"
         "        os.setsid()\n"
-        "        os.read(go_r, 1)\n"
+        "        os.close(go_w)\n"
+        "        if os.read(go_r, 1) != b\"x\":\n"
+        "            os._exit(0)\n"
         "        seized = libc.ptrace(0x4206, me, None, None) == 0\n"
         "        os.write(done_w, b\"ok\" if seized else b\"refused\")\n"
         "        time.sleep(HOLD)\n"
@@ -2475,6 +2553,7 @@ class ConditionalPassTest(unittest.TestCase):
         "    os.write(go_w, b\"x\")\n"
         "    if os.read(done_r, 64) != b\"ok\":\n"
         "        raise SystemExit(9)\n"
+        + SAY_READY +
         "    return _real_extract(text)\n"
     )
 
@@ -2496,11 +2575,18 @@ class ConditionalPassTest(unittest.TestCase):
         gate.subprocess.Popen = self.recording_popen(procs)
         pid_file = tool.parent / "tracer.pid"
         try:
-            started = time.monotonic()
-            result, err = self.call_reports("extract", self.ARGS["extract"])
-            elapsed = time.monotonic() - started
+            # Fix round 7: the 1 second timeout starts only once the seize
+            # has succeeded, so it cannot fire while the child is still
+            # being seized on a busy host.
+            # The bound below is measured from then, so the time a busy host
+            # takes to start the child does not count against it.
+            with self.timeout_when_ready(tool.parent / "ready") as ready_state:
+                started = time.monotonic()
+                result, err = self.call_reports("extract", self.ARGS["extract"])
+                elapsed = time.monotonic() - ready_state.get("ready_at", started)
             if result == ("exit", 3) and "exited 9" in err:
                 self.skipTest("this host refuses PTRACE_SEIZE of the child")
+            self.assertTrue((tool.parent / "ready").exists(), "the child was not seized before the timeout")
             states = [process_state(proc.pid) for proc in procs]
             returncodes = [proc.returncode for proc in procs]
         finally:
@@ -2821,7 +2907,6 @@ class ConditionalPassTest(unittest.TestCase):
         # that kill would fail too; either way it reaps the child it can and
         # exits 3 naming the group kill.
         problem = f"could not kill the process group of its child ({self.DENIED_NAMED})"
-        gate.CHILD_TIMEOUT_SECONDS = 1
         gate.REAP_GRACE_SECONDS = 1
         for label, body, op, arg, kill, expected_kills, returncodes in (
             ("after a normal end", None, "baseline", None, os.kill, [], [0]),
@@ -2833,12 +2918,18 @@ class ConditionalPassTest(unittest.TestCase):
                     gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
                 else:
                     self.fake_extractor(extractor_with(body))
+                # Fix round 7: only the subtest that times out shortens the
+                # timeout, so a normal end on a busy host never races it.
+                gate.CHILD_TIMEOUT_SECONDS = self._saved_child[1] if body is None else 1
                 result, err, kills, codes, elapsed = self.kill_reports(op, arg, self.denied, kill)
                 self.assertEqual(result, ("exit", 3), err)
                 self.assertEqual(err.splitlines(), [self.unavailable(problem, op)])
                 self.assertEqual(kills, expected_kills)
                 self.assertEqual(codes, returncodes)
-                self.assertLess(elapsed, 10)
+                # Fix round 7: far below the 300 seconds the hung child
+                # sleeps, so a gate that waited for it still fails, with room
+                # for a busy host to start and end a child.
+                self.assertLess(elapsed, 60)
 
     def test_a_group_kill_that_finds_no_process_still_reaps_the_child(self):
         # Fix round 6 (mutation sweep): a group kill that reports no such
@@ -3246,10 +3337,14 @@ class ModuleLoadTest(unittest.TestCase):
 
     def test_extractor_that_never_returns_exits_3(self):
         # The wrapper sets a 1 second child timeout; without the child the
-        # gate hangs and the outer timeout fails the test.
-        code, err = self.run_with_extractor(
-            extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"), wrapper=TIMEOUT_WRAPPER,
+        # gate hangs and the outer timeout fails the test. Fix round 7: the
+        # timeout starts only once the probe has ended and the extract child
+        # is ready, so a busy host cannot make it fire in the probe.
+        code, err, ready = self.run_with_extractor(
+            extractor_with("def extract(text):\n    import time\n" + SAY_READY + "    time.sleep(300)\n"),
+            wrapper=READY_TIMEOUT_WRAPPER, inspect=lambda tools: (tools / "ready").exists(),
         )
+        self.assertTrue(ready, "the extract child did not get ready")
         self.assertEqual(code, 3, err)
         self.assertIn("skill-release-date.py was not seen to end within 1 seconds in extract, "
                       "so the extractor is unavailable", err)
@@ -3259,16 +3354,25 @@ class ModuleLoadTest(unittest.TestCase):
         # A process the hung child started in its group is killed with it:
         # once the gate has exited it is gone, or a zombie where no process
         # reaps it, never still running.
+        # Fix round 7: the child writes the pid file whole (a rename) and
+        # then says it is ready, and the 1 second timeout starts only then
+        # (READY_TIMEOUT_WRAPPER), so on a busy host the kill can never come
+        # before the pid file exists.
         body = extractor_with(
             "def extract(text):\n"
-            "    import subprocess, time\n"
+            "    import os, subprocess, time\n"
+            "    here = Path(__file__).resolve().parent\n"
             "    grandchild = subprocess.Popen([sys.executable, \"-I\", \"-c\", \"import time; time.sleep(300)\"])\n"
-            "    with open(Path(__file__).resolve().parent / \"grandchild.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
+            "    with open(here / \"grandchild.pid.part\", \"w\", encoding=\"utf-8\") as handle:\n"
             "        handle.write(str(grandchild.pid))\n"
+            "    os.replace(here / \"grandchild.pid.part\", here / \"grandchild.pid\")\n"
+            + SAY_READY +
             "    time.sleep(300)\n"
         )
 
         def grandchild_state(tools):
+            if not (tools / "ready").exists():
+                raise AssertionError("the extract child did not get ready")
             pid = int((tools / "grandchild.pid").read_text(encoding="utf-8"))
             deadline = time.monotonic() + 10
             state = process_state(pid)
@@ -3277,7 +3381,7 @@ class ModuleLoadTest(unittest.TestCase):
                 state = process_state(pid)
             return pid, state
 
-        code, err, (pid, state) = self.run_with_extractor(body, wrapper=TIMEOUT_WRAPPER, inspect=grandchild_state)
+        code, err, (pid, state) = self.run_with_extractor(body, wrapper=READY_TIMEOUT_WRAPPER, inspect=grandchild_state)
         try:
             self.assertEqual(code, 3, err)
             self.assertIn("skill-release-date.py was not seen to end within 1 seconds in extract", err)

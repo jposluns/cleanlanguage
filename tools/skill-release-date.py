@@ -332,10 +332,10 @@ def json_main() -> int:
         die(f"--json: the request names no known op: {op!r}", 2)
     keys = {"op"} if op == "baseline" else {"op", "arg"}
     if set(request) != keys:
-        die(f"--json: a {op} request has exactly the keys {', '.join(sorted(keys))}", 2)
+        die(f"--json: a request for {op} has exactly the keys {', '.join(sorted(keys))}", 2)
     arg = request.get("arg")
     if op != "baseline" and type(arg) is not str:
-        die(f"--json: the arg of a {op} request is not a string", 2)
+        die(f"--json: the arg of a request for {op} is not a string", 2)
     reply = {"op": op}
     try:
         if op == "baseline":
