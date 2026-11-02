@@ -18,13 +18,17 @@ name: CI status tests
 # number such as 2.1.310; and the job with that display name holds only name,
 # runs-on set to ubuntu-latest, and steps. Each step holds an optional name and
 # either uses: naming an owner/repo action pinned to a full 40-character commit
-# sha, or run: with shell: bash, and nothing else. So no if:, needs: or
-# continue-on-error: key, no other runner or shell, no local or docker action,
-# and no environment variable such as BASH_ENV or SHELLOPTS set in the workflow
-# can skip the job or its steps, or pass over a failed step, and still read as
-# passing; any line outside that shape fails the check. What the commands the
-# steps run and the pinned actions do, including anything they write for later
-# steps, and what the other jobs of the workflow run, are not checked.
+# sha, or run: with shell: bash, and nothing else. So that check refuses any
+# if:, needs: or continue-on-error: key, any other runner or shell, any local or
+# docker action, and any environment variable such as BASH_ENV or SHELLOPTS set
+# in the workflow, any of which could otherwise skip the job or its steps, or
+# pass over a failed step, and still read as passing; any line outside that
+# shape fails the check. That check runs in CI only in this job, which
+# tools/ci-status.sh does not insist on, so a pull request that adds such a key
+# to one of the 3 workflows and also alters or skips this job is not caught by
+# ci-status. What the commands the steps run and the pinned actions do,
+# including anything they write for later steps, and what the other jobs of the
+# workflow run, are not checked.
 
 on:
   pull_request:

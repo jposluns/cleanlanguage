@@ -568,6 +568,69 @@ CASE_NEEDLE="required check(s) Plugin manifests not registered" \
   run_case "Plugin manifests run with a null name does not count -> not green" \
   "$(runs '{"status":"completed","conclusion":"success","name":null,"app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 2
 
+# Every per-run check applies to every run, not only to the first or the last.
+# For a head_sha of another commit and for each malformed field, bad_at puts the
+# bad value on one run alone, at each index of a 5-run reading in turn, so a
+# reader that checked only some runs would read it as green, pending or red, or
+# fail with another message; the whole reading must be unreadable, and the
+# message names what is wrong.
+# bad_at FIELD VALUE INDEX: the 4 green required checks and a green extra run, in
+# that order, with FIELD of the run at INDEX (0 to 4) set to the raw JSON VALUE.
+# FIELD is status, conclusion, name, app.slug, app (the whole app object) or
+# head_sha, which is added to that run alone. Any other INDEX changes no run.
+bad_at() {
+  local i=0 spec st cn nm app hs out=()
+  for spec in "Plugin manifests|github-actions" "Skill discovery|github-actions" \
+    "Agent Plugins manifest|github-actions" "Cloudflare Pages|cloudflare-pages" "extra|github-actions"; do
+    st='"completed"' cn='"success"' nm="\"${spec%|*}\"" app="{\"slug\":\"${spec#*|}\"}" hs=""
+    if [ "$i" -eq "$3" ]; then
+      case "$1" in
+        status) st="$2" ;;
+        conclusion) cn="$2" ;;
+        name) nm="$2" ;;
+        app.slug) app="{\"slug\":$2}" ;;
+        app) app="$2" ;;
+        head_sha) hs="\"head_sha\":$2," ;;
+      esac
+    fi
+    out+=("{${hs}\"status\":${st},\"conclusion\":${cn},\"name\":${nm},\"app\":${app}}")
+    i=$((i + 1))
+  done
+  runs "${out[@]}"
+}
+run_case "the bad_at reading with no run changed -> green" "$(bad_at status null 5)" "" "" 0
+read_failed="check read failed for 0000000000000000000000000000000000000000"
+for idx in 0 1 2 3 4; do
+  run_err_case "head_sha of another commit on run $idx alone -> unreadable" "$(bad_at head_sha "\"$C2\"" "$idx")" 3 \
+    "$read_failed: check run head_sha '$C2' is not the requested commit 0000000000000000000000000000000000000000"
+  run_err_case "null status on run $idx alone -> unreadable" "$(bad_at status null "$idx")" 3 \
+    "$read_failed: check field status is null"
+  run_err_case "non-string conclusion on run $idx alone -> unreadable" "$(bad_at conclusion 1 "$idx")" 3 \
+    "$read_failed: non-string check field conclusion"
+  run_err_case "non-string name on run $idx alone -> unreadable" "$(bad_at name 7 "$idx")" 3 \
+    "$read_failed: non-string check field name"
+  run_err_case "non-string app slug on run $idx alone -> unreadable" "$(bad_at app.slug 7 "$idx")" 3 \
+    "$read_failed: non-string check field app.slug"
+  run_err_case "non-object app on run $idx alone -> unreadable" "$(bad_at app '[]' "$idx")" 3 \
+    "$read_failed: check run app is not an object"
+done
+# Only success, neutral and skipped pass: a required check that concludes
+# cancelled, stale, action_required or timed_out is red, never green.
+for concl in cancelled stale action_required timed_out; do
+  run_case "required check concluding $concl -> red" "$(bad_at conclusion "\"$concl\"" 0)" "" "" 1
+done
+# A failed run outranks an unfinished one, so a reading that holds both is red,
+# not pending.
+run_case "failed run beside an unfinished run -> red" \
+  "$(runs '{"status":"completed","conclusion":"failure","name":"Plugin manifests","app":{"slug":"github-actions"}}' \
+  '{"status":"in_progress","conclusion":null,"name":"Skill discovery","app":{"slug":"github-actions"}}' "$APM_OK" "$CF")" "" "" 1
+# A reading with no check runs is unreadable, never a pass or pending, and both
+# lines of the report say so.
+run_err_case "empty check_runs is unreadable and says no checks are recorded" '{"total_count":0,"check_runs":[]}' 3 \
+  "ci-status: no checks are recorded for 0000000000000000000000000000000000000000 in owner/name"
+run_err_case "empty check_runs is not treated as a pass" '{"total_count":0,"check_runs":[]}' 3 \
+  "ci-status: treating absent checks as unreadable, not as a pass"
+
 # Exact matching of each required Actions job: a run counts only when its name is
 # the whole display name and its app slug is the whole github-actions slug. Each
 # near miss below replaces Plugin manifests beside the other 3 required checks
@@ -624,22 +687,26 @@ run_err_case "every missing required check is named, in order" \
 # trigger filtered to main alone. The permissions block is exactly contents:
 # read. A top-level env, if present, holds only CLAUDE_CODE_VERSION, set to a
 # dotted version number such as 2.1.310, which cannot change whether or how a
-# step runs, so no BASH_ENV, ENV, SHELLOPTS or BASHOPTS can turn every step into
-# a no-op. The job with the declared display name holds only name, runs-on set
-# to ubuntu-latest, and steps, so no env:, if:, needs:, defaults: or container:
-# key. Each step holds an optional name and either uses: naming an owner/repo
-# action pinned to a full 40-character commit sha, never a local ./ action or a
-# docker:// image, or run: with shell: bash, never another shell or a custom
-# shell command, and nothing else, so no env:, if: or continue-on-error: key. So
-# nothing set in the workflow can skip the job or its steps, or pass over a
-# failed step. A job skipped by an if:, or by a failed job it needs, concludes
-# skipped, and a step skipped by an if: or allowed to fail leaves the job
-# successful; ci-status.py counts skipped and success as passing, so such a job
-# would read green without running its checks. The job display name is also the
+# step runs, so the check admits no BASH_ENV, ENV, SHELLOPTS or BASHOPTS that
+# could turn every step into a no-op. The job with the declared display name
+# holds only name, runs-on set to ubuntu-latest, and steps, so no env:, if:,
+# needs:, defaults: or container: key. Each step holds an optional name and
+# either uses: naming an owner/repo action pinned to a full 40-character commit
+# sha, never a local ./ action or a docker:// image, or run: with shell: bash,
+# never another shell or a custom shell command, and nothing else, so no env:,
+# if: or continue-on-error: key. So the check refuses anything set in the
+# workflow that could skip the job or its steps, or pass over a failed step. A
+# job skipped by an if:, or by a failed job it needs, concludes skipped, and a
+# step skipped by an if: or allowed to fail leaves the job successful;
+# ci-status.py counts skipped and success as passing, so such a job would read
+# green without running its checks. The job display name is also the
 # only 4-space-indented name: line, and it equals the name that ci-status.py
 # declares. A renamed job, a filter that leaves a commit without the check, or
 # any key or line outside that shape fails here, instead of turning every read
-# into a forever-pending one or a false green. Residual: what the commands the
+# into a forever-pending one or a false green. In CI this check runs only in the
+# CI status tests job (.github/workflows/ci-status-test.yml), which ci-status.py
+# does not insist on, so a pull request that adds such a key and also alters or
+# skips that job is not caught by ci-status. Residual: what the commands the
 # steps run and the pinned actions do, including anything they write for later
 # steps, such as a BASH_ENV line in the GITHUB_ENV file, and what the other
 # jobs of the workflow run, are not checked, so a step changed to do nothing

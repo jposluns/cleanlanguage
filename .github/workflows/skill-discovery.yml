@@ -17,11 +17,15 @@ name: Skill discovery
 # set to a dotted version number such as 2.1.310; and the job with this display
 # name holds only name, runs-on set to ubuntu-latest, and steps. Each step holds
 # an optional name and either uses: naming an owner/repo action pinned to a full
-# 40-character commit sha, or run: with shell: bash, and nothing else. So no
-# if:, needs: or continue-on-error: key, no other runner or shell, no local or
-# docker action, and no environment variable such as BASH_ENV or SHELLOPTS set
-# in the workflow can skip the job or its steps, or pass over a failed step, and
-# still read as passing; any line outside that shape fails the check. What the
+# 40-character commit sha, or run: with shell: bash, and nothing else. So that
+# check refuses any if:, needs: or continue-on-error: key, any other runner or
+# shell, any local or docker action, and any environment variable such as
+# BASH_ENV or SHELLOPTS set in the workflow, any of which could otherwise skip
+# the job or its steps, or pass over a failed step, and still read as passing;
+# any line outside that shape fails the check. In CI that check runs only in
+# the CI status tests job (.github/workflows/ci-status-test.yml), which
+# tools/ci-status.sh does not insist on, so a pull request that adds such a key
+# and also alters or skips that job is not caught by ci-status. What the
 # commands the steps run and the pinned actions do, including anything they
 # write for later steps, and what the other jobs of the workflow run, are not
 # checked.
