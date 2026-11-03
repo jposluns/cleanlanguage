@@ -157,6 +157,9 @@ REFUSALS = [
     ("an upper-case SVG outside the switch", inject("<SVG></SVG>")),
     ("a second scheme.js load in another spelling",
         inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.6.0" defer></SCRIPT>')),
+    ("a second scheme.js load as the first of 2 src attributes", inject(
+        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.6.0" src="{{base}}assets/baseline/copy.js?v=1.6.0" defer></SCRIPT>')),
+    ("an attribute repeated on any other tag", inject('<p class="lead" class="x">x</p>')),
     ("a link to the pinned build tool, which is never served",
         inject('<p><a href="/.baseline/check_palette.py">palette gate</a></p>')),
     ("a module script", inject('<script type="module">alert(1)</script>')),
@@ -261,6 +264,10 @@ def check_scheme_validation(failures: list[str]) -> int:
             + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.6.0"></script>\n', 1), False),
         ("an upper-case stylesheet before the scheme.js line", text.replace(
             tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + tag, 1), False),
+        ("a second scheme.js load as the first of 2 src attributes", text.replace("</head>", '<SCRIPT SRC='
+            '"/assets/baseline/sch&#101;me.js?v=1.6.0" src="/assets/baseline/copy.js?v=1.6.0" defer></SCRIPT></head>', 1), False),
+        ("a stylesheet before the scheme.js line as the first of 2 rel attributes", text.replace(
+            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + tag, 1), False),
     ]
     for name, page_html, passes in cases:
         try:

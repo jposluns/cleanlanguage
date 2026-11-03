@@ -55,7 +55,8 @@ tag text such as ``<code>`` shown inside a ``pre`` block (each a defect found
 in the 1.2.1 reference demo page);
 an en or em dash; an inline ``style`` attribute or ``<style>`` element; an
 inline executable ``<script>`` (a ``application/ld+json`` data block is
-allowed, and emitted only at base ``/``); an ``on*`` attribute; "what this is"
+allowed, and emitted only at base ``/``); an ``on*`` attribute; an attribute
+repeated on 1 tag, which a browser reads by its first value; "what this is"
 framing; not exactly 1 ``h1``; a missing skip link, ``main#main-content``,
 family footer or ``#copy-status``; a duplicate ``id``; an unreplaced token; an
 in-page fragment with no target; a root-relative link or asset outside the base
@@ -660,6 +661,9 @@ class PageScan(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
         attrs = {k.lower(): (v or "") for k, v in attrs_list}
+        if len(attrs) != len(attrs_list):
+            # A browser reads the first of 2 attributes with the same name, and this dict the last.
+            self.problems.append(f"<{tag}> carries an attribute twice")
         if tag not in VOID_TAGS:
             self.open.append((tag, tag == "div" and "doc" in attrs.get("class", "").split()))
         if self.doc_closed and self.in_main:
@@ -753,9 +757,10 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     scheme_tags = {line_column(page_html, match.start()) for match in re.finditer(
         r'<script data-cfasync="false" src="' + re.escape(base)
         + r'assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>', page_html)}
-    # Each script element that loads scheme.js, read as the browser reads it, so another spelling of a
-    # second load counts; resolve_links refuses a root-relative src that names no generated, pinned or
-    # allowlisted path, such as a percent-encoded one.
+    # Each script element that loads scheme.js, read with character references decoded and names in lower
+    # case, so another spelling of a second load counts; PageScan refuses a tag that carries an attribute
+    # twice, and resolve_links refuses a root-relative src that names no generated, pinned or allowlisted
+    # path, such as a percent-encoded one.
     scheme_loads = [at for at, src in scan.loads
                     if src.split("#", 1)[0].split("?", 1)[0] == base + "assets/baseline/scheme.js"]
     if len(scheme_loads) != 1 or scheme_loads[0] not in scheme_tags or page_html.count("scheme.js") != 1:

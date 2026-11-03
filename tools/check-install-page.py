@@ -43,9 +43,11 @@ What it verifies
    ``select.js``, ``search.js``, ``rail.js``) from ``/assets/baseline/``, with
    the same token and ``defer``, as exactly
    ``<script src="/assets/baseline/NAME?v=X.Y.Z" defer></script>``. Each load is
-   read as the element a browser reads, so a tag inside a comment loads nothing,
-   and a ``<script>`` or stylesheet written in another spelling (letter case,
-   a character reference, attribute order or spacing) is still counted.
+   read as the parsed element, so a tag inside a comment loads nothing, and a
+   ``<script>`` or stylesheet written in another spelling (letter case, a
+   character reference, attribute order or spacing) is still counted. Any tag
+   that carries an attribute twice fails: a browser reads the first value, and
+   this gate's reading would take the last.
 6. ``site/_headers``, read with the parser of ``tools/check-headers.py``
    (header names compared without regard to case, comments ignored), has a
    ``/*`` rule that sets ``Content-Security-Policy`` exactly once, to exactly
@@ -69,8 +71,8 @@ stylesheet rule that hides a family section, a hiding ANCESTOR (a wrapping
 opacity or positions off-screen, a DESCENDANT wipe, or hiding by id. Those are
 visible regressions a browser check, a reviewer, or the tri-family QA catches.
 An exotic heading character may still slip through the visible-text check. The
-inline-code checks share the residual that ``tools/check-inline-code.py``
-states.
+inline-code checks, and the load reading of check 5, share the residual that
+``tools/check-inline-code.py`` states: ``html.parser`` is not a browser's parser.
 
 Exit codes:
   0  the markup is static and complete, and the header discipline holds
@@ -220,18 +222,22 @@ class TemplateParser(HTMLParser):
 
 
 class LoadScan(HTMLParser):
-    """Check 5: where each <script> and stylesheet <link> element starts, read as a browser reads the markup."""
+    """Check 5: where each <script> and stylesheet <link> element starts, and each tag that repeats an attribute."""
 
     def __init__(self, text: str) -> None:
         super().__init__()
         self.lines = [0] + [match.end() for match in re.finditer("\n", text)]
         self.scripts: list[tuple[int, dict[str, str], str]] = []
         self.sheets: list[tuple[int, dict[str, str], str]] = []
+        self.repeats: list[str] = []
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
         attrs = {k.lower(): (v if v is not None else "") for k, v in attrs_list}
         line, column = self.getpos()
         element = (self.lines[line - 1] + column, attrs, self.get_starttag_text() or "")
+        if len(attrs) != len(attrs_list):
+            # A browser reads the first of 2 attributes with the same name, and these dicts the last.
+            self.repeats.append(element[2])
         if tag == "script":
             self.scripts.append(element)
         elif tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split():
@@ -287,6 +293,8 @@ def check_template_page(text: str) -> list[str]:
     loads = LoadScan(text)
     loads.feed(text)
     loads.close()
+    for tag in loads.repeats:
+        problems.append(f"{where}: {tag} carries an attribute twice; a browser reads the first, this gate the last.")
     for name in ("fonts.css", "palettes.css", "baseline.css"):
         sheet = re.compile(r'<link rel="stylesheet" href="' + BASELINE_ASSET.format(name=re.escape(name)))
         if not any(sheet.match(text, at) for at, _, _ in loads.sheets):

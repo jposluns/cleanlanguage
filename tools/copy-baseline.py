@@ -8,9 +8,11 @@ the archive and verified against https://posluns.ca/baseline/SHA256SUMS, and
 refuses to copy unless:
 
 1. ``SHA256SUMS`` in that folder hashes to the digest given on the command line
-   (the value published in https://posluns.dev/hashes.txt), and
+   (the value published in https://posluns.dev/hashes.txt),
 2. every file listed in ``SHA256SUMS`` exists and hashes to its listed digest,
-   and no file in the folder is missing from it.
+   and no file in the folder is missing from it, and
+3. ``SHA256SUMS`` lists the build tool ``tools/check_palette.py``, so the served
+   files are never replaced by a version that lacks it.
 
 It then copies the runtime and licence files (the baseline README, "Adoption in
 a repository", step 2: the stylesheets, the fonts with their licence files, the
@@ -155,6 +157,9 @@ def main() -> int:
     for name, digest in listed.items():
         if sha256(source / name) != digest:
             die(1, f"{name} does not match its SHA256SUMS digest")
+    tool_digest = listed.get(TOOL_SOURCE)
+    if tool_digest is None:
+        die(1, f"SHA256SUMS does not list {TOOL_SOURCE}")
 
     chosen = sorted(name for name in listed if wanted(name))
     dest = output_root() / PREFIX
@@ -167,9 +172,6 @@ def main() -> int:
         if sha256(target) != listed[name]:
             die(1, f"the copy of {name} does not match its digest")
 
-    tool_digest = listed.get(TOOL_SOURCE)
-    if tool_digest is None:
-        die(1, f"SHA256SUMS does not list {TOOL_SOURCE}")
     if sha256(source / TOOL_SOURCE) != tool_digest:
         die(1, f"{TOOL_SOURCE} does not match its SHA256SUMS digest")
     PIN_DIR.mkdir(exist_ok=True)
@@ -192,7 +194,8 @@ def main() -> int:
     lines += [f'"{PREFIX}{name}" = "{listed[name]}"' for name in chosen]
     lines += [f'".baseline/{TOOL_NAME}" = "{tool_digest}"']
     (PIN_DIR / "pin.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"copied {len(chosen)} files of baseline {version} and wrote .baseline/pin.toml")
+    print(f"copied {len(chosen) + 1} files of baseline {version} ({len(chosen)} to {PREFIX} and .baseline/{TOOL_NAME}) "
+          "and wrote .baseline/pin.toml")
     return 0
 
 

@@ -3,10 +3,12 @@
 
 Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
 applies 1 fault, runs the gate on that tree as a separate process and asserts
-its exit code. The last case runs the gate on this repository. The first case
-runs ``tools/copy-baseline.py`` on a small version folder and asserts that the
-pin header it writes, and the committed one, give each key's base. Exit 0 when
-every case passes; 1 otherwise, naming each failing case.
+its exit code. The last case runs the gate on this repository. The first 4
+cases run ``tools/copy-baseline.py`` on a small version folder and assert that
+the pin header it writes, and the committed one, give each key's base; that it
+copies and pins the build tool and counts it among the copied files; and that a
+version without the build tool exits 1 before any served file is replaced.
+Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
 from __future__ import annotations
@@ -210,23 +212,53 @@ CASES = [
 ]
 
 
+def run_copy(root: Path, package: dict[str, bytes]) -> subprocess.CompletedProcess:
+    """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS."""
+    (root / "tools").mkdir()
+    shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
+    (root / "site-src").mkdir()
+    (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
+    for name, data in package.items():
+        (root / "1.2.1" / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / "1.2.1" / name).write_bytes(data)
+    sums = "".join(f"{digest(data)}  {name}\n" for name, data in sorted(package.items()))
+    (root / "1.2.1" / "SHA256SUMS").write_text(sums, encoding="utf-8")
+    command = [sys.executable, "-I", str(root / "tools" / COPY_TOOL.name), "--from", str(root / "1.2.1"),
+               "--sums-sha256", digest(sums.encode()), "--archive-sha256", "0" * 64]
+    return subprocess.run(command, capture_output=True, text=True)
+
+
+def copy_problems() -> list[str]:
+    """copy-baseline pins and copies the build tool, counts it, and checks for it before replacing a file."""
+    problems = []
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        result = run_copy(root, {**FILES, "tools/check_palette.py": TOOL})
+        pin = (root / ".baseline" / "pin.toml").read_text(encoding="utf-8") if result.returncode == 0 else ""
+        if f'"{TOOL_KEY}" = "{digest(TOOL)}"\n' not in pin or (root / TOOL_KEY).read_bytes() != TOOL:
+            problems.append(f"copy-baseline: the build tool is not copied to {TOOL_KEY} and pinned "
+                            f"(exit {result.returncode})")
+        if f"copied {len(FILES) + 1} files " not in result.stdout:
+            problems.append(f"copy-baseline: the count of copied files leaves out the build tool: "
+                            f"{result.stdout.strip()!r}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        served = root / "site" / "assets" / "baseline" / "served-before.css"
+        served.parent.mkdir(parents=True)
+        served.write_bytes(b"a { color: red; }\n")
+        result = run_copy(root, dict(FILES))
+        if result.returncode != 1 or not served.is_file():
+            kept = "keeps" if served.is_file() else "replaces"
+            problems.append(f"copy-baseline: a version without the build tool exits {result.returncode} "
+                            f"and {kept} the served files; expected 1 and keeps")
+    return problems
+
+
 def pin_header_problems() -> list[str]:
     """The pin's header, as tools/copy-baseline.py writes it and as committed, gives each key's base."""
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
-        (root / "tools").mkdir()
-        shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
-        (root / "site-src").mkdir()
-        (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
-        package = {**FILES, "tools/check_palette.py": TOOL}
-        for name, data in package.items():
-            (root / "1.2.1" / name).parent.mkdir(parents=True, exist_ok=True)
-            (root / "1.2.1" / name).write_bytes(data)
-        sums = "".join(f"{digest(data)}  {name}\n" for name, data in sorted(package.items()))
-        (root / "1.2.1" / "SHA256SUMS").write_text(sums, encoding="utf-8")
-        command = [sys.executable, "-I", str(root / "tools" / COPY_TOOL.name), "--from", str(root / "1.2.1"),
-                   "--sums-sha256", digest(sums.encode()), "--archive-sha256", "0" * 64]
-        result = subprocess.run(command, capture_output=True, text=True)
+        result = run_copy(root, {**FILES, "tools/check_palette.py": TOOL})
         if result.returncode != 0:
             return [f"the pin header: copy-baseline exit {result.returncode}: {result.stderr.strip()[:200]}"]
         written = (root / ".baseline" / "pin.toml").read_text(encoding="utf-8")
@@ -247,8 +279,8 @@ def pin_header_problems() -> list[str]:
 
 
 def main() -> int:
-    failures: list[str] = pin_header_problems()
-    ran = 1
+    failures: list[str] = pin_header_problems() + copy_problems()
+    ran = 4
     for name, fault, expected in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
