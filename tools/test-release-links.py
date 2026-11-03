@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Tests for check-release-links.py's skill-version parsing.
+"""Tests for check-release-links.py, and for the bare file names set-release-links.py writes.
 
 The gate reads the current version from the first ``Version:`` line of
 ``cleanlanguage/skills/cleanlanguage/SKILL.md``. These tests pin the gate's failure paths: the version parse (a malformed,
 missing, or unreadable SKILL, which fails before the site walk), and the
 fail-closed reads of scanned site files, ``site/_redirects``, and the verify
-page (which build a small site fixture). They run offline with the standard
-library: the fixtures patch the module's file paths.
+page (which build a small site fixture). They also pin the bare file-name
+rule on both sides: the gate fails on a stale version-named file name outside a
+URL, and the writer rewrites such names on the install page as well as the
+verify page. They run offline with the standard library: the fixtures patch
+each module's file paths.
 """
 
 from __future__ import annotations
@@ -24,6 +27,11 @@ MODULE_PATH = Path(__file__).resolve().parent / "check-release-links.py"
 spec = importlib.util.spec_from_file_location("check_release_links", MODULE_PATH)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
+
+WRITER_PATH = Path(__file__).resolve().parent / "set-release-links.py"
+writer_spec = importlib.util.spec_from_file_location("set_release_links", WRITER_PATH)
+writer = importlib.util.module_from_spec(writer_spec)
+writer_spec.loader.exec_module(writer)
 
 
 class VersionParseTest(unittest.TestCase):
@@ -219,6 +227,109 @@ class VersionParseTest(unittest.TestCase):
 
         with unittest.mock.patch("os.scandir", raising_scandir):
             self._expect_die("site/install could not be read")
+
+    def _write_consistent_site(self, page_text):
+        # A site that passes every other rule, so a test fails only on the
+        # page text it supplies.
+        gate.SKILL.write_text("Version: 1.0.14\n", encoding="utf-8")
+        gate.SITE_ROOT.mkdir(parents=True, exist_ok=True)
+        (gate.SITE_ROOT / "install.html").write_text(page_text, encoding="utf-8")
+        gate.REDIRECTS.write_text(self._valid_url("1.0.14") + "\n", encoding="utf-8")
+        gate.VERIFY_PAGE.write_text(
+            '<p>The published checksum for version 1.0.14 is:</p>\n'
+            '<code id="published-checksum">' + "a" * 64 + "</code>\n",
+            encoding="utf-8",
+        )
+
+    def _run_gate(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = gate.main()
+        return code, out.getvalue()
+
+    def test_stale_bare_file_name_fails(self):
+        # A version-named file name written out bare, outside any URL, must
+        # name the current version. This is the install page's example
+        # download name, which once kept the old version after a release.
+        self._write_consistent_site(
+            f'<a href="{self._valid_url("1.0.14")}">dl</a>\n'
+            "<p>for example <code>cleanlanguage-1.0.13.zip</code></p>\n"
+        )
+        code, out = self._run_gate()
+        self.assertEqual(code, 1)
+        self.assertIn(
+            "site/install.html names the file cleanlanguage-1.0.13.zip, "
+            "but SKILL.md says 1.0.14",
+            out,
+        )
+
+    def test_current_bare_file_name_passes(self):
+        self._write_consistent_site(
+            f'<a href="{self._valid_url("1.0.14")}">dl</a>\n'
+            "<p>for example <code>cleanlanguage-1.0.14.zip</code></p>\n"
+        )
+        code, out = self._run_gate()
+        self.assertEqual(code, 0, out)
+
+    def test_stale_url_is_not_also_reported_as_a_bare_name(self):
+        # A stale URL is reported once, as a link, not again as a file name.
+        self._write_consistent_site(
+            f'<a href="{self._valid_url("1.0.14")}">dl</a>\n'
+            f'<a href="{self._valid_url("1.0.13")}">old</a>\n'
+        )
+        code, out = self._run_gate()
+        self.assertEqual(code, 1)
+        self.assertIn("site/install.html links at version 1.0.13", out)
+        self.assertNotIn("names the file", out)
+
+
+class WriterBareFileNameTest(unittest.TestCase):
+    """set-release-links.py rewrites bare file names on both pages it owns."""
+
+    OLD_URL = (
+        "https://github.com/jposluns/cleanlanguage/releases/download/"
+        "v1.0.14/cleanlanguage-1.0.14.zip"
+    )
+    STAMPS = (
+        '<meta property="article:modified_time" content="2020-01-01">\n'
+        '<script type="application/ld+json">{"dateModified": "2020-01-01"}</script>\n'
+    )
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._saved = (writer.REPO_ROOT, writer.SITE)
+        root = Path(self._tmp.name)
+        writer.REPO_ROOT = root
+        writer.SITE = root / "site"
+        (writer.SITE / "install").mkdir(parents=True)
+        (writer.SITE / "verify").mkdir(parents=True)
+        (writer.SITE / "install" / "index.html").write_text(
+            self.STAMPS
+            + f'<a href="{self.OLD_URL}">dl</a>\n'
+            + "<p>for example <code>cleanlanguage-1.0.14.zip</code></p>\n",
+            encoding="utf-8",
+        )
+        (writer.SITE / "verify" / "index.html").write_text(
+            self.STAMPS
+            + f'<a href="{self.OLD_URL}">dl</a>\n'
+            + "<p>The published checksum for version 1.0.14 is:</p>\n"
+            + '<code id="published-checksum">' + "b" * 64 + "</code>\n"
+            + "<pre><code>sha256sum cleanlanguage-1.0.14.zip</code></pre>\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self):
+        writer.REPO_ROOT, writer.SITE = self._saved
+        self._tmp.cleanup()
+
+    def test_every_page_names_the_new_release_file(self):
+        planned = writer.rewrite("1.0.15", "v1.0.15", "a" * 64, "2026-11-03")
+        install = planned[writer.SITE / "install" / "index.html"]
+        verify = planned[writer.SITE / "verify" / "index.html"]
+        for text in (install, verify):
+            self.assertNotIn("cleanlanguage-1.0.14.zip", text)
+        self.assertIn("<code>cleanlanguage-1.0.15.zip</code>", install)
+        self.assertIn("sha256sum cleanlanguage-1.0.15.zip", verify)
 
 
 if __name__ == "__main__":
