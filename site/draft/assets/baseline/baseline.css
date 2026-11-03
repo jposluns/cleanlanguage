@@ -453,6 +453,33 @@ hr.space { border: 0; margin: 0; height: 2.4rem; }
 .fig .num { font: 300 3rem/1 "Newsreader", serif; color: var(--accent); font-variant-numeric: lining-nums; }
 .fig .cap { font: 500 0.72rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); }
 
+/* Compact figures (1.4.0): up to 6 figures on 1 line in the text column, smaller numerals, equal shares of the width;
+   at 900 px and below, rows of 3. Markup: <div class="figures compact"> with the usual .fig children. */
+.figures.compact { flex-wrap: nowrap; gap: 0.8rem 1.6rem; }
+.figures.compact .fig { flex: 1 1 0; min-width: 0; }
+.figures.compact .num { font-size: 2.2rem; }
+.figures.compact .cap { letter-spacing: 0.08em; }
+@media (max-width: 900px) { .figures.compact { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem 1.2rem; } }
+
+/* Figure beside text (1.4.0): 1 figure and a short paragraph side by side, stacked at 600 px and below.
+   Markup: <div class="fig-aside"><div class="fig">...</div><p>...</p></div>. */
+.fig-aside { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.6rem 1.6rem; align-items: start; margin: 0.2rem 0 1.4rem; }
+.fig-aside > p { margin: 0.4rem 0 0; }
+@media (max-width: 600px) { .fig-aside { grid-template-columns: minmax(0, 1fr); } }
+
+/* Inline accent (1.4.0): a number or key term in running text in the site's --accent (a text-safe colour,
+   4.5:1 or more on every surface, per contrast-report.txt). Emphasis only: the sentence reads the same without it,
+   so no meaning depends on colour (WCAG 2.2, 1.4.1). Markup: <span class="accent">28</span>. */
+span.accent { color: var(--accent); font-variant-numeric: lining-nums; }
+
+/* Brand marker (1.4.0), <mark class="marker">: emphasis in the site's rainbow colour that leaves the text in --text. A band of --brand
+   behind the lower part of the line; --brand stays decorative and never colours text (section 6.1). Underlining
+   was not used, because links are underlined. Browsers without color-mix() draw a thin solid --brand band. */
+mark.marker { color: inherit; padding: 0 0.08em; background: linear-gradient(transparent 82%, var(--brand) 82%); }
+@supports (background: color-mix(in srgb, red 50%, transparent)) {
+  mark.marker { background: linear-gradient(transparent 58%, color-mix(in srgb, var(--brand) 38%, transparent) 58%); }
+}
+
 /* Steps: large brand-coloured numerals */
 .steps { list-style: none; margin: 0 0 1.4rem; padding: 0; counter-reset: st; }
 .steps li { counter-increment: st; display: grid; grid-template-columns: 3.2rem minmax(0, 1fr); column-gap: 0.6rem; align-items: start; margin-bottom: 1.1rem; }
