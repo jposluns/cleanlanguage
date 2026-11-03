@@ -355,14 +355,17 @@ def _iter_json_values(text: str):
         yield obj
 
 
-# Passed to _field in place of a value when the field is absent from the run, so an
-# absent field and a present null are reported differently.
+# Passed to _field in place of the status when that field is absent from the run,
+# so an absent status and a present null status are reported differently. An
+# absent conclusion, name or app slug is passed as None, the same as a present
+# null, and head_sha is passed only when it is present.
 _ABSENT = object()
 
 
 def _field(value, allow_empty: bool, field: str):
-    """A field must be a string. null, or an absent field (passed as _ABSENT), is
-    allowed only for a nullable field (becomes ''); a bool or number is rejected (a
+    """A field must be a string. null, or an absent status (passed as _ABSENT; an
+    absent conclusion, name or app slug is passed as None), is allowed only for a
+    nullable field (becomes ''); a bool or number is rejected (a
     bool is not a valid string even though `x or ''` would hide it); an empty string
     is rejected for a field that is not nullable. Anything else makes the whole
     reading fail-closed. Each message names FIELD and says what is wrong with it:

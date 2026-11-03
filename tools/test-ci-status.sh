@@ -30,11 +30,12 @@
 # range-checked.
 #
 # Each reading case puts a fake gh on PATH serving check-runs from a per-call
-# "plan" (tokens g/a/f: default payload, alternate payload, or a failed call),
-# runs ci-status and asserts its exit code. Many cases also assert a fixed
-# string on standard error (CASE_NEEDLE and run_err_case), such as the required
-# check named as missing, the malformed field, or a line of the report; some
-# assert that a fixed string is absent from it (CASE_ABSENT); and some assert
+# "plan" (tokens g/a/t/f: default payload, alternate payload, third payload,
+# or a failed call), runs ci-status and asserts its exit code. Many cases also
+# assert a fixed string on standard error (CASE_NEEDLE and run_err_case), such
+# as the required check named as missing, the malformed field, or a line of the
+# report; some assert a fixed string on standard output (CASE_OUT); some assert
+# that a fixed string is absent from standard error (CASE_ABSENT); and some assert
 # that the only gh call made is the paginated check-runs read of the commit
 # (CASE_ONLY_CALLS and run_log_case). The timed cases also bound
 # the elapsed time, and the paginate case serves page 2 only to a --paginate
@@ -87,6 +88,9 @@ CLOUDFLARE_ONLY='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}
 ]}'
 GA_IN_PROGRESS="$(runs '{"status":"in_progress","conclusion":null,"name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")"
+# A red reading: Plugin manifests failed, beside the other 3 required checks
+# green. A wait that reaches it ends at once (exit 1), whatever time is left.
+GA_RED="$(runs '{"status":"completed","conclusion":"failure","name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")"
 EMPTY_CONCLUSION='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}},
   {"status":"completed","conclusion":null,"name":"success","app":{"slug":"external-app"}}
@@ -137,7 +141,9 @@ NONARRAY='{"check_runs":{"only":{"status":"completed","conclusion":"success","na
 # commit. The fake gh logs every call and answers a commit-status route with a
 # green body, so a tool that consulted commit statuses would see a pass there.
 # When CASE_ABSENT is set, standard error must not contain it as a fixed
-# string, and an error file that grep cannot search fails the case.
+# string, and an error file that grep cannot search fails the case. When
+# CASE_THIRD is set, the plan token t serves it as the payload. When CASE_OUT is
+# set, standard output must contain it as a fixed string.
 run_case() {
   local name="$1" def="$2" alt="$3" plan="$4" want="$5"; shift 5
   local sha="${CASE_SHA:-0000000000000000000000000000000000000000}"
@@ -145,6 +151,7 @@ run_case() {
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf '%s' "$def" > "$tmp/def.json"
   printf '%s' "$alt" > "$tmp/alt.json"
+  printf '%s' "${CASE_THIRD:-}" > "$tmp/third.json"
   printf '%s' "$plan" > "$tmp/plan"
   : > "$tmp/calls"
   cat > "$bin/gh" <<GH
@@ -165,6 +172,7 @@ case "\$*" in
     case "\$tok" in
       f) printf 'simulated check-runs read failure\n' >&2; exit 1 ;;
       a) cat "$tmp/alt.json" ;;
+      t) cat "$tmp/third.json" ;;
       *) cat "$tmp/def.json" ;;
     esac
     ;;
@@ -175,11 +183,14 @@ esac
 GH
   chmod +x "$bin/gh"
   PATH="$bin:$PATH" bash "$ci" "$sha" \
-    --repo owner/name --interval 1 "$@" >/dev/null 2>"$tmp/err"
+    --repo owner/name --interval 1 "$@" >"$tmp/out" 2>"$tmp/err"
   local got=$? why=""
   if [ "$got" -ne "$want" ]; then why="$why exit"; fi
   if [ -n "${CASE_NEEDLE:-}" ] && ! grep -q -F -- "$CASE_NEEDLE" "$tmp/err"; then
     why="$why message"
+  fi
+  if [ -n "${CASE_OUT:-}" ] && ! grep -q -F -- "$CASE_OUT" "$tmp/out"; then
+    why="$why output"
   fi
   if [ -n "${CASE_ABSENT:-}" ]; then
     grep -q -F -- "$CASE_ABSENT" "$tmp/err"
@@ -352,14 +363,16 @@ CASE_NEEDLE="simulated check-runs read failure" \
   run_case "a failed read passes on the standard error of gh" "$GA_PRESENT" "" "f" 3
 CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000: gh api failed" \
   run_case "a failed read gives gh api failed as the reason" "$GA_PRESENT" "" "f" 3
-run_case "failed read between green reads does not confirm" "$GA_PRESENT" "" "g f g f" 3 --wait --timeout 8
-# A pending reading between 2 green readings restarts the confirmation: the
-# green reading after it is a first reading again, not the second of a pair.
-# Here the reading after that fails, so the tool never confirms and exits 3 when
-# the window closes; a reader that kept the earlier green reading would confirm
-# on the third reading (exit 0).
-run_case "pending reading between green readings restarts the confirmation" \
-  "$GA_PRESENT" "$GA_IN_PROGRESS" "g a g f" 3 --wait --timeout 5
+# A failed read, or a pending reading, between 2 green readings restarts the
+# confirmation: the green reading after it is a first reading again, not the
+# second of a pair, so the tool reads once more. That reading is red, so the
+# tool exits 1 at once; a reader that kept the earlier green reading would
+# confirm on the third reading (exit 0). The red reading, not the window, ends
+# each case, so its result does not depend on how long the reads take.
+CASE_THIRD="$GA_RED" run_case "failed read between green reads does not confirm" \
+  "$GA_PRESENT" "" "g f g t" 1 --wait --timeout 30
+CASE_THIRD="$GA_RED" run_case "pending reading between green readings restarts the confirmation" \
+  "$GA_PRESENT" "$GA_IN_PROGRESS" "g a g t" 1 --wait --timeout 30
 run_case "transient read failures on a stable set still confirm green" "$GA_PRESENT" "" "g f g f g f g f g f g g" 0 --wait --timeout 30
 run_case "reordered identical check set still confirms green" "$GA_PRESENT" "$GA_REVERSED" "g a g a g a" 0
 # A completed check with no conclusion must stay non-green: a null conclusion
@@ -583,16 +596,19 @@ CASE_NEEDLE="required check(s) Agent Plugins manifest not registered" \
 # reading that lacks a required check after a green reading, whether it is the
 # confirmation reading or a later reading of a wait, is not green, and the check
 # is named. A reader that downgraded only before the first green reading would
-# confirm the 2 later readings green (exit 0).
+# confirm the 2 later readings green (exit 0). The 2 cases of a wait read a red
+# reading after the 2 that lack the check, so they end at once (exit 1) rather
+# than when the window closes, and their result does not depend on how long the
+# reads take.
 CASE_NEEDLE="required check(s) Plugin manifests not registered" \
   run_case "required check missing from the confirmation reading -> not green" \
   "$GA_PRESENT" "$(runs "$SD_OK" "$APM_OK" "$CF")" "g a a" 2
-CASE_NEEDLE="required check(s) Plugin manifests not registered" \
+CASE_NEEDLE="required check(s) Plugin manifests not registered" CASE_THIRD="$GA_RED" \
   run_case "required check missing from later readings of a wait -> not green" \
-  "$GA_PRESENT" "$(runs "$SD_OK" "$APM_OK" "$CF")" "g a a" 2 --wait --timeout 4
-CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
+  "$GA_PRESENT" "$(runs "$SD_OK" "$APM_OK" "$CF")" "g a a t" 1 --wait --timeout 30
+CASE_NEEDLE="required check(s) Cloudflare Pages not registered" CASE_THIRD="$GA_RED" \
   run_case "Cloudflare build missing from later readings of a wait -> not green" \
-  "$GA_PRESENT" "$(runs "$REQ_GA")" "g a a" 2 --wait --timeout 4
+  "$GA_PRESENT" "$(runs "$REQ_GA")" "g a a t" 1 --wait --timeout 30
 # The missing-check message belongs to a passing reading alone: a pending or red
 # reading that also lacks a required check is reported as pending or red, and
 # the message is not written.
@@ -640,8 +656,9 @@ run_err_case "a numeric head_sha is named on standard error" "$(head_runs 7)" 3 
 run_err_case "a head_sha of another commit is named on standard error" \
   "$(runs "{\"head_sha\":\"$C2\",${PM_OK#\{}" "$SD_OK" "$APM_OK" "$CF")" 3 \
   "check read failed for 0000000000000000000000000000000000000000: check run head_sha '$C2' is not the requested commit 0000000000000000000000000000000000000000"
-# head_sha is checked before the other fields of its run, also when the status
-# of that run is null or absent, so such a run is reported by its head_sha.
+# head_sha is checked after the id and the app object of its run and before its
+# status, conclusion, name and app slug, so a run whose status is null or absent
+# is reported by its head_sha.
 for st in null absent; do
   st_field=""
   if [ "$st" = null ]; then st_field='"status":null,'; fi
@@ -651,8 +668,9 @@ for st in null absent; do
 done
 # head_sha is compared as the whole 40-character sha, folded to lower case and
 # nothing else: an abbreviation, a trailing or middle slice, a value padded on
-# both sides or on one, and a value that has the commit as a prefix or a suffix
-# each name another value, so the reading is unreadable.
+# both sides or on one, a value that has the commit as a prefix or a suffix, the
+# sha with a separator inserted or with 0x before it, and the zero sha on a read
+# of another commit each name another value, so the reading is unreadable.
 CASE_SHA="$C1" run_case "head_sha abbreviated to 7 characters -> unreadable" "$(head_runs "\"${C1:0:7}\"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha abbreviated to 39 characters -> unreadable" "$(head_runs "\"${C1:0:39}\"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha padded with spaces -> unreadable" "$(head_runs "\" $C1 \"")" "" "" 3
@@ -662,6 +680,12 @@ CASE_SHA="$C1" run_case "head_sha with the commit as a suffix -> unreadable" "$(
 CASE_SHA="$C1" run_case "head_sha with a leading space only -> unreadable" "$(head_runs "\" $C1\"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha holding the last 7 characters -> unreadable" "$(head_runs "\"${C1:33}\"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha holding a middle slice -> unreadable" "$(head_runs "\"${C1:10:20}\"")" "" "" 3
+for sep in - " " _ : .; do
+  CASE_SHA="$C1" run_case "head_sha with [$sep] inserted -> unreadable" "$(head_runs "\"${C1:0:20}${sep}${C1:20}\"")" "" "" 3
+done
+CASE_SHA="$C1" run_case "head_sha with 0x before it -> unreadable" "$(head_runs "\"0x$C1\"")" "" "" 3
+CASE_SHA="$C1" run_case "zero head_sha on a read of another commit -> unreadable" \
+  "$(head_runs '"0000000000000000000000000000000000000000"')" "" "" 3
 # U+FB00, the ff ligature, is the one character whose upper case (FF) or case fold
 # (ff) is hexadecimal while its lower case is not, so a head_sha that spells ff
 # with it names another value only when head_sha is folded to lower case.
@@ -801,6 +825,18 @@ for st in queued in_progress; do
   run_case "$st required check carrying the conclusion success -> not green" \
     "$(bad_at status "\"$st\"" 0)" "" "" 2
 done
+# The status and the conclusion are compared in their exact letter case: a
+# required run whose status is COMPLETED or Completed has not finished, so the
+# reading is pending, and one that concludes Success or SUCCESS has not passed,
+# so the reading is red. A reader that folded either to lower case would read
+# green (exit 0).
+for st in COMPLETED Completed; do
+  run_case "required check with the status $st and the conclusion success -> not green" \
+    "$(bad_at status "\"$st\"" 0)" "" "" 2
+done
+for concl in Success SUCCESS; do
+  run_case "completed required check concluding $concl -> red" "$(bad_at conclusion "\"$concl\"" 0)" "" "" 1
+done
 # A failed run outranks an unfinished one, so a reading that holds both is red,
 # not pending.
 run_case "failed run beside an unfinished run -> red" \
@@ -812,6 +848,78 @@ run_err_case "empty check_runs is unreadable and says no checks are recorded" '{
   "ci-status: no checks are recorded for 0000000000000000000000000000000000000000 in owner/name"
 run_err_case "empty check_runs is not treated as a pass" '{"total_count":0,"check_runs":[]}' 3 \
   "ci-status: treating absent checks as unreadable, not as a pass"
+
+# Every per-run check applies whatever the other fields of its run hold. A real
+# check run always carries an integer id, so the decisive run below carries the
+# id 9, and it follows the 4 green required checks, the first of them with the
+# id 7. Each check is made on that run with one other field of it changed in
+# turn: the id left out, head_sha naming the commit read, each status, each
+# conclusion, each form of the app and its slug, and each form of the name,
+# except the field the check reads. A reader that made a check only when another
+# field of the same run held some value, or was present or absent, would read
+# such a reading green, pending or red, or fail with another message; the whole
+# reading must be unreadable, and the message names what is wrong. A null or
+# absent status is itself unreadable, so those 2 forms are used only for the
+# checks made before the status is read: the id, the app object and head_sha.
+# gated_run FIELD=RAW...: a completed, successful github-actions run named extra
+# with the id 9 and no head_sha, with each FIELD set to the raw JSON RAW, or
+# left out when RAW is absent. FIELD is id, head_sha, status, conclusion, name or
+# app (the whole app object); an empty argument changes nothing, and any other
+# FIELD prints nothing and fails.
+gated_run() {
+  local id=9 hs=absent st='"completed"' cn='"success"' nm='"extra"' app='{"slug":"github-actions"}'
+  local spec k v out=()
+  for spec in "$@"; do
+    [ -n "$spec" ] || continue
+    k="${spec%%=*}" v="${spec#*=}"
+    [ "$k" != "$spec" ] || return 1
+    case "$k" in
+      id) id="$v" ;;
+      head_sha) hs="$v" ;;
+      status) st="$v" ;;
+      conclusion) cn="$v" ;;
+      name) nm="$v" ;;
+      app) app="$v" ;;
+      *) return 1 ;;
+    esac
+  done
+  for spec in "id|$id" "head_sha|$hs" "status|$st" "conclusion|$cn" "name|$nm" "app|$app"; do
+    [ "${spec#*|}" = absent ] || out+=("\"${spec%%|*}\":${spec#*|}")
+  done
+  local IFS=,
+  printf '{%s}' "${out[*]}"
+}
+gate_ctx=("" id=absent 'head_sha="0000000000000000000000000000000000000000"'
+  'status="in_progress"' 'status="queued"' status=null status=absent
+  'conclusion="failure"' 'conclusion="neutral"' 'conclusion="skipped"' 'conclusion="cancelled"'
+  conclusion=null conclusion=absent
+  'app={"slug":"cloudflare-pages"}' 'app={"slug":"other-app"}' 'app={"slug":null}' 'app={}' app=null app=absent
+  'name="Plugin manifests"' 'name=""' name=null name=absent)
+# FIELD|WHAT|BAD|MESSAGE|WHEN: the check of FIELD, the bad value BAD given to
+# gated_run, the message it gives, and whether it is made before the status is
+# read (early) or after (late).
+gate_checks=(
+  "head_sha|head_sha of another commit|head_sha=\"$C2\"|check run head_sha '$C2' is not the requested commit 0000000000000000000000000000000000000000|early"
+  "id|a non-integer id|id=\"9\"|check run id is not an integer|early"
+  "id|the id of run 1 repeated|id=7|duplicate check run id|early"
+  "app|a non-object app|app=[]|check run app is not an object|early"
+  "status|a null status|status=null|check field status is null|late"
+  "conclusion|a non-string conclusion|conclusion=1|non-string check field conclusion|late"
+  "name|a non-string name|name=7|non-string check field name|late"
+  "app|a non-string app slug|app={\"slug\":7}|non-string check field app.slug|late"
+)
+gate_pm="{\"id\":7,${PM_OK#\{}"
+run_case "the gated reading with no field changed -> green" \
+  "$(runs "$gate_pm" "$SD_OK" "$APM_OK" "$CF" "$(gated_run)")" "" "" 0
+for chk in "${gate_checks[@]}"; do
+  IFS='|' read -r field what bad needle when <<<"$chk"
+  for ctx in "${gate_ctx[@]}"; do
+    if [ "${ctx%%=*}" = "$field" ]; then continue; fi
+    case "$ctx" in status=null | status=absent) if [ "$when" != early ]; then continue; fi ;; esac
+    run_err_case "$what on a run with the id 9 and [${ctx:-no other change}] -> unreadable" \
+      "$(runs "$gate_pm" "$SD_OK" "$APM_OK" "$CF" "$(gated_run "$ctx" "$bad")")" 3 "$read_failed: $needle"
+  done
+done
 
 # Every computation over the runs of a reading covers every run, wherever it
 # sits: not only the first runs, the last runs, or the first page. The 5-run
@@ -829,7 +937,8 @@ run_err_case "empty check_runs is not treated as a pass" '{"total_count":0,"chec
 # of that run do not confirm (the second differs from the first, so the tool
 # reads again, and that third read fails: exit 3, where a reader that compared
 # only some runs would confirm on the second reading, exit 0); and an
-# unfinished run there is named in the report when the wait window closes. A
+# unfinished run there is named in the report that a single reading without
+# --wait writes on standard output, so no wait window can close first. A
 # page 2 or 3 that is malformed makes the whole reading unreadable. A reader that checked only some runs or pages would read
 # such a reading green or pending, or fail with another message. Residual: the
 # positions are a sample, so a reader that skipped one other run of a large
@@ -939,9 +1048,9 @@ for at in 1:0 1:5 1:49 1:50 1:99 1:100 1:101 1:299 3:100 3:199 3:200 3:299; do
   CASE_NEEDLE="$read_failed: gh api failed" run_case "readings differing only on $where do not confirm" \
     "$(big_reading 300 "$pages" "${big_req[@]}")" \
     "$(big_one "$pages" "$idx" "$(big_bad conclusion '"neutral"' "$idx")")" "g a f" 3
-  CASE_NEEDLE="$(printf '  %-28s %s' "extra $idx" in_progress)" \
+  CASE_OUT="$(printf '  %-28s %s' "extra $idx" in_progress)" \
     run_case "the report names the unfinished $where" \
-    "$(big_one "$pages" "$idx" "$(big_bad status '"in_progress"' "$idx")")" "" "" 2 --wait --timeout 1
+    "$(big_one "$pages" "$idx" "$(big_bad status '"in_progress"' "$idx")")" "" "" 2
 done
 for p in 2 3; do
   run_err_case "page $p of 3 that is not an object -> unreadable" \
