@@ -93,7 +93,10 @@ to an element's or attribute's local name, whatever its namespace prefix:
 Python versions
 ---------------
 
-The gate prints the Python version it ran under. The raw-text element list is
+The gate runs only on Python 3.14 (``SUPPORTED_PYTHONS`` below), the version its
+guarantees are stated for and the version ``tools/test-inline-code.py`` passes
+on; on any other version it exits 3 before it reads a file. The gate prints the
+Python version it ran under. The raw-text element list is
 set on the HTML parser, so the reading of those elements does not depend on the
 version. Other ``html.parser`` behaviour does change between versions: how a
 comment ends (``--!>``), how a ``<!`` declaration or a ``<![CDATA[`` section is
@@ -104,6 +107,11 @@ where those changes matter for script, style and ``on`` attributes. A
 ``javascript:`` URL or a ``srcdoc`` attribute inside such markup stays
 version-dependent. The XML parser follows the XML specification on every
 version.
+
+The version check runs only when the gate runs as a program:
+``tools/check-install-page.py`` and ``tools/check-instructions-page.py`` load
+``inline_code_problems`` as a module and run on whatever Python their own
+workflows and ``tools/release-dry-run.sh`` use.
 
 What it does not verify
 -----------------------
@@ -125,7 +133,8 @@ another extension is outside it.
 Exit codes:
   0  no file carries inline code
   1  a file carries inline code or refused markup, the parser and a text count disagree, or the XML parser refuses an SVG file
-  3  site/ or a file could not be read, a file is not UTF-8, or no HTML page was found
+  3  site/ or a file could not be read, a file is not UTF-8, no HTML page was found, or the Python
+     version is not a supported one
 """
 
 from __future__ import annotations
@@ -143,6 +152,11 @@ SITE = REPO_ROOT / "site"
 PAGE_SUFFIXES = (".html", ".htm")
 SVG_SUFFIX = ".svg"
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+# The (major, minor) versions the gate runs on: the versions the docstring's guarantees
+# are stated for and tools/test-inline-code.py is green on. main() refuses every other
+# version, so the module loaders in check-install-page.py and check-instructions-page.py
+# are not affected.
+SUPPORTED_PYTHONS = ((3, 14),)
 
 DATA_BLOCK_TYPE = "application/ld+json"
 URL_ATTRIBUTES = ("href", "src", "action", "formaction")
@@ -402,6 +416,10 @@ def files() -> tuple[list[Path], list[Path]]:
 
 
 def main() -> int:
+    if sys.version_info[:2] not in SUPPORTED_PYTHONS:
+        supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
+        die(f"runs only on Python {supported}, the versions it and its tests are verified on; "
+            f"this is Python {sys.version_info[0]}.{sys.version_info[1]}")
     problems: list[str] = []
     pages, svgs = files()
     for path in pages + svgs:

@@ -19,8 +19,9 @@
 # A missing gate file fails the build with exit 3, the gates' own code for an
 # input that cannot be read; it is never skipped. A failing gate passes its
 # exit code through unchanged (1 for a failed check, 3 for an unreadable
-# input). tools/test-pages-build.py holds the expected gate list and fails if
-# this script stops running a gate, or stops failing when a gate exits 1 or 3.
+# input or, from tools/check-inline-code.py, an unsupported Python version).
+# tools/test-pages-build.py holds the expected gate list and fails if this
+# script stops running a gate, or stops failing when a gate exits 1 or 3.
 #
 # Usage (the build command in the Cloudflare Pages dashboard):
 #   bash tools/pages-build.sh
@@ -32,7 +33,9 @@ cd "${repo_root}"
 
 # tools/build-site.py and tools/check-baseline-pin.py import tomllib, which
 # needs Python 3.11 or later; refuse an older version here, before any gate,
-# so the build log names the problem in one line.
+# so the build log names the problem in one line. A version that passes this
+# check can still fail the build: tools/check-inline-code.py exits 3 on any
+# version outside its SUPPORTED_PYTHONS.
 python3 -I -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
   echo "pages-build: Python 3.11 or later is required (tomllib); found $(python3 --version 2>&1)." >&2
   exit 1

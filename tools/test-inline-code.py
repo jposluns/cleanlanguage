@@ -6,7 +6,8 @@ temporary repository (under $TMPDIR), applies 1 fault to 1 file, runs the gate
 there as a separate process and asserts its exit code. The cases named I1 to I7,
 I2 and I2B are the inline-code mutants of the PR 206 review, and the cases named
 N1, N2 and N4 are the probes of its first verification round. Exit 0 when every case passes;
-1 otherwise, naming each failing case.
+1 otherwise, naming each failing case. One further case runs the gate under a
+faked Python version tuple outside its supported set and asserts exit 3.
 """
 
 from __future__ import annotations
@@ -28,6 +29,12 @@ HOLDING = "site/draft/index.html"
 FAVICON = "site/assets/baseline/logos/cleanlanguage-favicon.svg"
 DEMO = "site/demo/index.html"
 IMG = '<img src="x" onerror="alert(1)">'
+# Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS and expects exit 3.
+VERSION_PROBE = (
+    "import sys, runpy; "
+    "sys.version_info = (3, 13, 9, 'final', 0); "
+    "runpy.run_path(sys.argv[1], run_name='__main__')"
+)
 
 
 def make_root(scratch: Path) -> Path:
@@ -254,12 +261,19 @@ def main() -> int:
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
             if result.returncode != expected:
                 failures.append(f"{name}: exit {result.returncode}, expected {expected}: {(result.stdout + result.stderr).strip()[:300]}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
+                                capture_output=True, text=True)
+        if result.returncode != 3:
+            failures.append(f"another Python version: exit {result.returncode}, expected 3: "
+                            f"{(result.stdout + result.stderr).strip()[:300]}")
     if failures:
         print("test-inline-code: failures:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-inline-code: all {len(CASES)} cases passed.")
+    print(f"test-inline-code: all {len(CASES) + 1} cases passed.")
     return 0
 
 
