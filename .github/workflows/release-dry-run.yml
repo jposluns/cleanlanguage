@@ -108,11 +108,11 @@ jobs:
 
       - name: Cross-consumer version-parse contract
         shell: bash
-        run: python3 tools/test-skill-version-consumers.py
+        run: python3 -I tools/test-skill-version-consumers.py
 
       - name: Released-line extractor contract
         shell: bash
-        run: python3 tools/test-skill-release-date.py
+        run: python3 -I tools/test-skill-release-date.py
 
       - name: Released-line client contract
         shell: bash
@@ -120,7 +120,7 @@ jobs:
 
       - name: Release workflow date-check behaviour
         shell: bash
-        run: python3 tools/test-release-skill-workflow.py
+        run: python3 -I tools/test-release-skill-workflow.py
 
       - name: Version-selector contract
         shell: bash

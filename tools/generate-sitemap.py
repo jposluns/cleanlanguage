@@ -21,7 +21,11 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# The tools folder goes last on the module path, after the standard library, so a
+# file planted beside this script cannot shadow a standard-library import, even
+# under python3 -I. Residual: a module named like a sibling (sitemap_engine,
+# web_metadata) in a site-packages directory would still be found first.
+sys.path.append(str(Path(__file__).resolve().parent))
 import sitemap_engine as engine  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
