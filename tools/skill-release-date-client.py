@@ -74,10 +74,11 @@ and STDERR_LIMIT). While the child runs, an ordinary write cannot grow any
 one file it writes past its cap: output_cap(limit) bytes, one byte past the
 larger read bound, or a lower file size limit the caller set, soft or hard
 (applied_cap). The cap is RLIMIT_FSIZE, set in the child before exec as
-both its soft and its hard limit, so a child without CAP_SYS_RESOURCE
-cannot raise it. After the wait, a child whose stdout or stderr has a
-final size that reached that cap, including a lower limit the caller set,
-is unavailable, and the reason names that cap. The client
+both its soft and its hard limit, so a child without CAP_SYS_RESOURCE,
+and any process it starts without it, cannot raise it. After the wait, a
+child whose stdout or stderr has a final size that reached that cap,
+including a lower limit the caller set, is unavailable, and the reason
+names that cap. The client
 waits for the child with a non-blocking
 waitpid (wait_child), at most CHILD_TIMEOUT_SECONDS, and exits 16 when the
 wait reports that the child is no longer its child, since its exit status
@@ -106,8 +107,15 @@ it starts, that holds CAP_SYS_RESOURCE (as a client run as root gives it)
 can raise the hard limit and then the soft one, so the cap holds only
 until it raises it; and the stdin file has the same cap but is not
 checked, so a child that fills it and still replies validly keeps its
-verdict. The extractor starts no process, so none of these arises from
-the extractor as it is.
+verdict. The extractor as it is starts no process and writes no file
+other than its stdout and stderr, so the residuals on the group after a
+normal end, on a process that leaves the group, and on the number of
+files cannot arise from it. It also reserves no disk blocks,
+truncates no file, sets no resource limit, and writes nothing to its stdin,
+so the residuals on reserved blocks, truncation, CAP_SYS_RESOURCE, and the
+stdin file do not arise from it either. The other two, on the free space of
+the file system and on a signal that ends the client while it waits, do not
+depend on what the extractor does.
 
 The contract (CONTRACT, REQUEST_KEYS, REPLY_KEYS) extends the one in
 ``tools/check-release-checksum-live.py``, rule for rule, with the ops and the
@@ -306,8 +314,8 @@ def output_cap(limit: int) -> int:
     reply one byte too long is still read and refused as too long, and an
     ordinary write that would grow a file past the cap fails. It does not
     bound a file already larger than the cap, which the child can write
-    within, storage reserved past the end of a file, or a child holding
-    CAP_SYS_RESOURCE that raises the limit."""
+    within; for everything else it does not bound, see the residuals in
+    the module docstring."""
     return max(limit + 1, STDERR_LIMIT) + 1
 
 
@@ -383,7 +391,8 @@ def run_extractor(op: str, fields: dict, timeout: float = CHILD_TIMEOUT_SECONDS,
         def limit_output() -> None:
             # Runs in the child, before exec: an ordinary write cannot grow a
             # file past cap, and with the hard limit set to cap too, a child
-            # without CAP_SYS_RESOURCE cannot raise it.
+            # without CAP_SYS_RESOURCE, or a process it starts without it,
+            # cannot raise the soft limit back.
             resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
 
         with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, \

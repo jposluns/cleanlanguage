@@ -214,7 +214,10 @@ case "${released_rc}" in
       || fail "tools/skill-release-date.py gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"
     ;;
   13) released="" ;;
-  14) fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line: the client could not read its input (exit 14)" ;;
+  14)
+    relay_client "${released}"
+    fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line: the client could not read its input (exit 14)"
+    ;;
   11)
     fail "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is malformed: $(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-release-date-client.py extract-stdin 2>&1 >/dev/null || true)"
     ;;

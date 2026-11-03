@@ -630,6 +630,17 @@ class PackagerReleaseDateTest(unittest.TestCase):
             "line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD",
         ])
 
+    def test_a_client_that_ends_before_the_whole_blob_with_exit_14_reports_its_reason(self):
+        # Row 89: unreadable input beside a SIGPIPE keeps the client's
+        # reason before the packager's unreadable-input message.
+        code, stderr = self.long_blob_run(14)
+        self.assertEqual(code, 1, stderr)
+        self.assertEqual(stderr.splitlines(), [
+            "stand-in ended at once",
+            "release-package: could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released "
+            "line: the client could not read its input (exit 14)",
+        ])
+
     def test_a_content_verdict_beside_a_sigpipe_is_a_failed_blob_read(self):
         # Row 89: a content verdict beside a non-zero blob status may rest on
         # part of the blob, so it is never taken: an absent line (13) or a
