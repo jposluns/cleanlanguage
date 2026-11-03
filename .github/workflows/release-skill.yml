@@ -363,7 +363,7 @@ jobs:
               0) echo "Release ${RELEASE_TAG} was published on ${RELEASE_DATE} (UTC), the day its Released line names." ;;
               15)
                 echo "::error::Release ${RELEASE_TAG} IS PUBLISHED on a different UTC day from its Released line: Released ${RELEASE_DATE}, published_at ${published_at} (see the days above)." >&2
-                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day; tools/check-release-checksum-live.py reports the same disagreement until then." >&2
+                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day, and tools/check-release-checksum-live.py reports the same disagreement until then." >&2
                 echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
                 exit 1
                 ;;

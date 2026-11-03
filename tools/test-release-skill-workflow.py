@@ -845,8 +845,8 @@ IMMUTABILITY_CLAIM = re.compile(
 IMMUTABILITY_CLAIM_ALLOWED = (
     "echo \"$1: release ${RELEASE_TAG} is immutable; it carries no Released line, so no publication day is checked.\"",
     "echo \"The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished,"
-    " so the remedy is a corrective new version whose Released line names its own publication day;"
-    " tools/check-release-checksum-live.py reports the same disagreement until then.\" >" + chr(38) + "2",
+    " so the remedy is a corrective new version whose Released line names its own publication day,"
+    " and tools/check-release-checksum-live.py reports the same disagreement until then.\" >" + chr(38) + "2",
     "echo \"Re-stamping the Released line cannot fix this: the published zip carries the Released line of the"
     " commit it was built from, and an immutable release cannot be republished. If the line at this commit"
     " was edited after the release, restore the value the published zip carries; otherwise the remedy is a"
