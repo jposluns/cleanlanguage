@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for tools/check-install-page.py: the install page's selector contract and the site-wide policy.
+"""Tests for tools/check-install-page.py: the install pages' contract and the site-wide policy.
 
 Each case copies the gate and the files it reads into a temporary repository
-(under $TMPDIR), applies 1 fault to the install page or to site/_headers, runs
-the gate there as a separate process and asserts its exit code. Exit 0 when
-every case passes; 1 otherwise, naming each failing case.
+(under $TMPDIR), applies 1 fault to the install page, a family page, or
+site/_headers, runs the gate there as a separate process and asserts its exit
+code. Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
 from __future__ import annotations
@@ -17,9 +17,14 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "tools" / "check-install-page.py"
-FILES = ["site/install/index.html", "site/_headers", "tools/check-headers.py", "tools/check-inline-code.py"]
 PAGE = "site/install/index.html"
+CLAUDE = "site/install/claude/index.html"
+CHATGPT = "site/install/chatgpt/index.html"
+GEMINI = "site/install/gemini/index.html"
+COPILOT = "site/install/copilot/index.html"
+OTHER = "site/install/other-ai/index.html"
 HEADERS = "site/_headers"
+FILES = [PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER, HEADERS, "tools/check-headers.py", "tools/check-inline-code.py"]
 SHARED_CSP = (
     "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
     "https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; "
@@ -30,6 +35,7 @@ NEXT_RULE = "\n\n/downloads/cleanlanguage.md"
 SITE_LINE = "/*\n  X-Frame-Options: DENY"
 SITE_CSP = f"  Content-Security-Policy: {SHARED_CSP}" + NEXT_RULE
 DRAFT_RULE = f"\n/draft/*\n  ! Content-Security-Policy\n  Content-Security-Policy: {SHARED_CSP}\n  X-Robots-Tag: noindex\n"
+OTHER_LINK = '<a class="btn inline" id="other-ai" href="/install/other-ai/">Other AI systems</a>'
 
 
 def make_root(scratch: Path) -> Path:
@@ -42,13 +48,13 @@ def make_root(scratch: Path) -> Path:
     return root
 
 
-def edit(relative: str, old: str, new: str):
+def edit(relative: str, old: str, new: str, every: bool = False):
     def apply(root: Path) -> None:
         path = root / relative
         text = path.read_text(encoding="utf-8")
         if old not in text:
             raise AssertionError(f"{old!r} is not in {relative}")
-        path.write_text(text.replace(old, new, 1), encoding="utf-8")
+        path.write_text(text.replace(old, new) if every else text.replace(old, new, 1), encoding="utf-8")
     return apply
 
 
@@ -63,25 +69,53 @@ def remove(relative: str):
     return lambda root: (root / relative).unlink()
 
 
+def both(*faults):
+    return lambda root: [fault(root) for fault in faults][-1]
+
+
 CASES = [
     ("the committed tree", None, 0),
-    ("a family section removed", edit(PAGE, 'data-family-section="gemini"', 'data-family-gone="gemini"'), 1),
-    ("a family section duplicated", edit(PAGE, '<section id="copilot" data-family-section="copilot">', '<section id="copilot" data-family-section="copilot"></section><section id="copilot" data-family-section="copilot">'), 1),
-    ("a family section hidden", edit(PAGE, '<section id="claude" data-family-section="claude">', '<section id="claude" data-family-section="claude" hidden>'), 1),
-    ("a family section aria-hidden", edit(PAGE, '<section id="claude" data-family-section="claude">', '<section id="claude" data-family-section="claude" aria-hidden="TRUE">'), 1),
-    ("a family heading emptied", edit(PAGE, "<h2>ChatGPT</h2>", "<h2>​</h2>"), 1),
-    ("data-family-section on another element", edit(PAGE, '<p class="lbl first">', '<p data-family-section="claude" class="lbl first">'), 1),
-    ("a picker link pointing elsewhere", edit(PAGE, '<a href="#chatgpt" data-family-link="chatgpt">', '<a href="#gemini" data-family-link="chatgpt">'), 1),
-    ("a picker link with aria-current", edit(PAGE, '<a href="#claude" data-family-link="claude">', '<a href="#claude" data-family-link="claude" aria-current="true">'), 1),
-    ("a picker link outside the list", edit(PAGE, '<li><a href="#other-ai" data-family-link="other-ai">Other AI systems</a></li></ul>', '</ul><a href="#other-ai" data-family-link="other-ai">Other AI systems</a>'), 1),
-    ("the reset button shown", edit(PAGE, "data-picker-reset hidden>", "data-picker-reset>"), 1),
-    ("the picker status removed", edit(PAGE, " data-picker-status></p>", "></p>"), 1),
+    ("a family link pointing elsewhere", edit(PAGE, 'id="chatgpt" href="/install/chatgpt/"', 'id="chatgpt" href="/install/gemini/"'), 1),
+    ("a family link removed", edit(PAGE, '<a class="btn inline" id="claude" href="/install/claude/">Claude</a> ', ""), 1),
+    ("a family id removed", edit(PAGE, 'id="gemini" href="/install/gemini/"', 'href="/install/gemini/"'), 1),
+    ("a family link duplicated", edit(PAGE, OTHER_LINK, OTHER_LINK + ' <a class="btn inline" id="copilot" href="/install/copilot/">Copilot</a>'), 1),
+    ("a family link that is not a button", edit(PAGE, '<a class="btn inline" id="copilot"', '<a id="copilot"'), 1),
+    ("a family link with aria-current", edit(PAGE, 'id="claude" href="/install/claude/"', 'id="claude" href="/install/claude/" aria-current="page"'), 1),
+    ("a family link hidden", edit(PAGE, 'id="gemini" href="/install/gemini/"', 'id="gemini" href="/install/gemini/" hidden'), 1),
+    ("a family link aria-hidden", edit(PAGE, 'id="gemini" href="/install/gemini/"', 'id="gemini" href="/install/gemini/" aria-hidden="TRUE"'), 1),
+    ("a family link outside the button row", both(
+        edit(PAGE, " " + OTHER_LINK, ""), edit(PAGE, '<p class="lbl blk">Scope</p>', f"<p>{OTHER_LINK}</p>\n" + '<p class="lbl blk">Scope</p>')), 1),
+    ("a family link after Get Clean Language", both(
+        edit(PAGE, " " + OTHER_LINK, ""), edit(PAGE, '<h2 id="get">Get Clean Language</h2>', f'<h2 id="get">Get Clean Language</h2>\n<p>{OTHER_LINK}</p>')), 1),
+    ("the family links out of order", both(
+        edit(PAGE, 'id="claude" href="/install/claude/">Claude', 'id="tmp" href="/install/claude/">Claude'),
+        edit(PAGE, 'id="chatgpt" href="/install/chatgpt/">ChatGPT', 'id="claude" href="/install/claude/">ChatGPT'),
+        edit(PAGE, 'id="tmp" href="/install/claude/">Claude', 'id="chatgpt" href="/install/chatgpt/">Claude')), 1),
+    ("data-picker reintroduced", edit(PAGE, '<p class="lbl first">', '<p data-picker class="lbl first">'), 1),
+    ("data-family-link reintroduced", edit(PAGE, '<a class="btn inline" id="claude"', '<a class="btn inline" data-family-link="claude" id="claude"'), 1),
+    ("data-family-section on a family page", edit(COPILOT, '<p class="lbl first">', '<p data-family-section="copilot" class="lbl first">'), 1),
+    ("a picker reset on a family page", edit(GEMINI, "</main>", '<button class="btn" type="button" data-picker-reset hidden>x</button></main>'), 1),
     ("the assurance id removed", edit(PAGE, '<h2 id="assurance">', "<h2>"), 1),
     ("the get id renamed", edit(PAGE, '<h2 id="get">', '<h2 id="cl-get">'), 1),
     ("the pick id removed", edit(PAGE, 'id="pick"', 'id="pick-gone"'), 1),
+    ("the technical id removed", edit(PAGE, '<h2 id="technical">', "<h2>"), 1),
+    ("a duplicate id on the install page", edit(PAGE, '<h2 id="spelling">', '<h2 id="spelling"><span id="test"></span>'), 1),
+    ("a duplicate id on a family page", edit(CHATGPT, '<p class="verified">', '<p class="verified" id="main-content">'), 1),
+    ("a family page missing", remove(GEMINI), 3),
+    ("a family page with no setup steps", edit(CLAUDE, '<ol class="steps">', "<ol>"), 1),
+    ("a family page step list hidden", edit(OTHER, '<ol class="steps">', '<ol class="steps" hidden>'), 1),
+    ("a family page with no verified line", edit(COPILOT, '<p class="verified">', "<p>"), 1),
+    ("a family page heading hidden", edit(CLAUDE, "<h1>", '<h1 class="visually-hidden">'), 1),
+    ("a family page heading emptied", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>​</h1>"), 1),
+    ("a family page inside a hidden wrapper", edit(GEMINI, '<div class="doc">', '<div class="doc" inert>'), 1),
+    ("a family page with a second h1", edit(GEMINI, "</main>", "<h1>Again</h1></main>"), 1),
+    ("a family page without its link back to #get", edit(OTHER, 'href="/install/#get"', 'href="/install/"', every=True), 1),
+    ("a family page without its link to #test", edit(CLAUDE, 'href="/install/#test"', 'href="/install/"', every=True), 1),
     ("an inline script", edit(PAGE, "</main>", "<script>alert(1)</script></main>"), 1),
+    ("an inline script on a family page", edit(COPILOT, "</main>", "<script>alert(1)</script></main>"), 1),
     ("an inline style", edit(PAGE, '<p class="lbl first">', '<p style="x" class="lbl first">'), 1),
     ("an on* handler", edit(PAGE, '<p class="lbl first">', '<p onclick="x()" class="lbl first">'), 1),
+    ("an on* handler on a family page", edit(OTHER, '<p class="lbl first">', '<p onclick="x()" class="lbl first">'), 1),
     ("I1: an application/x-javascript script",
         edit(PAGE, "</main>", '<script type="application/x-javascript">alert(1)</script></main>'), 1),
     ("I2B: src= inside another attribute's quoted value",
@@ -91,7 +125,11 @@ CASES = [
         "<noscript><p title=\"</noscript><img src=x title='>' onerror=alert(1)>\"></p></noscript></main>"), 1),
     ("a script from another origin", edit(PAGE, "</head>", '<script src="https://example.com/x.js" defer></script>\n</head>'), 1),
     ("baseline.css without its version token", edit(PAGE, "baseline.css?v=", "baseline.css?x="), 1),
-    ("select.js not loaded", edit(PAGE, "select.js?v=", "select-gone.js?v="), 1),
+    ("baseline.css without its version token on a family page", edit(CHATGPT, "baseline.css?v=", "baseline.css?x="), 1),
+    ("copy.js not loaded", edit(PAGE, "copy.js?v=", "copy-gone.js?v="), 1),
+    ("copy.js not loaded on a family page", edit(OTHER, "copy.js?v=", "copy-gone.js?v="), 1),
+    ("select.js loaded", edit(PAGE, "</head>", '<script src="/assets/baseline/select.js?v=1.3.0" defer></script>\n</head>'), 1),
+    ("select.js loaded on a family page", edit(CLAUDE, "</head>", '<script src="/assets/baseline/select.js?v=1.3.0" defer></script>\n</head>'), 1),
     ("a baseline script without its version token", edit(PAGE, "</head>", '<script src="/assets/baseline/rail.js" defer></script>\n</head>'), 1),
     ("a baseline script without defer", edit(PAGE, "</head>", '<script src="/assets/baseline/rail.js?v=1.3.0"></script>\n</head>'), 1),
     ("a script from outside the baseline", edit(PAGE, "</head>", '<script src="/assets/other.js?v=1.3.0" defer></script>\n</head>'), 1),

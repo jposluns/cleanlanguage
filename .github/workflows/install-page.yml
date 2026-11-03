@@ -1,15 +1,14 @@
 name: Install page
 
-# Checks that the install page keeps its five AI-family setup sections static,
-# visible, and complete, so the progressive-enhancement family selector in
-# site/assets/baseline/select.js stays an enhancement. With JavaScript blocked by the site's
-# rules, failed, or disabled, no family section may disappear. See
-# tools/check-install-page.py for what it proves and does not prove.
+# Checks that the install page links each AI family's setup page with visible
+# buttons, and that each family page keeps its setup steps static, visible, and
+# complete, with no script involved. See tools/check-install-page.py for what it
+# proves and does not prove.
 
 on:
   pull_request:
     paths:
-      - "site/install/index.html"
+      - "site/install/**"
       - "site/_headers"
       - "tools/check-install-page.py"
       - "tools/check-headers.py"
@@ -20,7 +19,7 @@ on:
     branches:
       - main
     paths:
-      - "site/install/index.html"
+      - "site/install/**"
       - "site/_headers"
       - "tools/check-install-page.py"
       - "tools/check-headers.py"
@@ -42,6 +41,6 @@ jobs:
         shell: bash
         run: python3 -I tools/test-install-page.py
 
-      - name: Check the install page stays static and complete
+      - name: Check the install pages stay static and complete
         shell: bash
         run: python3 -I tools/check-install-page.py
