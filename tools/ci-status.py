@@ -61,55 +61,51 @@ the check GitHub requires today. The tool insists on all 4, ahead of the branch
 ruleset listing the 3 Actions jobs. Each Actions job is matched by its exact display
 name (case-sensitive and untrimmed) together with the github-actions app slug, so a
 run of the same name from another app, or an unnamed github-actions job such as the
-sitemap check, never satisfies one; the Cloudflare build is matched by the exact
-app slug and app id of the Cloudflare app on this repository, whatever its name, so
-a run from any other app never satisfies it. If Cloudflare renames or
-re-registers that app, a passing run of it no longer counts, so the reading cannot
-turn green until the pin is updated: a passing reading reads pending, and a red
-reading still reads red. A present app id that is not an integer makes the
-reading unreadable. A
-passing reading missing any of the 4 means
-that check has not registered (a malformed branch, a head whose commit message
-carries a skip marker, or the external check still building); such a reading is
-downgraded from pass to pending, never to a red. A commit that legitimately ran
-none of them is a safe false-red,
-never a false-green. Residual: a name and an app cannot tell which workflow
-produced a run, so a pull request that deletes one of those workflows and adds
-another job with the same display name satisfies the check; GitHub's own
-app-pinned required check has the same limit. Within the same residual, another job
-in one of the 3 workflows can carry one of the 3 display names under a name: key
-indented other than the 4 spaces of a job's own keys. tools/test-ci-status.sh
-compares every name: line indented exactly 4 spaces, whatever form its value takes,
-but compares a job's name: key at any other indent only by its plain or quoted
-text, and only with the display name of that workflow's own job, so such a key
-passes when it carries another workflow's display name in any form, or its own
-workflow's display name in a form whose text differs from that name, such as a
-block scalar or an expression.
-The tool reads the check runs the API
-returns under its default filter, the latest runs, so whether such a job can take
-the place of a failed run of the real job in a reading depends on how the API
-selects the latest runs, which this tool does not control. Pointing --repo at a repository that
-does not run all 4 unconditionally would downgrade a legitimate green to pending.
-Residual: a required check that concludes skipped or neutral counts as passed, as
-GitHub counts it for a required check, so a job skipped without running its steps
-reads green. For the 3 Actions jobs, tools/test-ci-status.sh reads each workflow
-with an allow-list that fails closed: the on: block holds only a pull_request
-trigger with nothing under it and a push trigger filtered to main alone; the
-permissions block is exactly contents: read; a top-level env, if present, holds only
-CLAUDE_CODE_VERSION, set to a dotted version number such as 2.1.310; and the job
-with a required display name holds only name, runs-on set to ubuntu-latest, and
-steps. Each step holds an optional name and either uses: naming an owner/repo action
-pinned to a full 40-character commit sha, or run: with shell: bash, and nothing
-else. So that check refuses any if:, needs: or continue-on-error: key, any other
-runner or shell, any local or docker action, and any environment variable such as
-BASH_ENV or SHELLOPTS set in the workflow, any of which could otherwise skip the
-job or its steps, or pass over a failed step, and still read as passing; any line
-outside that shape fails the check. In CI that check runs only in the CI status
-tests job of .github/workflows/ci-status-test.yml, which this tool does not insist
-on, so a pull request that adds such a key and also alters or skips that job is
-not caught by ci-status. What the commands the steps run and the pinned actions
-do, including anything they write for later steps, and what the other jobs of the
-workflow run, are not checked.
+sitemap check, never satisfies one; the Cloudflare build is matched by the exact app
+slug and app id of the Cloudflare app on this repository, whatever its name, so a
+run from any other app never satisfies it. If Cloudflare renames or re-registers
+that app, a passing run of it no longer counts, so the reading cannot turn green
+until the pin is updated: a passing reading reads pending, and a red reading still
+reads red. A present app id that is not an integer makes the reading unreadable. A
+passing reading missing any of the 4 means that check has not registered (a
+malformed branch, a head whose commit message carries a skip marker, or the external
+check still building); such a reading is downgraded from pass to pending, never to a
+red. A commit that legitimately ran none of them is a safe false-red, never a
+false-green. Residual: a name and an app cannot tell which workflow produced a run,
+so a pull request that deletes one of those workflows and adds another job with the
+same display name satisfies the check; GitHub's own app-pinned required check has
+the same limit. Within the same residual, another job in one of the 3 workflows can
+carry one of the 3 display names under a name: key indented other than the 4 spaces
+of a job's own keys. tools/test-ci-status.sh compares every name: line indented
+exactly 4 spaces, whatever form its value takes, but compares a job's name: key at
+any other indent only by its plain or quoted text, and only with the display name of
+that workflow's own job, so such a key passes when it carries another workflow's
+display name in any form, or its own workflow's display name in a form whose text
+differs from that name, such as a block scalar or an expression. The tool reads the
+check runs the API returns under its default filter, the latest runs, so whether
+such a job can take the place of a failed run of the real job in a reading depends
+on how the API selects the latest runs, which this tool does not control. Pointing
+--repo at a repository that does not run all 4 unconditionally would downgrade a
+legitimate green to pending. Residual: a required check that concludes skipped or
+neutral counts as passed, as GitHub counts it for a required check, so a job skipped
+without running its steps reads green. For the 3 Actions jobs,
+tools/test-ci-status.sh reads each workflow with an allow-list that fails closed:
+the on: block holds only a pull_request trigger with nothing under it and a push
+trigger filtered to main alone; the permissions block is exactly contents: read; a
+top-level env, if present, holds only CLAUDE_CODE_VERSION, set to a dotted version
+number such as 2.1.310; and the job with a required display name holds only name,
+runs-on set to ubuntu-latest, and steps. Each step holds an optional name and either
+uses: naming an owner/repo action pinned to a full 40-character commit sha, or run:
+with shell: bash, and nothing else. So that check refuses any if:, needs: or
+continue-on-error: key, any other runner or shell, any local or docker action, and
+any environment variable such as BASH_ENV or SHELLOPTS set in the workflow, any of
+which could otherwise skip the job or its steps, or pass over a failed step, and
+still read as passing; any line outside that shape fails the check. In CI that check
+runs only in the CI status tests job of .github/workflows/ci-status-test.yml, which
+this tool does not insist on, so a pull request that adds such a key and also alters
+or skips that job is not caught by ci-status. What the commands the steps run and
+the pinned actions do, including anything they write for later steps, and what the
+other jobs of the workflow run, are not checked.
 
 The commit is named only by its full 40-character hexadecimal sha, folded to
 lower case and used as given. Every other value, an abbreviation of any length,

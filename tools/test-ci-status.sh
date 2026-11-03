@@ -463,6 +463,14 @@ run_err_case "a check run that is not an object is named" '{"check_runs":["compl
 run_deep_case "deeply nested payload is rejected fail-closed" 3
 # Duplicate JSON members must not hide a check -> fail-closed.
 run_case "duplicate JSON keys are rejected fail-closed" "$DUP_KEY" "" "" 3
+# The same holds inside the app object: a second id or slug would otherwise
+# replace the first and could make a run of another app read as the pinned one.
+run_err_case "duplicate id inside app is rejected fail-closed" \
+  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85456,"id":85455}}')" 3 \
+  "duplicate JSON key 'id'"
+run_err_case "duplicate slug inside app is rejected fail-closed" \
+  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages","slug":"cloudflare-workers-and-pages","id":85455}}')" 3 \
+  "duplicate JSON key 'slug'"
 # A declared total_count that exceeds the runs received is a truncated reading.
 run_case "declared total_count truncation is rejected fail-closed" "$TRUNCATED" "" "" 3
 # A non-ASCII digit passes str.isdigit() but int() would raise: reject as usage.
@@ -1226,21 +1234,25 @@ near_pm() {
 }
 for near in "Plugin manifest" "Plugin" "Plugin manifests (pull_request)" "Plugin manifestsx" \
   "xPlugin manifests" "lugin manifests" "Validate Plugin manifests" " Plugin manifests" \
-  "Plugin manifests\\t" "The Plugin manifests job" "PLUGIN MANIFESTS" "Plugin  manifests"; do
+  "Plugin manifests\\t" "\\tPlugin manifests" "\\uff30lugin manifests" "The Plugin manifests job" \
+  "PLUGIN MANIFESTS" "Plugin  manifests"; do
   CASE_NEEDLE="required check(s) Plugin manifests not registered" \
     run_case "near name [$near] does not count -> not green" "$(near_pm "$near" github-actions)" "" "" 2
 done
 for near in "github-actions-x" "xgithub-actions" "github-action" "ithub-actions" "x-github-actions-x" \
-  " github-actions" "github-actions " "GitHub-Actions" "GITHUB-ACTIONS"; do
+  " github-actions" "\\tgithub-actions" "github-actions " "\\uff47ithub-actions" "GitHub-Actions" \
+  "GITHUB-ACTIONS"; do
   CASE_NEEDLE="required check(s) Plugin manifests not registered" \
     run_case "near slug [$near] does not count -> not green" "$(near_pm "Plugin manifests" "$near")" "" "" 2
 done
 # The Cloudflare build is matched by the exact app slug and app id of the
 # Cloudflare app, so a run carrying the real app id under any other slug, whether
-# it shares a prefix, is padded, or is in another letter case, does not count.
+# it shares a prefix, has text or whitespace before or after the real slug, uses a
+# compatibility form of a letter, or is in another letter case, does not count.
 for near in "xcloudflare-pages" " cloudflare-pages" "Cloudflare-pages" "pages-cloudflare" "cloudflar" \
   "cloudflare-evil" "cloudflare" "cloudflare-pages" "cloudflare-workers-and-pages-x" \
-  "CLOUDFLARE-WORKERS-AND-PAGES" "cloudflare-workers-and-pages "; do
+  "CLOUDFLARE-WORKERS-AND-PAGES" "cloudflare-workers-and-pages " "x-cloudflare-workers-and-pages" \
+  " cloudflare-workers-and-pages" "\\tcloudflare-workers-and-pages" "\\uff43loudflare-workers-and-pages"; do
   CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
     run_case "near Cloudflare slug [$near] with the app id 85455 does not count -> not green" \
     "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"$near\",\"id\":85455}}")" "" "" 2
@@ -1268,6 +1280,12 @@ for spec in '85456|,"id":85456' '-85455|,"id":-85455' '4295052751|,"id":42950527
     run_case "real Cloudflare slug with app id [${spec%%|*}] does not count -> not green" \
     "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"cloudflare-workers-and-pages\"${spec#*|}}}")" "" "" 2
 done
+# The real slug and the real app id on 2 different runs are not the Cloudflare
+# app: each run must carry both.
+CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
+  run_case "real Cloudflare slug and real app id on different runs do not count -> not green" \
+  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85456}}' \
+    '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages","id":85455}}')" "" "" 2
 # A run that is not the pinned app is still read for its verdict: if Cloudflare
 # renames the app (another slug) or re-registers it (another app id), a failed
 # build of it reads red, never pending.
