@@ -4,12 +4,14 @@
 Row 95 asks that every gate or tool launch in the workflows runs `python3 -I`,
 pinned by a test. This scan pins it with one literal rule and refuses every
 other form by design. In the run text it reads, a line passes only when each
-python word and .py name written on it is part of the one form, or the line
-is a listed comment or echo that cannot run a command. For those lines the
-rule errs only by refusing an honest form. A launch can still pass when the
-scan does not see it: outside the run text, or written so that python or a
-.py name appears only after bash or GitHub expands it. Residuals, below,
-names each such case.
+python word and .py name written on it is part of the one form. No line is
+exempt: a comment or a message that names python or a .py file is a finding
+like any other, so the workflows name a tool in words (for example "the
+release-date extractor") wherever they mention it outside a launch. The rule
+can err by refusing an honest form. A launch can still pass when the scan does
+not see it: outside the run text, or written so that python or a .py name
+appears only after bash or GitHub expands it. Residuals, below, names each
+such case.
 
 A Python-launched gate that finds a planted file on its module path can import
 that file in place of a standard-library module and turn the gate into a green
@@ -28,27 +30,21 @@ The rule:
    is not a list and a step that is not a mapping are findings.
 2. Shell and environment. Every step `shell`, and every `defaults.run.shell`
    at workflow and job level, must be exactly `bash`, and every step with
-   run text must have one of them, so no step runs under a runner's default
-   shell. An `env` key BASH_ENV, ENV or PATH at workflow, job or step level
-   is a finding, and so is a run line that names BASH_ENV or GITHUB_PATH or
-   assigns ENV or PATH, since each can redirect `python3` to another program.
-   A listed line does not excuse these findings, nor those of rule 4.
+   run text must have one of them (its own, its job's, or the workflow's), so
+   no step runs under a runner's default shell. A job's default counts only
+   for that job's steps. An `env` key BASH_ENV, ENV or PATH at workflow, job
+   or step level is a finding, and so is a run line that names BASH_ENV or
+   GITHUB_PATH, or assigns ENV or PATH with `=` or `+=` (a name that only
+   ends in ENV or PATH, such as MYPATH, and an expansion such as `$PATH` are
+   not assignments). These are cheap checks of the common ways to redirect
+   `python3` to another program; they are not complete, and Residuals names
+   what they miss.
 3. Launch. In each step's `run` text, with every backslash-newline removed and
    nothing else dropped, every exact `python3 -I tools/<name>.py`, with single
    spaces, `<name>` holding no `/`, and no character of a path directly
    before `python3` or after `.py`, is a launch. With the launches removed, a
    line that still holds the word python in any case, or a `.py` or `.pyz`
-   name, is a finding, unless that exact line, stripped of surrounding
-   spaces, is listed for its file in ALLOWED_LINES. A listed line that no
-   longer exists is a finding, so the list stays exact. A listed line must
-   be a comment that holds no quote, backtick, backslash or `$(`, or a single
-   `echo` of one double-quoted message (optionally after a case label such
-   as `1)`, and optionally followed by `>&2` and `; exit N ;;`) whose message
-   holds none of `; & | < >`, a backtick, `$(`, a quote or a backslash; any
-   other listed line is a finding. So a listed line cannot run a command,
-   even when a quote opened on the line above puts its text outside quotes:
-   with no command separator, its words stay arguments, and an unquoted
-   parenthesis makes bash stop with a syntax error.
+   name, is a finding, whether it is a command, a comment or a message.
 4. A word that holds python or a `.py` name only once its quotes and
    backslashes are removed is a finding.
 5. Every launched script must exist, and the launches on lines that are not
@@ -61,8 +57,9 @@ Refused by design, although some of them would run isolated: `python3.12 -I`,
 `/usr/bin/python3 -I`, `python3 -I -B`, `python3 -I -W error`, the
 `python3 -P -E -s` equivalent, a quoted script path, two spaces before `-I`, a
 launch whose words are split across continued lines, `(python3)` and other
-case arms naming python, a message or comment that names python, and
-`shell: sh` or `bash -e {0}`. Write a launch as `python3 -I tools/<name>.py`.
+case arms naming python, a message or comment that names python or a .py
+file, and `shell: sh` or `bash -e {0}`. Write a launch as
+`python3 -I tools/<name>.py`.
 
 Out of this scan's scope: a check that the tools do not change sys.path, the
 pinning of `uses`, and local or composite actions, which are refused here
@@ -71,8 +68,13 @@ rather than read.
 Residuals, named here because the scan reads text the pull request controls:
 
 - a variable holding the interpreter or the script, such as `$PY tools/x`,
-  and a shell function or alias named python3, or a PATH change made in a
-  way the rule above does not name, that redirects the literal `python3`;
+  and a shell function or alias named python3, that redirects the literal
+  `python3`;
+- what rule 2 does not catch: any other environment variable (for example
+  LD_PRELOAD or LD_LIBRARY_PATH), an exported function (BASH_FUNC_*), a
+  multi-line GITHUB_ENV write, or a PATH change made by other means (for
+  example `read`) can change what `python3` runs, and the scan does not
+  catch it;
 - the shell scripts the workflows run, such as tools/release-dry-run.sh and
   tools/check-portable-text-sync.sh, which launch python3 without -I in
   places and are carried as a separate backlog row;
@@ -114,29 +116,6 @@ REPO = Path(__file__).resolve().parent.parent
 # The number of launches under .github/workflows when this check landed.
 LAUNCH_FLOOR = 51
 
-# Lines that name Python or a tool without launching it, by file, exactly as
-# they stand once stripped of surrounding spaces.
-ALLOWED_LINES: dict[str, tuple[str, ...]] = {
-    ".github/workflows/release-skill.yml": (
-        "# extractor, tools/skill-version.py, reads and validates it for every",
-        "# site, so the workflow, the dry run, and the Python gates agree byte",
-        "# stripped). skill-version.py reads the whole file, so there is no",
-        "# blob is piped straight in: skill-version.py reads all of stdin, so git",
-        "# published_at, interpreted only by tools/skill-release-date.py",
-        'echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2, so the release date cannot be checked." >&2',
-        '1) echo "tools/skill-release-date.py rejected the version ${VERSION} (see the error above)." >&2; exit 1 ;;',
-        '*) echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for ${VERSION}." >&2; exit 1 ;;',
-        "# left before UTC midnight (tools/skill-release-date.py",
-        'echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2." >&2',
-        "# Released day, decided only by tools/skill-release-date.py",
-        "# observation that tools/check-release-checksum-live.py defers to.",
-        "# (tools/test-release-skill-workflow.py fails if the workflow names",
-        'echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be '
-        "republished, so the remedy is a corrective new version whose Released line names its own "
-        'publication day, and tools/check-release-checksum-live.py reports the same disagreement until then." >&2',
-    ),
-}
-
 # Launched scripts that load sibling modules, checked with planted modules.
 PROBE_SCRIPTS = (
     "tools/check-page-metadata.py",
@@ -152,43 +131,24 @@ PYTHON = re.compile(r"python", re.IGNORECASE)
 PY_NAME = re.compile(r"\.pyz?(?![\w])")
 SHIM = re.compile(r"\bBASH_ENV\b|\bGITHUB_PATH\b|(?<![\w$])(?:ENV|PATH)\+?=")
 SHIM_ENV_KEYS = ("BASH_ENV", "ENV", "PATH")
-ALLOWED_COMMENT = re.compile(r"#[^\"'`\\]*")
-ALLOWED_ECHO = re.compile(
-    r'(?:[\w*|]+\) )?echo "([^"]*)"(?: >&2)?(?:; exit \d+ ;;)?'
-)
-UNSAFE_MESSAGE = re.compile(r"[;&|<>`\"'\\]|\$\(")
-
-
-def allowed_shape_problem(line: str) -> str | None:
-    """Return why a line may not be listed, or None when its shape is safe."""
-    if ALLOWED_COMMENT.fullmatch(line) and "$(" not in line:
-        return None
-    echo = ALLOWED_ECHO.fullmatch(line)
-    if echo and not UNSAFE_MESSAGE.search(echo.group(1)):
-        return None
-    return "is neither a plain comment nor one echo of a message with no shell control character"
 
 
 def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]:
-    """Return (refused lines, launches as (script, counted)).
-
-    Each refused line is (reason, line, listable); a line that is not listable
-    is a finding even when ALLOWED_LINES holds it.
-    """
-    refused: list[tuple[str, str, bool]] = []
+    """Return (refused lines as (reason, line), launches as (script, counted))."""
+    refused: list[tuple[str, str]] = []
     launches: list[tuple[str, bool]] = []
     for line in text.replace("\\\n", "").split("\n"):
         comment = line.lstrip(" \t").startswith("#")
         launches += [(m.group(1), not comment) for m in LAUNCH.finditer(line)]
         rest = LAUNCH.sub(" ", line)
         if SHIM.search(line):
-            refused.append(("BASH_ENV, GITHUB_PATH, or an ENV or PATH assignment, which can redirect python3", line.strip(), False))
+            refused.append(("BASH_ENV, GITHUB_PATH, or an ENV or PATH assignment, which can redirect python3", line.strip()))
         if PYTHON.search(rest) or PY_NAME.search(rest):
-            refused.append(("python or a .py name other than python3 -I tools/<name>.py", line.strip(), True))
+            refused.append(("python or a .py name other than python3 -I tools/<name>.py", line.strip()))
         for word in line.split():
             plain = re.sub(r"[\"'\\]", "", word)
             if (PYTHON.search(plain) and not PYTHON.search(word)) or (PY_NAME.search(plain) and not PY_NAME.search(word)):
-                refused.append(("a quote or backslash inside python or a .py name", line.strip(), False))
+                refused.append(("a quote or backslash inside python or a .py name", line.strip()))
     return refused, launches
 
 
@@ -292,13 +252,12 @@ def collect(doc, found: list) -> tuple[list, list]:
     return runs, shells
 
 
-def scan_tree(root: Path, floor: int, probe_scripts, allowed: dict) -> tuple[list[str], int]:
+def scan_tree(root: Path, floor: int, probe_scripts) -> tuple[list[str], int]:
     """Scan root/.github; return (findings, number of counted launches)."""
     files, findings = list_workflows(root)
     if not files:
         findings.append(f"no workflow found in {root / '.github' / 'workflows'}")
     counted = 0
-    seen_allowed: set[tuple[str, str]] = set()
     for path in files:
         rel = str(path.relative_to(root))
         try:
@@ -326,24 +285,13 @@ def scan_tree(root: Path, floor: int, probe_scripts, allowed: dict) -> tuple[lis
                 found.append(f"{where}.run: not text")
                 continue
             refused, launches = check_run(value)
-            for reason, line, listable in refused:
-                if listable and line in allowed.get(rel, ()):
-                    seen_allowed.add((rel, line))
-                else:
-                    found.append(f"{where}.run: {reason}: {line[:100]}")
+            for reason, line in refused:
+                found.append(f"{where}.run: {reason}: {line[:100]}")
             for script, count in launches:
                 if not (root / script).is_file():
                     found.append(f"{where}.run: launched script {script} does not exist")
                 counted += 1 if count else 0
         findings += [f"{rel}: {reason}" for reason in found]
-
-    for rel, lines in allowed.items():
-        for line in lines:
-            problem = allowed_shape_problem(line)
-            if problem:
-                findings.append(f"{rel}: the allowed line {problem}: {line[:100]}")
-            if (rel, line) not in seen_allowed:
-                findings.append(f"{rel}: the allowed line is no longer present: {line[:100]}")
 
     if counted < floor:
         findings.append(f"only {counted} launches found, below the floor of {floor}")
@@ -437,12 +385,28 @@ RUN_CASES = [
     ("./x.py", True),
     ("py\\\nthon3 -c 'x'", True),
     ("tools/x.\\\npy", True),
+    # Comments and messages have no exemption (fix round 7). The round 6
+    # reproduction: a ")" in a message closes a "$(" opened on the line above.
+    ("# see tools/x.py", True),
+    ("# the Python gates", True),
+    ('echo "tools/x.py is unavailable (exit $1)." >&2', True),
+    ('11) echo "tools/x.py rejected it." >&2; exit 1 ;;', True),
+    (f'v="$(\necho "a) {X}"', True),
+    (f': "\necho "{X}"\n"', True),
     # Each rule's own case
     ("echo the Python gates", True),
     ("echo check.py", True),
     ("p''ython3 -c 'x'", True),
     ("pyth\\on3 -c 'x'", True),
     ("cp a.p''y b", True),
+    ("# this step sets BASH_ENV", True),
+    ('PATH+=":/x"', True),
+    ('export PATH+=":/x"', True),
+    ("ENV+=x", True),
+    ("MYPATH=x", False),
+    ("OLD_ENV=x", False),
+    ('echo "$PATH=x"', False),
+    ('echo "$ENV="', False),
     # The one form, in its usual contexts
     (f"python3 -I {X}", False),
     (f"python3 -I {X} --flag \"$(date -u +%Y)\" >/dev/null || rc=$?", False),
@@ -457,6 +421,8 @@ RUN_CASES = [
     (f"python3 -I {X};", False),
     (f"python3 -I {X} \\\n  --flag", False),
     (f'cat <<EOF >> "$GITHUB_STEP_SUMMARY"\nLinks: $(python3 -I {X})\nEOF', False),
+    ('echo "The release-date extractor is unavailable (exit $1)." >&2', False),
+    ("# the release-date client runs the extractor", False),
     ("echo ok", False),
 ]
 
@@ -488,27 +454,26 @@ def self_test() -> list[str]:
             (tools / name).parent.mkdir(parents=True, exist_ok=True)
             (tools / f"{name}.py").write_text("import tempfile\n", encoding="utf-8")
         (tools / "x.pyc").write_bytes(b"")
-        missing, _ = scan_tree(root, 1, (), {})
+        missing, _ = scan_tree(root, 1, ())
         if not any("cannot list" in f for f in missing):
             errors.append("self-test: a missing .github folder gave no finding")
         github = root / ".github"
         workflows = github / "workflows"
         workflows.mkdir(parents=True)
-        empty, _ = scan_tree(root, 1, (), {})
+        empty, _ = scan_tree(root, 1, ())
         if not any("no workflow" in f for f in empty) or not any("below the floor" in f for f in empty):
             errors.append("self-test: an empty .github did not report both no workflow and the floor")
         case = workflows / "case.yml"
-        rel = ".github/workflows/case.yml"
         head = ("on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        shell: bash\n"
                 "    steps:\n      - run: python3 -I tools/a.py\n")
 
-        def scan(floor: int = 1, probe=(), allowed=None) -> list[str]:
-            return scan_tree(root, floor, probe, allowed or {})[0]
+        def scan(floor: int = 1, probe=()) -> list[str]:
+            return scan_tree(root, floor, probe)[0]
 
-        def run_case(text: str, **kw) -> list[str]:
+        def run_case(text: str) -> list[str]:
             body = "".join(f"          {line}\n" for line in text.split("\n"))
             case.write_text(head + "      - shell: bash\n        run: |\n" + body, encoding="utf-8")
-            return scan(**kw)
+            return scan()
 
         for text, want in RUN_CASES:
             if bool(run_case(text)) != want:
@@ -517,29 +482,6 @@ def self_test() -> list[str]:
             case.write_text(head + f"      - {text}\n", encoding="utf-8")
             if bool(scan()) != want:
                 errors.append(f"self-test: step {text!r}: expected {'a finding' if want else 'none'}")
-
-        message = 'echo "tools/x.py is unavailable (exit $1)." >&2'
-        if not run_case(message):
-            errors.append("self-test: an unlisted line naming a tool gave no finding")
-        if run_case(message, allowed={rel: (message,)}):
-            errors.append("self-test: a listed line naming a tool gave a finding")
-        if not any("no longer present" in f for f in run_case("echo ok", allowed={rel: (message,)})):
-            errors.append("self-test: a stale allowed line gave no finding")
-        if run_case(f': "\n{message}\n"', allowed={rel: (message,)}):
-            errors.append("self-test: a listed echo between quote lines gave a finding")
-        for bad in ('echo "a, then; tools/x.py runs." >&2', 'echo "a | tools/x.py" >&2',
-                    'echo "a & tools/x.py" >&2', 'echo "a `tools/x.py`" >&2', 'echo "a $(tools/x.py)" >&2',
-                    'echo "a > tools/x.py" >&2', 'echo "a \\" tools/x.py" >&2', 'echo "a \' tools/x.py" >&2',
-                    'echo "a \\ tools/x.py" >&2', "# a $(tools/x.py)", "# it's tools/x.py", '# a "tools/x.py"', "# a \\ tools/x.py",
-                    'echo "tools/x.py" && echo "tools/x.py"', 'printf "tools/x.py"'):
-            if not any("is neither a plain comment" in f for f in run_case(bad, allowed={rel: (bad,)})):
-                errors.append(f"self-test: the listed line {bad!r} was not refused by its shape")
-        shim = 'echo "$PWD/bin" >> "$GITHUB_PATH"'
-        if not run_case(shim, allowed={rel: (shim,)}):
-            errors.append("self-test: a listed line that writes GITHUB_PATH gave no finding")
-        named = "# this step sets BASH_ENV for tools/x.py"
-        if not any("redirect python3" in f for f in run_case(named, allowed={rel: (named,)})):
-            errors.append("self-test: a listed comment that names BASH_ENV was excused")
 
         case.write_text(head, encoding="utf-8")
         if scan():
@@ -553,6 +495,8 @@ def self_test() -> list[str]:
         if not any("does not exist" in f for f in scan()):
             errors.append("self-test: a missing launched script gave no finding")
 
+        two_jobs = ("on: push\njobs:\n  a:\n    defaults:\n      run:\n        shell: bash\n    steps:\n"
+                    "      - run: python3 -I tools/a.py\n  b:\n    steps:\n      - run: echo ok\n")
         whole = [
             ("parse error", "on: [push\n", "cannot be parsed"),
             ("duplicate key", head + "jobs: {}\n", "cannot be parsed"),
@@ -569,20 +513,28 @@ def self_test() -> list[str]:
             ("workflow env PATH", "on: push\nenv:\n  PATH: /x\n" + head[9:], "can redirect"),
             ("no shell anywhere", "on: push\njobs:\n  j:\n    runs-on: windows-latest\n    steps:\n      - run: echo ok\n",
              "no explicit shell"),
+            ("a second job without the first job's shell", two_jobs, "jobs.b.steps[0]: run text with no explicit shell"),
         ]
         for name, text, needle in whole:
             case.write_text(text, encoding="utf-8")
             if not any(needle in f for f in scan()):
                 errors.append(f"self-test: whole file {name} gave no finding naming {needle!r}")
-        case.write_text(
-            "x: &c\n  runs-on: ubuntu-latest\n  defaults:\n    run:\n      shell: bash\non: push\njobs:\n"
-            "  j:\n    <<: *c\n    steps:\n      - run: python3 -I tools/a.py\n", encoding="utf-8")
-        if scan():
-            errors.append(f"self-test: a YAML merge key gave {scan()!r}")
-        case.write_text("on: push\ndefaults:\n  run:\n    shell: bash\njobs:\n  j:\n    steps:\n"
-                        "      - run: python3 -I tools/a.py\n", encoding="utf-8")
-        if scan():
-            errors.append(f"self-test: a workflow-level shell: bash gave {scan()!r}")
+        clean = [
+            ("a YAML merge key",
+             "x: &c\n  runs-on: ubuntu-latest\n  defaults:\n    run:\n      shell: bash\non: push\njobs:\n"
+             "  j:\n    <<: *c\n    steps:\n      - run: python3 -I tools/a.py\n"),
+            ("a workflow-level shell: bash",
+             "on: push\ndefaults:\n  run:\n    shell: bash\njobs:\n  j:\n    steps:\n"
+             "      - run: python3 -I tools/a.py\n"),
+            ("a step-level shell: bash with no job or workflow shell",
+             "on: push\njobs:\n  j:\n    steps:\n      - shell: bash\n        run: python3 -I tools/a.py\n"),
+            ("a job-level shell: bash for each of two jobs",
+             two_jobs.replace("  b:\n    steps:", "  b:\n    defaults:\n      run:\n        shell: bash\n    steps:")),
+        ]
+        for name, text in clean:
+            case.write_text(text, encoding="utf-8")
+            if scan():
+                errors.append(f"self-test: {name} gave {scan()!r}")
         case.write_text(head, encoding="utf-8")
         (workflows / "bad.yml").write_bytes(b"on: \xff\n")
         if not any("cannot be read" in f for f in scan()):
@@ -664,7 +616,7 @@ def main() -> int:
             print(error)
         print(f"FAIL: {len(errors)} self-test failure(s)")
         return 1
-    findings, count = scan_tree(REPO, LAUNCH_FLOOR, PROBE_SCRIPTS, ALLOWED_LINES)
+    findings, count = scan_tree(REPO, LAUNCH_FLOOR, PROBE_SCRIPTS)
     for finding in findings:
         print(finding)
     if findings:

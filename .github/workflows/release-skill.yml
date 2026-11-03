@@ -73,10 +73,10 @@ jobs:
           # The first Version: line is authoritative and must be a bare X.Y.Z,
           # the same strict rule the release gates apply; a malformed first line
           # is rejected, never skipped to a later matching line. One shared strict
-          # extractor, tools/skill-version.py, reads and validates it for every
-          # site, so the workflow, the dry run, and the Python gates agree byte
+          # extractor, the skill version reader, reads and validates it for every
+          # site, so the workflow, the dry run, and the gate scripts agree byte
           # for byte (including on a NUL, which the old capture-then-sed form
-          # stripped). skill-version.py reads the whole file, so there is no
+          # stripped). The version reader reads the whole file, so there is no
           # early-quit pipe and no SIGPIPE on a large blob.
           if ! version="$(python3 -I tools/skill-version.py cleanlanguage/skills/cleanlanguage/SKILL.md)"; then
             echo "cleanlanguage/skills/cleanlanguage/SKILL.md has no valid bare X.Y.Z 'Version:' line (see the error above)." >&2
@@ -97,7 +97,7 @@ jobs:
           # rather than publishing and then stranding an unmergeable site flip.
           git fetch --quiet origin main
           # Read main's version through the same shared strict extractor. The raw
-          # blob is piped straight in: skill-version.py reads all of stdin, so git
+          # blob is piped straight in: the version reader reads all of stdin, so git
           # show completes and can take no SIGPIPE on a large blob.
           if ! main_version="$(git show FETCH_HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"; then
             echo "Could not read a valid bare X.Y.Z version on main." >&2
@@ -125,7 +125,7 @@ jobs:
           # release (HTTP 200: a re-run) keeps its first
           # publication day, so the expected date is the UTC day of its
           # published_at, interpreted only by the release_day_from_published_at
-          # op of tools/skill-release-date.py, the one place that states the
+          # op of the release-date extractor, the one place that states the
           # assumption about
           # that field. Any other status fails closed. The packager compares
           # this date with the Released line at HEAD. This probe duplicates the
@@ -142,7 +142,7 @@ jobs:
           # dated or not.
           #
           # Every call to the extractor goes through
-          # tools/skill-release-date-client.py (row 89), which runs it in its
+          # the release-date client (row 89), which runs it in its
           # --json mode and gives a content verdict only from a reply that meets
           # the contract: exit 11 malformed, 13 absent, 14 unreadable, 15
           # refused (each the extractor's own code plus 10). Every other exit
@@ -152,7 +152,7 @@ jobs:
           # content verdict. The probe below still runs first so a missing or
           # broken tool is named as that before any content is judged.
           release_date_tool_failed() { # exit-code what
-            echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2, so the release date cannot be checked." >&2
+            echo "The release-date extractor is unavailable or crashed (exit $1) while $2, so the release date cannot be checked." >&2
             exit 1
           }
           prc=0
@@ -166,7 +166,7 @@ jobs:
             0)
               # The value is used only as a bare day, checked as a whole.
               if ! [[ "${released}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-                echo "tools/skill-release-date.py gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md." >&2
+                echo "The release-date extractor gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md." >&2
                 exit 1
               fi
               dated=1
@@ -176,14 +176,14 @@ jobs:
               requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${VERSION}")" || rc=$?
               case "${rc}" in
                 0) ;;
-                11) echo "tools/skill-release-date.py rejected the version ${VERSION} (see the error above)." >&2; exit 1 ;;
+                11) echo "The release-date extractor rejected the version ${VERSION} (see the error above)." >&2; exit 1 ;;
                 *) release_date_tool_failed "${rc}" "deciding whether ${VERSION} needs a Released line" ;;
               esac
               case "${requirement}" in
                 optional) dated=0 ;;
                 # The line is required; the packager refuses its absence.
                 required) dated=1 ;;
-                *) echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for ${VERSION}." >&2; exit 1 ;;
+                *) echo "The release-date extractor gave an unexpected answer (${requirement:-nothing}) for ${VERSION}." >&2; exit 1 ;;
               esac
               ;;
             11) echo "The Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed (see the error above)." >&2; exit 1 ;;
@@ -231,7 +231,7 @@ jobs:
                   # must be a bare day, checked as a whole, never one with a
                   # line of its own after it.
                   if ! [[ "${release_date}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-                    echo "tools/skill-release-date.py gave an unexpected answer (${release_date:-nothing}) for the published_at of ${RELEASE_TAG}." >&2
+                    echo "The release-date extractor gave an unexpected answer (${release_date:-nothing}) for the published_at of ${RELEASE_TAG}." >&2
                     exit 1
                   fi
                   ;;
@@ -288,10 +288,10 @@ jobs:
           # refuses to start publishing unless the UTC clock, read at the
           # call, is still on the day RELEASE_DATE with at least 10 minutes
           # left before UTC midnight (the publish_window op of
-          # tools/skill-release-date.py, through tools/skill-release-date-client.py,
+          # the release-date extractor, through the release-date client,
           # decides that).
           release_date_tool_failed() { # exit-code what
-            echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2." >&2
+            echo "The release-date extractor is unavailable or crashed (exit $1) while $2." >&2
             exit 1
           }
           refuse_publish_window() {
@@ -319,18 +319,18 @@ jobs:
           # published_at cannot be replaced later, and then, for a dated
           # release only, requires the UTC day of its published_at to be the
           # Released day, decided only by the confirm_published op of
-          # tools/skill-release-date.py, through tools/skill-release-date-client.py.
+          # the release-date extractor, through the release-date client.
           # An undated release (RELEASE_DATED=0) has no
           # Released day, so its readback ends after the immutable check
           # (item 57). The log line it prints after the first creation of a
           # dated release is the first-publication
-          # observation that tools/check-release-checksum-live.py defers to.
+          # observation that the live release checksum check defers to.
           # This readback is the only immutability check. The repository
           # setting that makes new releases immutable is deliberately not
           # read beforehand: GitHub documents its REST endpoint as needing
           # administration read access, which the workflow GITHUB_TOKEN cannot
           # be granted, so such a pre-check would refuse every release
-          # (tools/test-release-skill-workflow.py fails if the workflow names
+          # (the release workflow test fails if the workflow names
           # that endpoint). The readback fails closed: an unreadable, missing
           # (null), empty or any other non-true immutable value refuses the
           # run. A release published while the setting is off is already
@@ -363,7 +363,7 @@ jobs:
               0) echo "Release ${RELEASE_TAG} was published on ${RELEASE_DATE} (UTC), the day its Released line names." ;;
               15)
                 echo "::error::Release ${RELEASE_TAG} IS PUBLISHED on a different UTC day from its Released line: Released ${RELEASE_DATE}, published_at ${published_at} (see the days above)." >&2
-                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day, and tools/check-release-checksum-live.py reports the same disagreement until then." >&2
+                echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day, and the live release checksum check reports the same disagreement until then." >&2
                 echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
                 exit 1
                 ;;

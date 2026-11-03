@@ -89,11 +89,12 @@ CLIENT = REPO / "tools" / "skill-release-date-client.py"
 # Row 89: the extractor file name. Each caller reaches the extractor only
 # through tools/skill-release-date-client.py, whose name does not contain
 # it, so in a caller the lines that name it are only the messages and
-# comments listed with the caller; any other line that names it, a launch
-# in any form among them (any interpreter, quoted or not, any options, a
-# continuation line, or the script run by its shebang), fails the launch
-# test. Residual: a launch that builds the name from parts or reads it from
-# a variable is not seen.
+# comments listed with the caller (none, in the release workflow, since
+# row 95 left no line there naming a .py file outside a launch); any other
+# line that names it, a launch in any form among them (any interpreter,
+# quoted or not, any options, a continuation line, or the script run by
+# its shebang), fails the launch test. Residual: a launch that builds the
+# name from parts or reads it from a variable is not seen.
 EXTRACTOR_NAME = 'skill-release-date.py'
 
 
@@ -113,8 +114,9 @@ LAUNCH_PROBES = (
 
 # Row 89: the client file name, checked the same way. In a caller, the
 # lines that name it are only the comments and the launches listed with
-# the caller, each launch exactly "python3 -I tools/skill-release-date-
-# client.py" and its arguments, so any other line that names it fails:
+# the caller (only launches, in the release workflow), each launch
+# exactly "python3 -I tools/skill-release-date-client.py" and its
+# arguments, so any other line that names it fails:
 # a launch without -I, with another interpreter word, quoted or from a
 # variable, over a continuation line, by its shebang, or one more launch in
 # the listed form. Residual: a launch that builds the name from parts or
@@ -138,34 +140,22 @@ CLIENT_LAUNCH_PROBES = (
     'python3 -I tools/skill-release-date-client.py baseline',
 )
 
-# The lines of the release workflow that name the client: its comments and
-# its launches.
+# The lines of the release workflow that name the client: its launches
+# only, since row 95 reworded every comment that named it.
 WORKFLOW_CLIENT_MENTIONS = (
-    '          # tools/skill-release-date-client.py (row 89), which runs it in its',
     '          baseline="$(python3 -I tools/skill-release-date-client.py baseline)" || prc=$?',
     '          released="$(python3 -I tools/skill-release-date-client.py extract-file cleanlanguage/skills/cleanlanguage/SKILL.md)" || rc=$?',
     '              requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${VERSION}")" || rc=$?',
     '              release_date="$(python3 -I tools/skill-release-date-client.py published-day "${published_at}")" || rc=$?',
-    '          # tools/skill-release-date.py, through tools/skill-release-date-client.py,',
     '            python3 -I tools/skill-release-date-client.py publish-window "${RELEASE_DATE}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null || rc=$?',
-    '          # tools/skill-release-date.py, through tools/skill-release-date-client.py.',
     '            python3 -I tools/skill-release-date-client.py confirm-published "${RELEASE_DATE}" "${published_at}" >/dev/null || rc=$?',
     '            baseline="$(python3 -I tools/skill-release-date-client.py baseline)" || prc=$?',
 )
 
-# The lines of the release workflow that name the extractor: failure
-# messages and a comment, none of them a launch.
-WORKFLOW_MENTIONS = (
-    '          # op of tools/skill-release-date.py, the one place that states the',
-    '            echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2, so the release date cannot be checked." >&2',
-    '                echo "tools/skill-release-date.py gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md." >&2',
-    '                11) echo "tools/skill-release-date.py rejected the version ${VERSION} (see the error above)." >&2; exit 1 ;;',
-    '                *) echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for ${VERSION}." >&2; exit 1 ;;',
-    '                    echo "tools/skill-release-date.py gave an unexpected answer (${release_date:-nothing}) for the published_at of ${RELEASE_TAG}." >&2',
-    '          # tools/skill-release-date.py, through tools/skill-release-date-client.py,',
-    '            echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2." >&2',
-    '          # tools/skill-release-date.py, through tools/skill-release-date-client.py.',
-)
+# The lines of the release workflow that name the extractor: none. Row 95
+# reworded its failure messages and comments to name "the release-date
+# extractor", so any line that names the file is a new mention.
+WORKFLOW_MENTIONS = ()
 VCS = "git"
 COMMIT = "c" * 40
 OTHER_COMMIT = "d" * 40
@@ -846,7 +836,7 @@ IMMUTABILITY_CLAIM_ALLOWED = (
     "echo \"$1: release ${RELEASE_TAG} is immutable; it carries no Released line, so no publication day is checked.\"",
     "echo \"The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished,"
     " so the remedy is a corrective new version whose Released line names its own publication day,"
-    " and tools/check-release-checksum-live.py reports the same disagreement until then.\" >" + chr(38) + "2",
+    " and the live release checksum check reports the same disagreement until then.\" >" + chr(38) + "2",
     "echo \"Re-stamping the Released line cannot fix this: the published zip carries the Released line of the"
     " commit it was built from, and an immutable release cannot be republished. If the line at this commit"
     " was edited after the release, restore the value the published zip carries; otherwise the remedy is a"
@@ -1314,7 +1304,7 @@ class PublishStepTest(WorkflowStepTest):
                     self.break_extractor(op, mode)
                     code, out, err = self.run_step(PUBLISH)
                     self.assertEqual(code, 1, err)
-                    self.assertIn(f"tools/skill-release-date.py is unavailable or crashed (exit 16) {what}.", err)
+                    self.assertIn(f"The release-date extractor is unavailable or crashed (exit 16) {what}.", err)
                     self.assertIn("so the extractor is unavailable", err)
                     for text in VERDICT_TEXTS:
                         self.assertNotIn(text, err)
@@ -2214,7 +2204,7 @@ class DetermineStepTest(WorkflowStepTest):
                     self.break_extractor(op, mode)
                     code, _out, err = self.run_step(DETERMINE)
                     self.assertEqual(code, 1, err)
-                    self.assertIn(f"tools/skill-release-date.py is unavailable or crashed (exit 16) while {what}, "
+                    self.assertIn(f"The release-date extractor is unavailable or crashed (exit 16) while {what}, "
                                   "so the release date cannot be checked.", err)
                     self.assertIn("so the extractor is unavailable", err)
                     for text in VERDICT_TEXTS:
@@ -2326,14 +2316,14 @@ class WholeValueTest(WorkflowStepTest):
     def test_extract_file_value_with_a_second_line(self):
         self.set_state(status="404")
         self.stand_in("extract-file", "2026-11-15")
-        self.assert_refused("tools/skill-release-date.py gave an unexpected answer (2026-11-15\nX=1) for the Released "
+        self.assert_refused("The release-date extractor gave an unexpected answer (2026-11-15\nX=1) for the Released "
                             "line of cleanlanguage/skills/cleanlanguage/SKILL.md.")
 
     def test_requires_date_value_with_a_second_line(self):
         self.carried["VERSION"] = "1.0.14"
         self.skill("Version: 1.0.14  \nAuthor: x\n")
         self.stand_in("requires-date", "optional")
-        self.assert_refused("tools/skill-release-date.py gave an unexpected answer (optional\nX=1) for 1.0.14.")
+        self.assert_refused("The release-date extractor gave an unexpected answer (optional\nX=1) for 1.0.14.")
 
     def test_published_day_value_with_a_second_line(self):
         # A version above the baseline with no Released line, and a published
@@ -2342,7 +2332,7 @@ class WholeValueTest(WorkflowStepTest):
         self.skill("Version: 1.0.15  \nAuthor: x\n")
         self.set_state(status="200", published_at="2026-11-15T12:00:03Z")
         self.stand_in("published-day", "2026-11-15")
-        self.assert_refused("tools/skill-release-date.py gave an unexpected answer (2026-11-15\nX=1) for the "
+        self.assert_refused("The release-date extractor gave an unexpected answer (2026-11-15\nX=1) for the "
                             "published_at of v1.0.15.")
 
 
@@ -2360,7 +2350,7 @@ class WholeBaselineTest(WorkflowStepTest):
                 self.set_state(status="404")
                 code, _out, err = self.run_step(step)
                 self.assertEqual(code, 1, err)
-                self.assertIn("tools/skill-release-date.py is unavailable or crashed (exit 0) while probing it", err)
+                self.assertIn("The release-date extractor is unavailable or crashed (exit 0) while probing it", err)
                 self.assertFalse(any(is_tag_operation(c) or is_create(c) for c in self.calls()), self.calls())
 
 
