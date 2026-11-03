@@ -2,18 +2,21 @@
 """Generate the cleanlanguage.ai site on the shared template (baseline), with a base path.
 
 The site is generated from ``site-src/`` into the folder its base path names:
-``/draft/`` writes ``site/draft/`` (staging, the current setting in
-``site-src/site.json``), and ``/`` writes ``site/`` (after promotion). Cloudflare
-Pages publishes ``site/`` as committed, so the output is committed and this
-tool's ``--check`` mode proves that the committed output is exactly what the
-sources produce.
+``/`` writes ``site/`` (the published site, the current setting in
+``site-src/site.json`` since promotion), and ``/draft/`` writes ``site/draft/``
+(staging a new version for review). Cloudflare Pages publishes ``site/`` as
+committed, so the output is committed and this tool's ``--check`` mode proves
+that the committed output is exactly what the sources produce.
 
 Sources
 -------
 
-- ``site-src/site.json``: base path, site class, navigation, page list, the
-  fixed root paths a draft page may link to (``root_allowlist``), the family
-  footer order, and the pages allowed to link the Disclosure and Licence pages.
+- ``site-src/site.json``: base path, site class, navigation, page list (each
+  page with its ``modified`` date, the ``article:modified_time`` of the ``/``
+  build, and its ``published`` date), the fixed root paths a draft page may
+  link to (``root_allowlist``), the files committed by hand beside the
+  generated ones at ``site/`` (``static_files``), the family footer order, and
+  the pages allowed to link the Disclosure and Licence pages.
 - ``.baseline/pin.toml``: the baseline version (for the ``?v=`` asset tokens)
   and the pinned file list, the one source of both (``tools/copy-baseline.py``
   writes it, ``tools/check-baseline-pin.py`` checks the copied files).
@@ -51,22 +54,31 @@ family footer or ``#copy-status``; a duplicate ``id``; an unreplaced token; an
 in-page fragment with no target; a root-relative link or asset outside the base
 path that is not in ``root_allowlist``; a relative link; an external link
 without ``target="_blank" rel="noopener noreferrer"`` and the "(opens in a new
-tab)" text; a draft page without ``noindex, nofollow``; a JSON-LD block on a
-draft page; and a release version that disagrees with SKILL.md.
+tab)" text; a draft page, or a ``noindex`` page at base ``/``, without
+exactly 1 ``noindex, nofollow`` robots meta, and an indexable page at base
+``/`` with one; a JSON-LD block on a draft page or a ``noindex`` page; a page
+of the ``/`` build with no ``modified`` date (and no ``--date``), or a date
+that is not ``YYYY-MM-DD``; and a release version that disagrees with SKILL.md.
 
 Modes
 -----
 
     python3 -I tools/build-site.py            write the configured base path's output
     python3 -I tools/build-site.py --check    regenerate in memory and compare byte for byte
-    python3 -I tools/build-site.py --base / --out DIR --date YYYY-MM-DD
-                                             render the promotion build into DIR (tests)
+    python3 -I tools/build-site.py --out DIR [--base B] [--date YYYY-MM-DD]
+                                             render into DIR instead (tests); --date
+                                             replaces every page's modified date
 
 ``--check`` fails on any missing, extra or different file under the output
-folder outside ``assets/baseline/``, and on any internal link that does not
-resolve to a generated page, a generated anchor, a pinned baseline file or an
-allowlisted root file. Writing the ``/`` build into ``site/`` also needs
-``--promote``, so it cannot happen by accident before the owner approves.
+folder outside ``assets/baseline/``, on any file there that is neither
+generated nor listed in ``static_files`` (at ``site/`` only), on a listed static
+file that is missing, and on any internal link that does not resolve to a
+generated page, a generated anchor, a pinned baseline file or an allowlisted
+root file. Writing a ``--base /`` override into ``site/`` while
+``site-src/site.json`` names another base needs ``--promote``, so a promotion
+cannot happen by accident before the owner approves; once the configured base
+is ``/``, a plain run writes ``site/``. The build never deletes a stale file at
+``site/``; remove an old page with ``git rm``.
 
 Exit codes:
   0  written, or the check passed
@@ -408,6 +420,11 @@ def operating_mode_count(root: Path) -> int:
 
 # Page assembly ----------------------------------------------------------------
 
+def page_date(page: dict, override: str | None) -> str | None:
+    """The page's modified date: ``--date`` when given, else its ``modified`` entry in site.json."""
+    return override if override is not None else page.get("modified")
+
+
 def head(config: dict, page: dict, base: str, asset_tokens: dict, date: str | None) -> str:
     title = f"{page['title']} | {config['name']}{config['tld']}"
     lines = [
@@ -422,7 +439,7 @@ def head(config: dict, page: dict, base: str, asset_tokens: dict, date: str | No
         lines.append('<meta name="robots" content="noindex, nofollow">')
     lines.append(f"<title>{html.escape(title, quote=False)}</title>")
     if not draft and not page.get("noindex"):
-        lines += promotion_metadata(config, page, date)
+        lines += promotion_metadata(config, page, page_date(page, date))
     key = config["site_key"]
     lines.append(f'<link rel="icon" href="{base}assets/baseline/logos/{key}-favicon.svg" type="image/svg+xml">')
     lines.append(f'<link rel="apple-touch-icon" href="{base}assets/baseline/logos/{key}-touch.png">')
@@ -443,9 +460,14 @@ def head(config: dict, page: dict, base: str, asset_tokens: dict, date: str | No
 
 def promotion_metadata(config: dict, page: dict, date: str | None) -> list[str]:
     """The metadata the page-metadata gate requires, emitted only at base /."""
-    if date is None or not DATE.match(date):
-        raise BuildError("the / build needs --date YYYY-MM-DD for article:modified_time")
+    if not isinstance(date, str) or not DATE.match(date):
+        raise BuildError(
+            f"{page['source']}: the / build needs a modified date YYYY-MM-DD for article:modified_time; "
+            f"set \"modified\" for page {page['id']!r} in site-src/site.json (found {date!r})"
+        )
     published = page.get("published") or date
+    if not DATE.match(published):
+        raise BuildError(f"{page['source']}: published date {published!r} is not YYYY-MM-DD")
     url = f"{config['origin']}/{page['path']}"
     full_title = f"{page['title']} | {config['name']}{config['tld']}"
     description = page.get("description", "")
@@ -699,8 +721,14 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
             problems.append("an inline executable <script>")
         if kind == "application/ld+json" and base != "/":
             problems.append("a JSON-LD block on a draft page")
+        elif kind == "application/ld+json" and page.get("noindex"):
+            problems.append("a JSON-LD block on a noindex page")
     if base != "/" and scan.robots != ["noindex, nofollow"]:
         problems.append("a draft page must carry exactly 1 robots meta, noindex, nofollow")
+    elif base == "/" and page.get("noindex") and scan.robots != ["noindex, nofollow"]:
+        problems.append("a noindex page must carry exactly 1 robots meta, noindex, nofollow")
+    elif base == "/" and not page.get("noindex") and scan.robots:
+        problems.append("an indexable page carries a robots meta")
     allow = set(config["root_allowlist"])
     if page["id"] not in config["about_linkers"]:
         for tag, value in scan.links:
@@ -738,23 +766,46 @@ def out_dir_for(base: str) -> Path:
     return Path("site") / base.strip("/")
 
 
-def check_sitemap_exclusion(root: Path, base: str) -> None:
-    """The page-metadata and sitemap gates read */index.html, which matches the draft's home page.
+def check_sitemap_exclusion(root: Path, base: str, pages: list) -> None:
+    """The page-metadata and sitemap gates read */index.html, so each noindex page there must be excluded.
 
-    While the site is staged, tools/sitemap-config.json must exclude it (recorded exclusion E1);
-    at promotion the exclusion must go, so the promoted home page is checked like every other page.
+    While a draft is staged, tools/sitemap-config.json must exclude the draft's home page
+    (recorded exclusion E1). At base /, it must exclude exactly the noindex pages whose output
+    is a */index.html (the /draft/ holding page), so every indexable page is checked and no
+    noindex page is.
     """
     config = read_json(root, Path("tools/sitemap-config.json"))
     exclude = config.get("exclude")
     if not isinstance(exclude, list):
         raise Unreadable("tools/sitemap-config.json has no exclude list")
     stray = [entry for entry in exclude if isinstance(entry, str) and entry.endswith("/index.html") and entry != "404.html"]
-    wanted = [] if base == "/" else [base.strip("/") + "/index.html"]
+    if base == "/":
+        wanted = sorted(
+            page["path"] + "index.html"
+            for page in pages
+            if page.get("noindex") and page["path"].endswith("/") and page["path"].count("/") == 1
+        )
+    else:
+        wanted = [base.strip("/") + "/index.html"]
     if sorted(stray) != wanted:
         raise BuildError(
             f"tools/sitemap-config.json excludes {sorted(stray)}, but base {base} needs exactly {wanted}; "
-            "the draft's home page is excluded while staged and checked after promotion"
+            "a noindex page that the gates would read as */index.html is excluded, and no other page is"
         )
+
+
+def static_files(config: dict) -> list[str]:
+    """The files committed by hand beside the generated ones at site/ (site.json static_files)."""
+    listed = config.get("static_files", [])
+    if not isinstance(listed, list) or not all(isinstance(name, str) and name for name in listed):
+        raise Unreadable("site-src/site.json static_files must be a list of file paths")
+    if len(set(listed)) != len(listed):
+        raise Unreadable("site-src/site.json static_files lists a file twice")
+    for name in listed:
+        parts = name.split("/")
+        if name.startswith("/") or "" in parts or "." in parts or ".." in parts or name.startswith("assets/baseline/"):
+            raise Unreadable(f"site-src/site.json static_files entry {name!r} is not a plain path under site/")
+    return listed
 
 
 def file_kb(root: Path, name: str) -> str:
@@ -767,15 +818,36 @@ def file_kb(root: Path, name: str) -> str:
 
 
 def build(
-    root: Path, base: str | None = None, date: str | None = None, release: dict | None = None
+    root: Path,
+    base: str | None = None,
+    date: str | None = None,
+    release: dict | None = None,
+    config: dict | None = None,
 ) -> tuple[Path, dict[str, bytes], dict]:
-    """Render every output file in memory; ``release`` replaces site-src/release.json when given."""
-    config = read_json(root, SRC / "site.json")
+    """Render every output file in memory.
+
+    ``release`` replaces site-src/release.json and ``config`` replaces site-src/site.json when
+    given (the release writer's new values, before it writes them).
+    """
+    if config is None:
+        config = read_json(root, SRC / "site.json")
+    elif not isinstance(config, dict):
+        raise Unreadable("the site.json override is not a JSON object")
     base = base or config.get("base")
     if not isinstance(base, str):
         raise Unreadable("site-src/site.json has no base")
     out = out_dir_for(base)
-    check_sitemap_exclusion(root, base)
+    pages = config.get("pages")
+    if not isinstance(pages, list) or not pages:
+        raise Unreadable("site-src/site.json lists no pages")
+    for page in pages:
+        modified = page.get("modified")
+        if modified is not None and (not isinstance(modified, str) or not DATE.match(modified)):
+            raise Unreadable(f"site-src/site.json page {page.get('id')!r} modified {modified!r} is not YYYY-MM-DD")
+    if date is not None and not DATE.match(date):
+        raise BuildError(f"--date {date!r} is not YYYY-MM-DD")
+    check_sitemap_exclusion(root, base, pages)
+    statics = static_files(config) if out == Path("site") else []
     release = load_release(root, release)
     baseline_version, pinned = load_pin(root)
     config["pinned"] = pinned
@@ -806,9 +878,6 @@ def build(
         "checklist": render_clauses(checklist_sections, str(REFS / "qa-checklist.md")),
         "instructions": html.escape(instructions, quote=False),
     }
-    pages = config.get("pages")
-    if not isinstance(pages, list) or not pages:
-        raise Unreadable("site-src/site.json lists no pages")
     pages_by_id = {page["id"]: page for page in pages}
     for page_id in config.get("nav", []):
         if page_id not in pages_by_id:
@@ -838,6 +907,10 @@ def build(
         scans[page["path"]] = validate(document, page, config, base)
         name = page["path"] + "index.html" if not page["path"].endswith(".html") else page["path"]
         outputs[name] = document.encode("utf-8")
+    clashes = sorted(set(statics) & set(outputs))
+    if clashes:
+        raise BuildError(f"site-src/site.json static_files names generated files {clashes}")
+    config["static_files_in_out"] = statics
     resolve_links(root, out, base, config, outputs, scans)
     return out, outputs, config
 
@@ -899,8 +972,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="compare the committed output with a fresh build")
     parser.add_argument("--base", help="override the base path (/ renders the promotion build)")
     parser.add_argument("--out", help="write into this folder instead (with --base, for tests)")
-    parser.add_argument("--date", help="modified date for the / build, YYYY-MM-DD")
-    parser.add_argument("--promote", action="store_true", help="allow the / build to write into site/")
+    parser.add_argument("--date", help="replace every page's modified date in the / build, YYYY-MM-DD")
+    parser.add_argument("--promote", action="store_true", help="allow a --base / build to write into site/ while site.json names another base")
     parser.add_argument("--root", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     root = Path(args.root).resolve() if args.root else REPO_ROOT
@@ -911,10 +984,13 @@ def main(argv: list[str] | None = None) -> int:
             if args.out or args.base:
                 raise BuildError("--check compares the configured base path's committed output only")
             present = existing_files(target)
-            problems = []
+            statics = config["static_files_in_out"]
+            problems = [f"{out / name} is listed in static_files but missing" for name in statics if name not in present]
             for name in sorted(set(present) | set(outputs)):
+                if name in statics:
+                    continue
                 if name not in outputs:
-                    problems.append(f"{out / name} is not generated; remove it or add it to the sources")
+                    problems.append(f"{out / name} is not generated or listed in static_files; remove it or add it to the sources")
                 elif name not in present:
                     problems.append(f"{out / name} is missing; run tools/build-site.py")
                 elif (target / name).read_bytes() != outputs[name]:
@@ -924,10 +1000,15 @@ def main(argv: list[str] | None = None) -> int:
                 for problem in problems:
                     print(f"  - {problem}")
                 return 1
-            print(f"The committed {out}/ matches a fresh build ({len(outputs)} files) and every internal link resolves inside {config['base']}.")
+            print(
+                f"The committed {out}/ matches a fresh build ({len(outputs)} files, beside {len(statics)} listed static files) "
+                f"and every internal link resolves inside {config['base']}."
+            )
             return 0
-        if out == Path("site") and not args.out and not args.promote:
-            raise BuildError("refusing to write the / build into site/ without --promote")
+        if out == Path("site") and not args.out and config.get("base") != "/" and not args.promote:
+            raise BuildError(
+                f"refusing to write the / build into site/ while site-src/site.json names base {config.get('base')!r}, without --promote"
+            )
         for name, data in outputs.items():
             path = target / name
             path.parent.mkdir(parents=True, exist_ok=True)

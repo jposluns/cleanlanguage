@@ -67,7 +67,7 @@ OTHER_SUM = "f" * 64
 VERIFY = """<!doctype html>
 <html><body>
 <p>The published checksum for version {version} is:</p>
-<pre><code id="published-checksum">{checksum}</code></pre>
+<code class="sum" id="published-checksum">{checksum}</code>
 </body></html>
 """
 
@@ -2219,16 +2219,16 @@ class ConditionalPassTest(unittest.TestCase):
         # current one is read as such, and reported as a release that is
         # not published.
         sha = "is not a 64 character lower-case SHA-256"
-        no_block = 'the verify page has no <code id="published-checksum"> block'
+        no_block = 'the verify page has no <code class="sum" id="published-checksum"> block'
         unstated = "the verify page does not state which version its checksum belongs to"
         stated = f"<p>The published checksum for version {CURRENT} is:</p>\n"
-        block = '<pre><code id="published-checksum">{}</code></pre>\n'
+        block = '<code class="sum" id="published-checksum">{}</code>\n'
         self.assertNotEqual(ZIP_SUM.upper(), ZIP_SUM)
         other_script = ZIP_SUM[:63] + "\u0661"
         cases = [
             ("a block that holds markup", stated + block.format(f"<b>{ZIP_SUM}</b>"), no_block),
-            ("a block closed by another tag", stated + '<code id="published-checksum">abc</span>\n', no_block),
-            ("an upper-case block", stated + '<CODE ID="published-checksum">abc</CODE>\n', no_block),
+            ("a block closed by another tag", stated + '<code class="sum" id="published-checksum">abc</span>\n', no_block),
+            ("an upper-case block", stated + '<CODE CLASS="sum" ID="published-checksum">abc</CODE>\n', no_block),
             ("a checksum on a line of its own", stated + block.format("\n abc\n"),
              f"the displayed checksum 'abc' {sha}"),
             ("an upper-case checksum", stated + block.format(ZIP_SUM.upper()),
@@ -2293,7 +2293,7 @@ class ConditionalPassTest(unittest.TestCase):
         # A release status read for a tag means that the checksum and the
         # version were accepted, and the tag names the version that was read.
         sha = "is not a 64 character lower-case SHA-256"
-        block = '<pre><code id="published-checksum">{}</code></pre>\n'
+        block = '<code class="sum" id="published-checksum">{}</code>\n'
 
         def sentence(version):
             return f"<p>The published checksum for version {version} is:</p>\n"
@@ -4564,7 +4564,7 @@ class ContractRoutingTest(unittest.TestCase):
 
 
 class DisplayedSumMarkupTest(unittest.TestCase):
-    """The live verify page's checksum element is read exactly; any other attribute fails."""
+    """The verify page's checksum element is read exactly as the generator writes it; any other form fails."""
 
     def test_live_markup(self):
         match = gate.DISPLAYED_SUM.search(VERIFY.format(version=CURRENT, checksum=ZIP_SUM))
@@ -4573,8 +4573,9 @@ class DisplayedSumMarkupTest(unittest.TestCase):
 
     def test_extra_attributes_do_not_match(self):
         for page in (
-            f'<code id="published-checksum" hidden>{ZIP_SUM}</code>',
-            f'<code class="sum" id="published-checksum">{ZIP_SUM}</code>',
+            f'<code class="sum" id="published-checksum" hidden>{ZIP_SUM}</code>',
+            f'<code id="published-checksum">{ZIP_SUM}</code>',
+            f'<code id="published-checksum" class="sum">{ZIP_SUM}</code>',
             f'<code data-id="published-checksum">{ZIP_SUM}</code>',
             f'<code id="published-checksum-old">{ZIP_SUM}</code>',
         ):

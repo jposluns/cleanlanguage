@@ -14,21 +14,22 @@ What it updates
 ---------------
 
 * ``site/_redirects``: the short shareable paths, still pointing at the
-  version-named assets.
-* ``site/install/index.html``: both download buttons.
-* ``site/verify/index.html``: the download button, the link to the checksum file,
-  the displayed checksum value, and the version named beside it.
-* On both pages, every bare version-named file name: the example download name
-  on the install page and the file that the verify page's hash commands name.
+  version-named assets, and the fixed redirects kept since promotion (the old
+  download names, ``/privacy`` and the old icon paths), so a release never
+  drops them.
 * ``site-src/release.json``: the version, tag and checksum that every version
-  string of the template pages staged at ``site/draft/`` comes from, and then
-  those pages themselves, regenerated in-process by ``tools/build-site.py``
-  (its download blocks, version labels, checksum, filenames in the hash
-  commands, and the install page's example filename).
-* On any page this run changes, its ``article:modified_time`` and JSON-LD
-  ``dateModified`` stamps, so the page-metadata gate still passes on the pull
-  request this rewrite feeds. ``site/sitemap.xml`` is regenerated separately by
-  ``tools/generate-sitemap.py``; this writer no longer edits it.
+  string of the generated pages comes from.
+* The generated pages under ``site/``, regenerated in-process by
+  ``tools/build-site.py`` with those values: the download blocks of the install
+  and verify pages, their version labels, the displayed checksum and the
+  version named beside it, the file names in the hash commands, the install
+  page's example file name, and any other page that shows a release value.
+* ``site-src/site.json``: the ``modified`` date of every indexable page whose
+  output this run changes, set to ``--date``, so the regenerated page carries
+  that ``article:modified_time`` and JSON-LD ``dateModified`` and the
+  page-metadata gate still passes on the pull request this rewrite feeds.
+  ``site/sitemap.xml`` is regenerated separately by
+  ``tools/generate-sitemap.py``; this writer does not edit it.
 
 The stable ``cleanlanguage.zip`` is deliberately not linked from the site. It
 exists as an always-latest URL to share by hand; the site serves version-named
@@ -58,10 +59,6 @@ SITE = REPO_ROOT / "site"
 REPO_SLUG = "jposluns/cleanlanguage"
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-ANY_RELEASE_URL = re.compile(
-    rf"https://github\.com/{re.escape(REPO_SLUG)}/releases/download/"
-    rf"[^/\"\s]+/cleanlanguage-[0-9][0-9.]*\.zip(\.sha256)?"
-)
 
 
 def die(message: str) -> None:
@@ -77,92 +74,77 @@ def redirects_body(zip_url: str, sum_url: str) -> str:
         f"/downloads/cleanlanguage-instructions.txt /downloads/cleanlanguage-11k.md 301\n"
         f"/downloads/clean-language-instructions.txt /downloads/cleanlanguage-11k.md 301\n"
         f"/downloads/cleanlanguage-short.md /downloads/cleanlanguage-11k.md 301\n"
+        f"/privacy https://posluns.ca/privacy/ 301\n"
+        f"/privacy/ https://posluns.ca/privacy/ 301\n"
+        f"/favicon.svg /assets/baseline/logos/cleanlanguage-favicon.svg 301\n"
+        f"/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301\n"
     )
 
 
-def stamp_dates(text: str, date: str, name: str) -> str:
-    """Stamp the modified date on a page this release changes.
+def stamp_modified(text: str, page_id: str, date: str) -> str:
+    """Set the ``modified`` date of 1 page entry in the text of site-src/site.json, keeping its layout.
 
     The page-metadata gate requires article:modified_time and JSON-LD
     dateModified to be no older than the file's last change, so a release that
     rewrites a page must also restamp it.
     """
-    for pattern in (
-        r'(<meta property="article:modified_time" content=")[0-9]{4}-[0-9]{2}-[0-9]{2}(")',
-        r'("dateModified":\s*")[0-9]{4}-[0-9]{2}-[0-9]{2}(")',
-    ):
-        text, n = re.subn(pattern, lambda m: m.group(1) + date + m.group(2), text)
-        if n != 1:
-            die(f"expected one match for {pattern!r} in {name}, found {n}")
+    pattern = r'(\{"id": "' + re.escape(page_id) + r'", [^\n]*?"modified": ")[0-9]{4}-[0-9]{2}-[0-9]{2}(")'
+    text, n = re.subn(pattern, lambda m: m.group(1) + date + m.group(2), text)
+    if n != 1:
+        die(f"expected one modified date for page {page_id!r} in site-src/site.json, found {n}")
     return text
 
 
-def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str]:
+def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str | bytes]:
     base = f"https://github.com/{REPO_SLUG}/releases/download/{tag}"
     zip_url = f"{base}/cleanlanguage-{version}.zip"
     sum_url = f"{zip_url}.sha256"
 
-    planned: dict[Path, str] = {SITE / "_redirects": redirects_body(zip_url, sum_url)}
-
-    for name in ("install/index.html", "verify/index.html"):
-        path = SITE / name
-        if not path.is_file():
-            die(f"{path.relative_to(REPO_ROOT)} does not exist")
-        text = path.read_text(encoding="utf-8")
-        original = text
-
-        # Any existing release URL becomes this release's, keeping the .sha256
-        # suffix where the original had one.
-        def swap(match: re.Match[str]) -> str:
-            return sum_url if match.group(1) else zip_url
-
-        text = ANY_RELEASE_URL.sub(swap, text)
-
-        # Bare version-named file names must also name this release, not only
-        # the URLs. The install page shows an example download name and the
-        # verify page's hash commands name the file, so the rewrite covers both
-        # pages, not the verify page alone.
-        text = re.sub(r"cleanlanguage-[0-9][0-9.]*\.zip",
-                      f"cleanlanguage-{version}.zip", text)
-
-        if name.startswith("verify"):
-            text, n = re.subn(
-                r'(<code id="published-checksum">)[^<]*(</code>)',
-                lambda m: m.group(1) + checksum + m.group(2),
-                text,
-            )
-            if n != 1:
-                die(f"expected one published-checksum block in {name}, found {n}")
-            text, n = re.subn(
-                r"(published checksum for version )[0-9][0-9.]*( is)",
-                lambda m: m.group(1) + version + m.group(2),
-                text,
-            )
-            if n != 1:
-                die(f"expected one checksum version sentence in {name}, found {n}")
-
-        if text != original:
-            text = stamp_dates(text, date, name)
-        planned[path] = text
-
+    planned: dict[Path, str | bytes] = {SITE / "_redirects": redirects_body(zip_url, sum_url)}
     release = {"version": version, "tag": tag, "checksum": checksum}
     planned[REPO_ROOT / "site-src" / "release.json"] = json.dumps(release, indent=2) + "\n"
-    planned.update(draft_pages(release))
+    planned.update(site_pages(release, date))
     return planned
 
 
-def draft_pages(release: dict) -> dict[Path, bytes]:
-    """The template pages under site/draft/, regenerated with this release's values."""
+def output_name(page: dict) -> str:
+    return page["path"] if page["path"].endswith(".html") else page["path"] + "index.html"
+
+
+def site_pages(release: dict, date: str) -> dict[Path, str | bytes]:
+    """The generated pages with this release's values, and site.json restamped for each page that changes.
+
+    A page changes when its regenerated output differs from the committed file. Only an
+    indexable page carries a modified date, so a noindex page is regenerated but never stamped.
+    """
     spec = importlib.util.spec_from_file_location("build_site", REPO_ROOT / "tools" / "build-site.py")
     if spec is None or spec.loader is None:
         die("tools/build-site.py could not be loaded")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    site_json = REPO_ROOT / "site-src" / "site.json"
     try:
-        out, outputs, _ = module.build(REPO_ROOT, release=release)
+        original = site_json.read_text(encoding="utf-8")
+        pages = json.loads(original)["pages"]
+        names = [(page["id"], output_name(page), bool(page.get("noindex"))) for page in pages]
+    except (OSError, UnicodeError, ValueError, KeyError, TypeError) as error:
+        die(f"site-src/site.json could not be read: {error}")
+    planned: dict[Path, str | bytes] = {}
+    try:
+        out, outputs, _ = module.build(REPO_ROOT, release=release, config=json.loads(original))
+        text = original
+        for page_id, name, noindex in names:
+            path = REPO_ROOT / out / name
+            current = path.read_bytes() if path.is_file() else None
+            if not noindex and outputs[name] != current:
+                text = stamp_modified(text, page_id, date)
+        if text != original:
+            planned[site_json] = text
+            out, outputs, _ = module.build(REPO_ROOT, release=release, config=json.loads(text))
     except (module.BuildError, module.Unreadable) as error:
-        die(f"the template pages could not be regenerated: {error}")
-    return {REPO_ROOT / out / name: data for name, data in outputs.items()}
+        die(f"the site pages could not be regenerated: {error}")
+    planned.update({REPO_ROOT / out / name: data for name, data in outputs.items()})
+    return planned
 
 
 def main() -> int:

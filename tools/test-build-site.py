@@ -4,7 +4,9 @@
 Every case copies the generator's inputs into a temporary folder (under
 $TMPDIR), applies 1 fault, runs the generator there as a separate process and
 asserts its exit code, and for the passing cases, what the output contains.
-The first case runs ``--check`` on this repository. Exit 0 when every case
+The first case runs ``--check`` on this repository. The configured base is
+``/``; the staged cases first set the base back to ``/draft/`` and drop the
+``/draft/`` holding page, as a staging round would. Exit 0 when every case
 passes; 1 otherwise, naming each failing case.
 """
 
@@ -26,7 +28,14 @@ INPUTS = [
     "cleanlanguage/skills/cleanlanguage/SKILL.md",
     "cleanlanguage/skills/cleanlanguage/references",
     "site/downloads",
-    "site/draft/assets/baseline",
+    "site/assets/baseline",
+    "site/_headers",
+    "site/_redirects",
+    "site/robots.txt",
+    "site/sitemap.xml",
+    "site/.well-known",
+    "site/README.md",
+    "site/images",
     ".baseline/pin.toml",
     "tools/sitemap-config.json",
 ]
@@ -69,6 +78,29 @@ def inject(snippet: str):
     return lambda root: edit(root, PAGE, ANCHOR, ANCHOR + snippet)
 
 
+def set_page(root: Path, page_id: str, **changes) -> None:
+    """Change (or with None, remove) fields of 1 page entry in site.json."""
+    path = root / "site-src" / "site.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for page in data["pages"]:
+        if page["id"] == page_id:
+            for key, value in changes.items():
+                if value is None:
+                    page.pop(key, None)
+                else:
+                    page[key] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def staged(root: Path) -> None:
+    """Set the base back to /draft/ and drop the holding page, as a staging round would."""
+    path = root / "site-src" / "site.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["base"] = "/draft/"
+    data["pages"] = [page for page in data["pages"] if page["id"] != "draft"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
 def set_release(root: Path, **changes: str) -> None:
     path = root / "site-src" / "release.json"
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -89,13 +121,17 @@ REFUSALS = [
     ("a duplicate id", inject('<p id="watch">again</p>')),
     ("an unknown token", inject("<p>{{nonsense}}</p>")),
     ("a malformed token", inject("<p>{{ base }}</p>")),
-    ("a root link outside the base", inject('<p><a href="/install/">live page</a></p>')),
-    ("a root asset outside the base", inject('<img src="/favicon.svg" alt="">')),
+    ("a root asset that is neither generated nor pinned", inject('<img src="/favicon.svg" alt="">')),
     ("a relative link", inject('<p><a href="install/">relative</a></p>')),
     ("an external link without target", inject('<p><a href="https://example.org/">x<span class="vh"> (opens in a new tab)</span></a></p>')),
     ("an external link without the new-tab text", inject('<p><a href="https://example.org/" target="_blank" rel="noopener noreferrer">x</a></p>')),
     ("an external image", inject('<img src="https://example.org/x.png" alt="">')),
-    ("a JSON-LD block on a draft page", inject('<script type="application/ld+json">{}</script>')),
+    ("a JSON-LD block on a noindex page", lambda root: edit(
+        root, "site-src/pages/draft.html", "</h1>", '</h1><script type="application/ld+json">{}</script>')),
+    ("a page with no modified date", lambda root: set_page(root, "demo", modified=None)),
+    ("the holding page without noindex", lambda root: set_page(root, "draft", noindex=None)),
+    ("a static file that is also generated", lambda root: edit(
+        root, "site-src/site.json", '"README.md",', '"README.md", "404.html",')),
     ("an in-page link with no target", inject('<p><a href="#nowhere">x</a></p>')),
     ("a link to a page that is not generated", inject('<p><a href="{{base}}nope/">x</a></p>')),
     ("a link to an anchor the target lacks", inject('<p><a href="{{base}}install/#nowhere">x</a></p>')),
@@ -113,7 +149,7 @@ REFUSALS = [
         root, "site-src/examples-commentary.json", '"Incident status":', '"Incident report":')),
     ("a Preferred block with no example before it", lambda root: edit(
         root, "cleanlanguage/skills/cleanlanguage/references/examples.md", "### Weak\n\nThe team has been", "### Preferred\n\nThe team has been")),
-    ("the sitemap config no longer excludes the draft home page", lambda root: edit(
+    ("the sitemap config no longer excludes the draft holding page", lambda root: edit(
         root, "tools/sitemap-config.json", ', "draft/index.html"', "")),
     ("an extra closing div (the reference demo's defect)", lambda root: edit(
         root, PAGE, "untested recovery path.</p></div></div>", "untested recovery path.</p></div></div></div>")),
@@ -133,16 +169,45 @@ REFUSALS = [
 ]
 
 
+# Refusals that only a staged base can raise: the base path is a folder, so a root link leaves it.
+STAGED_REFUSALS = [
+    ("a root link outside the staged base", inject('<p><a href="/install/">live page</a></p>')),
+    ("a JSON-LD block on a draft page", inject('<script type="application/ld+json">{}</script>')),
+    ("the staged sitemap config no longer excludes the draft home page", lambda root: edit(
+        root, "tools/sitemap-config.json", ', "draft/index.html"', "")),
+]
+
+
 def check_refusals(failures: list[str]) -> int:
     ran = 0
-    for name, fault in REFUSALS:
+    for group, cases in (("", REFUSALS), ("staged ", STAGED_REFUSALS)):
+        for name, fault in cases:
+            with tempfile.TemporaryDirectory() as scratch:
+                root = make_root(Path(scratch))
+                if group:
+                    staged(root)
+                fault(root)
+                result = run(root, "--out", str(Path(scratch) / "out"))
+                ran += 1
+                if result.returncode != 1:
+                    failures.append(f"{group}refusal '{name}': exit {result.returncode}, expected 1 ({result.stderr.strip()[:200]})")
+    return ran
+
+
+def check_unreadable(failures: list[str]) -> int:
+    ran = 0
+    for name, fault in (
+        ("static_files is not a list", lambda root: edit(root, "site-src/site.json", '"static_files": [', '"static_files": "none", "unused": [')),
+        ("a static file outside site/", lambda root: edit(root, "site-src/site.json", '"README.md",', '"../README.md",')),
+        ("a malformed modified date", lambda root: set_page(root, "demo", modified="3 November 2026")),
+    ):
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
             fault(root)
-            result = run(root, "--out", str(Path(scratch) / "out"))
+            result = run(root, "--check")
             ran += 1
-            if result.returncode != 1:
-                failures.append(f"refusal '{name}': exit {result.returncode}, expected 1 ({result.stderr.strip()[:200]})")
+            if result.returncode != 3:
+                failures.append(f"unreadable '{name}': exit {result.returncode}, expected 3 ({result.stderr.strip()[:200]})")
     return ran
 
 
@@ -155,24 +220,46 @@ def check_clean_build(failures: list[str]) -> int:
             failures.append(f"clean build: exit {result.returncode}: {result.stderr.strip()}")
             return 1
         pages = sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html"))
-        if len(pages) != 13:
-            failures.append(f"clean build: {len(pages)} pages, expected 13: {pages}")
+        if len(pages) != 14:
+            failures.append(f"clean build: {len(pages)} pages, expected 14: {pages}")
+        config = json.loads((root / "site-src/site.json").read_text(encoding="utf-8"))
+        noindex = {p["path"] if p["path"].endswith(".html") else p["path"] + "index.html"
+                   for p in config["pages"] if p.get("noindex")}
+        if noindex != {"404.html", "draft/index.html"}:
+            failures.append(f"clean build: the noindex pages are {sorted(noindex)}, expected 404.html and draft/index.html")
+        modified = {p["id"]: p.get("modified") for p in config["pages"]}
         for page in pages:
             text = (out / page).read_text(encoding="utf-8")
-            if '<link rel="apple-touch-icon" href="/draft/assets/baseline/logos/cleanlanguage-touch.png">' not in text:
+            if '<link rel="apple-touch-icon" href="/assets/baseline/logos/cleanlanguage-touch.png">' not in text:
                 failures.append(f"clean build: {page} lacks the touch icon")
             list_rail = '<nav class="rail" aria-label="On this page">' in text
             if list_rail != ('assets/baseline/rail.js?v=' in text):
                 failures.append(f"clean build: {page} loads rail.js {'without' if not list_rail else 'not on'} a list rail")
             if "aria-current=" in text.split('<nav class="rail"', 1)[-1].split("</nav>", 1)[0] and list_rail:
                 failures.append(f"clean build: {page} marks a rail link in the markup")
-            if text.count('<meta name="robots" content="noindex, nofollow">') != 1:
-                failures.append(f"clean build: {page} lacks the noindex meta")
-            if "application/ld+json" in text or 'rel="canonical"' in text:
-                failures.append(f"clean build: {page} carries publish metadata in the draft")
+            robots = text.count('<meta name="robots" content="noindex, nofollow">')
+            metadata = "application/ld+json" in text or 'rel="canonical"' in text
+            if page in noindex and (robots != 1 or metadata):
+                failures.append(f"clean build: {page} must carry 1 noindex meta and no publish metadata")
+            if page not in noindex and (robots or not metadata or "noindex" in text):
+                failures.append(f"clean build: {page} must carry publish metadata and no noindex")
             for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
-                if not value.startswith("/draft/") and not value.startswith("/downloads/"):
-                    failures.append(f"clean build: {page} links {value} outside /draft/")
+                if value.startswith("/draft/"):
+                    failures.append(f"clean build: {page} links the draft holding page {value}")
+        for page_id, page in (("home", "index.html"), ("install", "install/index.html"), ("license", "license/index.html")):
+            stamp = f'<meta property="article:modified_time" content="{modified[page_id]}">'
+            if stamp not in (out / page).read_text(encoding="utf-8"):
+                failures.append(f"clean build: {page} lacks its site.json modified date {stamp!r}")
+        holding = (out / "draft/index.html").read_text(encoding="utf-8")
+        for needed in ('<h1>Draft review</h1>', '<a class="start" href="/">Home', '<div class="rail"><img class="rail-logo"',
+                       "Nothing is staged here now; the published site is at the home page."):
+            if needed not in holding:
+                failures.append(f"clean build: the holding page lacks {needed!r}")
+        if 'property="og:' in holding or 'name="description"' in holding or "<script" in holding:
+            failures.append("clean build: the holding page carries social metadata or a script")
+        sitemap_config = json.loads((root / "tools/sitemap-config.json").read_text(encoding="utf-8"))
+        if "draft/index.html" not in sitemap_config["exclude"]:
+            failures.append("clean build: the sitemap config does not exclude the holding page")
         checklist = (out / "checklist/index.html").read_text(encoding="utf-8")
         rail_labels = re.findall(r'<li><a href="#[^"]+">([^<]*)</a></li>', checklist.split('<nav class="rail"', 1)[1].split("</nav>", 1)[0])
         if rail_labels[:2] != ["Accuracy", "Directness"] or any(label[:1].isdigit() for label in rail_labels):
@@ -228,17 +315,26 @@ def check_release_flip(failures: list[str]) -> int:
 
 def check_check_mode(failures: list[str]) -> int:
     ran = 0
+    def leave(relative: str):
+        def apply(d: Path) -> None:
+            (d / relative).parent.mkdir(parents=True, exist_ok=True)
+            (d / relative).write_text("x", encoding="utf-8")
+        return apply
     for name, fault in (
         ("a changed output byte", lambda d: (d / "verify/index.html").write_text((d / "verify/index.html").read_text(encoding="utf-8") + " ", encoding="utf-8")),
-        ("an extra output file", lambda d: (d / "stale.html").write_text("x", encoding="utf-8")),
+        ("an extra output file", leave("stale.html")),
         ("a missing output file", lambda d: (d / "demo/index.html").unlink()),
+        ("a missing static file", lambda d: (d / "robots.txt").unlink()),
+        ("an old live page left behind", leave("privacy/index.html")),
+        ("an old stylesheet left behind", leave("styles.css")),
+        ("a staged draft page left behind", leave("draft/install/index.html")),
     ):
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
             if run(root).returncode != 0 or run(root, "--check").returncode != 0:
                 failures.append(f"check mode '{name}': the clean tree did not build and check")
                 continue
-            fault(root / "site" / "draft")
+            fault(root / "site")
             code = run(root, "--check").returncode
             ran += 1
             if code != 1:
@@ -249,29 +345,64 @@ def check_check_mode(failures: list[str]) -> int:
 def check_promotion_build(failures: list[str]) -> int:
     with tempfile.TemporaryDirectory() as scratch:
         root = make_root(Path(scratch))
+        staged(root)
         edit(root, "tools/sitemap-config.json", ', "draft/index.html"', "")
-        result = run(root, "--base", "/", "--out", str(Path(scratch) / "x"))
-        if result.returncode != 1 or "--date" not in result.stderr:
-            failures.append("promotion build: ran without --date")
-        result = run(root, "--base", "/", "--date", "2026-11-03")
+        result = run(root, "--base", "/")
         if result.returncode != 1 or "--promote" not in result.stderr:
-            failures.append("promotion build: wrote into site/ without --promote")
+            failures.append("promotion build: a --base / override of a staged base wrote into site/ without --promote")
+        result = run(root, "--base", "/", "--promote")
+        if result.returncode != 0 or not (root / "site/index.html").is_file():
+            failures.append(f"promotion build: --base / --promote did not write site/: {result.stderr.strip()[:200]}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        result = run(root)
+        if result.returncode != 0:
+            failures.append(f"promotion build: the configured base / did not write site/ without --promote: {result.stderr.strip()[:200]}")
+        result = run(root, "--out", str(Path(scratch) / "bad"), "--date", "2026/11/03")
+        if result.returncode != 1:
+            failures.append(f"promotion build: a malformed --date gave exit {result.returncode}, expected 1")
         out = Path(scratch) / "root"
-        result = run(root, "--base", "/", "--out", str(out), "--date", "2026-11-03")
+        result = run(root, "--out", str(out), "--date", "2026-11-02")
         if result.returncode != 0:
             failures.append(f"promotion build: exit {result.returncode}: {result.stderr.strip()}")
             return 3
         home = (out / "index.html").read_text(encoding="utf-8")
         for needed in ('<link rel="canonical" href="https://cleanlanguage.ai/">', '<link rel="apple-touch-icon" href="/assets/baseline/logos/cleanlanguage-touch.png">', '<meta name="author" content="Jeff Posluns">',
-                       '<meta property="article:modified_time" content="2026-11-03">', '"@type": "Person"', 'href="/install/"'):
+                       '<meta property="article:modified_time" content="2026-11-02">', '"@type": "Person"', 'href="/install/"'):
             if needed not in home:
                 failures.append(f"promotion build: the home page lacks {needed!r}")
         if "noindex" in home or "/draft/" in home:
             failures.append("promotion build: the home page still carries draft paths or noindex")
-        missing = (out / "404.html").read_text(encoding="utf-8")
-        if '<meta name="robots" content="noindex, nofollow">' not in missing or "application/ld+json" in missing:
-            failures.append("promotion build: the 404 page must stay noindex without publish metadata")
-    return 3
+        for page in ("404.html", "draft/index.html"):
+            text = (out / page).read_text(encoding="utf-8")
+            if '<meta name="robots" content="noindex, nofollow">' not in text or "application/ld+json" in text:
+                failures.append(f"promotion build: {page} must stay noindex without publish metadata")
+    return 5
+
+
+def check_staged_build(failures: list[str]) -> int:
+    """A staging round still builds: every page noindex, nothing linked outside /draft/."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        staged(root)
+        out = Path(scratch) / "out"
+        result = run(root, "--out", str(out))
+        if result.returncode != 0:
+            failures.append(f"staged build: exit {result.returncode}: {result.stderr.strip()}")
+            return 1
+        pages = sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html"))
+        if len(pages) != 13:
+            failures.append(f"staged build: {len(pages)} pages, expected 13: {pages}")
+        for page in pages:
+            text = (out / page).read_text(encoding="utf-8")
+            if text.count('<meta name="robots" content="noindex, nofollow">') != 1:
+                failures.append(f"staged build: {page} lacks the noindex meta")
+            if "application/ld+json" in text or 'rel="canonical"' in text:
+                failures.append(f"staged build: {page} carries publish metadata in the draft")
+            for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
+                if not value.startswith("/draft/") and not value.startswith("/downloads/"):
+                    failures.append(f"staged build: {page} links {value} outside /draft/")
+    return 1
 
 
 def main() -> int:
@@ -282,7 +413,9 @@ def main() -> int:
     if code != 0:
         failures.append(f"this repository: --check exit {code}, expected 0")
     ran += check_refusals(failures)
+    ran += check_unreadable(failures)
     ran += check_clean_build(failures)
+    ran += check_staged_build(failures)
     ran += check_release_flip(failures)
     ran += check_check_mode(failures)
     ran += check_promotion_build(failures)

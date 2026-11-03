@@ -11,36 +11,40 @@ Why the page is static
 ----------------------
 
 The page used to fetch the text with an inline ``<script>``. The site's
-Content-Security-Policy is ``script-src 'self'`` with no ``'unsafe-inline'``,
-nonce, or hash, so a compliant browser blocked that script and the page showed
-"Loading the instructions..." and nothing else. Its only inline ``style``
+Content-Security-Policy was then ``script-src 'self'`` with no
+``'unsafe-inline'``, nonce, or hash, so a compliant browser blocked that script
+and the page showed "Loading the instructions..." and nothing else. Its only inline ``style``
 attribute was blocked by ``style-src 'self'`` for the same reason. Embedding the
 text removes both problems, works with JavaScript switched off, and needs no
-loosening of the policy.
-
-So this check also refuses to let that regress: the page must carry no inline
-script and no inline style attribute. Reintroducing either would break the page
-again in a way that is invisible to every other gate, because the markup is
-perfectly valid and the failure happens only in a browser enforcing the policy.
+loosening of the policy. Since the owner's decision of 2026-11-03 the site-wide
+policy is the shared template policy, which allows ``'unsafe-inline'`` scripts
+because Cloudflare's own scripts need it, so a browser no longer blocks an inline
+script here. The site's own pages must not use inline code (template
+specification, section 5), and this check enforces that rule on this page, as
+``tools/check-inline-code.py`` does on every page. ``style-src 'self'``
+still blocks an inline style attribute in the browser, so one would break the
+page again in a way that the valid markup does not show.
 
 What it verifies
 ----------------
 
-It checks 2 pages: the live page and the template page staged at
-``site/draft/instructions/index.html`` while the site is rebuilt on the shared
-template. On each:
+It checks the page that ``tools/build-site.py`` generates on the shared
+template:
 
 1. The page embeds the portable text exactly, character for character, once HTML
    escaping is undone.
-2. The page contains no inline ``<script>`` element.
-3. The page contains no inline ``style`` attribute.
+2. The page contains no inline code and no refused markup, as checks 1 to 10
+   of ``tools/check-inline-code.py`` define them for an HTML page, with that
+   gate's own code: among them, no ``<script>`` without ``src`` other than a
+   structured-data block, no ``on*`` attribute, no ``javascript:`` URL, no
+   ``<style>`` element or ``style`` attribute, and none of the elements that
+   the parser reads differently from a browser.
 
-The template page puts its copy button inside the block (template specification
-7.11). Exactly that button, ``<button class="copy" type="button"
+The template puts the page's copy button inside the block (template
+specification 7.11). Exactly that button, ``<button class="copy" type="button"
 data-copy="instructions-text" hidden>Copy</button>``, is required as the first
 thing in the block and is removed before the comparison; any other markup
-inside the block still fails the comparison. At promotion the template page
-replaces the live one and the live path is dropped from ``PAGES``.
+inside the block still fails the comparison.
 
 A ``<script type="application/ld+json">`` block is not an inline script for this
 purpose. The browser never executes it and CSP ``script-src`` does not apply, which
@@ -56,13 +60,14 @@ recorded hash and deliberate review.
 
 Exit codes:
   0  the page matches and is static
-  1  the text drifted, or an inline script or style was reintroduced
+  1  the text drifted, or inline code was reintroduced
   3  a file could not be read, or the expected markup was not found
 """
 
 from __future__ import annotations
 
 import html
+import importlib.util
 import re
 import sys
 from pathlib import Path
@@ -70,28 +75,35 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SOURCE = REPO_ROOT / "site" / "downloads" / "cleanlanguage.md"
 PAGE = REPO_ROOT / "site" / "instructions" / "index.html"
-DRAFT_PAGE = REPO_ROOT / "site" / "draft" / "instructions" / "index.html"
 # (page, the copy button the template puts first in the block, or None)
 COPY_BUTTON = '<button class="copy" type="button" data-copy="instructions-text" hidden>Copy</button>'
-PAGES = [(PAGE, None), (DRAFT_PAGE, COPY_BUTTON)]
+PAGES = [(PAGE, COPY_BUTTON)]
 
 # The embedded block. Matched on its id so a class or attribute change does not
 # quietly stop this check from finding anything to compare.
 EMBEDDED = re.compile(r'<pre id="instructions-text"[^>]*>(.*?)</pre>', re.S)
-# An inline <script> that the browser would execute. A script element carrying a
-# non-JavaScript type, notably application/ld+json, is a data block: the browser
-# never executes it, and CSP script-src does not apply to it. Those are allowed,
-# which is why the structured-data blocks elsewhere on the site work under the
-# same policy.
-SCRIPT_TAG = re.compile(r"<script([^>]*)>", re.I)
-SCRIPT_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
-EXECUTABLE_TYPES = {"", "module", "text/javascript", "application/javascript", "text/ecmascript"}
-INLINE_STYLE = re.compile(r"<[^>]+\sstyle=", re.I)
+INLINE_GATE = Path(__file__).resolve().parent / "check-inline-code.py"
+INLINE_RULE = (
+    "the site's own pages must not use inline code (template specification, section 5), and this "
+    "check and tools/check-inline-code.py enforce that rule"
+)
 
 
 def die(message: str) -> None:
     print(f"check-instructions-page: {message}", file=sys.stderr)
     raise SystemExit(3)
+
+
+def inline_code_problems(text: str) -> list[str]:
+    """Check 2: each piece of inline code, read with tools/check-inline-code.py."""
+    if not INLINE_GATE.is_file():
+        die("tools/check-inline-code.py does not exist")
+    spec = importlib.util.spec_from_file_location("check_inline_code", INLINE_GATE)
+    if spec is None or spec.loader is None:
+        die("tools/check-inline-code.py could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.inline_code_problems(text)
 
 
 def first_difference(a: str, b: str) -> str:
@@ -123,8 +135,8 @@ def main() -> int:
         return 1
 
     print(
-        f"Both instructions pages embed the portable text exactly "
-        f"({len(expected)} characters) and carry no inline script or style."
+        f"The instructions page embeds the portable text exactly "
+        f"({len(expected)} characters) and carries no inline code."
     )
     return 0
 
@@ -157,28 +169,7 @@ def check_page(page: Path, button: str | None, expected: str) -> list[str]:
             "Re-embed the file's contents in the page."
         )
 
-    def executes_inline(text: str) -> bool:
-        for tag in SCRIPT_TAG.finditer(text):
-            attributes = {k.lower(): v for k, v in SCRIPT_ATTR.findall(tag.group(1))}
-            if "src" in attributes:
-                continue
-            if attributes.get("type", "").strip().lower() in EXECUTABLE_TYPES:
-                return True
-        return False
-
-    if executes_inline(page_text):
-        problems.append(
-            f"{name}: the page contains an inline <script>. The site's CSP is "
-            "script-src 'self', which blocks it, and the page silently fails to "
-            "work in the browser. Move the code to a file under site/js/."
-        )
-
-    if INLINE_STYLE.search(page_text):
-        problems.append(
-            f"{name}: the page contains an inline style attribute. The site's CSP is "
-            "style-src 'self', which blocks it. Move the declarations to "
-            "site/styles.css."
-        )
+    problems += [f"{name} {problem}; {INLINE_RULE}." for problem in inline_code_problems(page_text)]
 
     return problems
 

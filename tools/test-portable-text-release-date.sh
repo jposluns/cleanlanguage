@@ -14,10 +14,12 @@
 #
 # Each case runs the CHECKOUT copy of the gate in a throwaway copy of the files
 # it reads, so nothing in the repository is changed. Every fixture is built so
-# that the generated files and the embed are current (regenerated) and the
-# Version agrees everywhere, so a failing case can fail only on the Released
-# check it targets; each failure is also pinned by its message. The passing
-# cases record the source hash with --update --force inside the copy. Every
+# that the generated files are current (regenerated) and the Version agrees
+# everywhere, so a failing case can fail only on the Released check it targets;
+# each failure is also pinned by its message. The passing cases record the
+# source hash with --update --force inside the copy, which also regenerates the
+# site pages with tools/build-site.py, so the copy carries the generator's
+# inputs and a site-src/release.json that names the fixture's version. Every
 # fixture sets its own Version and Released lines explicitly (an undated
 # fixture strips them), so the suite gives the same verdicts on an undated
 # checkout and on a dated one.
@@ -43,14 +45,31 @@ eight="site/downloads/cleanlanguage-8k.md"
 
 fresh() {
   rm -rf "${work}"
-  mkdir -p "${work}/tools" "${work}/cleanlanguage/skills" "${work}/site/downloads" "${work}/site/instructions"
+  mkdir -p "${work}/tools" "${work}/cleanlanguage/skills" "${work}/site/downloads" "${work}/.baseline"
   local t
-  for t in check-portable-text-sync.sh build-portable-text.py skill-version.py skill-release-date.py skill-release-date-client.py portable-text-skill-source.sha256; do
+  for t in check-portable-text-sync.sh build-portable-text.py skill-version.py skill-release-date.py skill-release-date-client.py \
+      portable-text-skill-source.sha256 build-site.py sitemap-config.json; do
     cp -p "${repo_root}/tools/${t}" "${work}/tools/${t}"
   done
   cp -R "${repo_root}/cleanlanguage/skills/cleanlanguage" "${work}/cleanlanguage/skills/cleanlanguage"
   cp -p "${repo_root}"/site/downloads/*.md "${work}/site/downloads/"
-  cp -p "${repo_root}/site/instructions/index.html" "${work}/site/instructions/index.html"
+  cp -R "${repo_root}/site-src" "${work}/site-src"
+  cp -p "${repo_root}/.baseline/pin.toml" "${work}/.baseline/pin.toml"
+}
+
+# release_matches_skill: set site-src/release.json to the fixture skill's version,
+# so tools/build-site.py, which --update runs, accepts the copy.
+release_matches_skill() {
+  python3 - "${work}" <<'PYREL'
+import json, subprocess, sys
+work = sys.argv[1]
+version = subprocess.run([sys.executable, work + "/tools/skill-version.py", work + "/cleanlanguage/skills/cleanlanguage/SKILL.md"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+path = work + "/site-src/release.json"
+release = json.load(open(path, encoding="utf-8"))
+release.update(version=version, tag="v" + version)
+open(path, "w", encoding="utf-8").write(json.dumps(release, indent=2) + "\n")
+PYREL
 }
 
 # set_meta FILE KEY VALUE SUFFIX: set the Version number, or insert or replace
@@ -97,10 +116,11 @@ set_version_everywhere() {
 }
 
 regen() {
-  (cd "${work}" && python3 tools/build-portable-text.py --embed >/dev/null)
+  (cd "${work}" && python3 tools/build-portable-text.py >/dev/null)
 }
 
 record() {
+  release_matches_skill
   (cd "${work}" && tools/check-portable-text-sync.sh --update --force >/dev/null 2>&1)
 }
 

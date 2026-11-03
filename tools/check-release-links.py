@@ -25,16 +25,13 @@ What it verifies
 6. Every version-named zip file name written out on a page outside a release
    URL, such as an example download name or the file in a hash command, names
    that same version, so a page cannot send the reader looking for an old file.
-   This covers every page under ``site/``, the template pages under
-   ``site/draft/`` included.
+   This covers every page under ``site/``.
 7. ``site-src/release.json``, the one source of every version string the
-   generated template pages show, names the same version, the tag ``v<version>``,
-   and the checksum the live verify page displays.
-8. On the template pages staged at ``site/draft/`` (install and verify), every
-   ``version X.Y.Z`` label names that version, each page names the release at
-   least once, and the draft verify page displays the same checksum as
-   ``release.json``. At promotion these pages replace the live ones and the
-   draft paths are dropped.
+   generated pages show, names the same version, the tag ``v<version>``, and a
+   well-formed checksum.
+8. On the install and verify pages, every ``version X.Y.Z`` label names that
+   version, each page names the release at least once, and the verify page
+   displays exactly 1 checksum element, the same checksum as ``release.json``.
 
 What it does not verify
 -----------------------
@@ -63,10 +60,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SITE_ROOT = REPO_ROOT / "site"
 SKILL = REPO_ROOT / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
 REDIRECTS = SITE_ROOT / "_redirects"
+INSTALL_PAGE = SITE_ROOT / "install" / "index.html"
 VERIFY_PAGE = SITE_ROOT / "verify" / "index.html"
 RELEASE_JSON = REPO_ROOT / "site-src" / "release.json"
-DRAFT_PAGES = [SITE_ROOT / "draft" / "install" / "index.html", SITE_ROOT / "draft" / "verify" / "index.html"]
-DRAFT_VERIFY = DRAFT_PAGES[1]
 
 RELEASE_URL = re.compile(
     r"https://github\.com/jposluns/cleanlanguage/releases/download/"
@@ -75,11 +71,10 @@ RELEASE_URL = re.compile(
 ZIP_NAME = re.compile(r"cleanlanguage-(?P<version>[0-9][0-9.]*)\.zip")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
 VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
-# The live verify page's checksum element, exactly as on main: no other attribute (such as hidden) passes.
-DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
-# The draft verify page's element exactly as the generator writes it (the template's download block):
-# no other attribute, such as hidden, passes.
-DRAFT_SUM = re.compile(r'<code class="sum" id="published-checksum">([^<]*)</code>')
+# The verify page's checksum element exactly as tools/build-site.py writes it (the template's
+# download block): no other attribute, such as hidden, passes.
+DISPLAYED_SUM = re.compile(r'<code class="sum" id="published-checksum">([^<]*)</code>')
+SUM_ELEMENT = '<code class="sum" id="published-checksum">'
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 NAMED_ZIP = re.compile(r"cleanlanguage-([0-9][0-9.]*[0-9])\.zip")
 VERSION_LABEL = re.compile(r"\bversion ([0-9]+\.[0-9]+\.[0-9]+)\b")
@@ -92,7 +87,7 @@ def die(message: str) -> NoReturn:
 
 
 def main() -> int:
-    for path in (SKILL, REDIRECTS, VERIFY_PAGE, RELEASE_JSON, *DRAFT_PAGES):
+    for path in (SKILL, REDIRECTS, INSTALL_PAGE, VERIFY_PAGE, RELEASE_JSON):
         try:
             info = path.stat()
         except FileNotFoundError:
@@ -200,7 +195,7 @@ def main() -> int:
         die(f"site/verify/index.html could not be read: {error}")
     shown = DISPLAYED_SUM.search(verify)
     if shown is None:
-        problems.append('the verify page has no <code id="published-checksum"> block')
+        problems.append(f"the verify page has no {SUM_ELEMENT} block")
     elif not SHA256.match(shown.group(1).strip()):
         problems.append(
             f"the displayed checksum {shown.group(1).strip()!r} is not a 64 character "
@@ -216,7 +211,7 @@ def main() -> int:
             f"but SKILL.md says {expected}"
         )
 
-    problems += check_release_source(expected, shown.group(1).strip() if shown else None)
+    problems += check_release_source(expected)
 
     if problems:
         print("Release link problems found:")
@@ -238,10 +233,10 @@ def main() -> int:
     return 0
 
 
-def check_release_source(expected: str, live_sum: str | None) -> list[str]:
-    """Checks 7 and 8: release.json and the template pages staged under site/draft/.
+def check_release_source(expected: str) -> list[str]:
+    """Checks 7 and 8: release.json, and the install and verify pages generated from it.
 
-    A stale bare file name on a draft page is check 6's (ZIP_NAME, site-wide), so it is
+    A stale bare file name on either page is check 6's (ZIP_NAME, site-wide), so it is
     not reported twice here; these pages must still name the release at least once."""
     import json
 
@@ -259,9 +254,7 @@ def check_release_source(expected: str, live_sum: str | None) -> list[str]:
     checksum = release.get("checksum")
     if not isinstance(checksum, str) or not SHA256.match(checksum):
         problems.append("site-src/release.json carries no 64 character lower-case SHA-256 checksum")
-    elif live_sum is not None and checksum != live_sum:
-        problems.append("site-src/release.json and the live verify page show different checksums")
-    for page in DRAFT_PAGES:
+    for page in (INSTALL_PAGE, VERIFY_PAGE):
         relative = page.relative_to(REPO_ROOT).as_posix()
         try:
             text = page.read_text(encoding="utf-8", errors="strict")
@@ -272,10 +265,10 @@ def check_release_source(expected: str, live_sum: str | None) -> list[str]:
             problems.append(f"{relative} names no release version")
         for version in sorted(labels - {expected}):
             problems.append(f"{relative} names version {version}, but SKILL.md says {expected}")
-        if page == DRAFT_VERIFY:
-            shown = DRAFT_SUM.findall(text)
+        if page == VERIFY_PAGE:
+            shown = DISPLAYED_SUM.findall(text)
             if len(shown) != 1:
-                problems.append(f'{relative} must show exactly 1 <code id="published-checksum">, found {len(shown)}')
+                problems.append(f"{relative} must show exactly 1 {SUM_ELEMENT}, found {len(shown)}")
             elif shown[0].strip() != checksum:
                 problems.append(f"{relative} shows a checksum other than site-src/release.json")
             stated = DISPLAYED_VERSION.search(text)
