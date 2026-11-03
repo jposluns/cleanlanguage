@@ -1,6 +1,6 @@
 name: Site draft
 
-# Two offline checks on the site generated on the shared template (baseline).
+# Three offline checks on the site generated on the shared template (baseline).
 # The workflow and its job keep the names they had while the site was staged at
 # site/draft/, so the names of the checks stay the same.
 #
@@ -14,6 +14,10 @@ name: Site draft
 # resolves, and that every page keeps the template's refusals (no dash, no inline
 # code, noindex on the 404 and draft holding pages). See tools/build-site.py for
 # scope.
+#
+# The third runs the baseline's pinned palette contrast gate,
+# .baseline/check_palette.py, after checking its pin, through
+# tools/check-palette.py. See that tool for scope.
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its
@@ -50,3 +54,11 @@ jobs:
       - name: Check the committed site matches a fresh build
         shell: bash
         run: python3 -I tools/build-site.py --check
+
+      - name: Run the palette gate tests
+        shell: bash
+        run: python3 -I tools/test-check-palette.py
+
+      - name: Check the palette contrast
+        shell: bash
+        run: python3 -I tools/check-palette.py

@@ -41,7 +41,7 @@ What it verifies
    - ``Cross-Origin-Opener-Policy: same-origin``
 
    - ``Content-Security-Policy:`` the shared policy of the template
-     specification (baseline 1.4.1, section 9), ``DRAFT_CSP`` below, the same
+     specification (baseline 1.6.0, section 9, unchanged), ``DRAFT_CSP`` below, the same
      value a ``/draft/*`` rule sets while a draft is staged.
 3. No other rule sets or detaches any of those 4 headers, so each appears once
    on every response class: pages, files and the 404 response. The 1 exception

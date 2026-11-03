@@ -35,15 +35,18 @@ What it verifies
 5. Versioned asset tokens: ``fonts.css``, ``palettes.css``, ``baseline.css``,
    ``copy.js`` and ``select.js`` load from ``/assets/baseline/`` with
    ``?v=X.Y.Z``, the scripts with ``defer``; an optional ``site.css`` loads with
-   ``?v=`` and 12 hexadecimal characters. Every ``<script>`` the page loads is
-   1 of the baseline's 4 scripts (``BASELINE_SCRIPTS``: ``copy.js``,
+   ``?v=`` and 12 hexadecimal characters. ``scheme.js`` loads exactly once, as
+   exactly ``<script data-cfasync="false" src="/assets/baseline/scheme.js?v=X.Y.Z"></script>``,
+   with no ``defer`` or ``async``, before the first stylesheet (template
+   specification 7.33, baseline 1.6.0). Every other ``<script>`` the page loads
+   is 1 of the baseline's other scripts (``BASELINE_SCRIPTS``: ``copy.js``,
    ``select.js``, ``search.js``, ``rail.js``) from ``/assets/baseline/``, with
    the same token and ``defer``.
 6. ``site/_headers``, read with the parser of ``tools/check-headers.py``
    (header names compared without regard to case, comments ignored), has a
    ``/*`` rule that sets ``Content-Security-Policy`` exactly once, to exactly
    the shared policy, ``SHARED_CSP`` below (template specification, baseline
-   1.4.1, section 9), and does not detach it. No rule sets or detaches
+   1.6.0, section 9, unchanged), and does not detach it. No rule sets or detaches
    ``X-Content-Security-Policy``, and no rule other than ``/*`` and ``/draft/*``
    sets, or other than ``/draft/*`` detaches, ``Content-Security-Policy``; a
    ``/draft/*`` rule appears only while a new
@@ -88,9 +91,11 @@ WHERE = "site/install/index.html"
 
 FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
 TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance"]
-BASELINE_SCRIPTS = ("copy.js", "select.js", "search.js", "rail.js")
+BASELINE_SCRIPTS = ("copy.js", "select.js", "search.js", "rail.js", "scheme.js")
+# scheme.js loads in exactly this form, with no defer, before the stylesheets (specification 7.33).
+SCHEME_TAG = re.compile(r'<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>')
 DRAFT_PATTERN = "/draft/*"
-# The shared policy (template specification, baseline 1.4.1, section 9), on every page since promotion.
+# The shared policy (template specification, baseline 1.6.0, section 9, unchanged), on every page since promotion.
 SHARED_CSP = (
     "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
     "https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; "
@@ -258,9 +263,18 @@ def check_template_page(text: str) -> list[str]:
     for name in ("copy.js", "select.js"):
         if not re.search(r'<script src="' + BASELINE_ASSET.format(name=re.escape(name)) + r" defer></script>", text):
             problems.append(f"{where}: {name} is not loaded from /assets/baseline/ with a ?v=X.Y.Z token and defer.")
-    for tag in re.findall(r"<script\b[^>]*\bsrc=[^>]*>", text):
+    scheme_tags = list(SCHEME_TAG.finditer(text))
+    first_sheet = text.find('<link rel="stylesheet"')
+    if len(scheme_tags) != 1:
+        problems.append(
+            f'{where}: scheme.js loads {len(scheme_tags)} times as <script data-cfasync="false" '
+            'src="/assets/baseline/scheme.js?v=X.Y.Z"></script>; exactly 1 is required.'
+        )
+    elif first_sheet == -1 or scheme_tags[0].start() > first_sheet:
+        problems.append(f"{where}: scheme.js does not load before the first stylesheet.")
+    for tag in re.findall(r"<script\b[^>]*\bsrc=[^>]*>", SCHEME_TAG.sub("", text)):
         name = re.search(r'src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+"', tag)
-        if name is None or name.group(1) not in BASELINE_SCRIPTS or not tag.endswith(" defer>"):
+        if name is None or name.group(1) not in BASELINE_SCRIPTS or name.group(1) == "scheme.js" or not tag.endswith(" defer>"):
             problems.append(f"{where}: {tag} is not 1 of the baseline's scripts with a ?v=X.Y.Z token and defer.")
     if "/assets/site.css" in text and not re.search(r'<link rel="stylesheet" href="/assets/site\.css\?v=[0-9a-f]{12}">', text):
         problems.append(f"{where}: site.css is not loaded with a ?v= content token.")

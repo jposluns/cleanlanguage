@@ -11,6 +11,8 @@ N1, N2 and N4 are the probes of its first verification round. Exit 0 when every 
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -28,6 +30,30 @@ HOLDING = "site/draft/index.html"
 FAVICON = "site/assets/baseline/logos/cleanlanguage-favicon.svg"
 DEMO = "site/demo/index.html"
 IMG = '<img src="x" onerror="alert(1)">'
+# The sha256 of the light and dark switch of template specification 7.33, computed from the 1.6.0
+# reference page reference/install.html line 18 (761 bytes, from <button class="scheme" to </button>).
+SWITCH_SHA256 = "9cbd502757bf584b5b83c5319729a9f33310682f305597b64347bc263f586f00"
+
+
+def gate_switch() -> str:
+    spec = importlib.util.spec_from_file_location("check_inline_code", GATE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.SCHEME_SWITCH
+
+
+SWITCH_HEAD = '<button class="scheme" type="button" data-scheme-toggle aria-pressed="false" hidden><svg class="moon" '
+
+
+def duplicate_switch(relative: str):
+    """Write the page's own switch a second time, right after the first."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        text = path.read_text(encoding="utf-8")
+        start = text.index(SWITCH_HEAD)
+        end = text.index("</button>", start) + len("</button>")
+        path.write_text(text[:end] + text[start:end] + text[end:], encoding="utf-8")
+    return apply
 
 
 def make_root(scratch: Path) -> Path:
@@ -241,11 +267,22 @@ CASES = [
     ("N4: an inline script in a .htm page", write_text("site/extra/index.htm", "<p>x</p><script>alert(1)</script>"), 1),
     ("a page that is not UTF-8", write_bytes(LICENSE, b"<p>\xff</p>"), 3),
     ("no HTML page under site/", remove_pages, 3),
+    ("the switch with an onload on its first svg",
+        edit(INSTALL, SWITCH_HEAD, SWITCH_HEAD.replace('<svg class="moon" ', '<svg class="moon" onload="alert(1)" ')), 1),
+    ("the switch with 1 byte changed", edit(INSTALL, 'stroke-width="1.8"', 'stroke-width="1.9"'), 1),
+    ("the switch twice on 1 page", duplicate_switch(LICENSE), 1),
+    ("a bare svg next to the switch", edit(LICENSE, '<span class="vh">Dark mode</span></button>',
+                                           '<span class="vh">Dark mode</span></button><svg></svg>'), 1),
 ]
 
 
 def main() -> int:
     failures: list[str] = []
+    switch = gate_switch()
+    if hashlib.sha256(switch.encode("utf-8")).hexdigest() != SWITCH_SHA256:
+        failures.append("SCHEME_SWITCH in tools/check-inline-code.py is not the 7.33 switch of the reference pages")
+    if (REPO_ROOT / INSTALL).read_text(encoding="utf-8").count(switch) != 1:
+        failures.append(f"{INSTALL} does not carry the switch exactly once")
     for name, fault, expected in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))

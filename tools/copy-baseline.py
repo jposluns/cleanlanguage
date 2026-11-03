@@ -14,10 +14,12 @@ refuses to copy unless:
 
 It then copies the runtime and licence files (the baseline README, "Adoption in
 a repository", step 2: the stylesheets, the fonts with their licence files, the
-4 scripts (``rail.js`` from 1.3.0), the logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and
+5 scripts (``rail.js`` from 1.3.0, ``scheme.js`` from 1.6.0), the logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and
 ``NOTICE.md``; never ``reference/``, ``tools/`` or the documents) byte for byte
 into ``<output root>/assets/baseline/``, where the output root follows the base
-path in ``site-src/site.json`` (``site/draft/`` while staged). It copies
+path in ``site-src/site.json`` (``site/draft/`` while staged). It copies the
+pinned build tool ``tools/check_palette.py`` (from 1.6.0) to
+``.baseline/check_palette.py``, which is pinned but never served, and it copies
 ``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
 ``.baseline/pin.toml`` in the README's format: a ``version`` key and a
 ``[files]`` table of path to SHA-256, the paths relative to the output root.
@@ -48,8 +50,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PIN_DIR = REPO_ROOT / ".baseline"
 PREFIX = "assets/baseline/"
+TOOL_SOURCE = "tools/check_palette.py"
+TOOL_NAME = "check_palette.py"
 
-TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "LICENSE", "NOTICE.md"}
+TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "scheme.js", "LICENSE", "NOTICE.md"}
 FOLDERS = ("fonts/", "logos/", "marks/")
 SUM_LINE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9._/-]+)$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -161,7 +165,15 @@ def main() -> int:
         if sha256(target) != listed[name]:
             die(1, f"the copy of {name} does not match its digest")
 
+    tool_digest = listed.get(TOOL_SOURCE)
+    if tool_digest is None:
+        die(1, f"SHA256SUMS does not list {TOOL_SOURCE}")
+    if sha256(source / TOOL_SOURCE) != tool_digest:
+        die(1, f"{TOOL_SOURCE} does not match its SHA256SUMS digest")
     PIN_DIR.mkdir(exist_ok=True)
+    shutil.copyfile(source / TOOL_SOURCE, PIN_DIR / TOOL_NAME)
+    if sha256(PIN_DIR / TOOL_NAME) != tool_digest:
+        die(1, f"the copy of {TOOL_SOURCE} does not match its digest")
     shutil.copyfile(sums_path, PIN_DIR / "SHA256SUMS")
     lines = [
         "# Baseline pin, in the format of the baseline README (\"Adoption in a repository\", step 3).",
@@ -175,6 +187,7 @@ def main() -> int:
         "[files]",
     ]
     lines += [f'"{PREFIX}{name}" = "{listed[name]}"' for name in chosen]
+    lines += [f'".baseline/{TOOL_NAME}" = "{tool_digest}"']
     (PIN_DIR / "pin.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"copied {len(chosen)} files of baseline {version} and wrote .baseline/pin.toml")
     return 0

@@ -12,7 +12,9 @@ passes; 1 otherwise, naming each failing case.
 
 from __future__ import annotations
 
+import hashlib
 import html
+import importlib.util
 import json
 import re
 import shutil
@@ -70,6 +72,42 @@ def edit(root: Path, relative: str, old: str, new: str, count: int = 1) -> None:
     path.write_text(text.replace(old, new, count), encoding="utf-8")
 
 
+# The sha256 of the light and dark switch of template specification 7.33 (baseline 1.6.0), computed from
+# the reference page reference/install.html line 18 (761 bytes, from <button class="scheme" to </button>).
+SWITCH_SHA256 = "9cbd502757bf584b5b83c5319729a9f33310682f305597b64347bc263f586f00"
+
+
+def load_module(path: Path):
+    spec = importlib.util.spec_from_file_location(path.stem.replace("-", "_"), path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def module_switch(path: Path) -> str:
+    """SCHEME_SWITCH as a tool defines it; tools/build-site.py and tools/check-inline-code.py each hold a copy."""
+    return load_module(path).SCHEME_SWITCH
+
+
+SWITCH = module_switch(GENERATOR)
+
+
+def scheme_problems(page: str, text: str, base: str) -> list[str]:
+    """Specification 7.33 on 1 generated page: the scheme.js line once, before the stylesheets, and the switch once."""
+    problems = []
+    line = re.compile(r'^<script data-cfasync="false" src="' + re.escape(base)
+                      + r'assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>$', re.M)
+    found = list(line.finditer(text))
+    first_sheet = text.find('<link rel="stylesheet"')
+    if len(found) != 1 or text.count("scheme.js") != 1:
+        problems.append(f"{page} does not load scheme.js exactly once, with data-cfasync and no defer")
+    elif first_sheet == -1 or found[0].start() > first_sheet:
+        problems.append(f"{page} loads scheme.js after the first stylesheet")
+    if text.count("</nav>" + SWITCH + "</header>") != 1 or text.count(SWITCH) != 1:
+        problems.append(f"{page} does not end header.mast with the light and dark switch exactly once")
+    return problems
+
+
 PAGE = "site-src/pages/demo.html"
 ANCHOR = "<p>This pair preserves every fact; only the style changes.</p>"
 
@@ -114,6 +152,11 @@ REFUSALS = [
     ("an inline style attribute", inject('<p style="color: red">x</p>')),
     ("a style element", inject("<style>p { color: red; }</style>")),
     ("an inline script", inject("<script>alert(1)</script>")),
+    ("a second light and dark switch", inject(SWITCH)),
+    ("a bare svg outside the switch", inject("<svg></svg>")),
+    ("an upper-case SVG outside the switch", inject("<SVG></SVG>")),
+    ("a link to the pinned build tool, which is never served",
+        inject('<p><a href="/.baseline/check_palette.py">palette gate</a></p>')),
     ("a module script", inject('<script type="module">alert(1)</script>')),
     ("an on* handler", inject('<p onclick="x()">x</p>')),
     ("what this is framing", inject("<p>What this is not: a filter.</p>")),
@@ -194,6 +237,34 @@ def check_refusals(failures: list[str]) -> int:
     return ran
 
 
+def check_scheme_validation(failures: list[str]) -> int:
+    """The generator's 7.33 refusals, called directly on the committed licence page with 1 fault each."""
+    generator = load_module(GENERATOR)
+    config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
+    page = next(entry for entry in config["pages"] if entry["id"] == "license")
+    text = (REPO_ROOT / "site/license/index.html").read_text(encoding="utf-8")
+    tag = re.search(r'<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9.]+"></script>\n', text).group(0)
+    sheet = text.index('<link rel="stylesheet"')
+    cases = [
+        ("the committed licence page", text, True),
+        ("no switch", text.replace(SWITCH, "", 1), False),
+        ("the switch after header.mast", text.replace(SWITCH + "</header>", "</header>" + SWITCH, 1), False),
+        ("no scheme.js line", text.replace(tag, "", 1), False),
+        ("the scheme.js line with defer", text.replace(tag, tag.replace('"></script>', '" defer></script>'), 1), False),
+        ("the scheme.js line after the first stylesheet", text.replace(tag, "", 1).replace("</head>", tag + "</head>", 1), False),
+        ("a second scheme.js line", text[:sheet] + tag + text[sheet:], False),
+    ]
+    for name, page_html, passes in cases:
+        try:
+            generator.validate(page_html, page, config, "/")
+            passed = True
+        except generator.BuildError:
+            passed = False
+        if passed != passes:
+            failures.append(f"scheme validation '{name}': {'passed' if passed else 'refused'}, expected the opposite")
+    return len(cases)
+
+
 def check_unreadable(failures: list[str]) -> int:
     ran = 0
     for name, fault in (
@@ -246,6 +317,7 @@ def check_clean_build(failures: list[str]) -> int:
             for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
                 if value.startswith("/draft/"):
                     failures.append(f"clean build: {page} links the draft holding page {value}")
+            failures += [f"clean build: {problem}" for problem in scheme_problems(page, text, "/")]
         for page_id, page in (("home", "index.html"), ("install", "install/index.html"), ("license", "license/index.html")):
             stamp = f'<meta property="article:modified_time" content="{modified[page_id]}">'
             if stamp not in (out / page).read_text(encoding="utf-8"):
@@ -255,8 +327,10 @@ def check_clean_build(failures: list[str]) -> int:
                        "Nothing is staged here now; the published site is at the home page."):
             if needed not in holding:
                 failures.append(f"clean build: the holding page lacks {needed!r}")
-        if 'property="og:' in holding or 'name="description"' in holding or "<script" in holding:
-            failures.append("clean build: the holding page carries social metadata or a script")
+        scheme_line = re.search(r'^<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>$',
+                                holding, re.M)
+        if 'property="og:' in holding or 'name="description"' in holding or holding.count("<script") != 1 or scheme_line is None:
+            failures.append("clean build: the holding page carries social metadata or a script other than the scheme.js line")
         sitemap_config = json.loads((root / "tools/sitemap-config.json").read_text(encoding="utf-8"))
         if "draft/index.html" not in sitemap_config["exclude"]:
             failures.append("clean build: the sitemap config does not exclude the holding page")
@@ -377,6 +451,9 @@ def check_promotion_build(failures: list[str]) -> int:
             text = (out / page).read_text(encoding="utf-8")
             if '<meta name="robots" content="noindex, nofollow">' not in text or "application/ld+json" in text:
                 failures.append(f"promotion build: {page} must stay noindex without publish metadata")
+        for page in sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html")):
+            text = (out / page).read_text(encoding="utf-8")
+            failures += [f"promotion build: {problem}" for problem in scheme_problems(page, text, "/")]
     return 5
 
 
@@ -399,6 +476,7 @@ def check_staged_build(failures: list[str]) -> int:
                 failures.append(f"staged build: {page} lacks the noindex meta")
             if "application/ld+json" in text or 'rel="canonical"' in text:
                 failures.append(f"staged build: {page} carries publish metadata in the draft")
+            failures += [f"staged build: {problem}" for problem in scheme_problems(page, text, "/draft/")]
             for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
                 if not value.startswith("/draft/") and not value.startswith("/downloads/"):
                     failures.append(f"staged build: {page} links {value} outside /draft/")
@@ -412,8 +490,13 @@ def main() -> int:
     ran += 1
     if code != 0:
         failures.append(f"this repository: --check exit {code}, expected 0")
+    for tool in (GENERATOR, REPO_ROOT / "tools" / "check-inline-code.py"):
+        ran += 1
+        if hashlib.sha256(module_switch(tool).encode("utf-8")).hexdigest() != SWITCH_SHA256:
+            failures.append(f"{tool.name}: SCHEME_SWITCH is not the 7.33 switch of the 1.6.0 reference pages")
     ran += check_refusals(failures)
     ran += check_unreadable(failures)
+    ran += check_scheme_validation(failures)
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
     ran += check_release_flip(failures)

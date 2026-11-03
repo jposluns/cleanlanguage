@@ -55,7 +55,14 @@ every HTML page it refuses:
    ``noembed``, ``noframes``, ``plaintext`` and ``template``, found in the
    text as ``<`` and the name, ignoring case, followed by whitespace, ``/``,
    ``>`` or the end of the text. The parser reads them differently from a
-   browser, and no page uses them.
+   browser, and no page uses them, with 1 exception: the light and dark switch
+   of template specification 7.33 (baseline 1.6.0), which carries 2 inline
+   ``<svg>`` glyphs that the specification requires. Before checks 1 to 10 run,
+   the gate replaces that switch, byte for byte as ``SCHEME_SWITCH`` below holds
+   it, with the same button without its 2 ``<svg>`` children, so its own
+   button and text are still checked. A page that carries the switch more than
+   once fails. Any other ``<svg``, including a switch that differs by 1 byte,
+   still fails check 7.
 8. Any ``<![CDATA[`` in the text, ignoring case.
 9. Any comment that opens as ``<!-->`` or ``<!--->``.
 10. On every page, a ``<script>`` element whose first ``src`` is not a
@@ -164,6 +171,22 @@ RAW_REFUSED_ELEMENT = re.compile(r"<(" + "|".join(REFUSED_ELEMENTS) + r")(?=[\s/
 RAW_CDATA = re.compile(r"<!\[CDATA\[", re.I)
 RAW_SHORT_COMMENT = re.compile(r"<!---?>")
 RAW_SVG_DECLARATION = re.compile(r"<!(DOCTYPE|ENTITY)", re.I)
+# The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
+# reference pages (reference/install.html line 18), as tools/build-site.py writes it. Check 7 admits
+# its 2 <svg> elements only inside this exact string, once per page.
+SCHEME_SWITCH = (
+    '<button class="scheme" type="button" data-scheme-toggle aria-pressed="false" hidden>'
+    '<svg class="moon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+    '<path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>'
+    '<svg class="sun" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+    '<circle cx="12" cy="12" r="4.2"/>'
+    '<path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'
+    '</svg><span class="vh">Dark mode</span></button>'
+)
+# The switch as checks 1 to 10 read it: the same button without its 2 <svg> children.
+SCHEME_SWITCH_READ = re.sub(r"<svg\b.*?</svg>", "", SCHEME_SWITCH)
 
 RULE = (
     "the site's own pages must not use inline code (template specification, section 5), "
@@ -380,8 +403,16 @@ def inline_code_problems(text: str, svg: bool = False) -> list[str]:
     """Each piece of inline code or refused markup in a file, as 'line N: ...'."""
     if svg:
         return svg_problems(text)
+    problems: list[str] = []
+    switches = text.count(SCHEME_SWITCH)
+    if switches > 1:
+        problems.append(
+            f"line {line_of(text, text.index(SCHEME_SWITCH))}: the light and dark switch appears {switches} times; "
+            "a page may carry it once"
+        )
+    text = text.replace(SCHEME_SWITCH, SCHEME_SWITCH_READ)
     parser = scan(text)
-    return parser.problems + count_problems(text, parser) + markup_problems(text)
+    return problems + parser.problems + count_problems(text, parser) + markup_problems(text)
 
 
 def files() -> tuple[list[Path], list[Path]]:

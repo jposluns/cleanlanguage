@@ -52,6 +52,17 @@ def edit(relative: str, old: str, new: str):
     return apply
 
 
+# The scheme.js tag of template specification 7.33 (baseline 1.6.0), as the committed page carries it.
+SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.6.0"></script>'
+
+
+def both(*faults):
+    def apply(root: Path) -> None:
+        for fault in faults:
+            fault(root)
+    return apply
+
+
 def append(relative: str, text: str):
     def apply(root: Path) -> None:
         path = root / relative
@@ -98,6 +109,16 @@ CASES = [
     ("the retired install script", edit(PAGE, "</head>", '<script src="/js/install.js?v=20260101-1" defer></script>\n</head>'), 1),
     ("a baseline script under the old draft path", edit(PAGE, "</head>", '<script src="/draft/assets/baseline/rail.js?v=1.3.0" defer></script>\n</head>'), 1),
     ("rail.js with its token and defer", edit(PAGE, "</head>", '<script src="/assets/baseline/rail.js?v=1.3.0" defer></script>\n</head>'), 0),
+    ("the scheme.js tag missing", edit(PAGE, SCHEME + "\n", ""), 1),
+    ("the scheme.js tag with defer", edit(PAGE, SCHEME, SCHEME.replace('"></script>', '" defer></script>')), 1),
+    ("the scheme.js tag with async", edit(PAGE, SCHEME, SCHEME.replace('"></script>', '" async></script>')), 1),
+    ("the scheme.js tag with src before data-cfasync", edit(PAGE, SCHEME,
+        '<script src="/assets/baseline/scheme.js?v=1.6.0" data-cfasync="false"></script>'), 1),
+    ("the scheme.js tag after the first stylesheet", both(edit(PAGE, SCHEME + "\n", ""),
+        edit(PAGE, "</head>", SCHEME + "\n</head>")), 1),
+    ("the scheme.js tag twice", edit(PAGE, SCHEME, SCHEME + SCHEME), 1),
+    ("a second scheme.js with defer", edit(PAGE, "</head>",
+        '<script src="/assets/baseline/scheme.js?v=1.6.0" defer></script>\n</head>'), 1),
     ("site.css without its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?w=1">\n</head>'), 1),
     ("site.css with its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">\n</head>'), 0),
     ("the install page missing", remove(PAGE), 3),

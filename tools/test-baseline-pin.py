@@ -22,8 +22,12 @@ GATE = REPO_ROOT / "tools" / "check-baseline-pin.py"
 
 FILES = {"baseline.css": b"a { color: red; }\n", "fonts/x.woff2": b"\x00\x01font", "marks/NOTICE.md": b"# marks\n"}
 # The rest of the README's runtime and licence set, which the gate requires in the pin.
-for _name in ("palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "LICENSE", "NOTICE.md"):
+for _name in ("palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "scheme.js", "LICENSE",
+              "NOTICE.md"):
     FILES[_name] = f"/* {_name} */\n".encode()
+# The pinned build tool, kept at .baseline/check_palette.py and never served.
+TOOL = b"# check_palette.py\n"
+TOOL_KEY = ".baseline/check_palette.py"
 
 
 def digest(data: bytes) -> str:
@@ -40,10 +44,13 @@ def build(root: Path) -> None:
         (copied(root) / name).write_bytes(data)
     sums = "".join(f"{digest(data)}  {name}\n" for name, data in sorted(FILES.items()))
     sums += f"{digest(b'unpinned')}  reference/landing.html\n"
+    sums += f"{digest(TOOL)}  tools/check_palette.py\n"
     (root / ".baseline").mkdir()
     (root / ".baseline" / "SHA256SUMS").write_text(sums, encoding="utf-8")
+    (root / TOOL_KEY).write_bytes(TOOL)
     lines = ["# comment", 'version = "1.2.1"', "", "[files]"]
     lines += [f'"assets/baseline/{name}" = "{digest(data)}"' for name, data in sorted(FILES.items())]
+    lines += [f'"{TOOL_KEY}" = "{digest(TOOL)}"']
     (root / ".baseline" / "pin.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (root / "site-src").mkdir()
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/draft/"}), encoding="utf-8")
@@ -123,6 +130,38 @@ def fault_rail_js_dropped(root: Path) -> None:
     edit_pin(root, f'"assets/baseline/rail.js" = "{digest(FILES["rail.js"])}"\n', "")
 
 
+def fault_scheme_js_dropped(root: Path) -> None:
+    (copied(root) / "scheme.js").unlink()
+    edit_pin(root, f'"assets/baseline/scheme.js" = "{digest(FILES["scheme.js"])}"\n', "")
+
+
+def fault_tool_edited(root: Path) -> None:
+    (root / TOOL_KEY).write_bytes(TOOL + b"# edited\n")
+
+
+def fault_tool_deleted(root: Path) -> None:
+    (root / TOOL_KEY).unlink()
+
+
+def fault_tool_unpinned(root: Path) -> None:
+    edit_pin(root, f'"{TOOL_KEY}" = "{digest(TOOL)}"\n', "")
+
+
+def fault_tool_digest_not_published(root: Path) -> None:
+    new = TOOL + b"# other\n"
+    (root / TOOL_KEY).write_bytes(new)
+    edit_pin(root, digest(TOOL), digest(new))
+
+
+def fault_tool_served(root: Path) -> None:
+    (root / "site" / "check_palette.py").write_bytes(TOOL)
+
+
+def fault_other_baseline_key(root: Path) -> None:
+    edit_pin(root, f'"{TOOL_KEY}" = "{digest(TOOL)}"\n',
+             f'"{TOOL_KEY}" = "{digest(TOOL)}"\n".baseline/other.py" = "{digest(TOOL)}"\n')
+
+
 def fault_promoted_base(root: Path) -> None:
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
 
@@ -148,12 +187,19 @@ CASES = [
     ("a symlink in place of a file", fault_symlink, 1),
     ("a digest the published sums do not list", fault_digest_not_published, 1),
     ("rail.js dropped from the copy and the pin", fault_rail_js_dropped, 1),
+    ("scheme.js dropped from the copy and the pin", fault_scheme_js_dropped, 1),
+    ("the pinned build tool edited", fault_tool_edited, 1),
+    ("the pinned build tool deleted", fault_tool_deleted, 1),
+    ("the build tool's pin entry removed", fault_tool_unpinned, 1),
+    ("the build tool pinned with a digest the published sums do not list", fault_tool_digest_not_published, 1),
+    ("a check_palette.py under the served site/ tree", fault_tool_served, 1),
     ("malformed TOML", fault_bad_toml, 3),
     ("no version", fault_missing_version, 3),
     ("a key outside the README format", fault_extra_key, 3),
     ("a version that is not X.Y.Z", fault_bad_version, 3),
     ("a malformed digest", fault_malformed_digest, 3),
     ("a path outside assets/baseline/", fault_path_outside, 3),
+    ("an unknown .baseline/ key", fault_other_baseline_key, 3),
     ("the base path moved to / with the files still under draft/", fault_promoted_base, 3),
     ("the pin is missing", fault_missing_pin, 3),
     ("SHA256SUMS is missing", fault_missing_sums, 3),

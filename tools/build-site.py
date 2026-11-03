@@ -19,7 +19,14 @@ Sources
   the pages allowed to link the Disclosure and Licence pages.
 - ``.baseline/pin.toml``: the baseline version (for the ``?v=`` asset tokens)
   and the pinned file list, the one source of both (``tools/copy-baseline.py``
-  writes it, ``tools/check-baseline-pin.py`` checks the copied files).
+  writes it, ``tools/check-baseline-pin.py`` checks the copied files). Only the
+  keys under ``assets/baseline/`` are served; the pinned build tool
+  ``.baseline/check_palette.py`` is not, so no link may resolve to it.
+
+Every page loads ``scheme.js`` in ``<head>`` before the stylesheets, with
+``data-cfasync="false"`` and no ``defer``, and ends ``header.mast`` with the
+light and dark switch (``SCHEME_SWITCH``), as template specification 7.33
+(baseline 1.6.0) requires.
 - ``site-src/release.json``: the release version, tag and checksum, written by
   ``tools/set-release-links.py``. Every version string the pages show comes
   from here, and the build refuses to run if it disagrees with the ``Version:``
@@ -58,7 +65,10 @@ tab)" text; a draft page, or a ``noindex`` page at base ``/``, without
 exactly 1 ``noindex, nofollow`` robots meta, and an indexable page at base
 ``/`` with one; a JSON-LD block on a draft page or a ``noindex`` page; a page
 of the ``/`` build with no ``modified`` date (and no ``--date``), or a date
-that is not ``YYYY-MM-DD``; and a release version that disagrees with SKILL.md.
+that is not ``YYYY-MM-DD``; a page without exactly 1 light and dark switch
+(``SCHEME_SWITCH``, exactly, as the last child of ``header.mast``), without
+exactly 1 ``scheme.js`` script tag before the first stylesheet, or with any
+other ``<svg``; and a release version that disagrees with SKILL.md.
 
 Modes
 -----
@@ -118,6 +128,20 @@ EXECUTABLE_TYPES = {"", "module", "text/javascript", "application/javascript", "
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 SKIP_LINK = '<a class="skip" href="#main-content">Skip to content</a>'
 COPY_STATUS = '<p class="vh" id="copy-status" role="status" aria-live="polite"></p>'
+# The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
+# reference pages (reference/install.html line 18): the last child of header.mast on every page. It is
+# the one inline <svg> a page may carry; tools/check-inline-code.py admits exactly this string.
+SCHEME_SWITCH = (
+    '<button class="scheme" type="button" data-scheme-toggle aria-pressed="false" hidden>'
+    '<svg class="moon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+    '<path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>'
+    '<svg class="sun" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+    '<circle cx="12" cy="12" r="4.2"/>'
+    '<path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'
+    '</svg><span class="vh">Dark mode</span></button>'
+)
 SLICE_COUNT = 6
 
 
@@ -404,7 +428,8 @@ def load_pin(root: Path) -> tuple[str, set[str]]:
         raise Unreadable(".baseline/pin.toml version is not X.Y.Z")
     if not isinstance(files, dict) or not files:
         raise Unreadable(".baseline/pin.toml pins no files")
-    return version, set(files)
+    # Only the copied files under assets/baseline/ are served; the pinned build tool is not.
+    return version, {path for path in files if path.startswith("assets/baseline/")}
 
 
 def operating_mode_count(root: Path) -> int:
@@ -443,6 +468,7 @@ def head(config: dict, page: dict, base: str, asset_tokens: dict, date: str | No
     key = config["site_key"]
     lines.append(f'<link rel="icon" href="{base}assets/baseline/logos/{key}-favicon.svg" type="image/svg+xml">')
     lines.append(f'<link rel="apple-touch-icon" href="{base}assets/baseline/logos/{key}-touch.png">')
+    lines.append(f'<script data-cfasync="false" src="{base}assets/baseline/scheme.js?v={asset_tokens["baseline"]}"></script>')
     for sheet in ("fonts.css", "palettes.css", "baseline.css"):
         lines.append(f'<link rel="stylesheet" href="{base}assets/baseline/{sheet}?v={asset_tokens["baseline"]}">')
     if "site.css" in asset_tokens:
@@ -530,7 +556,7 @@ def mast(config: dict, page: dict, base: str, pages_by_id: dict) -> str:
     return (
         f'<header class="mast"><a class="brand" href="{base}"><span class="name">{config["name"]}'
         f'<span class="tld">{config["tld"]}</span></span><span class="rule" aria-hidden="true"></span></a>'
-        f'<nav class="nav" aria-label="Site">{"".join(items)}</nav></header>'
+        f'<nav class="nav" aria-label="Site">{"".join(items)}</nav>{SCHEME_SWITCH}</header>'
     )
 
 
@@ -704,6 +730,18 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     for required in (SKIP_LINK, '<main id="main-content">', '<footer class="family wrap">', COPY_STATUS):
         if page_html.count(required) != 1:
             problems.append(f"{required!r} must appear exactly once")
+    if page_html.count(SCHEME_SWITCH) != 1 or page_html.count("</nav>" + SCHEME_SWITCH + "</header>") != 1:
+        problems.append("the light and dark switch must appear exactly once, as the last child of header.mast")
+    if re.search(r"<svg", page_html.replace(SCHEME_SWITCH, "", 1), re.I):
+        problems.append("an inline <svg> other than the light and dark switch")
+    scheme_tags = list(re.finditer(
+        r'<script data-cfasync="false" src="' + re.escape(base)
+        + r'assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>', page_html))
+    first_sheet = page_html.find('<link rel="stylesheet"')
+    if len(scheme_tags) != 1 or page_html.count("scheme.js") != 1:
+        problems.append("scheme.js must load exactly once, with data-cfasync=\"false\" and no defer")
+    elif first_sheet == -1 or scheme_tags[0].start() > first_sheet:
+        problems.append("scheme.js must load before the first stylesheet")
     scan = PageScan()
     scan.feed(page_html)
     scan.close()
