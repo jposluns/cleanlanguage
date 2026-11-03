@@ -70,12 +70,13 @@ directory and a session of its own. The request is its stdin and its stdout
 and stderr go to temporary files, so the client never blocks on a pipe and
 reads only a bounded part of each (RESULT_LIMIT plus
 ECHO_BYTES_PER_CHARACTER bytes for each character of the request values,
-and STDERR_LIMIT). While the child runs, no file it writes can grow past
-output_cap(limit) bytes, one byte past the larger read bound (RLIMIT_FSIZE,
-set in the child before exec as both its soft and its hard limit, so the
-child cannot raise it), so a child that writes fast cannot fill
-temporary storage within the timeout; a child whose stdout or stderr
-reaches that cap is unavailable, and the reason names the cap. The client
+and STDERR_LIMIT). While the child runs, an ordinary write cannot grow any
+file it writes past output_cap(limit) bytes, one byte past the larger read
+bound (RLIMIT_FSIZE, set in the child before exec as both its soft and its
+hard limit, so the child cannot raise it), so an extractor that writes too
+much by accident cannot fill temporary storage within the timeout. After
+the wait, a child whose stdout or stderr has a final size that reached
+that cap is unavailable, and the reason names the cap. The client
 waits for the child with a non-blocking
 waitpid (wait_child), at most CHILD_TIMEOUT_SECONDS, and exits 16 when the
 wait reports that the child is no longer its child, since its exit status
@@ -90,8 +91,15 @@ client exits 16, naming that. Residuals: after a normal end the group is not
 killed, because without a wait that leaves the child unreaped (not
 available on every platform the maintainer tools run on) a kill after the
 reap could reach a reused id, so a process the extractor starts can outlive
-a normal end; a process that leaves the group can outlive a timeout; and a
-signal that ends the client while it waits leaves the child to run on. The
+a normal end; a process that leaves the group can outlive a timeout; a
+signal that ends the client while it waits leaves the child to run on;
+RLIMIT_FSIZE bounds the logical size of a file, not the storage allocated
+to it, so deliberate child code can reserve disk blocks past the end of a
+file (with fallocate, for example) without growing it; the check reads only
+the final size, so a child that fills stdout to the cap, truncates it and
+writes a valid reply is accepted; and the stdin file is bounded the same
+way but not checked, so a child that fills it and still replies validly
+keeps its verdict. The
 extractor starts no process, so none of these arises from the extractor as
 it is.
 
@@ -360,8 +368,9 @@ def run_extractor(op: str, fields: dict, timeout: float = CHILD_TIMEOUT_SECONDS,
         cap = applied_cap(output_cap(limit))
 
         def limit_output() -> None:
-            # Runs in the child, before exec: no file it writes grows past
-            # cap, and with the hard limit set to cap too, it cannot raise it.
+            # Runs in the child, before exec: an ordinary write cannot grow a
+            # file past cap, and with the hard limit set to cap too, the child
+            # cannot raise it.
             resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
 
         with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, \
