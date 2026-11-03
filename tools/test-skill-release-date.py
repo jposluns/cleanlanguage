@@ -992,6 +992,25 @@ class PatternPinTest(unittest.TestCase):
                              "message": f"published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: {value!r}"}), ""),
         )
 
+    def test_an_instant_has_exactly_two_digits_of_seconds(self):
+        # Fix round 14 (VERIFY round 9.3, finding 1): PUBLISHED_AT_FORM
+        # requires the seconds, as exactly 2 ASCII digits, so an instant
+        # with no seconds, or with 1 or 3 digits of them, fails the form,
+        # never the strptime check, through the function, --published-day
+        # and --json alike.
+        for value in ("2026-01-01T00:00Z", "2026-01-01T00:00:1Z", "2026-01-01T00:00:000Z"):
+            with self.subTest(value):
+                message = f"published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: {value!r}"
+                self.assertEqual(self.malformed(srd.release_day_from_published_at, value), message)
+                self.assertEqual(
+                    run(None, "--published-day", value), (1, "", f"skill-release-date: {message}\n")
+                )
+                self.assertEqual(
+                    run(request("release_day_from_published_at", value), "--json", stdin=True),
+                    (0, reply_bytes({"op": "release_day_from_published_at", "outcome": "malformed",
+                                     "message": message}), ""),
+                )
+
     def test_the_version_line_takes_any_run_of_spaces_and_tabs_only(self):
         # VERSION_LINE: any run of spaces and tabs, none included, after the
         # colon and after the version, which is three runs of ASCII digits

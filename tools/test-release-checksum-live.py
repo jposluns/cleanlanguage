@@ -310,8 +310,10 @@ class ConditionalPassTest(unittest.TestCase):
         version = args[2].removeprefix("v")
         target = Path(args[args.index("--dir") + 1])
         (target / f"cleanlanguage-{version}.zip").write_bytes(ZIP_BYTES)
+        # Fix round 14 (VERIFY round 9.3, finding 3): the manifest ends in a
+        # newline, as the one sha256sum writes in tools/release-package.sh.
         (target / f"cleanlanguage-{version}.zip.sha256").write_text(
-            f"{ZIP_SUM}  cleanlanguage-{version}.zip", encoding="utf-8"
+            f"{ZIP_SUM}  cleanlanguage-{version}.zip\n", encoding="utf-8"
         )
         return subprocess.CompletedProcess(args, 0, "", "")
 
@@ -2225,7 +2227,7 @@ class ConditionalPassTest(unittest.TestCase):
              f"the displayed checksum {ZIP_SUM.upper()!r} {sha}"),
             ("a checksum with a digit of another script", stated + block.format(other_script),
              f"the displayed checksum {other_script!r} {sha}"),
-            ("a checksum one digit long", stated + block.format(ZIP_SUM + "0"),
+            ("a checksum one digit too long", stated + block.format(ZIP_SUM + "0"),
              f"the displayed checksum {ZIP_SUM + '0'!r} {sha}"),
         ]
         for sentence in (
@@ -2276,6 +2278,72 @@ class ConditionalPassTest(unittest.TestCase):
                     f"v{version}.\n"
                 ), ""))
                 self.assertEqual(probed, [f"v{version}"])
+
+    def test_the_first_checksum_block_and_version_sentence_are_read(self):
+        # Fix round 14 (VERIFY round 9.3, finding 4): a verify page with two
+        # checksum blocks, or two version sentences, is read by its first.
+        # A release status read for a tag means that the checksum and the
+        # version were accepted, and the tag names the version that was read.
+        sha = "is not a 64 character lower-case SHA-256"
+        block = '<pre><code id="published-checksum">{}</code></pre>\n'
+
+        def sentence(version):
+            return f"<p>The published checksum for version {version} is:</p>\n"
+
+        class Probed(Exception):
+            pass
+
+        def probe(tag):
+            raise Probed(tag)
+
+        for label, page, tag in (
+            ("a valid checksum block first", sentence(CURRENT) + block.format(ZIP_SUM) + block.format("abc"),
+             f"v{CURRENT}"),
+            ("the current version first", sentence(CURRENT) + sentence("1234.0.100") + block.format(ZIP_SUM),
+             f"v{CURRENT}"),
+            ("another version first", sentence("1234.0.100") + sentence(CURRENT) + block.format(ZIP_SUM),
+             "v1234.0.100"),
+        ):
+            with self.subTest(label):
+                gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
+                gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+                gate.release_status = probe
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    with self.assertRaises(Probed) as caught:
+                        gate.main()
+                self.assertEqual((str(caught.exception), out.getvalue(), err.getvalue()), (tag, "", ""))
+        with self.subTest("an invalid checksum block first"):
+            gate.VERIFY_PAGE.write_text(
+                sentence(CURRENT) + block.format("abc") + block.format(ZIP_SUM), encoding="utf-8"
+            )
+            gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+            gate.release_status = unexpected_call
+            self.assertEqual(
+                self.main_reports(), (3, "", f"check-release-checksum-live: the displayed checksum 'abc' {sha}\n")
+            )
+
+    def test_a_manifest_with_or_without_a_final_newline_is_one_line(self):
+        # Fix round 14 (VERIFY round 9.3, finding 3): the manifest is read
+        # as lines, so a final newline, which a real manifest ends in, ends
+        # its one line rather than starting a second, empty one.
+        for label, ending in (("with a final newline", "\n"), ("without a final newline", "")):
+            with self.subTest(label):
+                def manifest(*args, check=True):
+                    self.fake_download(*args, check=check)
+                    target = Path(args[args.index("--dir") + 1])
+                    (target / f"cleanlanguage-{AHEAD}.zip.sha256").write_text(
+                        f"{ZIP_SUM}  cleanlanguage-{AHEAD}.zip{ending}", encoding="utf-8"
+                    )
+                    return subprocess.CompletedProcess(args, 0, "", "")
+
+                gate.gh = manifest
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    digest = gate.published_digest(
+                        f"v{AHEAD}", f"cleanlanguage-{AHEAD}.zip", f"cleanlanguage-{AHEAD}.zip.sha256"
+                    )
+                self.assertEqual((digest, err.getvalue()), (ZIP_SUM, ""))
 
     def test_a_manifest_digest_one_digit_short_is_unverifiable(self):
         # Fix round 10 (mutation sweep): the digest of the manifest has
