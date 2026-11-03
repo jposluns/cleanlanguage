@@ -64,8 +64,10 @@ run of the same name from another app, or an unnamed github-actions job such as 
 sitemap check, never satisfies one; the Cloudflare build is matched by the exact
 app slug and app id of the Cloudflare app on this repository, whatever its name, so
 a run from any other app never satisfies it. If Cloudflare renames or
-re-registers that app, every reading stays pending until the pin is updated, never
-green. A present app id that is not an integer makes the reading unreadable. A
+re-registers that app, a passing run of it no longer counts, so the reading cannot
+turn green until the pin is updated: a passing reading reads pending, and a red
+reading still reads red. A present app id that is not an integer makes the
+reading unreadable. A
 passing reading missing any of the 4 means
 that check has not registered (a malformed branch, a head whose commit message
 carries a skip marker, or the external check still building); such a reading is
@@ -534,9 +536,11 @@ def verdict_of(checks) -> str:
 # by the exact app slug and app id of the Cloudflare app, read from the live
 # check-runs of commits 846e125 and 35fc546 on 2026-11-03 (slug
 # cloudflare-workers-and-pages, id 85455, owner cloudflare); its name is not
-# consulted. If Cloudflare renames or re-registers that app, every reading stays
-# pending ("Cloudflare Pages not registered") until the pin is updated, never
-# green, so a new pin is checked against live check-runs before it merges.
+# consulted. If Cloudflare renames or re-registers that app, a passing run of it
+# no longer counts, so the reading cannot turn green until the pin is updated: a
+# passing reading reads pending ("Cloudflare Pages not registered"), and a red
+# reading still reads red. A new pin is checked against live check-runs before it
+# merges.
 # Residual: a name and an app cannot tell which workflow produced a run, so a pull
 # request that deletes one of those workflows and adds another job with the same
 # display name satisfies the check. GitHub's own app-pinned required check has the

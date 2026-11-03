@@ -1249,12 +1249,21 @@ done
 # slug cloudflare alone, with the real app id, does not.
 run_case "Cloudflare build with an empty name is matched by its app slug and app id -> green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"","app":{"slug":"cloudflare-workers-and-pages","id":85455}}')" "" "" 0
+# An integer app id on a github-actions run is valid: the 3 required Actions jobs
+# carrying the github-actions app id 15368 still count.
+run_case "github-actions runs carrying the app id 15368 still count -> green" \
+  "$(runs '{"status":"completed","conclusion":"success","name":"Plugin manifests","app":{"slug":"github-actions","id":15368}}' \
+    '{"status":"completed","conclusion":"success","name":"Skill discovery","app":{"slug":"github-actions","id":15368}}' \
+    '{"status":"completed","conclusion":"success","name":"Agent Plugins manifest","app":{"slug":"github-actions","id":15368}}' \
+    "$CF")" "" "" 0
 CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
   run_case "Cloudflare app slug of exactly cloudflare does not count -> not green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare","id":85455}}')" "" "" 2
-# The real slug with another app id (including the negated one), with no app id,
-# or with a null app id is not the Cloudflare app, so the reading stays pending.
-for spec in '85456|,"id":85456' '-85455|,"id":-85455' 'absent|' 'null|,"id":null'; do
+# The real slug with another app id (including the negated one, and the ids that
+# equal it modulo 2**32 and 2**64), with no app id, or with a null app id is not the
+# Cloudflare app, so the reading stays pending.
+for spec in '85456|,"id":85456' '-85455|,"id":-85455' '4295052751|,"id":4295052751' \
+  '18446744073709637071|,"id":18446744073709637071' 'absent|' 'null|,"id":null'; do
   CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
     run_case "real Cloudflare slug with app id [${spec%%|*}] does not count -> not green" \
     "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"cloudflare-workers-and-pages\"${spec#*|}}}")" "" "" 2
