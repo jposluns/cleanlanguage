@@ -115,18 +115,21 @@ exits 0 and prints exactly one JSON object that matches the contract, and
 it reads only a bounded part of what the child prints (see RESULT_LIMIT).
 While the child runs, an ordinary write cannot grow any file it writes past
 output_cap(limit) bytes, one byte past the larger read bound (RLIMIT_FSIZE,
-set in the child before exec as both its soft and its hard limit, so neither
-the child nor a process it starts can raise it), so an extractor that
-writes too much by accident cannot fill temporary storage within the
-timeout. After the wait, a child whose stdout or stderr has a final size
-that reached that cap is unavailable, and the reason names the cap.
-Residuals: RLIMIT_FSIZE bounds the logical size of a file, not the storage
-allocated to it, so deliberate child code can reserve disk blocks past the
-end of a file (with fallocate, for example) without growing it; the check
-reads only the final size, so a child that fills stdout to the cap,
-truncates it and writes a valid reply is accepted; and its stdin file is
-bounded the same way but not checked, so a child that fills it and still
-replies validly keeps its verdict.
+set in the child before exec as both its soft and its hard limit, so a
+child without CAP_SYS_RESOURCE, and any process it starts without it,
+cannot raise it), so an extractor that writes too much by accident cannot
+fill temporary storage within the timeout. After the wait, a child whose
+stdout or stderr has a final size that reached that cap is unavailable,
+and the reason names the cap. Residuals: RLIMIT_FSIZE bounds the logical
+size of a file, not the storage allocated to it, so deliberate child code
+can reserve disk blocks past the end of a file (with fallocate, for
+example) without growing it; the check reads only the final size, so a
+child that fills stdout to the cap, truncates it and writes a valid reply
+is accepted; a child, or a process it starts, that holds CAP_SYS_RESOURCE
+(as a gate run as root gives it) can raise the hard limit and then the
+soft one, so the cap does not bound it; and its stdin file is bounded the
+same way but not checked, so a child that fills it and still replies
+validly keeps its verdict.
 Every other outcome of a child that the gate observes exits 3 with its
 report, never 2, 1, or 0. On a normal end and on a timeout, the gate kills
 the process group of the child before it reaps the child, or exits 3 when it
@@ -138,11 +141,11 @@ only while it is in the group: a process that leaves the child's process
 group, by any means, can outlive the gate.
 Separation is not a sandbox. The child runs with the uid, filesystem, and
 network of the gate, so extractor code can do whatever that uid can do,
-including writing files, reaching the network, and signalling the gate. An
-ordinary write cannot grow a file past output_cap(limit) bytes while it
-runs, but it can still reserve storage past the end of a file, create any
-number of files and use the disk through them, and it can use CPU and
-memory. A signal it sends to the gate acts on the gate as
+including writing files, reaching the network, and signalling the gate.
+While the child runs, its ordinary writes cannot grow a file past
+output_cap(limit) bytes, but the child can still reserve storage past the
+end of a file, create any number of files and use the disk through them,
+and use CPU and memory. A signal it sends to the gate acts on the gate as
 that signal acts on any process: it can interrupt, stop, or end the gate
 outside the exit codes above, and no bound of the gate limits its effect.
 More generally, extractor code can act on the gate and on its own children
@@ -338,17 +341,20 @@ def _kill_group(proc: subprocess.Popen, ended: bool) -> str | None:
 
 
 def output_cap(limit: int) -> int:
-    """The most bytes any file the child writes may hold: one byte past the
-    larger of the two read bounds (``limit + 1`` bytes of stdout and
-    STDERR_LIMIT bytes of stderr), so a reply one byte too long is still
-    read and refused as too long, and anything longer stops at the cap."""
+    """The size limit, in bytes, on each file the child writes, under
+    ordinary writes: one byte past the larger of the two read bounds
+    (``limit + 1`` bytes of stdout and STDERR_LIMIT bytes of stderr), so a
+    reply one byte too long is still read and refused as too long, and an
+    ordinary write that would grow a file past the cap fails. It does not
+    bound a file already larger than the cap, which the child can write
+    within, or storage reserved past the end of a file."""
     return max(limit + 1, STDERR_LIMIT) + 1
 
 
 def applied_cap(cap: int) -> int:
     """The file size limit the child gets, as both its soft and its hard
     limit: ``cap``, or the inherited hard limit when that is lower, since
-    a child cannot raise it."""
+    a child without CAP_SYS_RESOURCE cannot raise it."""
     _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
     if hard != resource.RLIM_INFINITY and hard < cap:
         return hard
@@ -422,8 +428,9 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
 
         def limit_output() -> None:
             # Runs in the child, before exec: an ordinary write cannot grow a
-            # file past cap. The cap is the hard limit too, so neither the
-            # child nor a process it starts can raise the soft limit back.
+            # file past cap. The cap is the hard limit too, so a child
+            # without CAP_SYS_RESOURCE, or a process it starts without it,
+            # cannot raise the soft limit back.
             # The gate has no threads (it imports no threading, and
             # reset_sigchld already requires the main thread), so a
             # preexec_fn is safe here.

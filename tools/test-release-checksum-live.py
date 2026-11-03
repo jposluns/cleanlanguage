@@ -3708,13 +3708,14 @@ class ConditionalPassTest(unittest.TestCase):
             "    return 0\n"
         )
 
-    def test_the_child_output_storage_is_capped_while_it_runs(self):
-        # Row 100: while the child runs, no file it writes grows past the
-        # cap, one byte past the larger read bound, so a child that writes
-        # fast cannot fill temporary storage within the timeout. A stdout or
-        # stderr that reaches the cap exits 3 naming the cap, before the exit
-        # code and the reply are read. Stdin is bounded by the same limit
-        # but not named, so a valid reply keeps its verdict.
+    def test_each_file_the_child_writes_ends_at_the_cap_under_ordinary_writes(self):
+        # Row 100: while the child runs, an ordinary write cannot grow a file
+        # it writes past the cap, one byte past the larger read bound, so
+        # each file this child writes 1 MiB to ends at the cap. A stdout or
+        # stderr whose final size reached the cap exits 3 naming the cap,
+        # before the exit code and the reply are read. Stdin is bounded by
+        # the same limit but not named, so a valid reply keeps its verdict.
+        # Storage reserved past the end of a file is not measured here.
         gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
         cap = 300 + 7 * len("xy") + 2
         absent = b'{"op": "extract", "outcome": "absent"}'
@@ -3774,12 +3775,14 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertTrue(callable(calls[0].get("preexec_fn")), calls[0])
 
-    def test_the_child_cannot_raise_its_file_size_limit_past_the_cap(self):
-        # Row 100: the cap is the hard limit as well as the soft one, so a
-        # child that tries to raise its soft limit back to no limit is
-        # refused, and its writes still stop at the cap. With the inherited
-        # hard limit left in place, the raise would succeed and the file
-        # would grow past the cap.
+    def test_the_child_cannot_raise_its_soft_file_size_limit_past_the_cap(self):
+        # Row 100: the cap is the hard limit as well as the soft one, and
+        # setrlimit refuses a soft limit above the hard limit for every
+        # process, so a child that tries to raise its soft limit back to no
+        # limit is refused and its writes still stop at the cap. With the
+        # inherited hard limit left in place, the raise would succeed and the
+        # file would grow past the cap. A child with CAP_SYS_RESOURCE could
+        # raise the hard limit first; that residual is not exercised here.
         gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
         cap = 300 + 7 * len("xy") + 2
         tool = self.fake_extractor(extractor_with(
@@ -3844,8 +3847,8 @@ class ConditionalPassTest(unittest.TestCase):
         # Row 100: the cap is one byte past the larger of limit + 1 and
         # STDERR_LIMIT, so a reply one byte over the bound is still refused
         # as too long (see test_the_output_bounds_follow_the_limits_of_the_gate),
-        # and an inherited hard file size limit below it, which the child
-        # cannot raise, is the cap instead.
+        # and an inherited hard file size limit below it, which a child
+        # without CAP_SYS_RESOURCE cannot raise, is the cap instead.
         gate.STDERR_LIMIT = 33
         self.assertEqual(gate.output_cap(314), 316)
         self.assertEqual(gate.output_cap(10), 34)
@@ -4423,8 +4426,8 @@ class ModuleLoadTest(unittest.TestCase):
     def test_an_inherited_hard_file_size_limit_below_the_cap_is_the_cap(self):
         # Row 100: a caller that leaves a hard file size limit below the cap
         # (ulimit -H -f in a CI job, say) gives the child that limit as its
-        # cap, which it cannot raise, and a child that writes fast exits 3
-        # naming it, never a traceback.
+        # cap, which it cannot raise without CAP_SYS_RESOURCE, and a child
+        # that writes fast exits 3 naming it, never a traceback.
         wrapper = (
             "import importlib.util, resource, sys\n"
             "resource.setrlimit(resource.RLIMIT_FSIZE, (200, 200))\n"
