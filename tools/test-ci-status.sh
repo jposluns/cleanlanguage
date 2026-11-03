@@ -763,8 +763,8 @@ CASE_NEEDLE="required check(s) Plugin manifests not registered" \
 # message names what is wrong.
 # bad_at FIELD VALUE INDEX: the 4 green required checks and a green extra run, in
 # that order, with FIELD of the run at INDEX (0 to 4) set to the raw JSON VALUE.
-# FIELD is status, conclusion, name, app.slug, app (the whole app object) or
-# head_sha, which is added to that run alone. Any other INDEX changes no run. Each
+# FIELD is status, conclusion, name, app.slug, app.id, app (the whole app object)
+# or head_sha, which is added to that run alone. Any other INDEX changes no run. Each
 # run is NAME|SLUG|ID; the Cloudflare run carries the app id 85455, the others none.
 bad_at() {
   local i=0 spec st cn nm app hs slug id out=()
@@ -780,6 +780,7 @@ bad_at() {
         conclusion) cn="$2" ;;
         name) nm="$2" ;;
         app.slug) app="{\"slug\":$2${id:+,\"id\":$id}}" ;;
+        app.id) app="{\"slug\":\"${slug}\",\"id\":$2}" ;;
         app) app="$2" ;;
         head_sha) hs="\"head_sha\":$2," ;;
       esac
@@ -804,6 +805,8 @@ for idx in 0 1 2 3 4; do
     "$read_failed: non-string check field app.slug"
   run_err_case "non-object app on run $idx alone -> unreadable" "$(bad_at app '[]' "$idx")" 3 \
     "$read_failed: check run app is not an object"
+  run_err_case "non-integer app id on run $idx alone -> unreadable" "$(bad_at app.id '"9"' "$idx")" 3 \
+    "$read_failed: check run app.id is not an integer"
 done
 # A status that is a JSON array or object is not a string, whatever it holds.
 for bad in '[]' '{}' '["completed"]'; do
@@ -911,7 +914,7 @@ gate_ctx=("" id=absent "$gate_head"
   'status="in_progress"' 'status="queued"' status=null status=absent
   'conclusion="failure"' 'conclusion="neutral"' 'conclusion="skipped"' 'conclusion="cancelled"'
   conclusion=null conclusion=absent
-  'app={"slug":"cloudflare-workers-and-pages"}' 'app={"slug":"other-app"}' 'app={"slug":null}' 'app={}' app=null app=absent
+  'app={"slug":"cloudflare-workers-and-pages","id":85455}' 'app={"slug":"other-app"}' 'app={"slug":null}' 'app={}' app=null app=absent
   'name="Plugin manifests"' 'name=""' name=null name=absent
   'status="in_progress";conclusion=null' 'status="queued";conclusion=null'
   "$gate_head;status=\"in_progress\";conclusion=null" "$gate_head;status=\"queued\";conclusion=null"
@@ -1118,8 +1121,8 @@ sys.stdout.write("\n".join(
 PY
 }
 # big_bad FIELD VALUE INDEX: the green extra run of index INDEX with FIELD set to
-# the raw JSON VALUE. FIELD is status, conclusion, name, app.slug, app (the whole
-# app object), or head_sha or id, which is added to that run alone; any other
+# the raw JSON VALUE. FIELD is status, conclusion, name, app.slug, app.id, app (the
+# whole app object), or head_sha or id, which is added to that run alone; any other
 # FIELD prints nothing and fails.
 big_bad() {
   local st='"completed"' cn='"success"' nm="\"extra $3\"" app='{"slug":"github-actions"}' pre=""
@@ -1128,6 +1131,7 @@ big_bad() {
     conclusion) cn="$2" ;;
     name) nm="$2" ;;
     app.slug) app="{\"slug\":$2}" ;;
+    app.id) app="{\"slug\":\"github-actions\",\"id\":$2}" ;;
     app) app="$2" ;;
     head_sha | id) pre="\"$1\":$2," ;;
     *) return 1 ;;
@@ -1163,6 +1167,8 @@ for at in 1:0 1:5 1:49 1:50 1:99 1:100 1:101 1:299 3:100 3:199 3:200 3:299; do
     "$(big_one "$pages" "$idx" "$(big_bad app.slug 7 "$idx")")" 3 "$read_failed: non-string check field app.slug"
   run_err_case "non-object app on $where alone -> unreadable" \
     "$(big_one "$pages" "$idx" "$(big_bad app '[]' "$idx")")" 3 "$read_failed: check run app is not an object"
+  run_err_case "non-integer app id on $where alone -> unreadable" \
+    "$(big_one "$pages" "$idx" "$(big_bad app.id '"9"' "$idx")")" 3 "$read_failed: check run app.id is not an integer"
   run_err_case "check run that is not an object as $where -> unreadable" \
     "$(big_one "$pages" "$idx" '"completed"')" 3 "$read_failed: a check run is not an object"
   run_err_case "non-integer id on $where alone -> unreadable" \
@@ -1237,16 +1243,17 @@ run_case "Cloudflare build with an empty name is matched by its app slug and app
 CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
   run_case "Cloudflare app slug of exactly cloudflare does not count -> not green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare","id":85455}}')" "" "" 2
-# The real slug with another app id, with no app id, or with a null app id is not
-# the Cloudflare app, so the reading stays pending.
-for spec in '85456|,"id":85456' 'absent|' 'null|,"id":null'; do
+# The real slug with another app id (including the negated one), with no app id,
+# or with a null app id is not the Cloudflare app, so the reading stays pending.
+for spec in '85456|,"id":85456' '-85455|,"id":-85455' 'absent|' 'null|,"id":null'; do
   CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
     run_case "real Cloudflare slug with app id [${spec%%|*}] does not count -> not green" \
     "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"cloudflare-workers-and-pages\"${spec#*|}}}")" "" "" 2
 done
-# An app id that is present and not an integer (a string, a boolean, or a number
-# with a fraction part) makes the whole reading unreadable.
-for app_id in '"85455"' true 85455.0; do
+# An app id that is present and is neither an integer nor null (a string, either
+# boolean, a number with a fraction part or an exponent, an array or an object)
+# makes the whole reading unreadable.
+for app_id in '"85455"' true false 85455.0 85455e0 '[]' '{}' '[85455]'; do
   run_err_case "Cloudflare app id [$app_id] is not an integer -> unreadable" \
     "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"cloudflare-workers-and-pages\",\"id\":${app_id}}}")" 3 \
     "check read failed for 0000000000000000000000000000000000000000: check run app.id is not an integer"
