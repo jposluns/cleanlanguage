@@ -22,7 +22,8 @@ GATE = REPO_ROOT / "tools" / "check-baseline-pin.py"
 
 FILES = {"baseline.css": b"a { color: red; }\n", "fonts/x.woff2": b"\x00\x01font", "marks/NOTICE.md": b"# marks\n"}
 # The rest of the README's runtime and licence set, which the gate requires in the pin.
-for _name in ("palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "LICENSE", "NOTICE.md"):
+for _name in ("palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "matrix.js", "LICENSE",
+              "NOTICE.md"):
     FILES[_name] = f"/* {_name} */\n".encode()
 
 
@@ -123,6 +124,11 @@ def fault_rail_js_dropped(root: Path) -> None:
     edit_pin(root, f'"assets/baseline/rail.js" = "{digest(FILES["rail.js"])}"\n', "")
 
 
+def fault_matrix_js_dropped(root: Path) -> None:
+    (copied(root) / "matrix.js").unlink()
+    edit_pin(root, f'"assets/baseline/matrix.js" = "{digest(FILES["matrix.js"])}"\n', "")
+
+
 def fault_promoted_base(root: Path) -> None:
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
 
@@ -148,6 +154,7 @@ CASES = [
     ("a symlink in place of a file", fault_symlink, 1),
     ("a digest the published sums do not list", fault_digest_not_published, 1),
     ("rail.js dropped from the copy and the pin", fault_rail_js_dropped, 1),
+    ("matrix.js dropped from the copy and the pin", fault_matrix_js_dropped, 1),
     ("malformed TOML", fault_bad_toml, 3),
     ("no version", fault_missing_version, 3),
     ("a key outside the README format", fault_extra_key, 3),

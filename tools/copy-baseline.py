@@ -14,7 +14,7 @@ refuses to copy unless:
 
 It then copies the runtime and licence files (the baseline README, "Adoption in
 a repository", step 2: the stylesheets, the fonts with their licence files, the
-4 scripts (``rail.js`` from 1.3.0), the logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and
+5 scripts (``matrix.js`` from 1.5.0, ``rail.js`` from 1.3.0), the logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and
 ``NOTICE.md``; never ``reference/``, ``tools/`` or the documents) byte for byte
 into ``<output root>/assets/baseline/``, where the output root follows the base
 path in ``site-src/site.json`` (``site/draft/`` while staged). It copies
@@ -49,7 +49,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PIN_DIR = REPO_ROOT / ".baseline"
 PREFIX = "assets/baseline/"
 
-TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "LICENSE", "NOTICE.md"}
+TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "matrix.js",
+             "LICENSE", "NOTICE.md"}
 FOLDERS = ("fonts/", "logos/", "marks/")
 SUM_LINE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9._/-]+)$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")

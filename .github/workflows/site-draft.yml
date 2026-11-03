@@ -35,6 +35,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      - name: Run the baseline copy tool tests
+        shell: bash
+        run: python3 -I tools/test-copy-baseline.py
+
       - name: Run the baseline pin gate tests
         shell: bash
         run: python3 -I tools/test-baseline-pin.py

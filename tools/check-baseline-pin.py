@@ -26,7 +26,7 @@ What it verifies
    link, and hashes to its pinned digest.
 4. No file under ``<output root>/assets/baseline/`` is missing from the pin.
 5. The pin holds the README's whole runtime and licence set (``REQUIRED``):
-   the 3 stylesheets, the 4 scripts, ``LICENSE``, ``NOTICE.md`` and
+   the 3 stylesheets, the 5 scripts, ``LICENSE``, ``NOTICE.md`` and
    ``marks/NOTICE.md``, so a copy that drops one, such as ``rail.js``, fails
    even when the files present match.
 
@@ -71,7 +71,7 @@ PREFIX = "assets/baseline/"
 REQUIRED = [
     PREFIX + name
     for name in ("baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js",
-                 "LICENSE", "NOTICE.md", "marks/NOTICE.md")
+                 "matrix.js", "LICENSE", "NOTICE.md", "marks/NOTICE.md")
 ]
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")

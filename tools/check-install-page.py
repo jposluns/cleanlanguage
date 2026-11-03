@@ -36,14 +36,15 @@ What it verifies
    ``copy.js`` and ``select.js`` load from ``/assets/baseline/`` with
    ``?v=X.Y.Z``, the scripts with ``defer``; an optional ``site.css`` loads with
    ``?v=`` and 12 hexadecimal characters. Every ``<script>`` the page loads is
-   1 of the baseline's 4 scripts (``BASELINE_SCRIPTS``: ``copy.js``,
-   ``select.js``, ``search.js``, ``rail.js``) from ``/assets/baseline/``, with
-   the same token and ``defer``.
+   1 of the 4 baseline scripts this page may load (``BASELINE_SCRIPTS``:
+   ``copy.js``, ``select.js``, ``search.js``, ``rail.js``; not the baseline's
+   ``matrix.js``, from 1.5.0) from ``/assets/baseline/``, with the same token
+   and ``defer``.
 6. ``site/_headers``, read with the parser of ``tools/check-headers.py``
    (header names compared without regard to case, comments ignored), has a
    ``/*`` rule that sets ``Content-Security-Policy`` exactly once, to exactly
    the shared policy, ``SHARED_CSP`` below (template specification, baseline
-   1.4.1, section 9), and does not detach it. No rule sets or detaches
+   1.5.0, section 9), and does not detach it. No rule sets or detaches
    ``X-Content-Security-Policy``, and no rule other than ``/*`` and ``/draft/*``
    sets, or other than ``/draft/*`` detaches, ``Content-Security-Policy``; a
    ``/draft/*`` rule appears only while a new
@@ -90,7 +91,7 @@ FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
 TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance"]
 BASELINE_SCRIPTS = ("copy.js", "select.js", "search.js", "rail.js")
 DRAFT_PATTERN = "/draft/*"
-# The shared policy (template specification, baseline 1.4.1, section 9), on every page since promotion.
+# The shared policy (template specification, baseline 1.5.0, section 9), on every page since promotion.
 SHARED_CSP = (
     "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
     "https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; "
