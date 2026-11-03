@@ -7,7 +7,10 @@
 # after its Version line when its version sorts above the undated baseline
 # (tools/skill-release-date.py --baseline), and may omit it at or below it.
 # G2: every portable rendering carries the same Released value as the skill, or
-# none when the skill has none.
+# none when the skill has none. Row 89: the gate reads the extractor only
+# through tools/skill-release-date-client.py, so an extractor that passes the
+# probe but breaks its --json contract is reported as unavailable, never as a
+# malformed line or a rejected version.
 #
 # Each case runs the CHECKOUT copy of the gate in a throwaway copy of the files
 # it reads, so nothing in the repository is changed. Every fixture is built so
@@ -42,7 +45,7 @@ fresh() {
   rm -rf "${work}"
   mkdir -p "${work}/tools" "${work}/cleanlanguage/skills" "${work}/site/downloads" "${work}/site/instructions"
   local t
-  for t in check-portable-text-sync.sh build-portable-text.py skill-version.py skill-release-date.py portable-text-skill-source.sha256; do
+  for t in check-portable-text-sync.sh build-portable-text.py skill-version.py skill-release-date.py skill-release-date-client.py portable-text-skill-source.sha256; do
     cp -p "${repo_root}/tools/${t}" "${work}/tools/${t}"
   done
   cp -R "${repo_root}/cleanlanguage/skills/cleanlanguage" "${work}/cleanlanguage/skills/cleanlanguage"
@@ -150,6 +153,57 @@ expect_fail() { # label fragment
   fi
 }
 
+expect_fail_without() { # label fragment absent-fragment
+  local code=0
+  run_gate || code=$?
+  if [ "${code}" -eq 0 ]; then
+    fail "$1 (expected a failure, the gate passed)"
+  elif ! grep -Fq -- "$2" "${gate_out}"; then
+    fail "$1 (failed, but not with [$2]: $(cat "${gate_out}"))"
+  elif grep -Fq -- "$3" "${gate_out}"; then
+    fail "$1 (failed, but also with [$3]: $(cat "${gate_out}"))"
+  else
+    pass "$1"
+  fi
+}
+
+# break_extractor OP MODE: make the copy of the extractor answer the --json op
+# OP in the way MODE names, while every other op still answers and the probe
+# passes, and make its CLI content modes exit 1 (row 89).
+break_extractor() {
+  python3 - "${work}/tools/skill-release-date.py" "$1" "$2" <<"PYBREAK"
+import sys
+path, op, mode = sys.argv[1:4]
+bodies = {
+    "exit1": "    raise SystemExit(1)",
+    "notjson": "    print(\"not json\")\n    return 0",
+    "otherop": "    print(json.dumps({\"op\": \"baseline\", \"outcome\": \"value\", \"value\": \"1.0.14\"}))\n    return 0",
+    "badvalue": "    print(json.dumps({\"op\": request[\"op\"], \"outcome\": \"value\", \"value\": \"2026-11-15 \"}))\n    return 0",
+    "refused": "    print(json.dumps({\"op\": request[\"op\"], \"outcome\": \"refused\", \"message\": \"x\"}))\n    return 0",
+}
+hook = (
+    "\n_real_json_main = json_main\n"
+    "def json_main():\n"
+    "    data = sys.stdin.buffer.read()\n"
+    "    request = json.loads(data.decode(\"utf-8\"))\n"
+    "    if request[\"op\"] != " + repr(op) + ":\n"
+    "        sys.stdin = io.TextIOWrapper(io.BytesIO(data), encoding=\"utf-8\")\n"
+    "        return _real_json_main()\n"
+    + bodies[mode] + "\n"
+    "_real_main = main\n"
+    "def main(argv):\n"
+    "    if argv[1:] in ([\"--baseline\"], [\"--json\"]):\n"
+    "        return _real_main(argv)\n"
+    "    return 1\n"
+)
+text = open(path, encoding="utf-8").read()
+guard = "\nif __name__ == \"__main__\":\n"
+if text.count(guard) != 1:
+    sys.exit("main guard not unique in " + path)
+open(path, "w", encoding="utf-8").write(text.replace(guard, hook + guard))
+PYBREAK
+}
+
 # 1. The undated baseline passes.
 undated_fixture 1.0.14
 if record; then pass "undated 1.0.14 fixture records"; else fail "undated 1.0.14 fixture records"; fi
@@ -180,9 +234,10 @@ undated_fixture 1.0.14
 printf 'def broken(:\n' > "${work}/tools/skill-release-date.py"
 expect_fail "a broken extractor is reported as unavailable" "tools/skill-release-date.py is unavailable or broken"
 
-# 2c. An internal error of the extractor (exit 6) is reported as the extractor
-#     crashing, never as an unreadable file or a malformed line. The copy is
-#     made to crash on decoding its input, after the probe has passed.
+# 2c. An internal error of the extractor (its exit 6, the client exit 16) is
+#     reported as the extractor crashing, never as an unreadable file or a
+#     malformed line. The copy is made to crash inside extract, after the
+#     probe has passed.
 undated_fixture 1.0.14
 python3 - "${work}/tools/skill-release-date.py" <<"PYCRASH"
 import sys
@@ -191,10 +246,39 @@ text = open(path, encoding="utf-8").read()
 anchor = "from pathlib import Path\n"
 if text.count(anchor) != 1:
     sys.exit("crash anchor not unique in " + path)
-hook = "import io as _crash_io\ndef _crash(*args, **kwargs):\n    raise RuntimeError(\"injected internal error\")\n_crash_io.TextIOWrapper = _crash\n"
+hook = "import unicodedata as _crash_mod\ndef _crash(*args, **kwargs):\n    raise RuntimeError(\"injected internal error\")\n_crash_mod.category = _crash\n"
 open(path, "w", encoding="utf-8").write(text.replace(anchor, anchor + hook))
 PYCRASH
-expect_fail "an extractor internal error is reported as a crash" "tools/skill-release-date.py is unavailable or crashed (exit 6)"
+expect_fail "an extractor internal error is reported as a crash" "tools/skill-release-date.py is unavailable or crashed (exit 16)"
+
+# 2d. Row 89: an extractor that passes the probe but breaks its --json
+#     contract for one op is reported as unavailable at that call, never as a
+#     malformed line or a rejected version.
+for mode in exit1 notjson otherop badvalue refused; do
+  undated_fixture 1.0.14
+  break_extractor extract "${mode}"
+  expect_fail_without "a broken extract reply (${mode}) is reported as unavailable" \
+    "tools/skill-release-date.py is unavailable or crashed (exit 16) reading ${skill}, so its Released line could not be checked." \
+    "Malformed Released"
+  undated_fixture 1.0.14
+  break_extractor requires_release_date "${mode}"
+  expect_fail_without "a broken requires_release_date reply (${mode}) is reported as unavailable" \
+    "tools/skill-release-date.py is unavailable or crashed (exit 16) deciding whether 1.0.14 needs a Released line." \
+    "rejected the version"
+done
+
+# 2e. Row 89: a missing client fails the probe.
+undated_fixture 1.0.14
+rm -f "${work}/tools/skill-release-date-client.py"
+expect_fail "a missing client is reported as unavailable" "tools/skill-release-date.py is unavailable or broken (probe exit 2)"
+
+# 2f. Row 89: every launch in the gate goes through the client.
+if [ "$(grep -Fc "python3 tools/skill-release-date.py" "${repo_root}/tools/check-portable-text-sync.sh")" = "0" ] \
+    && [ "$(grep -Fo "python3 -I tools/skill-release-date-client.py" "${repo_root}/tools/check-portable-text-sync.sh" | wc -l)" -eq 5 ]; then
+  pass "every extractor launch in the gate goes through the client"
+else
+  fail "every extractor launch in the gate goes through the client"
+fi
 
 # 3. A consistent dated release above the baseline passes.
 dated_fixture
@@ -215,7 +299,7 @@ expect_fail "a rendering missing the date fails" "Released disagreement: SKILL.m
 undated_fixture 1.0.15
 set_meta "${skill}" Released 2026-02-30 "  "
 regen
-expect_fail "an impossible date fails" "Malformed Released: line in ${skill}"
+expect_fail "an impossible date fails" "Malformed Released: line in ${skill}: skill-release-date: not a real calendar date"
 
 # 7. G1: the date on the wrong line fails.
 undated_fixture 1.0.15
@@ -226,7 +310,7 @@ expect_fail "the date on the wrong line fails" "is not the line directly after"
 # 8. G2: a malformed line in a rendering fails.
 dated_fixture
 set_meta "${eleven}" Released soon ""
-expect_fail "a malformed rendering line fails" "Malformed Released: line in ${eleven}"
+expect_fail "a malformed rendering line fails" "Malformed Released: line in ${eleven}: skill-release-date: the first Released line is not a bare YYYY-MM-DD date"
 
 # 9. G2 at the baseline: a rendering dated while the skill is not fails.
 undated_fixture 1.0.14

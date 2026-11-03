@@ -29,6 +29,8 @@ on:
       - "tools/skill-version.py"
       - "tools/skill-release-date.py"
       - "tools/test-skill-release-date.py"
+      - "tools/skill-release-date-client.py"
+      - "tools/test-skill-release-date-client.py"
       - "tools/test-portable-text-release-date.sh"
       - "tools/check-portable-text-sync.sh"
       - "tools/check-instructions-page.py"
@@ -51,6 +53,8 @@ on:
       - "tools/skill-version.py"
       - "tools/skill-release-date.py"
       - "tools/test-skill-release-date.py"
+      - "tools/skill-release-date-client.py"
+      - "tools/test-skill-release-date-client.py"
       - "tools/test-portable-text-release-date.sh"
       - "tools/check-portable-text-sync.sh"
       - "tools/check-instructions-page.py"
@@ -70,6 +74,10 @@ jobs:
       - name: Test the Released-line extractor
         shell: bash
         run: python3 tools/test-skill-release-date.py
+
+      - name: Test the Released-line client
+        shell: bash
+        run: python3 -I tools/test-skill-release-date-client.py
 
       - name: Test the Released-line checks in the sync gate
         shell: bash

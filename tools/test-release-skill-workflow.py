@@ -10,7 +10,9 @@ release run green: the first creation and a re-run at the same commit). These
 tests EXTRACT each step script from the real workflow file and run it with
 bash, the way the runner does, against fake ``gh``,
 ``git`` and ``date`` commands on PATH and a throwaway working directory holding
-the real ``tools/skill-release-date.py``. The fakes record every call in
+the real ``tools/skill-release-date.py`` and the real
+``tools/skill-release-date-client.py``, through which every step reads it
+(row 89). The fakes record every call in
 order, so the tests pin both the verdicts and the ordering: the binding window
 check runs after every tag operation and before the create call, the readback
 runs after it, and an undated release (``RELEASE_DATED=0``) checks no date at
@@ -82,6 +84,7 @@ import yaml
 REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / ".github" / "workflows" / "release-skill.yml"
 EXTRACTOR = REPO / "tools" / "skill-release-date.py"
+CLIENT = REPO / "tools" / "skill-release-date-client.py"
 VCS = "git"
 COMMIT = "c" * 40
 OTHER_COMMIT = "d" * 40
@@ -556,14 +559,45 @@ else:
 
 FAKE_PACKAGER = FAKE_COMMON
 
-# A copy of the real extractor that crashes inside, on reading its input, to
-# show an internal error is reported as the extractor failing.
+# A copy of the real extractor that crashes inside extract, after the probe
+# has passed, to show an internal error is reported as the extractor failing.
 CRASH_HOOK = (
-    "import io as _crash_io\n"
+    "import unicodedata as _crash_mod\n"
     "def _crash(*args, **kwargs):\n"
     "    raise RuntimeError(\"injected internal error\")\n"
-    "_crash_io.TextIOWrapper = _crash\n"
+    "_crash_mod.category = _crash\n"
 )
+
+# Row 89: a copy of the real extractor whose --json mode breaks for one op
+# only, in the way the mode names, while every other op still answers, and
+# whose CLI content modes exit 1, so the probe passes and a step that still
+# read the CLI would take the content as malformed.
+BROKEN_HOOK = """
+_real_json_main = json_main
+def json_main():
+    data = sys.stdin.buffer.read()
+    request = json.loads(data.decode("utf-8"))
+    if request["op"] != {op!r}:
+        sys.stdin = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8")
+        return _real_json_main()
+{body}
+_real_main = main
+def main(argv):
+    if argv[1:] in (["--baseline"], ["--json"]):
+        return _real_main(argv)
+    return 1
+"""
+BROKEN_MODES = {
+    "exit1": "    raise SystemExit(1)",
+    "notjson": "    print(\"not json\")\n    return 0",
+    "otherop": "    print(json.dumps({\"op\": \"baseline\", \"outcome\": \"value\", \"value\": \"1.0.14\"}))\n    return 0",
+    "badvalue": "    print(json.dumps({\"op\": request[\"op\"], \"outcome\": \"value\", \"value\": \"2026-11-15 \"}))\n    return 0",
+    "refused": "    print(json.dumps({\"op\": request[\"op\"], \"outcome\": \"refused\", \"message\": \"x\"}))\n    return 0",
+}
+
+# What a step that still read the CLI would print for the broken copy.
+VERDICT_TEXTS = ("is malformed", "Could not read", "rejected the version", "unexpected answer",
+                 "not a usable UTC instant", "Refusing to publish", "IS PUBLISHED on a different UTC day")
 
 
 class WorkflowStepTest(unittest.TestCase):
@@ -577,6 +611,7 @@ class WorkflowStepTest(unittest.TestCase):
         for path in (self.work / "tools", self.work / "cleanlanguage" / "skills" / "cleanlanguage", self.state, self.bin):
             path.mkdir(parents=True)
         shutil.copy2(EXTRACTOR, self.work / "tools" / "skill-release-date.py")
+        shutil.copy2(CLIENT, self.work / "tools" / "skill-release-date-client.py")
         for name, body in (("gh", FAKE_GH), (VCS, FAKE_VCS), ("date", FAKE_DATE)):
             self.write_exec(self.bin / name, body)
         self.write_exec(self.work / "tools" / "release-package.sh", FAKE_PACKAGER)
@@ -619,6 +654,14 @@ class WorkflowStepTest(unittest.TestCase):
         anchor = "from pathlib import Path\n"
         self.assertEqual(text.count(anchor), 1)
         target.write_text(text.replace(anchor, anchor + CRASH_HOOK), encoding="utf-8")
+
+    def break_extractor(self, op: str, mode: str):
+        target = self.work / "tools" / "skill-release-date.py"
+        text = EXTRACTOR.read_text(encoding="utf-8")
+        guard = "\nif __name__ == \"__main__\":\n"
+        self.assertEqual(text.count(guard), 1)
+        target.write_text(text.replace(guard, BROKEN_HOOK.format(op=op, body=BROKEN_MODES[mode]) + guard),
+                          encoding="utf-8")
 
     def resolve(self, value: str) -> str:
         """Resolve a declared env value the way the runner would."""
@@ -908,6 +951,12 @@ BAD_READBACKS = (
 class HarnessTest(WorkflowStepTest):
     """R7: the harness itself is as strict as the runner."""
 
+    def test_every_extractor_launch_goes_through_the_client(self):
+        # Row 89: no step runs the extractor CLI; each of the 7 calls runs
+        # the client, isolated.
+        self.assertEqual(WORKFLOW_TEXT.count("python3 tools/skill-release-date.py"), 0)
+        self.assertEqual(WORKFLOW_TEXT.count("python3 -I tools/skill-release-date-client.py"), 7)
+
     def test_fake_date_refuses_a_call_without_utc(self):
         proc = subprocess.run([str(self.bin / "date"), "+%F"], env={"FAKE_STATE": str(self.state)},
                               capture_output=True, text=True)
@@ -1010,6 +1059,7 @@ class PublishStepTest(WorkflowStepTest):
         self.assertEqual(code, 1, err)
         self.assertFalse(any(is_create(c) for c in self.calls()))
         self.assertIn("only 300 seconds remain in the UTC day 2026-11-15", err)
+        self.assertIn("skill-release-date: refusing to start publishing: only 300 seconds remain", err)
 
     def test_one_second_left_is_refused_in_the_singular(self):
         self.set_state(clock="2026-11-15T23:59:59Z")
@@ -1038,6 +1088,8 @@ class PublishStepTest(WorkflowStepTest):
         self.assertIn("published on 2026-11-16", err)
         self.assertIn("names 2026-11-15", err)
         self.assertIn("IS PUBLISHED on a different UTC day", err)
+        self.assertIn("skill-release-date: the release was published on 2026-11-16 (UTC; published_at "
+                      "2026-11-16T00:00:02Z), but its Released line names 2026-11-15", err)
 
     def test_readback_mismatch_names_a_corrective_new_version_and_no_republish(self):
         # R4: an immutable release cannot be republished.
@@ -1134,8 +1186,47 @@ class PublishStepTest(WorkflowStepTest):
         (self.work / "tools" / "skill-release-date.py").unlink()
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
-        self.assertIn("unavailable or crashed (exit 2)", err)
+        self.assertIn("unavailable or crashed (exit 16) while probing it", err)
+        self.assertIn("exited 2 in baseline", err)
         self.assertFalse(any(is_create(c) for c in self.calls()))
+
+    def test_a_missing_or_broken_client_is_reported_by_the_probe(self):
+        # Row 89: a client that is missing (exit 2) or does not compile
+        # (exit 1) fails the probe, before any tag operation.
+        for label, code_expected in (("missing", 2), ("broken", 1)):
+            with self.subTest(label):
+                self.reset_calls()
+                client = self.work / "tools" / "skill-release-date-client.py"
+                if label == "missing":
+                    client.unlink(missing_ok=True)
+                else:
+                    client.write_text("def broken(:\n", encoding="utf-8")
+                code, _out, err = self.run_step(PUBLISH)
+                self.assertEqual(code, 1, err)
+                self.assertIn(f"unavailable or crashed (exit {code_expected}) while probing it", err)
+                calls = self.calls()
+                self.assertFalse(any(is_tag_operation(c) or is_create(c) for c in calls), calls)
+
+    def test_a_broken_extractor_reply_is_unavailable_at_each_publish_check(self):
+        # Row 89: an extractor that passes the probe but breaks the contract
+        # for the window check or the readback is the tool failing, never a
+        # refusal, a malformed clock reading or another publication day.
+        for op, what, created in (
+            ("publish_window", "while checking the publication window", False),
+            ("confirm_published", "while confirming the publication day of v1.0.15", True),
+        ):
+            for mode in ("exit1", "notjson", "otherop", "badvalue"):
+                with self.subTest(op=op, mode=mode):
+                    self.reset_calls()
+                    self.break_extractor(op, mode)
+                    code, out, err = self.run_step(PUBLISH)
+                    self.assertEqual(code, 1, err)
+                    self.assertIn(f"tools/skill-release-date.py is unavailable or crashed (exit 16) {what}.", err)
+                    self.assertIn("so the extractor is unavailable", err)
+                    for text in VERDICT_TEXTS:
+                        self.assertNotIn(text, err)
+                    self.assertNotIn("was published on", out)
+                    self.assertEqual(any(is_create(c) for c in self.calls()), created, self.calls())
 
     def test_broken_extractor_is_reported_by_the_probe_on_first_publication(self):
         # T3: the probe at the start of the step reports a crashed extractor
@@ -1146,7 +1237,8 @@ class PublishStepTest(WorkflowStepTest):
                 (self.work / "tools" / "skill-release-date.py").write_text(body, encoding="utf-8")
                 code, _out, err = self.run_step(PUBLISH)
                 self.assertEqual(code, 1, err)
-                self.assertIn("unavailable or crashed (exit 1) while probing it", err)
+                self.assertIn("unavailable or crashed (exit 16) while probing it", err)
+                self.assertIn("exited 1 in baseline", err)
                 self.assertIn("ModuleNotFoundError" if label == "import-broken" else "SyntaxError", err)
                 self.assertNotIn("malformed", err)
                 calls = self.calls()
@@ -1249,7 +1341,8 @@ class RerunTest(WorkflowStepTest):
                     (self.work / "tools" / "skill-release-date.py").write_text(body, encoding="utf-8")
                     code, out, err = self.run_step(PUBLISH)
                     self.assertEqual(code, 1, err)
-                    self.assertIn("unavailable or crashed (exit 1) while probing it", err)
+                    self.assertIn("unavailable or crashed (exit 16) while probing it", err)
+                    self.assertIn("exited 1 in baseline", err)
                     self.assertIn("ModuleNotFoundError" if label == "import-broken" else "SyntaxError", err)
                     self.assertNotIn("not a usable UTC instant", err)
                     self.assertNotIn("kept its assets", out)
@@ -1899,6 +1992,7 @@ class DetermineStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 1, err)
         self.assertIn("is not a usable UTC instant", err)
+        self.assertIn("skill-release-date: published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: " + repr("null"), err)
         self.assert_superseded_advice(err, 0)
 
     def test_unreadable_published_at_names_the_verifying_dispatch(self):
@@ -1993,7 +2087,8 @@ class DetermineStepTest(WorkflowStepTest):
         self.crash_extractor()
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 1, err)
-        self.assertIn("unavailable or crashed (exit 6)", err)
+        self.assertIn("unavailable or crashed (exit 16)", err)
+        self.assertIn("failed unexpectedly (internal error) in extract", err)
         self.assertNotIn("Could not read", err)
 
     def test_malformed_line_is_named_as_such(self):
@@ -2001,6 +2096,37 @@ class DetermineStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 1, err)
         self.assertIn("is malformed", err)
+        self.assertIn("skill-release-date: the first Released line is not a bare YYYY-MM-DD date: "
+                      + repr("Released: soon"), err)
+
+    def test_a_broken_extractor_reply_is_unavailable_at_each_determine_call(self):
+        # Row 89: an extractor that passes the probe but breaks the contract
+        # for one call is the tool failing at that call, never a verdict on
+        # the content, the version or published_at.
+        sites = (
+            ("extract", "reading the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md",
+             "Version: 1.0.15  \nReleased: 2026-11-15  \n", "1.0.15", {"status": "404"}),
+            ("requires_release_date", "deciding whether 1.0.14 needs a Released line",
+             "Version: 1.0.14  \nAuthor: x\n", "1.0.14", {"status": "404"}),
+            ("release_day_from_published_at", "reading the published_at of v1.0.15",
+             "Version: 1.0.15  \nReleased: 2026-11-15  \n", "1.0.15", {"status": "200"}),
+        )
+        for op, what, skill, version, state in sites:
+            for mode in BROKEN_MODES:
+                with self.subTest(op=op, mode=mode):
+                    self.reset_calls()
+                    self.skill(skill)
+                    self.carried["VERSION"] = version
+                    self.set_state(**state)
+                    self.break_extractor(op, mode)
+                    code, _out, err = self.run_step(DETERMINE)
+                    self.assertEqual(code, 1, err)
+                    self.assertIn(f"tools/skill-release-date.py is unavailable or crashed (exit 16) while {what}, "
+                                  "so the release date cannot be checked.", err)
+                    self.assertIn("so the extractor is unavailable", err)
+                    for text in VERDICT_TEXTS:
+                        self.assertNotIn(text, err)
+                    self.assertEqual(self.env_values(), {})
 
 
 class PackageStepTest(WorkflowStepTest):

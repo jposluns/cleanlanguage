@@ -60,23 +60,26 @@ version_of() {
 # released_of FILE: print the Released date of FILE, or nothing when it has no
 # line, and return 0; otherwise report why the line cannot be accepted and
 # return 1. The one shared strict extractor, tools/skill-release-date.py, does
-# the reading: exit 0 prints the date, 3 means no line, 1 is malformed content,
-# 4 is an unreadable file, and anything else (2, 6 for an internal error of
-# the extractor, 127, an interpreter failure) means the extractor itself is
-# unavailable or crashed, which is reported as
-# that, never as malformed content. Every exit but 0 and 3 fails closed.
+# the reading, run in its --json mode by tools/skill-release-date-client.py
+# (row 89), which gives a content verdict only from a reply that meets the
+# contract: exit 0 prints the date, 13 means no line, 11 is malformed content,
+# 14 is an unreadable file, and anything else (16 when the client found the
+# extractor unavailable, 1 or 2 from a broken or missing client, 127, an
+# interpreter failure) means the tool itself is unavailable or crashed, which
+# is reported as that, never as malformed content. Every exit but 0 and 13
+# fails closed.
 released_of() {
   local out rc=0
-  out="$(python3 tools/skill-release-date.py "$1" 2>/dev/null)" || rc=$?
+  out="$(python3 -I tools/skill-release-date-client.py extract-file "$1" 2>/dev/null)" || rc=$?
   case "${rc}" in
     0) printf '%s\n' "${out}" ;;
-    3) ;;
-    1)
-      echo "Malformed Released: line in $1: $(python3 tools/skill-release-date.py "$1" 2>&1 >/dev/null || true)" >&2
+    13) ;;
+    11)
+      echo "Malformed Released: line in $1: $(python3 -I tools/skill-release-date-client.py extract-file "$1" 2>&1 >/dev/null || true)" >&2
       return 1
       ;;
-    4)
-      echo "Could not read $1 for its Released line: $(python3 tools/skill-release-date.py "$1" 2>&1 >/dev/null || true)" >&2
+    14)
+      echo "Could not read $1 for its Released line: $(python3 -I tools/skill-release-date-client.py extract-file "$1" 2>&1 >/dev/null || true)" >&2
       return 1
       ;;
     *)
@@ -105,14 +108,15 @@ check_common() {
   # The Released line (item 26), read everywhere through released_of. G1: the
   # skill must carry the line when its version sorts above the baseline the
   # extractor declares (the last undated release), and may omit it at or below
-  # that baseline; the extractor decides that comparison (--requires-date), so
+  # that baseline; the extractor decides that comparison (its
+  # requires_release_date op), so
   # no copy of the rule lives here. G2: every rendering carries the same parsed
   # value as the skill, or none when the skill has none; parsed values are
   # compared because the hand-maintained files carry no trailing hard-break
-  # spaces. The extractor is probed first (--baseline), so a missing or broken
-  # extractor is reported as unavailable before any content is judged.
+  # spaces. The client is probed first (baseline), so a missing or broken tool
+  # is reported as unavailable before any content is judged.
   local sr baseline requirement fr prc=0
-  baseline="$(python3 tools/skill-release-date.py --baseline 2>/dev/null)" || prc=$?
+  baseline="$(python3 -I tools/skill-release-date-client.py baseline 2>/dev/null)" || prc=$?
   if [ "${prc}" -ne 0 ] || ! printf '%s' "${baseline}" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
     echo "tools/skill-release-date.py is unavailable or broken (probe exit ${prc}), so the Released lines could not be checked." >&2
     return 1
@@ -120,10 +124,10 @@ check_common() {
   sr="$(released_of cleanlanguage/skills/cleanlanguage/SKILL.md)" || return 1
   if [ -z "${sr}" ]; then
     prc=0
-    requirement="$(python3 tools/skill-release-date.py --requires-date "${sv}" 2>/dev/null)" || prc=$?
+    requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${sv}" 2>/dev/null)" || prc=$?
     case "${prc}" in
       0) ;;
-      1) echo "tools/skill-release-date.py rejected the version ${sv} as not a bare X.Y.Z." >&2; return 1 ;;
+      11) echo "tools/skill-release-date.py rejected the version ${sv} as not a bare X.Y.Z." >&2; return 1 ;;
       *) echo "tools/skill-release-date.py is unavailable or crashed (exit ${prc}) deciding whether ${sv} needs a Released line." >&2; return 1 ;;
     esac
     if [ "${requirement}" = "required" ]; then

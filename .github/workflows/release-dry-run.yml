@@ -29,6 +29,8 @@ on:
       - "tools/skill-version.py"
       - "tools/skill-release-date.py"
       - "tools/test-skill-release-date.py"
+      - "tools/skill-release-date-client.py"
+      - "tools/test-skill-release-date-client.py"
       - "tools/test-release-skill-workflow.py"
       - "tools/test-skill-version-consumers.py"
       - "tools/test-version-selectors.sh"
@@ -68,6 +70,8 @@ on:
       - "tools/skill-version.py"
       - "tools/skill-release-date.py"
       - "tools/test-skill-release-date.py"
+      - "tools/skill-release-date-client.py"
+      - "tools/test-skill-release-date-client.py"
       - "tools/test-release-skill-workflow.py"
       - "tools/test-skill-version-consumers.py"
       - "tools/test-version-selectors.sh"
@@ -109,6 +113,10 @@ jobs:
       - name: Released-line extractor contract
         shell: bash
         run: python3 tools/test-skill-release-date.py
+
+      - name: Released-line client contract
+        shell: bash
+        run: python3 -I tools/test-skill-release-date-client.py
 
       - name: Release workflow date-check behaviour
         shell: bash

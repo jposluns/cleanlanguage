@@ -124,8 +124,9 @@ jobs:
           # expected date is the UTC day now, read once here. An existing
           # release (HTTP 200: a re-run) keeps its first
           # publication day, so the expected date is the UTC day of its
-          # published_at, interpreted only by tools/skill-release-date.py
-          # --published-day, the one place that states the assumption about
+          # published_at, interpreted only by the release_day_from_published_at
+          # op of tools/skill-release-date.py, the one place that states the
+          # assumption about
           # that field. Any other status fails closed. The packager compares
           # this date with the Released line at HEAD. This probe duplicates the
           # one in the publish step on purpose (one purpose each), and the
@@ -140,30 +141,35 @@ jobs:
           # read back as immutable on every path that ends the run green,
           # dated or not.
           #
-          # Every call to the extractor tells its own content verdicts (exit 1
-          # malformed, 3 absent, 4 unreadable) apart from the extractor being
-          # unavailable or crashed (2, 6 for an internal error, 127, anything
-          # else), and the probe below runs first so a broken extractor is
-          # never read as a content verdict.
+          # Every call to the extractor goes through
+          # tools/skill-release-date-client.py (row 89), which runs it in its
+          # --json mode and gives a content verdict only from a reply that meets
+          # the contract: exit 11 malformed, 13 absent, 14 unreadable, 15
+          # refused (each the extractor's own code plus 10). Every other exit
+          # (16 when the client found the extractor unavailable; 1, 2 or 127 from
+          # a broken or missing client; anything else) means the tool is
+          # unavailable or crashed, so a broken extractor is never read as a
+          # content verdict. The probe below still runs first so a missing or
+          # broken tool is named as that before any content is judged.
           release_date_tool_failed() { # exit-code what
             echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2, so the release date cannot be checked." >&2
             exit 1
           }
           prc=0
-          baseline="$(python3 tools/skill-release-date.py --baseline)" || prc=$?
+          baseline="$(python3 -I tools/skill-release-date-client.py baseline)" || prc=$?
           if [ "${prc}" -ne 0 ] || ! printf '%s' "${baseline}" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
             release_date_tool_failed "${prc}" "probing it"
           fi
           rc=0
-          released="$(python3 tools/skill-release-date.py cleanlanguage/skills/cleanlanguage/SKILL.md)" || rc=$?
+          released="$(python3 -I tools/skill-release-date-client.py extract-file cleanlanguage/skills/cleanlanguage/SKILL.md)" || rc=$?
           case "${rc}" in
             0) dated=1 ;;
-            3)
+            13)
               rc=0
-              requirement="$(python3 tools/skill-release-date.py --requires-date "${VERSION}")" || rc=$?
+              requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${VERSION}")" || rc=$?
               case "${rc}" in
                 0) ;;
-                1) echo "tools/skill-release-date.py rejected the version ${VERSION} (see the error above)." >&2; exit 1 ;;
+                11) echo "tools/skill-release-date.py rejected the version ${VERSION} (see the error above)." >&2; exit 1 ;;
                 *) release_date_tool_failed "${rc}" "deciding whether ${VERSION} needs a Released line" ;;
               esac
               case "${requirement}" in
@@ -173,8 +179,8 @@ jobs:
                 *) echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for ${VERSION}." >&2; exit 1 ;;
               esac
               ;;
-            1) echo "The Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed (see the error above)." >&2; exit 1 ;;
-            4) echo "Could not read cleanlanguage/skills/cleanlanguage/SKILL.md for its Released line (see the error above)." >&2; exit 1 ;;
+            11) echo "The Released line in cleanlanguage/skills/cleanlanguage/SKILL.md is malformed (see the error above)." >&2; exit 1 ;;
+            14) echo "Could not read cleanlanguage/skills/cleanlanguage/SKILL.md for its Released line (see the error above)." >&2; exit 1 ;;
             *) release_date_tool_failed "${rc}" "reading the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md" ;;
           esac
           if [ "${dated}" -eq 0 ]; then
@@ -211,10 +217,10 @@ jobs:
                 exit 1
               fi
               rc=0
-              release_date="$(python3 tools/skill-release-date.py --published-day "${published_at}")" || rc=$?
+              release_date="$(python3 -I tools/skill-release-date-client.py published-day "${published_at}")" || rc=$?
               case "${rc}" in
                 0) ;;
-                1)
+                11)
                   echo "The published_at of ${RELEASE_TAG} (${published_at:-empty}) is not a usable UTC instant (see the error above)." >&2
                   exit 1
                   ;;
@@ -266,8 +272,9 @@ jobs:
           # for a dated release (RELEASE_DATED=1): check_publish_window
           # refuses to start publishing unless the UTC clock, read at the
           # call, is still on the day RELEASE_DATE with at least 10 minutes
-          # left before UTC midnight (tools/skill-release-date.py
-          # --publish-window decides that).
+          # left before UTC midnight (the publish_window op of
+          # tools/skill-release-date.py, through tools/skill-release-date-client.py,
+          # decides that).
           release_date_tool_failed() { # exit-code what
             echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2." >&2
             exit 1
@@ -281,11 +288,11 @@ jobs:
           }
           check_publish_window() {
             local rc=0
-            python3 tools/skill-release-date.py --publish-window "${RELEASE_DATE}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null || rc=$?
+            python3 -I tools/skill-release-date-client.py publish-window "${RELEASE_DATE}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null || rc=$?
             case "${rc}" in
               0) ;;
-              5) refuse_publish_window ;;
-              1) echo "The expected release date ${RELEASE_DATE} or the clock reading is malformed (see the error above)." >&2; exit 1 ;;
+              15) refuse_publish_window ;;
+              11) echo "The expected release date ${RELEASE_DATE} or the clock reading is malformed (see the error above)." >&2; exit 1 ;;
               *) release_date_tool_failed "${rc}" "checking the publication window" ;;
             esac
           }
@@ -296,8 +303,9 @@ jobs:
           # record to be immutable (immutable exactly true), so its
           # published_at cannot be replaced later, and then, for a dated
           # release only, requires the UTC day of its published_at to be the
-          # Released day, decided only by tools/skill-release-date.py
-          # --confirm-published. An undated release (RELEASE_DATED=0) has no
+          # Released day, decided only by the confirm_published op of
+          # tools/skill-release-date.py, through tools/skill-release-date-client.py.
+          # An undated release (RELEASE_DATED=0) has no
           # Released day, so its readback ends after the immutable check
           # (item 57). The log line it prints after the first creation of a
           # dated release is the first-publication
@@ -335,16 +343,16 @@ jobs:
               exit 1
             fi
             echo "$1: release ${RELEASE_TAG} published_at ${published_at:-empty}."
-            python3 tools/skill-release-date.py --confirm-published "${RELEASE_DATE}" "${published_at}" >/dev/null || rc=$?
+            python3 -I tools/skill-release-date-client.py confirm-published "${RELEASE_DATE}" "${published_at}" >/dev/null || rc=$?
             case "${rc}" in
               0) echo "Release ${RELEASE_TAG} was published on ${RELEASE_DATE} (UTC), the day its Released line names." ;;
-              5)
+              15)
                 echo "::error::Release ${RELEASE_TAG} IS PUBLISHED on a different UTC day from its Released line: Released ${RELEASE_DATE}, published_at ${published_at} (see the days above)." >&2
                 echo "The published zip carries Released: ${RELEASE_DATE}, and an immutable release cannot be republished, so the remedy is a corrective new version whose Released line names its own publication day; tools/check-release-checksum-live.py reports the same disagreement until then." >&2
                 echo "${SUPERSEDED_RELEASE_ADVICE}" >&2
                 exit 1
                 ;;
-              1)
+              11)
                 echo "::error::Release ${RELEASE_TAG} is published, but its published_at (${published_at:-empty}) is not a usable UTC instant, so its publication day is unconfirmed against Released: ${RELEASE_DATE}." >&2
                 exit 1
                 ;;
@@ -356,7 +364,7 @@ jobs:
           # that, never read as a verdict on the clock or the release record.
           if [ "${RELEASE_DATED}" = "1" ]; then
             prc=0
-            baseline="$(python3 tools/skill-release-date.py --baseline)" || prc=$?
+            baseline="$(python3 -I tools/skill-release-date-client.py baseline)" || prc=$?
             if [ "${prc}" -ne 0 ] || ! printf '%s' "${baseline}" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
               release_date_tool_failed "${prc}" "probing it"
             fi

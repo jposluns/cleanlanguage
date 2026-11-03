@@ -44,9 +44,11 @@ accept it absent at or below it.
 Input modes:
   ``FILE`` reads that file; ``-`` or no argument reads all of stdin (so a
   producer piped in completes and can take no ``SIGPIPE``).
-  ``--baseline`` prints the baseline version. Shell callers also run it first
-  as an availability probe: a missing, unreadable or broken extractor fails
-  the probe, so a later exit 1 is known to come from the content.
+  ``--baseline`` prints the baseline version. Shell callers, through
+  ``tools/skill-release-date-client.py``, ask for it first as an availability
+  probe, so a missing or broken extractor is named as that before any content
+  is judged; what tells a content verdict from a failure is the ``--json``
+  contract the client checks, not the probe.
   ``--requires-date VERSION`` prints ``required`` when ``VERSION`` sorts above
   the baseline (compared numerically, part by part, so ``1.0.100`` is above
   ``1.0.14`` and ``1.00.14`` equals it) and ``optional`` otherwise. Every
@@ -64,24 +66,31 @@ Input modes:
   created, that its ``published_at`` falls on the day ``EXPECTED`` and prints
   that day; a different day is refused with exit 5, naming both days.
   ``--json`` reads one JSON request object from stdin and prints one JSON
-  reply object. Its caller is ``tools/check-release-checksum-live.py``, which
+  reply object. Its callers are ``tools/check-release-checksum-live.py`` and
+  ``tools/skill-release-date-client.py``, which every shell caller runs; each
   runs this file as a separate ``python3 -I`` child. The request is
-  ``{"op": "baseline"}``, or ``{"op": OP, "arg": TEXT}`` for the ops
+  ``{"op": "baseline"}``; ``{"op": OP, "arg": TEXT}`` for the ops
   ``extract`` (``TEXT`` is the content as read with universal newlines, as
   the gate reads it with ``Path.read_text``; it is passed to ``extract``
   unchanged, so a ``CR`` left in it is part of its line, not a line ending),
-  ``requires_release_date`` (``TEXT`` is a version) and
-  ``release_day_from_published_at`` (``TEXT`` is a ``published_at`` value),
-  with no other key. The reply echoes ``op`` and
-  carries ``outcome``: ``value`` with ``value`` (a day, a JSON ``true`` or
-  ``false``, or the baseline version), ``absent`` with no further key
-  (``extract`` only: no line looks like the key), or ``malformed`` with
-  ``message`` (the text of the ``Malformed`` verdict). It is printed as ASCII
-  JSON with sorted keys and one trailing newline. This mode is designed to
-  exit 0 when it has delivered a reply, whatever its outcome, 2 on a bad
-  request, and 6 on an internal error; any other exit, whatever its cause, is
-  a failure of the child too, and the gate reads every exit other than 0 as a
-  failure of the child, whatever stdout holds.
+  ``requires_release_date`` (``TEXT`` is a version),
+  ``release_day_from_published_at`` (``TEXT`` is a ``published_at`` value)
+  and ``parse_date`` (``TEXT`` is a day, as for ``--check-date``);
+  ``{"op": "publish_window", "expected": DAY, "now": INSTANT}``, as for
+  ``--publish-window``; or ``{"op": "confirm_published", "expected": DAY,
+  "published_at": INSTANT}``, as for ``--confirm-published``; with no other
+  key and every value a string (``JSON_REQUEST_KEYS``). The reply echoes
+  ``op`` and carries ``outcome``: ``value`` with ``value`` (a day, a JSON
+  ``true`` or ``false``, or the baseline version), ``absent`` with no further
+  key (``extract`` only: no line looks like the key), ``malformed`` with
+  ``message`` (the text of the ``Malformed`` verdict), or ``refused`` with
+  ``message`` (``publish_window`` and ``confirm_published`` only: the text
+  the CLI prints with exit 5). It is printed as ASCII JSON with sorted keys
+  and one trailing newline. This mode is designed to exit 0 when it has
+  delivered a reply, whatever its outcome, 2 on a bad request, and 6 on an
+  internal error; any other exit, whatever its cause, is a failure of the
+  child too, and each caller reads every exit other than 0 as a failure of
+  the child, whatever stdout holds.
 
 Exit codes:
   0  success; the requested value is printed to stdout
@@ -140,6 +149,11 @@ VERSION_LINE = re.compile(r"Version:[ \t]*[0-9]+\.[0-9]+\.[0-9]+[ \t]*")
 
 class Malformed(ValueError):
     """A Released line or value that breaks the strict grammar."""
+
+
+class Refused(ValueError):
+    """A well-formed value that names the wrong day: exit 5 in the CLI, the
+    ``refused`` outcome under ``--json``. Not a ``Malformed``."""
 
 
 def looks_like_key(line: str) -> bool:
@@ -282,6 +296,30 @@ def publish_window_problem(expected: str, now: datetime.datetime) -> str | None:
     return None
 
 
+def publish_window_verdict(expected_text: str, now_text: str) -> str:
+    """Return ``expected_text`` once publishing may start at ``now_text``;
+    raise ``Malformed`` for a bad day or instant and ``Refused`` otherwise."""
+    expected = parse_date(expected_text)
+    now = parse_instant(now_text, "the current instant")
+    problem = publish_window_problem(expected, now)
+    if problem is not None:
+        raise Refused(f"refusing to start publishing: {problem}")
+    return expected
+
+
+def confirm_published_verdict(expected_text: str, published_at: str) -> str:
+    """Return the UTC day of ``published_at`` once it is ``expected_text``;
+    raise ``Malformed`` for a bad value and ``Refused`` for another day."""
+    expected = parse_date(expected_text)
+    day = release_day_from_published_at(published_at)
+    if day != expected:
+        raise Refused(
+            f"the release was published on {day} (UTC; published_at {published_at}), "
+            f"but its Released line names {expected}"
+        )
+    return day
+
+
 def die(message: str, code: int = 1):
     print(f"{PROG}: {message}", file=sys.stderr)
     raise SystemExit(code)
@@ -311,15 +349,27 @@ USAGE = (
     f" | --json"
 )
 
-# Row 80: the ops of the --json mode, named after the functions they run.
-JSON_OPS = ("extract", "requires_release_date", "release_day_from_published_at", "baseline")
+# Row 80: the ops of the --json mode, named after the functions they run,
+# each with the exact keys of its request beside "op". Row 89 added
+# parse_date, publish_window and confirm_published for the shell callers.
+JSON_REQUEST_KEYS = {
+    "extract": ("arg",),
+    "requires_release_date": ("arg",),
+    "release_day_from_published_at": ("arg",),
+    "baseline": (),
+    "parse_date": ("arg",),
+    "publish_window": ("expected", "now"),
+    "confirm_published": ("expected", "published_at"),
+}
+JSON_OPS = tuple(JSON_REQUEST_KEYS)
 
 
 def json_main() -> int:
     """Answer one JSON request from stdin with one JSON reply on stdout (see
     ``--json`` in the module docstring). A bad request exits 2 with nothing on
     stdout; only ``Malformed``, or a subclass of it, is a ``malformed``
-    reply, as in every other mode, and an Exception that the internal-error
+    reply, as in every other mode, only ``Refused`` is a ``refused`` reply
+    (the exit 5 of the CLI), and an Exception that the internal-error
     guard catches exits 6 instead of a reply. Each op is answered by its own
     branch, and an op in JSON_OPS that no branch answers raises such an
     Exception, so it is never answered as another op. The mode is designed
@@ -336,12 +386,14 @@ def json_main() -> int:
     op = request.get("op")
     if type(op) is not str or op not in JSON_OPS:
         die(f"--json: the request names no known op: {op!r}", 2)
-    keys = {"op"} if op == "baseline" else {"op", "arg"}
+    fields = JSON_REQUEST_KEYS[op]
+    keys = {"op", *fields}
     if set(request) != keys:
         die(f"--json: a request for {op} has exactly the keys {', '.join(sorted(keys))}", 2)
+    for key in fields:
+        if type(request[key]) is not str:
+            die(f"--json: the {key} of a request for {op} is not a string", 2)
     arg = request.get("arg")
-    if op != "baseline" and type(arg) is not str:
-        die(f"--json: the arg of a request for {op} is not a string", 2)
     reply = {"op": op}
     try:
         if op == "baseline":
@@ -352,10 +404,19 @@ def json_main() -> int:
             value = requires_release_date(arg)
         elif op == "release_day_from_published_at":
             value = release_day_from_published_at(arg)
+        elif op == "parse_date":
+            value = parse_date(arg)
+        elif op == "publish_window":
+            value = publish_window_verdict(request["expected"], request["now"])
+        elif op == "confirm_published":
+            value = confirm_published_verdict(request["expected"], request["published_at"])
         else:
             raise RuntimeError(f"--json: no branch answers the op {op!r}")
     except Malformed as error:
         reply["outcome"] = "malformed"
+        reply["message"] = str(error)
+    except Refused as error:
+        reply["outcome"] = "refused"
         reply["message"] = str(error)
     else:
         if value is None:
@@ -383,27 +444,20 @@ def main(argv: list[str]) -> int:
         return 0
     if len(args) == 3 and args[0] == "--publish-window":
         try:
-            expected = parse_date(args[1])
-            now = parse_instant(args[2], "the current instant")
+            expected = publish_window_verdict(args[1], args[2])
         except Malformed as error:
             die(str(error))
-        problem = publish_window_problem(expected, now)
-        if problem is not None:
-            die(f"refusing to start publishing: {problem}", 5)
+        except Refused as error:
+            die(str(error), 5)
         print(expected)
         return 0
     if len(args) == 3 and args[0] == "--confirm-published":
         try:
-            expected = parse_date(args[1])
-            day = release_day_from_published_at(args[2])
+            day = confirm_published_verdict(args[1], args[2])
         except Malformed as error:
             die(str(error))
-        if day != expected:
-            die(
-                f"the release was published on {day} (UTC; published_at {args[2]}), "
-                f"but its Released line names {expected}",
-                5,
-            )
+        except Refused as error:
+            die(str(error), 5)
         print(day)
         return 0
     if len(args) == 2 and args[0] in ("--check-date", "--published-day"):

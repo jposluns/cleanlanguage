@@ -108,22 +108,23 @@ else:
     lines.insert(vi + 1, "Released: " + d + "  ")
 p.write_bytes("\n".join(lines).encode("utf-8"))
 PYDATE
-# The extractor is probed first, so a missing or broken extractor is reported
-# as that. Then exit 1 or 3 means the stamp did not produce a well-formed line,
-# exit 4 means the stamped file could not be read, and any other failure means
-# the extractor crashed, reported as that.
+# The client, tools/skill-release-date-client.py, runs the extractor in its
+# --json mode and is probed first, so a missing or broken tool is reported as
+# that. Then exit 11 or 13 means the stamp did not produce a well-formed line,
+# exit 14 means the stamped file could not be read, and any other exit means
+# the tool is unavailable or crashed, reported as that.
 probe_rc=0
-probe="$(python3 tools/skill-release-date.py --baseline 2>/dev/null)" || probe_rc=$?
+probe="$(python3 -I tools/skill-release-date-client.py baseline 2>/dev/null)" || probe_rc=$?
 case "${probe_rc}:${probe}" in
   0:[0-9]*.[0-9]*.[0-9]*) ;;
   *) fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc})" ;;
 esac
 stamped_rc=0
-stamped="$(python3 tools/skill-release-date.py cleanlanguage/skills/cleanlanguage/SKILL.md)" || stamped_rc=$?
+stamped="$(python3 -I tools/skill-release-date-client.py extract-file cleanlanguage/skills/cleanlanguage/SKILL.md)" || stamped_rc=$?
 case "${stamped_rc}" in
   0) ;;
-  1|3) fail "could not set the dry-run Released date in SKILL.md (extractor exit ${stamped_rc})" ;;
-  4) fail "could not read the stamped cleanlanguage/skills/cleanlanguage/SKILL.md for its Released line (extractor exit 4)" ;;
+  11|13) fail "could not set the dry-run Released date in SKILL.md (client exit ${stamped_rc})" ;;
+  14) fail "could not read the stamped cleanlanguage/skills/cleanlanguage/SKILL.md for its Released line (client exit 14)" ;;
   *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${stamped_rc}) reading the stamped SKILL.md" ;;
 esac
 [ "${stamped}" = "${dry_date}" ] \

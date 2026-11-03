@@ -8,9 +8,11 @@ test pins that the packager (release-package.sh) selects and validates
 identically, so a malformed first line fails in all three, and a clean version
 still passes. It runs offline: the packager is exercised in a throwaway git
 worktree, and the gates are exercised through their own compiled regexes.
-The packager and the dry run each tell an extractor that could not read its
-input (exit 4) apart from one that failed inside (exit 6); the dry run read is
-exercised from the block extracted from its real script.
+The packager and the dry run read the Released line through
+tools/skill-release-date-client.py (row 89), and each tells input the client
+could not read (client exit 14) apart from an extractor that failed inside or
+broke its contract (client exit 16), which is never read as malformed content;
+the dry run read is exercised from the block extracted from its real script.
 """
 
 from __future__ import annotations
@@ -28,8 +30,9 @@ REPO = Path(__file__).resolve().parent.parent
 PACKAGER = REPO / "tools" / "release-package.sh"
 DRY_RUN = REPO / "tools" / "release-dry-run.sh"
 RELEASE_DATE_TOOL = REPO / "tools" / "skill-release-date.py"
+CLIENT = REPO / "tools" / "skill-release-date-client.py"
 
-# Reads all of standard input, then fails the read, so the extractor exits 4
+# Reads all of standard input, then fails the read, so the client exits 14
 # (its input could not be read) without the writer of the pipe taking a
 # SIGPIPE.
 UNREADABLE_STDIN_HOOK = (
@@ -41,22 +44,65 @@ UNREADABLE_STDIN_HOOK = (
     "            raise OSError(5, \"injected read error\")\n"
     "sys.stdin = _UnreadableStdin()\n"
 )
-# Fails inside the extractor after its input is read, so it exits 6.
+# Fails inside the extractor's extract, after the probe has passed, so it
+# exits 6 and the client exits 16.
 CRASH_HOOK = (
-    "import io as _crash_io\n"
+    "import unicodedata as _crash_mod\n"
     "def _crash(*args, **kwargs):\n"
     "    raise RuntimeError(\"injected internal error\")\n"
-    "_crash_io.TextIOWrapper = _crash\n"
+    "_crash_mod.category = _crash\n"
 )
 
+# Row 89: a copy of the extractor whose --json mode breaks for the op named
+# first, in the way the MODE names, while every other op still answers, and
+# whose CLI content modes exit 1 (so the probe passes and an unchanged caller
+# reads the content as malformed).
+BROKEN_HOOK = '''
+_real_json_main = json_main
+def json_main():
+    data = sys.stdin.buffer.read()
+    request = json.loads(data.decode("utf-8"))
+    if request["op"] != {op!r}:
+        sys.stdin = io.TextIOWrapper(io.BytesIO(data), encoding="utf-8")
+        return _real_json_main()
+{body}
+_real_main = main
+def main(argv):
+    if argv[1:] in (["--baseline"], ["--json"]):
+        return _real_main(argv)
+    return 1
+'''
+MODES = {
+    "exit1": "    raise SystemExit(1)",
+    "notjson": "    print('not json')\n    return 0",
+    "otherop": "    print(json.dumps({'op': 'baseline', 'outcome': 'value', 'value': '1.0.14'}))\n    return 0",
+    "badvalue": "    print(json.dumps({'op': request['op'], 'outcome': 'value', 'value': '2026-11-15 '}))\n    return 0",
+    "refused": "    print(json.dumps({'op': request['op'], 'outcome': 'refused', 'message': 'x'}))\n    return 0",
+}
 
-def extractor_with(hook: str) -> str:
-    """The real extractor source with ``hook`` run right after its imports."""
+
+def broken_extractor(op: str, mode: str) -> str:
+    """The real extractor with ``op`` broken in the way ``mode`` names."""
     source = RELEASE_DATE_TOOL.read_text(encoding="utf-8")
+    guard = '\nif __name__ == "__main__":\n'
+    if source.count(guard) != 1:
+        raise AssertionError("the extractor __main__ guard is not unique")
+    return source.replace(guard, BROKEN_HOOK.format(op=op, body=MODES[mode]) + guard)
+
+
+def extractor_with(hook: str, path: Path = RELEASE_DATE_TOOL) -> str:
+    """The real extractor source (or the source at ``path``) with ``hook``
+    run right after its imports."""
+    source = path.read_text(encoding="utf-8")
     anchor = "from pathlib import Path\n"
     if source.count(anchor) != 1:
-        raise AssertionError("the extractor import anchor is not unique")
+        raise AssertionError("the import anchor is not unique")
     return source.replace(anchor, anchor + hook)
+
+
+def client_with(hook: str) -> str:
+    """The real client source with ``hook`` run right after its imports."""
+    return extractor_with(hook, CLIENT)
 
 
 def _load(name: str, filename: str):
@@ -118,13 +164,14 @@ def gate_verdict(gate, skill_text: str):
     return (True, match.group(1)) if match else (False, None)
 
 
-def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
-    CHECKOUT's release-package.sh and tools/skill-release-date.py (so the code
-    under test, not HEAD's copy, is exercised), passing ``--release-date`` when
-    ``release_date`` is given and then ``extra_args``. ``extractor`` replaces
-    the extractor: ``"missing"`` deletes it, any other text is written in its
-    place. Returns (exit_code, stderr)."""
+    CHECKOUT's release-package.sh, tools/skill-release-date.py and
+    tools/skill-release-date-client.py (so the code under test, not HEAD's
+    copy, is exercised), passing ``--release-date`` when ``release_date`` is
+    given and then ``extra_args``. ``extractor`` replaces the extractor and
+    ``client`` the client: ``"missing"`` deletes it, any other text is written
+    in its place. Returns (exit_code, stderr)."""
     skill = skill_with(version_block, released_block) + extra_tail
     with tempfile.TemporaryDirectory() as tmp:
         wt = Path(tmp) / "wt"
@@ -149,10 +196,12 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
             os.chmod(wt / "tools" / "release-package.sh", 0o755)
             shutil.copyfile(RELEASE_DATE_TOOL, wt / "tools" / "skill-release-date.py")
-            if extractor == "missing":
-                (wt / "tools" / "skill-release-date.py").unlink()
-            elif extractor is not None:
-                (wt / "tools" / "skill-release-date.py").write_text(extractor, encoding="utf-8")
+            shutil.copyfile(CLIENT, wt / "tools" / "skill-release-date-client.py")
+            for name, body in (("skill-release-date.py", extractor), ("skill-release-date-client.py", client)):
+                if body == "missing":
+                    (wt / "tools" / name).unlink()
+                elif body is not None:
+                    (wt / "tools" / name).write_text(body, encoding="utf-8")
             env = dict(os.environ)
             if locale is not None:
                 env["LC_ALL"] = locale
@@ -297,22 +346,66 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertNotIn("malformed", stderr)
 
     def test_unreadable_input_at_head_is_named_as_unreadable(self):
-        # T4: extractor exit 4 is unreadable input, never a crash.
+        # T4: client exit 14 is unreadable input, never a crash.
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
                                     released_block="Released: 2026-11-15  ",
-                                    extractor=extractor_with(UNREADABLE_STDIN_HOOK))
+                                    client=client_with(UNREADABLE_STDIN_HOOK))
         self.assertEqual(code, 1, stderr)
-        self.assertIn("at HEAD for its Released line: the extractor could not read its input (exit 4)", stderr)
+        self.assertIn("at HEAD for its Released line: the client could not read its input (exit 14)", stderr)
         self.assertNotIn("unavailable or crashed", stderr)
 
     def test_internal_error_at_head_is_reported_as_a_crash(self):
-        # T4: extractor exit 6 is the extractor failing, never unreadable input.
+        # T4: an extractor internal error is the tool failing (client exit
+        # 16), never unreadable input.
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
                                     released_block="Released: 2026-11-15  ",
                                     extractor=extractor_with(CRASH_HOOK))
         self.assertEqual(code, 1, stderr)
-        self.assertIn("unavailable or crashed (exit 6) reading the Released line", stderr)
+        self.assertIn("unavailable or crashed (exit 16) reading the Released line", stderr)
         self.assertNotIn("could not read", stderr)
+
+    def test_a_broken_extractor_reply_is_unavailable_at_every_call(self):
+        # Row 89: at each call of the packager, an extractor that passes the
+        # probe but breaks the contract for that call's op reads as the tool
+        # being unavailable, never as a verdict on the content.
+        sites = (
+            ("check-date", "parse_date",
+             dict(version_block="Version: 1.2.3  ", plugin_version="1.2.3", release_date="2026-11-15",
+                  released_block="Released: 2026-11-15  "),
+             "tools/skill-release-date.py is unavailable or crashed (exit 16) checking --release-date 2026-11-15",
+             ("must be a real YYYY-MM-DD date",)),
+            ("extract", "extract",
+             dict(version_block="Version: 1.2.3  ", plugin_version="1.2.3", release_date="2026-11-15",
+                  released_block="Released: 2026-11-15  "),
+             "tools/skill-release-date.py is unavailable or crashed (exit 16) reading the Released line of "
+             "cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD",
+             ("malformed", "could not read")),
+            ("requires-date", "requires_release_date",
+             dict(version_block="Version: 1.0.14  ", plugin_version="1.0.14"),
+             "tools/skill-release-date.py is unavailable or crashed (exit 16) deciding whether 1.0.14 needs a "
+             "Released line",
+             ("rejected the version", "unexpected answer")),
+        )
+        for site, op, fixture, expected, absent in sites:
+            for mode in MODES:
+                with self.subTest(site=site, mode=mode):
+                    code, stderr = run_packager(extractor=broken_extractor(op, mode), **fixture)
+                    self.assertEqual(code, 1, stderr)
+                    self.assertIn(expected, stderr)
+                    for fragment in absent:
+                        self.assertNotIn(fragment, stderr)
+
+    def test_a_broken_client_is_unavailable(self):
+        # Row 89: a client that does not compile (exit 1) or is missing (exit
+        # 2) fails the probe, never a content verdict.
+        for label, body in (("missing", "missing"), ("broken", "def broken(:\n")):
+            with self.subTest(label):
+                code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                            released_block="Released: 2026-11-15  ", client=body)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("tools/skill-release-date.py is unavailable or broken (probe exit "
+                              + ("2" if label == "missing" else "1") + ")", stderr)
+                self.assertNotIn("malformed", stderr)
 
     def test_malformed_line_fails_without_release_date(self):
         for label, block in (
@@ -323,7 +416,8 @@ class PackagerReleaseDateTest(unittest.TestCase):
             with self.subTest(label):
                 code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", released_block=block)
                 self.assertEqual(code, 1, stderr)
-                self.assertIn("Released line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is malformed", stderr)
+                self.assertIn("Released line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is malformed: "
+                              "skill-release-date: ", stderr)
 
     def test_line_away_from_version_fails(self):
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
@@ -340,10 +434,12 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertIn("--release-date must be a real YYYY-MM-DD date", stderr)
 
 
-def dry_run_stamped_read(extractor: str, skill_readable: bool = True):
+def dry_run_stamped_read(extractor: str, skill_readable: bool = True, client: str | None = None,
+                         skill_text: str = "Version: 1.0.15  \nReleased: 2026-11-15  \n"):
     """Run the stamped Released read of release-dry-run.sh, extracted from the
     real script (from ``stamped_rc=0`` to its ``esac``), in a throwaway tree
-    holding ``extractor``. Returns (exit code, stdout, stderr)."""
+    holding ``extractor`` and ``client`` (the real client by default).
+    Returns (exit code, stdout, stderr)."""
     lines = DRY_RUN.read_text(encoding="utf-8").split("\n")
     start = lines.index("stamped_rc=0")
     block = "\n".join(lines[start: lines.index("esac", start) + 1])
@@ -353,10 +449,12 @@ def dry_run_stamped_read(extractor: str, skill_readable: bool = True):
         skill = root / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
         skill.parent.mkdir(parents=True)
         if skill_readable:
-            skill.write_text("Version: 1.0.15  \nReleased: 2026-11-15  \n", encoding="utf-8")
+            skill.write_text(skill_text, encoding="utf-8")
         else:
             skill.mkdir()
         (root / "tools" / "skill-release-date.py").write_text(extractor, encoding="utf-8")
+        (root / "tools" / "skill-release-date-client.py").write_text(
+            CLIENT.read_text(encoding="utf-8") if client is None else client, encoding="utf-8")
         script = (
             "set -euo pipefail\n"
             "fail() { printf 'release-dry-run: %s\\n' \"$1\" >&2; exit 1; }\n"
@@ -367,8 +465,8 @@ def dry_run_stamped_read(extractor: str, skill_readable: bool = True):
 
 
 class DryRunReleasedReadTest(unittest.TestCase):
-    """T4: the dry run tells unreadable input (exit 4) apart from an extractor
-    that failed inside (exit 6)."""
+    """T4: the dry run tells unreadable input (client exit 14) apart from an
+    extractor that failed inside or broke its contract (client exit 16)."""
 
     def test_stamped_line_is_read(self):
         code, out, err = dry_run_stamped_read(RELEASE_DATE_TOOL.read_text(encoding="utf-8"))
@@ -378,14 +476,43 @@ class DryRunReleasedReadTest(unittest.TestCase):
     def test_unreadable_stamped_file_is_named_as_unreadable(self):
         code, _out, err = dry_run_stamped_read(RELEASE_DATE_TOOL.read_text(encoding="utf-8"), skill_readable=False)
         self.assertEqual(code, 1, err)
-        self.assertIn("could not read the stamped cleanlanguage/skills/cleanlanguage/SKILL.md for its Released line (extractor exit 4)", err)
+        self.assertIn("could not read the stamped cleanlanguage/skills/cleanlanguage/SKILL.md for its Released line (client exit 14)", err)
         self.assertNotIn("unavailable or crashed", err)
 
     def test_internal_error_is_reported_as_a_crash(self):
         code, _out, err = dry_run_stamped_read(extractor_with(CRASH_HOOK))
         self.assertEqual(code, 1, err)
-        self.assertIn("unavailable or crashed (exit 6) reading the stamped SKILL.md", err)
+        self.assertIn("unavailable or crashed (exit 16) reading the stamped SKILL.md", err)
         self.assertNotIn("could not read the stamped", err)
+
+    def test_a_broken_extractor_reply_is_unavailable(self):
+        # Row 89: an extractor that breaks the contract for the read is the
+        # tool failing, never a stamp that did not take.
+        for mode in MODES:
+            with self.subTest(mode):
+                code, _out, err = dry_run_stamped_read(broken_extractor("extract", mode))
+                self.assertEqual(code, 1, err)
+                self.assertIn("tools/skill-release-date.py is unavailable or crashed (exit 16) reading the stamped "
+                              "SKILL.md", err)
+                self.assertNotIn("could not set the dry-run Released date", err)
+
+    def test_a_malformed_stamp_names_the_client_exit(self):
+        code, _out, err = dry_run_stamped_read(RELEASE_DATE_TOOL.read_text(encoding="utf-8"),
+                                               skill_text="Version: 1.0.15  \nReleased: soon\n")
+        self.assertEqual(code, 1, err)
+        self.assertIn("could not set the dry-run Released date in SKILL.md (client exit 11)", err)
+
+
+class CallerLaunchTest(unittest.TestCase):
+    """Row 89: the packager and the dry run reach the extractor only through
+    the client, each launch isolated."""
+
+    def test_every_launch_goes_through_the_client(self):
+        for path, launches in ((PACKAGER, 5), (DRY_RUN, 2)):
+            with self.subTest(path.name):
+                text = path.read_text(encoding="utf-8")
+                self.assertEqual(text.count("python3 tools/skill-release-date.py"), 0)
+                self.assertEqual(text.count("python3 -I tools/skill-release-date-client.py"), launches)
 
 
 def _locale_available(name: str) -> bool:
@@ -523,6 +650,7 @@ class ZipLayoutTest(unittest.TestCase):
                 shutil.copyfile(PACKAGER, wt / "tools" / "release-package.sh")
                 os.chmod(wt / "tools" / "release-package.sh", 0o755)
                 shutil.copyfile(RELEASE_DATE_TOOL, wt / "tools" / "skill-release-date.py")
+                shutil.copyfile(CLIENT, wt / "tools" / "skill-release-date-client.py")
                 proc = subprocess.run(
                     ["bash", str(wt / "tools" / "release-package.sh")],
                     capture_output=True, text=True,
