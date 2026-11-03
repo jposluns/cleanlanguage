@@ -1011,6 +1011,28 @@ class PatternPinTest(unittest.TestCase):
                                      "message": message}), ""),
                 )
 
+    def test_an_instant_field_with_its_separator_but_no_digits_fails_the_form(self):
+        # Every field of PUBLISHED_AT_FORM requires its digits: a value that
+        # keeps every separator but drops only the digits of the seconds,
+        # the hour, the minutes, the day, or the month fails the form, never
+        # the strptime check, through the function, --published-day and
+        # --json alike.
+        for value in (
+            "2026-01-01T00:00:Z", "2026-01-01T:00:00Z", "2026-01-01T00::00Z", "2026-01-T00:00:00Z",
+            "2026--01T00:00:00Z",
+        ):
+            with self.subTest(value):
+                message = f"published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: {value!r}"
+                self.assertEqual(self.malformed(srd.release_day_from_published_at, value), message)
+                self.assertEqual(
+                    run(None, "--published-day", value), (1, "", f"skill-release-date: {message}\n")
+                )
+                self.assertEqual(
+                    run(request("release_day_from_published_at", value), "--json", stdin=True),
+                    (0, reply_bytes({"op": "release_day_from_published_at", "outcome": "malformed",
+                                     "message": message}), ""),
+                )
+
     def test_the_version_line_takes_any_run_of_spaces_and_tabs_only(self):
         # VERSION_LINE: any run of spaces and tabs, none included, after the
         # colon and after the version, which is three runs of ASCII digits
@@ -1053,6 +1075,15 @@ class PatternPinTest(unittest.TestCase):
                 text = HEAD + lead + "\n" + VERSION + RELEASED + TAIL
                 self.assertEqual(srd.extract(text), "2026-11-15")
                 self.assertEqual(run(text.encode("utf-8")), (0, "2026-11-15\n", ""))
+
+    def test_the_released_line_hangs_from_the_first_version_line_not_a_later_one(self):
+        # The Version line is the first line that starts with "Version:", so
+        # a later Version line does not move the place the Released line
+        # must sit: the Released line directly after the first one is
+        # accepted.
+        text = "Version: 1.0.15\nReleased: 2026-11-15\nVersion: 1.0.16\n"
+        self.assertEqual(srd.extract(text), "2026-11-15")
+        self.assertEqual(run(text.encode("utf-8")), (0, "2026-11-15\n", ""))
 
 
 class BuilderCarriesReleasedTest(unittest.TestCase):

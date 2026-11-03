@@ -2345,6 +2345,25 @@ class ConditionalPassTest(unittest.TestCase):
                     )
                 self.assertEqual((digest, err.getvalue()), (ZIP_SUM, ""))
 
+    def test_a_manifest_ending_in_a_blank_line_is_not_one_line(self):
+        # The final newline ends the one line, but a second newline starts a
+        # second, empty one, so a manifest ending in a blank line is not
+        # exactly one line and is unverifiable, before its form is read.
+        def manifest(*args, check=True):
+            self.fake_download(*args, check=check)
+            target = Path(args[args.index("--dir") + 1])
+            (target / f"cleanlanguage-{AHEAD}.zip.sha256").write_text(
+                f"{ZIP_SUM}  cleanlanguage-{AHEAD}.zip\n\n", encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        gate.gh = manifest
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+            gate.published_digest(f"v{AHEAD}", f"cleanlanguage-{AHEAD}.zip", f"cleanlanguage-{AHEAD}.zip.sha256")
+        self.assertEqual(stop.exception.code, 2)
+        self.assertEqual(err.getvalue(), self.CV + f"cleanlanguage-{AHEAD}.zip.sha256 is not exactly one line\n")
+
     def test_a_manifest_digest_one_digit_short_is_unverifiable(self):
         # Fix round 10 (mutation sweep): the digest of the manifest has
         # exactly 64 hex digits; one digit short fails its form, before the
