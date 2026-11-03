@@ -64,7 +64,9 @@ bounded part of each (RESULT_LIMIT plus ECHO_BYTES_PER_CHARACTER bytes for
 each character of the request values, and STDERR_LIMIT). The client waits
 at most CHILD_TIMEOUT_SECONDS; on a timeout it kills the process group of
 the child, which is still unreaped, so the group id cannot have been reused,
-and then reaps the child. Residuals: after a normal end the group is not
+and then reaps the child, waiting at most REAP_GRACE_SECONDS for it to end;
+a child that a kill does not end within that grace is left unreaped and the
+client exits 16, naming that. Residuals: after a normal end the group is not
 killed, because without a wait that leaves the child unreaped (not
 available on every platform the maintainer tools run on) a kill after the
 reap could reach a reused id, so a process the extractor starts can outlive
@@ -97,8 +99,10 @@ PROG = "skill-release-date-client"
 TOOL_PROG = "skill-release-date"
 RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 
-# The bounds on one extractor child, equal to the gate's.
+# The bounds on one extractor child, equal to the gate's. After a timeout
+# kill, the client waits at most REAP_GRACE_SECONDS to see the child end.
 CHILD_TIMEOUT_SECONDS = 20
+REAP_GRACE_SECONDS = 5
 RESULT_LIMIT = 65536
 ECHO_BYTES_PER_CHARACTER = 12
 STDERR_LIMIT = 4096
@@ -292,7 +296,16 @@ def run_extractor(op: str, fields: dict, timeout: float = CHILD_TIMEOUT_SECONDS,
                     os.killpg(proc.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                proc.wait()
+                try:
+                    proc.wait(timeout=REAP_GRACE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    # A child that a kill does not end (for example one in an
+                    # uninterruptible sleep) is left unreaped rather than
+                    # waited for without a bound.
+                    raise Unavailable(
+                        f"could not be reaped (the client saw no end of it within "
+                        f"{REAP_GRACE_SECONDS} seconds after its kill)"
+                    ) from None
             stderr.seek(0)
             printed = stderr.read(STDERR_LIMIT)
             stdout.seek(0)

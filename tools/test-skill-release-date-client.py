@@ -8,7 +8,8 @@ that it agrees with the extractor's CLI, stream for stream, with each exit
 code raised by 10 (T1); that every reply that breaks the contract, and every
 extractor that is broken, missing or crashes, reads as unavailable (exit 16),
 never as a verdict (T2, T3); its grammar (T4); the bounds on the child's
-output and time (T5); that the child runs isolated with an empty environment
+output and time, including the reap after a timeout kill (T5); that the
+child runs isolated with an empty environment
 (T6); that its contract agrees with the live checksum gate's and its request
 keys with the extractor's (T7); the shape of its source (T8); and its
 unreadable-input and machinery-error paths (T9).
@@ -19,16 +20,20 @@ The tests run offline and touch only throwaway directories.
 from __future__ import annotations
 
 import ast
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 CLIENT = REPO / "tools" / "skill-release-date-client.py"
@@ -301,6 +306,37 @@ class BrokenExtractorTest(unittest.TestCase):
                 self.assertEqual((code, out), (16, ""), err)
                 self.assertIn(fragment, err)
 
+    def test_a_reply_for_another_op_is_a_breach_even_with_a_valid_value(self):
+        # The op echo is the only rule this reply breaks: its value is a day,
+        # as the check-date op needs, and its outcome and keys are valid.
+        body = ("print('{\"op\": \"release_day_from_published_at\", \"outcome\": \"value\", "
+                "\"value\": \"2026-11-15\"}')\n")
+        pair = Pair(body)
+        try:
+            code, out, err = pair.run("check-date", "2026-11-15")
+        finally:
+            pair.close()
+        self.assertEqual((code, out), (16, ""), err)
+        self.assertIn("(it answers an op other than parse_date) in parse_date, so the extractor is unavailable", err)
+
+    def test_a_valid_reply_with_a_non_zero_exit_is_unavailable(self):
+        # The exit is the only rule each child breaks: its reply meets the
+        # contract in full, and it then exits 1 or 120.
+        reply = "{\"op\": \"baseline\", \"outcome\": \"value\", \"value\": \"1.0.14\"}"
+        for exit_code in (1, 120):
+            with self.subTest(exit_code=exit_code):
+                pair = Pair(f"print({reply!r})\nraise SystemExit({exit_code})\n")
+                try:
+                    code, out, err = pair.run("baseline")
+                finally:
+                    pair.close()
+                self.assertEqual((code, out), (16, ""), err)
+                self.assertEqual(
+                    err,
+                    f"skill-release-date-client: skill-release-date.py exited {exit_code} in baseline, "
+                    "so the extractor is unavailable\n",
+                )
+
     def test_a_message_that_is_not_a_string_is_a_breach(self):
         body = ("print('{\"op\": \"requires_release_date\", \"outcome\": \"malformed\", \"message\": 5}')\n")
         pair = Pair(body)
@@ -416,13 +452,53 @@ class BoundsTest(unittest.TestCase):
 
     def test_bound_constants_equal_the_gates(self):
         gate = _load("crc_gate_bounds", GATE)
-        for name in ("CHILD_TIMEOUT_SECONDS", "RESULT_LIMIT", "ECHO_BYTES_PER_CHARACTER", "STDERR_LIMIT",
-                     "EXTRACTOR_INTERNAL_ERROR"):
+        for name in ("CHILD_TIMEOUT_SECONDS", "REAP_GRACE_SECONDS", "RESULT_LIMIT", "ECHO_BYTES_PER_CHARACTER",
+                     "STDERR_LIMIT", "EXTRACTOR_INTERNAL_ERROR"):
             with self.subTest(name):
                 self.assertEqual(getattr(client, name), getattr(gate, name))
         self.assertEqual(
-            (client.CHILD_TIMEOUT_SECONDS, client.RESULT_LIMIT, client.ECHO_BYTES_PER_CHARACTER, client.STDERR_LIMIT),
-            (20, 65536, 12, 4096),
+            (client.CHILD_TIMEOUT_SECONDS, client.REAP_GRACE_SECONDS, client.RESULT_LIMIT,
+             client.ECHO_BYTES_PER_CHARACTER, client.STDERR_LIMIT),
+            (20, 5, 65536, 12, 4096),
+        )
+
+    def test_a_child_that_a_kill_does_not_end_is_left_unreaped(self):
+        # A child that a kill does not end, such as one in an uninterruptible
+        # sleep, cannot be made in a test, so a stand-in for Popen never ends:
+        # its wait with a timeout always times out, and a wait with no timeout
+        # fails the test, because it would block the client with no bound.
+        waits = []
+
+        class NeverEnds:
+            pid = 999999999
+            returncode = None
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def wait(self, timeout=None):
+                waits.append(timeout)
+                if timeout is None:
+                    raise AssertionError("a wait with no timeout")
+                raise subprocess.TimeoutExpired("extractor", timeout)
+
+        kills = []
+        reason = (f"could not be reaped (the client saw no end of it within "
+                  f"{client.REAP_GRACE_SECONDS} seconds after its kill)")
+        with mock.patch.object(client.subprocess, "Popen", NeverEnds), \
+                mock.patch.object(client.os, "killpg", lambda pid, sig: kills.append((pid, sig))):
+            with self.assertRaises(client.Unavailable) as caught:
+                client.run_extractor("baseline", {}, timeout=1)
+            self.assertEqual(caught.exception.reason, reason)
+            self.assertEqual(waits, [1, client.REAP_GRACE_SECONDS])
+            self.assertEqual(kills, [(NeverEnds.pid, signal.SIGKILL)])
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                code = client.main(["skill-release-date-client", "baseline"])
+        self.assertEqual(code, 16)
+        self.assertEqual(
+            stderr.getvalue(),
+            f"skill-release-date-client: skill-release-date.py {reason} in baseline, so the extractor is unavailable\n",
         )
 
     def test_relayed_stderr_is_bounded(self):
