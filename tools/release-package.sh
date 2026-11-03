@@ -148,10 +148,15 @@ fi
 # crashed, which is reported as that, never as malformed content. The client
 # is probed first (baseline), so a missing or broken tool fails here, before
 # any content is judged. A malformed line fails whether or not --release-date
-# is given. Both pipeline statuses are read explicitly and printed on a last
-# line of their own, so a failed blob read is told apart from every client
-# exit, never surfacing as the client exit 13 (absent) that pipefail would
-# otherwise report, and no client exit can pass for a failed blob read.
+# is given. Both pipeline statuses are printed on a last line of their own and
+# read explicitly, so a failed blob read never surfaces as the client exit 13
+# (absent) that pipefail would otherwise report. A non-zero blob status is
+# reported as a failed blob read, with one exception: a blob status of 141
+# (git show ended by SIGPIPE) beside a client exit that is not a content
+# verdict (0, 11 or 13) means the client ended before it read the whole blob,
+# so the client's own exit and reason are reported instead. A content verdict
+# is never taken beside a non-zero blob status, since it may rest on part of
+# the blob.
 # The client writes to one stream only: on exit 0 the value on stdout, and on
 # any other exit its message on stderr with nothing on stdout. Each call
 # below captures both streams, so an unavailable branch can relay the
@@ -197,9 +202,12 @@ released="${read_out%$'\n'*}"
 released="${released%$'\n'}"
 blob_rc="${read_statuses% *}"
 released_rc="${read_statuses#* }"
-if [ "${blob_rc}" != "0" ]; then
-  fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line"
-fi
+case "${blob_rc}:${released_rc}" in
+  0:*) ;;
+  141:0 | 141:11 | 141:13) fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line" ;;
+  141:*) ;;
+  *) fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line" ;;
+esac
 case "${released_rc}" in
   0)
     [[ "${released}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \

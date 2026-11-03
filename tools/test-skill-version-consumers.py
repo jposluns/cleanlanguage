@@ -173,6 +173,41 @@ FAILING_BLOB_GIT = (
     "exec {git} \"$@\"\n"
 )
 
+# Row 89: a stand-in client that answers the probe and the date check as the
+# real one does, and for the read of the Released line ends at once with the
+# exit code given and a line on stderr, without reading its input.
+EARLY_END_CLIENT = (
+    "import sys\n"
+    "args = sys.argv[1:]\n"
+    "if args == ['baseline']:\n"
+    "    print('1.0.14')\n"
+    "    raise SystemExit(0)\n"
+    "if args[:1] == ['check-date']:\n"
+    "    print(args[1])\n"
+    "    raise SystemExit(0)\n"
+    "print('stand-in ended at once', file=sys.stderr)\n"
+    "raise SystemExit({code})\n"
+)
+
+# Row 89: a git that, at its third read of HEAD:cleanlanguage/skills/
+# cleanlanguage/SKILL.md (the Released read of the packager), writes the
+# blob and then 300 KB more, far past a pipe buffer, so that when the client
+# ends without reading, git show ends by SIGPIPE (status 141).
+LONG_BLOB_GIT = (
+    "#!/bin/sh\n"
+    "if [ \"$1\" = show ] && [ \"$2\" = HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md ]; then\n"
+    "  n=$(cat {count} 2>/dev/null || echo 0)\n"
+    "  n=$((n + 1))\n"
+    "  echo \"$n\" > {count}\n"
+    "  if [ \"$n\" -eq 3 ]; then\n"
+    "    {git} \"$@\" || exit\n"
+    "    yes 'padding past the pipe buffer' | head -c 300000\n"
+    "    exit\n"
+    "  fi\n"
+    "fi\n"
+    "exec {git} \"$@\"\n"
+)
+
 # Row 89: a copy of the extractor whose --json mode breaks for the op named
 # first, in the way the MODE names, while every other op still answers, and
 # whose CLI content modes exit 1 (so the probe passes and an unchanged caller
@@ -568,6 +603,44 @@ class PackagerReleaseDateTest(unittest.TestCase):
         self.assertEqual(code, 1, stderr)
         self.assertIn("tools/skill-release-date.py is unavailable or crashed (exit 125) reading the Released line", stderr)
         self.assertNotIn("could not read", stderr)
+
+    def long_blob_run(self, code: int):
+        git = shutil.which("git")
+        self.assertIsNotNone(git)
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "git"
+            fake.write_text(LONG_BLOB_GIT.format(count=str(Path(tmp) / "count"), git=git), encoding="utf-8")
+            fake.chmod(0o755)
+            result = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                  released_block="Released: 2026-11-15  ", path_prefix=tmp,
+                                  client=EARLY_END_CLIENT.format(code=code))
+            reads = int((Path(tmp) / "count").read_text())
+        self.assertEqual(reads, 3, result[1])
+        return result
+
+    def test_a_client_that_ends_before_the_whole_blob_is_reported_as_itself(self):
+        # Row 89: the client ends at once with exit 16, so git show, still
+        # writing, ends by SIGPIPE (141). The client's exit and reason are
+        # reported, not a failed blob read.
+        code, stderr = self.long_blob_run(16)
+        self.assertEqual(code, 1, stderr)
+        self.assertEqual(stderr.splitlines(), [
+            "stand-in ended at once",
+            "release-package: tools/skill-release-date.py is unavailable or crashed (exit 16) reading the Released "
+            "line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD",
+        ])
+
+    def test_a_content_verdict_beside_a_sigpipe_is_a_failed_blob_read(self):
+        # Row 89: a content verdict beside a non-zero blob status may rest on
+        # part of the blob, so it is never taken: an absent line (13) or a
+        # malformed one (11) beside a SIGPIPE is a failed blob read.
+        for verdict in (13, 11):
+            with self.subTest(verdict=verdict):
+                code, stderr = self.long_blob_run(verdict)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("release-package: could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for "
+                              "its Released line\n", stderr)
+                self.assertNotIn("unavailable or crashed", stderr)
 
     def test_a_failed_blob_read_is_named_as_such(self):
         # Row 89: a git show that fails at the Released read is reported as
