@@ -157,7 +157,7 @@ jobs:
           }
           prc=0
           baseline="$(python3 -I tools/skill-release-date-client.py baseline)" || prc=$?
-          if [ "${prc}" -ne 0 ] || ! printf '%s' "${baseline}" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+          if [ "${prc}" -ne 0 ] || ! [[ "${baseline}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             release_date_tool_failed "${prc}" "probing it"
           fi
           rc=0
@@ -365,7 +365,7 @@ jobs:
           if [ "${RELEASE_DATED}" = "1" ]; then
             prc=0
             baseline="$(python3 -I tools/skill-release-date-client.py baseline)" || prc=$?
-            if [ "${prc}" -ne 0 ] || ! printf '%s' "${baseline}" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+            if [ "${prc}" -ne 0 ] || ! [[ "${baseline}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               release_date_tool_failed "${prc}" "probing it"
             fi
           fi

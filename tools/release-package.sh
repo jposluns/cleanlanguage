@@ -178,7 +178,12 @@ if [ -n "${release_date_given}" ]; then
       ;;
   esac
 fi
+# The substitution turns errexit off for itself, so its statuses are printed
+# even when errexit is inherited (shopt -s inherit_errexit, or POSIX mode),
+# where a failing client would otherwise end it, and set -e the packager,
+# before any status was read.
 read_out="$(
+  set +e
   git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-release-date-client.py extract-stdin 2>&1
   statuses=("${PIPESTATUS[@]}")
   printf '\n%s %s' "${statuses[0]}" "${statuses[1]}"

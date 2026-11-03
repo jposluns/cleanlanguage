@@ -781,13 +781,13 @@ class WorkflowStepTest(unittest.TestCase):
         env.update({key: value for key, value in self.carried.items() if key in written})
         return env
 
-    def run_step(self, name: str, script_text: str | None = None):
+    def run_step(self, name: str, script_text: str | None = None, bash_options: tuple = ()):
         env = self.step_environment(name)
         self.env_file.write_text("", encoding="utf-8")
         script = self.state / "step.sh"
         script.write_text(step_script(name) if script_text is None else script_text, encoding="utf-8")
         proc = subprocess.run(
-            ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(script)],
+            ["bash", "--noprofile", "--norc", *bash_options, "-eo", "pipefail", str(script)],
             cwd=self.work, env=env, capture_output=True, text=True,
         )
         if proc.returncode == 0:
@@ -2237,6 +2237,75 @@ class PackageStepTest(WorkflowStepTest):
         code, _out, err = self.run_step(PACKAGE)
         self.assertEqual(code, 0, err)
         self.assertEqual(self.packager_args(), [["--tag", "v1.0.15"]])
+
+
+# Row 89: the two ways errexit can be inherited by a command substitution.
+INHERITED_ERREXIT = (("inherit_errexit", ("-O", "inherit_errexit")), ("posix", ("-o", "posix")))
+
+# Row 89: a stand-in client whose baseline is a version followed by another
+# line, and which runs the real client for every other word.
+TWO_LINE_BASELINE_CLIENT = (
+    "import os, sys\n"
+    "if sys.argv[1:] == [\"baseline\"]:\n"
+    "    print(\"1.0.14\")\n"
+    "    print(\"noise\")\n"
+    "    raise SystemExit(0)\n"
+    "real = os.path.join(os.path.dirname(os.path.abspath(__file__)), \"real-client.py\")\n"
+    "os.execv(sys.executable, [sys.executable, \"-I\", real, *sys.argv[1:]])\n"
+)
+
+
+class InheritedErrexitStepTest(WorkflowStepTest):
+    """Row 89: the Determine and Publish steps keep every result of the
+    client when errexit is inherited by command substitutions, by shopt -s
+    inherit_errexit or in POSIX mode."""
+
+    def test_the_steps_give_the_same_verdicts(self):
+        for label, options in INHERITED_ERREXIT:
+            with self.subTest(label, case="a new dated release expects today"):
+                self.reset_calls()
+                self.set_state(status="404", clock="2026-11-15T10:00:00Z")
+                code, _out, err = self.run_step(DETERMINE, bash_options=options)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(self.env_values(), {"RELEASE_DATED": "1", "RELEASE_DATE": "2026-11-15"})
+            with self.subTest(label, case="a broken extractor is unavailable"):
+                self.reset_calls()
+                self.break_extractor("extract", "exit1")
+                code, _out, err = self.run_step(DETERMINE, bash_options=options)
+                shutil.copy2(EXTRACTOR, self.work / "tools" / "skill-release-date.py")
+                self.assertEqual(code, 1, err)
+                self.assertIn("unavailable or crashed (exit 16) while reading the Released line", err)
+                self.assertIn("exited 1 in extract, so the extractor is unavailable", err)
+            with self.subTest(label, case="a first publication ends green"):
+                self.reset_calls()
+                self.set_state(status="404", clock="2026-11-15T12:00:00Z")
+                code, _out, err = self.run_step(PUBLISH, bash_options=options)
+                self.assertEqual(code, 0, err)
+            with self.subTest(label, case="the window refusal is named"):
+                self.reset_calls()
+                self.set_state(clock="2026-11-15T23:55:00Z")
+                code, _out, err = self.run_step(PUBLISH, bash_options=options)
+                self.assertEqual(code, 1, err)
+                self.assertIn("Refusing to publish v1.0.15", err)
+                self.set_state(clock="2026-11-15T12:00:00Z")
+
+
+class WholeBaselineTest(WorkflowStepTest):
+    """Row 89: each baseline probe of the workflow checks the value as a
+    whole string, so a version followed by another line is refused."""
+
+    def test_a_baseline_with_another_line_is_refused_by_each_probe(self):
+        tools = self.work / "tools"
+        shutil.move(str(tools / "skill-release-date-client.py"), str(tools / "real-client.py"))
+        (tools / "skill-release-date-client.py").write_text(TWO_LINE_BASELINE_CLIENT, encoding="utf-8")
+        for step in (DETERMINE, PUBLISH):
+            with self.subTest(step):
+                self.reset_calls()
+                self.set_state(status="404")
+                code, _out, err = self.run_step(step)
+                self.assertEqual(code, 1, err)
+                self.assertIn("tools/skill-release-date.py is unavailable or crashed (exit 0) while probing it", err)
+                self.assertFalse(any(is_tag_operation(c) or is_create(c) for c in self.calls()), self.calls())
 
 
 class ChainedRunTest(WorkflowStepTest):

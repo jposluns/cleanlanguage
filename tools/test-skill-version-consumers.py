@@ -288,14 +288,15 @@ def gate_verdict(gate, skill_text: str):
     return (True, match.group(1)) if match else (False, None)
 
 
-def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None, bash_options: tuple = ()):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
     CHECKOUT's release-package.sh, tools/skill-release-date.py and
     tools/skill-release-date-client.py (so the code under test, not HEAD's
     copy, is exercised), passing ``--release-date`` when ``release_date`` is
     given and then ``extra_args``. ``extractor`` replaces the extractor and
     ``client`` the client: ``"missing"`` deletes it, any other text is written
-    in its place. ``path_prefix`` is put first on the PATH of the packager.
+    in its place. ``path_prefix`` is put first on the PATH of the packager,
+    and ``bash_options`` are passed to the bash that runs it.
     Returns (exit_code, stderr)."""
     skill = skill_with(version_block, released_block) + extra_tail
     with tempfile.TemporaryDirectory() as tmp:
@@ -332,7 +333,7 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
                 env["LC_ALL"] = locale
             if path_prefix is not None:
                 env["PATH"] = path_prefix + os.pathsep + env.get("PATH", "")
-            args = ["bash", str(wt / "tools" / "release-package.sh")]
+            args = ["bash", *bash_options, str(wt / "tools" / "release-package.sh")]
             if release_date is not None:
                 args += ["--release-date", release_date]
             args += list(extra_args)
@@ -622,7 +623,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertIn("--release-date must be a real YYYY-MM-DD date", stderr)
 
 
-def dry_run_probe(extractor: str):
+def dry_run_probe(extractor: str, bash_options: tuple = ()):
     """Run the probe of release-dry-run.sh, extracted from the real script
     (from ``probe_rc=0`` to its ``esac``), in a throwaway tree holding
     ``extractor`` and the real client. Returns (exit code, stdout, stderr)."""
@@ -640,12 +641,12 @@ def dry_run_probe(extractor: str):
             "fail() { printf 'release-dry-run: %s\\n' \"$1\" >&2; exit 1; }\n"
             + block + "\nprintf %s \"${probe}\"\n"
         )
-        proc = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
+        proc = subprocess.run(["bash", *bash_options, "-c", script], cwd=root, capture_output=True, text=True)
     return proc.returncode, proc.stdout, proc.stderr
 
 
 def dry_run_stamped_read(extractor: str, skill_readable: bool = True, client: str | None = None,
-                         skill_text: str = "Version: 1.0.15  \nReleased: 2026-11-15  \n"):
+                         skill_text: str = "Version: 1.0.15  \nReleased: 2026-11-15  \n", bash_options: tuple = ()):
     """Run the stamped Released read of release-dry-run.sh, extracted from the
     real script (from ``stamped_rc=0`` to its ``esac``), in a throwaway tree
     holding ``extractor`` and ``client`` (the real client by default).
@@ -670,7 +671,7 @@ def dry_run_stamped_read(extractor: str, skill_readable: bool = True, client: st
             "fail() { printf 'release-dry-run: %s\\n' \"$1\" >&2; exit 1; }\n"
             + block + "\nprintf %s \"${stamped}\"\n"
         )
-        proc = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
+        proc = subprocess.run(["bash", *bash_options, "-c", script], cwd=root, capture_output=True, text=True)
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -750,6 +751,67 @@ class CallerLaunchTest(unittest.TestCase):
             for probe in CLIENT_LAUNCH_PROBES:
                 with self.subTest(path.name, probe=probe):
                     self.assertNotEqual(client_mentions(text + probe + "\n"), list(client))
+
+
+# Row 89: the two ways errexit can be inherited by a command substitution.
+INHERITED_ERREXIT = (("inherit_errexit", ("-O", "inherit_errexit")), ("posix", ("-o", "posix")))
+
+
+class InheritedErrexitTest(unittest.TestCase):
+    """Row 89: the packager and the dry run keep every result of the client
+    when errexit is inherited by command substitutions, by shopt -s
+    inherit_errexit or in POSIX mode: a non-zero client exit never ends a
+    substitution before its statuses are read, so no run ends without its
+    message."""
+
+    def test_the_packager_builds_and_reports_as_without_the_option(self):
+        for label, options in INHERITED_ERREXIT:
+            with self.subTest(label, case="an undated baseline builds"):
+                code, stderr = run_packager(None, "1.0.14", bash_options=options)
+                self.assertEqual(code, 0, stderr)
+            with self.subTest(label, case="a dated release builds"):
+                code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                            released_block="Released: 2026-11-15  ", bash_options=options)
+                self.assertEqual(code, 0, stderr)
+            with self.subTest(label, case="a client exit 125 is reported"):
+                code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                            released_block="Released: 2026-11-15  ",
+                                            client=STAND_IN_CLIENT.format(out="", code=125), bash_options=options)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("tools/skill-release-date.py is unavailable or crashed (exit 125) reading the Released "
+                              "line", stderr)
+            with self.subTest(label, case="a broken extractor is reported with its reason"):
+                code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                            released_block="Released: 2026-11-15  ",
+                                            extractor=broken_extractor("extract", "exit1"), bash_options=options)
+                self.assertEqual(code, 1, stderr)
+                self.assertEqual(stderr.splitlines(), [
+                    "skill-release-date-client: skill-release-date.py exited 1 in extract, so the extractor is "
+                    "unavailable",
+                    "release-package: tools/skill-release-date.py is unavailable or crashed (exit 16) reading the "
+                    "Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD",
+                ])
+            with self.subTest(label, case="a malformed line is named as such"):
+                code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", released_block="Released: soon",
+                                            bash_options=options)
+                self.assertEqual(code, 1, stderr)
+                self.assertIn("at HEAD is malformed: skill-release-date: ", stderr)
+
+    def test_the_dry_run_reads_as_without_the_option(self):
+        extractor = RELEASE_DATE_TOOL.read_text(encoding="utf-8")
+        for label, options in INHERITED_ERREXIT:
+            with self.subTest(label):
+                self.assertEqual(dry_run_probe(extractor, bash_options=options), (0, "1.0.14", ""))
+                code, _out, err = dry_run_probe(broken_extractor("baseline", "exit1"), bash_options=options)
+                self.assertEqual(code, 1, err)
+                self.assertIn("release-dry-run: tools/skill-release-date.py is unavailable or broken (probe exit 16)",
+                              err)
+                code, out, err = dry_run_stamped_read(extractor, bash_options=options)
+                self.assertEqual((code, out), (0, "2026-11-15"), err)
+                code, _out, err = dry_run_stamped_read(extractor, skill_text="Version: 1.0.15  \nReleased: soon\n",
+                                                       bash_options=options)
+                self.assertEqual(code, 1, err)
+                self.assertIn("could not set the dry-run Released date in SKILL.md (client exit 11)", err)
 
 
 def _locale_available(name: str) -> bool:

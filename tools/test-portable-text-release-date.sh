@@ -127,9 +127,11 @@ dated_fixture() {
 }
 
 gate_out="${scratch}/gate.out"
+# The options passed to the bash that runs the gate (none by default).
+gate_bash=()
 run_gate() {
   local code=0
-  (cd "${work}" && tools/check-portable-text-sync.sh) >"${gate_out}" 2>&1 || code=$?
+  (cd "${work}" && bash "${gate_bash[@]}" tools/check-portable-text-sync.sh) >"${gate_out}" 2>&1 || code=$?
   return "${code}"
 }
 
@@ -291,6 +293,27 @@ os.execv(sys.executable, [sys.executable, "-I", real, *sys.argv[1:]])
 PYCLIENT
 expect_fail "a value that is not a bare day is not used" \
   "tools/skill-release-date.py gave an unexpected answer (2026-11-15"
+
+# 2g. Row 89: with errexit inherited by command substitutions (shopt -s
+#     inherit_errexit, or POSIX mode), the gate gives the same verdicts.
+for mode in "-O inherit_errexit" "-o posix"; do
+  read -r -a gate_bash <<< "${mode}"
+  undated_fixture 1.0.14
+  if record; then pass "undated 1.0.14 fixture records (${mode})"; else fail "undated 1.0.14 fixture records (${mode})"; fi
+  expect_pass "baseline 1.0.14 without a Released line passes (${mode})"
+  undated_fixture 1.0.15
+  expect_fail "1.0.15 without a Released line fails (${mode})" "above the undated baseline 1.0.14"
+  undated_fixture 1.0.14
+  break_extractor extract exit1
+  expect_fail_without "a broken extract reply is reported as unavailable (${mode})" \
+    "tools/skill-release-date.py is unavailable or crashed (exit 16) reading ${skill}, so its Released line could not be checked." \
+    "Malformed Released"
+  undated_fixture 1.0.15
+  set_meta "${skill}" Released 2026-02-30 "  "
+  regen
+  expect_fail "an impossible date fails (${mode})" "Malformed Released: line in ${skill}: skill-release-date: not a real calendar date"
+done
+gate_bash=()
 
 # 2e. Row 89: a missing client fails the probe.
 undated_fixture 1.0.14
