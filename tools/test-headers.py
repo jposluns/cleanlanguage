@@ -30,8 +30,9 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 PERMISSIONS = (
-    "accelerometer=(), autoplay=(), camera=(), display-capture=(), fullscreen=(), "
-    "geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+    "accelerometer=(), autoplay=(), bluetooth=(), browsing-topics=(), camera=(), "
+    "display-capture=(), fullscreen=(), geolocation=(), gyroscope=(), hid=(), "
+    "magnetometer=(), microphone=(), midi=(), payment=(), serial=(), usb=()"
 )
 DECIDED = {
     "X-Frame-Options": "DENY",
@@ -285,6 +286,15 @@ class HeadersGateTest(unittest.TestCase):
         lines = list(GOOD_LINES)
         lines.insert(3, "  ! X-Frame-Options: DENY")
         self.expect_fail(lines, "line 4: not a 'Name: value' or '! Name' line", code=3)
+
+    def test_a_detach_of_a_name_that_starts_with_a_bang_fails_closed(self):
+        for line in ("  !!X-Frame-Options", "  ! !Strict-Transport-Security",
+                     "  !!Cross-Origin-Opener-Policy"):
+            with self.subTest(line=line):
+                lines = list(GOOD_LINES)
+                lines.insert(3, line)
+                self.expect_fail(lines, "line 4: a detached header name starts with '!'",
+                                 code=3)
 
     def test_header_in_first_column_fails_closed(self):
         cases = (

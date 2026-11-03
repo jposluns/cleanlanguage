@@ -34,9 +34,10 @@ What it verifies
    value:
 
    - ``X-Frame-Options: DENY``
-   - ``Permissions-Policy: accelerometer=(), autoplay=(), camera=(),
-     display-capture=(), fullscreen=(), geolocation=(), gyroscope=(),
-     magnetometer=(), microphone=(), payment=(), usb=()``
+   - ``Permissions-Policy: accelerometer=(), autoplay=(), bluetooth=(),
+     browsing-topics=(), camera=(), display-capture=(), fullscreen=(),
+     geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(),
+     midi=(), payment=(), serial=(), usb=()``
    - ``Cross-Origin-Opener-Policy: same-origin``
 
    It also sets ``Content-Security-Policy`` exactly once. This gate does not pin
@@ -83,8 +84,9 @@ ALL_PATHS = "/*"
 DECIDED = {
     "X-Frame-Options": "DENY",
     "Permissions-Policy": (
-        "accelerometer=(), autoplay=(), camera=(), display-capture=(), fullscreen=(), "
-        "geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+        "accelerometer=(), autoplay=(), bluetooth=(), browsing-topics=(), camera=(), "
+        "display-capture=(), fullscreen=(), geolocation=(), gyroscope=(), hid=(), "
+        "magnetometer=(), microphone=(), midi=(), payment=(), serial=(), usb=()"
     ),
     "Cross-Origin-Opener-Policy": "same-origin",
 }
@@ -166,6 +168,9 @@ def parse(text: str) -> list[tuple[int, str, str, str, str | None]]:
                 f"{line!r}; a URL pattern starts in the first column")
         detach = DETACH_LINE.match(line)
         if detach:
+            if detach.group(1).startswith("!"):
+                die(f"site/_headers line {number}: a detached header name starts with '!': "
+                    f"{line!r}; write a detach as '! Name'")
             entries.append((number, pattern, "detach", detach.group(1), None))
             continue
         if line.startswith("!") and HEADER_LINE.match(line):
