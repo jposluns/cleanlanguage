@@ -48,14 +48,19 @@ The rule:
    GITHUB_PATH as a whole word, or holds ENV or PATH directly followed by
    `=` or `+=` and not directly preceded by a letter, digit, underscore or
    `$` (so MYPATH=x and `$PATH=` pass, and a quoted name such as
-   `export 'PATH'=x` is not matched). A run line that runs bash, sh, dash,
-   zsh or ksh, by name or by a path ending in that name, with `-c` (alone or
-   in a cluster such as `-ec`) after any number of options (words starting
-   with - or +, and `-o` or `+o` with its name), is a finding whether or not
-   it names python, since its command text is a string the scan cannot read
-   as commands. These are cheap checks of the common ways to redirect
-   `python3` or hide a launch; they are not complete, and Residuals names
-   what they miss.
+   `export 'PATH'=x` is not matched). A shell run with -c is a finding
+   whether or not it names python, since its command text is a string the
+   scan cannot read as commands. The rule cuts the line into commands at
+   each `;`, `&&`, `||`, `|`, `(` (so also `$(`) and backtick, without
+   reading quotes, and splits each command into words at whitespace. It
+   skips leading words that are NAME=value assignments or whose last path
+   part is exec, command, env, sudo, time, nohup, if, then, else, elif, do,
+   while, until, `!` or `{`. If the next word's last path part is exactly
+   bash, sh, dash, zsh or ksh, any later word of that command that is a
+   short-option cluster holding c (`-[A-Za-z]*c[A-Za-z]*` as a whole word,
+   such as `-c`, `-ec` or `-ce`) is a finding, whatever words come between.
+   These are cheap checks of the common ways to redirect `python3` or hide a
+   launch; they are not complete, and Residuals names what they miss.
 3. Launch. In each step's `run` text, with every backslash-newline removed and
    nothing else dropped, every exact `python3 -I tools/<name>.py`, with single
    spaces, `<name>` holding no `/`, no character of a path and no `$`
@@ -91,8 +96,15 @@ Residuals, named here because the scan reads text the pull request controls:
   scan sees but misreads, and can also edit this scan, which only review
   catches;
 - a PATH or ENV assignment whose name is quoted or escaped, such as
-  `export 'PATH'=x`, and a shell run with -c after an option that takes an
-  argument other than `-o`, such as `bash --rcfile f -c`;
+  `export 'PATH'=x`;
+- a shell run with -c that the shell rule does not read as one: a shell
+  other than the five, such as fish, rbash or `busybox ash`; a shell held
+  in a variable, such as `"$SHELL" -c` or `$BASH -c`; a quoted or escaped
+  shell name, such as `"bash" -c` or `'sh' -c`; a shell after a word the
+  rule does not skip, such as a skipped word's own option or argument
+  (`env -i`, `sudo -u user`, `time -p`), another launcher (`xargs bash
+  -c`), a case label or an assignment whose value holds a space; and a
+  shell after a separator the rule does not cut at, such as a lone `&`;
 - a variable holding the interpreter or the script, such as `$PY tools/x`,
   and a shell function or alias named python3, that redirects the literal
   `python3`;
@@ -156,11 +168,27 @@ PYTHON = re.compile(r"python", re.IGNORECASE)
 PY_NAME = re.compile(r"\.pyz?(?![\w])")
 SHIM = re.compile(r"\bBASH_ENV\b|\bGITHUB_PATH\b|(?<![\w$])(?:ENV|PATH)\+?=")
 SHIM_ENV_KEYS = ("BASH_ENV", "ENV", "PATH")
-SHELL_C = re.compile(
-    r"(?<![\w.$-])(?:[\w.-]*/)*(?:bash|sh|dash|zsh|ksh)"
-    r"(?:\s+(?:[-+]o\s+\w+|[-+][\w-]+))*?\s+-[A-Za-z]*c[A-Za-z]*(?![\w-])"
-)
+COMMAND_SEPARATOR = re.compile(r"&&|\|\||[;|(`]")
+SHELL_PREFIXES = ("exec", "command", "env", "sudo", "time", "nohup",
+                  "if", "then", "else", "elif", "do", "while", "until", "!", "{")
+ASSIGNMENT = re.compile(r"[A-Za-z_]\w*=\S*")
+SHELLS = ("bash", "sh", "dash", "zsh", "ksh")
+C_CLUSTER = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
 LOCAL_USES = ("./", "../")
+
+
+def runs_shell_c(line: str) -> bool:
+    """True when a command on the line runs a listed shell with a -c cluster."""
+    for command in COMMAND_SEPARATOR.split(line):
+        words = command.split()
+        n = 0
+        while n < len(words) and (words[n].rsplit("/", 1)[-1] in SHELL_PREFIXES
+                                  or ASSIGNMENT.fullmatch(words[n])):
+            n += 1
+        if n < len(words) and words[n].rsplit("/", 1)[-1] in SHELLS:
+            if any(C_CLUSTER.fullmatch(word) for word in words[n + 1:]):
+                return True
+    return False
 
 
 def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]:
@@ -173,7 +201,7 @@ def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]
         rest = LAUNCH.sub(" ", line)
         if SHIM.search(line):
             refused.append(("BASH_ENV, GITHUB_PATH, or an ENV or PATH assignment, which can redirect python3", line.strip()))
-        if SHELL_C.search(line):
+        if runs_shell_c(line):
             refused.append(("a shell run with -c, whose command text the scan cannot read", line.strip()))
         if PYTHON.search(rest) or PY_NAME.search(rest):
             refused.append(("python or a .py name other than python3 -I tools/<name>.py", line.strip()))
@@ -453,6 +481,32 @@ RUN_CASES = [
     ("bash -e +x -c true", True),
     ("bash --norc -c true", True),
     ("bash -ec true", True),
+    ("bash -ce true", True),
+    ("bash +o pipefail -c true", True),
+    ("bash -eo pipefail -c true", True),
+    ("bash -euo pipefail -c true", True),
+    ("bash --noprofile --norc -eo pipefail -c true", True),
+    (f"bash -eo pipefail -c python3 -I {X} <<EOF", True),
+    ("true; bash -c x", True),
+    ("true && bash -c x", True),
+    ("false || sh -c x", True),
+    ("cat f | bash -c x", True),
+    ("(bash -c x)", True),
+    ("v=`sh -c x`", True),
+    ("exec bash -c x", True),
+    ("command bash -c x", True),
+    ("env A=1 B=2 bash -c x", True),
+    ("sudo bash -c x", True),
+    ("time bash -c x", True),
+    ("nohup bash -c x", True),
+    ("LC_ALL=C bash -c x", True),
+    ("if bash -c x; then :; fi", True),
+    ("! bash -c x", True),
+    ("{ bash -c x; }", True),
+    ("shfmt -ln bash -ci -d tools", False),
+    ("grep bash -c file", False),
+    ("bash --noprofile --norc -eo pipefail tools/a.sh", False),
+    ("bash tools/a.sh; grep -c x f", False),
     ("v=$(dash -c true)", True),
     ("zsh -c true", True),
     ("ksh -xc true", True),
