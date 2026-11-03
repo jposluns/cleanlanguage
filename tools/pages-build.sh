@@ -7,14 +7,14 @@
 # 2026-11-03, and no others, on the tree Pages checked out. Any gate failure
 # fails the build, so a failing commit is never deployed (template
 # specification, section 4, step 3). The site's other offline gates, such as
-# tools/generate-sitemap.py, run only in GitHub Actions.
+# tools/generate-sitemap.py, do not run in the Pages build.
 #
 # Every gate here reads only the checked-out tree, and check-security-txt.py
 # also reads the clock (it fails once the Expires date in security.txt has
 # passed). None reaches the network or reads git history, so a shallow
 # checkout is enough. The checks that need git
 # history (tools/check-page-metadata.py) or the network
-# (tools/check-release-checksum-live.py) stay in GitHub Actions only.
+# (tools/check-release-checksum-live.py) do not run in the Pages build.
 #
 # A missing gate file fails the build with exit 3, the gates' own code for an
 # input that cannot be read; it is never skipped. A failing gate passes its
