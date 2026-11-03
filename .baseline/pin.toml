@@ -1,15 +1,15 @@
 # Baseline pin, in the format of the baseline README ("Adoption in a repository", step 3).
 # Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths are
 # relative to the site's output root (site/draft/ while staged, site/ after promotion).
-# Source: https://posluns.ca/baseline/baseline-1.4.1.tar.gz, archive sha256 1bba8c486b3050a737ddcba4dd36b5ea4199d42e4e7ff61d93998cf0439f03eb;
-# SHA256SUMS sha256 a08d0d37cd5634daec2049d0f614a566f950b93b1a797d58b7c254bf4881a60c, copied to .baseline/SHA256SUMS.
+# Source: https://posluns.ca/baseline/baseline-1.5.1.tar.gz, archive sha256 8d20f70612d524789ed0d7fc3fe269551413da8f29495dbafa06d8e0b9b0778e;
+# SHA256SUMS sha256 65a62b3aaac4bc6addc33eec71f4685b71b1bd88db0d7f7e382e5755beac37a1, copied to .baseline/SHA256SUMS.
 # Never edit a copied file; a new version arrives as a new copy and a new pin.
-version = "1.4.1"
+version = "1.5.1"
 
 [files]
 "assets/baseline/LICENSE" = "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
-"assets/baseline/NOTICE.md" = "08b26141bb2ecf0f4cd76e599c21f888fc71c4b3ab7ba769e954f6eea37ac7f3"
-"assets/baseline/baseline.css" = "8af38c8d65033c376475a3c65bcd90496010dd5a396c24aaa08d222d31619490"
+"assets/baseline/NOTICE.md" = "deeffb1a277a0b1f591feea15ecc10fbf4fc916cf0db07885625a288cc6e3b1e"
+"assets/baseline/baseline.css" = "84cdac02329821da51ab663421775067922caa164c4aeab939d17b72cd92a062"
 "assets/baseline/copy.js" = "9bf99b50471889b768c795af5a4f84f526cecf7622a1f1265ca3d088b31339a4"
 "assets/baseline/fonts.css" = "a309a8ff4026a67fb5d10dea2c02e5b9ea2c1b32d4b18d7892015e038397396a"
 "assets/baseline/fonts/dancing-script-LICENSE.txt" = "c02c0002d3bbd41a16933c162888c400469c7029f1362ca9d60d5ed20ea7d157"
@@ -60,5 +60,5 @@ version = "1.4.1"
 "assets/baseline/marks/orcid-id.svg" = "195be086656233fc1a0089086d9190d28dc6abce39c2290612d1893233e1f166"
 "assets/baseline/palettes.css" = "c67ffe38a93d266150a0bd82ce141fb6e8b544ff6a8d210f70b3d84032650bf7"
 "assets/baseline/rail.js" = "36535faf2df8637e694ff2a57af982b9c67c9f410f80d4dfceb193c4f2d601ca"
-"assets/baseline/search.js" = "4f106660b503af5c770a05472f733ababb3a01f3514cd9d1bfe03b983490d88f"
+"assets/baseline/search.js" = "87748d9c9d7bb31f55b35e54b7aa70a3d4585f5bf27a4c54a664d9a34f7e6cbc"
 "assets/baseline/select.js" = "2c4e1f1a2cc00c49dc013fd421b16c14cdc89eb873fc57f7768be90604d4bf90"

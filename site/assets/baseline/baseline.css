@@ -1,4 +1,4 @@
-/* baseline.css 1.2.0: the shared stylesheet of the project sites (the Atrium direction).
+/* baseline.css 1.5.1: the shared stylesheet of the project sites (the Atrium direction).
    Newsreader for text and headings, Public Sans for labels and navigation, JetBrains Mono for code,
    Dancing Script for the signature; the fonts are declared in fonts.css.
    Scale: perfect fourth (1.333) on a 1.1875rem base. No rules except the table header hairline.
@@ -14,6 +14,10 @@
 @media (prefers-color-scheme: dark) { :root:not([data-scheme="light"]) { --gold: #e6c15a; --silver: #cfcfcf; --ord-progress: #6faa62; --ord-speed: #e1791b; --ord-cost: #ef675c; } }
 :root[data-scheme="dark"] { --gold: #e6c15a; --silver: #cfcfcf; --ord-progress: #6faa62; --ord-speed: #e1791b; --ord-cost: #ef675c; }
 *, *::before, *::after { box-sizing: border-box; }
+/* Hidden means hidden, whatever display a component gives the element: `.doc section` and `.doc article` are
+   `display: contents`, which overrode the browser's own [hidden] rule and kept every section the install
+   selector hid on screen (1.0.0 to 1.5.0). The older per-component [hidden] rules below are kept. */
+[hidden] { display: none !important; }
 :root { color-scheme: light dark; }
 html { -webkit-text-size-adjust: 100%; }
 body {
@@ -195,6 +199,32 @@ details ul ul { margin: 0.2rem 0 0.4rem; }
 .rail li a[aria-current="location"], .rail li a[aria-current="true"] { color: var(--accent); }
 .rail > .lbl, .rail > ol, .rail > ul { margin-left: calc(100% * var(--logo-inset)); }
 
+/* Left-rail page (from 1.5.0): .doc.left-rail replaces the label column and the right rail with 1 side list on the
+   left, .lrail, so the main column gains their width (for a wide table). The list stays in view while the page
+   scrolls, at the right rail's offset and in its type; labels sit above their content, as at 1000 px and below.
+   rail.js reads only nav.rail, so it leaves the left list alone. */
+.doc.left-rail { grid-template-columns: var(--railw) minmax(0, 1fr); }
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > *,
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl,
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .wide,
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .next { grid-column: 2; }
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .full { grid-column: 1 / 3; }
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl,
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl.sec,
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl.blk { padding-top: 1.4rem; margin-bottom: 0.4rem; }
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl.first { padding-top: 0.9rem; }
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl + h2 { margin-top: 0; }
+:is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl.blk + .tablewrap { margin-top: 0.2rem; }
+.doc.left-rail > .lrail { grid-column: 1; grid-row: 1 / span 200; align-self: stretch; font: 400 0.95rem/1.5 "Public Sans", system-ui, sans-serif; --logo-inset: 0.115; }
+.site-opfiles .lrail { --logo-inset: 0.1225; } .site-auditthis .lrail { --logo-inset: 0.2075; } .site-cleanlanguage .lrail { --logo-inset: 0.185; } .site-aiqt .lrail { --logo-inset: 0.0975; } .site-grclibrary .lrail { --logo-inset: 0.115; }
+.lrail > nav { position: sticky; top: 1.5rem; max-height: calc(100vh - 3rem); overflow-y: auto; padding-left: calc(100% * var(--logo-inset)); }
+.lrail .lbl { margin: 0.6rem 0 0.8rem; }
+.lrail ul { list-style: none; margin: 0; padding: 0; }
+.lrail li { margin: 0; }
+.lrail li a, .lrail li button { display: block; width: 100%; text-align: left; font: inherit; color: var(--text-muted); text-decoration: none; padding: 0.22rem 0; background: transparent; border: 0; cursor: pointer; }
+.lrail li a:hover, .lrail li button:hover { color: var(--text); }
+.lrail li [aria-current="true"], .lrail li [aria-pressed="true"] { color: var(--accent); font-weight: 600; }
+
 /* Callouts: no border, label in the label column */
 .callout { background: var(--callout-bg); padding: 1.2rem 1.4rem; margin: 0.4rem 0 1.6rem; border-radius: 0.3rem; font-size: 1.15rem; line-height: 1.55; }
 .callout.rule { box-shadow: inset 4px 0 0 var(--brand); }
@@ -218,7 +248,9 @@ pre code { background: none; padding: 0; font-size: inherit; }
 
 /* Tables: header hairline only, tracked header, 0.6rem row padding. A table wider than its wrapper scrolls inside it;
    a long token wraps inside its own cell only in a fixed-layout table (table.fixed with colgroup widths). */
-.tablewrap { overflow-x: auto; margin: 0.4rem 0 1.6rem; -webkit-overflow-scrolling: touch; }
+/* position: relative makes the wrapper the containing block of visually hidden text (.vh) inside cells, so that
+   text is clipped by the wrapper and cannot widen the page (from 1.5.0). */
+.tablewrap { position: relative; overflow-x: auto; margin: 0.4rem 0 1.6rem; -webkit-overflow-scrolling: touch; }
 .tablewrap:focus-visible { outline-offset: 4px; }
 table { border-collapse: collapse; width: 100%; font-size: 1.05rem; line-height: 1.45; font-variant-numeric: lining-nums tabular-nums; }
 th { text-align: left; font: 500 0.68rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); padding: 0 1.2rem 0.6rem 0; border-bottom: 1px solid var(--rule-strong); vertical-align: bottom; white-space: nowrap; }
@@ -231,7 +263,30 @@ table.fixed th { white-space: normal; }
 .fixed col.w5 { width: 5%; } .fixed col.w10 { width: 10%; } .fixed col.w15 { width: 15%; } .fixed col.w20 { width: 20%; } .fixed col.w25 { width: 25%; } .fixed col.w30 { width: 30%; } .fixed col.w35 { width: 35%; } .fixed col.w40 { width: 40%; } .fixed col.w45 { width: 45%; } .fixed col.w50 { width: 50%; } .fixed col.w55 { width: 55%; } .fixed col.w60 { width: 60%; } .fixed col.w65 { width: 65%; } .fixed col.w70 { width: 70%; } .fixed col.w75 { width: 75%; } .fixed col.w80 { width: 80%; } .fixed col.w85 { width: 85%; } .fixed col.w90 { width: 90%; } .fixed col.w95 { width: 95%; }
 .fixed col.w11 { width: 11%; } .fixed col.w14 { width: 14%; } .fixed col.w16 { width: 16%; } .fixed col.w17 { width: 17%; } .fixed col.w26 { width: 26%; }
 th:last-child, td:last-child { padding-right: 0; }
-.sticky thead th { position: sticky; top: 0; background: var(--bg); }
+/* Sticky tables (from 1.5.0). A sticky header can stick only to its nearest scroll container, and .tablewrap is one,
+   so the wrapper of a sticky table is a bounded box that scrolls in both directions: the header row stays at the
+   box's top while the reader scrolls inside it. Mark the wrapper .bounded; 1.4.1 markup (.tablewrap holding
+   table.sticky) is bounded through :has() where the browser supports it, and elsewhere renders as in 1.4.1.
+   The 2 selectors stay in separate rules, so a browser without :has() still applies the first.
+   table.sticky-col keeps the first column at the box's left edge. Sticky cells take the page background, so
+   scrolled content never shows through, and the top-left cell sits above both the header row and the column. */
+.tablewrap.bounded { max-height: 75vh; max-height: 75svh; overflow: auto; overscroll-behavior: contain; }
+.tablewrap:has(> table.sticky) { max-height: 75vh; max-height: 75svh; overflow: auto; overscroll-behavior: contain; }
+.register .tablewrap.bounded { padding-top: 0; }
+.register .tablewrap:has(> table.sticky) { padding-top: 0; }
+table.sticky, table.sticky-col { border-collapse: separate; border-spacing: 0; }
+.sticky thead th { position: sticky; top: 0; z-index: 2; background: var(--bg); }
+table.sticky-col th:first-child, table.sticky-col td:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg); }
+table.sticky-col thead th:first-child { z-index: 3; }
+table [hidden] { display: none; }
+/* Matrix (from 1.5.0, matrix.js): a row header per row in the text voice, short identifiers and count links in the cells,
+   the instrument's organization under each column heading. */
+table.matrix tbody th { font: 600 1rem/1.45 "Public Sans", system-ui, sans-serif; letter-spacing: 0; text-transform: none; color: var(--text); padding: 0.6rem 1.2rem 0.6rem 0; border-bottom: 0; vertical-align: top; white-space: nowrap; }
+table.matrix td { white-space: nowrap; }
+table.matrix td code { white-space: nowrap; }
+table.matrix th .org { display: block; font: 400 0.72rem/1.4 "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.02em; text-transform: none; margin-top: 0.15rem; }
+table.matrix td a { margin-left: 0.4rem; }
+.matrix-status { font: 400 0.85rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: 0 0 0.6rem; min-height: 1.3rem; }
 td .sub { display: block; font: 400 0.95rem/1.45 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin-top: 0.15rem; }
 td.id, .mono { font: 400 0.8rem/1.6 "JetBrains Mono", ui-monospace, monospace; white-space: nowrap; }
 td.num { text-align: right; font-variant-numeric: lining-nums tabular-nums; }
@@ -282,7 +337,13 @@ dl.record.cols div { break-inside: avoid; }
 .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; margin: 0 0 1.6rem; padding: 0; }
 .chips a { display: inline-block; font: 500 0.7rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); text-decoration: none; padding: 0.55rem 0.8rem; border: 1px solid var(--rule-strong); border-radius: 999px; }
 .chips a:hover { color: var(--text); border-color: var(--text); }
-.chips a .n { font-family: "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.04em; margin-left: 0.4rem; }
+.chips a .n, .chips button .n { font-family: "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.04em; margin-left: 0.4rem; }
+/* Chips as buttons, and the chosen chip (from 1.5.0): search.js marks an active facet with aria-pressed="true";
+   matrix.js marks the chosen preset with aria-pressed="true" on a button or aria-current="true" on a link.
+   The chosen chip takes a 2px border in --accent, so the state does not rest on colour alone. */
+.chips button { display: inline-block; font: 500 0.7rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); background: transparent; padding: 0.55rem 0.8rem; border: 1px solid var(--rule-strong); border-radius: 999px; cursor: pointer; }
+.chips button:hover { color: var(--text); border-color: var(--text); }
+.chips [aria-pressed="true"], .chips [aria-current="true"] { color: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .plan li[hidden] { display: none; }
 
 /* Diagram: 3 rounded nodes, currentColor strokes, brand-coloured arrows */
@@ -561,6 +622,23 @@ mark.marker { color: inherit; padding: 0 0.08em; background: linear-gradient(tra
 }
 [data-scheme="dark"] .statement, [data-scheme="dark"] .doc h1 { letter-spacing: 0.01em; }
 
+
+/* Left-rail page at 1000 px and below: 1 column, the left list under the h1 as the right rail sits there, not sticky. */
+@media (max-width: 1000px) {
+  .doc.left-rail { grid-template-columns: minmax(0, 1fr); }
+  :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > *,
+  :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl,
+  :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .wide,
+  :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .next,
+  :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .full { grid-column: 1; }
+  :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl.first { padding-top: 0; }
+  .doc.left-rail > .lrail { grid-row: auto; align-self: start; margin: 0.4rem 0 1.6rem; max-width: 62ch; }
+  .lrail > nav { position: static; max-height: none; overflow: visible; padding-left: calc(7rem * var(--logo-inset)); }
+  .lrail .rail-logo { max-width: 7rem; margin: 0.6rem 0 0.8rem; }
+  .lrail ul { columns: 2; column-gap: 2rem; }
+  .lrail li { break-inside: avoid; }
+}
+@media (max-width: 600px) { .lrail ul { columns: 1; } }
 
 /* Fallback for browsers without container queries (before Chromium 105, Safari 16, Firefox 110): the footer bar
    wraps instead of overflowing, so the page never scrolls sideways. */
