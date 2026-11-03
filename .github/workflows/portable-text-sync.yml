@@ -10,14 +10,18 @@ name: Portable text sync
 #
 # The second checks that site/instructions/index.html still embeds that text
 # exactly, and that it carries no inline script or style. The page renders the
-# text statically because the site's rules forbid inline code, and a reintroduced
-# inline script would break the page in a way no other gate can see.
+# text statically because the site's own pages must not use inline code; the
+# security policy allows inline scripts, so a browser would not block one, and
+# site-hardening.yml checks every page for inline code as well.
 #
-# The paths filters list every file the steps read, directly and through the
-# scripts they run, copy or load (row 119). tools/test-portable-text-sync-workflow.py
-# holds the same list with the line that reads each entry, derives the copies
-# and loads it can from the test sources, and fails when the lists drift;
-# extend the filters and that test in the same change. This workflow is not a
+# The paths filters list every file the steps are known to read, directly and
+# through the scripts they run, copy or load (row 119). The test
+# tools/test-portable-text-sync-workflow.py holds the same list with the line
+# that reads each entry, derives the copies and loads it can from the step
+# sources, and fails when the lists drift; extend the filters and that test in
+# the same change. That test names what it cannot see: a read it cannot
+# derive, and a module file that a launch without -I in the shell scripts can
+# import from its module path. This workflow is not a
 # required check; if it is promoted to one, drop the pull_request filter and
 # give the job a unique display name, as manifest-icon.yml does and
 # sitemap.yml explains. Checkout attributes are an input too: a .gitattributes
