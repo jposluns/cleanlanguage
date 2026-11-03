@@ -17,8 +17,9 @@ undated release at or below the baseline makes no network call for the date
 check. A date failure never hides checksum drift: both are reported and the
 more severe code wins. A release state that cannot be verified never hides the
 Released line check, and an unreadable verify page or downloaded asset is
-reported as such, never read as drift. The gate reads the extractor module only through the
-attributes it declares and validates at load. The network reads of that record are replaced
+reported as such, never read as drift. The gate runs the extractor as a separate python3 -I
+child for each call, reads only a bounded part of what the child prints, and
+accepts only one JSON reply that matches the contract. The network reads of that record are replaced
 by injected fixtures. These tests pin all of that offline: the
 fixtures
 patch the module's file paths and network readers, so no gh CLI and no
@@ -30,29 +31,30 @@ the network gate cannot.
 from __future__ import annotations
 
 import ast
+import codecs
 import contextlib
+import errno
 import hashlib
 import importlib.util
 import io
+import json
+import locale
 import os
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parent / "check-release-checksum-live.py"
 spec = importlib.util.spec_from_file_location("check_release_checksum_live", MODULE_PATH)
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
-# The gate loads the extractor inside main, never at import, so a load failure
-# cannot hide the checksum comparison; load it here once for the tests that
-# patch the loaded module.
-if gate.RELEASE_DATE is None:
-    gate.RELEASE_DATE = gate._load_release_date_tool()
 
 CURRENT = "1.0.14"
 AHEAD = "1.0.15"
@@ -69,527 +71,148 @@ VERIFY = """<!doctype html>
 """
 
 
-class _Hostile:
-    """Fix round 4 (F1): a value every method of which the gate could reach
-    exits 0, standing in for extractor-defined code that misbehaves."""
-
-    def _exit(self, *args, **kwargs):
-        raise SystemExit(0)
-
-    __repr__ = __str__ = __format__ = __bool__ = __eq__ = __ne__ = _exit
-    __hash__ = None
-
-
-class _ExitingText(Exception):
-    """An error whose repr and str exit 0."""
-
-    def __repr__(self):
-        raise SystemExit(0)
-
-    __str__ = __repr__
-
-
-class _RaisingText(Exception):
-    """An error whose repr and str raise RuntimeError."""
-
-    def __repr__(self):
-        raise RuntimeError("repr failed")
-
-    __str__ = __repr__
-
-
-class _ExitingNameMeta(type):
-    @property
-    def __name__(cls):
-        raise SystemExit(0)
-
-
-class _ExitingName(Exception, metaclass=_ExitingNameMeta):
-    """An error whose class name and str exit 0."""
-
-    def __str__(self):
-        raise SystemExit(0)
-
-
-class _Escape(BaseException):
-    """An error outside Exception and SystemExit."""
-
-
-class _ExitingMalformed(gate.RELEASE_DATE.Malformed):
-    """A Malformed verdict whose str exits 0."""
-
-    def __str__(self):
-        raise SystemExit(0)
-
-
-class _ExitingCheckMeta(type):
-    def __instancecheck__(cls, instance):
-        raise SystemExit(0)
-
-    def __subclasscheck__(cls, subclass):
-        raise SystemExit(0)
-
-
-class _ExitingCheckMalformed(Exception, metaclass=_ExitingCheckMeta):
-    """A Malformed class whose instance and subclass checks exit 0."""
-
-
-class _ExitingVersion(str):
-    """A BASELINE_VERSION whose format and str exit 0."""
-
-    def __format__(self, spec):
-        raise SystemExit(0)
-
-    __str__ = __format__
-
-
-_REAL_MALFORMED = gate.RELEASE_DATE.Malformed
-
-
-class _ClassSpoofExit(SystemExit):
-    """Fix round 5: a SystemExit whose __class__ property names the real
-    Malformed class, a claim isinstance honours."""
-
-    __class__ = property(lambda self: _REAL_MALFORMED)
-
-
-class _ClassSpoofError(RuntimeError):
-    """Fix round 5: an ordinary error whose __class__ property names the real
-    Malformed class, so only the real type of the error can refuse it."""
-
-    __class__ = property(lambda self: _REAL_MALFORMED)
-
-
-class _MalformedExit(SystemExit, _REAL_MALFORMED):
-    """Fix round 5: a SystemExit that really inherits the Malformed class."""
-
-
-class _MroSpoofMeta(type):
-    def mro(cls):
-        return (cls, _REAL_MALFORMED) + _REAL_MALFORMED.__mro__[1:]
-
-
-class _MroSpoofExit(SystemExit, metaclass=_MroSpoofMeta):
-    """Fix round 5: an error built on SystemExit whose metaclass gives it an
-    MRO that names the Malformed class."""
-
-
-class _AcceptingInstanceMeta(type):
-    def __instancecheck__(cls, instance):
-        return True
-
-
-class _AcceptingInstanceMalformed(Exception, metaclass=_AcceptingInstanceMeta):
-    """Fix round 5: a Malformed class whose instance check accepts anything."""
-
-
-class _AcceptingSubclassMeta(type):
-    def __subclasscheck__(cls, subclass):
-        return True
-
-
-class _AcceptingSubclassMalformed(Exception, metaclass=_AcceptingSubclassMeta):
-    """Fix round 5: a Malformed class whose subclass check accepts anything."""
-
-
-class _PretendClass:
-    """Fix round 5: a Malformed that only claims to be an exception class,
-    through a __class__ property and __bases__, and whose own instance and
-    subclass checks accept anything."""
-
-    __class__ = property(lambda self: type)
-    __bases__ = (Exception,)
-
-    def __instancecheck__(self, instance):
-        return True
-
-    def __subclasscheck__(self, subclass):
-        return True
-
-
-class _ExitingStr(str):
-    """Fix round 6 (claude MEDIUM 1): a str subclass every method of which
-    the gate could reach exits 0. isinstance(value, str) accepts it, so only
-    an exact type check refuses it."""
-
-    def _exit(self, *args, **kwargs):
-        raise SystemExit(0)
-
-    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit
-    __hash__ = str.__hash__
-
-
-class _ClaimsType:
-    """Fix round 6: a value that only claims, through a __class__ property,
-    to be of the builtin type ``claimed``, a claim isinstance honours, and
-    every method of which the gate could reach exits 0. bool cannot be
-    subclassed, so such a claim is the only way a value other than True or
-    False passes isinstance(value, bool)."""
-
-    claimed = None
-    __class__ = property(lambda self: type(self).claimed)
-
-    def _exit(self, *args, **kwargs):
-        raise SystemExit(0)
-
-    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit
-    __hash__ = None
-
-
-class _ClaimsStr(_ClaimsType):
-    claimed = str
-
-
-class _ClaimsBool(_ClaimsType):
-    claimed = bool
-
-
-class _ClaimsNone(_ClaimsType):
-    """Fix round 7 (codex LOW): a value that only claims to be None, so
-    only an exact type check refuses it as a result of extract. NoneType
-    cannot be subclassed, so such a claim is the only way a value other than
-    None passes isinstance(value, type(None))."""
-
-    claimed = type(None)
-
-
-class _ExitingStrText(Exception):
-    """Fix round 6: an error whose str is an _ExitingStr."""
-
-    def __str__(self):
-        return _ExitingStr("boom")
-
-
-class _ExitingStrNameMeta(type):
-    @property
-    def __name__(cls):
-        return _ExitingStr("Boom")
-
-
-class _ExitingStrName(Exception, metaclass=_ExitingStrNameMeta):
-    """Fix round 6: an error whose class name is an _ExitingStr."""
-
-
-class _ClaimsStrNameMeta(type):
-    @property
-    def __name__(cls):
-        return _ClaimsStr()
-
-
-class _ClaimsStrName(Exception, metaclass=_ClaimsStrNameMeta):
-    """Fix round 6: an error whose class name only claims to be a str."""
-
-
-class _ExitingStrMalformed(_REAL_MALFORMED):
-    """Fix round 6: a genuine Malformed verdict whose str is an _ExitingStr."""
-
-    def __str__(self):
-        return _ExitingStr("bad stamp")
-
-
-class _AnyEqMeta(type):
-    """Fix round 8 (codex LOW): a metaclass whose classes compare equal to
-    anything and unequal to nothing, so a guard that compares a type with ==
-    or != instead of is or is not accepts them."""
-
-    def __eq__(cls, other):
-        return True
-
-    def __ne__(cls, other):
-        return False
-
-    __hash__ = type.__hash__
-
-
-class _EqualsMeta(type):
-    """Fix round 8 (codex LOW): a metaclass whose classes compare equal to
-    the one builtin type named by their ``equal_to`` attribute, so a result
-    check by == instead of is accepts a value of that class as that type."""
-
-    def __eq__(cls, other):
-        return other is cls.equal_to
-
-    def __ne__(cls, other):
-        return other is not cls.equal_to
-
-    __hash__ = type.__hash__
-
-
-def _exit_zero(self, *args, **kwargs):
-    raise SystemExit(0)
-
-
-class _EqualsStr(str, metaclass=_EqualsMeta):
-    """A str subclass that compares equal to str by type and every method of
-    which the gate could reach exits 0."""
-
-    equal_to = str
-    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit_zero
-    __hash__ = str.__hash__
-
-
-class _EqualsNone(metaclass=_EqualsMeta):
-    """A value whose class compares equal to NoneType and every method of
-    which the gate could reach exits 0."""
-
-    equal_to = type(None)
-    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit_zero
-    __hash__ = None
-
-
-class _EqualsBool(metaclass=_EqualsMeta):
-    """A value whose class compares equal to bool and every method of which
-    the gate could reach exits 0."""
-
-    equal_to = bool
-    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit_zero
-    __hash__ = None
-
-
-class _EqualsStrText(Exception):
-    """An error whose str is an _EqualsStr."""
-
-    def __str__(self):
-        return _EqualsStr("boom")
-
-
-class _ClassClaimsStrVersion(str):
-    """A BASELINE_VERSION that is a str subclass whose __class__ property
-    names str and whose format and str exit 0."""
-
-    __class__ = property(lambda self: str)
-    __format__ = __str__ = _exit_zero
-
-
-class _EqTypeMeta(type, metaclass=_AnyEqMeta):
-    """A metaclass that compares equal to the builtin type."""
-
-
-class _EqTypeMalformed(Exception, metaclass=_EqTypeMeta):
-    """A Malformed class whose metaclass compares equal to the builtin type."""
-
-
-class _ClaimingSpoofMeta(type, metaclass=_AnyEqMeta):
-    """A metaclass that compares equal to the builtin type, claims through a
-    __class__ property to be it, and gives its classes an MRO that names the
-    Malformed class."""
-
-    __class__ = property(lambda cls: type)
-
-    def mro(cls):
-        return (cls, _REAL_MALFORMED) + _REAL_MALFORMED.__mro__[1:]
-
-
-class _ClaimingMroSpoofExit(SystemExit, metaclass=_ClaimingSpoofMeta):
-    """An error built on SystemExit whose metaclass compares equal to and
-    claims to be the builtin type and whose MRO names Malformed."""
-
-
-class _EqEscape(BaseException, metaclass=_AnyEqMeta):
-    """A BaseException that is not an Exception and compares equal to any
-    class, BaseException and object among them."""
-
-
-class _EqException(Exception, metaclass=_AnyEqMeta):
-    """An Exception that compares equal to any class, Malformed among them."""
-
-
-class _BasesMalformedError(_REAL_MALFORMED):
-    """A Malformed verdict whose class, of exactly the builtin type, has the
-    _EqEscape class on its real MRO through a __bases__ assignment."""
-
-
-_BasesMalformedError.__bases__ = (_REAL_MALFORMED, _EqEscape)
-
-
-class _BasesEqError(RuntimeError):
-    """An ordinary error whose class, of exactly the builtin type, has the
-    _EqException class on its real MRO through a __bases__ assignment."""
-
-
-_BasesEqError.__bases__ = (RuntimeError, _EqException)
-
-
-class _PlainInterrupt(KeyboardInterrupt):
-    """Fix round 9: a subclass of KeyboardInterrupt alone, which a real
-    Ctrl-C never raises, so it is not let through."""
-
-
-class _InterruptExitGrandchildBase(KeyboardInterrupt, SystemExit):
-    pass
-
-
-class _InterruptExitGrandchild(_InterruptExitGrandchildBase, KeyboardInterrupt):
-    """VERIFY 5.1 (claude LOW 1a): a KeyboardInterrupt whose SystemExit sits
-    above a direct base."""
-
-
-class _RaisingEqMeta(type):
-    def __eq__(cls, other):
-        raise SystemExit(0)
-
-    __hash__ = type.__hash__
-
-
-class _CodexInterruptA(KeyboardInterrupt, metaclass=_RaisingEqMeta):
-    pass
-
-
-class _CodexInterruptB(KeyboardInterrupt):
-    pass
-
-
-class _CodexInterruptC(BaseException):
-    pass
-
-
-class _CodexInterrupt(_CodexInterruptB):
-    """VERIFY 5.1 (codex LOW 1): a KeyboardInterrupt whose bases, reassigned,
-    put a custom-metaclass ancestor before KeyboardInterrupt on its MRO."""
-
-
-_CodexInterrupt.__bases__ = (_CodexInterruptB, _CodexInterruptA, _CodexInterruptC)
-
-
-class _MalformedSystemExit(_REAL_MALFORMED, SystemExit):
-    pass
-
-
-class _MalformedSystemExitChild(_MalformedSystemExit):
-    """VERIFY 5.1 (claude LOW 1b): a SystemExit and Malformed one level above
-    a direct base."""
-
-
-class _MalformedChild(_REAL_MALFORMED):
-    """Fix round 9: a direct subclass of Malformed, not a verdict."""
-
-
-class _MalformedGrandchild(_MalformedChild):
-    """VERIFY 5.1 (claude LOW 1c): a Malformed grandchild, not a verdict."""
-
-
-class _HybridMalformedExit(ValueError, SystemExit):
-    """DISCOVERY 6 (codex and claude MEDIUM 1): a Malformed class that is
-    itself a SystemExit."""
-
-
-class _HybridMalformedInterrupt(ValueError, KeyboardInterrupt):
-    """DISCOVERY 6: a Malformed class that is itself a KeyboardInterrupt."""
-
-
-class _HybridExceptionExit(Exception, SystemExit):
-    """DISCOVERY 6 (claude MEDIUM 1): a Malformed class built on Exception
-    and SystemExit."""
-
-
-class _HybridMalformedChild(_HybridMalformedExit):
-    """Fix round 10: a Malformed class whose SystemExit sits above its direct
-    base."""
-
-
-class _EqBasesMalformed(ValueError):
-    """Fix round 10: a Malformed class, of exactly the builtin type, whose
-    real MRO carries, through a __bases__ assignment, a BaseException that is
-    not an Exception and compares equal to any class."""
-
-
-_EqBasesMalformed.__bases__ = (ValueError, _EqEscape)
-
-
-class _InterruptExit(KeyboardInterrupt, SystemExit):
-    """Fix round 8 (claude LOW 1): a KeyboardInterrupt that is also a
-    SystemExit, which a SystemExit handler of the gate would read by its
-    code."""
-
-
-class _InterruptMalformed(KeyboardInterrupt, gate.ReleaseDateMalformed):
-    """Fix round 8: a KeyboardInterrupt that also inherits the
-    ReleaseDateMalformed class of the gate and whose str exits 0, so a
-    handler of the gate for that class would run its str unguarded."""
-
-    def __str__(self):
-        raise SystemExit(0)
-
-
-class _PlainMeta(type):
-    pass
-
-
-class _MetaInterrupt(KeyboardInterrupt, metaclass=_PlainMeta):
-    """Fix round 8: a KeyboardInterrupt whose class has a custom metaclass,
-    so its MRO is not taken as the real one."""
-
-
-class _InterruptMroMeta(type, metaclass=_AnyEqMeta):
-    """A metaclass that compares equal to the builtin type, claims through a
-    __class__ property to be it, and gives its classes an MRO that names
-    KeyboardInterrupt."""
-
-    __class__ = property(lambda cls: type)
-
-    def mro(cls):
-        return (cls, KeyboardInterrupt, BaseException, object)
-
-
-class _InterruptMroError(Exception, metaclass=_InterruptMroMeta):
-    """Fix round 8: an Exception whose metaclass gives it an MRO that names
-    KeyboardInterrupt, so an except KeyboardInterrupt clause matches it."""
-
-
-class _BasesInterrupt(KeyboardInterrupt):
-    """Fix round 8: a KeyboardInterrupt whose class, of exactly the builtin
-    type, has the _EqEscape class on its real MRO through a __bases__
-    assignment, so it is also another BaseException."""
-
-
-_BasesInterrupt.__bases__ = (KeyboardInterrupt, _EqEscape)
-
-
-class _ClaimsInterrupt(RuntimeError):
-    """Fix round 8: an ordinary error whose __class__ property names
-    KeyboardInterrupt."""
-
-    __class__ = property(lambda self: KeyboardInterrupt)
-
-
-class _InterruptingStr(RuntimeError):
-    """Fix round 8: an error whose str raises a real KeyboardInterrupt."""
-
-    def __str__(self):
-        raise KeyboardInterrupt()
-
-
-class _InterruptingClassNameMeta(type):
-    @property
-    def __name__(cls):
-        raise KeyboardInterrupt()
-
-
-class _InterruptingClassName(RuntimeError, metaclass=_InterruptingClassNameMeta):
-    """Fix round 8: an error whose class name raises a real
-    KeyboardInterrupt."""
-
-
-class _InterruptingText(Exception):
-    """Fix round 8: an error whose str raises a KeyboardInterrupt that is
-    also a SystemExit."""
-
-    def __str__(self):
-        raise _InterruptExit(0)
-
-
-class _InterruptingNameMeta(type):
-    @property
-    def __name__(cls):
-        raise _InterruptExit(0)
-
-
-class _InterruptingName(Exception, metaclass=_InterruptingNameMeta):
-    """Fix round 8: an error whose class name raises a KeyboardInterrupt that
-    is also a SystemExit."""
-
-    def __str__(self):
-        return "boom"
+# Row 80: the gate runs the extractor as a separate python3 -I child, so a
+# fake extractor is a source file the child runs. The real extractor is also
+# imported here, only as the reference the child replies are compared with.
+EXTRACTOR_PATH = MODULE_PATH.parent / "skill-release-date.py"
+reference_spec = importlib.util.spec_from_file_location("skill_release_date_reference", EXTRACTOR_PATH)
+REFERENCE = importlib.util.module_from_spec(reference_spec)
+reference_spec.loader.exec_module(REFERENCE)
+
+MAIN_GUARD = '\nif __name__ == "__main__":\n'
+
+# The report of a probe that fails with exit 1 and prints nothing.
+PROBE_FAILED = (
+    "check-release-checksum-live: skill-release-date.py exited 1 in baseline, "
+    "so the extractor is unavailable"
+)
+
+# Runs a copy of the gate (its path the first argument) with a 1 second child
+# timeout, so a hung child is observed without a 20 second wait.
+TIMEOUT_WRAPPER = (
+    "import importlib.util, sys\n"
+    "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+    "gate = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(gate)\n"
+    "gate.CHILD_TIMEOUT_SECONDS = 1\n"
+    "sys.exit(gate.main())\n"
+)
+
+# Row 80, fix round 7: TIMEOUT_WRAPPER, except that the first wait of the
+# gate for each child, the one CHILD_TIMEOUT_SECONDS bounds, starts only once
+# the child has ended or a file named "ready" exists beside the gate copy,
+# polled for at most READY_SECONDS. The fake extractor writes that file only
+# after it has written every file the test reads, so a busy host can slow
+# the child down but cannot make the 1 second timeout fire before the child
+# is ready. The wait the gate then makes, its kill, its reap and its report
+# are the real ones.
+READY_SECONDS = 60
+READY_TIMEOUT_WRAPPER = (
+    "import importlib.util, os, sys, time\n"
+    "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+    "gate = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(gate)\n"
+    "gate.CHILD_TIMEOUT_SECONDS = 1\n"
+    "ready = os.path.join(os.path.dirname(sys.argv[1]), \"ready\")\n"
+    "real_wait = gate._wait_unreaped\n"
+    "seen = set()\n"
+    "def wait_when_ready(proc, timeout):\n"
+    "    if proc.pid not in seen:\n"
+    "        seen.add(proc.pid)\n"
+    f"        deadline = time.monotonic() + {READY_SECONDS}\n"
+    "        while not os.path.exists(ready) and time.monotonic() < deadline:\n"
+    "            if real_wait(proc, 0.05):\n"
+    "                return True\n"
+    "    return real_wait(proc, timeout)\n"
+    "gate._wait_unreaped = wait_when_ready\n"
+    "sys.exit(gate.main())\n"
+)
+
+# The source a fake extractor runs to say it is ready (see
+# READY_TIMEOUT_WRAPPER), indented for the body of a function.
+SAY_READY = "    (Path(__file__).resolve().parent / \"ready\").write_text(\"ready\", encoding=\"utf-8\")\n"
+
+
+def extractor_with(extra: str) -> str:
+    """Return the real extractor source with ``extra`` inserted just before
+    its __main__ guard, so a definition in ``extra`` replaces the real one
+    before main runs in the child."""
+    source = EXTRACTOR_PATH.read_text(encoding="utf-8")
+    if source.count(MAIN_GUARD) != 1:
+        raise AssertionError("the extractor has no single __main__ guard")
+    return source.replace(MAIN_GUARD, "\n" + extra + MAIN_GUARD, 1)
+
+
+def forging(outputs: dict, code: int = 0) -> str:
+    """Return extractor source whose --json mode, for each op named in
+    ``outputs`` (or for every op, under the key "*"), prints those raw bytes
+    and exits ``code``, and answers every other op as the real extractor
+    does."""
+    return extractor_with(
+        "_real_json_main = json_main\n"
+        f"_FORGED = {outputs!r}\n"
+        "def json_main():\n"
+        "    data = sys.stdin.buffer.read()\n"
+        "    op = json.loads(data)[\"op\"]\n"
+        "    forged = _FORGED.get(op, _FORGED.get(\"*\"))\n"
+        "    if forged is not None:\n"
+        "        sys.stdout.flush()\n"
+        "        sys.stdout.buffer.write(forged)\n"
+        "        sys.stdout.buffer.flush()\n"
+        f"        return {code!r}\n"
+        "    sys.stdin = io.TextIOWrapper(io.BytesIO(data))\n"
+        "    return _real_json_main()\n"
+    )
+
+
+def logging_extractor(fail_first: bool) -> str:
+    """Return extractor source that appends the op of each --json run to
+    runs.log beside it and, when ``fail_first`` is true, exits 1 with nothing
+    printed on its first run there, answering every other run as the real
+    extractor does."""
+    return extractor_with(
+        "_real_json_main = json_main\n"
+        "def json_main():\n"
+        "    data = sys.stdin.buffer.read()\n"
+        "    here = Path(__file__).resolve().parent\n"
+        "    with open(here / \"runs.log\", \"a\", encoding=\"utf-8\") as log:\n"
+        "        log.write(json.loads(data)[\"op\"] + \"\\n\")\n"
+        f"    if {fail_first!r} and not (here / \"failed-once\").exists():\n"
+        "        (here / \"failed-once\").write_text(\"x\", encoding=\"utf-8\")\n"
+        "        raise SystemExit(1)\n"
+        "    sys.stdin = io.TextIOWrapper(io.BytesIO(data))\n"
+        "    return _real_json_main()\n"
+    )
+
+
+def logged_runs(tool: Path) -> list[str]:
+    """The ops of the --json runs of the logging extractor ``tool``."""
+    return (tool.parent / "runs.log").read_text(encoding="utf-8").splitlines()
+
+
+class ReverseSortedKeys(frozenset):
+    """A key set of REPLY_KEYS that iterates in reverse sorted order. Fix
+    round 10: a report that lists the keys of a set without sorting them
+    then differs from the sorted list under every hash seed, not only under
+    some, so a test that pins the sorted list fails without the sort."""
+
+    def __iter__(self):
+        return iter(sorted(frozenset.__iter__(self), reverse=True))
+
+
+def process_state(pid: int) -> str | None:
+    """The State letter of process ``pid``, or None when it does not exist.
+    Fix round 11 (mutation sweep): a process reaped between the open and the
+    read of its status file makes the read fail with ESRCH
+    (ProcessLookupError), which also means it no longer exists."""
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    for line in status.splitlines():
+        if line.startswith("State:"):
+            return line.split()[1]
+    return None
 
 
 def unexpected_call(*args, **kwargs):
@@ -603,6 +226,13 @@ class ConditionalPassTest(unittest.TestCase):
             gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL,
             gate.release_status, gate.tag_status, gate.gh,
             gate.release_published_at, gate.release_immutable,
+        )
+        # Row 80: a test may point the gate at a fake extractor, shorten
+        # the child timeout or the reap grace, or change the output bounds;
+        # each is restored after it.
+        self._saved_child = (
+            gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS,
+            gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT,
         )
         root = Path(self._tmp.name)
         gate.REPO_ROOT = root
@@ -618,7 +248,51 @@ class ConditionalPassTest(unittest.TestCase):
         (gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL, gate.release_status,
          gate.tag_status, gate.gh, gate.release_published_at,
          gate.release_immutable) = self._saved
+        (gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS,
+         gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT) = self._saved_child
         self._tmp.cleanup()
+
+    @contextlib.contextmanager
+    def timeout_when_ready(self, ready: Path):
+        """Within the block, the first wait of the gate for each child, the
+        one CHILD_TIMEOUT_SECONDS bounds, starts only once the child has
+        ended or ``ready`` exists, polled for at most READY_SECONDS, as
+        READY_TIMEOUT_WRAPPER does for a gate in a process of its own; every
+        later wait, and the kill, the reap and the report, are the real
+        ones. Fix round 7: a busy host can then slow a child down without a
+        short timeout firing before the child has reached the state a test
+        needs."""
+        real_wait = gate._wait_unreaped
+        seen = set()
+        # The monotonic time at which the gate first found ``ready``, so a
+        # test can bound the time the gate takes from then on.
+        state = {}
+
+        def wait_when_ready(proc, timeout):
+            if proc.pid not in seen:
+                seen.add(proc.pid)
+                deadline = time.monotonic() + READY_SECONDS
+                while not ready.exists() and time.monotonic() < deadline:
+                    if real_wait(proc, 0.05):
+                        return True
+                if ready.exists():
+                    state.setdefault("ready_at", time.monotonic())
+            return real_wait(proc, timeout)
+
+        gate._wait_unreaped = wait_when_ready
+        try:
+            yield state
+        finally:
+            gate._wait_unreaped = real_wait
+
+    def fake_extractor(self, body):
+        """Write the extractor source ``body`` into a fresh directory and
+        point the gate at it, returning its path."""
+        folder = Path(tempfile.mkdtemp(dir=self._tmp.name))
+        tool = folder / "skill-release-date.py"
+        tool.write_text(body, encoding="utf-8")
+        gate.RELEASE_DATE_TOOL = tool
+        return tool
 
     def fixtures(self, site_version, site_sum, skill_version, released=None):
         gate.VERIFY_PAGE.write_text(
@@ -636,8 +310,10 @@ class ConditionalPassTest(unittest.TestCase):
         version = args[2].removeprefix("v")
         target = Path(args[args.index("--dir") + 1])
         (target / f"cleanlanguage-{version}.zip").write_bytes(ZIP_BYTES)
+        # Fix round 14 (VERIFY round 9.3, finding 3): the manifest ends in a
+        # newline, as the one sha256sum writes in tools/release-package.sh.
         (target / f"cleanlanguage-{version}.zip.sha256").write_text(
-            f"{ZIP_SUM}  cleanlanguage-{version}.zip", encoding="utf-8"
+            f"{ZIP_SUM}  cleanlanguage-{version}.zip\n", encoding="utf-8"
         )
         return subprocess.CompletedProcess(args, 0, "", "")
 
@@ -851,6 +527,64 @@ class ConditionalPassTest(unittest.TestCase):
         with self.assertRaises(SystemExit) as caught:
             gate.release_immutable("v1.0.15")
         self.assertEqual(caught.exception.code, 2)
+
+    def test_readers_remove_only_one_final_newline(self):
+        # Fix round 12 (VERIFY round 9.1, class sweep): each record reader
+        # returns what gh printed with only one final newline removed, so a
+        # second newline, a carriage return, or a blank on either side stays
+        # in the value and reaches the check that refuses it.
+        for name, reader, field in (
+            ("release_published_at", self._saved[6], "2026-11-15T09:30:00Z"),
+            ("release_immutable", self._saved[7], "true"),
+        ):
+            for printed, expected in (
+                (field + "\n", field), (field, field), (field + "\n\n", field + "\n"), (field + "\r\n", field + "\r"),
+                (" " + field + "\n", " " + field), (field + " \n", field + " "), (field + "\t\n", field + "\t"),
+            ):
+                with self.subTest(name, printed=printed):
+                    gate.gh = lambda *args, check=True, out=printed: subprocess.CompletedProcess(args, 0, out, "")
+                    self.assertEqual(reader("v1.0.15"), expected)
+
+    def test_the_real_gh_wrapper_fails_closed_on_output_that_does_not_decode(self):
+        # Fix round 12 (VERIFY round 9.1, class sweep): the real gh wrapper
+        # decodes what gh prints strictly, so a byte that is not UTF-8 is
+        # unverifiable (exit 2) in every reader, never replaced or read in
+        # another encoding. The wrapper decodes with the locale encoding,
+        # which this test requires to be UTF-8.
+        self.assertEqual(codecs.lookup(locale.getpreferredencoding(False)).name, "utf-8")
+        bindir = Path(self._tmp.name) / "undecodable-gh"
+        bindir.mkdir()
+        fake = bindir / "gh"
+        fake.write_text("#!/bin/sh\nprintf 'HTTP/2.0 200 OK\\n\\377\\n'\n", encoding="ascii")
+        fake.chmod(0o755)
+        readers = (
+            ("release_immutable", self._saved[7], "the immutable field of release v1.0.15"),
+            ("release_published_at", self._saved[6], "published_at for release v1.0.15"),
+            ("release_status", self._saved[3], "the release status for v1.0.15"),
+            ("tag_status", self._saved[4], "the tag status for v1.0.15"),
+        )
+        for name, reader, what in readers:
+            with self.subTest(name):
+                gate.gh = self._saved[5]
+                saved_path = os.environ.get("PATH")
+                os.environ["PATH"] = str(bindir)
+                out, err = io.StringIO(), io.StringIO()
+                try:
+                    with self.assertRaises(SystemExit) as caught, contextlib.redirect_stdout(out), \
+                            contextlib.redirect_stderr(err):
+                        reader("v1.0.15")
+                finally:
+                    if saved_path is None:
+                        os.environ.pop("PATH", None)
+                    else:
+                        os.environ["PATH"] = saved_path
+                self.assertEqual(caught.exception.code, 2)
+                lines = err.getvalue().splitlines()
+                self.assertEqual(len(lines), 1, err.getvalue())
+                self.assertTrue(
+                    lines[0].startswith(f"{self.CV}could not read {what}: UnicodeDecodeError("), err.getvalue()
+                )
+                self.assertEqual(out.getvalue(), "")
 
     def test_undated_release_reads_no_record_field(self):
         # F9: an undated release at or below the baseline reads neither field.
@@ -1126,14 +860,15 @@ class ConditionalPassTest(unittest.TestCase):
         return fresh
 
     def test_extractor_load_failure_does_not_hide_checksum_drift(self):
-        # Round 5: the extractor is loaded inside main, so a load failure
-        # contributes exit 3 while the checksum comparison still runs and
-        # reports the drift.
-        real = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
-        for label, body, reason in (
-            ("missing extractor", None, "could not load skill-release-date.py"),
-            ("syntax-broken extractor", "def broken(:\n", "SyntaxError"),
-            ("API-invalid extractor", real + "\nextract = 5\n", "lacks a usable extract "),
+        # Round 5: the extractor is probed inside main, so a failure to run
+        # it contributes exit 3 while the checksum comparison still runs and
+        # reports the drift. Row 80: each reason is the child outcome, with
+        # the child stderr relayed.
+        for label, body, reasons in (
+            ("missing extractor", None, ("exited 2 in baseline", "can't open file")),
+            ("syntax-broken extractor", "def broken(:\n", ("exited 1 in baseline", "SyntaxError")),
+            ("API-invalid extractor", extractor_with("extract = 5\n"),
+             ("failed unexpectedly (internal error) in extract", "TypeError")),
         ):
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
                 self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
@@ -1146,7 +881,8 @@ class ConditionalPassTest(unittest.TestCase):
                     except SystemExit as stop:
                         code = stop.code
                 self.assertEqual(code, 3, (out.getvalue(), err.getvalue()))
-                self.assertIn(reason, err.getvalue())
+                for reason in reasons:
+                    self.assertIn(reason, err.getvalue())
                 self.assertIn("the extractor is unavailable", err.getvalue())
                 self.assertIn("Release checksum drift found", out.getvalue())
 
@@ -1220,603 +956,62 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertNotIn("Release checksum drift found", out)
 
     def test_extractor_crash_inside_a_call_exits_3(self):
-        # F5: an unexpected failure of the loaded extractor is unavailable
-        # (exit 3), never a drift verdict (exit 1).
-        saved = gate.RELEASE_DATE.release_day_from_published_at
-
-        def crash(value):
-            raise RuntimeError("boom")
-
-        gate.RELEASE_DATE.release_day_from_published_at = crash
-        try:
-            self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
-            self.published("2026-11-15T09:30:00Z")
-            with self.assertRaises(SystemExit) as caught:
-                gate.main()
-            self.assertEqual(caught.exception.code, 3)
-        finally:
-            gate.RELEASE_DATE.release_day_from_published_at = saved
+        # F5: an unexpected failure of the extractor is unavailable (exit 3),
+        # never a drift verdict (exit 1). Row 80: the child exits 6 and its
+        # stderr is relayed.
+        self.fake_extractor(extractor_with(
+            "def release_day_from_published_at(value):\n    raise RuntimeError(\"boom\")\n"
+        ))
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z")
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 3, (out, err))
+        self.assertIn(
+            "check-release-checksum-live: skill-release-date.py failed unexpectedly (internal error) in "
+            "release_day_from_published_at, so the extractor is unavailable; it printed: ",
+            err,
+        )
+        self.assertIn("RuntimeError('boom')", err)
+        self.assertIn("matches the published", out)
 
     def test_extractor_raising_system_exit_exits_3(self):
         # Row 58: an extractor that raises SystemExit, whatever its code, is
-        # unavailable (exit 3), never a pass (0) or a drift (1), whether it
-        # raises it inside a call or from a lookup on the module.
-        def stop_with(code):
-            def stop(*args, **kwargs):
-                raise SystemExit(code)
-            return stop
-
-        # Fix round 4 (F2): 2 and 3 too, the codes release_date_code and main
-        # absorb as could not verify, so a pass-through of either fails here.
-        for stop_code in (0, 1, 2, 3, None):
-            for place in ("call", "lookup"):
-                with self.subTest(code=stop_code, place=place):
-                    saved = gate.RELEASE_DATE.release_day_from_published_at
-                    if place == "call":
-                        gate.RELEASE_DATE.release_day_from_published_at = stop_with(stop_code)
-                        reason = "failed unexpectedly in release_day_from_published_at"
-                    else:
-                        del gate.RELEASE_DATE.release_day_from_published_at
-                        gate.RELEASE_DATE.__getattr__ = stop_with(stop_code)
-                        reason = "lacks release_day_from_published_at"
-                    try:
-                        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
-                        self.published("2026-11-15T09:30:00Z")
-                        code, out, err = self.main_reports()
-                        self.assertEqual(code, 3, (out, err))
-                        self.assertIn(reason, err)
-                        self.assertIn("SystemExit", err)
-                    finally:
-                        vars(gate.RELEASE_DATE).pop("__getattr__", None)
-                        gate.RELEASE_DATE.release_day_from_published_at = saved
-
-    def test_extractor_code_run_by_the_gate_cannot_escape_exit_3(self):
-        # Fix round 4 (F1): beyond the call itself the gate reaches extractor
-        # code through the repr, str, and class name of a caught error, the
-        # Malformed class checks, and the methods of a returned value or of
-        # BASELINE_VERSION. Whatever that code raises, a SystemExit of any
-        # code or another exception, the gate exits 3 (unavailable), never 0
-        # (a silent pass) or 1 (drift), and the checksum comparison still runs.
-        def raising(error):
-            def call(*args, **kwargs):
-                raise error
-            return call
-
-        def returning(value):
-            def call(*args, **kwargs):
-                return value
-            return call
-
-        released = "Released: 2026-11-15  "
-        failed = "failed unexpectedly in release_day_from_published_at"
-        cases = (
-            ("repr and str exit 0", "release_day_from_published_at", raising(_ExitingText()), released, failed),
-            ("repr and str raise", "release_day_from_published_at", raising(_RaisingText()), released, failed),
-            ("a SystemExit code whose repr exits 0", "release_day_from_published_at",
-             raising(SystemExit(_Hostile())), released, failed),
-            ("class name and str exit 0", "release_day_from_published_at", raising(_ExitingName()), released, failed),
-            ("a BaseException subclass", "release_day_from_published_at", raising(_Escape()), released, failed),
-            ("a Malformed verdict whose str exits 0", "release_day_from_published_at",
-             raising(_ExitingMalformed()), released, failed),
-            # Fix round 5: a Malformed class with a custom metaclass is refused
-            # as unusable before any of its hooks can run.
-            ("a Malformed class whose checks exit 0", "Malformed", _ExitingCheckMalformed, released,
-             "lacks a usable Malformed (expected an exception class)"),
-            ("extract returns a hostile value", "extract", returning(_Hostile()), released,
-             "returned an unusable result from extract"),
-            ("requires_release_date returns a hostile value", "requires_release_date", returning(_Hostile()), None,
-             "returned an unusable result from requires_release_date"),
-            ("release_day_from_published_at returns a hostile value", "release_day_from_published_at",
-             returning(_Hostile()), released, "returned an unusable result from release_day_from_published_at"),
-            ("BASELINE_VERSION with a hostile format", "BASELINE_VERSION", _ExitingVersion("1.0.14"), None,
-             "lacks a usable BASELINE_VERSION "),
-            # Fix round 6 (claude MEDIUM 1): each exact type check, of the result
-            # of every extractor function and of the text _guarded_text reads,
-            # refuses a str subclass and a value that only claims its type,
-            # either of which isinstance would accept and whose methods would
-            # then exit 0 later in the gate.
-            ("extract returns a str subclass whose methods exit 0", "extract",
-             returning(_ExitingStr("2026-11-15")), released, "returned an unusable result from extract"),
-            ("extract returns a value that only claims to be a str", "extract",
-             returning(_ClaimsStr()), released, "returned an unusable result from extract"),
-            # Fix round 7 (codex LOW): the None alternative of extract is
-            # checked by identity too, so a value that only claims to be None
-            # is refused.
-            ("extract returns a value that only claims to be None", "extract",
-             returning(_ClaimsNone()), released, "returned an unusable result from extract"),
-            ("requires_release_date returns a value that only claims to be a bool", "requires_release_date",
-             returning(_ClaimsBool()), None, "returned an unusable result from requires_release_date"),
-            ("release_day_from_published_at returns a str subclass whose methods exit 0",
-             "release_day_from_published_at", returning(_ExitingStr("2026-11-15")), released,
-             "returned an unusable result from release_day_from_published_at"),
-            ("release_day_from_published_at returns a value that only claims to be a str",
-             "release_day_from_published_at", returning(_ClaimsStr()), released,
-             "returned an unusable result from release_day_from_published_at"),
-            ("an error whose str is a str subclass whose methods exit 0", "release_day_from_published_at",
-             raising(_ExitingStrText()), released, failed + ": _ExitingStrText: (its message could not be read)"),
-            ("an error whose class name is a str subclass whose methods exit 0", "release_day_from_published_at",
-             raising(_ExitingStrName()), released, failed + ": an error whose class name could not be read"),
-            ("an error whose class name only claims to be a str", "release_day_from_published_at",
-             raising(_ClaimsStrName()), released, failed + ": an error whose class name could not be read"),
-            ("a Malformed verdict whose str is a str subclass whose methods exit 0",
-             "release_day_from_published_at", raising(_ExitingStrMalformed()), released,
-             failed + ": _ExitingStrMalformed: (its message could not be read)"),
-            # Fix round 7 (claude informational): _describe reads the class name
-            # from the real type of the error, never its __class__, so an error
-            # whose __class__ property names another class is described by the
-            # name of its own class.
-            ("an error whose __class__ property names another class", "release_day_from_published_at",
-             raising(_ClassSpoofError("boom")), released, failed + ": _ClassSpoofError: boom"),
-            # Fix round 8 (codex LOW): each exact type check compares by
-            # identity, so a value whose class compares equal to the expected
-            # builtin type through its metaclass is refused, for every result
-            # kind of every extractor function, the text _guarded_text reads,
-            # and BASELINE_VERSION; BASELINE_VERSION must also be an exact
-            # str, not one that claims str through a __class__ property
-            # (ModuleLoadTest pins that it must be a bare version).
-            ("extract returns a value whose class compares equal to str", "extract",
-             returning(_EqualsStr("2026-11-15")), released, "returned an unusable result from extract"),
-            ("extract returns a value whose class compares equal to NoneType", "extract",
-             returning(_EqualsNone()), released, "returned an unusable result from extract"),
-            ("requires_release_date returns a value whose class compares equal to bool", "requires_release_date",
-             returning(_EqualsBool()), None, "returned an unusable result from requires_release_date"),
-            ("release_day_from_published_at returns a value whose class compares equal to str",
-             "release_day_from_published_at", returning(_EqualsStr("2026-11-15")), released,
-             "returned an unusable result from release_day_from_published_at"),
-            ("an error whose str is a value whose class compares equal to str", "release_day_from_published_at",
-             raising(_EqualsStrText()), released, failed + ": _EqualsStrText: (its message could not be read)"),
-            ("an error whose text is empty is described by its class name alone",
-             "release_day_from_published_at", raising(RuntimeError("")), released, failed + ": RuntimeError\n"),
-            ("BASELINE_VERSION whose class compares equal to str", "BASELINE_VERSION", _EqualsStr("1.0.14"), None,
-             "lacks a usable BASELINE_VERSION "),
-            ("BASELINE_VERSION whose __class__ property names str", "BASELINE_VERSION",
-             _ClassClaimsStrVersion("1.0.14"), None, "lacks a usable BASELINE_VERSION "),
-        )
-        for label, name, value, line, reason in cases:
-            with self.subTest(label):
-                saved = vars(gate.RELEASE_DATE)[name]
-                saved_day = gate.RELEASE_DATE.release_day_from_published_at
-                setattr(gate.RELEASE_DATE, name, value)
-                if name == "Malformed":
-                    gate.RELEASE_DATE.release_day_from_published_at = raising(RuntimeError("boom"))
-                try:
-                    self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
-                    self.published("2026-11-15T09:30:00Z")
-                    code, out, err = self.main_reports()
-                    self.assertEqual(code, 3, (out, err))
-                    self.assertIn(reason, err)
-                    self.assertIn("matches the published", out)
-                finally:
-                    setattr(gate.RELEASE_DATE, name, saved)
-                    gate.RELEASE_DATE.release_day_from_published_at = saved_day
-
-    def test_hostile_error_text_from_an_api_lookup_exits_3(self):
-        # Fix round 6 (claude MEDIUM 1): release_date_attr describes a failed
-        # lookup through _describe too, so an error whose str or class name is
-        # a str subclass whose methods exit 0 still exits 3 with the report,
-        # and the checksum comparison still runs.
-        for label, error, shown in (
-            ("str", _ExitingStrText(), "_ExitingStrText: (its message could not be read)"),
-            ("class name", _ExitingStrName(), "an error whose class name could not be read"),
+        # unavailable (exit 3), never a pass (0) or a drift (1). Fix round 4
+        # (F2): 2 and 3 too, the codes release_date_code and main absorb as
+        # could not verify. Row 80: the child ends with that code and an
+        # empty stdout, so 0 and None print no result and the others exit
+        # nonzero; no lookup on a module exists any more.
+        for stop_code, reason in (
+            (0, "did not print a JSON result"), (1, "exited 1"), (2, "exited 2"), (3, "exited 3"),
+            (None, "did not print a JSON result"),
         ):
-            with self.subTest(label):
-                saved = gate.RELEASE_DATE.release_day_from_published_at
-
-                def lookup(name):
-                    raise error
-
-                del gate.RELEASE_DATE.release_day_from_published_at
-                gate.RELEASE_DATE.__getattr__ = lookup
-                try:
-                    self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
-                    self.published("2026-11-15T09:30:00Z")
-                    code, out, err = self.main_reports()
-                    self.assertEqual(code, 3, (out, err))
-                    self.assertIn("lacks release_day_from_published_at: " + shown, err)
-                    self.assertIn("matches the published", out)
-                finally:
-                    vars(gate.RELEASE_DATE).pop("__getattr__", None)
-                    gate.RELEASE_DATE.release_day_from_published_at = saved
-
-    def test_spoofed_malformed_classification_exits_3(self):
-        # Fix round 5 (codex MEDIUM): the Malformed classification reads only
-        # what extractor code cannot fake. A SystemExit of any code, or an
-        # error that only claims to be a Malformed verdict through a __class__
-        # property, a metaclass instance or subclass check, or a metaclass
-        # mro, or a Malformed that only claims to be a class, is unavailable
-        # (exit 3), never a content verdict (exit 2), and the checksum
-        # comparison still runs.
-        failed = "failed unexpectedly in release_day_from_published_at"
-        unusable = "lacks a usable Malformed (expected an exception class)"
-        cases = (
-            ("a SystemExit whose __class__ property names Malformed", _ClassSpoofExit, None, failed),
-            ("a SystemExit that also inherits Malformed", _MalformedExit, None, failed),
-            ("an error built on SystemExit whose metaclass mro names Malformed", _MroSpoofExit, None, failed),
-            ("a Malformed metaclass whose instance check accepts anything", SystemExit,
-             _AcceptingInstanceMalformed, unusable),
-            ("a Malformed metaclass whose subclass check accepts anything", SystemExit,
-             _AcceptingSubclassMalformed, unusable),
-            ("a Malformed that only claims to be a class", SystemExit, _PretendClass(), unusable),
-            # Fix round 8 (codex LOW, operator sweep): each type and identity
-            # guard of the classification refuses a class whose metaclass
-            # compares equal to the type it is checked against, or claims it
-            # through a __class__ property, and a class whose real MRO, of a
-            # class of exactly the builtin type, carries such a class through
-            # a __bases__ assignment.
-            ("a Malformed whose metaclass compares equal to the builtin type", RuntimeError,
-             _EqTypeMalformed, unusable),
-            ("a Malformed that is not an exception class", RuntimeError, object, unusable),
-            ("an error built on SystemExit whose metaclass compares equal to and claims to be the builtin type",
-             _ClaimingMroSpoofExit, None, failed),
-            ("a Malformed verdict whose bases carry a BaseException that compares equal to any class",
-             _BasesMalformedError, None, failed),
-            ("an ordinary error whose bases carry an Exception that compares equal to Malformed",
-             _BasesEqError, None, failed),
-            # Fix round 9: only an error of exactly the Malformed class is a
-            # verdict, so a subclass of Malformed, a SystemExit and Malformed
-            # above a direct base, and a Malformed grandchild are not
-            # (VERIFY 5.1, claude LOW 1b and 1c), and an error whose metaclass
-            # compares unequal to nothing is not taken for a Malformed.
-            ("a direct subclass of Malformed", _MalformedChild, None, failed),
-            ("a SystemExit and Malformed above a direct base", _MalformedSystemExitChild, None, failed),
-            ("a Malformed grandchild", _MalformedGrandchild, None, failed),
-            ("an error whose metaclass compares unequal to nothing", _EqException, None, failed),
-        )
-        for label, error_class, malformed, reason in cases:
-            for stop_code in (0, 1, 2, 3, None):
-                with self.subTest(label, code=stop_code):
-                    self.assert_verdict(error_class(stop_code), malformed, 3, reason)
-        with self.subTest("an ordinary error whose __class__ property names Malformed"):
-            self.assert_verdict(_ClassSpoofError("boom"), None, 3, failed)
-        # Fix round 9: the Malformed class is checked again when the error is
-        # classified, so extractor code that reassigns its __bases__ during
-        # the call, leaving it no Exception, gets no content verdict.
-        # Fix round 11: it must also stay free of non-Exception bases even
-        # when it still subclasses Exception (verdict-time mutant B2).
-        for bases in (
-            (BaseException,),
-            (ValueError, KeyboardInterrupt),
-            (ValueError, SystemExit),
-            (ValueError, GeneratorExit),
-        ):
-            with self.subTest("a Malformed whose bases the call reassigns", bases=bases):
-                class Shifting(ValueError):
-                    pass
-
-                shifted = False
-
-                def shift_and_raise(*args, **kwargs):
-                    nonlocal shifted
-                    Shifting.__bases__ = bases
-                    shifted = True
-                    raise Shifting("boom")
-
-                saved_day = gate.RELEASE_DATE.release_day_from_published_at
-                saved_malformed = gate.RELEASE_DATE.Malformed
-                gate.RELEASE_DATE.release_day_from_published_at = shift_and_raise
-                gate.RELEASE_DATE.Malformed = Shifting
-                try:
-                    self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
-                    self.published("2026-11-15T09:30:00Z")
-                    code, out, err = self.main_reports()
-                finally:
-                    gate.RELEASE_DATE.release_day_from_published_at = saved_day
-                    gate.RELEASE_DATE.Malformed = saved_malformed
+            with self.subTest(code=stop_code):
+                self.fake_extractor(extractor_with(
+                    f"def release_day_from_published_at(value):\n    raise SystemExit({stop_code!r})\n"
+                ))
+                self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+                self.published("2026-11-15T09:30:00Z")
+                code, out, err = self.main_reports()
                 self.assertEqual(code, 3, (out, err))
-                if shifted:
-                    self.assertIn(failed + ": Shifting: boom", err)
-                else:
-                    # CPython refuses the larger SystemExit object layout.
-                    self.assertEqual(bases, (ValueError, SystemExit))
-                    self.assertIn(failed + ": TypeError: __bases__ assignment:", err)
-                self.assertNotIn("is unusable", err)
-        # Fix round 12 (DISCOVERY 7 LOW): reading the text of a verdict runs
-        # extractor code (its str), so the class checks run again after the
-        # text is read. A Malformed whose str reassigns the bases of its class
-        # to a hybrid, or the class of the error itself, gets no content
-        # verdict at any site, and an error that is not a Malformed when it is
-        # caught never becomes one through its str, so each exits 3 with the
-        # report. CPython refuses a SystemExit hybrid here too (its object
-        # layout differs from ValueError), so the str raises TypeError and the
-        # text cannot be read; that case also exits 3.
-        released = "Released: 2026-11-15  "
-        sites = (
-            ("extract", released),
-            ("requires_release_date", None),
-            ("release_day_from_published_at", released),
-        )
-        for shift in (
-            (ValueError, KeyboardInterrupt),
-            (ValueError, GeneratorExit),
-            (ValueError, SystemExit),
-            "the class of the error to a plain error",
-            "the class of a plain error to Malformed",
-        ):
-            for name, line in sites:
-                with self.subTest("a str that reassigns what the verdict checked", shift=shift, site=name):
-                    class Shifting(ValueError):
-                        pass
-
-                    class Plain(ValueError):
-                        pass
-
-                    outcomes = []
-
-                    def text(error):
-                        try:
-                            if type(shift) is tuple:
-                                Shifting.__bases__ = shift
-                            elif shift.endswith("to Malformed"):
-                                error.__class__ = Shifting
-                            else:
-                                error.__class__ = Plain
-                        except TypeError:
-                            outcomes.append("refused")
-                            raise
-                        outcomes.append("shifted")
-                        return "shifted probe"
-
-                    Shifting.__str__ = text
-                    Plain.__str__ = text
-                    raised = Plain if shift == "the class of a plain error to Malformed" else Shifting
-
-                    def raising(*args, **kwargs):
-                        raise raised("probe")
-
-                    saved = vars(gate.RELEASE_DATE)[name]
-                    saved_malformed = gate.RELEASE_DATE.Malformed
-                    setattr(gate.RELEASE_DATE, name, raising)
-                    gate.RELEASE_DATE.Malformed = Shifting
-                    try:
-                        self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
-                        self.published("2026-11-15T09:30:00Z")
-                        try:
-                            code, out, err = self.main_reports()
-                        except KeyboardInterrupt:
-                            code, out, err = "interrupt", "", ""
-                    finally:
-                        setattr(gate.RELEASE_DATE, name, saved)
-                        gate.RELEASE_DATE.Malformed = saved_malformed
-                    self.assertEqual(code, 3, (out, err))
-                    self.assertIn(f"failed unexpectedly in {name}: ", err)
-                    self.assertNotIn("is unusable", err)
-                    self.assertNotIn("is malformed", err)
-                    self.assertNotIn("was rejected by the extractor", err)
-                    self.assertIn("matches the published", out)
-                    if shift == (ValueError, SystemExit):
-                        self.assertEqual(set(outcomes), {"refused"})
-                        self.assertIn("(its message could not be read)", err)
-                    else:
-                        self.assertEqual(set(outcomes), {"shifted"})
-                        self.assertIn("shifted probe", err)
-        # The text of a genuine verdict is read once, before the last class
-        # check, and never again after it.
-        with self.subTest("a genuine Malformed verdict whose text is read once"):
-            reads = []
-
-            class Counted(_REAL_MALFORMED):
-                def __str__(self):
-                    reads.append(1)
-                    return "bad stamp"
-
-            self.assert_verdict(Counted("bad stamp"), Counted, 2,
-                                f"the published_at of release v{AHEAD} is unusable: bad stamp")
-            self.assertEqual(len(reads), 1)
-        # The control: a genuine Malformed verdict is still a content verdict.
-        with self.subTest("a genuine Malformed verdict"):
-            self.assert_verdict(_REAL_MALFORMED("bad stamp"), None, 2,
-                                f"the published_at of release v{AHEAD} is unusable: bad stamp")
-
-    def assert_verdict(self, error, malformed, expected, reason):
-        """Run the gate with release_day_from_published_at raising ``error``
-        and, unless it is None, Malformed replaced by ``malformed``."""
-        saved_day = gate.RELEASE_DATE.release_day_from_published_at
-        saved_malformed = gate.RELEASE_DATE.Malformed
-
-        def raising(*args, **kwargs):
-            raise error
-
-        gate.RELEASE_DATE.release_day_from_published_at = raising
-        if malformed is not None:
-            gate.RELEASE_DATE.Malformed = malformed
-        try:
-            self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
-            self.published("2026-11-15T09:30:00Z")
-            code, out, err = self.main_reports()
-            self.assertEqual(code, expected, (out, err))
-            self.assertIn(reason, err)
-            if expected == 3:
-                self.assertNotIn("is unusable", err)
-            self.assertIn("matches the published", out)
-        finally:
-            gate.RELEASE_DATE.release_day_from_published_at = saved_day
-            gate.RELEASE_DATE.Malformed = saved_malformed
-
-    def test_interrupt_that_is_also_another_class_exits_3(self):
-        # Fix round 8 (claude LOW 1), narrowed in fix round 9: a
-        # KeyboardInterrupt is let through as an interrupt only when its class
-        # is exactly KeyboardInterrupt. Anything else the
-        # extractor raises, in a call or from a lookup on the module, or
-        # raises while the gate reads the class name or text of an error,
-        # exits 3 with its report, never the code a SystemExit carries, the
-        # exit an unguarded str in a handler of the gate gives, or an
-        # interrupt, and the checksum comparison still runs.
-        cases = [
-            (f"a KeyboardInterrupt that is also a SystemExit({code})", _InterruptExit(code), "_InterruptExit")
-            for code in (0, 1, 2, 3, None)
-        ] + [
-            ("a KeyboardInterrupt that also inherits ReleaseDateMalformed", _InterruptMalformed(),
-             "_InterruptMalformed: (its message could not be read)"),
-            ("a KeyboardInterrupt with a custom metaclass", _MetaInterrupt("boom"), "_MetaInterrupt: boom"),
-            ("an Exception whose metaclass mro names KeyboardInterrupt", _InterruptMroError("boom"),
-             "_InterruptMroError: boom"),
-            ("a bare BaseException", BaseException("boom"), "BaseException: boom"),
-            ("an error whose str raises an interrupt that is also a SystemExit", _InterruptingText(),
-             "_InterruptingText: (its message could not be read)"),
-            ("an error whose class name raises an interrupt that is also a SystemExit", _InterruptingName(),
-             "an error whose class name could not be read: boom"),
-            ("a KeyboardInterrupt that is also another BaseException through its bases",
-             _BasesInterrupt("boom"), "_BasesInterrupt: boom"),
-            ("an error whose __class__ property names KeyboardInterrupt", _ClaimsInterrupt("boom"),
-             "_ClaimsInterrupt: boom"),
-            # Fix round 9: only exactly KeyboardInterrupt is let through, so a
-            # subclass of it alone, a SystemExit above a direct base, and the
-            # codex VERIFY 5.1 class with a custom-metaclass ancestor are
-            # refused, and an error whose metaclass compares equal to
-            # KeyboardInterrupt is not taken for it.
-            ("a subclass of KeyboardInterrupt alone", _PlainInterrupt("boom"), "_PlainInterrupt: boom"),
-            ("a KeyboardInterrupt with a SystemExit above a direct base", _InterruptExitGrandchild(0),
-             "_InterruptExitGrandchild: 0"),
-            ("a KeyboardInterrupt with a custom-metaclass ancestor through its bases", _CodexInterrupt("probe"),
-             "_CodexInterrupt: probe"),
-            ("an error whose metaclass compares equal to KeyboardInterrupt", _EqException("boom"),
-             "_EqException: boom"),
-        ]
-        for place, prefix in (
-            ("call", "failed unexpectedly in release_day_from_published_at: "),
-            ("lookup", "lacks release_day_from_published_at: "),
-        ):
-            for label, error, shown in cases:
-                with self.subTest(label, place=place):
-                    code, out, err = self.interrupt_reports(error, place)
-                    self.assertEqual(code, 3, (out, err))
-                    self.assertIn(prefix + shown, err)
-                    self.assertIn("matches the published", out)
-
-    def test_real_interrupt_is_let_through_at_every_guard(self):
-        # Fix round 8, narrowed in fix round 9: exactly KeyboardInterrupt is
-        # let through as an interrupt wherever the gate guards extractor code:
-        # a call, a lookup on the module, the class name or text of a caught
-        # error, and a call whose handler is a ReleaseDateMalformed or
-        # SystemExit handler of the gate.
-        released = "Released: 2026-11-15  "
-        for label, error, place, name, line in (
-            ("a KeyboardInterrupt in a call", KeyboardInterrupt(), "call", "release_day_from_published_at", released),
-            ("a KeyboardInterrupt from a lookup", KeyboardInterrupt(), "lookup", "release_day_from_published_at",
-             released),
-            ("an error whose str raises a KeyboardInterrupt", _InterruptingStr(), "call",
-             "release_day_from_published_at", released),
-            ("an error whose class name raises a KeyboardInterrupt", _InterruptingClassName(), "call",
-             "release_day_from_published_at", released),
-            ("a KeyboardInterrupt in extract", KeyboardInterrupt(), "call", "extract", released),
-            ("a KeyboardInterrupt in requires_release_date", KeyboardInterrupt(), "call", "requires_release_date",
-             None),
-        ):
-            with self.subTest(label):
-                code, out, err = self.interrupt_reports(error, place, name, line)
-                self.assertEqual(code, "interrupt", (out, err))
-
-    def test_loaded_extractor_module_is_recognized_by_identity(self):
-        # Fix round 8 (operator sweep): the loaded module is told from the
-        # not-loaded state by identity, so a module whose class compares
-        # equal to None runs no comparison of its own and is not loaded
-        # again; its functions decide, here a date mismatch.
-        class ComparingModule(types.ModuleType):
-            def __eq__(self, other):
-                raise SystemExit(0)
-
-            __ne__ = __eq__
-            __hash__ = types.ModuleType.__hash__
-
-        saved_class = type(gate.RELEASE_DATE)
-        gate.RELEASE_DATE.__class__ = ComparingModule
-        try:
-            self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
-            self.published("2026-11-16T00:00:01Z")
-            code, out, err = self.main_reports()
-        finally:
-            gate.RELEASE_DATE.__class__ = saved_class
-        self.assertEqual(code, 1, (out, err))
-        self.assertIn("Release date inconsistency found", out)
+                self.assertEqual(err.splitlines(), [
+                    f"check-release-checksum-live: skill-release-date.py {reason} in "
+                    f"release_day_from_published_at, so the extractor is unavailable"
+                ], err)
+                self.assertIn("matches the published", out)
 
     def test_requires_release_date_is_not_called_when_the_line_is_present(self):
         # Fix round 8 (operator sweep): with a Released line present, the
-        # baseline rule is not asked, so no extractor code runs for it.
-        saved = gate.RELEASE_DATE.requires_release_date
-        calls = []
-
-        def recording(*args, **kwargs):
-            calls.append(args)
-            raise RuntimeError("requires_release_date was called")
-
-        gate.RELEASE_DATE.requires_release_date = recording
-        try:
-            self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
-            self.published("2026-11-15T09:30:00Z")
-            code, out, err = self.main_reports()
-        finally:
-            gate.RELEASE_DATE.requires_release_date = saved
+        # baseline rule is not asked, so no extractor code runs for it. Row
+        # 80: a call would run the failing function in a child and exit 3.
+        self.fake_extractor(extractor_with(
+            "def requires_release_date(version):\n"
+            "    raise RuntimeError(\"requires_release_date was called\")\n"
+        ))
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z")
+        code, out, err = self.main_reports()
         self.assertEqual(code, 0, (out, err))
-        self.assertEqual(calls, [])
-
-    def interrupt_reports(self, error, place, name="release_day_from_published_at",
-                          line="Released: 2026-11-15  "):
-        """Run the gate with the extractor function ``name`` raising
-        ``error``, in a call or from a lookup on the module, and SKILL.md
-        carrying the Released line ``line``, returning (exit code, stdout,
-        stderr). An interrupt that escapes the gate gives the code
-        "interrupt", so a test fails rather than the run ending."""
-        saved = vars(gate.RELEASE_DATE)[name]
-
-        def raising(*args, **kwargs):
-            raise error
-
-        if place == "call":
-            setattr(gate.RELEASE_DATE, name, raising)
-        else:
-            delattr(gate.RELEASE_DATE, name)
-            gate.RELEASE_DATE.__getattr__ = raising
-        try:
-            self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
-            self.published("2026-11-15T09:30:00Z")
-            try:
-                return self.main_reports()
-            except KeyboardInterrupt:
-                return "interrupt", "", ""
-        finally:
-            vars(gate.RELEASE_DATE).pop("__getattr__", None)
-            setattr(gate.RELEASE_DATE, name, saved)
-
-    def test_hybrid_malformed_class_exits_3(self):
-        # DISCOVERY 6 (codex and claude MEDIUM 1): a Malformed class whose
-        # real MRO holds a class that is neither an Exception nor
-        # BaseException nor object, such as a SystemExit or a
-        # KeyboardInterrupt, is not a usable Malformed class, so an error of
-        # it is never a content verdict: at extract and at each verdict site
-        # the gate exits 3 with the report, and the checksum comparison still
-        # runs.
-        released = "Released: 2026-11-15  "
-        unusable = "lacks a usable Malformed (expected an exception class)"
-        for hybrid in (_HybridMalformedExit, _HybridMalformedInterrupt, _HybridExceptionExit,
-                       _HybridMalformedChild, _EqBasesMalformed):
-            for name, line in (
-                ("extract", released),
-                ("requires_release_date", None),
-                ("release_day_from_published_at", released),
-            ):
-                with self.subTest(hybrid.__name__, site=name):
-                    saved = vars(gate.RELEASE_DATE)[name]
-                    saved_malformed = gate.RELEASE_DATE.Malformed
-
-                    def raising(*args, **kwargs):
-                        raise hybrid("hybrid probe")
-
-                    setattr(gate.RELEASE_DATE, name, raising)
-                    gate.RELEASE_DATE.Malformed = hybrid
-                    try:
-                        self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
-                        self.published("2026-11-15T09:30:00Z")
-                        try:
-                            code, out, err = self.main_reports()
-                        except KeyboardInterrupt:
-                            code, out, err = "interrupt", "", ""
-                    finally:
-                        setattr(gate.RELEASE_DATE, name, saved)
-                        gate.RELEASE_DATE.Malformed = saved_malformed
-                    self.assertEqual(code, 3, (out, err))
-                    self.assertIn(unusable, err)
-                    self.assertNotIn("hybrid probe", err)
-                    self.assertIn("matches the published", out)
+        self.assertEqual(err, "")
 
     def test_unreadable_site_status_beside_a_skill_file_with_no_version_exits_3(self):
         # DISCOVERY 6 (claude LOW 1): a release status for the version the
@@ -1907,26 +1102,29 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertNotIn("Release checksum drift found", out)
 
     def test_extractor_attribute_gone_at_call_time_exits_3(self):
-        # R3: every lookup is resolved inside the protected wrapper, so an
-        # attribute missing at call time is unavailable (exit 3), never an
-        # uncaught AttributeError (exit 1, drift).
-        for name, released in (
-            ("extract", "Released: 2026-11-15  "),
-            ("release_day_from_published_at", "Released: 2026-11-15  "),
-            ("requires_release_date", None),
-            ("Malformed", "Released: 2026-11-15  "),
+        # R3: a function missing at call time is unavailable (exit 3), never
+        # an uncaught error (exit 1, drift). Row 80: the child fails with a
+        # NameError (exit 6). A missing Malformed fails only where a verdict
+        # is raised, so its row reads an unusable published_at.
+        released = "Released: 2026-11-15  "
+        for name, line, published_at, op in (
+            ("extract", released, "2026-11-15T09:30:00Z", "extract"),
+            ("release_day_from_published_at", released, "2026-11-15T09:30:00Z", "release_day_from_published_at"),
+            ("requires_release_date", None, "2026-11-15T09:30:00Z", "requires_release_date"),
+            ("Malformed", released, "null", "release_day_from_published_at"),
         ):
             with self.subTest(name):
-                saved = getattr(gate.RELEASE_DATE, name)
-                delattr(gate.RELEASE_DATE, name)
-                try:
-                    self.fixtures(AHEAD, ZIP_SUM, AHEAD, released)
-                    self.published("2026-11-15T09:30:00Z")
-                    with self.assertRaises(SystemExit) as caught:
-                        gate.main()
-                    self.assertEqual(caught.exception.code, 3)
-                finally:
-                    setattr(gate.RELEASE_DATE, name, saved)
+                self.fake_extractor(extractor_with(f"del {name}\n"))
+                self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
+                self.published(published_at)
+                code, out, err = self.main_reports()
+                self.assertEqual(code, 3, (out, err))
+                self.assertIn(
+                    f"skill-release-date.py failed unexpectedly (internal error) in {op}, "
+                    f"so the extractor is unavailable",
+                    err,
+                )
+                self.assertIn(f"NameError(\"name '{name}' is not defined\")", err)
 
     def test_published_release_with_matching_checksum_passes(self):
         self.fixtures(CURRENT, ZIP_SUM, CURRENT)
@@ -2007,42 +1205,30 @@ class ConditionalPassTest(unittest.TestCase):
                     self.assertNotIn("Nothing to reconcile", out)
 
     def test_pre_tag_window_after_a_failed_first_load_never_says_nothing_to_reconcile(self):
-        # Fix round 8: a load that fails in main and succeeds when the check
-        # retries it still ends the gate with 3, so the window does not say
-        # there is nothing to reconcile.
+        # Fix round 8: a probe that fails in main, beside later calls that
+        # succeed, still ends the gate with 3, so the window does not say
+        # there is nothing to reconcile. Row 80: the probe is the first
+        # child, and its failure is reported once.
         self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
         gate.release_status = lambda tag: 404
         gate.tag_status = lambda tag: 404
-        saved = (gate.RELEASE_DATE, gate._load_release_date_tool)
-        real = gate._load_release_date_tool
-        attempts = []
-
-        def flaky():
-            attempts.append(len(attempts))
-            if len(attempts) == 1:
-                gate._unavailable("could not load skill-release-date.py (the extractor is unavailable): flaky")
-            return real()
-
-        gate.RELEASE_DATE = None
-        gate._load_release_date_tool = flaky
-        try:
-            code, out, err = self.main_reports()
-        finally:
-            gate.RELEASE_DATE, gate._load_release_date_tool = saved
+        tool = self.fake_extractor(logging_extractor(fail_first=True))
+        code, out, err = self.main_reports()
         self.assertEqual(code, 3, (out, err))
-        self.assertEqual(len(attempts), 2)
+        self.assertTrue((tool.parent / "failed-once").exists())
+        self.assertEqual(logged_runs(tool), ["baseline", "extract"])
+        self.assertEqual(err.splitlines(), [PROBE_FAILED], err)
         self.assertIn("is not published yet", out)
         self.assertNotIn("Nothing to reconcile", out)
 
     def test_failed_first_load_combines_with_a_drift_or_mismatch_verdict(self):
-        # DISCOVERY 9 (LOW 2): main combines the load result with the check
-        # result through max. The load result is 0 or 3 and a drift or date
-        # mismatch verdict is 1, so a failed first load (3) wins over the
-        # verdict, and a clean load (0) leaves the verdict (1). The check
-        # retries the load, so the verdict is still reached and reported.
+        # DISCOVERY 9 (LOW 2): main combines the probe result with the check
+        # result through max. The probe result is 0 or 3 and a drift or date
+        # mismatch verdict is 1, so a failed probe (3) wins over the verdict,
+        # and a clean probe (0) leaves the verdict (1). Each later call runs a
+        # child of its own, so the verdict is still reached and reported.
         # This kills code = code, code = load_code and
         # code = min(load_code, code) at the combining line of main.
-        failed = "could not load skill-release-date.py (the extractor is unavailable): flaky"
         drift = "Release checksum drift found:"
         mismatch = "Release date inconsistency found:"
         for label, site_sum, published_at, flaky_load, expected, reports in (
@@ -2056,27 +1242,11 @@ class ConditionalPassTest(unittest.TestCase):
             with self.subTest(label):
                 self.fixtures(AHEAD, site_sum, AHEAD, "Released: 2026-11-15  ")
                 self.published(published_at)
-                saved = (gate.RELEASE_DATE, gate._load_release_date_tool)
-                real = gate._load_release_date_tool
-                attempts = []
-
-                def flaky():
-                    attempts.append(len(attempts))
-                    if flaky_load and len(attempts) == 1:
-                        gate._unavailable(failed)
-                    return real()
-
-                gate.RELEASE_DATE = None
-                gate._load_release_date_tool = flaky
-                try:
-                    code, out, err = self.main_reports()
-                finally:
-                    gate.RELEASE_DATE, gate._load_release_date_tool = saved
+                tool = self.fake_extractor(logging_extractor(fail_first=flaky_load))
+                code, out, err = self.main_reports()
                 self.assertEqual(code, expected, (out, err))
-                self.assertEqual(len(attempts), 2 if flaky_load else 1)
-                self.assertEqual(
-                    err.splitlines(), [f"check-release-checksum-live: {failed}"] if flaky_load else [], err
-                )
+                self.assertEqual(logged_runs(tool), ["baseline", "extract", "release_day_from_published_at"])
+                self.assertEqual(err.splitlines(), [PROBE_FAILED] if flaky_load else [], err)
                 lines = out.splitlines()
                 self.assertEqual([line for line in lines if line in (drift, mismatch)], reports, out)
                 if mismatch in reports:
@@ -2193,6 +1363,64 @@ class ConditionalPassTest(unittest.TestCase):
             args, 0, "HTTP/2 200", "HTTP/2 404"
         )
         self.assertEqual(gate.api_status("repos/x/y", "the status"), 404)
+
+    def test_a_status_is_three_ascii_digits_after_the_protocol(self):
+        # Fix round 13 (VERIFY round 9.2, finding 1): a status is read only
+        # from a line that starts with "HTTP/" and a version of digits and
+        # dots, then one space and three ASCII digits that end the line or
+        # are followed by a space; the last such line wins. Any other line
+        # is no status, so a gh read with no such line is unverifiable.
+        for stdout, status in (
+            ("HTTP/2.0 404 Not Found\n", 404), ("HTTP/2 404", 404), ("HTTP/1.1 200 OK\nX-Note: HTTP/1.1 500\n", 200),
+            ("HTTP/2.0 302 Found\nHTTP/2.0 404 Not Found\n", 404),
+        ):
+            with self.subTest(stdout):
+                gate.gh = lambda *args, check=True, out=stdout: subprocess.CompletedProcess(args, 0, out, "")
+                self.assertEqual(gate.api_status("repos/x/y", "the status"), status)
+        for stdout in (
+            "HTTP/2 \u0664\u0660\u0664\n", "HTTP/2 4\u0660\u0664\n", "HTTP/2 4040\n", "HTTP/2 40\n", "HTTP/2 404x\n",
+            "HTTP/2 404\tNot Found\n", "http/2 404\n", " HTTP/2 404\n", "X-Note: HTTP/1.1 404\n", "HTTP/ 404\n",
+            "HTTP/two 404\n", "HTTP/\u0662 404\n", "HTTP/2  404\n", "HTTP/2\t404\n", "HTTP2 404\n",
+        ):
+            with self.subTest(stdout):
+                gate.gh = lambda *args, check=True, out=stdout: subprocess.CompletedProcess(args, 0, out, "")
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+                    gate.api_status("repos/x/y", "the status")
+                self.assertEqual((stop.exception.code, err.getvalue()),
+                                 (2, self.CV + "could not read the status (gh exit 0)\n"))
+
+    def test_every_part_of_the_skill_version_patterns_is_pinned(self):
+        # Fix round 13 (VERIFY round 9.2, finding 1): the version line is the
+        # first line that starts with "Version:", and it is a bare X.Y.Z of
+        # ASCII digits with any run of spaces and tabs, none included, after
+        # the colon and after the version; anything else exits 3 with the
+        # exact report.
+        for text, version in (
+            ("Version:1.0.14\n", "1.0.14"), ("Version:\t1.0.14\n", "1.0.14"), ("Version: 1.0.14\n", "1.0.14"),
+            ("Version: \t 1.0.14 \t \n", "1.0.14"), ("Version: 1234.567.89\n", "1234.567.89"),
+            ("# Title\n\nVersion: 1.0.14\n", "1.0.14"), ("Versioning notes\nVersion: 1.0.14\n", "1.0.14"),
+            ("See Version: 9.9.9\nVersion: 1.0.14\n", "1.0.14"), ("version: 9.9.9\nVersion: 1.0.14\n", "1.0.14"),
+        ):
+            with self.subTest(text):
+                gate.SKILL.write_text(text, encoding="utf-8")
+                self.assertEqual(gate.skill_version(), version)
+        not_bare = (
+            "check-release-checksum-live: the first 'Version:' line in "
+            "cleanlanguage/skills/cleanlanguage/SKILL.md is not a bare X.Y.Z version\n"
+        )
+        for text in (
+            "Version:\nVersion: 1.0.14\n", "Version: \u0661.0.14\n", "Version: 1.\u0660.14\n",
+            "Version: 1.0.\u0661\u0664\n", "Version:\u00a01.0.14\n", "Version: 1.0.14\u00a0\n", "Version:\x0c1.0.14\n",
+            "Version: 1.0.14\x0b\n", "Version: 1x0.14\n", "Version: 1.0x14\n", "Version: 1..14\n", "Version: .0.14\n",
+            "Version: 1.0.\n", "Version: 1.0.14 x\n", "Version: 1.0.14.1\n",
+        ):
+            with self.subTest(text):
+                gate.SKILL.write_text(text, encoding="utf-8")
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+                    gate.skill_version()
+                self.assertEqual((stop.exception.code, err.getvalue()), (3, not_bare))
 
     def test_malformed_first_version_line_is_not_bypassed(self):
         # The first Version line is authoritative (as in release-package.sh); a
@@ -2635,12 +1863,1836 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertNotIn("is missing", err)
         self.assertIn("matches the publication day", out)
 
+    # --- Row 80: the child contract, run in-process ---------------------------
+
+    def call_reports(self, op, arg=None):
+        """Run release_date_call for ``op`` (with ``arg``) and return its
+        result, ("value", value), ("malformed", message), or ("exit", code),
+        with the stderr it printed."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            try:
+                args = () if arg is None else (arg,)
+                result = ("value", gate.release_date_call(op, *args))
+            except gate.ReleaseDateMalformed as error:
+                result = ("malformed", str(error))
+            except SystemExit as stop:
+                result = ("exit", stop.code)
+        return result, err.getvalue()
+
+    def unavailable(self, reason, op):
+        return f"check-release-checksum-live: skill-release-date.py {reason} in {op}, so the extractor is unavailable"
+
+    # An argument for each op that takes one, answered with a value.
+    ARGS = {
+        "extract": f"Version: {AHEAD}\nReleased: 2026-11-15\n",
+        "requires_release_date": AHEAD,
+        "release_day_from_published_at": "2026-11-15T09:30:00Z",
+        "baseline": None,
+    }
+
+    def test_the_real_extractor_meets_the_contract_for_every_op(self):
+        for op, arg, expected in (
+            ("extract", self.ARGS["extract"], ("value", "2026-11-15")),
+            ("extract", f"Version: {AHEAD}\n", ("value", None)),
+            ("extract", "Released: soon\n", ("malformed", "the first Released line is not a bare YYYY-MM-DD date: "
+                                                          "'Released: soon'")),
+            ("requires_release_date", AHEAD, ("value", True)),
+            ("requires_release_date", CURRENT, ("value", False)),
+            ("release_day_from_published_at", "2026-11-15T23:59:59Z", ("value", "2026-11-15")),
+            ("baseline", None, ("value", CURRENT)),
+        ):
+            with self.subTest(op=op, arg=arg):
+                self.assertEqual(self.call_reports(op, arg), (expected, ""))
+
+    def test_a_reply_that_breaks_the_contract_exits_3(self):
+        # Row 80 (2.4): each rule of the contract is checked, by exact type
+        # and exact key set, and a breach exits 3 naming the rule. Fix round
+        # 10: the key sets iterate in reverse sorted order here, so the
+        # sorted key list of each report is pinned under every hash seed.
+        self.addCleanup(setattr, gate, "REPLY_KEYS", gate.REPLY_KEYS)
+        gate.REPLY_KEYS = {outcome: ReverseSortedKeys(keys) for outcome, keys in gate.REPLY_KEYS.items()}
+        self.assertEqual(list(gate.REPLY_KEYS["value"]), ["value", "outcome", "op"])
+        day = "2026-11-15"
+        value_keys = "a result with outcome value has exactly the keys op, outcome, value"
+        day_form = "the value is not a YYYY-MM-DD string"
+        flag = "the value is not a JSON true or false"
+        version = "the value is not a bare X.Y.Z version string"
+        cases = (
+            ("an extra key", "extract", {"op": "extract", "outcome": "value", "value": day, "extra": 1}, value_keys),
+            ("a missing key", "extract", {"op": "extract", "outcome": "value"}, value_keys),
+            ("an absent result with a value", "extract", {"op": "extract", "outcome": "absent", "value": day},
+             "a result with outcome absent has exactly the keys op, outcome"),
+            ("a malformed result with no message", "extract", {"op": "extract", "outcome": "malformed"},
+             "a result with outcome malformed has exactly the keys message, op, outcome"),
+            ("no outcome", "extract", {"op": "extract", "value": day}, "its outcome is not value, absent, or malformed"),
+            ("an unknown outcome", "extract", {"op": "extract", "outcome": "maybe"},
+             "its outcome is not value, absent, or malformed"),
+            ("an outcome that is not a string", "extract", {"op": "extract", "outcome": 1},
+             "its outcome is not value, absent, or malformed"),
+            ("an outcome that is a list", "extract", {"op": "extract", "outcome": ["value"]},
+             "its outcome is not value, absent, or malformed"),
+            ("the wrong op echoed", "extract", {"op": "baseline", "outcome": "value", "value": day},
+             "it answers an op other than extract"),
+            ("an op that is not a string", "extract", {"op": 1, "outcome": "value", "value": day},
+             "it answers an op other than extract"),
+            ("absent for release_day_from_published_at", "release_day_from_published_at",
+             {"op": "release_day_from_published_at", "outcome": "absent"},
+             "absent is not a result of release_day_from_published_at"),
+            ("absent for requires_release_date", "requires_release_date",
+             {"op": "requires_release_date", "outcome": "absent"}, "absent is not a result of requires_release_date"),
+            ("malformed for baseline", "baseline", {"op": "baseline", "outcome": "malformed", "message": "x"},
+             "malformed is not a result of baseline"),
+            ("a day that is a number", "extract", {"op": "extract", "outcome": "value", "value": 20261115}, day_form),
+            ("a day not in the day form", "extract", {"op": "extract", "outcome": "value", "value": "2026-11-1x"},
+             day_form),
+            ("a day with trailing text", "extract", {"op": "extract", "outcome": "value", "value": day + "\n"},
+             day_form),
+            ("a day with a three-digit year", "extract", {"op": "extract", "outcome": "value", "value": day[1:]},
+             day_form),
+            ("a day with a five-digit year", "extract", {"op": "extract", "outcome": "value", "value": "2" + day},
+             day_form),
+            # Fix round 13 (VERIFY round 9.2, finding 1): each part of the day
+            # form is its exact number of ASCII digits, joined by hyphens.
+            *((f"the day {value!r}", "extract", {"op": "extract", "outcome": "value", "value": value}, day_form)
+              for value in (
+                  "\u0662\u0660\u0662\u0666-11-15", "2026-\u0661\u0661-15", "2026-11-\u0661\u0665", "20261115",
+                  "2026-1115", "202611-15", "2026-1-15", "2026-11-5", "2026-011-15", "2026-11-015", "2026/11/15",
+                  "2026.11.15", "2026.11-15", "2026-11.15", "2026/11-15", "2026-11/15", " 2026-11-15",
+              )),
+            ("a null day", "extract", {"op": "extract", "outcome": "value", "value": None}, day_form),
+            ("a published day not in the day form", "release_day_from_published_at",
+             {"op": "release_day_from_published_at", "outcome": "value", "value": "2026-11-1x"}, day_form),
+            ("a published day with trailing text", "release_day_from_published_at",
+             {"op": "release_day_from_published_at", "outcome": "value", "value": day + "x"}, day_form),
+            ("requires_release_date 1", "requires_release_date",
+             {"op": "requires_release_date", "outcome": "value", "value": 1}, flag),
+            ("requires_release_date 0", "requires_release_date",
+             {"op": "requires_release_date", "outcome": "value", "value": 0}, flag),
+            ("requires_release_date \"true\"", "requires_release_date",
+             {"op": "requires_release_date", "outcome": "value", "value": "true"}, flag),
+            ("a message that is not a string", "extract", {"op": "extract", "outcome": "malformed", "message": 5},
+             "the message is not a string"),
+            ("baseline 1.0", "baseline", {"op": "baseline", "outcome": "value", "value": "1.0"}, version),
+            ("baseline a number", "baseline", {"op": "baseline", "outcome": "value", "value": 14}, version),
+            ("baseline with trailing text", "baseline", {"op": "baseline", "outcome": "value", "value": "1.0.14x"},
+             version),
+            ("baseline with a trailing newline", "baseline",
+             {"op": "baseline", "outcome": "value", "value": "1.0.14\n"}, version),
+            # Fix round 13 (VERIFY round 9.2, finding 1): each part of the
+            # baseline is one or more ASCII digits, joined by dots.
+            *((f"baseline {value!r}", "baseline", {"op": "baseline", "outcome": "value", "value": value}, version)
+              for value in (
+                  "\u0661.0.14", "1.\u0660.14", "1.0.\u0661\u0664", "1x0.14", "1.0x14", "1..14", ".0.14", "1.0.",
+                  " 1.0.14", "1.0.14.1",
+              )),
+        )
+        for label, op, reply, rule in cases:
+            with self.subTest(label):
+                self.fake_extractor(forging({op: json.dumps(reply).encode("ascii") + b"\n"}))
+                result, err = self.call_reports(op, self.ARGS[op])
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(
+                    f"printed a result that does not match the contract ({rule})", op
+                )], err)
+
+    def test_a_reply_larger_than_the_limit_exits_3(self):
+        # Row 80: for a call with no argument, at most RESULT_LIMIT bytes of
+        # stdout are accepted (one byte more is read, to detect it); a reply
+        # of exactly that size is accepted and one byte more is refused.
+        valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}'
+        padded = valid + b" " * (gate.RESULT_LIMIT - len(valid))
+        self.assertEqual(gate.RESULT_LIMIT, 65536)
+        for label, output, expected in (
+            ("70000 bytes of spaces before a valid reply", b" " * 70000 + valid, None),
+            ("a valid reply one byte over the limit", padded + b" ", None),
+            ("a valid reply of exactly the limit", padded, ("value", CURRENT)),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"baseline": output}))
+                result, err = self.call_reports("baseline")
+                if expected is None:
+                    self.assertEqual(result, ("exit", 3), err)
+                    self.assertEqual(err.splitlines(), [self.unavailable("printed more than 65536 bytes", "baseline")])
+                else:
+                    self.assertEqual((result, err), (expected, ""))
+
+    def test_a_valid_reply_with_a_nonzero_exit_exits_3(self):
+        # Row 80: a reply counts only when the child exits 0.
+        valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}\n'
+        # Fix round 10 (mutation sweep): the codes on each side of the
+        # internal-error code are plain exits.
+        for exit_code, reason in (
+            (1, "exited 1"), (2, "exited 2"), (5, "exited 5"), (6, "failed unexpectedly (internal error)"),
+            (7, "exited 7"),
+        ):
+            with self.subTest(exit_code=exit_code):
+                self.fake_extractor(forging({"baseline": valid}, code=exit_code))
+                result, err = self.call_reports("baseline")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(reason, "baseline")])
+
+    def test_a_nonzero_exit_is_reported_before_an_oversized_stdout(self):
+        # Fix round 11 (DISCOVERY round 9, finding 3): the exit code is
+        # checked before the size of stdout, so a child that exits 1 with
+        # more than the bound on stdout is reported as exiting 1.
+        self.assertEqual(gate.RESULT_LIMIT, 65536)
+        self.fake_extractor(forging({"baseline": b" " * 65537}, code=1))
+        result, err = self.call_reports("baseline")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err, self.unavailable("exited 1", "baseline") + "\n")
+
+    def test_a_reply_followed_by_a_form_feed_or_a_vertical_tab_is_not_json(self):
+        # Fix round 11 (DISCOVERY round 9, finding 2): the reply is parsed
+        # as printed, never stripped first, so a valid reply followed by a
+        # character that JSON does not count as whitespace is no JSON
+        # result.
+        valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}'
+        for label, output in (
+            ("a form feed and a newline", valid + b"\x0c\n"),
+            ("a vertical tab", valid + b"\x0b"),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"baseline": output}))
+                result, err = self.call_reports("baseline")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err, self.unavailable("did not print a JSON result", "baseline") + "\n")
+
+    def test_a_reply_preceded_by_a_form_feed_or_a_vertical_tab_is_not_json(self):
+        # Fix round 12 (VERIFY round 9.1, finding 3): the reply is not
+        # stripped on the left either, so a valid reply behind a character
+        # that JSON does not count as whitespace is no JSON result.
+        valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}\n'
+        for label, output in (
+            ("a form feed", b"\x0c" + valid),
+            ("a vertical tab", b"\x0b" + valid),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"baseline": output}))
+                result, err = self.call_reports("baseline")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err, self.unavailable("did not print a JSON result", "baseline") + "\n")
+
+    def test_a_malformed_message_reaches_the_caller_unchanged(self):
+        # Fix round 11 (mutation sweep): the message of a malformed reply
+        # is raised exactly as the child printed it, never stripped, so a
+        # report quotes the verdict of the extractor as it was given.
+        message = "  padded verdict \n"
+        self.fake_extractor(forging({"extract": json.dumps(
+            {"op": "extract", "outcome": "malformed", "message": message}
+        ).encode("ascii") + b"\n"}))
+        self.assertEqual(self.call_reports("extract", "x"), (("malformed", message), ""))
+
+    def test_a_sigchld_reset_that_raises_oserror_exits_3_before_any_child(self):
+        # Fix round 11 (DISCOVERY round 9, finding 6): an OSError from the
+        # reset of SIGCHLD, which Linux gives only under a mock, exits 3
+        # naming it, as a ValueError does, and no child is started.
+        tool = self.fake_extractor(logging_extractor(fail_first=False))
+        refused = OSError(errno.EINVAL, "Invalid argument")
+        err = io.StringIO()
+        with mock.patch.object(gate.signal, "signal", side_effect=refused) as reset, \
+                contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+            gate.main()
+        self.assertEqual(stop.exception.code, 3)
+        reset.assert_called_once_with(signal.SIGCHLD, signal.SIG_DFL)
+        self.assertEqual(err.getvalue(), (
+            "check-release-checksum-live: could not reset SIGCHLD to its default disposition "
+            "(OSError: [Errno 22] Invalid argument), so the end of a child could be lost\n"
+        ))
+        self.assertFalse((tool.parent / "runs.log").exists(), "a child was started")
+
+    def test_the_relayed_stderr_is_stripped(self):
+        # Fix round 8: the relayed stderr is stripped, so a trailing newline
+        # adds no blank line, and stderr of only whitespace relays nothing.
+        # Fix round 9: it is stripped at both ends, so leading spaces or a
+        # leading newline add nothing before the text either.
+        for label, printed, expected in (
+            ("a trailing newline", b"boom\n", self.unavailable("exited 1", "baseline") + "; it printed: boom\n"),
+            ("only whitespace", b"\n", self.unavailable("exited 1", "baseline") + "\n"),
+            ("leading spaces", b"  boom\n", self.unavailable("exited 1", "baseline") + "; it printed: boom\n"),
+            ("a leading newline", b"\nboom", self.unavailable("exited 1", "baseline") + "; it printed: boom\n"),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(extractor_with(
+                    "def json_main():\n"
+                    "    sys.stdin.buffer.read()\n"
+                    f"    sys.stderr.buffer.write({printed!r})\n"
+                    "    return 1\n"
+                ))
+                result, err = self.call_reports("baseline")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err, expected)
+
+    def test_the_relayed_stderr_is_decoded_as_utf_8(self):
+        # Fix round 9 (mutation sweep): the relayed stderr is decoded as
+        # UTF-8, so a character outside ASCII is relayed as itself, never
+        # replaced or read as Latin-1.
+        self.fake_extractor(extractor_with(
+            "def json_main():\n"
+            "    sys.stdin.buffer.read()\n"
+            "    sys.stderr.buffer.write(\"\\u00e9chec\\n\".encode(\"utf-8\"))\n"
+            "    return 1\n"
+        ))
+        result, err = self.call_reports("baseline")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err, self.unavailable("exited 1", "baseline") + "; it printed: \u00e9chec\n")
+
+    def test_a_child_that_prints_and_hangs_relays_its_stderr(self):
+        # Fix round 9 (mutation sweep): when the gate sees no end of the
+        # child within the timeout, the report relays what the child
+        # printed to stderr, as it does for every other failure of a child
+        # that ran. The 1 second timeout starts only once the child has
+        # printed and is ready (timeout_when_ready).
+        tool = self.fake_extractor(extractor_with(
+            "def extract(text):\n"
+            "    import time\n"
+            "    sys.stderr.write(\"stuck\\n\")\n"
+            "    sys.stderr.flush()\n"
+            + SAY_READY +
+            "    time.sleep(300)\n"
+        ))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        with self.timeout_when_ready(tool.parent / "ready"):
+            result, err = self.call_reports("extract", "x")
+        self.assertTrue((tool.parent / "ready").exists(), "the extract child did not get ready")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err, self.unavailable("was not seen to end within 1 seconds", "extract")
+                         + "; it printed: stuck\n")
+
+    def test_the_relayed_gh_stderr_is_stripped(self):
+        # Fix round 9 (mutation sweep): a failed download relays the gh
+        # stderr stripped at both ends, so leading or trailing whitespace
+        # adds nothing to the report line.
+        for label, printed in (
+            ("surrounding spaces and a newline", "  HTTP 502\n"),
+            ("a leading newline", "\nHTTP 502"),
+        ):
+            with self.subTest(label):
+                def failed(*args, check=True):
+                    raise subprocess.CalledProcessError(1, ["gh", *args], "", printed)
+
+                gate.gh = failed
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+                    gate.published_digest(f"v{AHEAD}", f"cleanlanguage-{AHEAD}.zip", f"cleanlanguage-{AHEAD}.zip.sha256")
+                self.assertEqual(stop.exception.code, 2)
+                self.assertEqual(err.getvalue(), self.CV + (
+                    f"could not download cleanlanguage-{AHEAD}.zip / cleanlanguage-{AHEAD}.zip.sha256 "
+                    f"from v{AHEAD}: HTTP 502\n"
+                ))
+
+    def test_the_verify_page_must_show_a_bare_checksum_and_version(self):
+        # Fix round 10 (mutation sweep): the verify page is read by exact
+        # patterns. An empty checksum block, a checksum one digit short, and
+        # a version that does not start with a digit each exit 3 with their
+        # own report, before any release is read.
+        short = ZIP_SUM[:63]
+        sha = "is not a 64 character lower-case SHA-256"
+        for label, version, checksum, report in (
+            ("an empty checksum block", CURRENT, "", f"the displayed checksum '' {sha}"),
+            ("a checksum one digit short", CURRENT, short, f"the displayed checksum {short!r} {sha}"),
+            ("a version that starts with a dot", "." + CURRENT, ZIP_SUM,
+             "the verify page does not state which version its checksum belongs to"),
+        ):
+            with self.subTest(label):
+                self.fixtures(version, checksum, CURRENT)
+                self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {report}\n"))
+
+    def test_every_part_of_the_verify_page_patterns_is_pinned(self):
+        # Fix round 13 (VERIFY round 9.2, finding 1): the checksum block,
+        # the checksum and the version on the verify page are each read by
+        # an exact pattern, so a page that the shipped pattern and a pattern
+        # with one part changed would answer differently exits 3 with its
+        # own report, before any release is read. The checksum is exactly 64
+        # lower-case hex digits once stripped. The version is the shipped
+        # pattern, as the release tooling writes it (tools/set-release-links.py):
+        # an ASCII digit and then any run of ASCII digits and dots, between
+        # "version " and " is"; a version in that form that is not the
+        # current one is read as such, and reported as a release that is
+        # not published.
+        sha = "is not a 64 character lower-case SHA-256"
+        no_block = 'the verify page has no <code id="published-checksum"> block'
+        unstated = "the verify page does not state which version its checksum belongs to"
+        stated = f"<p>The published checksum for version {CURRENT} is:</p>\n"
+        block = '<pre><code id="published-checksum">{}</code></pre>\n'
+        self.assertNotEqual(ZIP_SUM.upper(), ZIP_SUM)
+        other_script = ZIP_SUM[:63] + "\u0661"
+        cases = [
+            ("a block that holds markup", stated + block.format(f"<b>{ZIP_SUM}</b>"), no_block),
+            ("a block closed by another tag", stated + '<code id="published-checksum">abc</span>\n', no_block),
+            ("an upper-case block", stated + '<CODE ID="published-checksum">abc</CODE>\n', no_block),
+            ("a checksum on a line of its own", stated + block.format("\n abc\n"),
+             f"the displayed checksum 'abc' {sha}"),
+            ("an upper-case checksum", stated + block.format(ZIP_SUM.upper()),
+             f"the displayed checksum {ZIP_SUM.upper()!r} {sha}"),
+            ("a checksum with a digit of another script", stated + block.format(other_script),
+             f"the displayed checksum {other_script!r} {sha}"),
+            ("a checksum one digit too long", stated + block.format(ZIP_SUM + "0"),
+             f"the displayed checksum {ZIP_SUM + '0'!r} {sha}"),
+        ]
+        for sentence in (
+            "version .0.14 is", "version 1x0.14 is", "version 1.0x14 is", "version \u0661.0.14 is",
+            "version 1.\u0660.14 is", "version 1.0.\u0661\u0664 is", "version 1.0.14 was", "version\n1.0.14 is",
+            "version 1.0.14\nis", "Version 1.0.14 is",
+        ):
+            cases.append((sentence, f"<p>The published checksum for {sentence}:</p>\n" + block.format(ZIP_SUM),
+                          unstated))
+        cases.append(("an upper-case sentence", "<p>The Published Checksum For Version 1.0.14 is:</p>\n"
+                      + block.format(ZIP_SUM), unstated))
+        for label, page, report in cases:
+            with self.subTest(label):
+                gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
+                gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+                self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {report}\n"))
+
+        class Probed(Exception):
+            pass
+
+        def probe(tag):
+            raise Probed(tag)
+
+        for version in (CURRENT, "1234.0.100"):
+            with self.subTest(version):
+                self.fixtures(version, ZIP_SUM, CURRENT)
+                gate.release_status = probe
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    with self.assertRaises(Probed) as caught:
+                        gate.main()
+                self.assertEqual((str(caught.exception), out.getvalue(), err.getvalue()), (f"v{version}", "", ""))
+        # A version of one, two or four parts, or with an empty part, is in
+        # the shipped form, so the gate reads its release status and reports
+        # it, with no release, as a version that is not the current one.
+        for version in ("7", "0.9.1", "1.0", "1.0.14.1", "1..14", "1.0.", "1234.0.100"):
+            with self.subTest(version):
+                self.fixtures(version, ZIP_SUM, CURRENT)
+                probed = []
+                gate.release_status = lambda tag: probed.append(tag) or 404
+                self.assertEqual(self.main_reports(), (1, (
+                    "Release checksum inconsistency found:\n"
+                    f"  - the verify page names version {version}, which has no published release\n"
+                    f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {CURRENT} as the current version\n"
+                    "\n"
+                    "A site legitimately ahead of its release names the current skill version. This looks like a "
+                    "typo or a stale bump; align the verify page with SKILL.md, or publish release "
+                    f"v{version}.\n"
+                ), ""))
+                self.assertEqual(probed, [f"v{version}"])
+
+    def test_the_first_checksum_block_and_version_sentence_are_read(self):
+        # Fix round 14 (VERIFY round 9.3, finding 4): a verify page with two
+        # checksum blocks, or two version sentences, is read by its first.
+        # A release status read for a tag means that the checksum and the
+        # version were accepted, and the tag names the version that was read.
+        sha = "is not a 64 character lower-case SHA-256"
+        block = '<pre><code id="published-checksum">{}</code></pre>\n'
+
+        def sentence(version):
+            return f"<p>The published checksum for version {version} is:</p>\n"
+
+        class Probed(Exception):
+            pass
+
+        def probe(tag):
+            raise Probed(tag)
+
+        for label, page, tag in (
+            ("a valid checksum block first", sentence(CURRENT) + block.format(ZIP_SUM) + block.format("abc"),
+             f"v{CURRENT}"),
+            ("the current version first", sentence(CURRENT) + sentence("1234.0.100") + block.format(ZIP_SUM),
+             f"v{CURRENT}"),
+            ("another version first", sentence("1234.0.100") + sentence(CURRENT) + block.format(ZIP_SUM),
+             "v1234.0.100"),
+        ):
+            with self.subTest(label):
+                gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
+                gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+                gate.release_status = probe
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    with self.assertRaises(Probed) as caught:
+                        gate.main()
+                self.assertEqual((str(caught.exception), out.getvalue(), err.getvalue()), (tag, "", ""))
+        with self.subTest("an invalid checksum block first"):
+            gate.VERIFY_PAGE.write_text(
+                sentence(CURRENT) + block.format("abc") + block.format(ZIP_SUM), encoding="utf-8"
+            )
+            gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+            gate.release_status = unexpected_call
+            self.assertEqual(
+                self.main_reports(), (3, "", f"check-release-checksum-live: the displayed checksum 'abc' {sha}\n")
+            )
+
+    def test_a_manifest_with_or_without_a_final_newline_is_one_line(self):
+        # Fix round 14 (VERIFY round 9.3, finding 3): the manifest is read
+        # as lines, so a final newline, which a real manifest ends in, ends
+        # its one line rather than starting a second, empty one.
+        for label, ending in (("with a final newline", "\n"), ("without a final newline", "")):
+            with self.subTest(label):
+                def manifest(*args, check=True):
+                    self.fake_download(*args, check=check)
+                    target = Path(args[args.index("--dir") + 1])
+                    (target / f"cleanlanguage-{AHEAD}.zip.sha256").write_text(
+                        f"{ZIP_SUM}  cleanlanguage-{AHEAD}.zip{ending}", encoding="utf-8"
+                    )
+                    return subprocess.CompletedProcess(args, 0, "", "")
+
+                gate.gh = manifest
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    digest = gate.published_digest(
+                        f"v{AHEAD}", f"cleanlanguage-{AHEAD}.zip", f"cleanlanguage-{AHEAD}.zip.sha256"
+                    )
+                self.assertEqual((digest, err.getvalue()), (ZIP_SUM, ""))
+
+    def test_a_manifest_ending_in_a_blank_line_is_not_one_line(self):
+        # The final newline ends the one line, but a second newline starts a
+        # second, empty one, so a manifest ending in a blank line is not
+        # exactly one line and is unverifiable, before its form is read.
+        def manifest(*args, check=True):
+            self.fake_download(*args, check=check)
+            target = Path(args[args.index("--dir") + 1])
+            (target / f"cleanlanguage-{AHEAD}.zip.sha256").write_text(
+                f"{ZIP_SUM}  cleanlanguage-{AHEAD}.zip\n\n", encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        gate.gh = manifest
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+            gate.published_digest(f"v{AHEAD}", f"cleanlanguage-{AHEAD}.zip", f"cleanlanguage-{AHEAD}.zip.sha256")
+        self.assertEqual(stop.exception.code, 2)
+        self.assertEqual(err.getvalue(), self.CV + f"cleanlanguage-{AHEAD}.zip.sha256 is not exactly one line\n")
+
+    def test_a_manifest_digest_one_digit_short_is_unverifiable(self):
+        # Fix round 10 (mutation sweep): the digest of the manifest has
+        # exactly 64 hex digits; one digit short fails its form, before the
+        # zip is hashed.
+        short = ZIP_SUM[:63]
+
+        def short_manifest(*args, check=True):
+            self.fake_download(*args, check=check)
+            target = Path(args[args.index("--dir") + 1])
+            (target / f"cleanlanguage-{AHEAD}.zip.sha256").write_text(
+                f"{short}  cleanlanguage-{AHEAD}.zip", encoding="utf-8"
+            )
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        gate.gh = short_manifest
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+            gate.published_digest(f"v{AHEAD}", f"cleanlanguage-{AHEAD}.zip", f"cleanlanguage-{AHEAD}.zip.sha256")
+        self.assertEqual(stop.exception.code, 2)
+        self.assertEqual(err.getvalue(), self.CV + (
+            f"cleanlanguage-{AHEAD}.zip.sha256 is not '<digest>  cleanlanguage-{AHEAD}.zip'\n"
+        ))
+
+    def test_a_refused_stdout_relays_the_stderr(self):
+        # Fix round 9 (mutation sweep): a child that exits 0 but prints a
+        # stdout the gate refuses, one over the bound, one that is not JSON,
+        # or one that breaks the contract, relays what it printed to stderr
+        # with the reason, as every other failure of a child that ran does.
+        self.assertEqual(gate.RESULT_LIMIT, 65536)
+        for label, output, reason in (
+            ("over the bound", "b\" \" * 65537", "printed more than 65536 bytes"),
+            ("not JSON", "b\"not json\\n\"", "did not print a JSON result"),
+            ("against the contract", "b\"[]\\n\"",
+             "printed a result that does not match the contract (not a JSON object)"),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(extractor_with(
+                    "def json_main():\n"
+                    "    sys.stdin.buffer.read()\n"
+                    f"    sys.stdout.buffer.write({output})\n"
+                    "    sys.stderr.buffer.write(b\"warned\\n\")\n"
+                    "    return 0\n"
+                ))
+                result, err = self.call_reports("baseline")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err, self.unavailable(reason, "baseline") + "; it printed: warned\n")
+
+    def test_extractor_code_cannot_rewrite_the_gate_state(self):
+        # Row 80: extractor code runs in the child, so a search of the live
+        # objects for the globals of the gate finds nothing to rewrite there;
+        # the verdict is the real one and the gate REPO is unchanged.
+        self.fake_extractor(extractor_with(
+            "_real_extract = extract\n"
+            "def extract(text):\n"
+            "    import gc\n"
+            "    for found in gc.get_objects():\n"
+            "        if type(found) is dict and \"release_date_call\" in found and \"REPO\" in found:\n"
+            "            found[\"REPO\"] = \"attacker/repo\"\n"
+            "    return _real_extract(text)\n"
+        ))
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z")
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual(gate.REPO, "jposluns/cleanlanguage")
+        self.assertIn(f"matches the publication day of release v{AHEAD}", out)
+
+    def test_the_child_runs_isolated_under_this_interpreter(self):
+        # Row 80: the child is this interpreter with -I, the extractor, and
+        # --json, in an empty environment, in the tool directory, in a session
+        # of its own.
+        calls = []
+        real_popen = subprocess.Popen
+
+        class Recording(real_popen):
+            def __init__(self, args, **kwargs):
+                calls.append((list(args), kwargs))
+                super().__init__(args, **kwargs)
+
+        gate.subprocess.Popen = Recording
+        try:
+            result, err = self.call_reports("baseline")
+        finally:
+            gate.subprocess.Popen = real_popen
+        self.assertEqual(result, ("value", CURRENT), err)
+        self.assertEqual(len(calls), 1)
+        args, kwargs = calls[0]
+        self.assertEqual(args, [sys.executable, "-I", str(gate.RELEASE_DATE_TOOL), "--json"])
+        self.assertEqual(kwargs["env"], {})
+        self.assertEqual(kwargs["cwd"], gate.RELEASE_DATE_TOOL.parent)
+        self.assertIs(kwargs["start_new_session"], True)
+
+    def test_the_child_ignores_a_shadowing_module_and_the_gate_environment(self):
+        # Row 80: the behavioural twins of the isolation. A json.py beside the
+        # extractor is not imported (-I implies -P), and a variable in the
+        # environment of the gate does not reach the child (env={}).
+        tool = self.fake_extractor(extractor_with(
+            "def extract(text):\n"
+            "    import os\n"
+            "    raise Malformed(\"probe=\" + os.environ.get(\"ROW80_PROBE\", \"unset\"))\n"
+        ))
+        marker = tool.parent / "shadowed"
+        (tool.parent / "json.py").write_text(f"open({str(marker)!r}, \"w\").close()\n", encoding="utf-8")
+        saved = os.environ.get("ROW80_PROBE")
+        os.environ["ROW80_PROBE"] = "leaked"
+        try:
+            result, err = self.call_reports("extract", "x")
+        finally:
+            if saved is None:
+                os.environ.pop("ROW80_PROBE", None)
+            else:
+                os.environ["ROW80_PROBE"] = saved
+        self.assertEqual((result, err), (("malformed", "probe=unset"), ""))
+        self.assertFalse(marker.exists())
+
+    def test_extract_through_the_child_matches_the_function(self):
+        # Row 80: the request carries any text exactly, so the child answer
+        # equals the function called directly, message text included.
+        valid = f"Version: {AHEAD}\nReleased: 2026-11-15\n"
+        big = valid + ("x" * 79 + "\n") * 26215
+        corpus = (
+            ("a valid line", valid),
+            ("CRLF left in the text", valid.replace("\n", "\r\n")),
+            ("lone CR left in the text", valid.replace("\n", "\r")),
+            ("NUL in the line", f"Version: {AHEAD}\nReleased: 2026-11-15\x00\n"),
+            ("line separator in a key-like line", valid + "\u2028Released: 2026-11-01\n"),
+            ("byte order mark in a key-like line", valid + "\ufeffReleased: 2026-11-01\n"),
+            ("text outside the basic plane", valid + "\U0001f600\n"),
+            ("no line", f"Version: {AHEAD}\n"),
+            ("a lone surrogate, carried only by ASCII escaping", valid + "\ud800\n"),
+            ("a 2 MB valid text", big),
+        )
+        self.assertGreater(len(big), 2 * 1024 * 1024)
+        for label, text in corpus:
+            with self.subTest(label):
+                try:
+                    expected = ("value", REFERENCE.extract(text))
+                except REFERENCE.Malformed as error:
+                    expected = ("malformed", str(error))
+                self.assertEqual(self.call_reports("extract", text), (expected, ""))
+
+    def test_the_gate_reads_skill_md_and_the_child_gets_the_decoded_text(self):
+        # Row 80: the gate keeps its own universal-newline read of SKILL.md,
+        # so CRLF and lone CR endings agree, and a SKILL.md that is not UTF-8
+        # is the read error of the gate, never a child failure.
+        for label, data in (
+            ("CRLF", f"Version: {AHEAD}\r\nReleased: 2026-11-15\r\n".encode("ascii")),
+            ("lone CR", f"Version: {AHEAD}\rReleased: 2026-11-15\r".encode("ascii")),
+        ):
+            with self.subTest(label):
+                gate.SKILL.write_bytes(data)
+                self.assertEqual(gate.skill_released(), "2026-11-15")
+        gate.SKILL.write_bytes(f"Version: {AHEAD}\nReleased: 2026-11-15\xff\n".encode("latin-1"))
+        err = io.StringIO()
+        with self.assertRaises(SystemExit) as caught, contextlib.redirect_stderr(err):
+            gate.skill_released()
+        self.assertEqual(caught.exception.code, 3)
+        self.assertTrue(err.getvalue().startswith(
+            f"check-release-checksum-live: {self.SHOWN} could not be read: 'utf-8' codec can't decode"
+        ), err.getvalue())
+        self.assertNotIn("unavailable", err.getvalue())
+
+    def test_a_child_that_cannot_be_started_exits_3(self):
+        # Row 80: a spawn failure, or an interpreter path that is empty,
+        # None, or relative, exits 3 as unavailable without running anything.
+        gate.RELEASE_DATE_TOOL = Path(self._tmp.name) / "no-such-directory" / "skill-release-date.py"
+        result, err = self.call_reports("baseline")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertTrue(err.startswith(
+            "check-release-checksum-live: skill-release-date.py could not run (FileNotFoundError: "
+        ), err)
+        self.assertTrue(err.endswith(" in baseline, so the extractor is unavailable\n"), err)
+        gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
+        for executable in ("", None, "python3"):
+            with self.subTest(executable=executable):
+                saved = sys.executable
+                sys.executable = executable
+                try:
+                    result, err = self.call_reports("baseline")
+                finally:
+                    sys.executable = saved
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(
+                    f"could not run (the interpreter path {executable!r} is not absolute)", "baseline"
+                )])
+
+    def test_a_hung_child_is_killed_with_its_group_before_it_is_reaped(self):
+        # Row 80: here, where the group can be killed, a child that has not
+        # ended within CHILD_TIMEOUT_SECONDS is killed through its process
+        # group while it is still unreaped, so the group id cannot have been
+        # reused.
+        self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        seen = []
+        real_killpg = os.killpg
+
+        def recording(pgid, sig):
+            seen.append((pgid, sig, process_state(pgid)))
+            real_killpg(pgid, sig)
+
+        gate.os.killpg = recording
+        try:
+            result, err = self.call_reports("extract", "x")
+        finally:
+            gate.os.killpg = real_killpg
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable("was not seen to end within 1 seconds", "extract")])
+        self.assertEqual(len(seen), 1, seen)
+        pgid, sig, state = seen[0]
+        self.assertEqual(sig, signal.SIGKILL)
+        self.assertIsNotNone(state, "the child was reaped before its group was killed")
+
+    def test_an_interrupt_while_waiting_kills_the_group_and_propagates(self):
+        # Row 80: a KeyboardInterrupt while the gate waits, where the group
+        # can be killed, kills the child group, reaps the child, and
+        # propagates unchanged. It is raised here from a stubbed os.waitid,
+        # not by a real signal, which can arrive at any point of the wait; an
+        # Exception while waiting exits 3 instead (see
+        # test_a_failure_while_waiting_kills_and_reaps_the_child_and_exits_3).
+        # Fix round 1: the gate waits with os.waitid, so the interrupt is
+        # raised from there.
+        self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
+        procs, kills = [], []
+        real_popen = subprocess.Popen
+        real_killpg = os.killpg
+        real_waitid = os.waitid
+
+        class Recording(real_popen):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                procs.append(self)
+
+        def recording(pgid, sig):
+            kills.append((pgid, sig))
+            real_killpg(pgid, sig)
+
+        calls = []
+
+        def interrupted(*args):
+            # Only the wait is interrupted; the reap after the kill polls
+            # the real os.waitid (DISCOVERY round 4, finding 1).
+            calls.append(args)
+            if len(calls) == 1:
+                raise KeyboardInterrupt()
+            return real_waitid(*args)
+
+        gate.subprocess.Popen = Recording
+        gate.os.killpg = recording
+        gate.os.waitid = interrupted
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                gate.release_date_call("extract", "x")
+        finally:
+            gate.subprocess.Popen = real_popen
+            gate.os.killpg = real_killpg
+            gate.os.waitid = real_waitid
+        self.assertEqual(len(procs), 1)
+        self.assertEqual(kills, [(procs[0].pid, signal.SIGKILL)])
+        self.assertEqual(procs[0].returncode, -signal.SIGKILL)
+
+    def test_a_malformed_subclass_from_the_published_day_is_a_content_verdict(self):
+        # Row 80, verdict change 3, accepted by the maintainer on 2026-11-01:
+        # the child classifies with the same except Malformed the CLI uses,
+        # so a subclass of Malformed raised by a modified
+        # release_day_from_published_at is a content verdict (2), where the
+        # in-process gate exited 3.
+        self.fake_extractor(extractor_with(
+            "class _Subclass(Malformed):\n    pass\n"
+            "def release_day_from_published_at(value):\n    raise _Subclass(\"bad stamp\")\n"
+        ))
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published("2026-11-15T09:30:00Z")
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        self.assertEqual(err.splitlines(), [f"{self.CV}the published_at of release v{AHEAD} is unusable: bad stamp"])
+        self.assertEqual(out.splitlines(), [
+            f"The verify page checksum {ZIP_SUM} matches the published "
+            f"cleanlanguage-{AHEAD}.zip for release v{AHEAD}."
+        ], out)
+
+
+    # --- Row 80 fix round 1: the child machinery, its group, its bound -------
+
+    MACHINERY = "could not be run, waited for, or read"
+
+    def recording_popen(self, procs):
+        """A Popen subclass that appends each child it starts to ``procs``."""
+
+        class Recording(subprocess.Popen):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                procs.append(self)
+
+        return Recording
+
+    def test_a_failure_in_the_child_machinery_exits_3(self):
+        # Fix round 1 (finding 1): an Exception (here an OSError or a
+        # RuntimeError) raised while the gate creates the temporary files,
+        # writes or rewinds the request, or rewinds or reads the output exits
+        # 3 naming it, never a traceback (exit 1), and leaves no child
+        # unreaped. A KeyboardInterrupt there is not caught and passes
+        # through (see run_release_date_child).
+        real_temporary_file = tempfile.TemporaryFile
+        real_popen = subprocess.Popen
+
+        class Faulty:
+            """A temporary file whose method ``method`` raises ``error``."""
+
+            def __init__(self, real, method, error):
+                self._real, self._method, self._error = real, method, error
+
+            def __getattr__(self, name):
+                if name == self._method:
+                    def raising(*args, **kwargs):
+                        raise self._error
+                    return raising
+                return getattr(self._real, name)
+
+            def __enter__(self):
+                self._real.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                return self._real.__exit__(*exc)
+
+        too_many = (OSError(errno.EMFILE, "Too many open files"), "OSError: [Errno 24] Too many open files")
+        no_space = (OSError(errno.ENOSPC, "No space left on device"), "OSError: [Errno 28] No space left on device")
+        io_error = (OSError(errno.EIO, "Input/output error"), "OSError: [Errno 5] Input/output error")
+        # (label, the file: 0 stdin, 1 stdout, 2 stderr, the method that
+        # fails or None for its creation, the error and how it is named)
+        cases = (
+            ("the first temporary file cannot be created", 0, None, too_many),
+            ("the last temporary file cannot be created", 2, None, too_many),
+            ("the request cannot be written", 0, "write", no_space),
+            ("the request cannot be rewound", 0, "seek", io_error),
+            ("the stderr cannot be rewound", 2, "seek", io_error),
+            ("the stderr cannot be read", 2, "read", io_error),
+            ("the stdout cannot be read", 1, "read", io_error),
+            ("an error that is not an OSError", 1, "read", (RuntimeError("boom"), "RuntimeError: boom")),
+        )
+        for label, index, method, (error, named) in cases:
+            with self.subTest(label):
+                made, procs = [], []
+
+                def factory(*args, **kwargs):
+                    position = len(made)
+                    made.append(position)
+                    if position == index and method is None:
+                        raise error
+                    real = real_temporary_file(*args, **kwargs)
+                    return Faulty(real, method, error) if position == index else real
+
+                gate.tempfile = types.SimpleNamespace(TemporaryFile=factory)
+                gate.subprocess.Popen = self.recording_popen(procs)
+                try:
+                    result, err = self.call_reports("baseline")
+                finally:
+                    gate.tempfile = tempfile
+                    gate.subprocess.Popen = real_popen
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(f"{self.MACHINERY} ({named})", "baseline")])
+                self.assertTrue(all(proc.returncode is not None for proc in procs), "a child was left unreaped")
+
+    def test_a_failure_while_waiting_kills_and_reaps_the_child_and_exits_3(self):
+        # Fix round 1 (finding 1): an Exception other than ChildProcessError
+        # (here an OSError or a RuntimeError) while the gate waits, where the
+        # group can be killed, kills the child group while the child is
+        # unreaped, reaps the child, and exits 3 naming the exception.
+        self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        real_popen, real_killpg, real_waitid = subprocess.Popen, os.killpg, os.waitid
+        for label, error, named in (
+            ("an OSError", OSError(errno.EINVAL, "Invalid argument"), "OSError: [Errno 22] Invalid argument"),
+            ("an error that is not an OSError", RuntimeError("boom"), "RuntimeError: boom"),
+        ):
+            with self.subTest(label):
+                procs, kills = [], []
+
+                def recording(pgid, sig):
+                    kills.append((pgid, sig, process_state(pgid)))
+                    real_killpg(pgid, sig)
+
+                calls = []
+
+                def failing(*args):
+                    # Only the wait fails; the reap after the kill polls the
+                    # real os.waitid (DISCOVERY round 4, finding 1).
+                    calls.append(args)
+                    if len(calls) == 1:
+                        raise error
+                    return real_waitid(*args)
+
+                gate.subprocess.Popen = self.recording_popen(procs)
+                gate.os.killpg = recording
+                gate.os.waitid = failing
+                try:
+                    result, err = self.call_reports("extract", "x")
+                finally:
+                    gate.subprocess.Popen = real_popen
+                    gate.os.killpg = real_killpg
+                    gate.os.waitid = real_waitid
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(f"{self.MACHINERY} ({named})", "extract")])
+                self.assertEqual(len(procs), 1)
+                self.assertEqual([(pgid, sig) for pgid, sig, _ in kills], [(procs[0].pid, signal.SIGKILL)])
+                self.assertIsNotNone(kills[0][2], "the child was reaped before its group was killed")
+                self.assertEqual(procs[0].returncode, -signal.SIGKILL)
+
+    def test_a_child_reaped_elsewhere_is_never_signalled(self):
+        # Fix round 1 (finding 1): when the wait reports that the child is
+        # no longer a child of the gate, its pid and group id may already be
+        # reused, so the gate signals neither and exits 3 naming the error.
+        self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        real_popen, real_killpg, real_waitid = subprocess.Popen, os.killpg, os.waitid
+        procs, kills = [], []
+
+        def recording(pgid, sig):
+            kills.append((pgid, sig))
+            real_killpg(pgid, sig)
+
+        def gone(*args):
+            raise ChildProcessError(errno.ECHILD, "No child processes")
+
+        gate.subprocess.Popen = self.recording_popen(procs)
+        gate.os.killpg = recording
+        gate.os.waitid = gone
+        try:
+            result, err = self.call_reports("extract", "x")
+        finally:
+            gate.subprocess.Popen = real_popen
+            gate.os.killpg = real_killpg
+            gate.os.waitid = real_waitid
+            for proc in procs:
+                if proc.returncode is None:
+                    proc.kill()
+                    proc.wait()
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            f"{self.MACHINERY} (ChildProcessError: [Errno 10] No child processes)", "extract"
+        )])
+        self.assertEqual(kills, [])
+
+    def test_what_a_child_forked_ends_with_it_when_it_exits_normally(self):
+        # Fix round 1 (finding 2): a process the child started that is still
+        # in its group, here a direct child and the grandchild of a double
+        # fork (which keeps the group), is killed once the child has ended
+        # normally, and the group is killed while the ended child is still
+        # unreaped.
+        direct = (
+            "    grandchild = subprocess.Popen([sys.executable, \"-I\", \"-c\", \"import time; time.sleep(300)\"])\n"
+            "    pid = grandchild.pid\n"
+        )
+        double = (
+            "    read, write = os.pipe()\n"
+            "    first = os.fork()\n"
+            "    if first == 0:\n"
+            "        second = os.fork()\n"
+            "        if second == 0:\n"
+            "            time.sleep(300)\n"
+            "            os._exit(0)\n"
+            "        os.write(write, str(second).encode(\"ascii\"))\n"
+            "        os._exit(0)\n"
+            "    os.close(write)\n"
+            "    os.waitpid(first, 0)\n"
+            "    pid = int(os.read(read, 64))\n"
+        )
+        real_killpg = os.killpg
+        for label, start in (("a direct child", direct), ("a double fork", double)):
+            with self.subTest(label):
+                tool = self.fake_extractor(extractor_with(
+                    "_real_extract = extract\n"
+                    "def extract(text):\n"
+                    "    import os, subprocess, time\n"
+                    + start +
+                    "    with open(Path(__file__).resolve().parent / \"grandchild.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
+                    "        handle.write(str(pid))\n"
+                    "    return _real_extract(text)\n"
+                ))
+                kills = []
+
+                def recording(pgid, sig):
+                    kills.append((pgid, sig, process_state(pgid)))
+                    real_killpg(pgid, sig)
+
+                gate.os.killpg = recording
+                try:
+                    result, err = self.call_reports("extract", self.ARGS["extract"])
+                finally:
+                    gate.os.killpg = real_killpg
+                pid = int((tool.parent / "grandchild.pid").read_text(encoding="utf-8"))
+                deadline = time.monotonic() + 10
+                state = process_state(pid)
+                while state not in (None, "Z") and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                    state = process_state(pid)
+                try:
+                    self.assertEqual((result, err), (("value", "2026-11-15"), ""))
+                    self.assertIn(state, (None, "Z"), f"the grandchild {pid} is still {state}")
+                    self.assertEqual(len(kills), 1, kills)
+                    self.assertEqual(kills[0][1], signal.SIGKILL)
+                    self.assertEqual(kills[0][2], "Z", "the group was not killed while the ended child was unreaped")
+                finally:
+                    if state not in (None, "Z"):
+                        with contextlib.suppress(OSError):
+                            command = Path(f"/proc/{pid}/cmdline").read_bytes()
+                            if b"time.sleep(300)" in command or str(tool).encode() in command:
+                                os.kill(pid, signal.SIGKILL)
+
+    def test_a_process_that_leaves_the_group_outlives_the_gate(self):
+        # Fix round 2 (VERIFY 1.1): the disclosed residual, observed: a
+        # process that leaves the child's process group, by any means, can
+        # outlive the gate. Here a process the child started calls setpgid
+        # into a new group, so the group kill does not reach it and it is
+        # still running after the gate has returned its reply.
+        tool = self.fake_extractor(extractor_with(
+            "_real_extract = extract\n"
+            "def extract(text):\n"
+            "    import os, time\n"
+            "    read, write = os.pipe()\n"
+            "    pid = os.fork()\n"
+            "    if pid == 0:\n"
+            "        os.setpgid(0, 0)\n"
+            "        os.write(write, b\"left\")\n"
+            "        time.sleep(300)\n"
+            "        os._exit(0)\n"
+            "    os.close(write)\n"
+            "    with open(Path(__file__).resolve().parent / \"leaver.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
+            "        handle.write(str(pid))\n"
+            "    assert os.read(read, 64) == b\"left\"\n"
+            "    return _real_extract(text)\n"
+        ))
+        pid_file = tool.parent / "leaver.pid"
+        try:
+            result, err = self.call_reports("extract", self.ARGS["extract"])
+            self.assertEqual((result, err), (("value", "2026-11-15"), ""))
+            pid = int(pid_file.read_text(encoding="utf-8"))
+            time.sleep(0.5)
+            # Any live state counts, so the check does not depend on whether
+            # the process is sleeping or still runnable when it is read.
+            self.assertNotIn(process_state(pid), (None, "Z"), f"the process {pid} that left the group did not outlive the gate")
+            stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+            self.assertEqual(int(stat.rsplit(")", 1)[1].split()[2]), pid, "the process did not lead a new group")
+        finally:
+            # Kill the process on every path, but only while it is still the
+            # one this test started: it leads its own group and runs the fake
+            # extractor.
+            with contextlib.suppress(OSError, ValueError):
+                pid = int(pid_file.read_text(encoding="utf-8"))
+                command = Path(f"/proc/{pid}/cmdline").read_bytes()
+                stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+                if int(stat.rsplit(")", 1)[1].split()[2]) == pid and str(tool).encode() in command:
+                    os.killpg(pid, signal.SIGKILL)
+
+    def test_a_group_that_cannot_be_killed_exits_3(self):
+        # Fix round 1 (finding 3): an OSError other than ProcessLookupError
+        # from the group kill exits 3 naming it, after the child is killed
+        # directly where it still runs and reaped where it can be; a child
+        # that cannot be killed either is not waited for.
+        hung = extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n")
+        denied = PermissionError(errno.EPERM, "Operation not permitted")
+        named = "PermissionError: [Errno 1] Operation not permitted"
+        real_popen, real_killpg, real_kill = subprocess.Popen, os.killpg, os.kill
+        for label, body, op, arg, error, detail, kill_fails, returncode in (
+            ("after a normal exit", None, "baseline", None, denied, named, False, 0),
+            ("after a timeout", hung, "extract", "x", denied, named, False, -signal.SIGKILL),
+            ("another OSError after a timeout", hung, "extract", "x", OSError(errno.EINVAL, "Invalid argument"),
+             "OSError: [Errno 22] Invalid argument", False, -signal.SIGKILL),
+            ("after a timeout, with a child that cannot be killed either", hung, "extract", "x", denied, named,
+             True, None),
+        ):
+            with self.subTest(label):
+                if body is None:
+                    gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
+                else:
+                    self.fake_extractor(body)
+                # Fix round 7: only a subtest that times out shortens the
+                # timeout, so a normal end on a busy host never races it.
+                gate.CHILD_TIMEOUT_SECONDS = self._saved_child[1] if body is None else 1
+                procs = []
+
+                def failing(*args):
+                    raise error
+
+                def kill_denied(*args):
+                    raise denied
+
+                gate.subprocess.Popen = self.recording_popen(procs)
+                gate.os.killpg = failing
+                if kill_fails:
+                    gate.os.kill = kill_denied
+                try:
+                    started = time.monotonic()
+                    result, err = self.call_reports(op, arg)
+                    elapsed = time.monotonic() - started
+                    returncodes = [proc.returncode for proc in procs]
+                finally:
+                    gate.subprocess.Popen = real_popen
+                    gate.os.killpg = real_killpg
+                    gate.os.kill = real_kill
+                    for proc in procs:
+                        if proc.returncode is None:
+                            proc.kill()
+                            proc.wait()
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(
+                    f"could not kill the process group of its child ({detail})", op
+                )])
+                self.assertEqual(returncodes, [returncode])
+                # Fix round 7: far below the 300 seconds the hung child
+                # sleeps, so a gate that waited for it still fails, with room
+                # for a busy host to start and end a child.
+                self.assertLess(elapsed, 60)
+
+    def test_an_echoed_request_of_any_size_keeps_its_verdict(self):
+        # Fix round 1 (finding 4): the stdout bound grows with the request,
+        # so the malformed messages tested here, which echo a long argument
+        # enlarged by repr and by ASCII JSON escaping, keep the verdict and
+        # the message the extractor gives, as the in-process gate did.
+        published = "\u00e9" * 12000
+        line = "Released: " + "\u00e9" * 12000
+        try:
+            REFERENCE.release_day_from_published_at(published)
+        except REFERENCE.Malformed as error:
+            published_message = str(error)
+        text = f"Version: {AHEAD}\n{line}\n"
+        try:
+            REFERENCE.extract(text)
+        except REFERENCE.Malformed as error:
+            line_message = str(error)
+        self.assertEqual(self.call_reports("release_day_from_published_at", published),
+                         (("malformed", published_message), ""))
+        self.assertEqual(self.call_reports("extract", text), (("malformed", line_message), ""))
+        # The worst case per character: each of these, repeated, is echoed
+        # through repr and ASCII JSON at its largest.
+        for character in ("\u00e9", "\U0001f600", "\x00", "\\", "\U000e0001", "'", "\"", "\t", "\u2028"):
+            for op, arg in (
+                ("release_day_from_published_at", character * 20000),
+                ("extract", f"Version: {AHEAD}\nReleased: " + character * 20000 + "\n"),
+            ):
+                with self.subTest(op=op, character=character):
+                    function = getattr(REFERENCE, op)
+                    try:
+                        expected = ("value", function(arg))
+                    except REFERENCE.Malformed as error:
+                        expected = ("malformed", str(error))
+                    self.assertEqual(self.call_reports(op, arg), (expected, ""))
+        # Through the whole gate: the published_at verdict stays 2 with its
+        # message, and the Released line verdict stays 3 with its message.
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, "Released: 2026-11-15  ")
+        self.published(published)
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 2, (out, err))
+        self.assertEqual(err.splitlines(), [f"{self.CV}the published_at of release v{AHEAD} is unusable: {published_message}"])
+        self.fixtures(AHEAD, ZIP_SUM, AHEAD, line)
+        try:
+            REFERENCE.extract(gate.SKILL.read_text(encoding="utf-8"))
+        except REFERENCE.Malformed as error:
+            skill_message = str(error)
+        self.published("2026-11-15T09:30:00Z")
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 3, (out, err))
+        self.assertEqual(err.splitlines(), [
+            f"check-release-checksum-live: the Released line in {self.SHOWN} is malformed: {skill_message}"
+        ])
+
+    def test_the_stdout_bound_of_a_call_with_an_argument_grows_with_it(self):
+        # Fix round 1 (finding 4): the bound is RESULT_LIMIT plus 12 bytes
+        # for each character of the argument; a reply of exactly that size is
+        # accepted and one byte more is refused, naming the bound.
+        valid = b'{"op": "extract", "outcome": "absent"}'
+        limit = gate.RESULT_LIMIT + 12 * len("xy")
+        padded = valid + b" " * (limit - len(valid))
+        for label, output, expected in (
+            ("a reply of exactly the bound", padded, (("value", None), "")),
+            ("a reply one byte over the bound", padded + b" ", None),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"extract": output}))
+                result = self.call_reports("extract", "xy")
+                if expected is None:
+                    self.assertEqual(result[0], ("exit", 3), result[1])
+                    self.assertEqual(result[1].splitlines(), [self.unavailable(
+                        f"printed more than {limit} bytes", "extract"
+                    )])
+                else:
+                    self.assertEqual(result, expected)
+
+    def test_a_reply_with_a_repeated_key_exits_3(self):
+        # Fix round 1 (finding 5): a reply is exactly one JSON object that
+        # matches the contract, so a key given twice is refused, never read
+        # with the last value winning.
+        rule = "printed a result that does not match the contract (a key appears more than once)"
+        for label, output in (
+            ("a repeated value", b'{"op": "extract", "outcome": "value", "value": "2026-11-15", "value": "2026-11-16"}\n'),
+            ("a repeated outcome", b'{"op": "extract", "outcome": "malformed", "outcome": "absent"}\n'),
+            ("a repeated op with the same value", b'{"op": "extract", "op": "extract", "outcome": "absent"}\n'),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"extract": output}))
+                result, err = self.call_reports("extract", "x")
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(rule, "extract")])
+
+    # A fake extractor whose extract op has a process in another session
+    # seize the child with ptrace (the child names it its tracer first), so
+    # the end of the child is reported to that tracer, which holds it for
+    # HOLD seconds, and not to the gate; the child writes the tracer pid to
+    # tracer.pid beside it and exits 9 when the seize is refused. Fix round
+    # 7: the tracer closes its own copy of the go pipe, so when the child
+    # ends before it says go (as when it is killed first) the tracer reads
+    # the end of the pipe and exits at once instead of waiting for ever in
+    # a session of its own, where no kill of the child group reaches it.
+    TRACED = (
+        "_real_extract = extract\n"
+        "def extract(text):\n"
+        "    import ctypes, os, time\n"
+        "    libc = ctypes.CDLL(None, use_errno=True)\n"
+        "    libc.ptrace.argtypes = [ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p]\n"
+        "    libc.prctl.argtypes = [ctypes.c_int, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong]\n"
+        "    me = os.getpid()\n"
+        "    go_r, go_w = os.pipe()\n"
+        "    done_r, done_w = os.pipe()\n"
+        "    tracer = os.fork()\n"
+        "    if tracer == 0:\n"
+        "        os.setsid()\n"
+        "        os.close(go_w)\n"
+        "        if os.read(go_r, 1) != b\"x\":\n"
+        "            os._exit(0)\n"
+        "        seized = libc.ptrace(0x4206, me, None, None) == 0\n"
+        "        os.write(done_w, b\"ok\" if seized else b\"refused\")\n"
+        "        time.sleep(HOLD)\n"
+        "        os._exit(0)\n"
+        "    with open(Path(__file__).resolve().parent / \"tracer.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
+        "        handle.write(str(tracer))\n"
+        "    libc.prctl(0x59616d61, tracer, 0, 0, 0)\n"
+        "    os.write(go_w, b\"x\")\n"
+        "    if os.read(done_r, 64) != b\"ok\":\n"
+        "        raise SystemExit(9)\n"
+        + SAY_READY +
+        "    return _real_extract(text)\n"
+    )
+
+    def test_a_child_whose_end_is_hidden_from_the_gate_ends_the_gate_within_the_bound(self):
+        # DISCOVERY round 4, finding 1: a process of the same uid in another
+        # session seizes the child with ptrace, so the child's end is
+        # reported to it and not to the gate. The gate sees no end within
+        # the timeout, kills the group, then sees no end within the reap
+        # grace either, and exits 3 naming that it could not reap the child,
+        # leaving it, within the two bounds, instead of blocking in a reap
+        # until the tracer exits (30 seconds here). The test skips only where
+        # the host refuses the seize; the next test simulates the same
+        # outcome in-process on every host.
+        tool = self.fake_extractor(extractor_with(self.TRACED.replace("HOLD", "30")))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        gate.REAP_GRACE_SECONDS = 1
+        procs = []
+        real_popen = subprocess.Popen
+        gate.subprocess.Popen = self.recording_popen(procs)
+        pid_file = tool.parent / "tracer.pid"
+        try:
+            # Fix round 7: the 1 second timeout starts only once the seize
+            # has succeeded, so it cannot fire while the child is still
+            # being seized on a busy host.
+            # The bound below is measured from then, so the time a busy host
+            # takes to start the child does not count against it.
+            with self.timeout_when_ready(tool.parent / "ready") as ready_state:
+                started = time.monotonic()
+                result, err = self.call_reports("extract", self.ARGS["extract"])
+                elapsed = time.monotonic() - ready_state.get("ready_at", started)
+            if result == ("exit", 3) and "exited 9" in err:
+                self.skipTest("this host refuses PTRACE_SEIZE of the child")
+            self.assertTrue((tool.parent / "ready").exists(), "the child was not seized before the timeout")
+            states = [process_state(proc.pid) for proc in procs]
+            returncodes = [proc.returncode for proc in procs]
+        finally:
+            gate.subprocess.Popen = real_popen
+            # Kill the tracer by its recorded pid, only while it is the
+            # process this test started (it runs the fake extractor), and
+            # then reap the child, whose end the gate now sees.
+            with contextlib.suppress(OSError, ValueError):
+                pid = int(pid_file.read_text(encoding="utf-8"))
+                if str(tool).encode() in Path(f"/proc/{pid}/cmdline").read_bytes():
+                    os.kill(pid, signal.SIGKILL)
+            for proc in procs:
+                if proc.returncode is None:
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        proc.wait(timeout=10)
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            "could not be reaped (the gate saw no end of it within 1 seconds after its kill)", "extract"
+        )])
+        self.assertLess(elapsed, 10)
+        # The child had ended (a zombie held by the tracer) and was left unreaped.
+        self.assertEqual(states, ["Z"])
+        self.assertEqual(returncodes, [None])
+
+    def test_a_child_not_seen_to_end_after_its_kill_is_left_unreaped(self):
+        # DISCOVERY round 4, finding 1, simulated in-process on every host:
+        # os.waitid never reports the end of the child, as when another
+        # process holds it, so after the timeout and the group kill the
+        # gate polls for at most the reap grace, exits 3 naming that it
+        # could not reap the child, and does not reap it.
+        self.fake_extractor(extractor_with("def extract(text):\n    import time\n    time.sleep(300)\n"))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        gate.REAP_GRACE_SECONDS = 1
+        procs, kills = [], []
+        real_popen, real_killpg, real_waitid = subprocess.Popen, os.killpg, os.waitid
+
+        def recording(pgid, sig):
+            kills.append((pgid, sig))
+            real_killpg(pgid, sig)
+
+        guard = time.monotonic()
+
+        def hidden(idtype, ident, options):
+            # Fix round 6: a gate whose waits had no bound would poll for
+            # ever; it fails here instead of hanging the suite.
+            if time.monotonic() - guard > 30:
+                raise AssertionError("the gate polled for more than 30 seconds")
+            if options & os.WNOHANG:
+                return None
+            return real_waitid(idtype, ident, options)
+
+        gate.subprocess.Popen = self.recording_popen(procs)
+        gate.os.killpg = recording
+        gate.os.waitid = hidden
+        try:
+            started = time.monotonic()
+            result, err = self.call_reports("extract", "x")
+            elapsed = time.monotonic() - started
+            returncodes = [proc.returncode for proc in procs]
+        finally:
+            gate.subprocess.Popen = real_popen
+            gate.os.killpg = real_killpg
+            gate.os.waitid = real_waitid
+            for proc in procs:
+                if proc.returncode is None:
+                    proc.kill()
+                    proc.wait()
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            "could not be reaped (the gate saw no end of it within 1 seconds after its kill)", "extract"
+        )])
+        self.assertEqual(kills, [(procs[0].pid, signal.SIGKILL)])
+        self.assertEqual(returncodes, [None])
+        self.assertLess(elapsed, 10)
+
+    def test_every_mapped_extractor_outcome_reaches_its_exit_and_message_through_main(self):
+        # DISCOVERY round 4, finding 3, at the width of the class: each place
+        # in the gate that turns an outcome of release_date_call into an exit
+        # code or a message (the malformed and absent mapping in
+        # release_date_call, the probe in probe_release_date_tool, the
+        # malformed handlers in skill_released, released_line, and
+        # check_release_date, and the baseline in
+        # report_missing_released_line) is pinned here through main, with its
+        # exact exit and output. Fix round 6 (DISCOVERY round 5, finding 2):
+        # every value the gate takes from the extractor here, the extracted
+        # day, the baseline rule, the published day, and the baseline itself,
+        # is also given by a fake extractor that answers differently from the
+        # real one (a baseline of 1.0.20, not 1.0.14), so a gate that put
+        # today's real answer in place of any of these calls fails this test
+        # as well as one that dropped a handler. Run as a mutation sweep,
+        # each of those mutants fails here.
+        def site_matches(version):
+            return (f"The verify page checksum {ZIP_SUM} matches the published cleanlanguage-{version}.zip "
+                    f"for release v{version}.")
+
+        matches = site_matches(AHEAD)
+        later = "1.0.21"
+        other_baseline = extractor_with("BASELINE_VERSION = \"1.0.20\"\n")
+        missing = [
+            "Release date inconsistency found:",
+            f"  - release v{AHEAD} is published",
+            f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {AHEAD}, above the undated baseline {CURRENT}, "
+            f"but has no Released: line",
+        ]
+        rejected = b'{"message": "a forged verdict", "op": "requires_release_date", "outcome": "malformed"}\n'
+        for label, extractor, site_sum, skill, released, published_at, expected in (
+            ("extract malformed: skill_released exits 3", None, ZIP_SUM, AHEAD, "Released: soon",
+             "2026-11-15T09:30:00Z",
+             (3, [matches], [
+                 "check-release-checksum-live: the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md "
+                 "is malformed: the first Released line is not a bare YYYY-MM-DD date: 'Released: soon'"
+             ])),
+            ("requires_release_date malformed: released_line exits 3",
+             forging({"requires_release_date": rejected}), ZIP_SUM, AHEAD, None, "2026-11-15T09:30:00Z",
+             (3, [matches], [
+                 f"check-release-checksum-live: the SKILL.md version {AHEAD} was rejected by the extractor: "
+                 f"a forged verdict"
+             ])),
+            ("release_day_from_published_at malformed: check_release_date exits 2", None, ZIP_SUM, AHEAD,
+             "Released: 2026-11-15", "null",
+             (2, [matches], [
+                 f"check-release-checksum-live: could not verify: the published_at of release v{AHEAD} is "
+                 f"unusable: published_at is not a YYYY-MM-DDTHH:MM:SSZ instant: 'null'"
+             ])),
+            ("extract absent above the baseline: the missing line and the baseline are reported", None, ZIP_SUM,
+             AHEAD, None, "2026-11-15T09:30:00Z",
+             (1, missing + [matches], [])),
+            ("extract absent at the baseline: no line is required", None, ZIP_SUM, CURRENT, None,
+             "2026-11-15T09:30:00Z",
+             (0, [f"The verify page checksum {ZIP_SUM} matches the published cleanlanguage-{CURRENT}.zip "
+                  f"for release v{CURRENT}."], [])),
+            ("baseline unavailable: the probe contributes 3 and the checks still run",
+             forging({"baseline": b""}, code=1), OTHER_SUM, AHEAD, "Released: 2026-11-15", "2026-11-15T09:30:00Z",
+             (3, [
+                 f"The SKILL.md Released date 2026-11-15 matches the publication day of release v{AHEAD}.",
+                 "Release checksum drift found:",
+                 f"  - the verify page shows {OTHER_SUM} for version {AHEAD}",
+                 f"  - the published cleanlanguage-{AHEAD}.zip is {ZIP_SUM}",
+                 "",
+                 f"The release v{AHEAD} is published but the site was not flipped to its checksum. Run the "
+                 f"orchestrator's post-release site flip (tools/set-release-links.py with checksum {ZIP_SUM}); "
+                 f"see the release runbook.",
+             ], [PROBE_FAILED])),
+            ("a baseline other than today's: the missing line names it", other_baseline, ZIP_SUM, later, None,
+             "2026-11-15T09:30:00Z",
+             (1, [
+                 "Release date inconsistency found:",
+                 f"  - release v{later} is published",
+                 f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {later}, above the undated baseline "
+                 f"1.0.20, but has no Released: line",
+                 site_matches(later),
+             ], [])),
+            ("a baseline other than today's: a version at or below it needs no line", other_baseline, ZIP_SUM,
+             AHEAD, None, "2026-11-15T09:30:00Z",
+             (0, [matches], [])),
+            ("a published day other than today's reading of published_at", extractor_with(
+                "def release_day_from_published_at(value):\n    return \"2026-11-16\"\n"
+            ), ZIP_SUM, AHEAD, "Released: 2026-11-16", "2026-11-15T09:30:00Z",
+             (0, [f"The SKILL.md Released date 2026-11-16 matches the publication day of release v{AHEAD}.",
+                  matches], [])),
+            ("an extracted day other than today's reading of the line", extractor_with(
+                "def extract(text):\n    return \"2026-11-17\"\n"
+            ), ZIP_SUM, AHEAD, "Released: 2026-11-15", "2026-11-17T09:30:00Z",
+             (0, [f"The SKILL.md Released date 2026-11-17 matches the publication day of release v{AHEAD}.",
+                  matches], [])),
+        ):
+            with self.subTest(label):
+                if extractor is None:
+                    gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
+                else:
+                    self.fake_extractor(extractor)
+                self.fixtures(skill, site_sum, skill, released)
+                self.published(published_at)
+                code, out, err = self.main_reports()
+                self.assertEqual((code, out.splitlines(), err.splitlines()), expected)
+
+
+    # --- Fix round 6: the wait, the reap, and the kill, pinned exactly -------
+
+    def on_fake_clock(self, end_at):
+        """Point the gate at a fake clock that starts at 100 and advances only
+        by the sleeps of the gate, and at an os.waitid that reports the end of
+        the child once that clock reaches ``end_at``. Returns the clock state,
+        the sleeps, the waitid calls, and a function that restores the real
+        clock and waitid. A wait that sleeps more than 10000 times, or reads
+        the clock more than 100000 times, fails instead of hanging."""
+        state = {"now": 100.0, "reads": 0}
+        sleeps, waits = [], []
+        real_time, real_waitid = gate.time, os.waitid
+
+        def monotonic():
+            state["reads"] += 1
+            if state["reads"] > 100000:
+                raise AssertionError("the wait read the clock more than 100000 times")
+            return state["now"]
+
+        def sleep(seconds):
+            if len(sleeps) >= 10000:
+                raise AssertionError("the wait slept more than 10000 times")
+            sleeps.append(seconds)
+            state["now"] += seconds
+
+        def waitid(idtype, ident, options):
+            waits.append((idtype, ident, options))
+            return types.SimpleNamespace(si_pid=ident) if state["now"] >= end_at else None
+
+        gate.time = types.SimpleNamespace(monotonic=monotonic, sleep=sleep)
+        gate.os.waitid = waitid
+
+        def restore():
+            gate.time = real_time
+            gate.os.waitid = real_waitid
+
+        return state, sleeps, waits, restore
+
+    def test_the_wait_polls_within_its_deadline_on_a_fake_clock(self):
+        # Fix round 6 (mutation sweep): _wait_unreaped waits exactly its
+        # timeout argument (here 7.25 seconds, no default of the gate), never
+        # sleeps past the deadline or more than 0.05 seconds at a time,
+        # starts at 1 millisecond and doubles, never sleeps for zero, polls
+        # only with WEXITED, WNOWAIT, and WNOHANG for this pid, and returns
+        # True at the first poll that sees the end.
+        child = types.SimpleNamespace(pid=4242)
+        flags = os.WEXITED | os.WNOWAIT | os.WNOHANG
+        for label, end_at, expected, low, high in (
+            ("no end within the timeout", float("inf"), False, 7.25, 7.25),
+            ("an end after 0.5 seconds", 100.5, True, 0.5, 0.55),
+        ):
+            with self.subTest(label):
+                state, sleeps, waits, restore = self.on_fake_clock(end_at)
+                try:
+                    result = gate._wait_unreaped(child, 7.25)
+                finally:
+                    restore()
+                self.assertIs(result, expected)
+                elapsed = state["now"] - 100.0
+                self.assertGreaterEqual(elapsed, low - 1e-9)
+                self.assertLessEqual(elapsed, high + 1e-9)
+                self.assertEqual(sleeps[:3], [0.001, 0.002, 0.004])
+                self.assertLessEqual(max(sleeps), 0.05)
+                self.assertGreater(min(sleeps), 0)
+                self.assertEqual(set(waits), {(os.P_PID, 4242, flags)})
+                self.assertEqual(len(waits), len(sleeps) + 1)
+
+    def test_the_reap_waits_only_its_grace_on_a_fake_clock(self):
+        # Fix round 6 (mutation sweep): _reap waits at most
+        # REAP_GRACE_SECONDS (here 2.75, no default of the gate) for the end
+        # of the child and names that grace when it sees no end, without
+        # reaping; it reaps once, with Popen.wait, only after it sees the end.
+        gate.REAP_GRACE_SECONDS = 2.75
+        for label, end_at, expected, elapsed, reaped in (
+            ("no end within the grace", float("inf"),
+             "could not be reaped (the gate saw no end of it within 2.75 seconds after its kill)", 2.75, 0),
+            ("an end after 1 second", 101.0, None, None, 1),
+        ):
+            with self.subTest(label):
+                reaps = []
+                child = types.SimpleNamespace(pid=4242, wait=lambda: reaps.append("wait"))
+                state, sleeps, waits, restore = self.on_fake_clock(end_at)
+                try:
+                    result = gate._reap(child)
+                finally:
+                    restore()
+                self.assertEqual(result, expected)
+                self.assertEqual(len(reaps), reaped)
+                if elapsed is not None:
+                    self.assertAlmostEqual(state["now"] - 100.0, elapsed, places=9)
+                else:
+                    self.assertLessEqual(state["now"], 101.05 + 1e-9)
+
+    def kill_reports(self, op, arg, killpg, kill, waitid=None):
+        """Run release_date_call for ``op`` with os.killpg, os.kill, and,
+        when given, os.waitid replaced, recording each os.kill call. Returns
+        (result, stderr, the os.kill calls, the return codes of the children,
+        seconds taken); every child left running is killed and reaped."""
+        procs, kills = [], []
+        real_popen, real_killpg, real_kill, real_waitid = subprocess.Popen, os.killpg, os.kill, os.waitid
+
+        def recording_kill(pid, sig):
+            kills.append((pid, sig))
+            kill(pid, sig)
+
+        gate.subprocess.Popen = self.recording_popen(procs)
+        gate.os.killpg = killpg
+        gate.os.kill = recording_kill
+        if waitid is not None:
+            gate.os.waitid = waitid
+        try:
+            started = time.monotonic()
+            try:
+                result, err = self.call_reports(op, arg)
+            except KeyboardInterrupt:
+                result, err = ("interrupt", None), ""
+            elapsed = time.monotonic() - started
+            returncodes = [proc.returncode for proc in procs]
+        finally:
+            gate.subprocess.Popen = real_popen
+            gate.os.killpg = real_killpg
+            gate.os.kill = real_kill
+            gate.os.waitid = real_waitid
+            for proc in procs:
+                if proc.returncode is None:
+                    proc.kill()
+                    proc.wait()
+        return result, err, [(sig, pid == procs[0].pid) for pid, sig in kills], returncodes, elapsed
+
+    DENIED = PermissionError(errno.EPERM, "Operation not permitted")
+    DENIED_NAMED = "PermissionError: [Errno 1] Operation not permitted"
+    HUNG = "def extract(text):\n    import time\n    time.sleep(300)\n"
+
+    def denied(self, *args):
+        raise self.DENIED
+
+    def test_a_failed_group_kill_kills_the_child_directly_only_when_it_has_not_ended(self):
+        # Fix round 6 (mutation sweep): when the group kill fails, the gate
+        # kills the child itself, with SIGKILL, only when the child has not
+        # ended (after a timeout), and never after a normal end, even when
+        # that kill would fail too; either way it reaps the child it can and
+        # exits 3 naming the group kill.
+        problem = f"could not kill the process group of its child ({self.DENIED_NAMED})"
+        gate.REAP_GRACE_SECONDS = 1
+        for label, body, op, arg, kill, expected_kills, returncodes in (
+            ("after a normal end", None, "baseline", None, os.kill, [], [0]),
+            ("after a normal end, with a direct kill that would fail", None, "baseline", None, self.denied, [], [0]),
+            ("after a timeout", self.HUNG, "extract", "x", os.kill, [(signal.SIGKILL, True)], [-signal.SIGKILL]),
+        ):
+            with self.subTest(label):
+                if body is None:
+                    gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
+                else:
+                    self.fake_extractor(extractor_with(body))
+                # Fix round 7: only the subtest that times out shortens the
+                # timeout, so a normal end on a busy host never races it.
+                gate.CHILD_TIMEOUT_SECONDS = self._saved_child[1] if body is None else 1
+                result, err, kills, codes, elapsed = self.kill_reports(op, arg, self.denied, kill)
+                self.assertEqual(result, ("exit", 3), err)
+                self.assertEqual(err.splitlines(), [self.unavailable(problem, op)])
+                self.assertEqual(kills, expected_kills)
+                self.assertEqual(codes, returncodes)
+                # Fix round 7: far below the 300 seconds the hung child
+                # sleeps, so a gate that waited for it still fails, with room
+                # for a busy host to start and end a child.
+                self.assertLess(elapsed, 60)
+
+    def test_a_group_kill_that_finds_no_process_still_reaps_the_child(self):
+        # Fix round 6 (mutation sweep): a group kill that reports no such
+        # process (ProcessLookupError) is not a failure: the gate reaps the
+        # ended child and returns its reply. On Linux this cannot happen
+        # while the child is unreaped, as the child leads its own session and
+        # so stays in its group; it is simulated here.
+        def missing(*args):
+            raise ProcessLookupError(errno.ESRCH, "No such process")
+
+        gate.RELEASE_DATE_TOOL = EXTRACTOR_PATH
+        result, err, kills, codes, elapsed = self.kill_reports("baseline", None, missing, os.kill)
+        self.assertEqual((result, err), (("value", CURRENT), ""))
+        self.assertEqual(kills, [])
+        self.assertEqual(codes, [0])
+
+    def test_a_failed_direct_kill_still_reaps_a_child_that_has_ended(self):
+        # Fix round 6 (mutation sweep): when the group kill and the direct
+        # kill both fail, the gate does not wait for the child, but a child
+        # that has already ended (here it is killed, and becomes a zombie,
+        # before the direct kill reports its failure) is still reaped by a
+        # non-blocking poll.
+        self.fake_extractor(extractor_with(self.HUNG))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        real_kill = os.kill
+
+        def ends_then_fails(pid, sig):
+            real_kill(pid, signal.SIGKILL)
+            deadline = time.monotonic() + 10
+            while process_state(pid) != "Z" and time.monotonic() < deadline:
+                time.sleep(0.01)
+            raise self.DENIED
+
+        result, err, kills, codes, elapsed = self.kill_reports("extract", "x", self.denied, ends_then_fails)
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            f"could not kill the process group of its child ({self.DENIED_NAMED})", "extract"
+        )])
+        self.assertEqual(kills, [(signal.SIGKILL, True)])
+        self.assertEqual(codes, [-signal.SIGKILL])
+
+    def test_a_failed_group_kill_with_a_hidden_end_leaves_the_child_unreaped(self):
+        # DISCOVERY round 5, finding 1: after a failed group kill and a
+        # direct kill, the reap is bounded by REAP_GRACE_SECONDS like every
+        # other reap. Here os.waitid never reports the end of the child, so
+        # the gate names both the group kill and the reap it could not do,
+        # leaves the child unreaped, and returns within the bounds, where an
+        # unbounded wait would have reaped it.
+        self.fake_extractor(extractor_with(self.HUNG))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        gate.REAP_GRACE_SECONDS = 1
+        real_waitid = os.waitid
+        started = time.monotonic()
+
+        def hidden(idtype, ident, options):
+            # A gate whose waits had no bound would poll for ever; it fails
+            # here instead of hanging the suite.
+            if time.monotonic() - started > 30:
+                raise AssertionError("the gate polled for more than 30 seconds")
+            if options & os.WNOHANG:
+                return None
+            return real_waitid(idtype, ident, options)
+
+        result, err, kills, codes, elapsed = self.kill_reports("extract", "x", self.denied, os.kill, waitid=hidden)
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            f"could not kill the process group of its child ({self.DENIED_NAMED}), and could not be reaped "
+            f"(the gate saw no end of it within 1 seconds after its kill)", "extract"
+        )])
+        self.assertEqual(kills, [(signal.SIGKILL, True)])
+        self.assertEqual(codes, [None])
+        self.assertLess(elapsed, 10)
+
+    def test_an_interrupt_while_waiting_with_a_group_that_cannot_be_killed_exits_3(self):
+        # Fix round 6 (mutation sweep): a KeyboardInterrupt while the gate
+        # waits, when the group cannot be killed, kills the child directly,
+        # as a child that has not ended, reaps it, and exits 3 naming the
+        # group kill instead of passing the interrupt on.
+        self.fake_extractor(extractor_with(self.HUNG))
+        gate.REAP_GRACE_SECONDS = 1
+        real_waitid = os.waitid
+        calls = []
+
+        def interrupted(*args):
+            calls.append(args)
+            if len(calls) == 1:
+                raise KeyboardInterrupt()
+            return real_waitid(*args)
+
+        result, err, kills, codes, elapsed = self.kill_reports(
+            "extract", "x", self.denied, os.kill, waitid=interrupted
+        )
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable(
+            f"could not kill the process group of its child ({self.DENIED_NAMED})", "extract"
+        )])
+        self.assertEqual(kills, [(signal.SIGKILL, True)])
+        self.assertEqual(codes, [-signal.SIGKILL])
+        self.assertLess(elapsed, 10)
+
+    def test_the_output_bounds_follow_the_limits_of_the_gate(self):
+        # Fix round 6 (mutation sweep): the stdout bound is RESULT_LIMIT plus
+        # ECHO_BYTES_PER_CHARACTER bytes for each character of the argument,
+        # and at most STDERR_LIMIT bytes of stderr are read and relayed, each
+        # taken from the gate at the call: with limits other than the
+        # defaults (300, 7, and 33), a reply of exactly the bound is
+        # accepted, one byte more is refused naming the bound, the reads ask
+        # for one byte over the bound and for STDERR_LIMIT bytes, and the
+        # relayed stderr is its first 33 bytes, decoded with replacement.
+        gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
+        limit = 300 + 7 * len("xy")
+        valid = b'{"op": "extract", "outcome": "absent"}'
+        padded = valid + b" " * (limit - len(valid))
+        real_temporary_file = tempfile.TemporaryFile
+        for label, output, expected in (
+            ("a reply of exactly the bound", padded, (("value", None), "")),
+            ("a reply one byte over the bound", padded + b" ",
+             (("exit", 3), self.unavailable(f"printed more than {limit} bytes", "extract") + "\n")),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(forging({"extract": output}))
+                reads = []
+
+                class Recording:
+                    def __init__(self, real, position):
+                        self._real, self._position = real, position
+
+                    def __getattr__(self, name):
+                        return getattr(self._real, name)
+
+                    def read(self, *args):
+                        reads.append((self._position, args))
+                        return self._real.read(*args)
+
+                    def __enter__(self):
+                        self._real.__enter__()
+                        return self
+
+                    def __exit__(self, *exc):
+                        return self._real.__exit__(*exc)
+
+                made = []
+
+                def factory(*args, **kwargs):
+                    made.append(None)
+                    return Recording(real_temporary_file(*args, **kwargs), len(made) - 1)
+
+                gate.tempfile = types.SimpleNamespace(TemporaryFile=factory)
+                try:
+                    result = self.call_reports("extract", "xy")
+                finally:
+                    gate.tempfile = tempfile
+                self.assertEqual(result, expected)
+                self.assertEqual(sorted(reads), [(1, (limit + 1,)), (2, (33,))])
+        self.fake_extractor(extractor_with(
+            "def json_main():\n"
+            "    sys.stdin.buffer.read()\n"
+            "    sys.stderr.buffer.write(b\"\\xff\" + b\"e\" * 100)\n"
+            "    return 1\n"
+        ))
+        result, err = self.call_reports("extract", "xy")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable("exited 1", "extract") + "; it printed: \ufffd" + "e" * 32])
+
+    def test_a_child_ended_by_a_signal_with_no_name_exits_3_naming_its_number(self):
+        # Fix round 6 (mutation sweep): a signal that has no name in
+        # signal.Signals, here the real-time signal 40, is named by its
+        # number, never a traceback.
+        self.assertNotIn(40, {member.value for member in signal.Signals})
+        self.fake_extractor(extractor_with("def extract(text):\n    import os\n    os.kill(os.getpid(), 40)\n"))
+        result, err = self.call_reports("extract", "x")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err.splitlines(), [self.unavailable("was killed by signal 40", "extract")])
+
+    def test_a_child_ended_by_signal_1_exits_3_naming_it(self):
+        # Fix round 10 (mutation sweep): signal 1 (SIGHUP), the lowest
+        # signal number, is a signal end like any other, reported by its
+        # name with what the child printed, never as an exit. The child
+        # restores the default action first, as an ignored SIGHUP (under
+        # nohup, for one) is inherited across exec.
+        self.assertEqual(signal.SIGHUP.value, 1)
+        self.fake_extractor(extractor_with(
+            "def extract(text):\n"
+            "    import os, signal\n"
+            "    sys.stderr.write(\"hung up\\n\")\n"
+            "    sys.stderr.flush()\n"
+            "    signal.signal(signal.SIGHUP, signal.SIG_DFL)\n"
+            "    os.kill(os.getpid(), signal.SIGHUP)\n"
+        ))
+        result, err = self.call_reports("extract", "x")
+        self.assertEqual(result, ("exit", 3), err)
+        self.assertEqual(err, self.unavailable("was killed by signal SIGHUP", "extract") + "; it printed: hung up\n")
+
 
 class ModuleLoadTest(unittest.TestCase):
     """F5: the gate exits 3 (unavailable), not 1 (drift), when the extractor
-    module cannot be loaded, whatever the reason."""
+    cannot be run or its child fails, for each reason tested here. Row 80:
+    each test runs a copy of the gate as a script, so an outcome that would
+    end or hang the gate itself is observed by the test rather than suffered
+    by it. Extractor code that signals the gate itself is the accepted
+    residual, not an exit 3 (see
+    test_extractor_that_interrupts_the_gate_ends_the_gate_by_sigint)."""
 
-    def run_with_extractor(self, body):
+    def run_with_extractor(self, body, wrapper=None, inspect=None):
+        """Run a copy of the gate as a script beside the extractor source
+        ``body`` (None for no extractor), returning (exit code, stderr).
+        ``wrapper``, when given, is Python source run in place of the gate
+        script, with the path of the gate copy as its first argument;
+        ``inspect``, when given, is called with the tools directory after the
+        run, before it is removed, and its result is returned third. An outer
+        timeout of 120 seconds makes a gate that hangs fail the test. The gate
+        runs with only PATH, an empty directory, and TMPDIR, a directory inside
+        the temporary directory of the test."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             tools = root / "tools"
@@ -2648,7 +3700,7 @@ class ModuleLoadTest(unittest.TestCase):
             shutil.copy2(MODULE_PATH, tools / MODULE_PATH.name)
             if body is not None:
                 (tools / "skill-release-date.py").write_text(body, encoding="utf-8")
-            # The gate loads the extractor inside main and goes on to the
+            # The gate probes the extractor inside main and goes on to the
             # checksum comparison, so give it the pages it reads and an empty
             # PATH: gh is then absent, so no network call can be made.
             page = root / "site" / "verify" / "index.html"
@@ -2659,262 +3711,556 @@ class ModuleLoadTest(unittest.TestCase):
             skill.write_text(f"Version: {AHEAD}\n", encoding="utf-8")
             empty = root / "empty-path"
             empty.mkdir()
+            # Fix round 1: a TMPDIR inside this directory, so the temporary
+            # files of the gate, which its children write to, never go to
+            # bare /tmp. A child runs with an empty environment, so a
+            # temporary file it made itself would not follow TMPDIR.
+            scratch = root / "tmp"
+            scratch.mkdir()
+            if wrapper is None:
+                command = [sys.executable, "-I", str(tools / MODULE_PATH.name)]
+            else:
+                command = [sys.executable, "-I", "-c", wrapper, str(tools / MODULE_PATH.name)]
             proc = subprocess.run(
-                [sys.executable, "-I", str(tools / MODULE_PATH.name)], capture_output=True, text=True,
-                env={"PATH": str(empty)},
+                command, capture_output=True, text=True, env={"PATH": str(empty), "TMPDIR": str(scratch)}, timeout=120,
             )
+            inspected = inspect(tools) if inspect is not None else None
+        if inspect is not None:
+            return proc.returncode, proc.stderr, inspected
         return proc.returncode, proc.stderr
 
     def test_missing_extractor_exits_3(self):
         code, err = self.run_with_extractor(None)
         self.assertEqual(code, 3, err)
-        self.assertIn("the extractor is unavailable", err)
+        self.assertIn("skill-release-date.py exited 2 in baseline, so the extractor is unavailable", err)
+        self.assertIn("can't open file", err)
 
     def test_syntax_error_exits_3(self):
         code, err = self.run_with_extractor("def broken(:\n")
         self.assertEqual(code, 3, err)
+        self.assertIn("skill-release-date.py exited 1 in baseline, so the extractor is unavailable", err)
         self.assertIn("SyntaxError", err)
 
     def test_exception_while_loading_exits_3(self):
         code, err = self.run_with_extractor("raise RuntimeError(\"boom\")\n")
         self.assertEqual(code, 3, err)
+        self.assertIn("skill-release-date.py exited 1 in baseline, so the extractor is unavailable", err)
         self.assertIn("RuntimeError", err)
 
-    def test_extractor_keyboard_interrupt_is_an_interrupt_not_a_pass_or_drift(self):
-        # Fix round 5 (claude LOW 1): the documented residual. A
-        # KeyboardInterrupt the extractor raises, exactly that class, at load
-        # or in a call, is let through as an interrupt, since the gate cannot
-        # tell it from a real Ctrl-C by its type: the gate ends with the
-        # SIGINT status, never 0 (a pass) or 1 (drift), and at load before the
-        # checksum comparison runs.
-        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
-        for label, body, at_load in (
-            ("KeyboardInterrupt at load", "raise KeyboardInterrupt()\n", True),
+    def test_extractor_keyboard_interrupt_exits_3_and_the_comparison_runs(self):
+        # Row 80, verdict change 1: a KeyboardInterrupt the extractor raises,
+        # at load or in a call, ends only the child, which Python then ends
+        # with SIGINT. The gate exits 3 with its report and the checksum
+        # comparison still runs, where the in-process gate ended with the
+        # SIGINT status (fix round 5 residual, now closed for an interrupt the
+        # extractor raises; one it sends to the gate is still a residual, see
+        # test_extractor_that_interrupts_the_gate_ends_the_gate_by_sigint).
+        for label, body, op in (
+            ("KeyboardInterrupt at load", "raise KeyboardInterrupt()\n", "baseline"),
             ("KeyboardInterrupt in a call",
-             source + "\ndef extract(text):\n    raise KeyboardInterrupt()\n", False),
-            # Fix round 8 (operator sweep): from a lookup the load validates.
-            ("KeyboardInterrupt from an API lookup at load",
-             source + "\ndel extract\ndef __getattr__(name):\n    raise KeyboardInterrupt()\n", True),
-        ):
-            with self.subTest(label):
-                code, err = self.run_with_extractor(body)
-                self.assertNotIn(code, (0, 1), err)
-                self.assertEqual(code, -signal.SIGINT, err)
-                self.assertIn("KeyboardInterrupt", err)
-                if at_load:
-                    self.assertNotIn("the gh CLI is not available", err)
-
-    def test_extractor_keyboard_interrupt_subclass_exits_3(self):
-        # Fix round 9: a real Ctrl-C raises exactly KeyboardInterrupt, so a
-        # subclass of it the extractor raises, at load or in a call, is not
-        # let through: the gate exits 3 with its report.
-        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
-        subclass = "class K(KeyboardInterrupt):\n    pass\n"
-        for label, body, reason in (
-            ("a KeyboardInterrupt subclass at load", subclass + "raise K()\n",
-             "could not load skill-release-date.py (the extractor is unavailable): K"),
-            ("a KeyboardInterrupt subclass in a call",
-             source + "\n" + subclass + "def extract(text):\n    raise K()\n",
-             "failed unexpectedly in extract: K"),
+             extractor_with("def extract(text):\n    raise KeyboardInterrupt()\n"), "extract"),
         ):
             with self.subTest(label):
                 code, err = self.run_with_extractor(body)
                 self.assertEqual(code, 3, err)
-                self.assertIn(reason, err)
+                self.assertIn(f"skill-release-date.py was killed by signal SIGINT in {op}, "
+                              f"so the extractor is unavailable", err)
+                self.assertIn("KeyboardInterrupt", err)
+                self.assertIn("the gh CLI is not available", err)
+
+    def test_extractor_keyboard_interrupt_subclass_exits_3(self):
+        # Fix round 9: a subclass of KeyboardInterrupt the extractor raises,
+        # at load or in a call, exits 3 with its report. Row 80: Python ends
+        # the child with SIGINT for it as for KeyboardInterrupt itself.
+        subclass = "class K(KeyboardInterrupt):\n    pass\n"
+        for label, body, op in (
+            ("a KeyboardInterrupt subclass at load", subclass + "raise K()\n", "baseline"),
+            ("a KeyboardInterrupt subclass in a call",
+             extractor_with(subclass + "def extract(text):\n    raise K()\n"), "extract"),
+        ):
+            with self.subTest(label):
+                code, err = self.run_with_extractor(body)
+                self.assertEqual(code, 3, err)
+                self.assertIn(f"skill-release-date.py was killed by signal SIGINT in {op}, "
+                              f"so the extractor is unavailable", err)
+                self.assertIn("the gh CLI is not available", err)
 
     def test_extractor_interrupt_that_is_also_another_class_exits_3(self):
-        # Fix round 8 (claude LOW 1): in a gate run as a script, a
-        # KeyboardInterrupt that is also a SystemExit, at load, from a lookup
-        # the load validates, or in a call, or one that also inherits the
-        # ReleaseDateMalformed class of the gate (which the extractor reaches
-        # as the __main__ module) and whose str exits 0, is not let through:
-        # the gate exits 3 with its report, never the code the SystemExit
-        # carries, an interrupt, or the 0 an unguarded str would give.
-        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
+        # Fix round 8 (claude LOW 1): a KeyboardInterrupt that is also a
+        # SystemExit, at load or in a call, exits 3 with its report, never the
+        # code the SystemExit carries or an interrupt. Row 80: Python 3.14
+        # ends the child for it with SIGINT, as for a KeyboardInterrupt
+        # (observed), so the report names the signal whatever code it carries.
         hybrid = "class H(KeyboardInterrupt, SystemExit):\n    pass\n"
-        mixed = (
-            "import sys as _sys\n"
-            "class H(KeyboardInterrupt, _sys.modules[\"__main__\"].ReleaseDateMalformed):\n"
-            "    def __str__(self):\n        raise SystemExit(0)\n"
-        )
         cases = [
             (f"an interrupt that is also SystemExit({code}) at load", hybrid + f"raise H({code})\n",
-             "could not load skill-release-date.py (the extractor is unavailable): H")
+             "was killed by signal SIGINT in baseline")
             for code in (0, 1, 2, 3)
         ] + [
-            ("an interrupt that is also SystemExit(0) from an API lookup",
-             source + "\n" + hybrid + "del extract\ndef __getattr__(name):\n    raise H(0)\n",
-             "lacks a usable extract "),
             ("an interrupt that is also SystemExit(0) in a call",
-             source + "\n" + hybrid + "def extract(text):\n    raise H(0)\n",
-             "failed unexpectedly in extract: H: 0"),
-            ("an interrupt that also inherits ReleaseDateMalformed in a call",
-             source + "\n" + mixed + "def extract(text):\n    raise H()\n",
-             "failed unexpectedly in extract: H: (its message could not be read)"),
+             extractor_with(hybrid + "def extract(text):\n    raise H(0)\n"), "was killed by signal SIGINT in extract"),
         ]
         for label, body, reason in cases:
             with self.subTest(label):
                 code, err = self.run_with_extractor(body)
                 self.assertEqual(code, 3, err)
-                self.assertIn(reason, err)
+                self.assertIn(f"skill-release-date.py {reason}, so the extractor is unavailable", err)
+                self.assertIn("the gh CLI is not available", err)
 
     def test_system_exit_while_loading_exits_3(self):
-        # Row 58: an extractor that raises SystemExit while it loads, or from
-        # a lookup the load validates, is unavailable (exit 3), whatever code
-        # it raises, never a pass (0) or a drift (1).
-        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
-        lookup = source + "\ndel extract\ndef __getattr__(name):\n    raise SystemExit(0)\n"
+        # Row 58: an extractor that raises SystemExit while it loads is
+        # unavailable (exit 3), whatever code it raises, never a pass (0) or
+        # a drift (1). Row 80: the child ends with that code and prints no
+        # result.
         for label, body, reason in (
-            ("SystemExit(0) at load", "raise SystemExit(0)\n", "could not load skill-release-date.py"),
-            ("SystemExit(1) at load", "raise SystemExit(1)\n", "could not load skill-release-date.py"),
+            ("SystemExit(0) at load", "raise SystemExit(0)\n", "did not print a JSON result"),
+            ("SystemExit(1) at load", "raise SystemExit(1)\n", "exited 1"),
             # Fix round 4 (F2): the codes main absorbs as could not verify.
-            ("SystemExit(2) at load", "raise SystemExit(2)\n", "could not load skill-release-date.py"),
-            ("SystemExit(3) at load", "raise SystemExit(3)\n", "could not load skill-release-date.py"),
-            ("bare SystemExit at load", "raise SystemExit\n", "could not load skill-release-date.py"),
-            ("SystemExit(0) from an API lookup", lookup, "lacks a usable extract "),
+            ("SystemExit(2) at load", "raise SystemExit(2)\n", "exited 2"),
+            ("SystemExit(3) at load", "raise SystemExit(3)\n", "exited 3"),
+            ("bare SystemExit at load", "raise SystemExit\n", "did not print a JSON result"),
         ):
             with self.subTest(label):
                 code, err = self.run_with_extractor(body)
                 self.assertEqual(code, 3, err)
-                self.assertIn(reason, err)
-                self.assertIn("the extractor is unavailable", err)
+                self.assertIn(f"skill-release-date.py {reason} in baseline, so the extractor is unavailable", err)
 
     def test_extractor_code_run_while_reporting_a_load_failure_exits_3(self):
-        # Fix round 4 (F1): the report of a load failure runs no unguarded
-        # extractor code, so an error whose repr, str, or class name exits or
+        # Fix round 4 (F1): an error whose repr, str, or class name exits or
         # raises, a SystemExit whose code does, or an error outside Exception
-        # and SystemExit, still exits 3 with the report, never 0 or 1.
-        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
+        # and SystemExit, still exits 3 with the report, never 0 or 1. Row
+        # 80: that code runs only in the child, while Python reports it.
         hostile_text = "    def __repr__(self):\n        raise SystemExit(0)\n    __str__ = __repr__\n"
-        for label, body, reason in (
-            ("a SystemExit code whose repr exits 0",
-             "class C:\n" + hostile_text + "raise SystemExit(C())\n", "could not load skill-release-date.py"),
-            ("an error whose repr and str exit 0",
-             "class E(Exception):\n" + hostile_text + "raise E()\n", "could not load skill-release-date.py"),
+        exiting_str = (
+            "class S(str):\n    def _exit(self, *args, **kwargs):\n        raise SystemExit(0)\n"
+            "    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit\n"
+            "    __hash__ = str.__hash__\n"
+        )
+        for label, body in (
+            ("a SystemExit code whose repr exits 0", "class C:\n" + hostile_text + "raise SystemExit(C())\n"),
+            ("an error whose repr and str exit 0", "class E(Exception):\n" + hostile_text + "raise E()\n"),
             ("an error whose repr and str raise",
              "class E(Exception):\n    def __repr__(self):\n        raise RuntimeError(\"x\")\n"
-             "    __str__ = __repr__\nraise E()\n", "could not load skill-release-date.py"),
+             "    __str__ = __repr__\nraise E()\n"),
             ("an error whose class name and str exit 0",
              "class M(type):\n    @property\n    def __name__(cls):\n        raise SystemExit(0)\n"
              "class E(Exception, metaclass=M):\n    def __str__(self):\n        raise SystemExit(0)\n"
-             "raise E()\n", "could not load skill-release-date.py"),
-            ("a BaseException subclass at load",
-             "class B(BaseException):\n    pass\nraise B()\n", "could not load skill-release-date.py"),
-            # Fix round 6 (claude MEDIUM 1): a text or class name that is a str
-            # subclass whose methods exit 0 is refused by the exact type check
-            # in _guarded_text, so the load report still exits 3.
+             "raise E()\n"),
+            ("a BaseException subclass at load", "class B(BaseException):\n    pass\nraise B()\n"),
             ("an error whose str is a str subclass whose methods exit 0",
-             "class S(str):\n    def _exit(self, *args, **kwargs):\n        raise SystemExit(0)\n"
-             "    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit\n"
-             "    __hash__ = str.__hash__\n"
-             "class E(Exception):\n    def __str__(self):\n        return S(\"boom\")\nraise E()\n",
-             "could not load skill-release-date.py (the extractor is unavailable): E: (its message could not be read)"),
+             exiting_str + "class E(Exception):\n    def __str__(self):\n        return S(\"boom\")\nraise E()\n"),
             ("an error whose class name is a str subclass whose methods exit 0",
-             "class S(str):\n    def _exit(self, *args, **kwargs):\n        raise SystemExit(0)\n"
-             "    __eq__ = __ne__ = __format__ = __str__ = __repr__ = __bool__ = __len__ = _exit\n"
-             "    __hash__ = str.__hash__\n"
-             "class M(type):\n    @property\n    def __name__(cls):\n        return S(\"E\")\n"
-             "class E(Exception, metaclass=M):\n    pass\nraise E()\n",
-             "could not load skill-release-date.py (the extractor is unavailable): "
-             "an error whose class name could not be read"),
-            ("a BaseException subclass from an API lookup",
-             source + "\nclass B(BaseException):\n    pass\ndel extract\ndef __getattr__(name):\n    raise B()\n",
-             "lacks a usable extract "),
+             exiting_str + "class M(type):\n    @property\n    def __name__(cls):\n        return S(\"E\")\n"
+             "class E(Exception, metaclass=M):\n    pass\nraise E()\n"),
         ):
             with self.subTest(label):
                 code, err = self.run_with_extractor(body)
                 self.assertEqual(code, 3, err)
-                self.assertIn(reason, err)
-                self.assertIn("the extractor is unavailable", err)
+                self.assertIn(" in baseline, so the extractor is unavailable", err)
 
     def test_incomplete_extractor_api_exits_3_naming_the_attribute(self):
-        # R3: the API the gate uses is validated at load time.
-        source = (MODULE_PATH.parent / "skill-release-date.py").read_text(encoding="utf-8")
-        for label, tail, name in (
-            ("missing extract", "del extract\n", "extract"),
-            ("missing Malformed", "del Malformed\n", "Malformed"),
-            ("non-callable extract", "extract = 5\n", "extract"),
-            ("missing requires_release_date", "del requires_release_date\n", "requires_release_date"),
-            ("missing release_day_from_published_at", "del release_day_from_published_at\n",
-             "release_day_from_published_at"),
-            ("Malformed not an exception class", "Malformed = \"x\"\n", "Malformed"),
-            # Fix round 5: a Malformed class with a custom metaclass is refused.
-            # Fix round 10 (DISCOVERY 6 MEDIUM 1): a Malformed class that is
-            # also a SystemExit or a KeyboardInterrupt is refused at load.
-            ("Malformed that is also a SystemExit",
-             "class Malformed(ValueError, SystemExit):\n    pass\n", "Malformed"),
-            ("Malformed that is also a KeyboardInterrupt",
-             "class Malformed(ValueError, KeyboardInterrupt):\n    pass\n", "Malformed"),
-            ("Malformed built on Exception and SystemExit",
-             "class Malformed(Exception, SystemExit):\n    pass\n", "Malformed"),
-            ("Malformed with a custom metaclass",
-             "class _Meta(type):\n    pass\nclass Malformed(ValueError, metaclass=_Meta):\n    pass\n",
-             "Malformed"),
-            ("BASELINE_VERSION not a version", "BASELINE_VERSION = 14\n", "BASELINE_VERSION"),
+        # R3: an incomplete or incompatible extractor exits 3 naming what it
+        # lacks. Row 80: a function that is missing or not callable fails the
+        # child that runs it (exit 6, its NameError or TypeError relayed),
+        # and a baseline that is not a bare version breaks the contract. A
+        # missing release_day_from_published_at is reached only on a
+        # published release (see test_extractor_attribute_gone_at_call_time),
+        # and the Malformed class rows have no subject, since no extractor
+        # class reaches the gate.
+        internal = "failed unexpectedly (internal error)"
+        version = "printed a result that does not match the contract (the value is not a bare X.Y.Z version string)"
+        for label, tail, reason, detail in (
+            ("missing extract", "del extract\n", f"{internal} in extract", "NameError(\"name 'extract' is not defined\")"),
+            ("non-callable extract", "extract = 5\n", f"{internal} in extract", "TypeError(\"'int' object is not callable\")"),
+            ("missing requires_release_date", "del requires_release_date\n", f"{internal} in requires_release_date",
+             "NameError(\"name 'requires_release_date' is not defined\")"),
+            ("BASELINE_VERSION not a version", "BASELINE_VERSION = 14\n", f"{version} in baseline", None),
             # Fix round 8 (operator sweep): an exact str that is not a bare
             # version is refused by the gate itself, even beside a baseline
             # rule that would not reject it.
             ("BASELINE_VERSION an exact str that is not a bare version",
              "BASELINE_VERSION = \"1.0\"\ndef requires_release_date(version):\n    return True\n",
-             "BASELINE_VERSION"),
+             f"{version} in baseline", None),
         ):
             with self.subTest(label):
-                code, err = self.run_with_extractor(source + "\n" + tail)
+                code, err = self.run_with_extractor(extractor_with(tail))
                 self.assertEqual(code, 3, err)
-                self.assertIn(f"lacks a usable {name} ", err)
+                self.assertIn(f"skill-release-date.py {reason}, so the extractor is unavailable", err)
+                if detail is not None:
+                    self.assertIn(detail, err)
                 self.assertNotIn("does not exist", err)
 
+    # --- Row 80: what extractor code does to its own process ends only the child
 
-class ExtractorApiTest(unittest.TestCase):
-    """R3: the class of every reference to an attribute of the loaded
-    extractor module. The gate names none directly; it passes declared names
-    to release_date_call and release_date_attr, the only lookup is the one in
-    release_date_attr, and every declared name is usable in the real
-    extractor."""
+    def test_extractor_that_signals_its_own_process_exits_3(self):
+        # Without the child the gate itself would end by that signal.
+        for name in ("SIGKILL", "SIGSEGV"):
+            with self.subTest(name):
+                code, err = self.run_with_extractor(extractor_with(
+                    f"def extract(text):\n    import os, signal\n    os.kill(os.getpid(), signal.{name})\n"
+                ))
+                self.assertEqual(code, 3, err)
+                self.assertIn(f"skill-release-date.py was killed by signal {name} in extract, "
+                              f"so the extractor is unavailable", err)
+                self.assertIn("the gh CLI is not available", err)
+
+    def test_extractor_that_never_returns_exits_3(self):
+        # The wrapper sets a 1 second child timeout; without the child the
+        # gate hangs and the outer timeout fails the test. Fix round 7: the
+        # timeout starts only once the probe has ended and the extract child
+        # is ready, so a busy host cannot make it fire in the probe.
+        code, err, ready = self.run_with_extractor(
+            extractor_with("def extract(text):\n    import time\n" + SAY_READY + "    time.sleep(300)\n"),
+            wrapper=READY_TIMEOUT_WRAPPER, inspect=lambda tools: (tools / "ready").exists(),
+        )
+        self.assertTrue(ready, "the extract child did not get ready")
+        self.assertEqual(code, 3, err)
+        self.assertIn("skill-release-date.py was not seen to end within 1 seconds in extract, "
+                      "so the extractor is unavailable", err)
+        self.assertIn("the gh CLI is not available", err)
+
+    def test_a_hung_extractor_and_what_it_forked_are_killed(self):
+        # A process the hung child started in its group is killed with it:
+        # once the gate has exited it is gone, or a zombie where no process
+        # reaps it, never still running.
+        # Fix round 7: the child writes the pid file whole (a rename) and
+        # then says it is ready, and the 1 second timeout starts only then
+        # (READY_TIMEOUT_WRAPPER), so on a busy host the kill can never come
+        # before the pid file exists.
+        body = extractor_with(
+            "def extract(text):\n"
+            "    import os, subprocess, time\n"
+            "    here = Path(__file__).resolve().parent\n"
+            "    grandchild = subprocess.Popen([sys.executable, \"-I\", \"-c\", \"import time; time.sleep(300)\"])\n"
+            "    with open(here / \"grandchild.pid.part\", \"w\", encoding=\"utf-8\") as handle:\n"
+            "        handle.write(str(grandchild.pid))\n"
+            "    os.replace(here / \"grandchild.pid.part\", here / \"grandchild.pid\")\n"
+            + SAY_READY +
+            "    time.sleep(300)\n"
+        )
+
+        def grandchild_state(tools):
+            if not (tools / "ready").exists():
+                raise AssertionError("the extract child did not get ready")
+            pid = int((tools / "grandchild.pid").read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 10
+            state = process_state(pid)
+            while state not in (None, "Z") and time.monotonic() < deadline:
+                time.sleep(0.1)
+                state = process_state(pid)
+            return pid, state
+
+        code, err, (pid, state) = self.run_with_extractor(body, wrapper=READY_TIMEOUT_WRAPPER, inspect=grandchild_state)
+        try:
+            self.assertEqual(code, 3, err)
+            self.assertIn("skill-release-date.py was not seen to end within 1 seconds in extract", err)
+            self.assertIn(state, (None, "Z"), f"the grandchild {pid} is still {state}")
+        finally:
+            if state not in (None, "Z"):
+                with contextlib.suppress(OSError):
+                    if b"time.sleep(300)" in Path(f"/proc/{pid}/cmdline").read_bytes():
+                        os.kill(pid, signal.SIGKILL)
+
+    def test_extractor_that_calls_os_exit_exits_3(self):
+        # Without the child the gate would end with the code os._exit names.
+        exiting = "def extract(text):\n    import os\n"
+        for label, body, reason in (
+            ("os._exit(0) before any output", extractor_with(exiting + "    os._exit(0)\n"),
+             "did not print a JSON result in extract"),
+            ("os._exit(0) after half a JSON object",
+             extractor_with(exiting + "    sys.stdout.write('{\"op\": \"ext')\n    sys.stdout.flush()\n    os._exit(0)\n"),
+             "did not print a JSON result in extract"),
+            ("os._exit(0) at load", extractor_with("import os\nos._exit(0)\n"), "did not print a JSON result in baseline"),
+            ("os._exit(1)", extractor_with(exiting + "    os._exit(1)\n"), "exited 1 in extract"),
+            ("os._exit(3)", extractor_with(exiting + "    os._exit(3)\n"), "exited 3 in extract"),
+        ):
+            with self.subTest(label):
+                code, err = self.run_with_extractor(body)
+                self.assertEqual(code, 3, err)
+                self.assertIn(f"skill-release-date.py {reason}, so the extractor is unavailable", err)
+                self.assertIn("the gh CLI is not available", err)
+
+    def test_extractor_output_that_is_not_one_json_object_exits_3(self):
+        valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}'
+        no_result = "did not print a JSON result"
+        for label, output, reason in (
+            ("a bare day", b"2026-11-15\n", no_result),
+            ("an object then text", valid + b"\njunk\n", no_result),
+            ("two objects", valid + b"\n" + valid + b"\n", no_result),
+            ("a byte that is not ASCII", valid[:-1] + b', "x": "\xc3\xa9"}\n', no_result),
+            ("nothing at all", b"", no_result),
+            ("nesting too deep to parse", b"[" * 60000, no_result),
+            ("a top-level list", b"[" + valid + b"]\n",
+             "printed a result that does not match the contract (not a JSON object)"),
+        ):
+            with self.subTest(label):
+                code, err = self.run_with_extractor(forging({"*": output}))
+                self.assertEqual(code, 3, err)
+                self.assertIn(f"skill-release-date.py {reason} in baseline, so the extractor is unavailable", err)
+                self.assertIn("the gh CLI is not available", err)
+
+    def test_hostile_exception_in_the_child_exits_3(self):
+        # Extractor code that runs while the child reports its own error, or
+        # an interrupt it raises, ends only the child.
+        hostile = "class _Hostile(Exception):\n    def __repr__(self):\n        {action}\n    __str__ = __repr__\n"
+        for label, extra, reason in (
+            ("an error whose repr and str raise SystemExit(0)",
+             hostile.format(action="raise SystemExit(0)") + "def extract(text):\n    raise _Hostile()\n",
+             "did not print a JSON result"),
+            ("an error whose repr and str call os._exit(0)",
+             hostile.format(action="import os; os._exit(0)") + "def extract(text):\n    raise _Hostile()\n",
+             "did not print a JSON result"),
+            ("a KeyboardInterrupt", "def extract(text):\n    raise KeyboardInterrupt()\n",
+             "was killed by signal SIGINT"),
+            ("a KeyboardInterrupt that is also a SystemExit",
+             "class _H(KeyboardInterrupt, SystemExit):\n    pass\ndef extract(text):\n    raise _H()\n",
+             "was killed by signal SIGINT"),
+        ):
+            with self.subTest(label):
+                code, err = self.run_with_extractor(extractor_with(extra))
+                self.assertEqual(code, 3, err)
+                self.assertIn(f"skill-release-date.py {reason} in extract, so the extractor is unavailable", err)
+                self.assertIn("the gh CLI is not available", err)
+
+    # --- Fix round 6 (DISCOVERY round 5, finding 3): SIGCHLD ----------------
+
+    def test_an_ignored_sigchld_inherited_by_the_gate_keeps_the_verdict(self):
+        # A caller that ignores SIGCHLD passes that disposition across exec,
+        # which makes the kernel reap each child as it ends, so the gate
+        # could never see an extractor child end and would exit 3 on every
+        # run. The gate resets SIGCHLD to its default before any child, so
+        # its verdict, here 2 with gh absent, is the same as with the
+        # default disposition.
+        launch = (
+            "import os, signal, sys\n"
+            "signal.signal(signal.SIGCHLD, signal.{})\n"
+            "os.execv(sys.executable, [sys.executable, \"-I\", sys.argv[1]])\n"
+        )
+        body = EXTRACTOR_PATH.read_text(encoding="utf-8")
+        for disposition in ("SIG_DFL", "SIG_IGN"):
+            with self.subTest(disposition):
+                code, err = self.run_with_extractor(body, wrapper=launch.format(disposition))
+                self.assertEqual(code, 2, err)
+                self.assertEqual(err.splitlines(), ["check-release-checksum-live: could not verify: the gh CLI is not available"])
+
+    def test_a_sigchld_that_cannot_be_reset_exits_3_before_any_child(self):
+        # The reset is refused in a thread other than the main thread
+        # (ValueError); the gate then exits 3 naming it and starts no child.
+        wrapper = (
+            "import importlib.util, sys, threading\n"
+            "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+            "gate = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(gate)\n"
+            "codes = []\n"
+            "def run():\n"
+            "    try:\n"
+            "        codes.append(gate.main())\n"
+            "    except SystemExit as stop:\n"
+            "        codes.append(stop.code)\n"
+            "thread = threading.Thread(target=run)\n"
+            "thread.start()\n"
+            "thread.join()\n"
+            "sys.exit(codes[0] if codes else 70)\n"
+        )
+        code, err, started = self.run_with_extractor(
+            logging_extractor(fail_first=False), wrapper=wrapper, inspect=lambda tools: (tools / "runs.log").exists(),
+        )
+        self.assertEqual(code, 3, err)
+        lines = err.splitlines()
+        self.assertEqual(len(lines), 1, err)
+        self.assertTrue(lines[0].startswith(
+            "check-release-checksum-live: could not reset SIGCHLD to its default disposition (ValueError: "
+        ), err)
+        self.assertTrue(lines[0].endswith("), so the end of a child could be lost"), err)
+        self.assertFalse(started, "a child was started")
+
+    # --- Row 80: the accepted same-uid residual, observed ---------------------
+
+    def test_extractor_that_interrupts_the_gate_ends_the_gate_by_sigint(self):
+        # Fix round 3 (DISCOVERY 2, finding 1): the child runs with the uid
+        # of the gate, so extractor code can signal the gate. An interrupt
+        # it sends to its parent, the gate, while the gate waits ends the
+        # gate by SIGINT, with no report and none of its exit codes, after
+        # the gate has killed the child. The probe sleeps first, so the gate
+        # is already waiting. Fix round 4 (DISCOVERY 3, finding 5): the probe
+        # signals its parent only when one argument of that parent resolves
+        # to the gate copy that run_with_extractor started, and otherwise
+        # loads as the real extractor, so on a gate that runs extractor code
+        # in its own process, whose parent is this test runner, the test
+        # fails instead of interrupting the runner. A stop (SIGSTOP) is the
+        # same residual and is not run here, as it would halt the gate.
+        body = extractor_with(
+            "import os, signal, time\n"
+            "with open(Path(__file__).resolve().parent / \"child.pid\", \"w\", encoding=\"utf-8\") as handle:\n"
+            "    handle.write(str(os.getpid()))\n"
+            "time.sleep(0.5)\n"
+            "_parent = os.getppid()\n"
+            f"_gate_copy = os.path.realpath(Path(__file__).resolve().parent / {MODULE_PATH.name!r})\n"
+            "try:\n"
+            "    with open(f\"/proc/{_parent}/cmdline\", \"rb\") as handle:\n"
+            "        _arguments = [argument for argument in handle.read().split(b\"\\0\") if argument]\n"
+            "except OSError:\n"
+            "    _arguments = []\n"
+            "if any(os.path.realpath(os.fsdecode(argument)) == _gate_copy for argument in _arguments):\n"
+            "    os.kill(_parent, signal.SIGINT)\n"
+            "    time.sleep(300)\n"
+        )
+
+        def child_state(tools):
+            pid = int((tools / "child.pid").read_text(encoding="utf-8"))
+            deadline = time.monotonic() + 10
+            state = process_state(pid)
+            while state not in (None, "Z") and time.monotonic() < deadline:
+                time.sleep(0.1)
+                state = process_state(pid)
+            return pid, state
+
+        code, err, (pid, state) = self.run_with_extractor(body, inspect=child_state)
+        try:
+            self.assertEqual(code, -signal.SIGINT, err)
+            self.assertIn("KeyboardInterrupt", err)
+            self.assertNotIn("so the extractor is unavailable", err)
+            self.assertNotIn("the gh CLI is not available", err)
+            self.assertIn(state, (None, "Z"), f"the child {pid} is still {state}")
+        finally:
+            if state not in (None, "Z"):
+                with contextlib.suppress(OSError):
+                    if b"skill-release-date.py" in Path(f"/proc/{pid}/cmdline").read_bytes():
+                        os.kill(pid, signal.SIGKILL)
+
+    def test_the_gate_keeps_its_temporary_files_in_the_test_directory(self):
+        # Fix round 1 addition: a gate run in this suite is given a TMPDIR
+        # inside the test's own temporary directory, so no temporary file
+        # of the gate, and so none its child writes to, goes to bare /tmp.
+        # An audit hook records where each temporary file is made.
+        wrapper = (
+            "import importlib.util, json, os, sys\n"
+            "made = []\n"
+            "def hook(event, args):\n"
+            "    if event in (\"tempfile.mkstemp\", \"tempfile.mkdtemp\"):\n"
+            "        made.append(os.fsdecode(args[0]))\n"
+            "    elif event == \"open\" and hasattr(os, \"O_TMPFILE\") and type(args[2]) is int \\\n"
+            "            and args[2] & os.O_TMPFILE == os.O_TMPFILE:\n"
+            "        made.append(os.fsdecode(args[0]))\n"
+            "sys.addaudithook(hook)\n"
+            "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+            "gate = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(gate)\n"
+            "try:\n"
+            "    code = gate.main()\n"
+            "except SystemExit as stop:\n"
+            "    code = stop.code\n"
+            "with open(os.path.join(os.path.dirname(sys.argv[1]), \"temporary-paths.json\"), \"w\") as handle:\n"
+            "    json.dump(made, handle)\n"
+            "sys.exit(code)\n"
+        )
+
+        def outside(tools):
+            root = tools.parent.resolve()
+            made = json.loads((tools / "temporary-paths.json").read_text(encoding="utf-8"))
+            return made, [path for path in made if not Path(path).resolve().is_relative_to(root)]
+
+        code, err, (made, stray) = self.run_with_extractor(
+            EXTRACTOR_PATH.read_text(encoding="utf-8"), wrapper=wrapper, inspect=outside,
+        )
+        # With gh absent the release status cannot be read (2); the
+        # Released line is then checked offline.
+        self.assertEqual(code, 2, err)
+        # The probe and the offline extract each make three temporary files.
+        self.assertGreaterEqual(len(made), 6, made)
+        self.assertEqual(stray, [], f"temporary files made outside the test directory: {stray}")
+
+    def test_too_few_file_descriptors_exits_3_with_no_traceback(self):
+        # Fix round 1 (finding 1): with the open-file limit so low that the
+        # temporary files of a child cannot all be created, the probe exits
+        # 3 naming the error, and the gate exits 3, never a traceback (exit 1).
+        wrapper = (
+            "import importlib.util, os, resource, sys\n"
+            "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+            "gate = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(gate)\n"
+            "highest = max(int(name) for name in os.listdir(\"/proc/self/fd\"))\n"
+            "resource.setrlimit(resource.RLIMIT_NOFILE, (highest + 1, resource.getrlimit(resource.RLIMIT_NOFILE)[1]))\n"
+            "sys.exit(gate.main())\n"
+        )
+        code, err = self.run_with_extractor(EXTRACTOR_PATH.read_text(encoding="utf-8"), wrapper=wrapper)
+        self.assertEqual(code, 3, err)
+        self.assertIn("skill-release-date.py could not be run, waited for, or read (OSError: [Errno 24] "
+                      "Too many open files", err)
+        self.assertIn(" in baseline, so the extractor is unavailable", err)
+        self.assertNotIn("Traceback", err)
+
+
+class ControlConstantTest(unittest.TestCase):
+    """Fix round 10 (mutation sweep): every control constant of the gate,
+    each bound, timeout, exit code, and table of the extractor contract,
+    is pinned at its shipped value, as a test that shortens or widens one
+    for its own purpose cannot show that the shipped value is the one
+    stated."""
+
+    def test_the_child_bounds_keep_their_shipped_values(self):
+        self.assertEqual(gate.CHILD_TIMEOUT_SECONDS, 20)
+        self.assertEqual(gate.REAP_GRACE_SECONDS, 5)
+        self.assertEqual(gate.RESULT_LIMIT, 65536)
+        self.assertEqual(gate.ECHO_BYTES_PER_CHARACTER, 12)
+        self.assertEqual(gate.STDERR_LIMIT, 4096)
+        self.assertEqual(gate.EXTRACTOR_INTERNAL_ERROR, 6)
+
+    def test_the_contract_tables_keep_their_shipped_values(self):
+        self.assertEqual(gate.REPLY_KEYS, {
+            "value": frozenset({"op", "outcome", "value"}),
+            "absent": frozenset({"op", "outcome"}),
+            "malformed": frozenset({"op", "outcome", "message"}),
+        })
+        self.assertEqual(gate.RELEASE_DATE_CONTRACT, {
+            "extract": (gate._is_day, "a YYYY-MM-DD string", ("value", "absent", "malformed")),
+            "requires_release_date": (gate._is_flag, "a JSON true or false", ("value", "malformed")),
+            "release_day_from_published_at": (gate._is_day, "a YYYY-MM-DD string", ("value", "malformed")),
+            "baseline": (gate._is_version, "a bare X.Y.Z version string", ("value",)),
+        })
+
+
+class ContractRoutingTest(unittest.TestCase):
+    """Row 80 (replaces the R3 attribute routing): every op the gate names is
+    in the contract, every op of the contract is used, and the only calls
+    inside a function of the gate that start a process through an attribute
+    of subprocess or os are in gh and in run_release_date_child. A start at
+    module level, or through another name, an alias, or another module, is
+    not detected."""
 
     def setUp(self):
         self.tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
 
-    def test_no_direct_attribute_of_the_loaded_module(self):
-        direct = [
-            node.lineno for node in ast.walk(self.tree)
-            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "RELEASE_DATE"
-        ]
-        self.assertEqual(direct, [])
-
-    def test_every_routed_name_is_declared(self):
-        declared = {name for name, _kind in gate.RELEASE_DATE_API}
+    def test_every_routed_op_is_in_the_contract(self):
         routed, dynamic = [], []
         for node in ast.walk(self.tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in (
-                "release_date_call", "release_date_attr"
+                "release_date_call", "run_release_date_child"
             ):
                 first = node.args[0]
                 if isinstance(first, ast.Constant) and isinstance(first.value, str):
                     routed.append(first.value)
                 else:
                     dynamic.append(ast.unparse(first))
-        self.assertTrue(routed)
-        self.assertLessEqual(set(routed), declared)
-        # The only non-literal name is the wrapper passing its own parameter on.
+        self.assertEqual(sorted(set(routed)), sorted(gate.RELEASE_DATE_CONTRACT))
+        # The only non-literal op is release_date_call passing its own
+        # parameter on.
         self.assertEqual(dynamic, ["name"])
 
-    def test_the_only_lookup_on_the_module_is_in_release_date_attr(self):
-        lookups = []
+    def test_processes_start_only_in_gh_and_the_child_runner(self):
+        starters = {"Popen", "run", "call", "check_call", "check_output", "getoutput", "getstatusoutput",
+                    "system", "popen", "fork", "forkpty", "startfile"}
+        starts = []
         for func in ast.walk(self.tree):
             if isinstance(func, ast.FunctionDef):
                 for node in ast.walk(func):
-                    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                            and node.func.id in ("getattr", "hasattr", "setattr", "delattr")
-                            and node.args and isinstance(node.args[0], ast.Name)
-                            and node.args[0].id == "RELEASE_DATE"):
-                        lookups.append(func.name)
-        self.assertEqual(lookups, ["release_date_attr"])
-
-    def test_every_declared_name_is_usable_in_the_real_extractor(self):
-        for name, kind in gate.RELEASE_DATE_API:
-            with self.subTest(name):
-                self.assertTrue(gate._api_kind_ok(getattr(gate.RELEASE_DATE, name), kind))
+                    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                            and isinstance(node.func.value, ast.Name)
+                            and node.func.value.id in ("subprocess", "os")
+                            and (node.func.attr in starters
+                                 or node.func.attr.startswith(("exec", "spawn", "posix_spawn")))):
+                        starts.append((func.name, node.func.value.id, node.func.attr))
+        self.assertEqual(sorted(starts), [("gh", "subprocess", "run"), ("run_release_date_child", "subprocess", "Popen")])
 
 
 if __name__ == "__main__":
