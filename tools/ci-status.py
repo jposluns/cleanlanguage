@@ -68,8 +68,10 @@ run from any other app never satisfies it. If Cloudflare renames or re-registers
 that app, a passing run of it no longer counts, so the reading cannot turn green
 until the pin is updated: a passing reading reads pending, and a red reading still
 reads red. An app id that is neither an integer nor null makes the reading
-unreadable; an absent or null app id matches no pinned app. A passing reading
-missing any of the 4 means that check has not registered (a malformed branch, a head
+unreadable. Only the Cloudflare build is pinned by app id, and an absent or null
+app id never matches that pinned id. The 3 Actions jobs are matched by app slug
+and display name alone; their app id is not compared. A passing reading missing
+any of the 4 means that check has not registered (a malformed branch, a head
 whose commit message carries a skip marker, or the external check still building);
 such a reading is downgraded from pass to pending, never to a red. A commit that
 legitimately ran none of them is a safe false-red, never a false-green. Residual: a
@@ -477,7 +479,9 @@ def read_checks(repo: str, full_sha: str, deadline: float):
                 slug = app_id = None
             elif isinstance(app, dict):
                 slug = app.get("slug")
-                # An absent or null app id is tolerated and matches no pinned app.
+                # An absent or null app id is tolerated. Only the Cloudflare Pages
+                # check is pinned by app id, and an absent or null id never matches
+                # that pinned id; the 3 Actions checks are matched by slug and name.
                 app_id = app.get("id")
                 if app_id is not None and (not isinstance(app_id, int) or isinstance(app_id, bool)):
                     raise Unreadable("check run app.id is not an integer")
