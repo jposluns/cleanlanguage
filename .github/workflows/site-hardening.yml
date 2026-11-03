@@ -35,16 +35,16 @@ jobs:
 
       - name: Run the headers gate tests
         shell: bash
-        run: python3 tools/test-headers.py
+        run: python3 -I tools/test-headers.py
 
       - name: Check the security headers in site/_headers
         shell: bash
-        run: python3 tools/check-headers.py
+        run: python3 -I tools/check-headers.py
 
       - name: Run the security.txt gate tests
         shell: bash
-        run: python3 tools/test-security-txt.py
+        run: python3 -I tools/test-security-txt.py
 
       - name: Check site/.well-known/security.txt
         shell: bash
-        run: python3 tools/check-security-txt.py
+        run: python3 -I tools/check-security-txt.py

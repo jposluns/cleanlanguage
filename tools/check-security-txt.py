@@ -8,8 +8,15 @@ fields and values; this gate holds the file to that decision.
 What it verifies
 ----------------
 
-1. The file reads as UTF-8, and every line is blank, a ``#`` comment, or a
-   ``Field: value`` line. Anything else fails closed (exit 3).
+1. The file reads as UTF-8 with no byte order mark, and its lines break only
+   at a line feed; one carriage return before a line feed is ignored. A line
+   that holds any other control character (a tab or a lone carriage return
+   included), a Unicode line or paragraph separator, a byte order mark, or any
+   whitespace other than the ASCII space (U+0020) fails closed (exit 3), naming
+   the line. Every line is empty, a ``#`` comment, or a ``Field: value`` line
+   with at most one space after the colon, as RFC 9116 shows it. A line that
+   starts or ends with a space, a line with more than one space after the
+   colon, and any other line fail closed (exit 3).
 2. Each of these fields appears exactly once, with exactly this value:
 
    - ``Contact: mailto:jeff@posluns.ca``
@@ -24,7 +31,8 @@ What it verifies
    clock, so the gate fails once the file has expired and must be renewed.
 
 Field names compare without regard to case, as RFC 9116 defines them. A value
-compares exactly, after the surrounding spaces are removed.
+is everything after the colon and its optional single space, and compares
+exactly; no character is removed from it.
 
 What it does not verify
 -----------------------
@@ -43,6 +51,7 @@ from __future__ import annotations
 
 import re
 import sys
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -58,7 +67,7 @@ DECIDED = {
     "Canonical": "https://cleanlanguage.ai/.well-known/security.txt",
 }
 
-FIELD_LINE = re.compile(r"^([A-Za-z0-9-]+):(.*)$")
+FIELD_LINE = re.compile(r"^([A-Za-z0-9-]+): ?(.*)$")
 
 
 def die(message: str) -> None:
@@ -66,16 +75,56 @@ def die(message: str) -> None:
     raise SystemExit(3)
 
 
+def split_lines(text: str) -> list[tuple[int, str]]:
+    """Split at line feeds only and return (line number, line) pairs.
+
+    One carriage return before a line feed is removed. Any other control
+    character, a Unicode line or paragraph separator, a byte order mark, or any
+    whitespace other than the ASCII space fails closed, naming the line.
+    """
+    lines: list[tuple[int, str]] = []
+    for number, raw in enumerate(text.split("\n"), start=1):
+        if raw.endswith("\r"):
+            raw = raw[:-1]
+        for char in raw:
+            code = f"U+{ord(char):04X}"
+            if unicodedata.category(char) == "Cc":
+                die(f"site/.well-known/security.txt line {number}: holds the control character "
+                    f"{code}; a line may end only in a line feed, with at most one carriage "
+                    "return before it")
+            if char in ("\u2028", "\u2029"):
+                die(f"site/.well-known/security.txt line {number}: holds the Unicode line or "
+                    f"paragraph separator {code}; lines break only at a line feed")
+            if char == "\ufeff":
+                die(f"site/.well-known/security.txt line {number}: holds a byte order mark "
+                    f"({code}); save the file as UTF-8 without one")
+            if char.isspace() and char != " ":
+                die(f"site/.well-known/security.txt line {number}: holds the whitespace "
+                    f"character {code}; only the ASCII space (U+0020) may appear")
+        lines.append((number, raw))
+    return lines
+
+
 def parse(text: str) -> list[tuple[int, str, str]]:
     fields: list[tuple[int, str, str]] = []
-    for number, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
+    for number, line in split_lines(text):
+        if not line:
+            continue
+        if line.startswith(" "):
+            die(f"site/.well-known/security.txt line {number}: starts with a space; a field "
+                "or comment starts in the first column")
+        if line.endswith(" "):
+            die(f"site/.well-known/security.txt line {number}: ends in a space; nothing may "
+                "follow the value but the line end")
+        if line.startswith("#"):
             continue
         match = FIELD_LINE.match(line)
         if not match:
             die(f"site/.well-known/security.txt line {number}: not a 'Field: value' line: {line!r}")
-        fields.append((number, match.group(1), match.group(2).strip()))
+        if match.group(2).startswith(" "):
+            die(f"site/.well-known/security.txt line {number}: more than one space after the "
+                "colon; RFC 9116 shows at most one")
+        fields.append((number, match.group(1), match.group(2)))
     return fields
 
 
@@ -105,7 +154,7 @@ def check(fields: list[tuple[int, str, str]], now: datetime) -> list[str]:
 
 def main(now: datetime | None = None) -> int:
     try:
-        text = SECURITY_TXT.read_text(encoding="utf-8", errors="strict")
+        text = SECURITY_TXT.read_bytes().decode("utf-8", errors="strict")
     except (OSError, UnicodeError) as error:
         die(f"site/.well-known/security.txt could not be read: {error}")
     if now is None:

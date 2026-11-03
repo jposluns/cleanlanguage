@@ -12,8 +12,17 @@ responses that both rules match twice over, as a single joined value.
 What it verifies
 ----------------
 
-1. Every header line sits under a URL pattern and has the form ``Name: value``
-   or ``! Name``. Anything else is a malformed line and fails closed (exit 3).
+1. The file reads as UTF-8 with no byte order mark, and its lines break only
+   at a line feed; one carriage return before a line feed is ignored. A line
+   that holds any other control character (a tab or a lone carriage return
+   included), a Unicode line or paragraph separator, a byte order mark, or any
+   whitespace other than the ASCII space (U+0020) fails closed (exit 3), naming
+   the line. A URL pattern starts in the first column. A header line is
+   indented by one or more ASCII spaces, sits under a URL pattern and has the
+   form ``Name: value`` or ``! Name``, where the name is an HTTP token (RFC 9110
+   ``tchar`` characters only) and only ASCII spaces may follow the colon. An
+   indented line that looks like a URL or a path, a line that ends in a space,
+   a line that holds only spaces, and any other line fail closed (exit 3).
 2. The ``/*`` rule sets each of these headers exactly once, with exactly this
    value:
 
@@ -32,7 +41,8 @@ What it verifies
    zone sends HSTS, so a line here would duplicate or remove them.
 
 Header names compare without regard to case, as HTTP defines them. A value
-compares exactly, after the surrounding spaces are removed.
+compares exactly, after the ASCII spaces between the colon and the value are
+removed; no other character is removed.
 
 What it does not verify
 -----------------------
@@ -55,6 +65,7 @@ from __future__ import annotations
 
 import re
 import sys
+import unicodedata
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -73,13 +84,44 @@ DECIDED = {
 ONCE_ANY_VALUE = ("Content-Security-Policy",)
 FORBIDDEN = ("X-Content-Type-Options", "Referrer-Policy", "Strict-Transport-Security")
 
-HEADER_LINE = re.compile(r"^([!-9;-~]+):(.*)$")
-DETACH_LINE = re.compile(r"^!\s*([!-9;-~]+)\s*$")
+TOKEN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+HEADER_LINE = re.compile(rf"^({TOKEN}): *(.*)$")
+DETACH_LINE = re.compile(rf"^! *({TOKEN})$")
+URL_OR_PATH = re.compile(r"^(?:/|[A-Za-z][A-Za-z0-9+.-]*://)")
 
 
 def die(message: str) -> None:
     print(f"check-headers: {message}", file=sys.stderr)
     raise SystemExit(3)
+
+
+def split_lines(text: str) -> list[tuple[int, str]]:
+    """Split at line feeds only and return (line number, line) pairs.
+
+    One carriage return before a line feed is removed. Any other control
+    character, a Unicode line or paragraph separator, a byte order mark, or any
+    whitespace other than the ASCII space fails closed, naming the line.
+    """
+    lines: list[tuple[int, str]] = []
+    for number, raw in enumerate(text.split("\n"), start=1):
+        if raw.endswith("\r"):
+            raw = raw[:-1]
+        for char in raw:
+            code = f"U+{ord(char):04X}"
+            if unicodedata.category(char) == "Cc":
+                die(f"site/_headers line {number}: holds the control character {code}; "
+                    "a line may end only in a line feed, with at most one carriage return before it")
+            if char in ("\u2028", "\u2029"):
+                die(f"site/_headers line {number}: holds the Unicode line or paragraph separator "
+                    f"{code}; lines break only at a line feed")
+            if char == "\ufeff":
+                die(f"site/_headers line {number}: holds a byte order mark ({code}); "
+                    "save the file as UTF-8 without one")
+            if char.isspace() and char != " ":
+                die(f"site/_headers line {number}: holds the whitespace character {code}; "
+                    "only the ASCII space (U+0020) may appear")
+        lines.append((number, raw))
+    return lines
 
 
 def parse(text: str) -> list[tuple[int, str, str, str, str | None]]:
@@ -89,22 +131,31 @@ def parse(text: str) -> list[tuple[int, str, str, str, str | None]]:
     """
     entries: list[tuple[int, str, str, str, str | None]] = []
     pattern: str | None = None
-    for number, raw in enumerate(text.splitlines(), start=1):
-        if not raw.strip() or raw.lstrip().startswith("#"):
+    for number, raw in split_lines(text):
+        if not raw:
             continue
-        if not raw[0].isspace():
-            pattern = raw.strip()
+        if raw.endswith(" "):
+            die(f"site/_headers line {number}: ends in a space; no line may carry trailing "
+                "whitespace or hold only spaces")
+        content = raw.lstrip(" ")
+        if content.startswith("#"):
             continue
-        line = raw.strip()
+        if raw[0] != " ":
+            pattern = raw
+            continue
+        line = content
         if pattern is None:
             die(f"site/_headers line {number}: a header line comes before any URL pattern")
+        if URL_OR_PATH.match(line):
+            die(f"site/_headers line {number}: an indented line looks like a URL or a path: "
+                f"{line!r}; a URL pattern starts in the first column")
         detach = DETACH_LINE.match(line)
         if detach:
             entries.append((number, pattern, "detach", detach.group(1), None))
             continue
         header = HEADER_LINE.match(line)
         if header:
-            entries.append((number, pattern, "set", header.group(1), header.group(2).strip()))
+            entries.append((number, pattern, "set", header.group(1), header.group(2)))
             continue
         die(f"site/_headers line {number}: not a 'Name: value' or '! Name' line: {line!r}")
     return entries
@@ -143,7 +194,7 @@ def check(entries: list[tuple[int, str, str, str, str | None]]) -> list[str]:
 
 def main() -> int:
     try:
-        text = HEADERS.read_text(encoding="utf-8", errors="strict")
+        text = HEADERS.read_bytes().decode("utf-8", errors="strict")
     except (OSError, UnicodeError) as error:
         die(f"site/_headers could not be read: {error}")
     problems = check(parse(text))

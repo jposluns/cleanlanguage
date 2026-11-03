@@ -40,7 +40,8 @@ Add `cleanlanguage.ai` as the custom domain after the first deployment.
 - `.well-known/security.txt`: the security contact file (RFC 9116), checked by
   [`tools/check-security-txt.py`](../tools/check-security-txt.py)
 - `sitemap.xml`: search-engine sitemap, generated from the pages by [`tools/generate-sitemap.py`](../tools/generate-sitemap.py) and verified byte for byte by a gate
-- `_headers`: Cloudflare Pages security and caching headers
+- `_headers`: Cloudflare Pages security and caching headers, checked by
+  [`tools/check-headers.py`](../tools/check-headers.py)
 - `_redirects`: download shortcuts to the latest release assets
 
 The website is framework-free static HTML and CSS. It requires no build process.
