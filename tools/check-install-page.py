@@ -80,8 +80,12 @@ that context, so they are not in ``HIDING_CLASSES`` and the gate passes an
 element that carries one of them there. ``tools/test-install-page.py`` fails
 when fonts.css, palettes.css or baseline.css hides a bare single class (a
 selector such as ``.only-dark``) that is not in ``HIDING_CLASSES`` or its
-exempt list; it reads no compound, descendant or attribute selector, and it
-does not treat ``opacity`` as hiding. It does not check the wording
+exempt list. It counts a rule as hiding only when the rule sets
+``display: none``, ``visibility: hidden`` or ``collapse``, ``clip: rect(``,
+or ``absolute`` or ``fixed`` positioning with a negative ``top`` or ``left``.
+It reads no other property, so a class hidden by ``clip-path``, by
+``height: 0`` with ``overflow: hidden``, or by ``opacity`` passes it, and it
+reads no compound, descendant or attribute selector. It does not check the wording
 of the setup steps, only that they are present. Those are visible regressions
 a browser check, a reviewer, or the tri-family QA catches. An exotic heading
 character may still slip through the visible-text check. The inline-code
