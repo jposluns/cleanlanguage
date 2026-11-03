@@ -54,12 +54,12 @@ jobs:
 
       - name: Run the shared web-metadata tests
         shell: bash
-        run: python3 tools/test-web-metadata.py
+        run: python3 -I tools/test-web-metadata.py
 
       - name: Run the page metadata gate tests
         shell: bash
-        run: python3 tools/test-page-metadata.py
+        run: python3 -I tools/test-page-metadata.py
 
       - name: Check page author and date metadata
         shell: bash
-        run: python3 tools/check-page-metadata.py
+        run: python3 -I tools/check-page-metadata.py

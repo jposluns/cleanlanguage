@@ -30,12 +30,12 @@ jobs:
 
       - name: Verify the sitemap matches the pages
         shell: bash
-        run: python3 tools/generate-sitemap.py
+        run: python3 -I tools/generate-sitemap.py
 
       - name: Run the shared web-metadata tests
         shell: bash
-        run: python3 tools/test-web-metadata.py
+        run: python3 -I tools/test-web-metadata.py
 
       - name: Run the sitemap engine tests
         shell: bash
-        run: python3 tools/test-sitemap.py
+        run: python3 -I tools/test-sitemap.py
