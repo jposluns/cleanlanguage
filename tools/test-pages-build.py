@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Tests for tools/pages-build.sh: it runs every listed gate and fails when one fails.
+"""Tests for tools/pages-build.sh: it runs every listed gate and fails when one exits 1 or 3.
 
 Each case copies the build script into a temporary tree whose tools/ folder
 holds a stub in place of each gate. A stub records its name and arguments and
 exits with the code the case sets. The script runs as a separate process with
-bash, the command the Cloudflare Pages dashboard runs, but against the stubs.
+bash, as the build command in site/README.md runs it, but against the stubs.
 
 EXPECTED is the gate list the owner decided for the Pages build command, kept
 here apart from the script, so a gate dropped from the script, a changed
@@ -101,8 +101,8 @@ def main() -> int:
     if failures:
         return 1
     print(
-        f"pages-build.sh runs all {len(EXPECTED)} gates in order and fails on each "
-        f"gate's failure or absence ({1 + 3 * len(EXPECTED)} cases)."
+        f"pages-build.sh runs all {len(EXPECTED)} gates in order, fails when one exits 1 or 3, "
+        f"and fails with exit 3 when one is missing ({1 + 3 * len(EXPECTED)} cases)."
     )
     return 0
 
