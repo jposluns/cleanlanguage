@@ -86,13 +86,11 @@ markup of the template specification (section 7.12), so it is checked here too:
     ``'unsafe-inline'`` for Cloudflare's JavaScript Detections), and nothing
     looser: any other ``Content-Security-Policy`` line anywhere in the file,
     outside the first (site-wide) line, fails. The site-wide rule in check 7 is
-    unchanged. The draft's ``X-Robots-Tag`` is protected by the rule of
-    ``tools/check-headers.py`` check 6, run here from that file so the 2 gates
-    cannot drift: no rule detaches ``X-Robots-Tag``, and no rule other than
-    ``/draft/*`` sets it where its pattern can reach ``/draft/`` (that check's
-    ``reaches_draft`` heuristic, which ignores case). If that file cannot be
-    loaded (any exception or exit while it loads) or lacks ``robots_rule``,
-    ``parse`` or ``reaches_draft``, this gate fails closed (exit 3).
+    unchanged. This gate checks the lines of the ``/draft/*`` rule itself; it
+    does not judge ``X-Robots-Tag`` in other rules. ``tools/check-headers.py``
+    check 6 owns that rule (no rule detaches ``X-Robots-Tag``, and no rule other
+    than ``/draft/*`` sets it where its pattern can reach ``/draft/``), and it
+    runs on every pull request with no paths filter (``site-hardening.yml``).
 
 At promotion the template page moves to ``site/install/index.html`` and the
 live-only checks (``.platform-actions``, ``#family-reset``, ``styles.css``,
@@ -410,24 +408,6 @@ def header_rules(text: str) -> list[tuple[str, str]]:
     return rules
 
 
-def load_headers_gate():
-    """tools/check-headers.py, whose check 6 (robots_rule, reaches_draft) this gate shares."""
-    import importlib.util
-
-    path = Path(__file__).resolve().parent / "check-headers.py"
-    try:
-        spec = importlib.util.spec_from_file_location("check_headers", path)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    except (Exception, SystemExit) as error:
-        # Any failure while loading, a module-level exit included (even exit 0), is a cannot-evaluate.
-        die(f"tools/check-headers.py could not be loaded for its X-Robots-Tag rule: {type(error).__name__}: {error}")
-    missing = [name for name in ("robots_rule", "parse", "reaches_draft") if not callable(getattr(module, name, None))]
-    if missing:
-        die(f"tools/check-headers.py lacks {', '.join(missing)}, which this gate shares")
-    return module
-
-
 def check_draft_headers(text: str) -> list[str]:
     problems: list[str] = []
     rules = header_rules(text)
@@ -449,8 +429,6 @@ def check_draft_headers(text: str) -> list[str]:
         )
     if [line for _, line in draft if line.lower().startswith("x-robots-tag:")] != ["X-Robots-Tag: noindex"]:
         problems.append(f"the {DRAFT_PATTERN} rule must set X-Robots-Tag: noindex exactly once.")
-    headers_gate = load_headers_gate()
-    problems += headers_gate.robots_rule(headers_gate.parse(text))
     if csp and csp[0][1] == DRAFT_PATTERN:
         problems.append(f"the first Content-Security-Policy line belongs to {DRAFT_PATTERN}; the site-wide rule must come first.")
     return problems

@@ -56,8 +56,8 @@ What it verifies
    on 2026-11-03; at promotion the rule is removed and the site-wide rule
    carries the policy. A file with no ``/draft/*`` rule passes check 5.
 6. No rule detaches ``X-Robots-Tag``, and no rule other than ``/draft/*`` sets it
-   where its pattern can match a path under ``/draft/``: a pattern that starts
-   with ``/draft``, or whose first path segment holds a ``*`` or a ``:``
+   where its pattern can match a path under ``/draft/``: a pattern whose path
+   is ``/`` or starts with ``/draft``, or whose first path segment holds a ``*`` or a ``:``
    anywhere (``/*``, ``/:name``, ``/d:x/*``), or a full URL whose path does
    either. So no later rule
    can remove or dilute the draft's ``X-Robots-Tag: noindex``. Rules for other

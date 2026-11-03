@@ -27,7 +27,6 @@ def make_root(scratch: Path) -> Path:
     root = scratch / "repo"
     (root / "tools").mkdir(parents=True)
     shutil.copyfile(GATE, root / "tools" / GATE.name)
-    shutil.copyfile(REPO_ROOT / "tools" / "check-headers.py", root / "tools" / "check-headers.py")
     for relative in FILES:
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO_ROOT / relative, root / relative)
@@ -80,21 +79,6 @@ CASES = [
         edit(HEADERS, "  X-Robots-Tag: noindex\n\n/downloads/cleanlanguage.md\n",
              "  ! Content-Security-Policy\n  X-Robots-Tag: noindex\n\n/downloads/cleanlanguage.md\n")(root),
     ), 1),
-    ("the noindex detached under another draft rule", edit(HEADERS, "/sitemap.xml\n", "/draft/install/*\n  ! X-Robots-Tag\n\n/sitemap.xml\n"), 1),
-    ("the noindex changed site-wide", edit(HEADERS, "/sitemap.xml\n", "/*\n  X-Robots-Tag: all\n\n/sitemap.xml\n"), 1),
-    ("the noindex changed through a full URL pattern", edit(HEADERS, "/sitemap.xml\n", "https://cleanlanguage.ai/draft/*\n  X-Robots-Tag: all\n\n/sitemap.xml\n"), 1),
-    ("the noindex changed under /Draft/ in another case", edit(HEADERS, "/sitemap.xml\n", "/Draft/*\n  X-Robots-Tag: all\n\n/sitemap.xml\n"), 1),
-    ("the shared headers gate missing", lambda root: (root / "tools" / "check-headers.py").unlink(), 3),
-    ("the shared headers gate exits 0 while it loads", lambda root: (root / "tools" / "check-headers.py").write_text(
-        (root / "tools" / "check-headers.py").read_text(encoding="utf-8").replace(
-            "\nimport re\n", "\nimport re\nimport sys\nsys.exit(0)\n", 1), encoding="utf-8"), 3),
-    ("the shared headers gate raises while it loads", lambda root: (root / "tools" / "check-headers.py").write_text(
-        (root / "tools" / "check-headers.py").read_text(encoding="utf-8") + "\nundefined_name\n", encoding="utf-8"), 3),
-    ("the shared headers gate lacks reaches_draft", lambda root: (root / "tools" / "check-headers.py").write_text(
-        (root / "tools" / "check-headers.py").read_text(encoding="utf-8").replace(
-            "def reaches_draft(", "def reaches_draft_renamed(").replace(
-            "reaches_draft(pattern)", "reaches_draft_renamed(pattern)"), encoding="utf-8"), 3),
-    ("the noindex changed under another draft rule", edit(HEADERS, "/sitemap.xml\n", "/draft/install/*\n  X-Robots-Tag: all\n\n/sitemap.xml\n"), 1),
     ("the draft rule without X-Robots-Tag", edit(HEADERS, "  X-Robots-Tag: noindex\n\n/downloads/cleanlanguage.md\n", "\n/downloads/cleanlanguage.md\n"), 1),
     ("a policy on another rule", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Content-Security-Policy: default-src 'none'\n"), 1),
     ("the site-wide policy gaining unsafe-inline", edit(HEADERS, "script-src 'self'; img-src", "script-src 'self' 'unsafe-inline'; img-src"), 1),
