@@ -34,10 +34,12 @@ template. On each:
 
 1. The page embeds the portable text exactly, character for character, once HTML
    escaping is undone.
-2. The page contains no inline code, read with the parser of
-   ``tools/check-inline-code.py``: no ``<script>`` without ``src`` other than a
-   structured-data block, no ``on*`` attribute, no ``javascript:`` URL, and no
-   ``<style>`` element or ``style`` attribute.
+2. The page contains no inline code and no refused markup, as checks 1 to 9
+   of ``tools/check-inline-code.py`` define them for an HTML page, with that
+   gate's own code: among them, no ``<script>`` without ``src`` other than a
+   structured-data block, no ``on*`` attribute, no ``javascript:`` URL, no
+   ``<style>`` element or ``style`` attribute, and none of the elements that
+   the parser reads differently from a browser.
 
 The template page puts its copy button inside the block (template specification
 7.11). Exactly that button, ``<button class="copy" type="button"

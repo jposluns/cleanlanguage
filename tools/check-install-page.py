@@ -32,10 +32,12 @@ What it verifies (reliably)
    ``aria-current``, and exactly one ``family-reset`` button exists and is hidden.
 4. Each family has exactly one picker ``<a data-family-link=X href="#X">`` inside
    the ``.platform-actions`` group.
-5. No inline code, read with the parser of ``tools/check-inline-code.py``: no
-   ``<script>`` without ``src`` other than a structured-data block, no ``on*``
-   attribute, no ``javascript:`` URL, and no ``<style>`` element or ``style``
-   attribute.
+5. No inline code and no refused markup, as checks 1 to 9 of
+   ``tools/check-inline-code.py`` define them for an HTML page, with that
+   gate's own code: among them, no ``<script>`` without ``src`` other than a
+   structured-data block, no ``on*`` attribute, no ``javascript:`` URL, no
+   ``<style>`` element or ``style`` attribute, and none of the elements that
+   the parser reads differently from a browser.
 6. The guarded collapse rule is present: some hiding rule whose selector carries a
    positive, boundary-anchored ``html[data-family]`` / ``html[data-family=...]``
    (not ``.html``/``xhtml``/``data-family-mode``) and names ``data-family-section``.
@@ -46,7 +48,8 @@ What it verifies (reliably)
    the shared policy, ``DRAFT_CSP`` below (template specification, baseline
    1.3.1, section 9; the owner authorized the live pages to adopt it,
    ``'unsafe-inline'`` included, once https://posluns.ca/privacy/ was
-   published), and detaches it nowhere. No rule sets or detaches
+   published), and does not detach it. No rule other than ``/draft/*``
+   (check 13) detaches ``Content-Security-Policy``, no rule sets or detaches
    ``X-Content-Security-Policy``, and ``site/_headers`` keeps a
    ``Cache-Control`` entry for ``/js/install.js``. The policy allows
    ``'unsafe-inline'``, so a browser does not block inline code on these pages.
@@ -572,11 +575,16 @@ def main() -> int:
             f"the site-wide Content-Security-Policy (site/_headers line {site_csp[0][0]}) is not exactly "
             f"the shared policy: {site_csp[0][2]!r}"
         )
-    for number, pattern, _, name, _ in entries:
+    for number, pattern, kind, name, _ in entries:
         if name.lower() == "x-content-security-policy":
             problems.append(
                 f"site/_headers line {number} names X-Content-Security-Policy under {pattern}; "
                 "only Content-Security-Policy carries the policy."
+            )
+        elif name.lower() == "content-security-policy" and kind == "detach" and pattern not in ("/*", DRAFT_PATTERN):
+            problems.append(
+                f"site/_headers line {number} detaches Content-Security-Policy under {pattern}; only "
+                f"{DRAFT_PATTERN} may detach it, because it sets the same policy again."
             )
     if not re.search(r"/js/install\.js\s*\n\s*Cache-Control:", headers):
         problems.append("site/_headers has no Cache-Control entry for /js/install.js.")

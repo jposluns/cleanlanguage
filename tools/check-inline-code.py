@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuse inline code in every HTML page under site/, live and draft.
+"""Refuse inline code in every HTML page and SVG file under site/, live and draft.
 
 The site's own pages carry no inline code (template specification, section 5):
 every script loads from a file, and every style comes from a stylesheet. The
@@ -10,8 +10,8 @@ event handler on these pages. This gate enforces the rule instead.
 What it verifies
 ----------------
 
-It reads every ``.html`` and ``.htm`` file under ``site/``, at any depth, with
-Python's HTML parser (``html.parser``), and refuses:
+It reads every ``.html``, ``.htm`` and ``.svg`` file under ``site/``, at any
+depth, with Python's HTML parser (``html.parser``). In every file it refuses:
 
 1. A ``<script>`` element without a ``src`` attribute, whatever its ``type``,
    unless its first ``type`` attribute is ``application/ld+json`` (ignoring case
@@ -19,40 +19,61 @@ Python's HTML parser (``html.parser``), and refuses:
    browser never runs. A browser uses the first of 2 attributes with the same
    name, and so does this check. A ``<script>`` element with ``src`` that also
    holds text other than whitespace fails too: the browser ignores that text,
-   so it can only be dead code or a decoy.
+   so it can only be dead code or a decoy. In an SVG file every ``<script>``
+   element fails, with or without ``src``.
 2. Any attribute whose name starts with ``on``, on any element. The parser reads
    ``/`` as an attribute separator, as a browser does, so
    ``<span/onclick="...">`` counts.
-3. A ``javascript:`` URL in an ``href``, ``xlink:href``, ``src``, ``action`` or
-   ``formaction`` attribute, after character references are decoded, leading and
-   trailing control characters and spaces are removed, and every tab, line feed
-   and carriage return is removed, as a browser does before it reads the scheme.
+3. A ``javascript:`` URL in an ``href``, ``src``, ``action`` or ``formaction``
+   attribute, or in any attribute whose name ends in ``:href`` (such as
+   ``xlink:href``), after character references are decoded, leading and trailing
+   control characters and spaces are removed, and every tab, line feed and
+   carriage return is removed, as a browser does before it reads the scheme.
    The scheme compares without regard to case.
 4. Any ``<style>`` element and any ``style`` attribute.
-5. A page where the number of ``<script`` and ``<style`` start tags found by a
-   plain text count, ignoring case, differs from the number the parser reports.
-   This catches markup that the parser reads differently from a browser, such
-   as a script the parser takes to be inside a comment.
+5. Any ``srcdoc`` attribute, on any element.
+6. An ``<animate>`` or ``<set>`` element whose first ``attributeName`` is
+   ``href`` or ends in ``:href``, ignoring case and surrounding whitespace, because it can change a link to a ``javascript:`` URL
+   after the page loads.
+7. A file where a plain text count differs from what the parser reports: the
+   number of ``<script`` and ``<style`` start tags, ignoring case, or the number
+   of ``on`` attributes, counted as ``on`` followed by letters and ``=`` (with
+   optional whitespace before the ``=``), ignoring case, after whitespace, a
+   ``/`` or a quote inside a tag, a tag being a ``<`` and an ASCII letter up to
+   the next ``>``. This
+   catches markup that the parser reads differently from a browser, such as an
+   element the parser takes to be text.
+
+In an HTML page it also refuses markup that ``html.parser`` reads differently
+from a browser, and that no page uses:
+
+8. The elements ``svg``, ``math``, ``iframe``, ``textarea``, ``xmp``,
+   ``noembed``, ``noframes``, ``plaintext`` and ``template``, found in the
+   file's text as ``<`` and the name, ignoring case, followed by whitespace,
+   ``/``, ``>`` or the end of the file.
+9. Any ``<![CDATA[`` in the file's text, ignoring case, and any comment that
+   opens as ``<!-->`` or ``<!--->``.
 
 What it does not verify
 -----------------------
 
 It reads files only; it runs no browser. ``html.parser`` is not the HTML
-parsing algorithm of the specification, so markup built to make the 2 disagree
-can still slip past checks 1 to 4. Check 5 narrows that for script and style
-elements only; it does not cover event-handler attributes or URLs. The gate
-does not judge external scripts (the ``src`` value, the files under
-``site/js/`` or ``site/draft/assets/``), other URL schemes such as ``data:``,
-``<iframe srcdoc>``, ``<meta http-equiv="refresh">`` or SVG animation
-attributes. The security policy covers the frame, image and object cases:
-``default-src 'none'`` blocks frames and objects, and ``img-src 'self'`` blocks
-``data:`` images. It does not read files other than HTML pages, so a page served
-from another extension is outside it.
+parsing algorithm of the specification, nor an XML parser, so markup built to
+make them disagree can still slip past checks 1 to 6. Checks 7 to 9 narrow that:
+check 7 compares counts only for script and style start tags and for ``on``
+attributes, so a ``javascript:`` URL or a ``srcdoc`` attribute that the parser
+reads as text is outside it. The gate does not judge external scripts (the
+``src`` value, the files under ``site/js/`` or ``site/draft/assets/``), other
+URL schemes such as ``data:``, ``<meta http-equiv="refresh">``, or SVG
+animation of attributes other than ``href``. The security policy covers some of
+those cases: ``default-src 'none'`` blocks frames and objects, and ``img-src
+'self'`` blocks ``data:`` images. It does not read files other than HTML pages
+and SVG files, so a document served from another extension is outside it.
 
 Exit codes:
-  0  no page carries inline code
-  1  a page carries inline code, or the parser and the text count disagree
-  3  site/ or a page could not be read, a page is not UTF-8, or no page was found
+  0  no file carries inline code
+  1  a file carries inline code or refused markup, or the parser and a text count disagree
+  3  site/ or a file could not be read, a file is not UTF-8, or no HTML page was found
 """
 
 from __future__ import annotations
@@ -65,15 +86,23 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SITE = REPO_ROOT / "site"
-SUFFIXES = (".html", ".htm")
+PAGE_SUFFIXES = (".html", ".htm")
+SVG_SUFFIX = ".svg"
 
 DATA_BLOCK_TYPE = "application/ld+json"
-URL_ATTRIBUTES = ("href", "xlink:href", "src", "action", "formaction")
+URL_ATTRIBUTES = ("href", "src", "action", "formaction")
+ANIMATION_ELEMENTS = ("animate", "set")
 # A browser removes leading and trailing C0 controls and spaces from a URL, and
 # every ASCII tab or newline inside it, before it reads the scheme.
 URL_EDGES = "".join(chr(code) for code in range(0x21))
 URL_REMOVED = re.compile(r"[\t\n\r]")
 RAW_START = re.compile(r"<(script|style)(?=[\s/>])", re.I)
+RAW_TAG = re.compile(r"<[A-Za-z][^>]*>")
+RAW_HANDLER = re.compile(r"(?<=[\s/\"'])on[a-z]+\s*=", re.I)
+REFUSED_ELEMENTS = ("svg", "math", "iframe", "textarea", "xmp", "noembed", "noframes", "plaintext", "template")
+RAW_REFUSED_ELEMENT = re.compile(r"<(" + "|".join(REFUSED_ELEMENTS) + r")(?=[\s/>]|$)", re.I)
+RAW_CDATA = re.compile(r"<!\[CDATA\[", re.I)
+RAW_SHORT_COMMENT = re.compile(r"<!---?>")
 
 RULE = (
     "the site's own pages must not use inline code (template specification, section 5), "
@@ -90,11 +119,17 @@ def is_javascript_url(value: str) -> bool:
     return URL_REMOVED.sub("", value.strip(URL_EDGES)).lower().startswith("javascript:")
 
 
+def is_href_name(name: str) -> bool:
+    return name == "href" or name.endswith(":href")
+
+
 class InlineCodeParser(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, svg: bool) -> None:
         super().__init__(convert_charrefs=True)
+        self.svg = svg
         self.problems: list[str] = []
         self.starts = {"script": 0, "style": 0}
+        self.handlers = 0
         self.external_script: int | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -118,26 +153,39 @@ class InlineCodeParser(HTMLParser):
         if tag in self.starts:
             self.starts[tag] += 1
         names = [name for name, _ in attrs]
-        if tag == "script" and "src" in names:
+        if tag == "script" and self.svg:
+            self.problems.append(f"line {line}: a <script> element in an SVG file")
+        elif tag == "script" and "src" in names:
             self.external_script = line
-        if tag == "script" and "src" not in names:
+        elif tag == "script":
             kind = next((value or "" for name, value in attrs if name == "type"), "")
             if kind.strip(" \t\n\f\r").lower() != DATA_BLOCK_TYPE:
                 self.problems.append(f"line {line}: a <script> element without src (type {kind!r})")
         if tag == "style":
             self.problems.append(f"line {line}: a <style> element")
+        if tag in ANIMATION_ELEMENTS:
+            target = next((value or "" for name, value in attrs if name == "attributename"), "")
+            if is_href_name(target.strip().lower()):
+                self.problems.append(f"line {line}: an <{tag}> element that animates {target!r}")
         for name, value in attrs:
             if name.startswith("on"):
+                self.handlers += 1
                 self.problems.append(f"line {line}: an event-handler attribute {name!r} on <{tag}>")
             elif name == "style":
                 self.problems.append(f"line {line}: a style attribute on <{tag}>")
-            elif name in URL_ATTRIBUTES and value and is_javascript_url(value):
+            elif name == "srcdoc":
+                self.problems.append(f"line {line}: a srcdoc attribute on <{tag}>")
+            elif (name in URL_ATTRIBUTES or is_href_name(name)) and value and is_javascript_url(value):
                 self.problems.append(f"line {line}: a javascript: URL in the {name} attribute of <{tag}>")
 
 
-def inline_code_problems(text: str) -> list[str]:
-    """Each piece of inline code in an HTML page, as 'line N: ...', with the count check (check 5)."""
-    parser = InlineCodeParser()
+def line_of(text: str, index: int) -> int:
+    return text.count("\n", 0, index) + 1
+
+
+def inline_code_problems(text: str, svg: bool = False) -> list[str]:
+    """Each piece of inline code or refused markup in a file, as 'line N: ...', with the count checks."""
+    parser = InlineCodeParser(svg)
     parser.feed(text)
     parser.close()
     problems = list(parser.problems)
@@ -148,41 +196,60 @@ def inline_code_problems(text: str) -> list[str]:
                 f"a text count finds {raw} <{tag}> start tags but the parser reads {parser.starts[tag]}; "
                 "the parser and a browser may read this markup differently, so it cannot be checked"
             )
+    raw_handlers = sum(len(RAW_HANDLER.findall(tag.group(0))) for tag in RAW_TAG.finditer(text))
+    if raw_handlers != parser.handlers:
+        problems.append(
+            f"a text count finds {raw_handlers} on* attributes inside tags but the parser reads "
+            f"{parser.handlers}; the parser and a browser may read this markup differently, so it cannot be checked"
+        )
+    if not svg:
+        for match in RAW_REFUSED_ELEMENT.finditer(text):
+            problems.append(
+                f"line {line_of(text, match.start())}: a <{match.group(1).lower()}> element, which the parser "
+                "may read differently from a browser and which no page uses"
+            )
+        for match in RAW_CDATA.finditer(text):
+            problems.append(f"line {line_of(text, match.start())}: a <![CDATA[ section in an HTML page")
+        for match in RAW_SHORT_COMMENT.finditer(text):
+            problems.append(f"line {line_of(text, match.start())}: a comment that opens as {match.group(0)!r}")
     return problems
 
 
-def pages() -> list[Path]:
+def files() -> tuple[list[Path], list[Path]]:
     if not SITE.is_dir():
         die(f"{SITE.relative_to(REPO_ROOT)} is not a directory")
 
     def fail(error: OSError) -> None:
         die(f"could not list {error.filename}: {error.strerror}")
 
-    found: list[Path] = []
-    for folder, _, files in os.walk(SITE, onerror=fail):
-        found += [Path(folder) / name for name in files if name.lower().endswith(SUFFIXES)]
-    if not found:
+    pages: list[Path] = []
+    svgs: list[Path] = []
+    for folder, _, names in os.walk(SITE, onerror=fail):
+        pages += [Path(folder) / name for name in names if name.lower().endswith(PAGE_SUFFIXES)]
+        svgs += [Path(folder) / name for name in names if name.lower().endswith(SVG_SUFFIX)]
+    if not pages:
         die("found no HTML page under site/")
-    return sorted(found)
+    return sorted(pages), sorted(svgs)
 
 
 def main() -> int:
     problems: list[str] = []
-    found = pages()
-    for page in found:
-        where = page.relative_to(REPO_ROOT)
+    pages, svgs = files()
+    for path in pages + svgs:
+        where = path.relative_to(REPO_ROOT)
         try:
-            text = page.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
             die(f"could not read {where} as UTF-8: {error}")
-        problems += [f"{where} {problem}" for problem in inline_code_problems(text)]
+        svg = path.name.lower().endswith(SVG_SUFFIX)
+        problems += [f"{where} {problem}" for problem in inline_code_problems(text, svg)]
     if problems:
         print(f"Inline code found; {RULE}. The security policy allows 'unsafe-inline', so a browser "
               "would run it. Move scripts to files under site/js/ and styles to a stylesheet.")
         for problem in problems:
             print(f"  - {problem}")
         return 1
-    print(f"No inline code in the {len(found)} HTML pages under site/.")
+    print(f"No inline code in the {len(pages)} HTML pages and {len(svgs)} SVG files under site/.")
     return 0
 
 

@@ -116,6 +116,9 @@ CASES = [
     ("I3: an event handler after a slash on the live page",
         edit(LIVE, "</main>", '<span/onclick="alert(1)">x</span></main>'), 1),
     ("the headers gate missing", lambda root: (root / "tools/check-headers.py").unlink(), 3),
+    ("N3 (H1): /install/* detaching the policy",
+        lambda root: (root / HEADERS).write_text((root / HEADERS).read_text(encoding="utf-8")
+                                                  + "\n/install/*\n  ! Content-Security-Policy\n", encoding="utf-8"), 1),
 ]
 
 
