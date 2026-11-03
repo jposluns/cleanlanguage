@@ -71,16 +71,13 @@ and stderr go to temporary files, so the client never blocks on a pipe and
 reads only a bounded part of each (RESULT_LIMIT plus
 ECHO_BYTES_PER_CHARACTER bytes for each character of the request values,
 and STDERR_LIMIT). While the child runs, an ordinary write cannot grow any
-file it writes past its cap: output_cap(limit) bytes, one byte past the
+one file it writes past its cap: output_cap(limit) bytes, one byte past the
 larger read bound, or a lower file size limit the caller set, soft or hard
 (applied_cap). The cap is RLIMIT_FSIZE, set in the child before exec as
 both its soft and its hard limit, so a child without CAP_SYS_RESOURCE
-cannot raise it, and an extractor that writes too much by accident through
-any one file, such as its stdout or stderr, cannot fill temporary storage
-through that file within the timeout. After the wait, a child whose
-stdout or stderr has a final size that reached that cap, including a
-lower limit the caller set, is unavailable, and the reason names that
-cap. The client
+cannot raise it. After the wait, a child whose stdout or stderr has a
+final size that reached that cap, including a lower limit the caller set,
+is unavailable, and the reason names that cap. The client
 waits for the child with a non-blocking
 waitpid (wait_child), at most CHILD_TIMEOUT_SECONDS, and exits 16 when the
 wait reports that the child is no longer its child, since its exit status
@@ -97,18 +94,19 @@ available on every platform the maintainer tools run on) a kill after the
 reap could reach a reused id, so a process the extractor starts can outlive
 a normal end; a process that leaves the group can outlive a timeout; a
 signal that ends the client while it waits leaves the child to run on;
-RLIMIT_FSIZE bounds the logical size of a file, not the storage allocated
-to it, so deliberate child code can reserve disk blocks past the end of a
-file (with fallocate, for example) without growing it; the check reads only
-the final size, so a child that fills stdout to the cap, truncates it and
-writes a valid reply is accepted; the cap applies to each file, not to
-their total, so a child that writes many files, by accident or not, can
-still fill temporary storage; a child, or a process it starts, that holds
-CAP_SYS_RESOURCE (as a client run as root gives it) can raise the hard
-limit and then the soft one, so the cap does not bound it; and the stdin
-file is bounded the same way but not checked, so a child that fills it and
-still replies validly keeps its verdict. The extractor starts no process,
-so none of these arises from the extractor as it is.
+RLIMIT_FSIZE limits the logical size of a file, not the disk space
+allocated to it, so deliberate child code can reserve disk blocks past the
+end of a file (with fallocate, for example) without growing it; the cap is
+not compared with the free space of the file system, so a file below the
+cap can still run out of space; the check reads only the final size, so a
+child that fills stdout to the cap, truncates it and writes a valid reply
+is accepted; the cap applies to each file, not to their total, so a child
+can write any number of files, each up to the cap; a child, or a process
+it starts, that holds CAP_SYS_RESOURCE (as a client run as root gives it)
+can raise the hard limit and then the soft one, so the cap does not apply
+to it; and the stdin file has the same cap but is not checked, so a child
+that fills it and still replies validly keeps its verdict. The extractor
+starts no process, so none of these arises from the extractor as it is.
 
 The contract (CONTRACT, REQUEST_KEYS, REPLY_KEYS) extends the one in
 ``tools/check-release-checksum-live.py``, rule for rule, with the ops and the
