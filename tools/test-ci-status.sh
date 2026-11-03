@@ -10,14 +10,15 @@
 # checks: the GitHub Actions jobs Plugin manifests, Skill discovery and Agent
 # Plugins manifest, each matched by its exact display name together with the
 # github-actions app slug, and the external Cloudflare Pages build, matched by the
-# cloudflare prefix of its app slug alone, so any app whose slug starts with
-# cloudflare satisfies it. A passing reading missing any of them is downgraded to
+# exact app slug cloudflare-workers-and-pages and app id 85455 of the Cloudflare
+# app, whatever its name. A passing reading missing any of them is downgraded to
 # pending, never a red; an unnamed or differently named github-actions run, or a
 # required name posted by another app, does not count. Presence is read from the
 # same reading as the verdict, and the reading is FAIL-CLOSED: a malformed page
 # (non-object, or check_runs that is not a list), a check that is not an object,
 # any field of the wrong type (a status that is not a non-empty string, a
-# conclusion/name/slug that is neither a string nor null), or a head_sha that is
+# conclusion/name/slug that is neither a string nor null, or an app id that is
+# neither an integer nor null), or a head_sha that is
 # present and does not name the requested commit makes the whole reading
 # unreadable rather than dropping or forging a check. A name and the
 # github-actions slug are each compared as the whole string, control characters
@@ -63,7 +64,7 @@ C2=1111111111111111111111111111111111111111
 PM_OK='{"status":"completed","conclusion":"success","name":"Plugin manifests","app":{"slug":"github-actions"}}'
 SD_OK='{"status":"completed","conclusion":"success","name":"Skill discovery","app":{"slug":"github-actions"}}'
 APM_OK='{"status":"completed","conclusion":"success","name":"Agent Plugins manifest","app":{"slug":"github-actions"}}'
-CF='{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}'
+CF='{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85455}}'
 REQ_GA="${PM_OK},${SD_OK},${APM_OK}"
 # runs FRAGMENT...: one check-runs page holding the fragments in order.
 runs() { local IFS=,; printf '{"check_runs":[%s]}' "$*"; }
@@ -82,10 +83,10 @@ GA_REVERSED="$(runs "$CF" "$APM_OK" "$SD_OK" "$PM_OK")"
 # Cloudflare build. None of the 3 required Actions checks is in it.
 GENERIC_GA='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"check","app":{"slug":"github-actions"}},
-  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}
+  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85455}}
 ]}'
 CLOUDFLARE_ONLY='{"check_runs":[
-  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}
+  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85455}}
 ]}'
 GA_IN_PROGRESS="$(runs '{"status":"in_progress","conclusion":null,"name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")"
 # A red reading: Plugin manifests failed, beside the other 3 required checks
@@ -97,11 +98,11 @@ EMPTY_CONCLUSION='{"check_runs":[
 ]}'
 INJECT_US='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"x\u001fgithub-actions","app":{"slug":null}},
-  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}
+  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85455}}
 ]}'
 INJECT_NL_US='{"check_runs":[
   {"status":"completed","conclusion":"success","name":"benign\ncompleted\u001fsuccess\u001fforged\u001fgithub-actions","app":{"slug":null}},
-  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}
+  {"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85455}}
 ]}'
 # A required name followed by a unit separator and the github-actions slug,
 # under a null app, beside the other 3 required checks green. A reader that took
@@ -410,12 +411,12 @@ TRUNCATED='{"total_count":2,"check_runs":[{"status":"completed","conclusion":"su
 # check ABSENT: not green until the required check registers.
 MISSING_CLOUDFLARE="{\"total_count\":3,\"check_runs\":[${REQ_GA}]}"
 # A duplicate check-run id pads the list to match total_count while hiding a run.
-DUP_ID='{"total_count":3,"check_runs":[{"id":1,"status":"completed","conclusion":"success","name":"pm","app":{"slug":"github-actions"}},{"id":2,"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}},{"id":2,"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}]}'
+DUP_ID='{"total_count":3,"check_runs":[{"id":1,"status":"completed","conclusion":"success","name":"pm","app":{"slug":"github-actions"}},{"id":2,"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85455}},{"id":2,"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85455}}]}'
 # total_count present as an explicit null is malformed.
-TOTAL_NULL='{"total_count":null,"check_runs":[{"status":"completed","conclusion":"success","name":"pm","app":{"slug":"github-actions"}},{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}]}'
+TOTAL_NULL='{"total_count":null,"check_runs":[{"status":"completed","conclusion":"success","name":"pm","app":{"slug":"github-actions"}},{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85455}}]}'
 # total_count present on one page but not the other is inconsistent.
 INCONSISTENT_TOTAL='{"check_runs":[{"status":"completed","conclusion":"success","name":"pm","app":{"slug":"github-actions"}}]}
-{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages"}}]}'
+{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85455}}]}'
 # A check whose app field is not an object ([]) must not coerce to a null slug.
 NONOBJ_APP='{"total_count":2,"check_runs":[{"status":"completed","conclusion":"success","name":"pm","app":{"slug":"github-actions"}},{"status":"completed","conclusion":"success","name":"cf","app":[]}]}'
 # A lone surrogate in a name is unencodable and must fail closed, not crash report.
@@ -423,9 +424,9 @@ SURROGATE='{"total_count":1,"check_runs":[{"status":"completed","conclusion":"su
 # A green reading with an EXTRA passing check: a different set than GA_PRESENT
 # (both carry the required checks), used to exercise a changing-but-green set.
 GA_PLUS_EXTRA="$(runs "$REQ_GA" "$CF" '{"status":"completed","conclusion":"success","name":"extra","app":{"slug":"github-actions"}}')"
-# The REAL Cloudflare app slug on this repository is cloudflare-workers-and-pages,
-# not cloudflare-pages; the required-check match is by the "cloudflare" prefix.
-REAL_CLOUDFLARE="$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages"}}')"
+# The real Cloudflare app on this repository, as its live check-runs show: slug
+# cloudflare-workers-and-pages and app id 85455. The required-check match is exact.
+REAL_CLOUDFLARE="$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85455}}')"
 # A digit-only timeout with a leading zero (08) is base-10, not octal: it does not
 # error, and a green commit still confirms green.
 run_case "leading-zero timeout is base 10, not octal -> green" "$GA_PRESENT" "" "" 0 --wait --timeout 08
@@ -549,9 +550,9 @@ CASE_NEEDLE="$(printf '  %-28s %s' "Plugin manifests" in_progress)" \
 run_case "zero-timeout wait window fails closed" "$GA_IN_PROGRESS" "" "" 3 --wait --timeout 0
 CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000: the wait window closed before the read" \
   run_case "zero-timeout wait window says it closed before the read" "$GA_IN_PROGRESS" "" "" 3 --wait --timeout 0
-# The real Cloudflare app slug (cloudflare-workers-and-pages) satisfies the required
-# Cloudflare check via the prefix match -> green (regression: an exact cloudflare-pages
-# match would false-red every real commit).
+# The real Cloudflare app (slug cloudflare-workers-and-pages, app id 85455)
+# satisfies the required Cloudflare check -> green (regression: a pin on a slug or
+# id that the live check-runs do not show would false-red every real commit).
 run_case "real cloudflare-workers-and-pages slug satisfies the required check" "$REAL_CLOUDFLARE" "" "" 0
 run_timed_case "wait stops near the deadline, not a whole interval past it" "$GA_IN_PROGRESS" 4 2 --wait --timeout 2 --interval 5
 
@@ -631,8 +632,8 @@ for size in 6 12 100 300; do
   CASE_NEEDLE="required check(s) Plugin manifests not registered" \
     run_case "reading of $size runs missing a required check -> not green" "$(many_runs "$size")" "" "" 2
 done
-run_case "Cloudflare build under another name is matched by the cloudflare prefix of its app slug -> green" \
-  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Pages build","app":{"slug":"cloudflare-workers-and-pages"}}')" "" "" 0
+run_case "Cloudflare build under another name is matched by its app slug and app id -> green" \
+  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Pages build","app":{"slug":"cloudflare-workers-and-pages","id":85455}}')" "" "" 0
 # A green commit status is never read: the only gh call is the check-runs read.
 run_log_case "a green commit status never stands in for a missing required check" "$(runs "$SD_OK" "$APM_OK" "$CF")" 2
 run_log_case "a green reading makes only the paginated check-runs call" "$GA_PRESENT" 0
@@ -763,18 +764,22 @@ CASE_NEEDLE="required check(s) Plugin manifests not registered" \
 # bad_at FIELD VALUE INDEX: the 4 green required checks and a green extra run, in
 # that order, with FIELD of the run at INDEX (0 to 4) set to the raw JSON VALUE.
 # FIELD is status, conclusion, name, app.slug, app (the whole app object) or
-# head_sha, which is added to that run alone. Any other INDEX changes no run.
+# head_sha, which is added to that run alone. Any other INDEX changes no run. Each
+# run is NAME|SLUG|ID; the Cloudflare run carries the app id 85455, the others none.
 bad_at() {
-  local i=0 spec st cn nm app hs out=()
-  for spec in "Plugin manifests|github-actions" "Skill discovery|github-actions" \
-    "Agent Plugins manifest|github-actions" "Cloudflare Pages|cloudflare-pages" "extra|github-actions"; do
-    st='"completed"' cn='"success"' nm="\"${spec%|*}\"" app="{\"slug\":\"${spec#*|}\"}" hs=""
+  local i=0 spec st cn nm app hs slug id out=()
+  for spec in "Plugin manifests|github-actions|" "Skill discovery|github-actions|" \
+    "Agent Plugins manifest|github-actions|" "Cloudflare Pages|cloudflare-workers-and-pages|85455" \
+    "extra|github-actions|"; do
+    slug="${spec#*|}" id="${spec##*|}"
+    slug="${slug%|*}"
+    st='"completed"' cn='"success"' nm="\"${spec%%|*}\"" app="{\"slug\":\"${slug}\"${id:+,\"id\":$id}}" hs=""
     if [ "$i" -eq "$3" ]; then
       case "$1" in
         status) st="$2" ;;
         conclusion) cn="$2" ;;
         name) nm="$2" ;;
-        app.slug) app="{\"slug\":$2}" ;;
+        app.slug) app="{\"slug\":$2${id:+,\"id\":$id}}" ;;
         app) app="$2" ;;
         head_sha) hs="\"head_sha\":$2," ;;
       esac
@@ -906,7 +911,7 @@ gate_ctx=("" id=absent "$gate_head"
   'status="in_progress"' 'status="queued"' status=null status=absent
   'conclusion="failure"' 'conclusion="neutral"' 'conclusion="skipped"' 'conclusion="cancelled"'
   conclusion=null conclusion=absent
-  'app={"slug":"cloudflare-pages"}' 'app={"slug":"other-app"}' 'app={"slug":null}' 'app={}' app=null app=absent
+  'app={"slug":"cloudflare-workers-and-pages"}' 'app={"slug":"other-app"}' 'app={"slug":null}' 'app={}' app=null app=absent
   'name="Plugin manifests"' 'name=""' name=null name=absent
   'status="in_progress";conclusion=null' 'status="queued";conclusion=null'
   "$gate_head;status=\"in_progress\";conclusion=null" "$gate_head;status=\"queued\";conclusion=null"
@@ -925,6 +930,7 @@ gate_checks=(
   "id|a non-integer id|id=\"31234567890\"|check run id is not an integer|early"
   "id|the id of run 1 repeated|id=$gate_pm_id|duplicate check run id|early"
   "app|a non-object app|app=[]|check run app is not an object|early"
+  "app|a non-integer app id|app={\"slug\":\"github-actions\",\"id\":\"9\"}|check run app.id is not an integer|early"
   "status|a null status|status=null|check field status is null|late"
   "conclusion|a non-string conclusion|conclusion=1|non-string check field conclusion|late"
   "name|a non-string name|name=7|non-string check field name|late"
@@ -1214,20 +1220,37 @@ for near in "github-actions-x" "xgithub-actions" "github-action" "ithub-actions"
   CASE_NEEDLE="required check(s) Plugin manifests not registered" \
     run_case "near slug [$near] does not count -> not green" "$(near_pm "Plugin manifests" "$near")" "" "" 2
 done
-# The Cloudflare build is matched by the cloudflare prefix of its app slug, so a
-# slug with the word elsewhere, padded, or in another letter case does not count.
-for near in "xcloudflare-pages" " cloudflare-pages" "Cloudflare-pages" "pages-cloudflare" "cloudflar"; do
+# The Cloudflare build is matched by the exact app slug and app id of the
+# Cloudflare app, so a run carrying the real app id under any other slug, whether
+# it shares a prefix, is padded, or is in another letter case, does not count.
+for near in "xcloudflare-pages" " cloudflare-pages" "Cloudflare-pages" "pages-cloudflare" "cloudflar" \
+  "cloudflare-evil" "cloudflare" "cloudflare-pages" "cloudflare-workers-and-pages-x" \
+  "CLOUDFLARE-WORKERS-AND-PAGES" "cloudflare-workers-and-pages "; do
   CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
-    run_case "near Cloudflare slug [$near] does not count -> not green" \
-    "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"$near\"}}")" "" "" 2
+    run_case "near Cloudflare slug [$near] with the app id 85455 does not count -> not green" \
+    "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"$near\",\"id\":85455}}")" "" "" 2
 done
-# The Cloudflare build is matched by the cloudflare prefix of its app slug
-# alone, so any app whose slug starts with cloudflare satisfies it: a run with
-# an empty name, or with the slug cloudflare and nothing after it, counts.
-run_case "Cloudflare build with an empty name is matched by the cloudflare prefix of its app slug -> green" \
-  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"","app":{"slug":"cloudflare-workers-and-pages"}}')" "" "" 0
-run_case "Cloudflare app slug of exactly cloudflare counts -> green" \
-  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare"}}')" "" "" 0
+# The name is not consulted: a run of the real app with an empty name counts. The
+# slug cloudflare alone, with the real app id, does not.
+run_case "Cloudflare build with an empty name is matched by its app slug and app id -> green" \
+  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"","app":{"slug":"cloudflare-workers-and-pages","id":85455}}')" "" "" 0
+CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
+  run_case "Cloudflare app slug of exactly cloudflare does not count -> not green" \
+  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare","id":85455}}')" "" "" 2
+# The real slug with another app id, with no app id, or with a null app id is not
+# the Cloudflare app, so the reading stays pending.
+for spec in '85456|,"id":85456' 'absent|' 'null|,"id":null'; do
+  CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
+    run_case "real Cloudflare slug with app id [${spec%%|*}] does not count -> not green" \
+    "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"cloudflare-workers-and-pages\"${spec#*|}}}")" "" "" 2
+done
+# An app id that is present and not an integer (a string, a boolean, or a number
+# with a fraction part) makes the whole reading unreadable.
+for app_id in '"85455"' true 85455.0; do
+  run_err_case "Cloudflare app id [$app_id] is not an integer -> unreadable" \
+    "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"cloudflare-workers-and-pages\",\"id\":${app_id}}}")" 3 \
+    "check read failed for 0000000000000000000000000000000000000000: check run app.id is not an integer"
+done
 # Every required check missing: the message names all 4, in their declared order,
 # and the commit read.
 run_err_case "every missing required check is named, in order" \

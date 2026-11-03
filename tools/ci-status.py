@@ -61,9 +61,12 @@ the check GitHub requires today. The tool insists on all 4, ahead of the branch
 ruleset listing the 3 Actions jobs. Each Actions job is matched by its exact display
 name (case-sensitive and untrimmed) together with the github-actions app slug, so a
 run of the same name from another app, or an unnamed github-actions job such as the
-sitemap check, never satisfies one; the Cloudflare build is matched by the
-cloudflare prefix of its app slug alone, so any app whose slug starts with
-cloudflare satisfies it (disclosed). A passing reading missing any of the 4 means
+sitemap check, never satisfies one; the Cloudflare build is matched by the exact
+app slug and app id of the Cloudflare app on this repository, whatever its name, so
+a run from any other app never satisfies it. If Cloudflare renames or
+re-registers that app, every reading stays pending until the pin is updated, never
+green. A present app id that is not an integer makes the reading unreadable. A
+passing reading missing any of the 4 means
 that check has not registered (a malformed branch, a head whose commit message
 carries a skip marker, or the external check still building); such a reading is
 downgraded from pass to pending, never to a red. A commit that legitimately ran
@@ -471,9 +474,13 @@ def read_checks(repo: str, full_sha: str, deadline: float):
                 seen_ids.add(run_id)
             app = run.get("app")
             if app is None:
-                slug = None
+                slug = app_id = None
             elif isinstance(app, dict):
                 slug = app.get("slug")
+                # An absent or null app id is tolerated and matches no pinned app.
+                app_id = app.get("id")
+                if app_id is not None and (not isinstance(app_id, int) or isinstance(app_id, bool)):
+                    raise Unreadable("check run app.id is not an integer")
             else:
                 raise Unreadable("check run app is not an object")
             # A run of another commit cannot come from an honest read of this
@@ -489,6 +496,7 @@ def read_checks(repo: str, full_sha: str, deadline: float):
                 "conclusion": _field(run.get("conclusion"), allow_empty=True, field="conclusion"),
                 "name": _field(run.get("name"), allow_empty=True, field="name"),
                 "slug": _field(slug, allow_empty=True, field="app.slug"),
+                "app_id": app_id,
             })
     if declared_total is not None and declared_total != len(checks):
         raise Unreadable(
@@ -522,10 +530,13 @@ def verdict_of(checks) -> str:
 # marker, or the branch is malformed), so it is not green until all are present.
 # Each Actions job is matched by its exact display name together with the
 # github-actions app slug, so a run of the same name from another app, or an
-# unnamed github-actions job, never satisfies one. The Cloudflare app slug is
-# "cloudflare-workers-and-pages" on this repository, so it is matched by the
-# "cloudflare" prefix to stay robust to Cloudflare's app naming; its name is not
-# consulted.
+# unnamed github-actions job, never satisfies one. The Cloudflare build is matched
+# by the exact app slug and app id of the Cloudflare app, read from the live
+# check-runs of commits 846e125 and 35fc546 on 2026-11-03 (slug
+# cloudflare-workers-and-pages, id 85455, owner cloudflare); its name is not
+# consulted. If Cloudflare renames or re-registers that app, every reading stays
+# pending ("Cloudflare Pages not registered") until the pin is updated, never
+# green, so a new pin is checked against live check-runs before it merges.
 # Residual: a name and an app cannot tell which workflow produced a run, so a pull
 # request that deletes one of those workflows and adds another job with the same
 # display name satisfies the check. GitHub's own app-pinned required check has the
@@ -538,11 +549,15 @@ def _actions_job(name: str):
     return lambda c: c["slug"] == "github-actions" and c["name"] == name
 
 
+CLOUDFLARE_PAGES_SLUG = "cloudflare-workers-and-pages"
+CLOUDFLARE_PAGES_APP_ID = 85455
+
 REQUIRED_CHECKS = (
     ("Plugin manifests", _actions_job("Plugin manifests")),
     ("Skill discovery", _actions_job("Skill discovery")),
     ("Agent Plugins manifest", _actions_job("Agent Plugins manifest")),
-    ("Cloudflare Pages", lambda c: c["slug"].startswith("cloudflare")),
+    ("Cloudflare Pages",
+     lambda c: c["slug"] == CLOUDFLARE_PAGES_SLUG and c["app_id"] == CLOUDFLARE_PAGES_APP_ID),
 )
 
 
