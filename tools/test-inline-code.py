@@ -26,6 +26,7 @@ PRIVACY = "site/privacy/index.html"
 DRAFT_INSTALL = "site/draft/install/index.html"
 DRAFT_HOME = "site/draft/index.html"
 FAVICON = "site/favicon.svg"
+DEMO = "site/demo/index.html"
 IMG = '<img src="x" onerror="alert(1)">'
 
 
@@ -63,6 +64,13 @@ def write_text(relative: str, text: str):
     def apply(root: Path) -> None:
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
         (root / relative).write_text(text, encoding="utf-8")
+    return apply
+
+
+def both(*faults):
+    def apply(root: Path) -> None:
+        for fault in faults:
+            fault(root)
     return apply
 
 
@@ -156,6 +164,33 @@ CASES = [
     ("N2: a new SVG file with a script", write_text("site/images/x.svg", "<svg><script>alert(1)</script></svg>"), 1),
     ("N2: a srcdoc attribute on a page", before_main_end(PRIVACY, '<div srcdoc="&lt;img src=x onerror=alert(1)&gt;"></div>'), 1),
     ("N2: a srcdoc attribute in an SVG file", svg_with('<g srcdoc="x"></g>'), 1),
+    ("P1: a handler after a </noscript> inside an attribute on the demo page", before_main_end(DEMO,
+        "<noscript><p title=\"</noscript><img src=x title='>' onerror=alert(1)>\"></p></noscript>"), 1),
+    ("P2: a handler after a </noscript> inside an attribute on the install page", before_main_end(INSTALL,
+        "<noscript><p title=\"</noscript><img src=x title='>' onerror=alert(1)>\"></p></noscript>"), 1),
+    ("P3: a javascript: link after a </noscript> inside an attribute on the instructions page",
+        before_main_end(INSTRUCTIONS,
+        "<noscript><p title=\"</noscript><a href='javascript:alert(1)' title='>'>x</a>\"></p></noscript>"), 1),
+    ("a handler after a </noscript x> inside an attribute", before_main_end(DEMO,
+        "<noscript><p title=\"</noscript x><img src=x title='>' onerror=alert(1)>\"></p></noscript>"), 1),
+    ("LOW-4: a style attribute after a </noscript> inside an attribute", before_main_end(DEMO,
+        "<noscript><p title=\"</noscript><b style=color:red>x</b>\"></p></noscript>"), 1),
+    ("a style attribute inside noscript", before_main_end(DEMO, '<noscript><b style="color:red">x</b></noscript>'), 1),
+    ("a handler inside noscript", before_main_end(DEMO, '<noscript><img src="x" onerror="alert(1)"></noscript>'), 1),
+    ("a javascript: link inside noscript", before_main_end(DEMO, '<noscript><a href="javascript:alert(1)">x</a></noscript>'), 1),
+    ("an svg element inside noscript", before_main_end(DEMO, "<noscript><svg></svg></noscript>"), 1),
+    ("an external script inside noscript", before_main_end(DEMO, '<noscript><script src="/js/x.js"></script></noscript>'), 0),
+    ("a javascript: link after a </title> inside an attribute",
+        edit(PRIVACY, "</title>", "<a title=\"</title><a href='javascript:alert(1)'>x</a>\"></a></title>"), 1),
+    ("a handler after a quoted > in a title", edit(PRIVACY, "</title>", "<b title='>' onclick=alert(1)></b></title>"), 1),
+    ("a javascript: link inside an SVG title", svg_with('<title><a href="javascript:alert(1)">x</a></title>'), 1),
+    ("an ordinary noscript notice", before_main_end(DEMO, '<noscript><p class="notice">x</p></noscript>'), 0),
+    ("LOW-2: a handler after a quoted > in a tag", before_main_end(INSTALL, "<img src=x title='>' onerror=alert(1)>"), 1),
+    ("LOW-3: an internal entity in an SVG file", both(
+        edit(FAVICON, "<svg ", '<!DOCTYPE svg [<!ENTITY x "&#60;script&#62;alert(1)&#60;/script&#62;">]><svg '),
+        edit(FAVICON, "</svg>", "&x;</svg>")), 1),
+    ("a DOCTYPE in an SVG file", edit(FAVICON, "<svg ", "<!DOCTYPE svg><svg "), 1),
+    ("an ENTITY declaration in an SVG file", edit(FAVICON, "<svg ", '<!entity x "y"><svg '), 1),
     ("N4: an inline script in a .htm page", write_text("site/extra/index.htm", "<p>x</p><script>alert(1)</script>"), 1),
     ("a page that is not UTF-8", write_bytes(PRIVACY, b"<p>\xff</p>"), 3),
     ("no HTML page under site/", remove_pages, 3),

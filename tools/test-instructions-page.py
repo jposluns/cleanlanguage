@@ -60,6 +60,8 @@ CASES = [
         edit(DRAFT, "</main>", '<span/onclick="alert(1)">x</span></main>'), 1),
     ("I4: a javascript: link on the live page", edit(LIVE, "</main>", '<a href="javascript:alert(1)">x</a></main>'), 1),
     ("the inline-code gate missing", lambda root: (root / "tools/check-inline-code.py").unlink(), 3),
+    ("P3: a javascript: link after a </noscript> inside an attribute on the live page", edit(LIVE, "</main>",
+        "<noscript><p title=\"</noscript><a href='javascript:alert(1)' title='>'>x</a>\"></p></noscript></main>"), 1),
     ("the draft page missing", lambda root: (root / DRAFT).unlink(), 3),
     ("a second block on the draft page", edit(DRAFT, "</main>", '<pre id="instructions-text">x</pre></main>'), 3),
 ]
