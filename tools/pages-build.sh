@@ -9,8 +9,10 @@
 # specification, section 4, step 3). The site's other offline gates, such as
 # tools/generate-sitemap.py, run only in GitHub Actions.
 #
-# Every gate here reads only the checked-out tree: none reaches the network or
-# reads git history, so a shallow checkout is enough. The checks that need git
+# Every gate here reads only the checked-out tree, and check-security-txt.py
+# also reads the clock (it fails once the Expires date in security.txt has
+# passed). None reaches the network or reads git history, so a shallow
+# checkout is enough. The checks that need git
 # history (tools/check-page-metadata.py) or the network
 # (tools/check-release-checksum-live.py) stay in GitHub Actions only.
 #
