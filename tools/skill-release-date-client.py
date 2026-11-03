@@ -103,10 +103,11 @@ child that fills stdout to the cap, truncates it and writes a valid reply
 is accepted; the cap applies to each file, not to their total, so a child
 can write any number of files, each up to the cap; a child, or a process
 it starts, that holds CAP_SYS_RESOURCE (as a client run as root gives it)
-can raise the hard limit and then the soft one, so the cap does not apply
-to it; and the stdin file has the same cap but is not checked, so a child
-that fills it and still replies validly keeps its verdict. The extractor
-starts no process, so none of these arises from the extractor as it is.
+can raise the hard limit and then the soft one, so the cap holds only
+until it raises it; and the stdin file has the same cap but is not
+checked, so a child that fills it and still replies validly keeps its
+verdict. The extractor starts no process, so none of these arises from
+the extractor as it is.
 
 The contract (CONTRACT, REQUEST_KEYS, REPLY_KEYS) extends the one in
 ``tools/check-release-checksum-live.py``, rule for rule, with the ops and the
