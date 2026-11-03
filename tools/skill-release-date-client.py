@@ -306,7 +306,8 @@ def output_cap(limit: int) -> int:
     reply one byte too long is still read and refused as too long, and an
     ordinary write that would grow a file past the cap fails. It does not
     bound a file already larger than the cap, which the child can write
-    within, or storage reserved past the end of a file."""
+    within, storage reserved past the end of a file, or a child holding
+    CAP_SYS_RESOURCE that raises the limit."""
     return max(limit + 1, STDERR_LIMIT) + 1
 
 
