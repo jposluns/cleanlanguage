@@ -424,6 +424,44 @@ class BoundsTest(unittest.TestCase):
             tool = self.stub(tmp, f"import sys\nsys.stdout.write({reply!r} + ' ' * {pad})\n")
             self.assertEqual(client.run_extractor("baseline", {}, tool=tool)["value"], "1.0.14")
 
+    def test_a_capped_child_that_hangs_reports_the_cap_not_the_timeout(self):
+        # The cap check comes before the timeout check, so a child that fills
+        # stdout to the cap and then hangs past the timeout is unavailable
+        # naming the cap, not the timeout. The 1 second timeout starts only
+        # once the child has filled stdout and written its ready file, polled
+        # for at most 60 seconds, so a busy host cannot fire it early.
+        cap = client.output_cap(client.RESULT_LIMIT)
+        real_wait = client.wait_child
+        seen = set()
+        with tempfile.TemporaryDirectory() as tmp:
+            ready = Path(tmp) / "ready"
+            tool = self.stub(tmp, (
+                "import os, sys, time\n"
+                "sys.stdin.read()\n"
+                "for _ in range(16):\n"
+                "    try:\n"
+                "        os.write(1, b'x' * 65536)\n"
+                "    except OSError:\n"
+                "        pass\n"
+                "open('ready', 'w').write('ready')\n"
+                "time.sleep(60)\n"
+            ))
+
+            def wait_when_ready(proc, timeout):
+                if proc.pid not in seen:
+                    seen.add(proc.pid)
+                    deadline = time.monotonic() + 60
+                    while not ready.exists() and time.monotonic() < deadline:
+                        if real_wait(proc, 0.05):
+                            return True
+                return real_wait(proc, timeout)
+
+            with mock.patch.object(client, "wait_child", wait_when_ready):
+                with self.assertRaises(client.Unavailable) as caught:
+                    client.run_extractor("baseline", {}, timeout=1, tool=tool)
+            self.assertTrue(ready.exists(), "the child did not get ready")
+        self.assertEqual(caught.exception.reason, f"wrote stdout up to the output cap of {cap} bytes")
+
     def test_a_child_that_does_not_end_is_killed_with_its_group(self):
         with tempfile.TemporaryDirectory() as tmp:
             tool = self.stub(tmp, (
