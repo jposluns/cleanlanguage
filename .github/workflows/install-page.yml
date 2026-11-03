@@ -10,20 +10,24 @@ on:
   pull_request:
     paths:
       - "site/install/index.html"
+      - "site/draft/install/index.html"
       - "site/styles.css"
       - "site/_headers"
       - "site/js/install.js"
       - "tools/check-install-page.py"
+      - "tools/test-install-page.py"
       - ".github/workflows/install-page.yml"
   push:
     branches:
       - main
     paths:
       - "site/install/index.html"
+      - "site/draft/install/index.html"
       - "site/styles.css"
       - "site/_headers"
       - "site/js/install.js"
       - "tools/check-install-page.py"
+      - "tools/test-install-page.py"
       - ".github/workflows/install-page.yml"
 
 permissions:
@@ -36,6 +40,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      - name: Run the install page gate tests
+        shell: bash
+        run: python3 -I tools/test-install-page.py
+
       - name: Check the install page stays static and complete
         shell: bash
-        run: python3 tools/check-install-page.py
+        run: python3 -I tools/check-install-page.py

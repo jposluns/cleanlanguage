@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="auditthis-title">
+<title id="auditthis-title">AuditThis: a clipboard holding a checklist, with a pencil</title>
+<g stroke="#2a2220" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+<rect x="112" y="80" width="288" height="384" rx="22" fill="#f4c929"/>
+<path d="M126 448V104a12 12 0 0 1 12-12h250" fill="none" stroke="#ffeeba" stroke-width="8"/>
+<rect x="144" y="132" width="224" height="296" rx="8" fill="#f6efe3"/>
+<circle cx="256" cy="66" r="18" fill="#cfc4b4"/>
+<rect x="198" y="62" width="116" height="56" rx="14" fill="#a0937f"/>
+<rect x="214" y="78" width="84" height="24" rx="8" fill="none" stroke="#6f6354" stroke-width="6"/>
+<rect x="168" y="170" width="30" height="30" rx="6" fill="#f6efe3" stroke-width="8"/>
+<polyline points="175,186 182,193 192,178" fill="none" stroke="#b79400" stroke-width="8"/>
+<rect x="214" y="178" width="120" height="14" rx="7" fill="#a0937f" stroke="none"/>
+<rect x="168" y="226" width="30" height="30" rx="6" fill="#f6efe3" stroke-width="8"/>
+<polyline points="175,242 182,249 192,234" fill="none" stroke="#b79400" stroke-width="8"/>
+<rect x="214" y="234" width="96" height="14" rx="7" fill="#a0937f" stroke="none"/>
+<rect x="168" y="282" width="30" height="30" rx="6" fill="#f6efe3" stroke-width="8"/>
+<polyline points="175,298 182,305 192,290" fill="none" stroke="#b79400" stroke-width="8"/>
+<rect x="214" y="290" width="130" height="14" rx="7" fill="#a0937f" stroke="none"/>
+<rect x="168" y="338" width="30" height="30" rx="6" fill="#f6efe3" stroke-width="8"/>
+<rect x="214" y="346" width="72" height="14" rx="7" fill="#a0937f" stroke="none"/>
+<g transform="rotate(-40 320 330)">
+<rect x="302" y="200" width="40" height="224" rx="8" fill="#ffeeba"/>
+<rect x="302" y="200" width="40" height="30" rx="8" fill="#a0937f"/>
+<rect x="302" y="222" width="40" height="8" fill="#a0937f" stroke="none"/>
+<path d="M302 424L322 470L342 424Z" fill="#f6efe3"/>
+<path d="M315 454L322 470L329 454Z" fill="#2a2220"/>
+<rect x="312" y="238" width="6" height="180" rx="3" fill="#f4c929" stroke="none"/>
+</g>
+</g>
+</svg>

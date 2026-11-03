@@ -217,6 +217,12 @@ python3 tools/check-page-metadata.py
 python3 tools/generate-sitemap.py
 python3 tools/check-links.py
 python3 tools/check-install-page.py
+# The template pages staged under site/draft/ are generated from site-src/release.json,
+# which the writer above rewrote and then regenerated from; the generator's check mode
+# proves the committed output now matches a fresh build, and the pin is untouched.
+python3 -I tools/build-site.py --check
+python3 -I tools/check-baseline-pin.py
+python3 -I tools/check-instructions-page.py
 
 # 4. Assertions on the rewritten site. Because the dates were seeded old, a
 #    passing stamp assertion here proves the writer changed them.
@@ -230,10 +236,27 @@ assert_contains site/verify/index.html "${checksum}"
 assert_contains site/verify/index.html "published checksum for version ${dry_version} is"
 # No page may still name the release it replaced, in a URL or written out bare
 # (the install page's example download name, the verify page's hash commands).
-for page in site/install/index.html site/verify/index.html; do
+# The template pages under site/draft/ are held to the same rule.
+for page in site/install/index.html site/verify/index.html site/draft/install/index.html site/draft/verify/index.html; do
   if grep -qF "cleanlanguage-${version}.zip" "${page}"; then
     fail "${page} still names cleanlanguage-${version}.zip after the rewrite"
   fi
+done
+# The template pages under site/draft/ name the new version everywhere: the download
+# block, the version labels, the checksum, the hash commands, and the install page's
+# example filename (the version text the old writer left behind), and no old version.
+assert_contains site-src/release.json "\"version\": \"${dry_version}\""
+assert_contains site-src/release.json "\"checksum\": \"${checksum}\""
+assert_contains site/draft/install/index.html "releases/download/${dry_tag}/cleanlanguage-${dry_version}.zip"
+assert_contains site/draft/install/index.html "zip, version ${dry_version}"
+assert_contains site/draft/install/index.html "for example <code>cleanlanguage-${dry_version}.zip</code>"
+assert_contains site/draft/verify/index.html "id=\"published-checksum\">${checksum}</code>"
+assert_contains site/draft/verify/index.html "published checksum for version ${dry_version} is"
+assert_contains site/draft/verify/index.html "cleanlanguage-${dry_version}.zip.sha256"
+assert_contains site/draft/verify/index.html "sha256sum cleanlanguage-${dry_version}.zip"
+for page in site/draft/install/index.html site/draft/verify/index.html; do
+  grep -q "version ${version}\b" "${page}" \
+    && fail "${page} still names version ${version} after the flip"
 done
 for page in site/install/index.html site/verify/index.html; do
   assert_contains "${page}" "article:modified_time\" content=\"${dry_date}\""

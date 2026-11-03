@@ -24,6 +24,7 @@ on:
       - "site/downloads/cleanlanguage-8k.md"
       - "tools/build-portable-text.py"
       - "site/instructions/index.html"
+      - "site/draft/instructions/index.html"
       - "tools/portable-text-skill-source.sha256"
       - "tools/skill-version.py"
       - "tools/skill-release-date.py"
@@ -31,6 +32,7 @@ on:
       - "tools/test-portable-text-release-date.sh"
       - "tools/check-portable-text-sync.sh"
       - "tools/check-instructions-page.py"
+      - "tools/test-instructions-page.py"
       - ".github/workflows/portable-text-sync.yml"
   push:
     branches:
@@ -44,6 +46,7 @@ on:
       - "site/downloads/cleanlanguage-8k.md"
       - "tools/build-portable-text.py"
       - "site/instructions/index.html"
+      - "site/draft/instructions/index.html"
       - "tools/portable-text-skill-source.sha256"
       - "tools/skill-version.py"
       - "tools/skill-release-date.py"
@@ -51,6 +54,7 @@ on:
       - "tools/test-portable-text-release-date.sh"
       - "tools/check-portable-text-sync.sh"
       - "tools/check-instructions-page.py"
+      - "tools/test-instructions-page.py"
       - ".github/workflows/portable-text-sync.yml"
 
 permissions:
@@ -74,6 +78,10 @@ jobs:
       - name: Check the portable text is reconciled with the skill
         shell: bash
         run: tools/check-portable-text-sync.sh
+
+      - name: Run the instructions page gate tests
+        shell: bash
+        run: python3 -I tools/test-instructions-page.py
 
       - name: Check the instructions page embeds that text, statically
         shell: bash

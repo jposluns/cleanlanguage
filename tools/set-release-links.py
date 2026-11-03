@@ -20,6 +20,11 @@ What it updates
   the displayed checksum value, and the version named beside it.
 * On both pages, every bare version-named file name: the example download name
   on the install page and the file that the verify page's hash commands name.
+* ``site-src/release.json``: the version, tag and checksum that every version
+  string of the template pages staged at ``site/draft/`` comes from, and then
+  those pages themselves, regenerated in-process by ``tools/build-site.py``
+  (its download blocks, version labels, checksum, filenames in the hash
+  commands, and the install page's example filename).
 * On any page this run changes, its ``article:modified_time`` and JSON-LD
   ``dateModified`` stamps, so the page-metadata gate still passes on the pull
   request this rewrite feeds. ``site/sitemap.xml`` is regenerated separately by
@@ -42,6 +47,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
@@ -137,7 +144,25 @@ def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str]
         if text != original:
             text = stamp_dates(text, date, name)
         planned[path] = text
+
+    release = {"version": version, "tag": tag, "checksum": checksum}
+    planned[REPO_ROOT / "site-src" / "release.json"] = json.dumps(release, indent=2) + "\n"
+    planned.update(draft_pages(release))
     return planned
+
+
+def draft_pages(release: dict) -> dict[Path, bytes]:
+    """The template pages under site/draft/, regenerated with this release's values."""
+    spec = importlib.util.spec_from_file_location("build_site", REPO_ROOT / "tools" / "build-site.py")
+    if spec is None or spec.loader is None:
+        die("tools/build-site.py could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    try:
+        out, outputs, _ = module.build(REPO_ROOT, release=release)
+    except (module.BuildError, module.Unreadable) as error:
+        die(f"the template pages could not be regenerated: {error}")
+    return {REPO_ROOT / out / name: data for name, data in outputs.items()}
 
 
 def main() -> int:
@@ -170,11 +195,13 @@ def main() -> int:
 
     changed = []
     for path, new_text in planned.items():
-        current = path.read_text(encoding="utf-8") if path.is_file() else None
-        if current != new_text:
+        new_bytes = new_text if isinstance(new_text, bytes) else new_text.encode("utf-8")
+        current = path.read_bytes() if path.is_file() else None
+        if current != new_bytes:
             changed.append(path.relative_to(REPO_ROOT).as_posix())
             if not args.check:
-                path.write_text(new_text, encoding="utf-8")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(new_bytes)
 
     if not changed:
         print(f"The site already points at {tag}; nothing to change.")

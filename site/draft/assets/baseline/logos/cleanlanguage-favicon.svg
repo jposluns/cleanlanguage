@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="cleanlanguage-favicon-title">
+<title id="cleanlanguage-favicon-title">Clean Language favicon</title>
+<g fill="none" stroke="#2a2220" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+<rect x="10" y="6" width="38" height="52" rx="4" fill="#f6efe3"/>
+<path d="M18 22h12M18 32h22M18 42h18" stroke="#a0937f" stroke-width="4"/>
+<path d="M19 59L31 36" stroke="#59a847" stroke-width="9"/>
+<circle cx="48" cy="16" r="11" fill="#59a847"/>
+<polyline points="42 16 46 20 54 11" stroke="#f6efe3" stroke-width="4"/>
+</g>
+</svg>

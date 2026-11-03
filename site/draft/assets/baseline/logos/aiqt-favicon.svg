@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="aiqt-favicon-title">
+<title id="aiqt-favicon-title">AIQT Guardrails favicon</title>
+<g fill="none" stroke="currentColor" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+<rect x="6" y="40" width="52" height="8" rx="4" fill="#cfc4b4" stroke="#2a2220"/>
+<path d="M32 5L50 12V28C50 39 42 46 32 50C22 46 14 39 14 28V12Z" fill="#136dbf" stroke="#2a2220"/>
+<polyline points="24 26 30 32 41 19" stroke="#f6efe3" stroke-width="6"/>
+</g>
+</svg>

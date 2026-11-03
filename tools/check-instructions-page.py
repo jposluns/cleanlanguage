@@ -26,10 +26,21 @@ perfectly valid and the failure happens only in a browser enforcing the policy.
 What it verifies
 ----------------
 
+It checks 2 pages: the live page and the template page staged at
+``site/draft/instructions/index.html`` while the site is rebuilt on the shared
+template. On each:
+
 1. The page embeds the portable text exactly, character for character, once HTML
    escaping is undone.
 2. The page contains no inline ``<script>`` element.
 3. The page contains no inline ``style`` attribute.
+
+The template page puts its copy button inside the block (template specification
+7.11). Exactly that button, ``<button class="copy" type="button"
+data-copy="instructions-text" hidden>Copy</button>``, is required as the first
+thing in the block and is removed before the comparison; any other markup
+inside the block still fails the comparison. At promotion the template page
+replaces the live one and the live path is dropped from ``PAGES``.
 
 A ``<script type="application/ld+json">`` block is not an inline script for this
 purpose. The browser never executes it and CSP ``script-src`` does not apply, which
@@ -59,6 +70,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SOURCE = REPO_ROOT / "site" / "downloads" / "cleanlanguage.md"
 PAGE = REPO_ROOT / "site" / "instructions" / "index.html"
+DRAFT_PAGE = REPO_ROOT / "site" / "draft" / "instructions" / "index.html"
+# (page, the copy button the template puts first in the block, or None)
+COPY_BUTTON = '<button class="copy" type="button" data-copy="instructions-text" hidden>Copy</button>'
+PAGES = [(PAGE, None), (DRAFT_PAGE, COPY_BUTTON)]
 
 # The embedded block. Matched on its id so a class or attribute change does not
 # quietly stop this check from finding anything to compare.
@@ -92,27 +107,51 @@ def first_difference(a: str, b: str) -> str:
 
 
 def main() -> int:
-    for path in (SOURCE, PAGE):
+    for path in (SOURCE, *(page for page, _ in PAGES)):
         if not path.is_file():
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
 
     expected = SOURCE.read_text(encoding="utf-8").rstrip("\n")
-    page_text = PAGE.read_text(encoding="utf-8")
+    problems: list[str] = []
+    for page, button in PAGES:
+        problems += check_page(page, button, expected)
+
+    if problems:
+        print("Instructions page problems found:")
+        for problem in problems:
+            print(f"  - {problem}")
+        return 1
+
+    print(
+        f"Both instructions pages embed the portable text exactly "
+        f"({len(expected)} characters) and carry no inline script or style."
+    )
+    return 0
+
+
+def check_page(page: Path, button: str | None, expected: str) -> list[str]:
+    name = page.relative_to(REPO_ROOT)
+    page_text = page.read_text(encoding="utf-8")
 
     matches = list(EMBEDDED.finditer(page_text))
     if len(matches) != 1:
         die(
             'expected exactly one <pre id="instructions-text"> block in '
-            f"{PAGE.relative_to(REPO_ROOT)}, found {len(matches)}"
+            f"{name}, found {len(matches)}"
         )
 
-    embedded = html.unescape(matches[0].group(1)).rstrip("\n")
-
+    raw = matches[0].group(1)
     problems: list[str] = []
+    if button is not None:
+        if not raw.startswith(button):
+            problems.append(f"{name}: the block does not start with the template's copy button {button!r}.")
+        else:
+            raw = raw[len(button):]
+    embedded = html.unescape(raw).rstrip("\n")
 
     if embedded != expected:
         problems.append(
-            "the embedded text does not match "
+            f"{name}: the embedded text does not match "
             f"{SOURCE.relative_to(REPO_ROOT)} ({len(embedded)} characters embedded, "
             f"{len(expected)} in the file); {first_difference(embedded, expected)}. "
             "Re-embed the file's contents in the page."
@@ -129,29 +168,19 @@ def main() -> int:
 
     if executes_inline(page_text):
         problems.append(
-            "the page contains an inline <script>. The site's CSP is "
+            f"{name}: the page contains an inline <script>. The site's CSP is "
             "script-src 'self', which blocks it, and the page silently fails to "
             "work in the browser. Move the code to a file under site/js/."
         )
 
     if INLINE_STYLE.search(page_text):
         problems.append(
-            "the page contains an inline style attribute. The site's CSP is "
+            f"{name}: the page contains an inline style attribute. The site's CSP is "
             "style-src 'self', which blocks it. Move the declarations to "
             "site/styles.css."
         )
 
-    if problems:
-        print("Instructions page problems found:")
-        for problem in problems:
-            print(f"  - {problem}")
-        return 1
-
-    print(
-        f"The instructions page embeds the portable text exactly "
-        f"({len(expected)} characters) and carries no inline script or style."
-    )
-    return 0
+    return problems
 
 
 if __name__ == "__main__":

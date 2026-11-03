@@ -4263,5 +4263,23 @@ class ContractRoutingTest(unittest.TestCase):
         self.assertEqual(sorted(starts), [("gh", "subprocess", "run"), ("run_release_date_child", "subprocess", "Popen")])
 
 
+class DisplayedSumMarkupTest(unittest.TestCase):
+    """The live verify page's checksum element is read exactly; any other attribute fails."""
+
+    def test_live_markup(self):
+        match = gate.DISPLAYED_SUM.search(VERIFY.format(version=CURRENT, checksum=ZIP_SUM))
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), ZIP_SUM)
+
+    def test_extra_attributes_do_not_match(self):
+        for page in (
+            f'<code id="published-checksum" hidden>{ZIP_SUM}</code>',
+            f'<code class="sum" id="published-checksum">{ZIP_SUM}</code>',
+            f'<code data-id="published-checksum">{ZIP_SUM}</code>',
+            f'<code id="published-checksum-old">{ZIP_SUM}</code>',
+        ):
+            self.assertIsNone(gate.DISPLAYED_SUM.search(page), page)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,543 @@
+/* baseline.css 1.2.0: the shared stylesheet of the project sites (the Atrium direction).
+   Newsreader for text and headings, Public Sans for labels and navigation, JetBrains Mono for code,
+   Dancing Script for the signature; the fonts are declared in fonts.css.
+   Scale: perfect fourth (1.333) on a 1.1875rem base. No rules except the table header hairline.
+   Colour comes only from the tokens in palettes.css and the family tokens below; the site class on <html>
+   is the only per-site switch. Specification: docs/site-template-spec.md in jposluns/posluns_site. */
+
+/* Family signature tokens (the link-preview cards): gold and silver, checked at 4.5:1 or better on every site background in each mode;
+   the 3 ordering colours for aiqt are the text-safe accents of the green, orange and red sites from palettes.css. */
+:root { --gold-rule: #d4a52a; --gold: #8a6a0a; --silver: #6a6a6a; --ord-progress: #3b752e; --ord-speed: #a25100; --ord-cost: #bc3732; }
+/* Layout tokens: the page gutter, the hero logo column, the rail column, the label column of the document and
+   region grids, and the footer's band, tile, logo and mark sizes. */
+:root { --pad: clamp(1rem, 3vw, 3.2rem); --art: clamp(11rem, 22vw, 30rem); --railw: clamp(13rem, 13vw, 17rem); --label-col: 9rem; --band: 0.55rem; --tile: 3.4rem; --tile-logo: 2.75rem; --mark: 2rem; }
+@media (prefers-color-scheme: dark) { :root:not([data-scheme="light"]) { --gold: #e6c15a; --silver: #cfcfcf; --ord-progress: #6faa62; --ord-speed: #e1791b; --ord-cost: #ef675c; } }
+:root[data-scheme="dark"] { --gold: #e6c15a; --silver: #cfcfcf; --ord-progress: #6faa62; --ord-speed: #e1791b; --ord-cost: #ef675c; }
+*, *::before, *::after { box-sizing: border-box; }
+:root { color-scheme: light dark; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 1.25rem/1.6 "Newsreader", Georgia, "Times New Roman", serif;
+  font-variant-numeric: oldstyle-nums proportional-nums;
+  font-feature-settings: "kern", "liga";
+  text-rendering: optimizeLegibility;
+}
+::selection { background: var(--selection); color: var(--text); }
+
+/* Links */
+a { color: var(--link); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 0.18em; text-decoration-color: var(--rule-strong); }
+a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 2px; }
+.vh { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* Skip link */
+.skip { position: absolute; left: 1rem; top: -4rem; z-index: 50; background: var(--surface-raised); color: var(--text); padding: 0.6rem 1rem; border-radius: 0.3rem; font: 500 0.78rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; text-decoration: none; }
+.skip:focus { top: 1rem; }
+
+/* The label voice of the direction: tracked uppercase Public Sans */
+.lbl, .label {
+  font: 500 0.72rem/1.4 "Public Sans", system-ui, sans-serif;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 0.6rem;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.lbl.accent, .label.accent { color: var(--accent); }
+.lbl.file { text-transform: none; letter-spacing: 0.06em; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 0.74rem; }
+.lbl .n { font-family: "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.08em; }
+.lbl a { color: inherit; text-decoration: none; }
+.lbl a:hover { color: var(--text); }
+
+/* Page container: the widest of the 3 directions */
+.wrap { margin: 0; padding: 0 var(--pad); }
+
+/* Masthead: no rule under it; the entrance field below gives it its edge. 2 columns: the wordmark and the site's
+   page links on 1 row, right-aligned, GitHub last where the site has a public repository. Nothing wraps: when the
+   row cannot hold the links it scrolls sideways, and a shadow at the scrolled edge (background-attachment: local,
+   no script) shows that more links follow. Disclosure and Licence are not in the bar; the landing page's
+   "About this project" line links them. The bar is positioned so that the visually hidden "(opens in a new tab)"
+   span of the GitHub link is clipped inside the scrolling row instead of widening the page. */
+.mast { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "brand pages"; align-items: center; column-gap: clamp(1.2rem, 2.5vw, 2.5rem); padding: 1rem var(--pad) 0.9rem; }
+/* The wordmark, in the style of the link-preview cards: bold name, gold .ai, gold rule beneath */
+.brand { grid-area: brand; display: inline-grid; gap: 0.3rem; color: var(--text); text-decoration: none; font: 700 clamp(1.6rem, 1.9vw, 2.2rem)/1 "Public Sans", system-ui, sans-serif; letter-spacing: -0.015em; padding: 0.35rem 0 0.1rem; white-space: nowrap; }
+.brand .tld { color: var(--gold); }
+.brand .rule { display: block; height: 3px; background: var(--gold-rule); border-radius: 2px; }
+.brand:hover .name { color: var(--text); }
+.nav { grid-area: pages; position: relative; display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 0 clamp(1rem, 1.6vw, 2rem); overflow-x: auto; scrollbar-width: thin; min-width: 0; font: 500 clamp(0.66rem, 0.45vw + 0.36rem, 0.74rem)/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.16em; text-transform: uppercase;
+  background: linear-gradient(90deg, var(--bg) 40%, transparent) left / 2.4rem 100% no-repeat local, linear-gradient(270deg, var(--bg) 40%, transparent) right / 2.4rem 100% no-repeat local,
+    linear-gradient(90deg, color-mix(in srgb, var(--rule-strong) 55%, transparent), transparent) left / 0.9rem 100% no-repeat scroll, linear-gradient(270deg, color-mix(in srgb, var(--rule-strong) 55%, transparent), transparent) right / 0.9rem 100% no-repeat scroll; }
+.nav a { color: var(--text-muted); text-decoration: none; padding: 0.7rem 0; display: inline-block; white-space: nowrap; }
+.nav a:hover { color: var(--text); }
+.nav a[aria-current="page"] { color: var(--accent); }
+
+/* Hero: 1 section. The logo sits beside the title block, over a soft glow, at a size that supports the heading. */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) var(--art); grid-template-areas: "text art"; column-gap: clamp(2.5rem, 5vw, 6rem); align-items: center; padding: 1.2rem max(0px, calc(var(--art) * 0.5 - var(--pad))) 2.4rem 0; }
+.hero-text { grid-area: text; container-type: inline-size; min-width: 0; }
+.hero .lbl { grid-area: kicker; margin-bottom: 0.4rem; }
+.hero .lbl.gold { color: var(--gold); }
+.hero-art { grid-area: art; align-self: center; justify-self: end; width: 100%; aspect-ratio: 1; display: grid; place-items: center; background: radial-gradient(closest-side, var(--glow) 0%, var(--glow) 38%, transparent 100%); animation: field-in 400ms ease-out both; }
+.hero-art img { width: 84%; height: auto; display: block; }
+@keyframes field-in { from { opacity: 0; } to { opacity: 1; } }
+/* The statement sits on 1 line whenever it fits the text column at 2.6rem or more (--sw is the statement's
+   1-line width in em, measured per site and scheme); the size scales between the floor and 5rem to achieve that. Below
+   the floor it breaks once, at the meaningful point: the emphasized part never splits, so a 1-sentence statement breaks
+   before it and a 2-sentence statement breaks between the sentences. README: re-measure --sw when a statement changes (tools/measure.js). */
+.statement { grid-area: title; font-weight: 300; font-size: clamp(2.6rem, 98cqw / var(--sw), 5rem); line-height: 1.06; letter-spacing: -0.015em; margin: 0 0 1rem; --sw: 20; }
+.statement em { font-style: italic; font-weight: 300; color: var(--accent); white-space: nowrap; }
+.site-secureconfig .statement { --sw: 13.712; } .site-opfiles .statement { --sw: 15.070; } .site-auditthis .statement { --sw: 12.562; }
+.site-cleanlanguage .statement { --sw: 12.824; } .site-aiqt .statement { --sw: 19.868; } .site-grclibrary .statement { --sw: 13.069; }
+/* The dark widths apply in system dark mode (sites never set data-scheme) and under a forced dark scheme. */
+@media (prefers-color-scheme: dark) {
+  .site-secureconfig:not([data-scheme="light"]) .statement { --sw: 14.612; } .site-opfiles:not([data-scheme="light"]) .statement { --sw: 16.070; } .site-auditthis:not([data-scheme="light"]) .statement { --sw: 13.337; }
+  .site-cleanlanguage:not([data-scheme="light"]) .statement { --sw: 13.724; } .site-aiqt:not([data-scheme="light"]) .statement { --sw: 21.218; } .site-grclibrary:not([data-scheme="light"]) .statement { --sw: 13.894; }
+}
+.site-secureconfig[data-scheme="dark"] .statement { --sw: 14.612; } .site-opfiles[data-scheme="dark"] .statement { --sw: 16.070; } .site-auditthis[data-scheme="dark"] .statement { --sw: 13.337; }
+.site-cleanlanguage[data-scheme="dark"] .statement { --sw: 13.724; } .site-aiqt[data-scheme="dark"] .statement { --sw: 21.218; } .site-grclibrary[data-scheme="dark"] .statement { --sw: 13.894; }
+.hero .intro { grid-area: intro; font-size: clamp(1.35rem, 1.35vw, 1.8rem); line-height: 1.5; max-width: 68ch; margin: 0 0 1.4rem; }
+.hero .intro .ordering { font-size: 1.2rem; margin: 0.6rem 0 0; }
+.lead { font-size: 1.333rem; line-height: 1.5; max-width: 52ch; margin: 0 0 2rem; }
+.start { grid-area: start; justify-self: start; display: inline-flex; align-items: baseline; gap: 1rem; font: 500 0.78rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text); text-decoration: none; border-bottom: 2px solid var(--brand); padding: 0.4rem 0 0.55rem; }
+.start:hover { color: var(--text); }
+.start .arrow { font-family: "Newsreader", serif; font-size: 1.2rem; color: var(--accent); transition: transform 150ms ease-out; display: inline-block; }
+.start:hover .arrow { transform: translateX(0.25rem); }
+
+/* Labelled regions: the label column at the left, content at the right.
+   Used by the site plan, the family footer, the scope paragraph and every stand-alone block. */
+.region { display: grid; grid-template-columns: var(--label-col) minmax(0, 1fr); gap: 0.4rem 2.5rem; padding: 0 0 2.6rem; align-items: start; }
+.region > .lbl { padding-top: 0.5rem; }
+.region.narrow > div { max-width: 72ch; }
+.region p { margin: 0 0 1.1rem; }
+.region p:last-child { margin-bottom: 0; }
+
+/* Index lists: 2 columns, serif title, mono count or type at the right, no rules */
+.plan { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: 3rem; }
+.plan.three { columns: 3; column-gap: 2.5rem; }
+.plan li { break-inside: avoid; padding: 0.3rem 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: baseline; }
+.plan li a { text-decoration: none; color: var(--text); }
+.plan li a:hover { color: var(--link-hover); }
+.plan li .n, .plan li .t { font: 400 0.82rem/1.8 "JetBrains Mono", ui-monospace, monospace; color: var(--text-muted); font-variant-numeric: lining-nums tabular-nums; white-space: nowrap; }
+.plan.one { columns: 1; }
+.plan li small { display: block; font: 400 1rem/1.45 "Public Sans", system-ui, sans-serif; color: var(--text-muted); grid-column: 1 / -1; margin-top: 0; }
+.plan.described li { padding: 0.35rem 0 1.15rem; row-gap: 0.05rem; }
+.plan.described li a, .plan.described li .n { line-height: 1.35; }
+
+/* Document page: label column, text column, contents rail */
+.doc { display: grid; grid-template-columns: var(--label-col) minmax(0, 1fr) var(--railw); gap: 0 clamp(2rem, 3vw, 4rem); padding: 0.6rem 0 2rem; align-items: start; }
+:is(.doc, .doc > section, .doc > article) > :is(p, h1, h2, h3, ul, ol.num, dl.record:not(.cols), blockquote, .callout, .download, details, .pair, .search) { max-width: 72ch; }
+:is(.doc, .doc > section, .doc > article) > .steps { max-width: 84ch; }
+.rail-logo { width: 100%; height: auto; display: block; margin: 0.3rem 0 1.2rem; }
+:is(.doc, .doc > section, .doc > article) > * { grid-column: 2; min-width: 0; }
+:is(.doc, .doc > section, .doc > article) > .lbl { grid-column: 1; padding-top: 0.55rem; margin: 0; }
+:is(.doc, .doc > section, .doc > article) > .lbl.first { padding-top: 0.9rem; }
+:is(.doc, .doc > section, .doc > article) > .rail { grid-column: 3; grid-row: 1 / span 200; position: sticky; top: 1.5rem; align-self: start; }
+:is(.doc, .doc > section, .doc > article) > .wide { grid-column: 2; }
+:is(.doc, .doc > section, .doc > article) > .full { grid-column: 1 / 4; }
+.doc section, .doc article { display: contents; }
+.doc h1 { font-weight: 300; font-size: 2.8rem; line-height: 1.1; margin: 0 0 0.5rem; letter-spacing: -0.012em; }
+.doc h2 { font-weight: 400; font-size: 2rem; line-height: 1.18; margin: 2rem 0 0.7rem; }
+.doc h3 { font-weight: 500; font-size: 1.45rem; line-height: 1.35; margin: 1.6rem 0 0.5rem; }
+:is(.doc, .doc > section, .doc > article) > .lbl + h1, :is(.doc, .doc > section, .doc > article) > .lbl + h3 { margin-top: 0; }
+:is(.doc, .doc > section, .doc > article) > .lbl + h2 { margin-top: 1.2rem; }
+:is(.doc, .doc > section, .doc > article) > .lbl.sec { padding-top: 1.8rem; }
+:is(.doc, .doc > section, .doc > article) > .lbl.blk { padding-top: 1.75rem; }
+:is(.doc, .doc > section, .doc > article) > .lbl.first { padding-top: 0.9rem; }
+:is(.doc, .doc > section, .doc > article) > .lbl + .tablewrap { margin-top: 0.4rem; }
+:is(.doc, .doc > section, .doc > article) > .lbl + .tablewrap + * { margin-top: 0; }
+:is(.doc, .doc > section, .doc > article) > .lbl.blk + .tablewrap { margin-top: 1.35rem; }
+:is(.doc, .doc > section, .doc > article) > .lbl + .picker { margin-top: 1.1rem; }
+:is(.doc, .doc > section, .doc > article) > .lbl + .chips { margin-top: 1.4rem; }
+:is(.doc, .doc > section, .doc > article) > .lbl + .search { margin-top: 1.2rem; }
+:is(.doc, .doc > section, .doc > article) > .side { grid-column: 1; grid-row: span 7; align-self: start; padding-top: 0.6rem; }
+:is(.doc, .doc > section, .doc > article) > .side dd { font-size: 0.9rem; }
+:is(.doc, .doc > section, .doc > article) > .lead + .side { margin-top: 0; }
+.lbl.size { color: var(--text-muted); margin: 0.3rem 0 0.9rem; }
+.ordering { font: 400 1.777rem/1.25 "Newsreader", serif; margin: 0 0 1rem; letter-spacing: -0.005em; }
+.ordering .tier { color: var(--gold); }
+.ordering .p { color: var(--ord-progress); }
+.ordering .s { color: var(--ord-speed); }
+.ordering .c { color: var(--ord-cost); }
+.hero .intro .ordering { display: block; font: 400 1.25rem/1.35 "Newsreader", serif; }
+.callout .ordering { font-size: 1.5rem; }
+.region ol.num { padding-left: 0; list-style: none; counter-reset: c; margin: 0; }
+.region ol.num > li { counter-increment: c; position: relative; padding-left: 2.6rem; margin-bottom: 0.9rem; }
+.region ol.num > li::before { content: counter(c); position: absolute; left: 0; top: 0.12rem; font: 400 0.95rem/1.6 "Newsreader", serif; color: var(--accent); font-variant-numeric: lining-nums; }
+:is(.doc, .doc > section, .doc > article) > details { margin: 0 0 1.1rem; }
+details summary { cursor: pointer; font-weight: 600; padding: 0.4rem 0; }
+details p, details ul { margin: 0.4rem 0 0.8rem; }
+details ul ul { margin: 0.2rem 0 0.4rem; }
+.doc p, .doc ul, .doc ol, .doc dl { margin: 0 0 1.1rem; }
+.doc .meta { font: 400 1.05rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: 0 0 1.6rem; max-width: 66ch; }
+.doc .lead { margin-bottom: 1.4rem; }
+.doc ul { padding-left: 1.2rem; }
+.doc li { margin-bottom: 0.45rem; }
+.doc ol.num { padding-left: 0; list-style: none; counter-reset: c; }
+.doc ol.num > li { counter-increment: c; position: relative; padding-left: 2.6rem; margin-bottom: 0.9rem; }
+.doc ol.num > li::before { content: counter(c); position: absolute; left: 0; top: 0.12rem; font: 400 0.95rem/1.6 "Newsreader", serif; color: var(--accent); font-variant-numeric: lining-nums; }
+.doc ol.num ol { list-style: lower-alpha; padding-left: 1.4rem; margin-top: 0.5rem; }
+.doc blockquote { margin: 0 0 1.1rem; padding-left: 1.4rem; font-style: italic; color: var(--text-muted); }
+
+/* Contents rail */
+.rail { font: 400 0.95rem/1.5 "Public Sans", system-ui, sans-serif; --logo-inset: 0.115; }
+/* The rail text starts under the visible left edge of the logo artwork: each SVG's internal left margin, measured as a fraction of its box (README, tools/measure.js). */
+.site-opfiles .rail { --logo-inset: 0.1225; } .site-auditthis .rail { --logo-inset: 0.2075; } .site-cleanlanguage .rail { --logo-inset: 0.185; } .site-aiqt .rail { --logo-inset: 0.0975; } .site-grclibrary .rail { --logo-inset: 0.115; }
+.rail .lbl { margin: 0.6rem 0 0.8rem; }
+.rail ol, .rail ul { list-style: none; margin: 0; padding: 0; counter-reset: r; }
+.rail li { margin: 0; }
+.rail li a { display: grid; grid-template-columns: 1.4rem 1fr; gap: 0.2rem; color: var(--text-muted); text-decoration: none; padding: 0.22rem 0; }
+.rail ol li a::before { counter-increment: r; content: counter(r); font: 400 0.8rem/1.6 "Newsreader", serif; color: var(--accent); font-variant-numeric: lining-nums; }
+.rail ul li a { grid-template-columns: 1fr; }
+.rail li a:hover { color: var(--text); }
+/* rail.js marks the section on screen with aria-current="location"; the "true" form is kept for pages built on 1.2.1 and earlier. */
+.rail li a[aria-current="location"], .rail li a[aria-current="true"] { color: var(--accent); }
+.rail > .lbl, .rail > ol, .rail > ul { margin-left: calc(100% * var(--logo-inset)); }
+
+/* Callouts: no border, label in the label column */
+.callout { background: var(--callout-bg); padding: 1.2rem 1.4rem; margin: 0.4rem 0 1.6rem; border-radius: 0.3rem; font-size: 1.15rem; line-height: 1.55; }
+.callout.rule { box-shadow: inset 4px 0 0 var(--brand); }
+.callout p { margin: 0 0 0.8rem; }
+.callout p:last-child, .callout ul:last-child, .callout ol:last-child { margin-bottom: 0; }
+
+/* Code and prompt blocks */
+pre, .code { font: 400 0.95rem/1.55 "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code-bg); color: var(--text); padding: 1.3rem 1.4rem; border-radius: 0.3rem; margin: 0.4rem 0 1.6rem; position: relative; white-space: pre-wrap; overflow-wrap: anywhere; font-variant-numeric: lining-nums tabular-nums; }
+pre.hascopy { padding-top: 3.2rem; }
+code { font: 400 0.9em/1.4 "JetBrains Mono", ui-monospace, monospace; background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 0.2rem; overflow-wrap: anywhere; }
+pre code { background: none; padding: 0; font-size: inherit; }
+.copy, .btn { position: absolute; top: 0.8rem; right: 0.8rem; font: 500 0.7rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.16em; text-transform: uppercase; background: transparent; color: var(--text-muted); border: 1px solid var(--rule-strong); border-radius: 999px; padding: 0.55rem 0.9rem; cursor: pointer; }
+.copy:hover, .btn:hover { color: var(--text); border-color: var(--text); }
+.copy[hidden] { display: none; }
+.btn.inline { position: static; display: inline-block; text-decoration: none; margin: 0 0.6rem 0.6rem 0; }
+.btn.inline:hover { color: var(--text); }
+.code-note { font: 400 0.95rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: -0.8rem 0 1.6rem; }
+.prompt-block { max-height: 36rem; overflow: auto; }
+/* The flowing variant: the whole text in the page flow, no cap and no inner scroll, for a portable text the reader reads in place. */
+.prompt-flow { max-height: none; overflow: visible; }
+
+/* Tables: header hairline only, tracked header, 0.6rem row padding. A table wider than its wrapper scrolls inside it;
+   a long token wraps inside its own cell only in a fixed-layout table (table.fixed with colgroup widths). */
+.tablewrap { overflow-x: auto; margin: 0.4rem 0 1.6rem; -webkit-overflow-scrolling: touch; }
+.tablewrap:focus-visible { outline-offset: 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 1.05rem; line-height: 1.45; font-variant-numeric: lining-nums tabular-nums; }
+th { text-align: left; font: 500 0.68rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); padding: 0 1.2rem 0.6rem 0; border-bottom: 1px solid var(--rule-strong); vertical-align: bottom; white-space: nowrap; }
+td { padding: 0.6rem 1.2rem 0.6rem 0; vertical-align: top; overflow-wrap: break-word; }
+td code { white-space: normal; overflow-wrap: break-word; }
+td.id code { white-space: nowrap; }
+table.fixed { table-layout: fixed; min-width: 56rem; }
+table.fixed th { white-space: normal; }
+/* Column widths for fixed tables: col.w<N> for N in steps of 5, plus the 5 widths the framework registry uses. */
+.fixed col.w5 { width: 5%; } .fixed col.w10 { width: 10%; } .fixed col.w15 { width: 15%; } .fixed col.w20 { width: 20%; } .fixed col.w25 { width: 25%; } .fixed col.w30 { width: 30%; } .fixed col.w35 { width: 35%; } .fixed col.w40 { width: 40%; } .fixed col.w45 { width: 45%; } .fixed col.w50 { width: 50%; } .fixed col.w55 { width: 55%; } .fixed col.w60 { width: 60%; } .fixed col.w65 { width: 65%; } .fixed col.w70 { width: 70%; } .fixed col.w75 { width: 75%; } .fixed col.w80 { width: 80%; } .fixed col.w85 { width: 85%; } .fixed col.w90 { width: 90%; } .fixed col.w95 { width: 95%; }
+.fixed col.w11 { width: 11%; } .fixed col.w14 { width: 14%; } .fixed col.w16 { width: 16%; } .fixed col.w17 { width: 17%; } .fixed col.w26 { width: 26%; }
+th:last-child, td:last-child { padding-right: 0; }
+.sticky thead th { position: sticky; top: 0; background: var(--bg); }
+td .sub { display: block; font: 400 0.95rem/1.45 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin-top: 0.15rem; }
+td.id, .mono { font: 400 0.8rem/1.6 "JetBrains Mono", ui-monospace, monospace; white-space: nowrap; }
+td.num { text-align: right; font-variant-numeric: lining-nums tabular-nums; }
+.tag { display: inline-block; font: 500 0.66rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); padding: 0.35rem 0.55rem; border: 1px solid var(--rule-strong); border-radius: 999px; white-space: nowrap; }
+.tag.accent { color: var(--accent); border-color: var(--brand); }
+.tag.fill { background: var(--surface-sunken); border-color: transparent; }
+
+/* Definition lists: tracked dt, serif dd */
+dl.record { margin: 0; }
+dl.record dt { font: 500 0.68rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 0.15rem; }
+dl.record dd { margin: 0 0 0.9rem; font-size: 1.05rem; line-height: 1.45; }
+dl.record dd:last-child { margin-bottom: 0; }
+dl.record.cols { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: 0.6rem 2rem; }
+dl.record.cols div { break-inside: avoid; }
+
+/* Before and after */
+.pair { display: grid; grid-template-columns: 1fr; gap: 1rem; margin: 0.4rem 0 1.6rem; }
+.pair > div { padding: 1.2rem 1.4rem; border-radius: 0.3rem; font-size: 1.15rem; line-height: 1.5; }
+.pair > div p { margin: 0; }
+.pair .before { background: var(--surface-sunken); }
+.pair .after { background: var(--surface-raised); }
+.pair .lbl { margin-bottom: 0.5rem; }
+.pair .after .lbl { color: var(--accent); }
+
+/* Download and checksum block */
+.download { margin: 0.4rem 0 1.6rem; }
+.download .file { font-size: 1.333rem; line-height: 1.4; }
+.download .file a { text-decoration-color: var(--brand); text-decoration-thickness: 2px; }
+.download .size { margin: 0.3rem 0 0.9rem; }
+.download code.sum { display: block; background: var(--code-bg); padding: 0.9rem 1rem; border-radius: 0.3rem; font-size: 0.85rem; overflow-wrap: anywhere; white-space: normal; margin: 0 0 0.9rem; }
+.download pre { margin: 0; font-size: 0.8rem; padding: 0.9rem 1rem; }
+
+/* Install selector: 6 tracked labels in a row */
+.picker { display: flex; flex-wrap: wrap; gap: 0.4rem 1.8rem; margin: 0.4rem 0 1.4rem; padding: 0; list-style: none; }
+.picker a { display: inline-block; font: 500 0.74rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); text-decoration: none; padding: 0.7rem 0; border-bottom: 1px solid transparent; }
+.picker a:hover { color: var(--text); }
+.picker a[aria-current="true"] { color: var(--accent); border-bottom-color: var(--brand); border-bottom-width: 2px; }
+.picker-reset { position: static; margin: 0 0 1.6rem; }
+.picker-reset[hidden] { display: none; }
+.verified { font: 400 0.95rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: -0.4rem 0 1rem; }
+
+/* Search: progressive enhancement, all content visible without script */
+.search { margin: 0.4rem 0 1.6rem; }
+.search label { display: block; }
+.search input { width: 100%; max-width: 40rem; font: 400 1.1875rem/1.4 "Newsreader", serif; padding: 0.7rem 1rem; border: 1px solid var(--rule-strong); border-radius: 0.3rem; background: var(--surface-raised); color: var(--text); }
+.search input::placeholder { color: var(--text-muted); opacity: 1; }
+.search .status { font: 400 0.85rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: 0.6rem 0 0; min-height: 1.3rem; }
+.chips { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; margin: 0 0 1.6rem; padding: 0; }
+.chips a { display: inline-block; font: 500 0.7rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); text-decoration: none; padding: 0.55rem 0.8rem; border: 1px solid var(--rule-strong); border-radius: 999px; }
+.chips a:hover { color: var(--text); border-color: var(--text); }
+.chips a .n { font-family: "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.04em; margin-left: 0.4rem; }
+.plan li[hidden] { display: none; }
+
+/* Diagram: 3 rounded nodes, currentColor strokes, brand-coloured arrows */
+.figure { margin: 0.4rem 0 1.6rem; }
+.figure svg { width: 100%; height: auto; display: block; color: var(--text); font-family: "Public Sans", system-ui, sans-serif; }
+.figure svg .node { fill: var(--surface-raised); stroke: currentColor; stroke-width: 1; }
+.figure svg .arrow { stroke: var(--brand); stroke-width: 2; fill: none; }
+.figure svg .head { fill: var(--brand); }
+.figure svg .t { font-size: 11px; letter-spacing: 2.2px; text-transform: uppercase; fill: var(--text-muted); font-weight: 500; }
+.figure svg .t.accent { fill: var(--accent); }
+.figure svg .m { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; fill: var(--text); }
+.figure svg .s { font-family: "Newsreader", serif; font-size: 14px; fill: var(--text); }
+.figure .stack { display: none; }
+.figure figcaption { font: 400 0.95rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin-top: 0.8rem; }
+
+/* Source and view, side by side on wide screens */
+.srcview { display: grid; grid-template-columns: 1fr; gap: 1rem; margin: 0.4rem 0 1.6rem; }
+.srcview pre { margin: 0; }
+.srcview .view { background: var(--surface-raised); border-radius: 0.3rem; padding: 1.3rem 1.4rem; font-size: 0.95rem; }
+.srcview .view .gen { font: 400 0.78rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: 0 0 0.8rem; }
+.srcview .view h4 { font: 500 0.72rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.2em; text-transform: uppercase; margin: 0 0 0.6rem; color: var(--text); }
+.srcview .view ul { margin: 0; padding: 0; list-style: none; }
+.srcview .view li { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.srcview .lbl { margin-bottom: 0.5rem; }
+
+/* The value paragraph of the landing page, and the "About this project" line beneath it: Disclosure, Licence,
+   Privacy and Security as 1 line of links separated by middle dots. */
+.region .value { max-width: 68ch; margin: 0; }
+.region .about { margin: 0; font: 500 0.8rem/1.6 "Public Sans", system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-muted); }
+.region .about a { color: var(--text-muted); text-decoration: none; }
+.region .about a:hover { color: var(--text); }
+.region .about .dot { padding: 0 0.5rem; }
+
+/* Family footer: 1 bar at the content width. The 6 project cards, current site first, on the rotated
+   spectrum; then the GitHub, LinkedIn and ORCID tiles under a grey tail of the band; then the signature tile as the
+   posluns.ca link. The footer is a size container, so the bar responds to its own width and never wraps:
+   stage A (>= 1400 px of content width) full size; stage B (1040 to 1399) names kept, sizes scaled down;
+   stage C (< 1040) names visually hidden, equal tiles that shrink to fit; the signature shrinks below 750,
+   loses "A" and "Project" below 650, and shrinks again below 450. Below 600 the marks and the signature drop to a
+   second line under the grey band (phones). The bar is contiguous: no gaps between tiles. */
+.family { padding: 1.6rem var(--pad) 2.2rem; font: 400 0.9rem/1.4 "Public Sans", system-ui, sans-serif; color: var(--text-muted); container: footer / inline-size; }
+.site-secureconfig .family { --tail-from: var(--rainbow-6); } .site-opfiles .family { --tail-from: var(--rainbow-1); } .site-auditthis .family { --tail-from: var(--rainbow-2); }
+.site-cleanlanguage .family { --tail-from: var(--rainbow-3); } .site-aiqt .family { --tail-from: var(--rainbow-4); } .site-grclibrary .family { --tail-from: var(--rainbow-5); }
+.family .bar { display: flex; flex-wrap: nowrap; align-items: stretch; gap: 0; width: 100%; border-radius: 0.5rem; overflow: hidden; }
+.family .cards, .family .tail { display: flex; flex-wrap: nowrap; list-style: none; margin: 0; padding: 0; min-width: 0; }
+.family .cards { flex: 6 1 auto; gap: 0; }
+.family .tail { flex: none; gap: 0; }
+.family .slice, .family .tile { display: flex; min-width: 0; padding: var(--band) 0 0; }
+.family .slice { flex: 1 1 auto; }
+.family .sigtile { flex: none; }
+.family .tail .tile-1 { background: linear-gradient(90deg, var(--tail-from) 0%, var(--band-grey) 20%); }
+.family .tail .tile-2, .family .tail .tile-3, .family .sigtile { background: var(--band-grey); }
+/* The first card starts on its own hue and the last ends on it, so the bar's ends and the grey tail take a clean colour. */
+.family .slice-1:first-child { background: linear-gradient(90deg, var(--rainbow-1) 0%, var(--rainbow-1) 80%, var(--rainbow-join-1) 100%); } .family .slice-1:last-child { background: linear-gradient(90deg, var(--rainbow-join-6) 0%, var(--rainbow-1) 20%, var(--rainbow-1) 100%); }
+.family .slice-2:first-child { background: linear-gradient(90deg, var(--rainbow-2) 0%, var(--rainbow-2) 80%, var(--rainbow-join-2) 100%); } .family .slice-2:last-child { background: linear-gradient(90deg, var(--rainbow-join-1) 0%, var(--rainbow-2) 20%, var(--rainbow-2) 100%); }
+.family .slice-3:first-child { background: linear-gradient(90deg, var(--rainbow-3) 0%, var(--rainbow-3) 80%, var(--rainbow-join-3) 100%); } .family .slice-3:last-child { background: linear-gradient(90deg, var(--rainbow-join-2) 0%, var(--rainbow-3) 20%, var(--rainbow-3) 100%); }
+.family .slice-4:first-child { background: linear-gradient(90deg, var(--rainbow-4) 0%, var(--rainbow-4) 80%, var(--rainbow-join-4) 100%); } .family .slice-4:last-child { background: linear-gradient(90deg, var(--rainbow-join-3) 0%, var(--rainbow-4) 20%, var(--rainbow-4) 100%); }
+.family .slice-5:first-child { background: linear-gradient(90deg, var(--rainbow-5) 0%, var(--rainbow-5) 80%, var(--rainbow-join-5) 100%); } .family .slice-5:last-child { background: linear-gradient(90deg, var(--rainbow-join-4) 0%, var(--rainbow-5) 20%, var(--rainbow-5) 100%); }
+.family .slice-6:first-child { background: linear-gradient(90deg, var(--rainbow-6) 0%, var(--rainbow-6) 80%, var(--rainbow-join-6) 100%); } .family .slice-6:last-child { background: linear-gradient(90deg, var(--rainbow-join-5) 0%, var(--rainbow-6) 20%, var(--rainbow-6) 100%); }
+.family .card, .family .sig { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; min-height: var(--tile); background: var(--surface-raised); color: var(--text); text-decoration: none; white-space: nowrap; }
+.family .card { gap: 0.6rem; padding: 0.3rem 0.7rem; font: 600 0.95rem/1.2 "Public Sans", system-ui, sans-serif; letter-spacing: -0.015em; }
+.family .card:hover, .family .sig:hover { box-shadow: inset 0 -3px 0 var(--gold-rule); }
+.family .card img { width: var(--tile-logo); height: var(--tile-logo); display: block; flex: none; }
+.family .card .tld { color: var(--gold); }
+.family .card[aria-current="page"] .cname { box-shadow: inset 0 -2px 0 var(--gold-rule); }
+.family .tail .card { width: var(--tile); justify-content: center; padding: 0.3rem; }
+.family .tail .card img { width: var(--mark); height: var(--mark); object-fit: contain; }
+.sig { margin: 0; font: 400 1.5rem/1 "Dancing Script", cursive; color: var(--silver); white-space: nowrap; }
+.sig .pre, .sig .post { font-size: 0.78em; white-space: pre; }
+.sig .gold { color: var(--gold); }
+.family .sig { padding: 0 0.6rem; justify-content: center; }
+/* Stage B: names kept, every size scaled with the footer's own width (1 cqw = 1% of the content width). */
+@container footer (max-width: 1399px) {
+  .family .card { font-size: clamp(0.8rem, 0.8cqw + 4px, 0.95rem); gap: clamp(0.3rem, 1.53cqw - 11.8px, 0.6rem); padding: 0.3rem clamp(0.375rem, 1.73cqw - 13px, 0.7rem); }
+  .family .cards .card img { width: clamp(2rem, 4cqw - 12px, var(--tile-logo)); height: clamp(2rem, 4cqw - 12px, var(--tile-logo)); }
+  .family .tail .card { width: clamp(2.75rem, 4cqw - 2.4px, var(--tile)); padding: 0.2rem; }
+  .family .tail .card img { width: clamp(1.5rem, 2.67cqw - 5.3px, var(--mark)); height: clamp(1.5rem, 2.67cqw - 5.3px, var(--mark)); }
+  .family .sig { font-size: clamp(1.05rem, 2.4cqw - 9.6px, 1.5rem); padding: 0 0.4rem; }
+}
+/* Stage C: logos only. The 9 tiles share the width left by the signature; each logo fills its tile up to 2.75rem. */
+@container footer (max-width: 1039px) {
+  .family .cards { flex: 6 1 0; }
+  .family .tail { flex: 3 1 0; }
+  .family .slice, .family .tail .tile { flex: 1 1 0; }
+  .family .card { justify-content: center; padding: 0.3rem 0.2rem; gap: 0; }
+  .family .cards .cname { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); border: 0; }
+  .family .card[aria-current="page"] { box-shadow: inset 0 -3px 0 var(--gold-rule); }
+  .family .cards .card img { width: 100%; max-width: var(--tile-logo); height: auto; aspect-ratio: 1 / 1; }
+  .family .tail .card { width: auto; padding: 0.3rem 0.2rem; }
+  .family .tail .card img { width: 72%; max-width: var(--mark); height: auto; aspect-ratio: 1 / 1; }
+  .family .sig { font-size: 1.5rem; padding: 0 0.5rem; }
+}
+@container footer (max-width: 749px) { .family .sig { font-size: clamp(1.05rem, 7.2cqw - 30px, 1.5rem); } }
+@container footer (max-width: 649px) { .family .sig .pre, .family .sig .post { display: none; } .family .sig { padding: 0 0.4rem; } }
+@container footer (max-width: 449px) { .family .sig { font-size: clamp(0.85rem, 4.6cqw - 4px, 1.05rem); padding: 0 0.3rem; } .family .card { padding: 0.3rem 0.1rem; } }
+/* Phones (< 600 px of content width): the 3 marks and the signature drop to a second line, under a solid grey
+   band that separates them from the project cards; logos and marks return to full size. */
+@container footer (max-width: 599px) {
+  .family .bar { flex-wrap: wrap; row-gap: 0; }
+  .family .cards { flex: 1 1 100%; }
+  .family .tail { flex: none; }
+  .family .sigtile { flex: 1 1 auto; }
+  .family .tail .tile-1 { background: var(--band-grey); }
+  .family .card { padding: 0.3rem 0.2rem; }
+  .family .tail .card { width: var(--tile); }
+  .family .tail .card img { width: var(--mark); max-width: var(--mark); }
+  .family .sig { font-size: clamp(1.05rem, 4.2cqw, 1.5rem); padding: 0 0.4rem; }
+}
+@container footer (min-width: 420px) and (max-width: 599px) { .family .sig .pre, .family .sig .post { display: inline; } }
+
+/* Scheme-specific marks (GitHub's black and white Invertocat). The generic .only-* rules serve any element; the
+   .family .card img.only-* forms (0,3,1) outrank .family .card img { display: block } (0,2,1), so inside a footer tile
+   the off-scheme mark is removed from the layout and never takes a tile's width. */
+img.only-dark, .only-dark { display: none; }
+.family .card img.only-dark { display: none; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-scheme="light"]) img.only-light, :root:not([data-scheme="light"]) .family .card img.only-light { display: none; }
+  :root:not([data-scheme="light"]) img.only-dark, :root:not([data-scheme="light"]) .family .card img.only-dark { display: block; }
+}
+[data-scheme="dark"] img.only-light, [data-scheme="dark"] .family .card img.only-light { display: none; }
+[data-scheme="dark"] img.only-dark, [data-scheme="dark"] .family .card img.only-dark { display: block; }
+[data-scheme="light"] img.only-light, [data-scheme="light"] .family .card img.only-light { display: block; }
+[data-scheme="light"] img.only-dark, [data-scheme="light"] .family .card img.only-dark { display: none; }
+
+/* Standard-document elements (aiqt.ai): document control strip, numbered clauses, framed notes, framed registers */
+.control { display: flex; flex-wrap: wrap; gap: 0.3rem 2rem; margin: 0 0 1.6rem; padding: 0.6rem 0; border-top: 1px solid var(--rule-strong); border-bottom: 1px solid var(--rule-strong); font: 400 0.8rem/1.5 "JetBrains Mono", ui-monospace, monospace; color: var(--text-muted); max-width: none; }
+.control div { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.control dt { text-transform: uppercase; letter-spacing: 0.08em; }
+.control dd { margin: 0; color: var(--text); }
+.doc h2.clause { display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); column-gap: 0.4rem; align-items: baseline; }
+h2.clause .num { font: 400 1.1rem/1.5 "JetBrains Mono", ui-monospace, monospace; color: var(--accent); }
+ol.clauses { list-style: none; margin: 0 0 1.4rem; padding: 0; max-width: 72ch; }
+ol.clauses > li { display: grid; grid-template-columns: 2.8rem minmax(0, 1fr); margin-bottom: 0.7rem; }
+ol.clauses .n { font: 400 0.85rem/1.7 "JetBrains Mono", ui-monospace, monospace; color: var(--text-muted); }
+ol.clauses p { margin: 0; }
+.note { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); border: 1px solid var(--rule-strong); border-left: 4px solid var(--brand); background: var(--callout-bg); margin: 0.4rem 0 1.6rem; max-width: 72ch; }
+.note > .label { font: 600 0.68rem/1.45 "Public Sans", system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); padding: 0.85rem 0.6rem 0.8rem 0.8rem; border-right: 1px solid var(--rule-strong); }
+.note > div { padding: 0.75rem 1rem; font-size: 1.1rem; line-height: 1.55; }
+.note p { margin: 0 0 0.8rem; }
+.note p:last-child { margin-bottom: 0; }
+.register { border: 1px solid var(--rule-strong); margin: 0.4rem 0 1.6rem; }
+.reg-cap { margin: 0; display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; align-items: baseline; padding: 0.6rem 1rem; background: var(--surface-sunken); border-bottom: 1px solid var(--rule-strong); box-shadow: inset 4px 0 0 var(--brand); font: 500 0.68rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); }
+.reg-cap b { color: var(--text); font-weight: 600; }
+.reg-cap .count { margin-left: auto; font: 400 0.8rem/1.4 "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.04em; text-transform: none; }
+.register .tablewrap { margin: 0; padding: 0.2rem 1rem 0.4rem; }
+@media (max-width: 600px) { .note { grid-template-columns: minmax(0, 1fr); } .note > .label { border-right: 0; border-bottom: 1px solid var(--rule-strong); padding: 0.5rem 0.8rem; } .doc h2.clause { grid-template-columns: 2.2rem minmax(0, 1fr); } }
+
+/* Spacing between page regions: 4rem; inside the text: the 0.6rem grid */
+.pagehead { padding: 1rem 0 0; }
+.region + .region { padding-top: 0; }
+hr.space { border: 0; margin: 0; height: 2.4rem; }
+
+/* Entry points: 1 row of equal tiles, numeral above title, metadata under the title; the landing page's only navigation list */
+.entries { list-style: none; margin: 0; padding: 0; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 1rem 2.2rem; counter-reset: e; }
+.entries li { counter-increment: e; }
+.entries a { display: flex; flex-direction: column; align-items: flex-start; text-decoration: none; color: var(--text); padding: 0.3rem 0; }
+.entries a::before { content: counter(e); font: 300 2.3rem/1 "Newsreader", serif; color: var(--accent); font-variant-numeric: lining-nums; margin-bottom: 0.45rem; }
+.entries .t { font: 600 1.4rem/1.2 "Newsreader", serif; }
+.entries .n { font: 400 0.8rem/1.6 "JetBrains Mono", ui-monospace, monospace; color: var(--text-muted); margin-top: 0.15rem; }
+.entries .d { font: 400 1.05rem/1.45 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin-top: 0.4rem; }
+.entries:has(li:nth-child(5)) .t { font-size: 1.2rem; }
+.entries:has(li:nth-child(5)) .d { font-size: 0.95rem; }
+.entries a:hover .t { color: var(--link-hover); }
+
+/* Figures: a row of large numbers, the visual anchor of a reference page */
+.figures { display: flex; flex-wrap: wrap; gap: 1rem 3rem; margin: 0.2rem 0 1.4rem; }
+.fig { display: grid; gap: 0.2rem; padding-top: 0.4rem; border-top: 3px solid var(--brand); min-width: 7rem; }
+.fig .num { font: 300 3rem/1 "Newsreader", serif; color: var(--accent); font-variant-numeric: lining-nums; }
+.fig .cap { font: 500 0.72rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); }
+
+/* Steps: large brand-coloured numerals */
+.steps { list-style: none; margin: 0 0 1.4rem; padding: 0; counter-reset: st; }
+.steps li { counter-increment: st; display: grid; grid-template-columns: 3.2rem minmax(0, 1fr); column-gap: 0.6rem; align-items: start; margin-bottom: 1.1rem; }
+.steps li::before { content: counter(st); font: 300 2.6rem/1 "Newsreader", serif; color: var(--accent); font-variant-numeric: lining-nums; padding-top: 0.1rem; }
+.steps li > span { padding-top: 0.25rem; }
+
+/* Next step: closes every inner page */
+.next { margin: 2.4rem 0 0.6rem; padding-top: 1.2rem; border-top: 3px solid var(--brand); }
+.next p { margin: 0 0 0.6rem; color: var(--text-muted); font-size: 1.1rem; }
+:is(.doc, .doc > section, .doc > article) > .next { grid-column: 2; }
+
+/* iPad portrait and narrower: 1 column, labels above content, rail under the h1 */
+@media (max-width: 1000px) {
+  .mast { grid-template-columns: minmax(0, 1fr); grid-template-areas: "brand" "pages"; row-gap: 0.2rem; }
+  .nav { justify-content: flex-start; padding-bottom: 0.1rem; }
+  .doc { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  :is(.doc, .doc > section, .doc > article) > *, :is(.doc, .doc > section, .doc > article) > .lbl, :is(.doc, .doc > section, .doc > article) > .wide, :is(.doc, .doc > section, .doc > article) > .full { grid-column: 1; }
+  :is(.doc, .doc > section, .doc > article) > .lbl, :is(.doc, .doc > section, .doc > article) > .lbl.sec, :is(.doc, .doc > section, .doc > article) > .lbl.blk { padding-top: 1.4rem; margin-bottom: 0.4rem; }
+  :is(.doc, .doc > section, .doc > article) > .lbl.first { padding-top: 0; }
+  :is(.doc, .doc > section, .doc > article) > .lbl + h2 { margin-top: 0; }
+  :is(.doc, .doc > section, .doc > article) > .lbl.blk + .tablewrap { margin-top: 0.2rem; }
+  :is(.doc, .doc > section, .doc > article) > .side { grid-row: auto; padding-top: 0; margin: 0 0 1.6rem; }
+  :is(.doc, .doc > section, .doc > article) > .side dd { font-size: 0.95rem; }
+  :is(.doc, .doc > section, .doc > article) > .rail { grid-column: 1; grid-row: auto; position: static; margin: 0.4rem 0 1.6rem; max-width: 62ch; }
+  .rail ol { columns: 2; column-gap: 2rem; }
+  .rail li { break-inside: avoid; }
+  :is(.doc, .doc > section, .doc > article) > h1 + .rail { order: 0; }
+  .region { grid-template-columns: minmax(0, 1fr); gap: 0.2rem; padding-bottom: 2.2rem; }
+  .region > .lbl { padding-top: 0; }
+  .doc { grid-template-columns: minmax(0, 1fr); }
+  .rail-logo { max-width: 7rem; margin: 0.6rem 0 0.8rem; }
+  .rail > .lbl, .rail > ol, .rail > ul { margin-left: calc(7rem * var(--logo-inset)); }
+  .hero { grid-template-columns: minmax(0, 1fr) clamp(9rem, 24vw, 13rem); column-gap: 2rem; padding: 1rem 0 2.2rem; }
+  .hero { padding-right: 0; }
+  .statement { font-size: clamp(2.4rem, 98cqw / var(--sw), 3.2rem); }
+  .plan.three { columns: 2; }
+  .entries { grid-auto-flow: row; grid-template-columns: minmax(0, 1fr); gap: 0.6rem 0; }
+  .entries a { display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); grid-template-areas: "n t" "n m" "n d"; column-gap: 0.4rem; }
+  .entries a::before { grid-area: n; margin: 0; }
+  .entries .t { grid-area: t; } .entries .n { grid-area: m; } .entries .d { grid-area: d; max-width: 62ch; }
+  :is(.doc, .doc > section, .doc > article) > .next { grid-column: 1; }
+}
+@media (min-width: 1001px) {
+  .pair { grid-template-columns: 1fr 1fr; gap: 2rem; }
+  .srcview { grid-template-columns: 1fr 1fr; gap: 2rem; }
+}
+@media (max-width: 600px) {
+  .plan, .plan.three { columns: 1; }
+  .rail ol { columns: 1; }
+  .hero { grid-template-columns: minmax(0, 1fr) 5.5rem; grid-template-areas: "kicker art" "title title" "intro intro" "start start"; column-gap: 1rem; row-gap: 0; padding: 0.6rem 0 2rem; }
+  .hero-art { align-self: start; }
+  .hero-art img { width: 86%; }
+  .hero .lbl { align-self: center; }
+  .hero-text { display: contents; }
+  .figure .wide { display: none; }
+  .figure .stack { display: block; max-width: 20rem; margin: 0 auto; }
+  body { font-size: 1.125rem; }
+  .statement { font-size: 2.2rem; margin-bottom: 0.8rem; }
+  .statement.two em { display: block; white-space: normal; text-wrap: balance; }
+  .lead, .hero .intro { font-size: 1.2rem; }
+
+  .doc h1 { font-size: 2.2rem; }
+  .doc h2 { font-size: 1.7rem; }
+  .fig .num { font-size: 2.4rem; }
+  .mast { padding-top: 1.1rem; padding-bottom: 1rem; }
+  pre, .code { padding: 1rem 1rem; }
+  pre.hascopy { padding-top: 3rem; }
+  dl.record.cols { grid-template-columns: 1fr 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-art { animation: none; }
+  .start .arrow { transition: none; }
+  .start:hover .arrow { transform: none; }
+}
+
+/* Dark mode: thin headings gain a little tracking; the field becomes the lit object */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-scheme="light"]) .statement, :root:not([data-scheme="light"]) .doc h1 { letter-spacing: 0.01em; }
+}
+[data-scheme="dark"] .statement, [data-scheme="dark"] .doc h1 { letter-spacing: 0.01em; }
+
+
+/* Fallback for browsers without container queries (before Chromium 105, Safari 16, Firefox 110): the footer bar
+   wraps instead of overflowing, so the page never scrolls sideways. */
+@supports not (container-type: inline-size) {
+  .family .bar { flex-wrap: wrap; }
+  .family .cards { flex: 1 1 100%; flex-wrap: wrap; }
+}

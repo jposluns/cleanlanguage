@@ -57,6 +57,21 @@ GOOD_LINES = [
 ]
 
 
+DRAFT_CSP = (
+    "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
+    "https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; "
+    "style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
+    "frame-ancestors 'none'"
+)
+DRAFT_LINES = [
+    "",
+    "/draft/*",
+    "  ! Content-Security-Policy",
+    f"  Content-Security-Policy: {DRAFT_CSP}",
+    "  X-Robots-Tag: noindex",
+]
+
+
 class HeadersGateTest(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -412,6 +427,109 @@ class HeadersGateTest(unittest.TestCase):
             text,
             "check-headers: site/_headers line 13: a line that starts with '!' must be a detach, "
             "'! Name' alone, not a header to set: '!: x'\n")
+
+
+class DraftRuleTest(unittest.TestCase):
+    """Check 5: exactly the staged draft's /draft/* rule is accepted, and nothing wider."""
+
+    # The fixture helpers of HeadersGateTest, borrowed without inheriting its tests.
+    setUp = HeadersGateTest.setUp
+    tearDown = HeadersGateTest.tearDown
+    run_gate = HeadersGateTest.run_gate
+    run_bytes = HeadersGateTest.run_bytes
+    expect_fail = HeadersGateTest.expect_fail
+
+    def with_draft(self, draft):
+        return GOOD_LINES + draft
+
+    def test_exact_draft_rule_passes(self):
+        code, text = self.run_gate(self.with_draft(DRAFT_LINES))
+        self.assertEqual(code, 0, text)
+
+    def test_draft_rule_header_names_compare_without_case(self):
+        lines = [line.replace("Content-Security-Policy", "content-security-policy") for line in DRAFT_LINES]
+        code, text = self.run_gate(self.with_draft(lines))
+        self.assertEqual(code, 0, text)
+
+    def test_draft_policy_with_another_value_fails(self):
+        for value in (DRAFT_CSP + "; worker-src *", DRAFT_CSP.replace("'unsafe-inline' ", "'unsafe-inline' 'unsafe-eval' "),
+                      DRAFT_CSP.replace("default-src 'none'", "default-src *")):
+            with self.subTest(value=value):
+                lines = list(DRAFT_LINES)
+                lines[3] = f"  Content-Security-Policy: {value}"
+                self.expect_fail(self.with_draft(lines), "the /draft/* rule")
+
+    def test_draft_policy_without_detach_fails(self):
+        lines = [line for line in DRAFT_LINES if "!" not in line]
+        self.expect_fail(self.with_draft(lines), "the /draft/* rule")
+
+    def test_detach_after_draft_policy_fails(self):
+        lines = list(DRAFT_LINES)
+        lines[2], lines[3] = lines[3], lines[2]
+        self.expect_fail(self.with_draft(lines), "the /draft/* rule")
+
+    def test_draft_rule_without_noindex_fails(self):
+        self.expect_fail(self.with_draft(DRAFT_LINES[:-1]), "the /draft/* rule")
+
+    def test_draft_rule_with_another_header_fails(self):
+        for extra in ("  Cache-Control: no-store", "  X-Frame-Options: DENY", "  ! X-Frame-Options", "  Referrer-Policy: no-referrer"):
+            with self.subTest(extra=extra):
+                self.expect_fail(self.with_draft(DRAFT_LINES + [extra]), "the /draft/* rule")
+
+    def test_draft_rule_repeated_fails(self):
+        self.expect_fail(self.with_draft(DRAFT_LINES + DRAFT_LINES), "the /draft/* rule")
+
+    def test_detach_alone_fails(self):
+        self.expect_fail(self.with_draft(DRAFT_LINES[:3]), "the /draft/* rule")
+
+    def test_same_lines_under_another_pattern_fail(self):
+        for pattern in ("/draft/", "/draft/assets/*", "/preview/*"):
+            with self.subTest(pattern=pattern):
+                lines = list(DRAFT_LINES)
+                lines[1] = pattern
+                self.expect_fail(self.with_draft(lines), f"{pattern} detaches Content-Security-Policy; only one set line")
+
+    def test_noindex_detached_under_draft_fails(self):
+        # The review's mutant M9.
+        self.expect_fail(self.with_draft(DRAFT_LINES + ["", "/draft/install/*", "  ! X-Robots-Tag"]),
+                         "/draft/install/* detaches X-Robots-Tag")
+
+    def test_noindex_detached_anywhere_fails(self):
+        for pattern in ("/*", "/sitemap.xml", "https://cleanlanguage.ai/*"):
+            with self.subTest(pattern=pattern):
+                self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  ! X-Robots-Tag"]), "detaches X-Robots-Tag")
+
+    def test_noindex_changed_where_the_draft_is_served_fails(self):
+        # "/" and a path-less full URL pin the root case of reaches_draft (path == "/").
+        for pattern in ("/draft/install/*", "/draft/", "/*", "/:page/*", "https://cleanlanguage.ai/draft/*",
+                        "/", "https://cleanlanguage.ai"):
+            with self.subTest(pattern=pattern):
+                self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  X-Robots-Tag: all"]),
+                                 "sets X-Robots-Tag where the draft is served")
+
+    def test_noindex_changed_under_a_draft_pattern_in_another_case_fails(self):
+        # Whether Pages matches patterns case-sensitively is not established, so /Draft/ counts as the draft.
+        for pattern in ("/Draft/*", "/DRAFT/install/*", "https://cleanlanguage.ai/Draft/*"):
+            with self.subTest(pattern=pattern):
+                self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  X-Robots-Tag: all"]),
+                                 "sets X-Robots-Tag where the draft is served")
+
+    def test_noindex_changed_under_a_mid_segment_splat_or_placeholder_fails(self):
+        # A * or : anywhere in the first segment counts as reaching the draft (fail closed).
+        for pattern in ("/d:x/*", "/dr*", "/x*y/install/*"):
+            with self.subTest(pattern=pattern):
+                self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  X-Robots-Tag: all"]),
+                                 "sets X-Robots-Tag where the draft is served")
+
+    def test_noindex_on_other_paths_passes(self):
+        # The download files' own noindex (GOOD_LINES) and another live path stay allowed.
+        code, text = self.run_gate(self.with_draft(DRAFT_LINES + ["", "/sitemap-old.xml", "  X-Robots-Tag: noindex"]))
+        self.assertEqual(code, 0, text)
+
+    def test_draft_rule_does_not_relax_the_site_wide_rule(self):
+        csp = next(line for line in GOOD_LINES if "Content-Security-Policy" in line)
+        lines = [line for line in GOOD_LINES if line != csp] + DRAFT_LINES
+        self.expect_fail(lines, "the /* rule sets Content-Security-Policy 0 times")
 
 
 if __name__ == "__main__":

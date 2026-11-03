@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en" class="site-cleanlanguage">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Verify | CleanLanguage.ai</title>
+<link rel="icon" href="/draft/assets/baseline/logos/cleanlanguage-favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/draft/assets/baseline/logos/cleanlanguage-touch.png">
+<link rel="stylesheet" href="/draft/assets/baseline/fonts.css?v=1.3.1">
+<link rel="stylesheet" href="/draft/assets/baseline/palettes.css?v=1.3.1">
+<link rel="stylesheet" href="/draft/assets/baseline/baseline.css?v=1.3.1">
+<script src="/draft/assets/baseline/copy.js?v=1.3.1" defer></script>
+</head>
+<body>
+<a class="skip" href="#main-content">Skip to content</a>
+<header class="mast"><a class="brand" href="/draft/"><span class="name">CleanLanguage<span class="tld">.ai</span></span><span class="rule" aria-hidden="true"></span></a><nav class="nav" aria-label="Site"><a href="/draft/standard/">The standard</a><a href="/draft/examples/">Examples</a><a href="/draft/patterns/">Patterns</a><a href="/draft/install/">Install</a><a href="/draft/verify/" aria-current="page">Verify</a><a href="/draft/instructions/">Instructions</a><a href="https://github.com/jposluns/cleanlanguage" target="_blank" rel="noopener noreferrer">GitHub<span class="vh"> (opens in a new tab)</span></a></nav></header>
+<main id="main-content">
+<div class="wrap"><div class="doc"><p class="lbl first">Optional</p>
+<h1>Verify your download</h1>
+<div class="rail"><img class="rail-logo" src="/draft/assets/baseline/logos/cleanlanguage.svg" alt="A document with a green check mark and a pen, the Clean Language mark"></div>
+<p class="meta">This step is optional. If you trust the source, which is the official Clean Language release on GitHub, install the skill without checking anything. Verifying confirms that the file arrived exactly as published, which matters most on an untrusted network.</p>
+<p class="lbl sec">What a checksum is</p>
+<h2 id="checksum">What a checksum is</h2>
+<p>A SHA-256 checksum is a short fingerprint of a file. The same file always produces the same fingerprint, and changing even 1 byte produces a different one. Each Clean Language release publishes the checksum of its zip file. If the checksum you calculate for your copy matches the published value, your download matches the published release and reached you intact.</p>
+<p class="lbl sec">How</p>
+<h2 id="how">How to verify</h2>
+<p class="lbl blk">Step 1</p>
+<p>Download the skill. The published checksum is shown under the link.</p>
+<div class="download"><p class="file"><a href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.14/cleanlanguage-1.0.14.zip" target="_blank" rel="noopener noreferrer">cleanlanguage-1.0.14.zip<span class="vh"> (opens in a new tab)</span></a></p><p class="lbl size">zip, version 1.0.14, SHA-256</p><p>The published checksum for version 1.0.14 is:</p><code class="sum" id="published-checksum">2b57d83fcbe567d5d617a8d2416770e5a832002aa5f01e196ef6d1bcd12f1336</code><p>The same value is in the <a href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.14/cleanlanguage-1.0.14.zip.sha256" target="_blank" rel="noopener noreferrer">published checksum file<span class="vh"> (opens in a new tab)</span></a>, if you would rather compare files than read.</p></div>
+<p class="lbl blk">Step 2</p>
+<p>Calculate the checksum of the file you downloaded. First open a terminal in your Downloads folder:</p>
+<ul><li>On Windows: open your Downloads folder in File Explorer, click the address bar, type <code>powershell</code>, and press Enter.</li><li>On macOS: press Command+Space, type <code>Terminal</code>, press Return, then type <code>cd Downloads</code> and press Return.</li></ul>
+<p>Copy the command for your system, paste it into the window, and press Enter.</p>
+<p class="lbl blk">Windows (PowerShell)</p>
+<pre id="v-win" class="hascopy"><button class="copy" type="button" data-copy="v-win" hidden>Copy</button>Get-FileHash cleanlanguage-1.0.14.zip -Algorithm SHA256</pre>
+<p class="lbl blk">macOS</p>
+<pre id="v-mac" class="hascopy"><button class="copy" type="button" data-copy="v-mac" hidden>Copy</button>shasum -a 256 cleanlanguage-1.0.14.zip</pre>
+<p class="lbl blk">Linux</p>
+<pre id="v-linux" class="hascopy"><button class="copy" type="button" data-copy="v-linux" hidden>Copy</button>sha256sum cleanlanguage-1.0.14.zip</pre>
+<p class="lbl blk">Step 3</p>
+<p>Compare the value your computer prints with the published checksum shown in step 1. Letter case does not matter: PowerShell prints the hash in upper case, while the published value is lower case, so compare the letters and digits and ignore the case. A match means your copy matches the published release.</p>
+<p>If the two differ, delete the file, download it again, and check once more. If the values still differ after a fresh download, do not install the file and <a href="https://github.com/jposluns/cleanlanguage/issues" target="_blank" rel="noopener noreferrer">report it on GitHub<span class="vh"> (opens in a new tab)</span></a>.</p>
+<div class="next"><p class="lbl">Next</p><a class="start" href="/draft/install/">Continue installing <span class="arrow" aria-hidden="true">&rarr;</span></a></div></div></div>
+</main>
+<footer class="family wrap"><div class="bar"><ul class="cards rainbow" aria-label="The 6 project sites"><li class="slice slice-4"><a class="card" href="/draft/" aria-current="page"><img src="/draft/assets/baseline/logos/cleanlanguage.svg" alt=""><span class="cname">CleanLanguage<span class="tld">.ai</span></span><span class="vh"> (this site)</span></a></li><li class="slice slice-5"><a class="card" href="https://aiqt.ai/" target="_blank" rel="noopener noreferrer"><img src="/draft/assets/baseline/logos/aiqt.svg" alt=""><span class="cname">AIQT<span class="tld">.ai</span></span><span class="vh"> (opens in a new tab)</span></a></li><li class="slice slice-6"><a class="card" href="https://grclibrary.ai/" target="_blank" rel="noopener noreferrer"><img src="/draft/assets/baseline/logos/grclibrary.svg" alt=""><span class="cname">GRCLibrary<span class="tld">.ai</span></span><span class="vh"> (opens in a new tab)</span></a></li><li class="slice slice-1"><a class="card" href="https://secureconfig.ai/" target="_blank" rel="noopener noreferrer"><img src="/draft/assets/baseline/logos/secureconfig.svg" alt=""><span class="cname">SecureConfig<span class="tld">.ai</span></span><span class="vh"> (opens in a new tab)</span></a></li><li class="slice slice-2"><a class="card" href="https://opfiles.ai/" target="_blank" rel="noopener noreferrer"><img src="/draft/assets/baseline/logos/opfiles.svg" alt=""><span class="cname">OPFiles<span class="tld">.ai</span></span><span class="vh"> (opens in a new tab)</span></a></li><li class="slice slice-3"><a class="card" href="https://auditthis.ai/" target="_blank" rel="noopener noreferrer"><img src="/draft/assets/baseline/logos/auditthis.svg" alt=""><span class="cname">AuditThis<span class="tld">.ai</span></span><span class="vh"> (opens in a new tab)</span></a></li></ul><ul class="tail" aria-label="Jeff Posluns elsewhere"><li class="tile tile-1"><a class="card" href="https://github.com/jposluns" target="_blank" rel="noopener noreferrer"><img class="only-light" src="/draft/assets/baseline/marks/github-invertocat-black.svg" alt=""><img class="only-dark" src="/draft/assets/baseline/marks/github-invertocat-white.svg" alt=""><span class="cname vh">GitHub</span><span class="vh"> (opens in a new tab)</span></a></li><li class="tile tile-2"><a class="card" href="https://www.linkedin.com/in/jposluns/" target="_blank" rel="noopener noreferrer"><img src="/draft/assets/baseline/marks/linkedin-in-bug.png" alt=""><span class="cname vh">LinkedIn</span><span class="vh"> (opens in a new tab)</span></a></li><li class="tile tile-3"><a class="card" href="https://orcid.org/0009-0000-7775-2233" target="_blank" rel="noopener noreferrer"><img src="/draft/assets/baseline/marks/orcid-id.svg" alt=""><span class="cname vh">ORCID</span><span class="vh"> (opens in a new tab)</span></a></li></ul><div class="tile sigtile"><a class="sig" href="https://posluns.ca/" target="_blank" rel="noopener noreferrer" aria-label="A Jeff at Posluns dot ca project: posluns.ca (opens in a new tab)"><span class="pre">A </span>Jeff<span class="gold">@</span>Posluns<span class="gold">.ca</span><span class="post"> Project</span></a></div></div></footer>
+<p class="vh" id="copy-status" role="status" aria-live="polite"></p>
+</body>
+</html>

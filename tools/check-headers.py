@@ -43,7 +43,28 @@ What it verifies
    It also sets ``Content-Security-Policy`` exactly once. This gate does not pin
    the policy's value: ``tools/check-install-page.py`` checks its sources.
 3. No other rule sets or detaches any of those 4 headers, so each appears once
-   on every response class: pages, files and the 404 response.
+   on every response class: pages, files and the 404 response. The 1 exception
+   is the staged draft's rule (check 5): its own detach and policy replace the
+   site-wide policy on ``/draft/*`` responses, so those still carry it once.
+5. A ``/draft/*`` rule, while the site is staged there, is exactly these 3
+   lines in this order, and nothing else: ``! Content-Security-Policy``,
+   ``Content-Security-Policy: `` followed by ``DRAFT_CSP`` below, and
+   ``X-Robots-Tag: noindex``. The detach comes first, so Pages removes the
+   site-wide policy before it adds the draft's, and the browser never enforces
+   both. Any other line in that rule, another value, another order, or the same
+   lines under another pattern fails. The owner decided this policy for /draft/
+   on 2026-11-03; at promotion the rule is removed and the site-wide rule
+   carries the policy. A file with no ``/draft/*`` rule passes check 5.
+6. No rule detaches ``X-Robots-Tag``, and no rule other than ``/draft/*`` sets it
+   where its pattern can match a path under ``/draft/``: a pattern whose path
+   is ``/`` or starts with ``/draft``, or whose first path segment holds a ``*`` or a ``:``
+   anywhere (``/*``, ``/:name``, ``/d:x/*``), or a full URL whose path does
+   either. So no later rule
+   can remove or dilute the draft's ``X-Robots-Tag: noindex``. Rules for other
+   paths, such as the download files' ``noindex``, are unaffected. The pattern
+   comparison ignores case (``/Draft/*`` counts as reaching the draft), because
+   whether Cloudflare Pages matches ``_headers`` patterns case-sensitively is
+   not established, so the check fails closed.
 4. No rule sets or detaches ``X-Content-Type-Options``, ``Referrer-Policy`` or
    ``Strict-Transport-Security``. Cloudflare sends the first 2 by default and the
    zone sends HSTS, so a line here would duplicate or remove them.
@@ -58,10 +79,17 @@ What it does not verify
 It reads the file only. It does not observe the headers that Cloudflare actually
 sends: zone settings, Transform Rules and the Pages defaults sit between this
 file and the response. The live check of each response class stays a separate,
-manual acceptance step after deploy. It does not evaluate URL pattern matching,
-so a second rule whose pattern happens to be equivalent to ``/*`` (for example
-``https://:host/*``) counts as another rule, where it fails check 3 if it sets a
-decided header.
+manual acceptance step after deploy. Checks 1 to 5 do not evaluate URL pattern
+matching, so a second rule whose pattern happens to be equivalent to ``/*`` (for
+example ``https://:host/*``) counts as another rule, where it fails check 3 if it
+sets a decided header. Check 6 uses a conservative prefix heuristic,
+``reaches_draft``, not Pages' matcher: a pattern reaches the draft when its path
+(after any ``https://host``) starts with ``/draft`` in any case, is ``/``, or has
+a ``*`` or a ``:`` anywhere in its first segment. Its residual: it reads pattern
+text only, so it misses a rule that reaches ``/draft/`` through a redirect or a
+rewrite elsewhere, or through any matching behaviour of Pages beyond those
+cases; and it flags some patterns Pages would not match to the draft, which can
+only fail closed.
 
 Exit codes:
   0  every check passes
@@ -92,6 +120,20 @@ DECIDED = {
 }
 ONCE_ANY_VALUE = ("Content-Security-Policy",)
 FORBIDDEN = ("X-Content-Type-Options", "Referrer-Policy", "Strict-Transport-Security")
+
+DRAFT_PATTERN = "/draft/*"
+DRAFT_CSP = (
+    "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
+    "https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; "
+    "style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
+    "frame-ancestors 'none'"
+)
+# (kind, header name in lower case, value) of each line of the /draft/* rule, in order.
+DRAFT_RULE = [
+    ("detach", "content-security-policy", None),
+    ("set", "content-security-policy", DRAFT_CSP),
+    ("set", "x-robots-tag", "noindex"),
+]
 
 TOKEN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
 HEADER_LINE = re.compile(rf"^({TOKEN}): *(.*)$")
@@ -184,8 +226,48 @@ def parse(text: str) -> list[tuple[int, str, str, str, str | None]]:
     return entries
 
 
+def draft_rule(entries: list[tuple[int, str, str, str, str | None]]) -> tuple[set[int], list[str]]:
+    """Check 5: the line numbers of an exact /draft/* rule, which check 3 then allows, or a problem."""
+    mine = [entry for entry in entries if entry[1] == DRAFT_PATTERN]
+    if not mine:
+        return set(), []
+    shape = [(kind, name.lower(), value) for _, _, kind, name, value in mine]
+    if shape != DRAFT_RULE:
+        return set(), [
+            f"the {DRAFT_PATTERN} rule (lines {', '.join(str(entry[0]) for entry in mine)}) must be exactly "
+            f"'! Content-Security-Policy', 'Content-Security-Policy: {DRAFT_CSP}' and "
+            "'X-Robots-Tag: noindex', in that order, and nothing else."
+        ]
+    return {entry[0] for entry in mine}, []
+
+
+def reaches_draft(pattern: str) -> bool:
+    """Whether a URL pattern can match a path under /draft/ (check 6)."""
+    path = (re.sub(r"^https://[^/]*", "", pattern) or "/").lower()
+    if path.startswith("/draft"):
+        return True
+    first = path.split("/")[1] if path.count("/") >= 1 else ""
+    return path == "/" or "*" in first or ":" in first
+
+
+def robots_rule(entries: list[tuple[int, str, str, str, str | None]]) -> list[str]:
+    """Check 6: the draft's X-Robots-Tag is set only by /draft/* and detached nowhere."""
+    problems = []
+    for number, pattern, kind, name, _ in entries:
+        if name.lower() != "x-robots-tag":
+            continue
+        if kind == "detach":
+            problems.append(f"line {number}: {pattern} detaches X-Robots-Tag; no rule may remove the draft's noindex.")
+        elif pattern != DRAFT_PATTERN and reaches_draft(pattern):
+            problems.append(
+                f"line {number}: {pattern} sets X-Robots-Tag where the draft is served; only {DRAFT_PATTERN} may set it there."
+            )
+    return problems
+
+
 def check(entries: list[tuple[int, str, str, str, str | None]]) -> list[str]:
-    problems: list[str] = []
+    allowed, problems = draft_rule(entries)
+    problems += robots_rule(entries)
     for name in FORBIDDEN:
         for number, pattern, kind, found, _ in entries:
             if found.lower() == name.lower():
@@ -208,6 +290,8 @@ def check(entries: list[tuple[int, str, str, str, str | None]]) -> list[str]:
         for number, pattern, kind, found, _ in matching:
             if pattern == ALL_PATHS and kind == "set":
                 continue
+            if number in allowed:
+                continue  # the exact /draft/* rule of check 5
             problems.append(
                 f"line {number}: {pattern} {'sets' if kind == 'set' else 'detaches'} {found}; "
                 f"only one set line in the {ALL_PATHS} rule may name it."
