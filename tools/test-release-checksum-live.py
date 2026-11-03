@@ -40,6 +40,7 @@ import io
 import json
 import locale
 import os
+import resource
 import shutil
 import signal
 import subprocess
@@ -2000,18 +2001,25 @@ class ConditionalPassTest(unittest.TestCase):
         # Row 80: for a call with no argument, at most RESULT_LIMIT bytes of
         # stdout are accepted (one byte more is read, to detect it); a reply
         # of exactly that size is accepted and one byte more is refused.
+        # Row 100: a reply that reaches the output cap, 65538 bytes here,
+        # stops there and is refused naming the cap; what the child then
+        # prints about its refused write is relayed after it.
         valid = b'{"op": "baseline", "outcome": "value", "value": "1.0.14"}'
         padded = valid + b" " * (gate.RESULT_LIMIT - len(valid))
         self.assertEqual(gate.RESULT_LIMIT, 65536)
         for label, output, expected in (
-            ("70000 bytes of spaces before a valid reply", b" " * 70000 + valid, None),
+            ("70000 bytes of spaces before a valid reply", b" " * 70000 + valid, "capped"),
             ("a valid reply one byte over the limit", padded + b" ", None),
             ("a valid reply of exactly the limit", padded, ("value", CURRENT)),
         ):
             with self.subTest(label):
                 self.fake_extractor(forging({"baseline": output}))
                 result, err = self.call_reports("baseline")
-                if expected is None:
+                if expected == "capped":
+                    self.assertEqual(result, ("exit", 3), err)
+                    self.assertTrue(err.startswith(self.unavailable(
+                        "wrote stdout up to the output cap of 65538 bytes", "baseline") + "; it printed: "), err)
+                elif expected is None:
                     self.assertEqual(result, ("exit", 3), err)
                     self.assertEqual(err.splitlines(), [self.unavailable("printed more than 65536 bytes", "baseline")])
                 else:
@@ -3644,6 +3652,195 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(result, ("exit", 3), err)
         self.assertEqual(err.splitlines(), [self.unavailable("exited 1", "extract") + "; it printed: \ufffd" + "e" * 32])
 
+    # --- Row 100: the output cap of the child ---------------------------------
+
+    @contextlib.contextmanager
+    def recorded_sizes(self):
+        """Within the block, each temporary file the gate makes records its
+        size in bytes as it closes, keyed by the order the gate made it in
+        (0 stdin, 1 stdout, 2 stderr for one child)."""
+        real_temporary_file = tempfile.TemporaryFile
+        sizes = {}
+        made = []
+
+        class Sized:
+            def __init__(self, real, position):
+                self._real, self._position = real, position
+
+            def __getattr__(self, name):
+                return getattr(self._real, name)
+
+            def __enter__(self):
+                self._real.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                sizes[self._position] = os.fstat(self._real.fileno()).st_size
+                return self._real.__exit__(*exc)
+
+        def factory(*args, **kwargs):
+            made.append(None)
+            return Sized(real_temporary_file(*args, **kwargs), len(made) - 1)
+
+        gate.tempfile = types.SimpleNamespace(TemporaryFile=factory)
+        try:
+            yield sizes
+        finally:
+            gate.tempfile = tempfile
+
+    @staticmethod
+    def fast_writer(fds, reply=b""):
+        """Extractor source whose --json mode reads its request, writes 1 MiB
+        to each file descriptor in ``fds`` in 64 KiB writes, going on past
+        any write that fails, then prints ``reply`` and exits 0."""
+        return extractor_with(
+            "def json_main():\n"
+            "    import os\n"
+            "    sys.stdin.buffer.read()\n"
+            f"    for fd in {tuple(fds)!r}:\n"
+            "        for _ in range(16):\n"
+            "            try:\n"
+            "                os.write(fd, b\"x\" * 65536)\n"
+            "            except OSError:\n"
+            "                pass\n"
+            f"    sys.stdout.buffer.write({reply!r})\n"
+            "    sys.stdout.buffer.flush()\n"
+            "    return 0\n"
+        )
+
+    def test_the_child_output_storage_is_capped_while_it_runs(self):
+        # Row 100: while the child runs, no file it writes grows past the
+        # cap, one byte past the larger read bound, so a child that writes
+        # fast cannot fill temporary storage within the timeout. A stdout or
+        # stderr that reaches the cap exits 3 naming the cap, before the exit
+        # code and the reply are read. Stdin is bounded by the same limit
+        # but not named, so a valid reply keeps its verdict.
+        gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
+        cap = 300 + 7 * len("xy") + 2
+        absent = b'{"op": "extract", "outcome": "absent"}'
+        relayed = "; it printed: " + "x" * 33
+        for label, fds, reply, expected in (
+            ("stdout", (1,), b"",
+             (("exit", 3), self.unavailable(f"wrote stdout up to the output cap of {cap} bytes", "extract") + "\n")),
+            ("stderr", (2,), b"",
+             (("exit", 3), self.unavailable(f"wrote stderr up to the output cap of {cap} bytes", "extract")
+              + relayed + "\n")),
+            ("stdout and stderr", (1, 2), b"",
+             (("exit", 3), self.unavailable(f"wrote stdout and stderr up to the output cap of {cap} bytes", "extract")
+              + relayed + "\n")),
+            ("stdin", (0,), absent, (("value", None), "")),
+        ):
+            with self.subTest(label):
+                self.fake_extractor(self.fast_writer(fds, reply))
+                with self.recorded_sizes() as sizes:
+                    result = self.call_reports("extract", "xy")
+                self.assertEqual(result, expected)
+                self.assertEqual(sorted(sizes), [0, 1, 2])
+                for fd in fds:
+                    self.assertEqual(sizes[fd], cap, sizes)
+                self.assertLessEqual(max(sizes.values()), cap, sizes)
+
+    def test_the_child_runs_under_the_file_size_limit(self):
+        # Row 100: the child gets the cap as both its soft and its hard file
+        # size limit, set by a preexec_fn the gate passes to Popen.
+        gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
+        cap = 300 + 7 * len("xy") + 2
+        _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+        if hard != resource.RLIM_INFINITY and hard < cap:
+            cap = hard
+        self.fake_extractor(extractor_with(
+            "def json_main():\n"
+            "    import resource\n"
+            "    sys.stdin.buffer.read()\n"
+            "    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)\n"
+            "    message = \"%d %d\" % (soft, hard)\n"
+            "    print(json.dumps({\"op\": \"extract\", \"outcome\": \"malformed\", \"message\": message}))\n"
+            "    return 0\n"
+        ))
+        calls = []
+        real_popen = subprocess.Popen
+
+        class Recording(real_popen):
+            def __init__(self, args, **kwargs):
+                calls.append(kwargs)
+                super().__init__(args, **kwargs)
+
+        gate.subprocess.Popen = Recording
+        try:
+            result, err = self.call_reports("extract", "xy")
+        finally:
+            gate.subprocess.Popen = real_popen
+        self.assertEqual(result, ("malformed", f"{cap} {cap}"), err)
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(callable(calls[0].get("preexec_fn")), calls[0])
+
+    def test_the_child_cannot_raise_its_file_size_limit_past_the_cap(self):
+        # Row 100: the cap is the hard limit as well as the soft one, so a
+        # child that tries to raise its soft limit back to no limit is
+        # refused, and its writes still stop at the cap. With the inherited
+        # hard limit left in place, the raise would succeed and the file
+        # would grow past the cap.
+        gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
+        cap = 300 + 7 * len("xy") + 2
+        tool = self.fake_extractor(extractor_with(
+            "def json_main():\n"
+            "    import os, resource\n"
+            "    sys.stdin.buffer.read()\n"
+            "    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)\n"
+            "    try:\n"
+            "        resource.setrlimit(resource.RLIMIT_FSIZE, (resource.RLIM_INFINITY, hard))\n"
+            "        outcome = \"raised\"\n"
+            "    except (OSError, ValueError) as error:\n"
+            "        outcome = \"refused \" + type(error).__name__\n"
+            "    (Path(__file__).resolve().parent / \"raise.log\").write_text(outcome, encoding=\"utf-8\")\n"
+            "    for _ in range(16):\n"
+            "        try:\n"
+            "            os.write(1, b\"x\" * 65536)\n"
+            "        except OSError:\n"
+            "            pass\n"
+            "    return 0\n"
+        ))
+        with self.recorded_sizes() as sizes:
+            result = self.call_reports("extract", "xy")
+        self.assertEqual((tool.parent / "raise.log").read_text(encoding="utf-8"), "refused ValueError")
+        self.assertEqual(sizes[1], cap, sizes)
+        self.assertEqual(result, (("exit", 3), self.unavailable(
+            f"wrote stdout up to the output cap of {cap} bytes", "extract") + "\n"))
+
+    def test_the_cap_is_one_byte_past_the_larger_read_bound_or_a_lower_hard_limit(self):
+        # Row 100: the cap is one byte past the larger of limit + 1 and
+        # STDERR_LIMIT, so a reply one byte over the bound is still refused
+        # as too long (see test_the_output_bounds_follow_the_limits_of_the_gate),
+        # and an inherited hard file size limit below it, which the child
+        # cannot raise, is the cap instead.
+        gate.STDERR_LIMIT = 33
+        self.assertEqual(gate.output_cap(314), 316)
+        self.assertEqual(gate.output_cap(10), 34)
+        real_resource = gate.resource
+        infinity = resource.RLIM_INFINITY
+        for limits, expected in (
+            ((200, 200), 200),
+            ((infinity, 200), 200),
+            ((100, 400), 316),
+            ((316, 316), 316),
+            ((infinity, infinity), 316),
+        ):
+            with self.subTest(limits=limits):
+                asked = []
+
+                def getrlimit(which, limits=limits):
+                    asked.append(which)
+                    return limits
+
+                gate.resource = types.SimpleNamespace(
+                    getrlimit=getrlimit, RLIMIT_FSIZE=resource.RLIMIT_FSIZE, RLIM_INFINITY=infinity,
+                )
+                try:
+                    self.assertEqual(gate.applied_cap(316), expected)
+                finally:
+                    gate.resource = real_resource
+                self.assertEqual(asked, [resource.RLIMIT_FSIZE])
+
     def test_a_child_ended_by_a_signal_with_no_name_exits_3_naming_its_number(self):
         # Fix round 6 (mutation sweep): a signal that has no name in
         # signal.Signals, here the real-time signal 40, is named by its
@@ -4188,6 +4385,36 @@ class ModuleLoadTest(unittest.TestCase):
         self.assertIn("skill-release-date.py could not be run, waited for, or read (OSError: [Errno 24] "
                       "Too many open files", err)
         self.assertIn(" in baseline, so the extractor is unavailable", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_an_inherited_hard_file_size_limit_below_the_cap_is_the_cap(self):
+        # Row 100: a caller that leaves a hard file size limit below the cap
+        # (ulimit -H -f in a CI job, say) gives the child that limit as its
+        # cap, which it cannot raise, and a child that writes fast exits 3
+        # naming it, never a traceback.
+        wrapper = (
+            "import importlib.util, resource, sys\n"
+            "resource.setrlimit(resource.RLIMIT_FSIZE, (200, 200))\n"
+            "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+            "gate = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(gate)\n"
+            "sys.exit(gate.main())\n"
+        )
+        body = extractor_with(
+            "def json_main():\n"
+            "    import os\n"
+            "    sys.stdin.buffer.read()\n"
+            "    for _ in range(16):\n"
+            "        try:\n"
+            "            os.write(1, b\"x\" * 65536)\n"
+            "        except OSError:\n"
+            "            pass\n"
+            "    return 0\n"
+        )
+        code, err = self.run_with_extractor(body, wrapper=wrapper)
+        self.assertEqual(code, 3, err)
+        self.assertIn("skill-release-date.py wrote stdout up to the output cap of 200 bytes in baseline, "
+                      "so the extractor is unavailable", err)
         self.assertNotIn("Traceback", err)
 
 

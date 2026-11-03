@@ -113,6 +113,14 @@ the gate for up to their sum on each call (the residual below is outside
 these bounds). The gate takes a result from a child only when the child
 exits 0 and prints exactly one JSON object that matches the contract, and
 it reads only a bounded part of what the child prints (see RESULT_LIMIT).
+While the child runs, no file it writes can grow past output_cap(limit)
+bytes, one byte past the larger read bound (RLIMIT_FSIZE, set in the child
+before exec as both its soft and its hard limit, so neither the child nor a
+process it starts can raise it), so a child that writes fast cannot fill
+temporary storage within the timeout; a child whose stdout or stderr reaches
+that cap is unavailable, and the reason names the cap. Its stdin file is
+bounded the same way but not checked, so a child that fills it and still
+replies validly keeps its verdict.
 Every other outcome of a child that the gate observes exits 3 with its
 report, never 2, 1, or 0. On a normal end and on a timeout, the gate kills
 the process group of the child before it reaps the child, or exits 3 when it
@@ -124,8 +132,10 @@ only while it is in the group: a process that leaves the child's process
 group, by any means, can outlive the gate.
 Separation is not a sandbox. The child runs with the uid, filesystem, and
 network of the gate, so extractor code can do whatever that uid can do,
-including writing files, reaching the network, using CPU, memory, and disk,
-and signalling the gate. A signal it sends to the gate acts on the gate as
+including writing files, reaching the network, and signalling the gate. Each
+file it writes is capped at output_cap(limit) bytes while it runs, but it can
+still create any number of files and use the disk through them, and it can
+use CPU and memory. A signal it sends to the gate acts on the gate as
 that signal acts on any process: it can interrupt, stop, or end the gate
 outside the exit codes above, and no bound of the gate limits its effect.
 More generally, extractor code can act on the gate and on its own children
@@ -149,6 +159,7 @@ import hashlib
 import json
 import os
 import re
+import resource
 import signal
 import stat
 import subprocess
@@ -189,7 +200,10 @@ RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 # character outside the basic plane becomes a surrogate pair of two \uXXXX
 # escapes, 12 bytes); the allowance is there so that a malformed message that
 # echoes the argument keeps its verdict (see
-# test_an_echoed_request_of_any_size_keeps_its_verdict).
+# test_an_echoed_request_of_any_size_keeps_its_verdict). Row 100: while the
+# child runs, each file it writes stops at output_cap(limit) bytes
+# (RLIMIT_FSIZE, soft and hard), and after the wait a stdout or stderr file
+# that reached the cap, checked with fstat, exits 3 naming the cap.
 CHILD_TIMEOUT_SECONDS = 20
 REAP_GRACE_SECONDS = 5
 RESULT_LIMIT = 65536
@@ -315,6 +329,24 @@ def _kill_group(proc: subprocess.Popen, ended: bool) -> str | None:
     return _reap(proc)
 
 
+def output_cap(limit: int) -> int:
+    """The most bytes any file the child writes may hold: one byte past the
+    larger of the two read bounds (``limit + 1`` bytes of stdout and
+    STDERR_LIMIT bytes of stderr), so a reply one byte too long is still
+    read and refused as too long, and anything longer stops at the cap."""
+    return max(limit + 1, STDERR_LIMIT) + 1
+
+
+def applied_cap(cap: int) -> int:
+    """The file size limit the child gets, as both its soft and its hard
+    limit: ``cap``, or the inherited hard limit when that is lower, since
+    a child cannot raise it."""
+    _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    if hard != resource.RLIM_INFINITY and hard < cap:
+        return hard
+    return cap
+
+
 def run_release_date_child(op: str, arg: str | None = None) -> dict:
     """Run the extractor once, as ``skill-release-date.py --json`` under
     ``sys.executable -I``, for the op ``op`` with ``arg``, and return its
@@ -325,11 +357,16 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     directory, and its own session, so it leads a process group of its own.
     The request is written to a temporary file that is its stdin, and its
     stdout and stderr go to temporary files, so the gate never blocks on a
-    pipe and reads only a bounded part of each. The wait, bounded by
-    CHILD_TIMEOUT_SECONDS for this child, leaves the child unreaped. On a
-    normal end and on a timeout, the process group of the child is then
-    killed before the child is reaped, or the call exits 3 when the group
-    cannot be killed; on the other paths this docstring describes it may not
+    pipe and reads only a bounded part of each. While the child runs, no
+    file it writes grows past applied_cap(output_cap(limit)) bytes
+    (RLIMIT_FSIZE, set by limit_output before exec as both its soft and its
+    hard limit), and after the wait a stdout or stderr file that reached
+    that cap, checked with fstat, exits 3 naming the cap before the exit
+    code is read. The wait, bounded by CHILD_TIMEOUT_SECONDS for this
+    child, leaves the child unreaped. On a normal end and on a timeout, the
+    process group of the child is then killed before the child is reaped,
+    or the call exits 3 when the group cannot be killed; on the other
+    paths this docstring describes it may not
     be. The child is reaped only once the gate sees it end, and when the
     gate sees no end within REAP_GRACE_SECONDS of the kill, the call exits 3
     and leaves the child unreaped (see _reap). A process the child started
@@ -369,6 +406,16 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     request = {"op": op} if arg is None else {"op": op, "arg": arg}
     limit = RESULT_LIMIT + ECHO_BYTES_PER_CHARACTER * (0 if arg is None else len(arg))
     try:
+        cap = applied_cap(output_cap(limit))
+
+        def limit_output() -> None:
+            # Runs in the child, before exec: no file it writes grows past
+            # cap. The cap is the hard limit too, so neither the child nor a
+            # process it starts can raise the soft limit back. The gate has
+            # no threads (it imports no threading, and reset_sigchld already
+            # requires the main thread), so a preexec_fn is safe here.
+            resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
+
         with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, \
                 tempfile.TemporaryFile() as stderr:
             stdin.write(json.dumps(request, ensure_ascii=True).encode("ascii"))
@@ -378,6 +425,7 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
                     [executable, "-I", str(RELEASE_DATE_TOOL), "--json"],
                     stdin=stdin, stdout=stdout, stderr=stderr, env={},
                     cwd=RELEASE_DATE_TOOL.parent, start_new_session=True,
+                    preexec_fn=limit_output,
                 )
             except OSError as error:
                 fail(f"could not run ({type(error).__name__}: {error})")
@@ -399,11 +447,15 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
             printed = stderr.read(STDERR_LIMIT)
             stdout.seek(0)
             data = stdout.read(limit + 1)
+            capped = [name for name, handle in (("stdout", stdout), ("stderr", stderr))
+                      if os.fstat(handle.fileno()).st_size >= cap]
     except Exception as error:
         # An Exception from the machinery of the gate itself exits 3, never
         # a traceback read as drift (exit 1); a BaseException that is not an
         # Exception, SystemExit from fail among them, passes through.
         fail(f"could not be run, waited for, or read ({type(error).__name__}: {error})")
+    if capped:
+        fail(f"wrote {' and '.join(capped)} up to the output cap of {cap} bytes", printed)
     code = proc.returncode
     if not ended:
         # Only what the gate saw is reported: it saw no end of the child
