@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the install pages keep their family links, setup steps, and ids, and do not hide the links or steps.
+"""Check the install pages keep their family links, step lists, and ids, and do not hide the links or step lists.
 
 ``site/install/index.html`` holds what applies to every AI system: the
 downloads, the test, how to use it, spelling, and assurance. Each AI family
@@ -20,10 +20,11 @@ What it verifies
 ----------------
 
 1. On ``/install/``, each family has exactly 1 link, ``<a id=X href="/install/X/">``
-   with the classes ``btn`` and ``inline``, none with ``aria-current``, none
-   hidden by itself or an ancestor (``hidden`` in any value, ``until-found``
-   included; ``inert``; ``aria-hidden="true"`` in any case; ``popover`` in any
-   value, even on an open ``dialog``, which the HTML standard displays; a class
+   with the classes ``btn`` and ``inline`` and visible text (as check 4 defines
+   it), none with ``aria-current``, none hidden by itself or an ancestor
+   (``hidden`` in any value, ``until-found`` included; ``inert``;
+   ``aria-hidden="true"`` in any case; ``popover`` in any value, even on an open
+   ``dialog``, which the HTML standard displays; a class
    in ``HIDING_CLASSES``: ``vh``, the template's visually-hidden class,
    ``visually-hidden``, ``only-dark`` or ``skip``, each matched as a whole class
    name; an element in ``HIDING_ELEMENTS``: ``datalist``, ``noscript``, ``rp``
@@ -44,7 +45,8 @@ What it verifies
    visible text (a character other than whitespace, U+0000 and those in
    ``ZERO_WIDTH``, in text that no element hides by the rules of check 1), at
    least 1 ``p.verified`` and at least 1 ``ol.steps``, none of them hidden by
-   itself or an ancestor, and links to ``/install/#get`` and ``/install/#test``.
+   itself or an ancestor, and links, hidden or not, to ``/install/#get`` and
+   ``/install/#test``.
 5. No inline code and no refused markup on any of the 6 pages, as checks 1 to
    10 of ``tools/check-inline-code.py`` define them for an HTML page, with that
    gate's own code: among them, no ``<script>`` without ``src`` other than a
@@ -83,6 +85,10 @@ the two differ: ``/>`` on an element that is not void
 does not close it, so ``<div hidden/>`` hides what follows; of 2 attributes with
 the same name, the first counts; a heading start tag closes a heading that is
 the current node, and any heading end tag closes the innermost open heading;
+text after an ``a`` start tag is not in a link opened before it (a browser
+keeps that link open when the later one sits in a table cell or caption, an
+``object``, a ``marquee`` or an ``applet`` inside it, so there the gate
+refuses more);
 and a hiding ``html`` or ``body`` start tag anywhere hides the whole page,
 because a browser adds its attributes to the page's own element. Where
 ``html.parser`` keeps open an element that a browser closes by an implied end
@@ -121,11 +127,13 @@ exempt list. It counts a rule as hiding only when the rule sets
 or ``absolute`` or ``fixed`` positioning with a negative ``top`` or ``left``.
 It reads no other property, so a class hidden by ``clip-path``, by
 ``height: 0`` with ``overflow: hidden``, or by ``opacity`` passes it, and it
-reads no compound, descendant or attribute selector. It reads no text but the
-heading's, so an empty or swapped family link label, an empty ``p.verified``
-and an empty ``ol.steps`` pass; it checks that the setup steps are present, not
-their wording. Those are visible regressions
-a browser check, a reviewer, or the tri-family QA catches. A heading made only
+reads no compound, descendant or attribute selector. Of text it reads only
+whether the heading and each family link have visible text, so a wrong family
+link label (another family's, say), an empty ``p.verified``, an empty
+``ol.steps`` and an empty link back to the downloads or the test pass; it checks
+that a step list is present, not its steps or their wording. Those are visible
+regressions a browser check, a reviewer, or the tri-family QA catches. A heading
+or family link label made only
 of an invisible character that is not whitespace, U+0000 or in ``ZERO_WIDTH``
 (such as U+034F, U+115F, U+180E, U+2061 to U+2064, U+3164, a variation
 selector or a tag character) passes the visible-text check. An end tag closes
@@ -148,7 +156,7 @@ checks share the residual that ``tools/check-inline-code.py`` states.
 
 Exit codes:
   0  every check above passes
-  1  a family link, family page, id, retired attribute, asset token, or header discipline regressed
+  1  a family link, family page, id, retired attribute, inline code, asset token, or header discipline regressed
   3  a file could not be read, or a gate it reuses is missing
 """
 
@@ -306,9 +314,13 @@ class PageParser(HTMLParser):
         for name in RETIRED_ATTRS:
             if name in attrs:
                 self.retired.append(f"<{tag} {name}>")
+        anchor = None
         if tag == "a":
+            # A browser closes an open link when another starts, so later text is not in it; text stops counting for it.
+            for frame in self.stack:
+                frame["a"] = None
             self.hrefs.append(attrs.get("href", ""))
-            self.anchors.append({
+            anchor = {
                 "id": attrs.get("id"),
                 "href": attrs.get("href", ""),
                 "classes": classes,
@@ -316,7 +328,9 @@ class PageParser(HTMLParser):
                 "hidden": hiding,
                 "order": self.order,
                 "parent": (parent["tag"], parent["order"]) if parent else None,
-            })
+                "text": False,
+            }
+            self.anchors.append(anchor)
         heading = None
         if tag == "h1":
             heading = {"hidden": hiding, "text": False}
@@ -332,7 +346,8 @@ class PageParser(HTMLParser):
         if tag not in VOID:
             closed = tag == "details" and "open" not in attrs
             self.stack.append(
-                {"tag": tag, "hiding": hiding, "order": self.order, "closed": closed, "summary": False, "h1": heading}
+                {"tag": tag, "hiding": hiding, "order": self.order, "closed": closed, "summary": False, "h1": heading,
+                 "a": anchor}
             )
 
     def handle_startendtag(self, tag: str, attrs_list) -> None:
@@ -349,12 +364,15 @@ class PageParser(HTMLParser):
                 break
 
     def handle_data(self, data: str) -> None:
-        # Text counts for the h1 only when no element around it hides it: a hiding element (by itself or an
-        # ancestor, as for the links) or a details without open, whose text outside its first summary is hidden.
+        # Text counts for the h1 or the innermost open link only when no element around it hides it: a hiding
+        # element (by itself or an ancestor) or a details without open, whose text outside its first summary is hidden.
         heading = next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
+        anchor = next((frame["a"] for frame in reversed(self.stack) if frame["a"] is not None), None)
         hidden = bool(self.stack) and (self.stack[-1]["hiding"] or self.stack[-1]["closed"])
-        if heading is not None and not hidden and has_visible_text(data):
-            heading["text"] = True
+        if not hidden and has_visible_text(data):
+            for record in (heading, anchor):
+                if record is not None:
+                    record["text"] = True
 
 
 def parse(text: str) -> PageParser:
@@ -421,6 +439,8 @@ def check_install_page(text: str) -> list[str]:
             problems.append(f"{where}: the {fam} family link carries aria-current in the static markup.")
         if link["hidden"]:
             problems.append(f"{where}: the {fam} family link reads as hidden in the static markup.")
+        if not link["text"]:
+            problems.append(f"{where}: the {fam} family link has no text that reads as visible.")
         if get_at is not None and link["order"] > get_at:
             problems.append(f'{where}: the {fam} family link comes after the "get" id; the family links sit at the top.')
     if len(found) == len(FAMILIES):
@@ -522,9 +542,10 @@ def main() -> int:
         return 1
 
     print(
-        "The install page links all five family pages in order with buttons before the get id, none of them "
-        "read as hidden, and keeps its ids; each family page has 1 h1 with text read as visible, a verified "
-        "line and a step list, none of them read as hidden, and links back to the downloads and the test; ids "
+        "The install page links all five family pages in order with buttons before the get id, each with text "
+        "read as visible and none of them read as hidden, and keeps its ids; each family page has 1 h1 with text "
+        "read as visible, a verified line and a step list, none of them read as hidden, and links, hidden or not, "
+        "back to the downloads and the test; ids "
         "are unique, no retired selector attribute remains, the six pages pass the inline-code checks, name the "
         "baseline's versioned stylesheets and copy.js, and load no script but the allowed baseline scripts, and "
         "the /* rule of site/_headers carries exactly the shared policy."

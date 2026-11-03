@@ -5,9 +5,10 @@ Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault to the install page, a family page, or
 site/_headers, runs the gate there as a separate process and asserts its exit
 code. Exit 0 when every case passes; 1 otherwise, naming each failing case.
-Each of RESIDUALS is markup the gate passes although a browser hides or empties
-what the gate checks; it must exit 0, and the gate's docstring must name it, so
-that what the gate says it checks cannot outgrow its code unnoticed.
+Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
+hides or empties what the gate checks; it must exit 0, and the gate's docstring
+must name it, so that what the gate says it checks cannot outgrow its code
+unnoticed.
 
 It also reads the stylesheets every install page loads (fonts.css, palettes.css
 and baseline.css under site/assets/baseline/) and fails when a rule whose
@@ -134,6 +135,18 @@ CASES = [
         edit(PAGE, " " + OTHER_LINK, ""), edit(PAGE, '<p class="lbl blk">Scope</p>', f"<p>{OTHER_LINK}</p>\n" + '<p class="lbl blk">Scope</p>')), 1),
     ("a family link after Get Clean Language", both(
         edit(PAGE, " " + OTHER_LINK, ""), edit(PAGE, '<h2 id="get">Get Clean Language</h2>', f'<h2 id="get">Get Clean Language</h2>\n<p>{OTHER_LINK}</p>')), 1),
+    ("a family link with no label", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><")), 1),
+    ("a family link whose only label is in a hidden span",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><span hidden>Claude</span><")), 1),
+    ("a family link whose only label is in a vh span",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", '><span class="vh">Claude</span><')), 1),
+    ("a family link labelled only with U+200B", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">" + chr(0x200B) + "<")), 1),
+    ("a family link labelled only with &nbsp;", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">&nbsp;<")), 1),
+    ("a family link whose label is in a later link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><a>Claude</a><")), 1),
+    ("a family link whose label follows a later link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><a></a>Claude<")), 1),
+    ("a family link whose label is in a span", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><span>Claude</span><")), 0),
+    ("a family link with a label and a hidden span",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", '>Claude<span class="vh"> setup</span><')), 0),
     ("the family links out of order", both(
         edit(PAGE, 'id="claude" href="/install/claude/">Claude', 'id="tmp" href="/install/claude/">Claude'),
         edit(PAGE, 'id="chatgpt" href="/install/chatgpt/">ChatGPT', 'id="claude" href="/install/claude/">ChatGPT'),
@@ -283,8 +296,8 @@ CASES = [
     ("N3 (H1): /install/* detaching the policy", append(HEADERS, "\n/install/*\n  ! Content-Security-Policy\n"), 1),
     ("a staged /draft/* rule with its own detach", append(HEADERS, DRAFT_RULE), 0),
 ]
-# Markup the gate passes although a browser hides or empties what it checks, and the words of the gate's docstring
-# that name it (compared with runs of whitespace read as 1 space).
+# Faults the gate passes, and the words of the gate's docstring that name each (compared with runs of whitespace
+# read as 1 space).
 RESIDUALS = [
     ("the button row after <span hidden><div></span>", edit(PAGE, ROW, "<span hidden><div></span>" + ROW),
         "after ``<span hidden><div></span>`` the ``span`` stays open"),
@@ -292,13 +305,22 @@ RESIDUALS = [
         "after ``<p><div hidden></p>`` the ``div`` stays open"),
     ("a div between 2 family links", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK + "<div></div>"),
         "``<div></div>`` between 2 family links leaves the later links outside it"),
-    ("a family link with no label", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><")),
-        "an empty or swapped family link label"),
     ("a family link with another family's label", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">ChatGPT<")),
-        "an empty or swapped family link label"),
+        "a wrong family link label (another family's, say)"),
+    ("a family link labelled only with U+034F", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">" + chr(0x034F) + "<")),
+        "or family link label made only of an invisible character"),
+    ("a family page whose links back to #get are hidden", edit(GEMINI, 'href="/install/#get"', 'href="/install/#get" hidden', every=True),
+        "links, hidden or not, to ``/install/#get``"),
+    ("a family page whose links back to #get are empty",
+        edit(GEMINI, '<a href="/install/#get">Get Clean Language</a>', '<a href="/install/#get"></a>', every=True),
+        "an empty link back to the downloads or the test"),
     ("a family page with an empty verified line", edit(GEMINI, '<p class="verified">', '<p class="verified"></p><p>'),
         "an empty ``p.verified``"),
     ("a family page with an empty step list", edit(OTHER, STEPS, STEPS + "</ol><ol>"), "an empty ``ol.steps``"),
+    ("a family page with 1 setup step hidden", edit(OTHER, STEPS + "<li>", STEPS + "<li hidden>"), "not its steps or their wording"),
+    ("a family page with 1 setup step dropped",
+        edit(OTHER, STEPS + '<li><span>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</span></li>', STEPS),
+        "not its steps or their wording"),
     ("the tokened baseline.css tag only in a comment", decoy(PAGE), "matched as text, so a tag in a comment counts"),
 ]
 
