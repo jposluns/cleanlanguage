@@ -390,6 +390,29 @@ class HeadersGateTest(unittest.TestCase):
             code = gate.main()
         self.assertEqual(code, 0, out.getvalue())
 
+    # Boundaries of the first-column and bang rules: the https:// scheme is
+    # matched in lower case only, and the bang rule tests the whole line, so a
+    # lone '!' as the name is still a set line that starts with '!'.
+
+    def test_first_column_url_with_an_upper_case_scheme_fails_closed(self):
+        for line in ("HTTPS://cleanlanguage.ai/*", "Https://cleanlanguage.ai/*"):
+            with self.subTest(line=line):
+                code, text = self.run_gate(GOOD_LINES + [line, "  Cache-Control: no-store"])
+                self.assertEqual(code, 3, text)
+                self.assertEqual(
+                    text,
+                    f"check-headers: site/_headers line 13: a first-column line is not a URL "
+                    f"pattern: {line!r}; a URL pattern is a path that starts with '/' or a URL "
+                    "that starts with 'https://', with no space, and a header line is indented\n")
+
+    def test_a_set_line_whose_name_is_a_lone_bang_fails_closed(self):
+        code, text = self.run_gate(GOOD_LINES + ["  !: x"])
+        self.assertEqual(code, 3, text)
+        self.assertEqual(
+            text,
+            "check-headers: site/_headers line 13: a line that starts with '!' must be a detach, "
+            "'! Name' alone, not a header to set: '!: x'\n")
+
 
 if __name__ == "__main__":
     unittest.main()
