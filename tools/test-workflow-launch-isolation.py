@@ -2,16 +2,25 @@
 """Check that every Python launch in the workflows has the one isolated form.
 
 Row 95 asks that every gate or tool launch in the workflows runs `python3 -I`,
-pinned by a test. This scan pins it with one literal rule and refuses every
+pinned by a test.
+
+Threat model: honest drift. The scan guards against an honest author who
+writes a workflow launch without -I, or in some other form, by mistake. An
+author who sets out to run python without -I is outside its model: such an
+author can also edit this scan, and deliberate evasion is a named residual.
+
+This scan pins the launch form with one literal rule and refuses every
 other form by design. In the run text it reads, a line passes only when each
 python word and .py name written on it is part of the one form. No line is
 exempt: a comment or a message that names python or a .py file is a finding
 like any other, so the workflows name a tool in words (for example "the
 release-date extractor") wherever they mention it outside a launch. The rule
-can err by refusing an honest form. A launch can still pass when the scan does
-not see it: outside the run text, or written so that python or a .py name
-appears only after bash or GitHub expands it. Residuals, below, names each
-such case.
+can err by refusing an honest form. The scan reads text: it does not know
+command position or what bash will run. So a launch without -I can pass when
+the scan does not see it (outside the run text, or written so that python or
+a .py name appears only after bash or GitHub expands it), and also when the
+scan sees its text but a deliberate author has written it so that the text
+rules misread it. Residuals, below, names each such case.
 
 A Python-launched gate that finds a planted file on its module path can import
 that file in place of a standard-library module and turn the gate into a green
@@ -27,24 +36,34 @@ The rule:
    parsed with PyYAML's safe loader, a repeated mapping key, and U+0085,
    U+2028 or U+2029 (which YAML 1.1 and 1.2 read differently). Each workflow
    must have a jobs mapping; a job that is not a mapping, a steps value that
-   is not a list and a step that is not a mapping are findings.
+   is not a list and a step that is not a mapping are findings. A job or step
+   `uses:` value that starts with ./ or ../, a local action or a local
+   reusable workflow, is a finding, since the scan does not read it.
 2. Shell and environment. Every step `shell`, and every `defaults.run.shell`
    at workflow and job level, must be exactly `bash`, and every step with
    run text must have one of them (its own, its job's, or the workflow's), so
    no step runs under a runner's default shell. A job's default counts only
    for that job's steps. An `env` key BASH_ENV, ENV or PATH at workflow, job
-   or step level is a finding, and so is a run line that names BASH_ENV or
-   GITHUB_PATH, or assigns ENV or PATH with `=` or `+=` (a name that only
-   ends in ENV or PATH, such as MYPATH, and an expansion such as `$PATH` are
-   not assignments). These are cheap checks of the common ways to redirect
-   `python3` to another program; they are not complete, and Residuals names
+   or step level is a finding, and so is a run line that holds BASH_ENV or
+   GITHUB_PATH as a whole word, or holds ENV or PATH directly followed by
+   `=` or `+=` and not directly preceded by a letter, digit, underscore or
+   `$` (so MYPATH=x and `$PATH=` pass, and a quoted name such as
+   `export 'PATH'=x` is not matched). A run line that runs bash, sh, dash,
+   zsh or ksh, by name or by a path ending in that name, with `-c` (alone or
+   in a cluster such as `-ec`) after any number of options (words starting
+   with - or +, and `-o` or `+o` with its name), is a finding whether or not
+   it names python, since its command text is a string the scan cannot read
+   as commands. These are cheap checks of the common ways to redirect
+   `python3` or hide a launch; they are not complete, and Residuals names
    what they miss.
 3. Launch. In each step's `run` text, with every backslash-newline removed and
    nothing else dropped, every exact `python3 -I tools/<name>.py`, with single
-   spaces, `<name>` holding no `/`, and no character of a path directly
-   before `python3` or after `.py`, is a launch. With the launches removed, a
-   line that still holds the word python in any case, or a `.py` or `.pyz`
-   name, is a finding, whether it is a command, a comment or a message.
+   spaces, `<name>` holding no `/`, no character of a path and no `$`
+   directly before `python3`, and no character of a path after `.py`, is a
+   launch (so `$python3 -I tools/x.py` is not one). With the launches
+   removed, a line that still holds the word python in any case, or a `.py`
+   or `.pyz` name, is a finding, whether it is a command, a comment or a
+   message.
 4. A word that holds python or a `.py` name only once its quotes and
    backslashes are removed is a finding.
 5. Every launched script must exist, and the launches on lines that are not
@@ -62,11 +81,18 @@ file, and `shell: sh` or `bash -e {0}`. Write a launch as
 `python3 -I tools/<name>.py`.
 
 Out of this scan's scope: a check that the tools do not change sys.path, the
-pinning of `uses`, and local or composite actions, which are refused here
-rather than read.
+pinning of `uses`, and local actions and local reusable workflows, which
+rule 1 refuses rather than reads.
 
 Residuals, named here because the scan reads text the pull request controls:
 
+- deliberate evasion of any kind: the scan reads text, not commands, so an
+  author who means to run python without -I can write a line whose text the
+  scan sees but misreads, and can also edit this scan, which only review
+  catches;
+- a PATH or ENV assignment whose name is quoted or escaped, such as
+  `export 'PATH'=x`, and a shell run with -c after an option that takes an
+  argument other than `-o`, such as `bash --rcfile f -c`;
 - a variable holding the interpreter or the script, such as `$PY tools/x`,
   and a shell function or alias named python3, that redirects the literal
   `python3`;
@@ -84,12 +110,10 @@ Residuals, named here because the scan reads text the pull request controls:
 - obfuscation that spells python or a `.py` name only once bash or GitHub
   expands it, such as an ANSI-C string, a glob, brace or parameter expansion,
   or a `${{ }}` expression;
-- remote actions and reusable workflows, which are outside this repository;
+- remote actions and remote reusable workflows, including composite ones,
+  which are outside this repository;
 - a correct launch in a context that never runs, such as an echo message or a
   here-document body, which still counts toward the floor.
-
-The scan is a check of the pull request's own checkout: the author of a change
-can also edit this scan, and only review catches that.
 
 Usage: python3 -I tools/test-workflow-launch-isolation.py
 Exit status: 0 when every check passes, 1 on any finding or failure.
@@ -113,8 +137,9 @@ except ImportError:
 
 REPO = Path(__file__).resolve().parent.parent
 
-# The number of launches under .github/workflows when this check landed.
-LAUNCH_FLOOR = 51
+# The number of launches under .github/workflows after row 95 was rebased
+# onto row 89 (fix round 8).
+LAUNCH_FLOOR = 53
 
 # Launched scripts that load sibling modules, checked with planted modules.
 PROBE_SCRIPTS = (
@@ -126,11 +151,16 @@ PLANTED_MODULES = ("tempfile", "msvcrt", "nt", "_winapi")
 PLANT_MARKER = "PLANTED-MODULE-RAN"
 
 YAML_DISAGREEMENT = {"\x85": "U+0085", "\u2028": "U+2028", "\u2029": "U+2029"}
-LAUNCH = re.compile(r"(?<![\w./\\-])python3 -I (tools/[\w.-]+\.py)(?![\w./\\-])")
+LAUNCH = re.compile(r"(?<![\w./\\$-])python3 -I (tools/[\w.-]+\.py)(?![\w./\\-])")
 PYTHON = re.compile(r"python", re.IGNORECASE)
 PY_NAME = re.compile(r"\.pyz?(?![\w])")
 SHIM = re.compile(r"\bBASH_ENV\b|\bGITHUB_PATH\b|(?<![\w$])(?:ENV|PATH)\+?=")
 SHIM_ENV_KEYS = ("BASH_ENV", "ENV", "PATH")
+SHELL_C = re.compile(
+    r"(?<![\w.$-])(?:[\w.-]*/)*(?:bash|sh|dash|zsh|ksh)"
+    r"(?:\s+(?:[-+]o\s+\w+|[-+][\w-]+))*?\s+-[A-Za-z]*c[A-Za-z]*(?![\w-])"
+)
+LOCAL_USES = ("./", "../")
 
 
 def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]:
@@ -143,6 +173,8 @@ def check_run(text: str) -> tuple[list[tuple[str, str]], list[tuple[str, bool]]]
         rest = LAUNCH.sub(" ", line)
         if SHIM.search(line):
             refused.append(("BASH_ENV, GITHUB_PATH, or an ENV or PATH assignment, which can redirect python3", line.strip()))
+        if SHELL_C.search(line):
+            refused.append(("a shell run with -c, whose command text the scan cannot read", line.strip()))
         if PYTHON.search(rest) or PY_NAME.search(rest):
             refused.append(("python or a .py name other than python3 -I tools/<name>.py", line.strip()))
         for word in line.split():
@@ -219,6 +251,11 @@ def collect(doc, found: list) -> tuple[list, list]:
                 if key in SHIM_ENV_KEYS:
                     found.append(f"{where}.env: {key} can redirect python3 to another program")
 
+    def local_uses(node, where):
+        uses = node.get("uses")
+        if isinstance(uses, str) and uses.strip().startswith(LOCAL_USES):
+            found.append(f"{where}.uses: {uses!r} is a local action or workflow, which this scan does not read")
+
     defaults(doc, "workflow")
     env_keys(doc, "workflow")
     workflow_shell = bool(shells)
@@ -230,6 +267,7 @@ def collect(doc, found: list) -> tuple[list, list]:
         before = len(shells)
         defaults(job, where)
         env_keys(job, where)
+        local_uses(job, where)
         job_shell = workflow_shell or len(shells) > before
         steps = job.get("steps")
         if steps is None:
@@ -243,6 +281,7 @@ def collect(doc, found: list) -> tuple[list, list]:
                 found.append(f"{label}: not a mapping")
                 continue
             env_keys(step, label)
+            local_uses(step, label)
             if "run" in step:
                 runs.append((label, step["run"]))
                 if "shell" not in step and not job_shell:
@@ -399,6 +438,31 @@ RUN_CASES = [
     ("p''ython3 -c 'x'", True),
     ("pyth\\on3 -c 'x'", True),
     ("cp a.p''y b", True),
+    ('p"y"thon3 -c \'x\'', True),
+    ('cp a.p"y" b', True),
+    ("PYTHON3 -c 'x'", True),
+    ("echo pYthon", True),
+    (f"$python3 -I {X}", True),
+    (f'v="$python3 -I {X}"', True),
+    ("bash -c true", True),
+    ("sh -c 'echo ok'", True),
+    ('bash -c "$CMD"', True),
+    ("/bin/sh -c true", True),
+    ("/usr/bin/env bash -c true", True),
+    ("bash -o pipefail -c true", True),
+    ("bash -e +x -c true", True),
+    ("bash --norc -c true", True),
+    ("bash -ec true", True),
+    ("v=$(dash -c true)", True),
+    ("zsh -c true", True),
+    ("ksh -xc true", True),
+    ("bash tools/test-version-selectors.sh", False),
+    ("bash -e -o pipefail tools/a.sh", False),
+    ("sha256sum -c SHA256SUMS", False),
+    ("ssh -c aes128-ctr host true", False),
+    ("fish -c true", False),
+    ("git commit -C HEAD", False),
+    ("echo bash is the shell", False),
     ("# this step sets BASH_ENV", True),
     ('PATH+=":/x"', True),
     ('export PATH+=":/x"', True),
@@ -441,6 +505,9 @@ STEP_CASES = [
     ("env:\n          PATH: /x\n        run: echo ok", True),
     ("env:\n          FOO: bar\n        run: echo ok", False),
     ("run: echo ok\n        run: python3 tools/x.py", True),
+    ("uses: ./tools/action", True),
+    ("uses: ../other/action", True),
+    ("uses: actions/checkout@" + "a" * 40, False),
 ]
 
 
@@ -514,6 +581,8 @@ def self_test() -> list[str]:
             ("no shell anywhere", "on: push\njobs:\n  j:\n    runs-on: windows-latest\n    steps:\n      - run: echo ok\n",
              "no explicit shell"),
             ("a second job without the first job's shell", two_jobs, "jobs.b.steps[0]: run text with no explicit shell"),
+            ("a job that uses a local reusable workflow", head + "  k:\n    uses: ./.github/workflows/w.yml\n",
+             "jobs.k.uses: './.github/workflows/w.yml' is a local action"),
         ]
         for name, text, needle in whole:
             case.write_text(text, encoding="utf-8")
@@ -528,6 +597,8 @@ def self_test() -> list[str]:
              "      - run: python3 -I tools/a.py\n"),
             ("a step-level shell: bash with no job or workflow shell",
              "on: push\njobs:\n  j:\n    steps:\n      - shell: bash\n        run: python3 -I tools/a.py\n"),
+            ("a job that uses a remote reusable workflow",
+             head + "  k:\n    uses: octo/repo/.github/workflows/w.yml@" + "a" * 40 + "\n"),
             ("a job-level shell: bash for each of two jobs",
              two_jobs.replace("  b:\n    steps:", "  b:\n    defaults:\n      run:\n        shell: bash\n    steps:")),
         ]
