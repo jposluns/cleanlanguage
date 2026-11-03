@@ -18,6 +18,8 @@ What it updates
 * ``site/install/index.html``: both download buttons.
 * ``site/verify/index.html``: the download button, the link to the checksum file,
   the displayed checksum value, and the version named beside it.
+* On both pages, every bare version-named file name: the example download name
+  on the install page and the file that the verify page's hash commands name.
 * On any page this run changes, its ``article:modified_time`` and JSON-LD
   ``dateModified`` stamps, so the page-metadata gate still passes on the pull
   request this rewrite feeds. ``site/sitemap.xml`` is regenerated separately by
@@ -109,6 +111,13 @@ def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str]
 
         text = ANY_RELEASE_URL.sub(swap, text)
 
+        # Bare version-named file names must also name this release, not only
+        # the URLs. The install page shows an example download name and the
+        # verify page's hash commands name the file, so the rewrite covers both
+        # pages, not the verify page alone.
+        text = re.sub(r"cleanlanguage-[0-9][0-9.]*\.zip",
+                      f"cleanlanguage-{version}.zip", text)
+
         if name.startswith("verify"):
             text, n = re.subn(
                 r'(<code id="published-checksum">)[^<]*(</code>)',
@@ -124,10 +133,6 @@ def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str]
             )
             if n != 1:
                 die(f"expected one checksum version sentence in {name}, found {n}")
-            # Bare version-named filenames in the hash commands must also name
-            # this release, not only the URLs.
-            text = re.sub(r"cleanlanguage-[0-9][0-9.]*\.zip",
-                          f"cleanlanguage-{version}.zip", text)
 
         if text != original:
             text = stamp_dates(text, date, name)

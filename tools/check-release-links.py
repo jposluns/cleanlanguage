@@ -22,6 +22,9 @@ What it verifies
    and the version named in the sentence above it agrees with the links.
 5. ``site/_redirects`` names the same version, so the shareable short paths and
    the direct links cannot point at different releases.
+6. Every version-named zip file name written out on a page outside a release
+   URL, such as an example download name or the file in a hash command, names
+   that same version, so a page cannot send the reader looking for an old file.
 
 What it does not verify
 -----------------------
@@ -56,6 +59,7 @@ RELEASE_URL = re.compile(
     r"https://github\.com/jposluns/cleanlanguage/releases/download/"
     r"(?P<tag>[^/\"\s]+)/cleanlanguage-(?P<version>[0-9][0-9.]*)\.zip(?:\.sha256)?"
 )
+ZIP_NAME = re.compile(r"cleanlanguage-(?P<version>[0-9][0-9.]*)\.zip")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
 VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
 DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
@@ -139,7 +143,9 @@ def main() -> int:
         except (OSError, UnicodeError) as error:
             die(f"{path.relative_to(REPO_ROOT).as_posix()} could not be read: {error}")
         relative = path.relative_to(REPO_ROOT).as_posix()
+        url_spans: list[tuple[int, int]] = []
         for hit in RELEASE_URL.finditer(text):
+            url_spans.append(hit.span())
             version, tag = hit.group("version"), hit.group("tag")
             found.setdefault(version, []).append(relative)
             if version != expected:
@@ -148,6 +154,16 @@ def main() -> int:
                 )
             if tag != f"v{version}":
                 problems.append(f"{relative} uses tag {tag} for version {version}")
+        # A file name written out bare, outside a release URL, goes stale on a
+        # release exactly as a link does. A name inside a URL is judged above.
+        for name in ZIP_NAME.finditer(text):
+            if any(start <= name.start() and name.end() <= end for start, end in url_spans):
+                continue
+            if name.group("version") != expected:
+                problems.append(
+                    f"{relative} names the file cleanlanguage-{name.group('version')}.zip, "
+                    f"but SKILL.md says {expected}"
+                )
 
     if not found:
         die(f"no release-asset URLs found under {SITE_ROOT.relative_to(REPO_ROOT)}")

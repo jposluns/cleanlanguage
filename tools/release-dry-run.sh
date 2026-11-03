@@ -228,6 +228,13 @@ assert_contains site/install/index.html "cleanlanguage-${dry_version}.zip"
 assert_contains site/verify/index.html "cleanlanguage-${dry_version}.zip.sha256"
 assert_contains site/verify/index.html "${checksum}"
 assert_contains site/verify/index.html "published checksum for version ${dry_version} is"
+# No page may still name the release it replaced, in a URL or written out bare
+# (the install page's example download name, the verify page's hash commands).
+for page in site/install/index.html site/verify/index.html; do
+  if grep -qF "cleanlanguage-${version}.zip" "${page}"; then
+    fail "${page} still names cleanlanguage-${version}.zip after the rewrite"
+  fi
+done
 for page in site/install/index.html site/verify/index.html; do
   assert_contains "${page}" "article:modified_time\" content=\"${dry_date}\""
   assert_contains "${page}" "\"dateModified\": \"${dry_date}\""
