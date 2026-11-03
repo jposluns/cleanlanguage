@@ -113,12 +113,18 @@ the gate for up to their sum on each call (the residual below is outside
 these bounds). The gate takes a result from a child only when the child
 exits 0 and prints exactly one JSON object that matches the contract, and
 it reads only a bounded part of what the child prints (see RESULT_LIMIT).
-While the child runs, no file it writes can grow past output_cap(limit)
-bytes, one byte past the larger read bound (RLIMIT_FSIZE, set in the child
-before exec as both its soft and its hard limit, so neither the child nor a
-process it starts can raise it), so a child that writes fast cannot fill
-temporary storage within the timeout; a child whose stdout or stderr reaches
-that cap is unavailable, and the reason names the cap. Its stdin file is
+While the child runs, an ordinary write cannot grow any file it writes past
+output_cap(limit) bytes, one byte past the larger read bound (RLIMIT_FSIZE,
+set in the child before exec as both its soft and its hard limit, so neither
+the child nor a process it starts can raise it), so an extractor that
+writes too much by accident cannot fill temporary storage within the
+timeout. After the wait, a child whose stdout or stderr has a final size
+that reached that cap is unavailable, and the reason names the cap.
+Residuals: RLIMIT_FSIZE bounds the logical size of a file, not the storage
+allocated to it, so deliberate child code can reserve disk blocks past the
+end of a file (with fallocate, for example) without growing it; the check
+reads only the final size, so a child that fills stdout to the cap,
+truncates it and writes a valid reply is accepted; and its stdin file is
 bounded the same way but not checked, so a child that fills it and still
 replies validly keeps its verdict.
 Every other outcome of a child that the gate observes exits 3 with its
@@ -132,10 +138,11 @@ only while it is in the group: a process that leaves the child's process
 group, by any means, can outlive the gate.
 Separation is not a sandbox. The child runs with the uid, filesystem, and
 network of the gate, so extractor code can do whatever that uid can do,
-including writing files, reaching the network, and signalling the gate. Each
-file it writes is capped at output_cap(limit) bytes while it runs, but it can
-still create any number of files and use the disk through them, and it can
-use CPU and memory. A signal it sends to the gate acts on the gate as
+including writing files, reaching the network, and signalling the gate. An
+ordinary write cannot grow a file past output_cap(limit) bytes while it
+runs, but it can still reserve storage past the end of a file, create any
+number of files and use the disk through them, and it can use CPU and
+memory. A signal it sends to the gate acts on the gate as
 that signal acts on any process: it can interrupt, stop, or end the gate
 outside the exit codes above, and no bound of the gate limits its effect.
 More generally, extractor code can act on the gate and on its own children
@@ -201,9 +208,10 @@ RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 # escapes, 12 bytes); the allowance is there so that a malformed message that
 # echoes the argument keeps its verdict (see
 # test_an_echoed_request_of_any_size_keeps_its_verdict). Row 100: while the
-# child runs, each file it writes stops at output_cap(limit) bytes
-# (RLIMIT_FSIZE, soft and hard), and after the wait a stdout or stderr file
-# that reached the cap, checked with fstat, exits 3 naming the cap.
+# child runs, an ordinary write cannot grow a file past output_cap(limit)
+# bytes (RLIMIT_FSIZE, soft and hard), and after the wait a stdout or stderr
+# file whose final size, checked with fstat, reached the cap exits 3 naming
+# the cap (see the module docstring for what this does not bound).
 CHILD_TIMEOUT_SECONDS = 20
 REAP_GRACE_SECONDS = 5
 RESULT_LIMIT = 65536
@@ -357,12 +365,16 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     directory, and its own session, so it leads a process group of its own.
     The request is written to a temporary file that is its stdin, and its
     stdout and stderr go to temporary files, so the gate never blocks on a
-    pipe and reads only a bounded part of each. While the child runs, no
-    file it writes grows past applied_cap(output_cap(limit)) bytes
-    (RLIMIT_FSIZE, set by limit_output before exec as both its soft and its
-    hard limit), and after the wait a stdout or stderr file that reached
-    that cap, checked with fstat, exits 3 naming the cap before the exit
-    code is read. The wait, bounded by CHILD_TIMEOUT_SECONDS for this
+    pipe and reads only a bounded part of each. While the child runs, an
+    ordinary write cannot grow any file it writes past
+    applied_cap(output_cap(limit)) bytes (RLIMIT_FSIZE, set by
+    limit_output before exec as both its soft and its hard limit), and
+    after the wait a stdout or stderr file whose final size, checked with
+    fstat, reached that cap exits 3 naming the cap before the exit code is
+    read. The check sees only the final size, so a file filled to the cap
+    and then truncated passes it, and storage reserved past the end of a
+    file is not counted (see the module docstring). The wait, bounded by
+    CHILD_TIMEOUT_SECONDS for this
     child, leaves the child unreaped. On a normal end and on a timeout, the
     process group of the child is then killed before the child is reaped,
     or the call exits 3 when the group cannot be killed; on the other
@@ -409,11 +421,12 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
         cap = applied_cap(output_cap(limit))
 
         def limit_output() -> None:
-            # Runs in the child, before exec: no file it writes grows past
-            # cap. The cap is the hard limit too, so neither the child nor a
-            # process it starts can raise the soft limit back. The gate has
-            # no threads (it imports no threading, and reset_sigchld already
-            # requires the main thread), so a preexec_fn is safe here.
+            # Runs in the child, before exec: an ordinary write cannot grow a
+            # file past cap. The cap is the hard limit too, so neither the
+            # child nor a process it starts can raise the soft limit back.
+            # The gate has no threads (it imports no threading, and
+            # reset_sigchld already requires the main thread), so a
+            # preexec_fn is safe here.
             resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
 
         with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, \

@@ -3807,6 +3807,39 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(result, (("exit", 3), self.unavailable(
             f"wrote stdout up to the output cap of {cap} bytes", "extract") + "\n"))
 
+    def test_only_the_final_size_of_stdout_is_checked_against_the_cap(self):
+        # Row 100: the fstat check reads the final size of stdout, as the
+        # docstrings state. A child that fills stdout to the cap (its write
+        # past the cap fails with EFBIG), truncates it, and writes a valid
+        # reply is accepted: the documented residual, pinned so that a change
+        # to the semantics is a deliberate one.
+        gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
+        cap = 300 + 7 * len("xy") + 2
+        absent = b'{"op": "extract", "outcome": "absent"}'
+        tool = self.fake_extractor(extractor_with(
+            "def json_main():\n"
+            "    import errno, os\n"
+            "    sys.stdin.buffer.read()\n"
+            "    refused = 0\n"
+            "    for _ in range(16):\n"
+            "        try:\n"
+            "            os.write(1, b\"x\" * 65536)\n"
+            "        except OSError as error:\n"
+            "            refused += error.errno == errno.EFBIG\n"
+            "    reached = os.fstat(1).st_size\n"
+            "    (Path(__file__).resolve().parent / \"filled.log\").write_text(\n"
+            "        \"%d %d\" % (reached, refused), encoding=\"utf-8\")\n"
+            "    os.ftruncate(1, 0)\n"
+            "    os.lseek(1, 0, os.SEEK_SET)\n"
+            f"    os.write(1, {absent!r})\n"
+            "    return 0\n"
+        ))
+        with self.recorded_sizes() as sizes:
+            result = self.call_reports("extract", "xy")
+        self.assertEqual((tool.parent / "filled.log").read_text(encoding="utf-8"), f"{cap} 15")
+        self.assertEqual(sizes[1], len(absent), sizes)
+        self.assertEqual(result, (("value", None), ""))
+
     def test_the_cap_is_one_byte_past_the_larger_read_bound_or_a_lower_hard_limit(self):
         # Row 100: the cap is one byte past the larger of limit + 1 and
         # STDERR_LIMIT, so a reply one byte over the bound is still refused
