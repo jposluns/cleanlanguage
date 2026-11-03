@@ -6,7 +6,8 @@ holds a stub in place of each gate. A stub records its name and arguments and
 exits with the code the case sets. The script runs as a separate process with
 bash, as the build command in site/README.md runs it, but against the stubs.
 
-EXPECTED is the gate list the owner decided for the Pages build command, kept
+EXPECTED is the gate list for the Pages build command, the 5 gates the owner
+decided and the palette gate that baseline 1.6.0 makes mandatory, kept
 here apart from the script, so a gate dropped from the script, a changed
 argument (build-site.py without --check), a reordered list, or a skipped
 missing gate fails a case. A failing gate stub exits 1 or 3 only, so a case
@@ -36,6 +37,7 @@ EXPECTED = [
     ["tools/check-headers.py"],
     ["tools/check-inline-code.py"],
     ["tools/build-site.py", "--check"],
+    ["tools/check-palette.py"],
 ]
 
 STUB = """import sys
