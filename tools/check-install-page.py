@@ -40,9 +40,10 @@ What it verifies
    (existing deep links, such as ``/install/#pick`` and ``/install/#claude``),
    and on every page no id is duplicated.
 4. Each family page exists (exit 3 if not) and has exactly 1 ``<h1>`` with
-   visible text, at least 1 ``p.verified`` and at least 1 ``ol.steps``, none of
-   them hidden by itself or an ancestor, and links to ``/install/#get`` and
-   ``/install/#test``.
+   visible text (a character other than whitespace, U+0000 and those in
+   ``ZERO_WIDTH``, in text that no element hides by the rules of check 1), at
+   least 1 ``p.verified`` and at least 1 ``ol.steps``, none of them hidden by
+   itself or an ancestor, and links to ``/install/#get`` and ``/install/#test``.
 5. No inline code and no refused markup on any of the 6 pages, as checks 1 to
    10 of ``tools/check-inline-code.py`` define them for an HTML page, with that
    gate's own code: among them, no ``<script>`` without ``src`` other than a
@@ -70,6 +71,17 @@ What it verifies
    block inline code on these pages. The site's own pages must not use it
    (template specification, section 5), and check 5 and
    ``tools/check-inline-code.py`` enforce that rule.
+
+It reads the markup with ``html.parser`` and follows a browser where the two
+differ in a way checks 1 and 4 depend on: ``/>`` on an element that is not void
+does not close it, so ``<div hidden/>`` hides what follows; of 2 attributes with
+the same name, the first counts; a heading start tag closes a heading that is
+the current node, and any heading end tag closes the innermost open heading;
+and a hiding ``html`` or ``body`` start tag anywhere hides the whole page,
+because a browser adds its attributes to the page's own element. Where
+``html.parser`` keeps open an element that a browser closes by an implied end
+tag (a ``p`` before a ``div``, say), the gate sees more ancestors than a
+browser, so a hiding one makes it refuse more, not less.
 
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
@@ -102,8 +114,19 @@ It reads no other property, so a class hidden by ``clip-path``, by
 ``height: 0`` with ``overflow: hidden``, or by ``opacity`` passes it, and it
 reads no compound, descendant or attribute selector. It does not check the wording
 of the setup steps, only that they are present. Those are visible regressions
-a browser check, a reviewer, or the tri-family QA catches. An exotic heading
-character may still slip through the visible-text check. The inline-code
+a browser check, a reviewer, or the tri-family QA catches. A heading made only
+of an invisible character that is not whitespace, U+0000 or in ``ZERO_WIDTH``
+(such as U+034F, U+115F, U+180E, U+2061 to U+2064, U+3164, a variation
+selector or a tag character) passes the visible-text check. Nor does the gate
+model 2 browser repairs that can hide markup it reads as visible: an end tag a
+browser ignores because its element is not in scope (``</div>`` inside a table
+cell leaves a hiding ``div`` outside the table open), and a formatting element
+(``a``, ``b``, ``big``, ``code``, ``em``, ``font``, ``i``, ``nobr``, ``s``,
+``small``, ``strike``, ``strong``, ``tt`` or ``u``) that a browser reopens with
+its attributes after an end tag closed it out of order, so after
+``<p><b hidden>x</p>`` a link is hidden in a browser and visible here. Before
+Python 3.14, ``html.parser`` reads a comment that a browser ends at ``--!>`` on
+to the next ``-->``, so a hiding element between them passes. The inline-code
 checks share the residual that ``tools/check-inline-code.py`` states.
 
 Exit codes:
@@ -141,10 +164,20 @@ SHARED_CSP = (
     "frame-ancestors 'none'"
 )
 BASELINE_ASSET = r'/assets/baseline/{name}\?v=[0-9]+\.[0-9]+\.[0-9]+"'
-VOID = {"meta", "link", "img", "br", "hr", "input", "source", "wbr", "col"}
-# Invisible characters a heading might be reduced to: zero-width spaces/joiner/BOM,
-# no-break and soft-hyphen, word joiner, and the bidi marks.
-ZERO_WIDTH = "​‌‍﻿ ⁠‎‏­"
+# The elements a browser never keeps open, whether or not the start tag ends in "/>".
+VOID = {
+    "area", "base", "basefont", "bgsound", "br", "col", "embed", "frame", "hr", "img", "input", "keygen", "link", "meta",
+    "param", "source", "track", "wbr",
+}
+HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+# Invisible characters a heading might be reduced to, besides the whitespace str.strip removes: the zero-width space,
+# non-joiner and joiner (U+200B to U+200D), the zero-width no-break space or byte order mark (U+FEFF), the no-break
+# space (U+00A0), the word joiner (U+2060), the soft hyphen (U+00AD), and the bidi formatting characters: the marks
+# (U+200E, U+200F and U+061C), the embeddings, overrides and their pop (U+202A to U+202E), and the isolates and
+# their pop (U+2066 to U+2069). has_visible_text also drops U+0000, which a browser ignores in body text.
+ZERO_WIDTH = (
+    "\u200b\u200c\u200d\ufeff\u00a0\u2060\u00ad\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+)
 
 INLINE_RULE = (
     "the site's own pages must not use inline code (template specification, section 5), and this gate "
@@ -207,7 +240,7 @@ def is_hiding_element(tag: str, attrs: dict[str, str]) -> bool:
 
 
 def has_visible_text(data: str) -> bool:
-    return bool(data.translate({ord(c): None for c in ZERO_WIDTH}).strip())
+    return bool(data.translate({ord(c): None for c in ZERO_WIDTH + "\0"}).strip())
 
 
 class PageParser(HTMLParser):
@@ -225,14 +258,24 @@ class PageParser(HTMLParser):
         self.h1: list[dict] = []
         self.verified: list[bool] = []
         self.steps: list[bool] = []
-        self._h1: dict | None = None
+        self.page_hidden = False
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
-        attrs = {k.lower(): (v if v is not None else "") for k, v in attrs_list}
+        # A browser keeps the first of 2 attributes with the same name, so <p class="vh" class="x"> hides.
+        attrs: dict[str, str] = {}
+        for k, v in attrs_list:
+            attrs.setdefault(k.lower(), v if v is not None else "")
         self.order += 1
         classes = attrs.get("class", "").split()
+        # A heading start tag closes a heading that is the current node, as a browser does: <h1><h2>x leaves the h1 empty.
+        if tag in HEADINGS and self.stack and self.stack[-1]["tag"] in HEADINGS:
+            del self.stack[-1]
         parent = self.stack[-1] if self.stack else None
         hiding = is_hiding_element(tag, attrs) or any(frame["hiding"] for frame in self.stack)
+        # A browser adds the attributes of a later html or body start tag to the page's own html or body element,
+        # so a hiding one hides the whole page, the markup before it included.
+        if tag in ("html", "body") and is_hiding_element(tag, attrs):
+            self.page_hidden = True
         # A details without open renders only its first summary child; the rest of its content is hidden.
         if parent and parent["closed"]:
             if tag == "summary" and not parent["summary"]:
@@ -256,34 +299,51 @@ class PageParser(HTMLParser):
                 "order": self.order,
                 "parent": (parent["tag"], parent["order"]) if parent else None,
             })
+        heading = None
         if tag == "h1":
-            self._h1 = {"hidden": hiding, "text": False}
-            self.h1.append(self._h1)
+            heading = {"hidden": hiding, "text": False}
+            self.h1.append(heading)
         if tag == "p" and "verified" in classes:
             self.verified.append(hiding)
         if tag == "ol" and "steps" in classes:
             self.steps.append(hiding)
         if tag not in VOID:
             closed = tag == "details" and "open" not in attrs
-            self.stack.append({"tag": tag, "hiding": hiding, "order": self.order, "closed": closed, "summary": False})
+            self.stack.append(
+                {"tag": tag, "hiding": hiding, "order": self.order, "closed": closed, "summary": False, "h1": heading}
+            )
+
+    def handle_startendtag(self, tag: str, attrs_list) -> None:
+        # A browser ignores the "/" of "/>" on an element that is not void, so <div hidden/> stays open and hides
+        # what follows, as <div hidden> does. A void element never goes on the stack, so it needs no end tag.
+        self.handle_starttag(tag, attrs_list)
 
     def handle_endtag(self, tag: str) -> None:
-        if tag == "h1":
-            self._h1 = None
+        # Any heading end tag closes the innermost open heading, as in a browser: </h2> closes an open h1.
+        names = HEADINGS if tag in HEADINGS else (tag,)
         for i in range(len(self.stack) - 1, -1, -1):
-            if self.stack[i]["tag"] == tag:
+            if self.stack[i]["tag"] in names:
                 del self.stack[i:]
                 break
 
     def handle_data(self, data: str) -> None:
-        if self._h1 is not None and has_visible_text(data):
-            self._h1["text"] = True
+        # Text counts for the h1 only when no element around it hides it: a hiding element (by itself or an
+        # ancestor, as for the links) or a details without open, whose text outside its first summary is hidden.
+        heading = next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
+        hidden = bool(self.stack) and (self.stack[-1]["hiding"] or self.stack[-1]["closed"])
+        if heading is not None and not hidden and has_visible_text(data):
+            heading["text"] = True
 
 
 def parse(text: str) -> PageParser:
     parser = PageParser()
     parser.feed(text)
     parser.close()
+    if parser.page_hidden:
+        for record in parser.anchors + parser.h1:
+            record["hidden"] = True
+        parser.verified = [True for _ in parser.verified]
+        parser.steps = [True for _ in parser.steps]
     return parser
 
 
