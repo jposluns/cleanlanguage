@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="auditthis-favicon-title">
+<title id="auditthis-favicon-title">AuditThis favicon</title>
+<g fill="none" stroke="#2a2220" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+<rect x="12" y="10" width="40" height="50" rx="5" fill="#f4c929"/>
+<rect x="18" y="18" width="28" height="36" rx="2" fill="#f6efe3"/>
+<rect x="24" y="5" width="16" height="9" rx="3" fill="#a0937f"/>
+<polyline points="23 27 27 31 34 23" stroke="#b79400" stroke-width="4"/>
+<polyline points="23 41 27 45 34 37" stroke="#b79400" stroke-width="4"/>
+<rect x="36" y="25" width="6" height="4" fill="#a0937f" stroke="none"/>
+<rect x="36" y="39" width="6" height="4" fill="#a0937f" stroke="none"/>
+</g>
+</svg>

@@ -162,7 +162,10 @@ VERIFY_PAGE = REPO_ROOT / "site" / "verify" / "index.html"
 SKILL = REPO_ROOT / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
 REPO = "jposluns/cleanlanguage"
 
-DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
+# The displayed checksum, matched by its id in any attribute order, so the live page's
+# <code id="published-checksum"> and the template's <code class="sum" id="published-checksum">
+# both count, while an attribute such as data-id="published-checksum" does not.
+DISPLAYED_SUM = re.compile(r'<code(?=[^>]*\sid="published-checksum"[\s>])[^>]*>([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)

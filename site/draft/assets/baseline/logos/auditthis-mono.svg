@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="auditthis-mono-title">
+<title id="auditthis-mono-title">AuditThis mark, single colour</title>
+<g fill="none" stroke="currentColor" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+<path d="M134 80H378A22 22 0 0 1 400 102V442A22 22 0 0 1 378 464H134A22 22 0 0 1 112 442V102A22 22 0 0 1 134 80ZM152 132H360A8 8 0 0 1 368 140V420A8 8 0 0 1 360 428H152A8 8 0 0 1 144 420V140A8 8 0 0 1 152 132Z" fill="currentColor" fill-opacity="0.2" fill-rule="evenodd" stroke="none"/>
+<rect x="112" y="80" width="288" height="384" rx="22"/>
+<rect x="144" y="132" width="224" height="296" rx="8"/>
+<circle cx="256" cy="66" r="18"/>
+<rect x="198" y="62" width="116" height="56" rx="14" fill="currentColor" fill-opacity="0.5"/>
+<rect x="168" y="170" width="30" height="30" rx="6" stroke-width="8"/>
+<polyline points="175,186 182,193 192,178" stroke-width="8"/>
+<rect x="214" y="178" width="120" height="14" rx="7" fill="currentColor" stroke="none"/>
+<rect x="168" y="226" width="30" height="30" rx="6" stroke-width="8"/>
+<polyline points="175,242 182,249 192,234" stroke-width="8"/>
+<rect x="214" y="234" width="96" height="14" rx="7" fill="currentColor" stroke="none"/>
+<rect x="168" y="282" width="30" height="30" rx="6" stroke-width="8"/>
+<polyline points="175,298 182,305 192,290" stroke-width="8"/>
+<rect x="214" y="290" width="130" height="14" rx="7" fill="currentColor" stroke="none"/>
+<rect x="168" y="338" width="30" height="30" rx="6" stroke-width="8"/>
+<rect x="214" y="346" width="72" height="14" rx="7" fill="currentColor" stroke="none"/>
+<g transform="rotate(-40 320 330)">
+<rect x="302" y="200" width="40" height="224" rx="8" fill="currentColor" fill-opacity="0.2"/>
+<rect x="302" y="200" width="40" height="30" rx="8" fill="currentColor" fill-opacity="0.5"/>
+<path d="M302 424L322 470L342 424Z"/>
+<path d="M315 454L322 470L329 454Z" fill="currentColor"/>
+</g>
+</g>
+</svg>

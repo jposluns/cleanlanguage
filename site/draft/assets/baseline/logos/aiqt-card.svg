@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="aiqt-card-title">
+<title id="aiqt-card-title">AIQT Guardrails: a shield bearing a check mark, set on a guardrail</title>
+<g stroke="#2a2220" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+<rect x="92" y="296" width="36" height="168" rx="10" fill="#9aa4ae"/>
+<rect x="384" y="296" width="36" height="168" rx="10" fill="#9aa4ae"/>
+<rect x="56" y="328" width="400" height="40" rx="12" fill="#dfe3e8"/>
+<rect x="56" y="392" width="400" height="40" rx="12" fill="#dfe3e8"/>
+<path d="M256 52L392 100V220C392 304 332 362 256 392C180 362 120 304 120 220V100Z" fill="#e3ac2b"/>
+<path d="M256 52L120 100V220C120 304 180 362 256 392V342C202 318 160 276 160 220V134L256 100Z" fill="#f7d679" stroke="none"/>
+<path d="M256 100L352 134V220C352 276 310 318 256 342C202 318 160 276 160 220V134Z" fill="#7a5410" stroke="none"/>
+<polyline points="206,226 242,262 312,186" fill="none" stroke="#59a847" stroke-width="22"/>
+</g>
+<g fill="#2a2220">
+<circle cx="110" cy="348" r="6"/><circle cx="110" cy="412" r="6"/>
+<circle cx="402" cy="348" r="6"/><circle cx="402" cy="412" r="6"/>
+</g>
+</svg>

@@ -16,6 +16,7 @@ on:
   pull_request:
     paths:
       - "site/**"
+      - "site-src/release.json"
       - "*.md"
       - ".claude/**/*.md"
       - "cleanlanguage/**/*.md"
@@ -29,6 +30,7 @@ on:
       - main
     paths:
       - "site/**"
+      - "site-src/release.json"
       - "*.md"
       - ".claude/**/*.md"
       - "cleanlanguage/**/*.md"

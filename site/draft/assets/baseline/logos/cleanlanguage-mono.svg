@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="cleanlanguage-mono-title">
+<title id="cleanlanguage-mono-title">Clean Language mark, single colour</title>
+<g fill="none" stroke="currentColor" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+<path d="M136 68H376A20 20 0 0 1 396 88V440A20 20 0 0 1 376 460H136A20 20 0 0 1 116 440V88A20 20 0 0 1 136 68ZM120 52H360A20 20 0 0 1 380 72V424A20 20 0 0 1 360 444H120A20 20 0 0 1 100 424V72A20 20 0 0 1 120 52Z" fill="currentColor" fill-opacity="0.35" fill-rule="evenodd" stroke="none"/>
+<path d="M136 68H376A20 20 0 0 1 396 88V440A20 20 0 0 1 376 460H136A20 20 0 0 1 116 440V88A20 20 0 0 1 136 68Z"/>
+<path d="M120 52H360A20 20 0 0 1 380 72V424A20 20 0 0 1 360 444H120A20 20 0 0 1 100 424V72A20 20 0 0 1 120 52Z" fill="none"/>
+<rect x="136" y="96" width="120" height="20" rx="10" fill="currentColor" stroke="none"/>
+<rect x="136" y="146" width="160" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<rect x="136" y="180" width="200" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<rect x="136" y="214" width="130" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<rect x="136" y="248" width="190" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<rect x="136" y="282" width="110" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<rect x="136" y="316" width="170" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<g transform="rotate(40 200 330)">
+<rect x="180" y="196" width="40" height="228" rx="10" fill="currentColor" fill-opacity="0.35"/>
+<rect x="180" y="196" width="40" height="40" rx="10" fill="currentColor"/>
+<rect x="180" y="300" width="40" height="14" fill="currentColor" stroke="none"/>
+<path d="M180 424L200 472L220 424Z"/>
+<path d="M200 472V446" stroke-width="6"/>
+</g>
+<path d="M372 50A50 50 0 1 0 372 150A50 50 0 1 0 372 50ZM340 102L348 94L366 110L390 76L402 88L366 130Z" fill="currentColor" fill-rule="evenodd"/>
+</g>
+</svg>

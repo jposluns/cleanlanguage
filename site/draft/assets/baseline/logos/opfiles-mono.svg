@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="opfiles-mono-title">
+<title id="opfiles-mono-title">OPFiles mark, single colour</title>
+<g fill="none" stroke="currentColor" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+<path d="M80 76H192L228 112V376A12 12 0 0 1 216 388H80A12 12 0 0 1 68 376V88A12 12 0 0 1 80 76ZM102 132H110A6 6 0 0 1 116 138V138A6 6 0 0 1 110 144H102A6 6 0 0 1 96 138V138A6 6 0 0 1 102 132ZM130 132H158A6 6 0 0 1 164 138V138A6 6 0 0 1 158 144H130A6 6 0 0 1 124 138V138A6 6 0 0 1 130 132ZM102 166H110A6 6 0 0 1 116 172V172A6 6 0 0 1 110 178H102A6 6 0 0 1 96 172V172A6 6 0 0 1 102 166ZM130 166H178A6 6 0 0 1 184 172V172A6 6 0 0 1 178 178H130A6 6 0 0 1 124 172V172A6 6 0 0 1 130 166ZM102 200H110A6 6 0 0 1 116 206V206A6 6 0 0 1 110 212H102A6 6 0 0 1 96 206V206A6 6 0 0 1 102 200ZM130 200H146A6 6 0 0 1 152 206V206A6 6 0 0 1 146 212H130A6 6 0 0 1 124 206V206A6 6 0 0 1 130 200ZM102 234H110A6 6 0 0 1 116 240V240A6 6 0 0 1 110 246H102A6 6 0 0 1 96 240V240A6 6 0 0 1 102 234ZM130 234H194A6 6 0 0 1 200 240V240A6 6 0 0 1 194 246H130A6 6 0 0 1 124 240V240A6 6 0 0 1 130 234ZM102 268H110A6 6 0 0 1 116 274V274A6 6 0 0 1 110 280H102A6 6 0 0 1 96 274V274A6 6 0 0 1 102 268ZM130 268H166A6 6 0 0 1 172 274V274A6 6 0 0 1 166 280H130A6 6 0 0 1 124 274V274A6 6 0 0 1 130 268ZM102 302H110A6 6 0 0 1 116 308V308A6 6 0 0 1 110 314H102A6 6 0 0 1 96 308V308A6 6 0 0 1 102 302ZM130 302H182A6 6 0 0 1 188 308V308A6 6 0 0 1 182 314H130A6 6 0 0 1 124 308V308A6 6 0 0 1 130 302ZM102 336H110A6 6 0 0 1 116 342V342A6 6 0 0 1 110 348H102A6 6 0 0 1 96 342V342A6 6 0 0 1 102 336ZM130 336H154A6 6 0 0 1 160 342V342A6 6 0 0 1 154 348H130A6 6 0 0 1 124 342V342A6 6 0 0 1 130 336Z" fill="currentColor" fill-rule="evenodd" stroke="none"/>
+<path d="M80 76H192L228 112V376A12 12 0 0 1 216 388H80A12 12 0 0 1 68 376V88A12 12 0 0 1 80 76Z"/>
+<path d="M192 76V100A12 12 0 0 0 204 112H228Z" fill="currentColor" fill-opacity="0.35"/>
+<path d="M296 124H408L444 160V424A12 12 0 0 1 432 436H296A12 12 0 0 1 284 424V136A12 12 0 0 1 296 124Z"/>
+<path d="M408 124V148A12 12 0 0 0 420 160H444Z" fill="currentColor" fill-opacity="0.35"/>
+<rect x="312" y="172" width="80" height="14" rx="7" fill="currentColor" fill-opacity="1" stroke="none"/>
+<rect x="312" y="206" width="118" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<rect x="312" y="238" width="96" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<rect x="312" y="270" width="124" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<rect x="312" y="302" width="72" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<rect x="312" y="334" width="104" height="14" rx="7" fill="currentColor" fill-opacity="0.5" stroke="none"/>
+<path d="M234 200H270M258 184L274 200L258 216" stroke-width="12"/>
+<path d="M256 344A56 56 0 1 0 256 456A56 56 0 1 0 256 344ZM232 402L242 392L252 402L274 376L294 392L252 432Z" fill="currentColor" fill-rule="evenodd" stroke="none"/>
+<circle cx="256" cy="400" r="56"/>
+</g>
+</svg>

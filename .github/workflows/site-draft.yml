@@ -1,0 +1,50 @@
+name: Site draft
+
+# Two offline checks on the site rebuilt on the shared template (baseline),
+# staged at site/draft/ until the owner approves promotion.
+#
+# The first verifies that every baseline file copied into site/draft/assets/baseline/
+# still matches .baseline/pin.toml and the version's published SHA256SUMS, so a
+# copied file is never edited. See tools/check-baseline-pin.py for scope.
+#
+# The second verifies that the committed site/draft/ is exactly what
+# tools/build-site.py generates from site-src/ and the skill's own files, that
+# no draft page links or loads anything outside /draft/ beyond the recorded root
+# allowlist, and that every page keeps the template's refusals (no dash, no inline
+# code, noindex). See tools/build-site.py for scope.
+#
+# This workflow carries no paths filter on purpose, as sitemap.yml explains: a
+# path-filtered required check never reports on a pull request outside its
+# paths, and the generated pages depend on files across the repository.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Run the baseline pin gate tests
+        shell: bash
+        run: python3 -I tools/test-baseline-pin.py
+
+      - name: Check the copied baseline files against the pin
+        shell: bash
+        run: python3 -I tools/check-baseline-pin.py
+
+      - name: Run the site generator tests
+        shell: bash
+        run: python3 -I tools/test-build-site.py
+
+      - name: Check the committed draft matches a fresh build
+        shell: bash
+        run: python3 -I tools/build-site.py --check

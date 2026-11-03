@@ -1,0 +1,26 @@
+<div class="doc"><p class="lbl first">Optional</p>
+<h1>Verify your download</h1>
+<!--rail-->
+<p class="meta">This step is optional. If you trust the source, which is the official Clean Language release on GitHub, install the skill without checking anything. Verifying confirms that the file arrived exactly as published, which matters most on an untrusted network.</p>
+<p class="lbl sec">What a checksum is</p>
+<h2 id="checksum">What a checksum is</h2>
+<p>A SHA-256 checksum is a short fingerprint of a file. The same file always produces the same fingerprint, and changing even 1 byte produces a different one. Each Clean Language release publishes the checksum of its zip file. If the checksum you calculate for your copy matches the published value, your download matches the published release and reached you intact.</p>
+<p class="lbl sec">How</p>
+<h2 id="how">How to verify</h2>
+<p class="lbl blk">Step 1</p>
+<p>Download the skill. The published checksum is shown under the link.</p>
+<div class="download"><p class="file"><a href="{{release.zip_url}}" target="_blank" rel="noopener noreferrer">{{release.zip_name}}<span class="vh"> (opens in a new tab)</span></a></p><p class="lbl size">zip, version {{release.version}}, SHA-256</p><p>The published checksum for version {{release.version}} is:</p><code class="sum" id="published-checksum">{{release.checksum}}</code><p>The same value is in the <a href="{{release.sum_url}}" target="_blank" rel="noopener noreferrer">published checksum file<span class="vh"> (opens in a new tab)</span></a>, if you would rather compare files than read.</p></div>
+<p class="lbl blk">Step 2</p>
+<p>Calculate the checksum of the file you downloaded. First open a terminal in your Downloads folder:</p>
+<ul><li>On Windows: open your Downloads folder in File Explorer, click the address bar, type <code>powershell</code>, and press Enter.</li><li>On macOS: press Command+Space, type <code>Terminal</code>, press Return, then type <code>cd Downloads</code> and press Return.</li></ul>
+<p>Copy the command for your system, paste it into the window, and press Enter.</p>
+<p class="lbl blk">Windows (PowerShell)</p>
+<pre id="v-win" class="hascopy"><button class="copy" type="button" data-copy="v-win" hidden>Copy</button>Get-FileHash {{release.zip_name}} -Algorithm SHA256</pre>
+<p class="lbl blk">macOS</p>
+<pre id="v-mac" class="hascopy"><button class="copy" type="button" data-copy="v-mac" hidden>Copy</button>shasum -a 256 {{release.zip_name}}</pre>
+<p class="lbl blk">Linux</p>
+<pre id="v-linux" class="hascopy"><button class="copy" type="button" data-copy="v-linux" hidden>Copy</button>sha256sum {{release.zip_name}}</pre>
+<p class="lbl blk">Step 3</p>
+<p>Compare the value your computer prints with the published checksum shown in step 1. Letter case does not matter: PowerShell prints the hash in upper case, while the published value is lower case, so compare the letters and digits and ignore the case. A match means your copy matches the published release.</p>
+<p>If the two differ, delete the file, download it again, and check once more. If the values still differ after a fresh download, do not install the file and <a href="https://github.com/jposluns/cleanlanguage/issues" target="_blank" rel="noopener noreferrer">report it on GitHub<span class="vh"> (opens in a new tab)</span></a>.</p>
+<div class="next"><p class="lbl">Next</p><a class="start" href="{{base}}install/">Continue installing <span class="arrow" aria-hidden="true">&rarr;</span></a></div></div>

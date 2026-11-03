@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="grclibrary-favicon-title">
+<title id="grclibrary-favicon-title">GRC Library favicon</title>
+<g fill="none" stroke="#2a2220" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+<rect x="9" y="14" width="12" height="36" rx="2" fill="#9049a5"/>
+<rect x="24" y="10" width="13" height="40" rx="2" fill="#5a1b6b"/>
+<rect x="40" y="16" width="12" height="34" rx="2" fill="#ae76c0"/>
+<rect x="5" y="50" width="54" height="7" rx="2" fill="#a0937f"/>
+<circle cx="44" cy="38" r="12" fill="#f6efe3"/>
+<polyline points="38 38 43 43 51 33" stroke="#9049a5" stroke-width="4"/>
+</g>
+</svg>

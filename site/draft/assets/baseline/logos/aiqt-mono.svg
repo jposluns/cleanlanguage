@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="aiqt-mono-title">
+<title id="aiqt-mono-title">AIQT Guardrails mark, single colour</title>
+<g fill="none" stroke="currentColor" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+<rect x="92" y="296" width="36" height="168" rx="10" fill="currentColor" fill-opacity="0.35"/>
+<rect x="384" y="296" width="36" height="168" rx="10" fill="currentColor" fill-opacity="0.35"/>
+<rect x="56" y="328" width="400" height="40" rx="12" fill="currentColor" fill-opacity="0.15"/>
+<rect x="56" y="392" width="400" height="40" rx="12" fill="currentColor" fill-opacity="0.15"/>
+<path d="M256 52L392 100V220C392 304 332 362 256 392C180 362 120 304 120 220V100Z" fill="currentColor" fill-opacity="0.2"/>
+<path d="M256 100L352 134V220C352 276 310 318 256 342C202 318 160 276 160 220V134ZM206 226L220 212L242 234L298 172L326 186L242 276Z" fill="currentColor" fill-rule="evenodd" stroke="none"/>
+</g>
+<g fill="currentColor">
+<circle cx="110" cy="348" r="6"/><circle cx="110" cy="412" r="6"/>
+<circle cx="402" cy="348" r="6"/><circle cx="402" cy="412" r="6"/>
+</g>
+</svg>

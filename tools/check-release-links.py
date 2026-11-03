@@ -25,6 +25,16 @@ What it verifies
 6. Every version-named zip file name written out on a page outside a release
    URL, such as an example download name or the file in a hash command, names
    that same version, so a page cannot send the reader looking for an old file.
+   This covers every page under ``site/``, the template pages under
+   ``site/draft/`` included.
+7. ``site-src/release.json``, the one source of every version string the
+   generated template pages show, names the same version, the tag ``v<version>``,
+   and the checksum the live verify page displays.
+8. On the template pages staged at ``site/draft/`` (install and verify), every
+   ``version X.Y.Z`` label names that version, each page names the release at
+   least once, and the draft verify page displays the same checksum as
+   ``release.json``. At promotion these pages replace the live ones and the
+   draft paths are dropped.
 
 What it does not verify
 -----------------------
@@ -54,6 +64,9 @@ SITE_ROOT = REPO_ROOT / "site"
 SKILL = REPO_ROOT / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
 REDIRECTS = SITE_ROOT / "_redirects"
 VERIFY_PAGE = SITE_ROOT / "verify" / "index.html"
+RELEASE_JSON = REPO_ROOT / "site-src" / "release.json"
+DRAFT_PAGES = [SITE_ROOT / "draft" / "install" / "index.html", SITE_ROOT / "draft" / "verify" / "index.html"]
+DRAFT_VERIFY = DRAFT_PAGES[1]
 
 RELEASE_URL = re.compile(
     r"https://github\.com/jposluns/cleanlanguage/releases/download/"
@@ -62,8 +75,13 @@ RELEASE_URL = re.compile(
 ZIP_NAME = re.compile(r"cleanlanguage-(?P<version>[0-9][0-9.]*)\.zip")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
 VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
-DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
+# The displayed checksum, matched by its id in any attribute order, so the live page's
+# <code id="published-checksum"> and the template's <code class="sum" id="published-checksum">
+# both count, while an attribute such as data-id="published-checksum" does not.
+DISPLAYED_SUM = re.compile(r'<code(?=[^>]*\sid="published-checksum"[\s>])[^>]*>([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
+NAMED_ZIP = re.compile(r"cleanlanguage-([0-9][0-9.]*[0-9])\.zip")
+VERSION_LABEL = re.compile(r"\bversion ([0-9]+\.[0-9]+\.[0-9]+)\b")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -73,7 +91,7 @@ def die(message: str) -> NoReturn:
 
 
 def main() -> int:
-    for path in (SKILL, REDIRECTS, VERIFY_PAGE):
+    for path in (SKILL, REDIRECTS, VERIFY_PAGE, RELEASE_JSON, *DRAFT_PAGES):
         try:
             info = path.stat()
         except FileNotFoundError:
@@ -197,6 +215,8 @@ def main() -> int:
             f"but SKILL.md says {expected}"
         )
 
+    problems += check_release_source(expected, shown.group(1).strip() if shown else None)
+
     if problems:
         print("Release link problems found:")
         for problem in dict.fromkeys(problems):
@@ -215,6 +235,52 @@ def main() -> int:
         f"and the displayed checksum is well formed."
     )
     return 0
+
+
+def check_release_source(expected: str, live_sum: str | None) -> list[str]:
+    """Checks 7 and 8: release.json and the template pages staged under site/draft/.
+
+    A stale bare file name on a draft page is check 6's (ZIP_NAME, site-wide), so it is
+    not reported twice here; these pages must still name the release at least once."""
+    import json
+
+    problems: list[str] = []
+    try:
+        release = json.loads(RELEASE_JSON.read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, ValueError) as error:
+        die(f"site-src/release.json could not be read: {error}")
+    if not isinstance(release, dict):
+        die("site-src/release.json is not a JSON object")
+    if release.get("version") != expected:
+        problems.append(f"site-src/release.json names version {release.get('version')!r}, but SKILL.md says {expected}")
+    if release.get("tag") != f"v{expected}":
+        problems.append(f"site-src/release.json names tag {release.get('tag')!r}, not v{expected}")
+    checksum = release.get("checksum")
+    if not isinstance(checksum, str) or not SHA256.match(checksum):
+        problems.append("site-src/release.json carries no 64 character lower-case SHA-256 checksum")
+    elif live_sum is not None and checksum != live_sum:
+        problems.append("site-src/release.json and the live verify page show different checksums")
+    for page in DRAFT_PAGES:
+        relative = page.relative_to(REPO_ROOT).as_posix()
+        try:
+            text = page.read_text(encoding="utf-8", errors="strict")
+        except (OSError, UnicodeError) as error:
+            die(f"{relative} could not be read: {error}")
+        labels = set(VERSION_LABEL.findall(text))
+        if not labels and not NAMED_ZIP.search(text):
+            problems.append(f"{relative} names no release version")
+        for version in sorted(labels - {expected}):
+            problems.append(f"{relative} names version {version}, but SKILL.md says {expected}")
+        if page == DRAFT_VERIFY:
+            shown = DISPLAYED_SUM.findall(text)
+            if len(shown) != 1:
+                problems.append(f'{relative} must show exactly 1 <code id="published-checksum">, found {len(shown)}')
+            elif shown[0].strip() != checksum:
+                problems.append(f"{relative} shows a checksum other than site-src/release.json")
+            stated = DISPLAYED_VERSION.search(text)
+            if stated is None or stated.group(1) != expected:
+                problems.append(f"{relative} does not state that its checksum is for version {expected}")
+    return problems
 
 
 if __name__ == "__main__":

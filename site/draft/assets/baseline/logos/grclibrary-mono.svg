@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="grclibrary-mono-title">
+<title id="grclibrary-mono-title">GRC Library mark, single colour</title>
+<g fill="none" stroke="currentColor" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+<rect x="92" y="128" width="60" height="272" rx="8" fill="currentColor" fill-opacity="0.45"/>
+<rect x="104" y="156" width="36" height="12" rx="6" fill="currentColor" stroke="none"/>
+<rect x="160" y="104" width="64" height="296" rx="8" fill="currentColor" fill-opacity="0.7"/>
+<rect x="172" y="132" width="40" height="12" rx="6" fill="currentColor" stroke="none"/>
+<rect x="232" y="152" width="56" height="248" rx="8" fill="currentColor" fill-opacity="0.12"/>
+<rect x="244" y="180" width="32" height="12" rx="6" fill="currentColor" stroke="none"/>
+<rect x="296" y="120" width="60" height="280" rx="8" fill="currentColor" fill-opacity="0.45"/>
+<rect x="308" y="148" width="36" height="12" rx="6" fill="currentColor" stroke="none"/>
+<rect x="364" y="140" width="56" height="260" rx="8" fill="currentColor" fill-opacity="0.3"/>
+<rect x="376" y="168" width="32" height="12" rx="6" fill="currentColor" stroke="none"/>
+<rect x="64" y="400" width="384" height="32" rx="8" fill="currentColor" fill-opacity="0.35"/>
+<rect x="80" y="432" width="352" height="18" rx="6" fill="currentColor"/>
+<path d="M330 352L306 404L342 394Z" fill="currentColor" fill-opacity="0.35"/>
+<path d="M374 352L398 404L362 394Z" fill="currentColor" fill-opacity="0.35"/>
+<path d="M352 252A64 64 0 1 0 352 380A64 64 0 1 0 352 252ZM314 318L324 308L344 326L380 288L392 300L344 348Z" fill="currentColor" fill-rule="evenodd" stroke="none"/>
+</g>
+</svg>

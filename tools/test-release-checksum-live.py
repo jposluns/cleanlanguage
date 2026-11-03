@@ -4263,5 +4263,28 @@ class ContractRoutingTest(unittest.TestCase):
         self.assertEqual(sorted(starts), [("gh", "subprocess", "run"), ("run_release_date_child", "subprocess", "Popen")])
 
 
+class DisplayedSumMarkupTest(unittest.TestCase):
+    """The checksum is read by its id in any attribute order (the template's download block)."""
+
+    def test_live_markup(self):
+        match = gate.DISPLAYED_SUM.search(VERIFY.format(version=CURRENT, checksum=ZIP_SUM))
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), ZIP_SUM)
+
+    def test_template_markup(self):
+        page = f'<p>The published checksum for version {CURRENT} is:</p><code class="sum" id="published-checksum">{ZIP_SUM}</code>'
+        match = gate.DISPLAYED_SUM.search(page)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), ZIP_SUM)
+
+    def test_other_attributes_do_not_match(self):
+        for page in (
+            f'<code data-id="published-checksum">{ZIP_SUM}</code>',
+            f'<code id="published-checksum-old">{ZIP_SUM}</code>',
+            f'<code class="sum">{ZIP_SUM}</code>',
+        ):
+            self.assertIsNone(gate.DISPLAYED_SUM.search(page), page)
+
+
 if __name__ == "__main__":
     unittest.main()

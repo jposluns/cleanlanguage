@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="secureconfig-card-title">
+<title id="secureconfig-card-title">SecureConfig: a terminal window with a padlock and a small shield</title>
+<g stroke="#2a2220" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+<rect x="64" y="64" width="384" height="272" rx="20" fill="#f6efe3"/>
+<path d="M64 84a20 20 0 0 1 20-20h344a20 20 0 0 1 20 20v40H64Z" fill="#3f6390"/>
+<path d="M78 124V88a14 14 0 0 1 14-14h328" fill="none" stroke="#7d9cc2" stroke-width="6"/>
+<g fill="#f6efe3" stroke="none"><circle cx="100" cy="94" r="9"/><circle cx="130" cy="94" r="9"/><circle cx="160" cy="94" r="9"/></g>
+<rect x="96" y="156" width="150" height="14" rx="7" fill="#a0937f" stroke="none"/>
+<rect x="96" y="190" width="60" height="14" rx="7" fill="#ec7c0e" stroke="none"/>
+<rect x="168" y="190" width="110" height="14" rx="7" fill="#a0937f" stroke="none"/>
+<rect x="96" y="224" width="180" height="14" rx="7" fill="#a0937f" stroke="none"/>
+<rect x="96" y="258" width="80" height="14" rx="7" fill="#136dbf" stroke="none"/>
+<rect x="188" y="258" width="90" height="14" rx="7" fill="#a0937f" stroke="none"/>
+<rect x="96" y="292" width="120" height="14" rx="7" fill="#a0937f" stroke="none"/>
+<path d="M196 344V288a60 60 0 0 1 120 0v56" fill="none" stroke-width="44"/>
+<path d="M196 344V288a60 60 0 0 1 120 0v56" fill="none" stroke="#cfc4b4" stroke-width="26"/>
+<rect x="160" y="320" width="192" height="144" rx="22" fill="#c9302d"/>
+<path d="M176 448V344a16 16 0 0 1 16-16h144" fill="none" stroke="#e36b60" stroke-width="8"/>
+<path d="M256 358a20 20 0 0 1 10 37.3V420a10 10 0 0 1 -20 0v-24.7A20 20 0 0 1 256 358Z" fill="#59a847"/>
+<path d="M396 192L440 208V250C440 278 420 298 396 310C372 298 352 278 352 250V208Z" fill="#59a847"/>
+<polyline points="378,252 392,266 416,232" fill="none" stroke="#f6efe3" stroke-width="12"/>
+</g>
+</svg>

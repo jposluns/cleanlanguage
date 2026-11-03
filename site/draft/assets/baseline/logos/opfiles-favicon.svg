@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="opfiles-favicon-title">
+<title id="opfiles-favicon-title">OPFiles favicon</title>
+<g fill="none" stroke="#2a2220" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+<path d="M9 9h18l6 6v31a2 2 0 0 1 -2 2H11a2 2 0 0 1 -2 -2Z" fill="#ec7c0e"/>
+<path d="M15 20h4M15 28h8M15 36h6" stroke="#f6efe3" stroke-width="3"/>
+<path d="M33 18h18l6 6v31a2 2 0 0 1 -2 2H35a2 2 0 0 1 -2 -2Z" fill="#f6efe3"/>
+<path d="M39 30h10M39 38h8" stroke="#a0937f" stroke-width="3"/>
+<circle cx="32" cy="50" r="10" fill="#ec7c0e"/>
+<polyline points="27 50 31 54 38 45" stroke="#f6efe3" stroke-width="4"/>
+</g>
+</svg>
