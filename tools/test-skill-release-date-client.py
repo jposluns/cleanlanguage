@@ -549,11 +549,13 @@ class BoundsTest(unittest.TestCase):
             f"skill-release-date-client: skill-release-date.py {reason} in baseline, so the extractor is unavailable\n",
         )
 
-    def test_output_past_the_cap_stops_at_the_cap(self):
+    def test_stdout_and_stderr_end_at_the_cap_under_ordinary_writes(self):
         # A child that writes far past the read bound, on stdout or on
-        # stderr, stops at the cap: its writes past it fail, so the storage
-        # it takes stays bounded while it runs, and the client is unavailable
-        # naming the cap. The child reports how much it wrote.
+        # stderr, with ordinary writes, ends with a file of exactly the cap:
+        # its writes past it fail, and the client, seeing a final size that
+        # reached the cap, is unavailable naming it. The child reports the
+        # size it reached. Storage reserved past the end of a file is not
+        # measured here.
         limit = client.RESULT_LIMIT
         cap = client.output_cap(limit)
         self.assertEqual(cap, limit + 2)
@@ -584,7 +586,8 @@ class BoundsTest(unittest.TestCase):
 
     def test_an_inherited_hard_file_size_limit_below_the_cap_is_applied(self):
         # A caller (a CI job with ulimit -H -f, say) can leave a hard file
-        # size limit below the cap, which a child cannot raise. The child then
+        # size limit below the cap, which a child without CAP_SYS_RESOURCE
+        # cannot raise. The child then
         # gets that hard limit as its cap, and a normal reply still succeeds.
         hard = 50000
         self.assertLess(hard, client.output_cap(client.RESULT_LIMIT))
@@ -620,10 +623,13 @@ class BoundsTest(unittest.TestCase):
         with mock.patch.object(client.resource, "getrlimit", lambda which: (hard, client.resource.RLIM_INFINITY)):
             self.assertEqual(client.applied_cap(1000), 1000)
 
-    def test_the_child_cannot_raise_its_file_size_limit(self):
-        # The child gets the cap as both its soft and its hard limit, so it
-        # can neither raise its soft limit past the cap nor raise the hard
-        # limit; a child with an infinite hard limit could undo the cap.
+    def test_an_unprivileged_child_cannot_raise_its_file_size_limit(self):
+        # The child gets the cap as both its soft and its hard limit, so a
+        # child without CAP_SYS_RESOURCE can neither raise its soft limit
+        # past the cap nor raise the hard limit; a child with an infinite
+        # hard limit could undo the cap. Run with CAP_SYS_RESOURCE (as
+        # root), the raise of the hard limit would succeed, the residual the
+        # module docstring names.
         body = (
             "import json, resource, sys\n"
             "request = json.loads(sys.stdin.read())\n"
