@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "tools" / "check-instructions-page.py"
 LIVE = "site/instructions/index.html"
 DRAFT = "site/draft/instructions/index.html"
-FILES = ["site/downloads/cleanlanguage.md", LIVE, DRAFT]
+FILES = ["site/downloads/cleanlanguage.md", LIVE, DRAFT, "tools/check-inline-code.py"]
 BUTTON = '<button class="copy" type="button" data-copy="instructions-text" hidden>Copy</button>'
 
 
@@ -52,6 +52,14 @@ CASES = [
     ("a second copy button in the draft block", edit(DRAFT, BUTTON, BUTTON + BUTTON), 1),
     ("an inline script on the draft page", edit(DRAFT, "</main>", "<script>x()</script></main>"), 1),
     ("an inline style on the draft page", edit(DRAFT, "<h1>", '<h1 style="x">'), 1),
+    ("I5: an application/x-javascript script on the live page",
+        edit(LIVE, "</main>", '<script type="application/x-javascript">alert(1)</script></main>'), 1),
+    ("I2B: src= inside another attribute's quoted value on the live page",
+        edit(LIVE, "</main>", "<script title='src=\"/install/\"'>alert(1)</script></main>"), 1),
+    ("I3: an event handler after a slash on the draft page",
+        edit(DRAFT, "</main>", '<span/onclick="alert(1)">x</span></main>'), 1),
+    ("I4: a javascript: link on the live page", edit(LIVE, "</main>", '<a href="javascript:alert(1)">x</a></main>'), 1),
+    ("the inline-code gate missing", lambda root: (root / "tools/check-inline-code.py").unlink(), 3),
     ("the draft page missing", lambda root: (root / DRAFT).unlink(), 3),
     ("a second block on the draft page", edit(DRAFT, "</main>", '<pre id="instructions-text">x</pre></main>'), 3),
 ]

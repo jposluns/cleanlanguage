@@ -32,6 +32,7 @@ on:
       - "tools/test-portable-text-release-date.sh"
       - "tools/check-portable-text-sync.sh"
       - "tools/check-instructions-page.py"
+      - "tools/check-inline-code.py"
       - "tools/test-instructions-page.py"
       - ".github/workflows/portable-text-sync.yml"
   push:
@@ -54,6 +55,7 @@ on:
       - "tools/test-portable-text-release-date.sh"
       - "tools/check-portable-text-sync.sh"
       - "tools/check-instructions-page.py"
+      - "tools/check-inline-code.py"
       - "tools/test-instructions-page.py"
       - ".github/workflows/portable-text-sync.yml"
 

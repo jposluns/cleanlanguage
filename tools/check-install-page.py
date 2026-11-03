@@ -32,19 +32,26 @@ What it verifies (reliably)
    ``aria-current``, and exactly one ``family-reset`` button exists and is hidden.
 4. Each family has exactly one picker ``<a data-family-link=X href="#X">`` inside
    the ``.platform-actions`` group.
-5. No inline executable ``<script>``, ``style`` attribute, or ``on*`` handler.
+5. No inline code, read with the parser of ``tools/check-inline-code.py``: no
+   ``<script>`` without ``src`` other than a structured-data block, no ``on*``
+   attribute, no ``javascript:`` URL, and no ``<style>`` element or ``style``
+   attribute.
 6. The guarded collapse rule is present: some hiding rule whose selector carries a
    positive, boundary-anchored ``html[data-family]`` / ``html[data-family=...]``
    (not ``.html``/``xhtml``/``data-family-mode``) and names ``data-family-section``.
    This catches the feature being deleted or its guard being renamed.
-7. The first ``Content-Security-Policy`` line in ``site/_headers`` (the ``/*``
-   rule) is exactly the shared policy, ``DRAFT_CSP`` below (template
-   specification, baseline 1.3.1, section 9; the owner authorized the live pages
-   to adopt it, ``'unsafe-inline'`` included, once https://posluns.ca/privacy/ was
-   published), and ``site/_headers`` keeps a ``Cache-Control`` entry for
-   ``/js/install.js``. The policy no longer blocks an inline script, so check 5
-   refuses inline code on the site's own rules (template specification, section
-   5), not on the policy's.
+7. ``site/_headers``, read with the parser of ``tools/check-headers.py``
+   (header names compared without regard to case, comments ignored), has a
+   ``/*`` rule that sets ``Content-Security-Policy`` exactly once, to exactly
+   the shared policy, ``DRAFT_CSP`` below (template specification, baseline
+   1.3.1, section 9; the owner authorized the live pages to adopt it,
+   ``'unsafe-inline'`` included, once https://posluns.ca/privacy/ was
+   published), and detaches it nowhere. No rule sets or detaches
+   ``X-Content-Security-Policy``, and ``site/_headers`` keeps a
+   ``Cache-Control`` entry for ``/js/install.js``. The policy allows
+   ``'unsafe-inline'``, so a browser does not block inline code on these pages.
+   The site's own pages must not use it (template specification, section 5),
+   and check 5 and ``tools/check-inline-code.py`` enforce that rule.
 
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
@@ -56,9 +63,9 @@ hides a family section without the guard (for example ``section[data-family-sect
 opacity/positions off-screen, a DESCENDANT wipe, or hiding by id. Those are visible
 regressions a browser check, a reviewer, or the tri-family QA catches; a regex
 cannot decide them without false positives that would block valid edits. The
-inline-code checks and the collapse-rule scan are regex over a flat, unnested
-stylesheet; an exotic heading character or attribute-string shape may still slip
-through.
+collapse-rule scan is a regex over a flat, unnested stylesheet, and an exotic
+heading character may still slip through. The inline-code checks share the
+residual that ``tools/check-inline-code.py`` states.
 
 The template page (staged at /draft/)
 ------------------------------------
@@ -77,7 +84,7 @@ markup of the template specification (section 7.12), so it is checked here too:
    button exists and is ``hidden``; exactly 1 ``data-picker-status`` region exists.
 10. The ids ``pick``, ``get``, ``test``, ``how-to-use``, ``spelling`` and
     ``assurance`` exist (existing deep links), and no id is duplicated.
-11. No inline executable ``<script>``, ``style`` attribute or ``on*`` handler.
+11. No inline code, as in check 5.
 12. Versioned asset tokens: ``fonts.css``, ``palettes.css``, ``baseline.css``,
     ``copy.js`` and ``select.js`` load from the draft's ``assets/baseline/`` with
     ``?v=X.Y.Z``, the scripts with ``defer``; an optional ``site.css`` loads with
@@ -91,8 +98,8 @@ markup of the template specification (section 7.12), so it is checked here too:
     authorized this policy for ``/draft/`` on 2026-11-03 (it carries
     ``'unsafe-inline'`` for Cloudflare's JavaScript Detections), and nothing
     looser: any other ``Content-Security-Policy`` line anywhere in the file,
-    outside the first (site-wide) line, fails. The site-wide rule in check 7 is
-    unchanged. This gate checks the lines of the ``/draft/*`` rule itself; it
+    outside the first (site-wide) line, fails. Check 7 holds the site-wide rule
+    to the same policy. This gate checks the lines of the ``/draft/*`` rule itself; it
     does not judge ``X-Robots-Tag`` in other rules. ``tools/check-headers.py``
     check 6 owns that rule (no rule detaches ``X-Robots-Tag``, and no rule other
     than ``/draft/*`` sets it where its pattern can reach ``/draft/``), and it
@@ -110,6 +117,8 @@ Exit codes:
 
 from __future__ import annotations
 
+import functools
+import importlib.util
 import re
 import sys
 from collections import Counter
@@ -127,7 +136,8 @@ FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
 TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance"]
 BASELINE_SCRIPTS = ("copy.js", "select.js", "search.js", "rail.js")
 DRAFT_PATTERN = "/draft/*"
-# The owner's decision of 2026-11-03 (item 5), authorized for /draft/ only (item 6).
+# The shared policy (template specification, baseline 1.3.1, section 9). The owner decided it for
+# /draft/ on 2026-11-03 and then authorized the live pages to adopt it.
 DRAFT_CSP = (
     "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
     "https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; "
@@ -141,11 +151,10 @@ VOID = {"meta", "link", "img", "br", "hr", "input", "source", "wbr", "col"}
 # no-break and soft-hyphen, word joiner, and the bidi marks.
 ZERO_WIDTH = "​‌‍﻿ ⁠‍‌­"
 
-SCRIPT_TAG = re.compile(r"<script([^>]*)>", re.I)
-SCRIPT_ATTR = re.compile(r'([A-Za-z][\w:.-]*)\s*=\s*"([^"]*)"')
-EXECUTABLE_TYPES = {"", "module", "text/javascript", "application/javascript", "text/ecmascript"}
-INLINE_STYLE = re.compile(r"<[^>]+\sstyle\s*=", re.I)
-INLINE_HANDLER = re.compile(r"<[^>]+\son[a-z]+\s*=", re.I)
+INLINE_RULE = (
+    "the site's own pages must not use inline code (template specification, section 5), and this gate "
+    "and tools/check-inline-code.py enforce that rule"
+)
 CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
 CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}", re.S)
 # A positive root guard: html[data-family] or html[data-family=...], anchored so a
@@ -157,6 +166,25 @@ GUARD = re.compile(r"(?:^|[\s,>+~(])html\[data-family(?:[~^$*|]?=|\])", re.I)
 def die(message: str) -> None:
     print(f"check-install-page: {message}", file=sys.stderr)
     raise SystemExit(3)
+
+
+@functools.cache
+def load_tool(name: str):
+    """Load a sibling gate as a module, so this gate applies exactly its logic."""
+    path = Path(__file__).resolve().parent / name
+    if not path.is_file():
+        die(f"tools/{name} does not exist")
+    spec = importlib.util.spec_from_file_location(name.removesuffix(".py").replace("-", "_"), path)
+    if spec is None or spec.loader is None:
+        die(f"tools/{name} could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def inline_code(where: str, text: str) -> list[str]:
+    """Checks 5 and 11: each piece of inline code, read with tools/check-inline-code.py."""
+    return [f"{where} {problem}; {INLINE_RULE}." for problem in load_tool("check-inline-code.py").inline_code_problems(text)]
 
 
 def is_hiding_element(attrs: dict[str, str]) -> bool:
@@ -266,16 +294,6 @@ class InstallParser(HTMLParser):
             self.family_has_h2[self._h2_family] = True
 
 
-def executes_inline(text: str) -> bool:
-    for tag in SCRIPT_TAG.finditer(text):
-        attributes = {k.lower(): v for k, v in SCRIPT_ATTR.findall(tag.group(1))}
-        if "src" in attributes:
-            continue
-        if attributes.get("type", "").strip().lower() in EXECUTABLE_TYPES:
-            return True
-    return False
-
-
 class TemplateParser(HTMLParser):
     """Collects the selector markup of the template install page (specification 7.12)."""
 
@@ -379,12 +397,7 @@ def check_template_page(text: str) -> list[str]:
     for gid in TEMPLATE_IDS:
         if parser.id_counts.get(gid, 0) == 0:
             problems.append(f'{where}: the id "{gid}" is missing; existing deep links use it.')
-    if executes_inline(text):
-        problems.append(f"{where}: the page contains an inline <script>.")
-    if INLINE_STYLE.search(text):
-        problems.append(f"{where}: the page contains an inline style attribute.")
-    if INLINE_HANDLER.search(text):
-        problems.append(f"{where}: the page contains an inline on* event handler.")
+    problems += inline_code(where, text)
     for name in ("fonts.css", "palettes.css", "baseline.css"):
         if not re.search(r'<link rel="stylesheet" href="' + BASELINE_ASSET.format(name=re.escape(name)), text):
             problems.append(f"{where}: {name} is not loaded from assets/baseline/ with a ?v=X.Y.Z token.")
@@ -524,22 +537,7 @@ def main() -> int:
         )
 
     # 4. no inline code
-    if executes_inline(page_text):
-        problems.append(
-            "the page contains an inline <script>; the site's rules forbid inline code "
-            "(the policy allows 'unsafe-inline' only for Cloudflare's JavaScript Detections). "
-            "Move the code to site/js/."
-        )
-    if INLINE_STYLE.search(page_text):
-        problems.append(
-            "the page contains an inline style attribute; the CSP is style-src 'self'. "
-            "Move the declarations to site/styles.css."
-        )
-    if INLINE_HANDLER.search(page_text):
-        problems.append(
-            "the page contains an inline on* event handler; the site's rules forbid inline "
-            "code. Bind the listener in site/js/."
-        )
+    problems += inline_code("site/install/index.html", page_text)
 
     # 5. script and stylesheet tokens
     if not re.search(r'src="/js/install\.js\?v=\d{8}-\d+"', page_text):
@@ -558,13 +556,27 @@ def main() -> int:
 
     # 7. header discipline
     headers = HEADERS.read_text(encoding="utf-8")
-    csp_line = next((ln for ln in headers.splitlines() if "Content-Security-Policy:" in ln), "")
-    if not csp_line:
-        problems.append("site/_headers has no Content-Security-Policy line.")
-    else:
-        if csp_line.split(":", 1)[1].strip() != DRAFT_CSP:
+    entries = load_tool("check-headers.py").parse(headers)
+    site_csp = [
+        (number, kind, value) for number, pattern, kind, name, value in entries
+        if pattern == "/*" and name.lower() == "content-security-policy"
+    ]
+    if len(site_csp) != 1 or site_csp[0][1] != "set":
+        problems.append(
+            f"the /* rule of site/_headers sets or detaches Content-Security-Policy {len(site_csp)} times "
+            "(lines " + (", ".join(str(entry[0]) for entry in site_csp) or "none") + "); "
+            "it must set it exactly once and detach it nowhere."
+        )
+    elif site_csp[0][2] != DRAFT_CSP:
+        problems.append(
+            f"the site-wide Content-Security-Policy (site/_headers line {site_csp[0][0]}) is not exactly "
+            f"the shared policy: {site_csp[0][2]!r}"
+        )
+    for number, pattern, _, name, _ in entries:
+        if name.lower() == "x-content-security-policy":
             problems.append(
-                f"the site-wide Content-Security-Policy is not exactly the shared policy: {csp_line.strip()!r}"
+                f"site/_headers line {number} names X-Content-Security-Policy under {pattern}; "
+                "only Content-Security-Policy carries the policy."
             )
     if not re.search(r"/js/install\.js\s*\n\s*Cache-Control:", headers):
         problems.append("site/_headers has no Cache-Control entry for /js/install.js.")

@@ -15,6 +15,8 @@ on:
       - "site/_headers"
       - "site/js/install.js"
       - "tools/check-install-page.py"
+      - "tools/check-headers.py"
+      - "tools/check-inline-code.py"
       - "tools/test-install-page.py"
       - ".github/workflows/install-page.yml"
   push:
@@ -27,6 +29,8 @@ on:
       - "site/_headers"
       - "site/js/install.js"
       - "tools/check-install-page.py"
+      - "tools/check-headers.py"
+      - "tools/check-inline-code.py"
       - "tools/test-install-page.py"
       - ".github/workflows/install-page.yml"
 

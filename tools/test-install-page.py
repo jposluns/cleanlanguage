@@ -17,10 +17,20 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "tools" / "check-install-page.py"
-FILES = ["site/install/index.html", "site/styles.css", "site/_headers", "site/draft/install/index.html"]
+FILES = ["site/install/index.html", "site/styles.css", "site/_headers", "site/draft/install/index.html",
+         "tools/check-headers.py", "tools/check-inline-code.py"]
 DRAFT = "site/draft/install/index.html"
 HEADERS = "site/_headers"
 DRAFT_CSP_LINE = "  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'"
+LIVE = "site/install/index.html"
+SHARED_CSP = (
+    "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
+    "https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; "
+    "style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
+    "frame-ancestors 'none'"
+)
+SITE_LINE = "/*\n  X-Frame-Options: DENY"
+SITE_CSP = f"  Content-Security-Policy: {SHARED_CSP}\n\n/draft/*"
 
 
 def make_root(scratch: Path) -> Path:
@@ -88,6 +98,24 @@ CASES = [
         "Cross-Origin-Opener-Policy: same-origin\n  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'"), 1),
     ("the site-wide policy allowing data: images", edit(HEADERS, "frame-ancestors 'none'\n\n/draft/*",
         "frame-ancestors 'none'; img-src 'self' data:\n\n/draft/*"), 1),
+    ("H5: a lower-case header name on a wider site-wide policy",
+        edit(HEADERS, SITE_CSP, "  content-security-policy: default-src *\n\n/draft/*"), 1),
+    ("H6: a comment decoy above a wider site-wide policy", lambda root: (
+        edit(HEADERS, SITE_LINE, f"# Content-Security-Policy: {SHARED_CSP}\n" + SITE_LINE)(root),
+        edit(HEADERS, SITE_CSP, "  Content-Security-Policy: default-src *\n\n/draft/*")(root))[-1], 1),
+    ("H7: an X-Content-Security-Policy decoy beside a wider site-wide policy",
+        edit(HEADERS, SITE_CSP, f"  X-Content-Security-Policy: {SHARED_CSP}\n  Content-Security-Policy: default-src *\n\n/draft/*"), 1),
+    ("an X-Content-Security-Policy line beside the shared policy",
+        edit(HEADERS, SITE_CSP, f"  X-Content-Security-Policy: {SHARED_CSP}\n" + SITE_CSP), 1),
+    ("the site-wide policy set twice", edit(HEADERS, SITE_CSP, f"  Content-Security-Policy: {SHARED_CSP}\n" + SITE_CSP), 1),
+    ("the site-wide policy missing", edit(HEADERS, SITE_CSP, "\n/draft/*"), 1),
+    ("I1: an application/x-javascript script on the live page",
+        edit(LIVE, "</main>", '<script type="application/x-javascript">alert(1)</script></main>'), 1),
+    ("I2B: src= inside another attribute's quoted value on the draft page",
+        edit(DRAFT, "</main>", "<script title='src=\"/install/\"'>alert(1)</script></main>"), 1),
+    ("I3: an event handler after a slash on the live page",
+        edit(LIVE, "</main>", '<span/onclick="alert(1)">x</span></main>'), 1),
+    ("the headers gate missing", lambda root: (root / "tools/check-headers.py").unlink(), 3),
 ]
 
 

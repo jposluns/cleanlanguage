@@ -152,6 +152,15 @@ class HeadersGateTest(unittest.TestCase):
                 lines = self.replace(f"  Content-Security-Policy: {SHARED_CSP}", f"  Content-Security-Policy: {value}")
                 self.expect_fail(lines, "the decided value is")
 
+    def test_site_wide_policy_spaced_or_ordered_differently_fails(self):
+        directives = SHARED_CSP.split("; ")
+        for value in (SHARED_CSP.replace("; ", ";  ", 1), SHARED_CSP.replace("'self' 'unsafe-inline'", "'self'  'unsafe-inline'"),
+                      SHARED_CSP.replace("; ", ";"), "; ".join(reversed(directives)),
+                      "; ".join(directives[1:] + directives[:1])):
+            with self.subTest(value=value):
+                lines = self.replace(f"  Content-Security-Policy: {SHARED_CSP}", f"  Content-Security-Policy: {value}")
+                self.expect_fail(lines, "the decided value is")
+
     def test_permissions_policy_missing_one_feature_fails(self):
         lines = self.replace(f"  Permissions-Policy: {PERMISSIONS}",
                              "  Permissions-Policy: " + PERMISSIONS.replace(", usb=()", ""))

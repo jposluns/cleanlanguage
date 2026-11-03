@@ -1,6 +1,6 @@
 name: Site hardening
 
-# Two offline checks on files that Cloudflare Pages serves as they are.
+# Three offline checks on files that Cloudflare Pages serves as they are.
 #
 # The first verifies that site/_headers sets X-Frame-Options,
 # Permissions-Policy, Cross-Origin-Opener-Policy and Content-Security-Policy
@@ -11,6 +11,13 @@ name: Site hardening
 # The second verifies that site/.well-known/security.txt carries every decided
 # field with its decided value and has not expired. See
 # tools/check-security-txt.py for scope.
+#
+# The third reads every HTML page under site/, live and draft, with Python's
+# HTML parser and refuses inline code: a script element without src (other than
+# a structured-data block), an on* attribute, a javascript: URL, and a style
+# element or attribute. The security policy allows 'unsafe-inline', so a browser
+# does not block inline code; the site's own pages must not use it, and this
+# gate enforces that rule. See tools/check-inline-code.py for scope.
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its
@@ -48,3 +55,11 @@ jobs:
       - name: Check site/.well-known/security.txt
         shell: bash
         run: python3 -I tools/check-security-txt.py
+
+      - name: Run the inline-code gate tests
+        shell: bash
+        run: python3 -I tools/test-inline-code.py
+
+      - name: Check every HTML page under site/ for inline code
+        shell: bash
+        run: python3 -I tools/check-inline-code.py
