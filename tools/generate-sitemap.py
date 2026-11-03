@@ -18,15 +18,27 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import sys
 from pathlib import Path
 
-# The tools folder goes last on the module path, after the standard library, so a
-# file planted beside this script cannot shadow a standard-library import, even
-# under python3 -I. Residual: a module named like a sibling (sitemap_engine,
-# web_metadata) in a site-packages directory would still be found first.
-sys.path.append(str(Path(__file__).resolve().parent))
-import sitemap_engine as engine  # noqa: E402
+TOOLS_DIR = Path(__file__).resolve().parent
+
+
+def _load_sibling(name: str):
+    """Load tools/<name>.py by its explicit path, leaving sys.path unchanged."""
+    spec = importlib.util.spec_from_file_location(name, TOOLS_DIR / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+# The sibling modules load by explicit path, so sys.path never names the tools
+# folder and no file planted there can be imported. web_metadata loads first
+# under its own name, because sitemap_engine imports it by that name.
+_load_sibling("web_metadata")
+engine = _load_sibling("sitemap_engine")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = REPO_ROOT / "tools" / "sitemap-config.json"

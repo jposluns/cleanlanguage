@@ -1,7 +1,7 @@
 name: Workflow launch isolation
 
-# Checks that every Python launch in .github/workflows runs isolated
-# (python3 -I), so a file beside a script cannot shadow a standard-library
+# Checks that every Python launch in .github/workflows runs isolated, with
+# the -I option, so a file beside a script cannot shadow a standard-library
 # import and no PYTHON* environment variable steers the run, and that a file
 # planted beside a script that imports a sibling cannot run. See
 # tools/test-workflow-launch-isolation.py for scope and residuals.
