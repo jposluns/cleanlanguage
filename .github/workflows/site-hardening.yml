@@ -1,0 +1,50 @@
+name: Site hardening
+
+# Two offline checks on files that Cloudflare Pages serves as they are.
+#
+# The first verifies that site/_headers sets X-Frame-Options,
+# Permissions-Policy, Cross-Origin-Opener-Policy and Content-Security-Policy
+# exactly once, in the /* rule, with the decided values, and carries no
+# X-Content-Type-Options, Referrer-Policy or Strict-Transport-Security line.
+# See tools/check-headers.py for scope.
+#
+# The second verifies that site/.well-known/security.txt carries every decided
+# field with its decided value and has not expired. See
+# tools/check-security-txt.py for scope.
+#
+# This workflow carries no paths filter on purpose, as sitemap.yml explains: a
+# path-filtered required check never reports on a pull request outside its
+# paths. Running on every pull request keeps it promotable to a required check,
+# and the expiry check needs to run even when the file has not changed.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Run the headers gate tests
+        shell: bash
+        run: python3 -I tools/test-headers.py
+
+      - name: Check the security headers in site/_headers
+        shell: bash
+        run: python3 -I tools/check-headers.py
+
+      - name: Run the security.txt gate tests
+        shell: bash
+        run: python3 -I tools/test-security-txt.py
+
+      - name: Check site/.well-known/security.txt
+        shell: bash
+        run: python3 -I tools/check-security-txt.py
