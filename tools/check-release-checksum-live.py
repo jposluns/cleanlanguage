@@ -146,9 +146,9 @@ Separation is not a sandbox. The child runs with the uid, filesystem, and
 network of the gate, so extractor code can do whatever that uid can do,
 including writing files, reaching the network, and signalling the gate.
 While the child runs, its ordinary writes cannot grow any one file past its
-cap unless it holds CAP_SYS_RESOURCE and raises the limit, but the child
-can still reserve disk blocks past the end of a file, create any number of
-files and write to each up to the cap, and use CPU and memory. A signal
+cap, except as the residuals above state, but the child can still reserve
+disk blocks past the end of a file, create any number of files and write
+to each up to the cap, and use CPU and memory. A signal
 it sends to the gate acts on the gate as that signal acts on any process:
 it can interrupt, stop, or end the gate outside the exit codes above, and
 no bound of the gate limits its effect.
@@ -352,8 +352,8 @@ def output_cap(limit: int) -> int:
     reply one byte too long is still read and refused as too long, and an
     ordinary write that would grow a file past the cap fails. It does not
     bound a file already larger than the cap, which the child can write
-    within, storage reserved past the end of a file, or a child holding
-    CAP_SYS_RESOURCE that raises the limit."""
+    within; for everything else it does not bound, see the residuals in
+    the module docstring."""
     return max(limit + 1, STDERR_LIMIT) + 1
 
 
@@ -387,10 +387,9 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     (RLIMIT_FSIZE, set by limit_output before exec as both its soft and
     its hard limit), and after the wait a stdout or stderr file whose
     final size, checked with fstat, reached that cap exits 3 naming that
-    cap before the exit code is read. The check sees only the final size,
-    so a file filled to the cap and then truncated passes it, and storage
-    reserved past the end of a file is not counted (see the module
-    docstring). The wait, bounded by CHILD_TIMEOUT_SECONDS for this
+    cap before the exit code is read. The module docstring lists what the
+    cap and this check do not bound. The wait, bounded by
+    CHILD_TIMEOUT_SECONDS for this
     child, leaves the child unreaped. On a normal end and on a timeout, the
     process group of the child is then killed before the child is reaped,
     or the call exits 3 when the group cannot be killed; on the other
