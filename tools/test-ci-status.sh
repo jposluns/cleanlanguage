@@ -1245,8 +1245,7 @@ for near in "xcloudflare-pages" " cloudflare-pages" "Cloudflare-pages" "pages-cl
     run_case "near Cloudflare slug [$near] with the app id 85455 does not count -> not green" \
     "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"$near\",\"id\":85455}}")" "" "" 2
 done
-# The name is not consulted: a run of the real app with an empty name counts. The
-# slug cloudflare alone, with the real app id, does not.
+# The name is not consulted: a run of the real app with an empty name counts.
 run_case "Cloudflare build with an empty name is matched by its app slug and app id -> green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"","app":{"slug":"cloudflare-workers-and-pages","id":85455}}')" "" "" 0
 # An integer app id on a github-actions run is valid: the 3 required Actions jobs
@@ -1256,6 +1255,7 @@ run_case "github-actions runs carrying the app id 15368 still count -> green" \
     '{"status":"completed","conclusion":"success","name":"Skill discovery","app":{"slug":"github-actions","id":15368}}' \
     '{"status":"completed","conclusion":"success","name":"Agent Plugins manifest","app":{"slug":"github-actions","id":15368}}' \
     "$CF")" "" "" 0
+# The slug cloudflare alone, with the real app id, does not count.
 CASE_NEEDLE="required check(s) Cloudflare Pages not registered" \
   run_case "Cloudflare app slug of exactly cloudflare does not count -> not green" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"success","name":"Cloudflare Pages","app":{"slug":"cloudflare","id":85455}}')" "" "" 2
@@ -1268,6 +1268,13 @@ for spec in '85456|,"id":85456' '-85455|,"id":-85455' '4295052751|,"id":42950527
     run_case "real Cloudflare slug with app id [${spec%%|*}] does not count -> not green" \
     "$(runs "$REQ_GA" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"Cloudflare Pages\",\"app\":{\"slug\":\"cloudflare-workers-and-pages\"${spec#*|}}}")" "" "" 2
 done
+# A run that is not the pinned app is still read for its verdict: if Cloudflare
+# renames the app (another slug) or re-registers it (another app id), a failed
+# build of it reads red, never pending.
+run_case "failed run of a renamed Cloudflare app (slug cloudflare-pages) -> red" \
+  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"failure","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages","id":85455}}')" "" "" 1
+run_case "failed run of a re-registered Cloudflare app (app id 85456) -> red" \
+  "$(runs "$REQ_GA" '{"status":"completed","conclusion":"failure","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85456}}')" "" "" 1
 # An app id that is present and is neither an integer nor null (a string, either
 # boolean, a number with a fraction part or an exponent, an array or an object)
 # makes the whole reading unreadable.
