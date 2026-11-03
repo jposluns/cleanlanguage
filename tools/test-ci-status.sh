@@ -669,8 +669,9 @@ done
 # head_sha is compared as the whole 40-character sha, folded to lower case and
 # nothing else: an abbreviation, a trailing or middle slice, a value padded on
 # both sides or on one, a value that has the commit as a prefix or a suffix, the
-# sha with a separator inserted or with 0x before it, and the zero sha on a read
-# of another commit each name another value, so the reading is unreadable.
+# sha with a separator inserted, before it or after it, or with 0x before it, and
+# the zero sha on a read of another commit each name another value, so the
+# reading is unreadable.
 CASE_SHA="$C1" run_case "head_sha abbreviated to 7 characters -> unreadable" "$(head_runs "\"${C1:0:7}\"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha abbreviated to 39 characters -> unreadable" "$(head_runs "\"${C1:0:39}\"")" "" "" 3
 CASE_SHA="$C1" run_case "head_sha padded with spaces -> unreadable" "$(head_runs "\" $C1 \"")" "" "" 3
@@ -682,6 +683,8 @@ CASE_SHA="$C1" run_case "head_sha holding the last 7 characters -> unreadable" "
 CASE_SHA="$C1" run_case "head_sha holding a middle slice -> unreadable" "$(head_runs "\"${C1:10:20}\"")" "" "" 3
 for sep in - " " _ : .; do
   CASE_SHA="$C1" run_case "head_sha with [$sep] inserted -> unreadable" "$(head_runs "\"${C1:0:20}${sep}${C1:20}\"")" "" "" 3
+  CASE_SHA="$C1" run_case "head_sha with [$sep] before it -> unreadable" "$(head_runs "\"${sep}${C1}\"")" "" "" 3
+  CASE_SHA="$C1" run_case "head_sha with [$sep] after it -> unreadable" "$(head_runs "\"${C1}${sep}\"")" "" "" 3
 done
 CASE_SHA="$C1" run_case "head_sha with 0x before it -> unreadable" "$(head_runs "\"0x$C1\"")" "" "" 3
 CASE_SHA="$C1" run_case "zero head_sha on a read of another commit -> unreadable" \
@@ -850,24 +853,32 @@ run_err_case "empty check_runs is not treated as a pass" '{"total_count":0,"chec
   "ci-status: treating absent checks as unreadable, not as a pass"
 
 # Every per-run check applies whatever the other fields of its run hold. A real
-# check run always carries an integer id, so the decisive run below carries the
-# id 9, and it follows the 4 green required checks, the first of them with the
-# id 7. Each check is made on that run with one other field of it changed in
-# turn: the id left out, head_sha naming the commit read, each status, each
-# conclusion, each form of the app and its slug, and each form of the name,
-# except the field the check reads. A reader that made a check only when another
-# field of the same run held some value, or was present or absent, would read
-# such a reading green, pending or red, or fail with another message; the whole
-# reading must be unreadable, and the message names what is wrong. A null or
-# absent status is itself unreadable, so those 2 forms are used only for the
-# checks made before the status is read: the id, the app object and head_sha.
+# check run always carries a large integer id and the head_sha of its commit, so
+# the decisive run below carries the id 31234567890, and it follows the 4 green
+# required checks, the first of them with the id 31234567880. Each check is made
+# on that run with one other field of it changed in turn: the id left out,
+# head_sha naming the commit read, each status, each conclusion, each form of the
+# app and its slug, and each form of the name, except the field the check reads.
+# Each check is also made with the field combinations a real run carries: an
+# in-progress or queued run with a null conclusion, with and without head_sha
+# naming the commit read, and a completed run with head_sha naming the commit
+# read and each conclusion. A context that sets the field the check reads is used
+# without that field. A reader that made a check only when other fields of the
+# same run held some values, or were present or absent, would read such a
+# reading green, pending or red, or fail with another message; the whole reading
+# must be unreadable, and the message names what is wrong. A null or absent
+# status is itself unreadable, so those 2 forms are used only for the checks made
+# before the status is read: the id, the app object and head_sha.
 # gated_run FIELD=RAW...: a completed, successful github-actions run named extra
-# with the id 9 and no head_sha, with each FIELD set to the raw JSON RAW, or
-# left out when RAW is absent. FIELD is id, head_sha, status, conclusion, name or
-# app (the whole app object); an empty argument changes nothing, and any other
-# FIELD prints nothing and fails.
+# with the id 31234567890 and no head_sha, with each FIELD set to the raw JSON
+# RAW, or left out when RAW is absent; a later FIELD=RAW replaces an earlier one.
+# FIELD is id, head_sha, status, conclusion, name or app (the whole app object);
+# an empty argument changes nothing, and any other FIELD prints nothing and
+# fails.
+gate_id=31234567890
+gate_pm_id=31234567880
 gated_run() {
-  local id=9 hs=absent st='"completed"' cn='"success"' nm='"extra"' app='{"slug":"github-actions"}'
+  local id="$gate_id" hs=absent st='"completed"' cn='"success"' nm='"extra"' app='{"slug":"github-actions"}'
   local spec k v out=()
   for spec in "$@"; do
     [ -n "$spec" ] || continue
@@ -889,36 +900,152 @@ gated_run() {
   local IFS=,
   printf '{%s}' "${out[*]}"
 }
-gate_ctx=("" id=absent 'head_sha="0000000000000000000000000000000000000000"'
+# Each context is a list of FIELD=RAW changes separated by semicolons.
+gate_head='head_sha="0000000000000000000000000000000000000000"'
+gate_ctx=("" id=absent "$gate_head"
   'status="in_progress"' 'status="queued"' status=null status=absent
   'conclusion="failure"' 'conclusion="neutral"' 'conclusion="skipped"' 'conclusion="cancelled"'
   conclusion=null conclusion=absent
   'app={"slug":"cloudflare-pages"}' 'app={"slug":"other-app"}' 'app={"slug":null}' 'app={}' app=null app=absent
-  'name="Plugin manifests"' 'name=""' name=null name=absent)
+  'name="Plugin manifests"' 'name=""' name=null name=absent
+  'status="in_progress";conclusion=null' 'status="queued";conclusion=null'
+  "$gate_head;status=\"in_progress\";conclusion=null" "$gate_head;status=\"queued\";conclusion=null"
+  "$gate_head;conclusion=\"failure\"" "$gate_head;conclusion=\"neutral\"" "$gate_head;conclusion=\"skipped\""
+  "$gate_head;conclusion=\"cancelled\"" "$gate_head;conclusion=null")
+# The realistic contexts: a run as the API returns it, finished or not.
+gate_real=("" "$gate_head" "$gate_head;status=\"in_progress\";conclusion=null"
+  "$gate_head;status=\"queued\";conclusion=null" "$gate_head;conclusion=\"failure\"")
 # FIELD|WHAT|BAD|MESSAGE|WHEN: the check of FIELD, the bad value BAD given to
 # gated_run, the message it gives, and whether it is made before the status is
-# read (early) or after (late).
+# read (early) or after (late). gate_checks holds one bad value per check, made
+# in every context; gate_bad holds every other bad value of each check, made in
+# the realistic contexts.
 gate_checks=(
   "head_sha|head_sha of another commit|head_sha=\"$C2\"|check run head_sha '$C2' is not the requested commit 0000000000000000000000000000000000000000|early"
-  "id|a non-integer id|id=\"9\"|check run id is not an integer|early"
-  "id|the id of run 1 repeated|id=7|duplicate check run id|early"
+  "id|a non-integer id|id=\"31234567890\"|check run id is not an integer|early"
+  "id|the id of run 1 repeated|id=$gate_pm_id|duplicate check run id|early"
   "app|a non-object app|app=[]|check run app is not an object|early"
   "status|a null status|status=null|check field status is null|late"
   "conclusion|a non-string conclusion|conclusion=1|non-string check field conclusion|late"
   "name|a non-string name|name=7|non-string check field name|late"
   "app|a non-string app slug|app={\"slug\":7}|non-string check field app.slug|late"
 )
-gate_pm="{\"id\":7,${PM_OK#\{}"
+gate_bad=(
+  "head_sha|a numeric head_sha|head_sha=7|non-string check field head_sha|early"
+  "head_sha|a null head_sha|head_sha=null|check field head_sha is null|early"
+  "head_sha|an empty head_sha|head_sha=\"\"|check field head_sha is empty|early"
+  "head_sha|a boolean head_sha|head_sha=true|non-string check field head_sha|early"
+  "head_sha|an array head_sha|head_sha=[]|non-string check field head_sha|early"
+  "head_sha|an object head_sha|head_sha={}|non-string check field head_sha|early"
+  "head_sha|an unencodable head_sha|head_sha=\"\\ud800\"|check field head_sha is not encodable text|early"
+  "head_sha|head_sha with a hyphen before it|head_sha=\"-0000000000000000000000000000000000000000\"|check run head_sha '-0000000000000000000000000000000000000000' is not the requested commit|early"
+  "head_sha|head_sha with a hyphen after it|head_sha=\"0000000000000000000000000000000000000000-\"|check run head_sha '0000000000000000000000000000000000000000-' is not the requested commit|early"
+  "id|the id 9.0|id=9.0|check run id is not an integer|early"
+  "id|the id 31234567890.0|id=31234567890.0|check run id is not an integer|early"
+  "id|the id 9e0|id=9e0|check run id is not an integer|early"
+  "id|the id 9.5|id=9.5|check run id is not an integer|early"
+  "id|the id -9.0|id=-9.0|check run id is not an integer|early"
+  "id|the id 1E400|id=1E400|check run id is not an integer|early"
+  "id|a true id|id=true|check run id is not an integer|early"
+  "id|a false id|id=false|check run id is not an integer|early"
+  "id|an empty string id|id=\"\"|check run id is not an integer|early"
+  "id|an array id|id=[]|check run id is not an integer|early"
+  "id|an object id|id={}|check run id is not an integer|early"
+  "app|a string app|app=\"github-actions\"|check run app is not an object|early"
+  "app|an empty string app|app=\"\"|check run app is not an object|early"
+  "app|a numeric app|app=1|check run app is not an object|early"
+  "app|a zero app|app=0|check run app is not an object|early"
+  "app|a true app|app=true|check run app is not an object|early"
+  "app|a false app|app=false|check run app is not an object|early"
+  "status|an absent status|status=absent|missing required field status|late"
+  "status|an empty status|status=\"\"|check field status is empty|late"
+  "status|a numeric status|status=1|non-string check field status|late"
+  "status|a boolean status|status=true|non-string check field status|late"
+  "status|an array status|status=[]|non-string check field status|late"
+  "status|an object status|status={}|non-string check field status|late"
+  "status|an unencodable status|status=\"\\ud800\"|check field status is not encodable text|late"
+  "conclusion|a boolean conclusion|conclusion=true|non-string check field conclusion|late"
+  "conclusion|a false conclusion|conclusion=false|non-string check field conclusion|late"
+  "conclusion|an array conclusion|conclusion=[]|non-string check field conclusion|late"
+  "conclusion|an object conclusion|conclusion={}|non-string check field conclusion|late"
+  "conclusion|an unencodable conclusion|conclusion=\"\\ud800\"|check field conclusion is not encodable text|late"
+  "name|a boolean name|name=true|non-string check field name|late"
+  "name|a false name|name=false|non-string check field name|late"
+  "name|an array name|name=[]|non-string check field name|late"
+  "name|an object name|name={}|non-string check field name|late"
+  "name|an unencodable name|name=\"\\ud800\"|check field name is not encodable text|late"
+  "app|a boolean app slug|app={\"slug\":true}|non-string check field app.slug|late"
+  "app|a false app slug|app={\"slug\":false}|non-string check field app.slug|late"
+  "app|an array app slug|app={\"slug\":[]}|non-string check field app.slug|late"
+  "app|an object app slug|app={\"slug\":{}}|non-string check field app.slug|late"
+  "app|an unencodable app slug|app={\"slug\":\"\\ud800\"}|check field app.slug is not encodable text|late"
+)
+gate_pm="{\"id\":${gate_pm_id},${PM_OK#\{}"
 run_case "the gated reading with no field changed -> green" \
   "$(runs "$gate_pm" "$SD_OK" "$APM_OK" "$CF" "$(gated_run)")" "" "" 0
+run_case "the gated reading with head_sha naming the commit read -> green" \
+  "$(runs "$gate_pm" "$SD_OK" "$APM_OK" "$CF" "$(gated_run "$gate_head")")" "" "" 0
+run_case "the gated reading with the decisive run in progress -> not green" \
+  "$(runs "$gate_pm" "$SD_OK" "$APM_OK" "$CF" "$(gated_run "$gate_head" 'status="in_progress"' conclusion=null)")" "" "" 2
+run_case "the gated reading with the decisive run failed -> red" \
+  "$(runs "$gate_pm" "$SD_OK" "$APM_OK" "$CF" "$(gated_run "$gate_head" 'conclusion="failure"')")" "" "" 1
+# gate_cases CHECKS CONTEXTS: each check of the array named CHECKS, made in each
+# context of the array named CONTEXTS less the changes to the field the check
+# reads; a context left empty by that, or repeating one already made for the
+# check, is skipped, as are a null or absent status for a late check.
+gate_cases() {
+  local -n gc_checks="$1" gc_ctxs="$2"
+  local chk field what bad needle when ctx spec key late_bad
+  local -a specs kept
+  local -A made
+  for chk in "${gc_checks[@]}"; do
+    IFS='|' read -r field what bad needle when <<<"$chk"
+    made=()
+    for ctx in "${gc_ctxs[@]}"; do
+      specs=() kept=() late_bad=""
+      IFS=';' read -r -a specs <<<"$ctx"
+      for spec in "${specs[@]}"; do
+        if [ "${spec%%=*}" != "$field" ]; then kept+=("$spec"); fi
+        case "$spec" in status=null | status=absent) late_bad=1 ;; esac
+      done
+      if [ -n "$ctx" ] && [ "${#kept[@]}" -eq 0 ]; then continue; fi
+      if [ -n "$late_bad" ] && [ "$when" != early ] && [ "$field" != status ]; then continue; fi
+      key="$(IFS=';'; printf '%s' "${kept[*]}")"
+      if [ -n "${made["k$key"]+x}" ]; then continue; fi
+      made["k$key"]=1
+      run_err_case "$what on a run with the id $gate_id and [${key:-no other change}] -> unreadable" \
+        "$(runs "$gate_pm" "$SD_OK" "$APM_OK" "$CF" "$(gated_run "${kept[@]}" "$bad")")" 3 "$read_failed: $needle"
+    done
+  done
+}
+gate_cases gate_checks gate_ctx
+gate_cases gate_bad gate_real
+# Each check is also made once on a run with the small id 9, after a first run
+# with the id 7, so a reader that made a check only on a run whose id is above
+# some size is caught as well as one that made it only below.
 for chk in "${gate_checks[@]}"; do
   IFS='|' read -r field what bad needle when <<<"$chk"
-  for ctx in "${gate_ctx[@]}"; do
-    if [ "${ctx%%=*}" = "$field" ]; then continue; fi
-    case "$ctx" in status=null | status=absent) if [ "$when" != early ]; then continue; fi ;; esac
-    run_err_case "$what on a run with the id 9 and [${ctx:-no other change}] -> unreadable" \
-      "$(runs "$gate_pm" "$SD_OK" "$APM_OK" "$CF" "$(gated_run "$ctx" "$bad")")" 3 "$read_failed: $needle"
+  if [ "$bad" = "id=$gate_pm_id" ]; then bad=id=7; fi
+  run_err_case "$what on a run with the id 9 -> unreadable" \
+    "$(runs "{\"id\":7,${PM_OK#\{}" "$SD_OK" "$APM_OK" "$CF" "$(gated_run id=9 "$bad")")" 3 "$read_failed: $needle"
+done
+# The repeated-id check applies whatever the first run carrying the id holds: the
+# first run below carries the id 31234567890 and each context above in turn (a
+# null or absent status is itself unreadable, and a context changing the id is
+# not this case, so those are left out), and a later run, with head_sha naming
+# the commit read, carries the same id. A reader that recorded an id only for a
+# run with some field value, or with head_sha present or absent, would read the
+# reading green, pending or red.
+for ctx in "${gate_ctx[@]}"; do
+  specs=() skip=""
+  IFS=';' read -r -a specs <<<"$ctx"
+  for spec in "${specs[@]}"; do
+    case "$spec" in id=* | status=null | status=absent) skip=1 ;; esac
   done
+  if [ -n "$skip" ]; then continue; fi
+  run_err_case "the id of an earlier run with [${ctx:-no other change}] repeated -> unreadable" \
+    "$(runs "$PM_OK" "$SD_OK" "$APM_OK" "$CF" "$(gated_run "${specs[@]}")" "$(gated_run "$gate_head")")" 3 \
+    "$read_failed: duplicate check run id"
 done
 
 # Every computation over the runs of a reading covers every run, wherever it
