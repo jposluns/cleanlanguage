@@ -144,6 +144,17 @@ CASES = [
     ("a family link labelled only with &nbsp;", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">&nbsp;<")), 1),
     ("a family link whose label is in a later link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><a>Claude</a><")), 1),
     ("a family link whose label follows a later link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><a></a>Claude<")), 1),
+    ("a family link whose only label is a structured-data script", edit(PAGE, CLAUDE_LINK,
+        CLAUDE_LINK.replace(">Claude<", '><script type="application/ld+json">"Claude"</script><')), 1),
+    # A browser renders the content of each only as fallback or in a control, so it hides here.
+    *[(f"a family link whose only label is in {tag}",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", f"><{tag}>Claude</{tag}><")), 1)
+        for tag in ("audio", "canvas", "meter", "object", "progress", "select", "video")],
+    # Check 5 refuses each of these, whose text a browser does not render.
+    ("a family link whose only label is in a style element",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><style>Claude</style><")), 1),
+    ("a family link whose only label is in an SVG desc",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><svg><desc>Claude</desc></svg><")), 1),
     ("a family link whose label is in a span", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><span>Claude</span><")), 0),
     ("a family link with a label and a hidden span",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", '>Claude<span class="vh"> setup</span><')), 0),
@@ -224,6 +235,10 @@ CASES = [
     ("a family page step list after <br/>", edit(CLAUDE, STEPS, "<br/>" + STEPS), 0),
     ("a family page heading whose only text is in a hidden span",
         edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1><span hidden>ChatGPT</span></h1>"), 1),
+    ("a family page heading whose only text is a structured-data script",
+        edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1><script type="application/ld+json">"ChatGPT"</script></h1>'), 1),
+    ("a family page heading whose only text is a MathML annotation", edit(CHATGPT, "<h1>ChatGPT</h1>",
+        "<h1><math><semantics><mi></mi><annotation>ChatGPT</annotation></semantics></math></h1>"), 1),
     ("a family page heading with visible text and a hidden span",
         edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>ChatGPT<span class="vh"> setup</span></h1>'), 0),
     *[(f"a family page heading made only of U+{code:04X}", edit(CHATGPT, "<h1>ChatGPT</h1>", f"<h1>{chr(code)}</h1>"), 1)
@@ -235,6 +250,7 @@ CASES = [
         edit(PAGE, ROW, '<p class="vh" class="row"><a class="btn inline" id="claude"'), 1),
     ("the install page with a later hidden body start tag", edit(PAGE, "</main>", "</main><body hidden>"), 1),
     ("a family page with a later html start tag with the class vh", edit(CLAUDE, "</main>", '</main><html class="vh">'), 1),
+    ("the install page with a frameset start tag", edit(PAGE, "</head>", "</head><frameset></frameset>"), 1),
     ("a family page with a second h1", edit(GEMINI, "</main>", "<h1>Again</h1></main>"), 1),
     ("a family page without its link back to #get", edit(OTHER, 'href="/install/#get"', 'href="/install/"', every=True), 1),
     ("a family page without its link to #test", edit(CLAUDE, 'href="/install/#test"', 'href="/install/"', every=True), 1),
