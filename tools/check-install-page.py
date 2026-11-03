@@ -22,9 +22,10 @@ What it verifies
 1. On ``/install/``, each family has exactly 1 link, ``<a id=X href="/install/X/">``
    with the classes ``btn`` and ``inline``, none with ``aria-current``, none
    hidden by itself or an ancestor (``hidden``, ``inert``, ``aria-hidden="true"``
-   in any case, or the ``visually-hidden`` class); the 5 links sit in 1
-   paragraph, in the order Claude, ChatGPT, Gemini, Copilot, other AI systems,
-   before the ``get`` id.
+   in any case, or the class ``vh``, the template's visually-hidden class, or
+   ``visually-hidden``, each matched as a whole class name); the 5 links sit
+   in 1 paragraph, in the order Claude, ChatGPT, Gemini, Copilot, other AI
+   systems, before the ``get`` id.
 2. No element on any of the 6 pages carries the retired selector attributes
    ``data-picker``, ``data-family-link``, ``data-family-section``,
    ``data-picker-reset`` or ``data-picker-status``.
@@ -146,13 +147,19 @@ def inline_code(where: str, text: str) -> list[str]:
     return [f"{where} {problem}; {INLINE_RULE}." for problem in load_tool("check-inline-code.py").inline_code_problems(text)]
 
 
+# The template's visually-hidden class is .vh (site/assets/baseline/baseline.css). The common name
+# visually-hidden is kept although no stylesheet here defines it: an author who adds it means to hide
+# the element, and this gate cannot see whether a later stylesheet defines it, so it fails closed.
+HIDING_CLASSES = ("vh", "visually-hidden")
+
+
 def is_hiding_element(attrs: dict[str, str]) -> bool:
     classes = attrs.get("class", "").split()
     return (
         "hidden" in attrs
         or "inert" in attrs
         or attrs.get("aria-hidden", "").lower() == "true"
-        or "visually-hidden" in classes
+        or any(name in classes for name in HIDING_CLASSES)
     )
 
 
