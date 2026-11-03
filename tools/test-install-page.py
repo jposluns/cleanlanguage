@@ -27,6 +27,7 @@ def make_root(scratch: Path) -> Path:
     root = scratch / "repo"
     (root / "tools").mkdir(parents=True)
     shutil.copyfile(GATE, root / "tools" / GATE.name)
+    shutil.copyfile(REPO_ROOT / "tools" / "check-headers.py", root / "tools" / "check-headers.py")
     for relative in FILES:
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO_ROOT / relative, root / relative)
@@ -80,6 +81,10 @@ CASES = [
              "  ! Content-Security-Policy\n  X-Robots-Tag: noindex\n\n/downloads/cleanlanguage.md\n")(root),
     ), 1),
     ("the noindex detached under another draft rule", edit(HEADERS, "/sitemap.xml\n", "/draft/install/*\n  ! X-Robots-Tag\n\n/sitemap.xml\n"), 1),
+    ("the noindex changed site-wide", edit(HEADERS, "/sitemap.xml\n", "/*\n  X-Robots-Tag: all\n\n/sitemap.xml\n"), 1),
+    ("the noindex changed through a full URL pattern", edit(HEADERS, "/sitemap.xml\n", "https://cleanlanguage.ai/draft/*\n  X-Robots-Tag: all\n\n/sitemap.xml\n"), 1),
+    ("the noindex changed under /Draft/ in another case", edit(HEADERS, "/sitemap.xml\n", "/Draft/*\n  X-Robots-Tag: all\n\n/sitemap.xml\n"), 1),
+    ("the shared headers gate missing", lambda root: (root / "tools" / "check-headers.py").unlink(), 3),
     ("the noindex changed under another draft rule", edit(HEADERS, "/sitemap.xml\n", "/draft/install/*\n  X-Robots-Tag: all\n\n/sitemap.xml\n"), 1),
     ("the draft rule without X-Robots-Tag", edit(HEADERS, "  X-Robots-Tag: noindex\n\n/downloads/cleanlanguage.md\n", "\n/downloads/cleanlanguage.md\n"), 1),
     ("a policy on another rule", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Content-Security-Policy: default-src 'none'\n"), 1),

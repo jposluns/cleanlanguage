@@ -60,7 +60,10 @@ What it verifies
    with ``/draft``, or whose first path segment holds a splat or a placeholder
    (``/*``, ``/:name``), or a full URL whose path does either. So no later rule
    can remove or dilute the draft's ``X-Robots-Tag: noindex``. Rules for other
-   paths, such as the download files' ``noindex``, are unaffected.
+   paths, such as the download files' ``noindex``, are unaffected. The pattern
+   comparison ignores case (``/Draft/*`` counts as reaching the draft), because
+   whether Cloudflare Pages matches ``_headers`` patterns case-sensitively is
+   not established, so the check fails closed.
 4. No rule sets or detaches ``X-Content-Type-Options``, ``Referrer-Policy`` or
    ``Strict-Transport-Security``. Cloudflare sends the first 2 by default and the
    zone sends HSTS, so a line here would duplicate or remove them.
@@ -75,10 +78,17 @@ What it does not verify
 It reads the file only. It does not observe the headers that Cloudflare actually
 sends: zone settings, Transform Rules and the Pages defaults sit between this
 file and the response. The live check of each response class stays a separate,
-manual acceptance step after deploy. It does not evaluate URL pattern matching,
-so a second rule whose pattern happens to be equivalent to ``/*`` (for example
-``https://:host/*``) counts as another rule, where it fails check 3 if it sets a
-decided header.
+manual acceptance step after deploy. Checks 1 to 5 do not evaluate URL pattern
+matching, so a second rule whose pattern happens to be equivalent to ``/*`` (for
+example ``https://:host/*``) counts as another rule, where it fails check 3 if it
+sets a decided header. Check 6 uses a conservative prefix heuristic,
+``reaches_draft``, not Pages' matcher: a pattern reaches the draft when its path
+(after any ``https://host``) starts with ``/draft`` in any case, is ``/``, or has
+a splat or placeholder in its first segment. Its residual: it reads pattern text
+only, so it misses a rule that reaches ``/draft/`` through matching behaviour of
+Pages it does not model (for example a placeholder that spans more than 1 path
+segment) or through a redirect or rewrite elsewhere; and it flags some patterns
+Pages would not match to the draft, which can only fail closed.
 
 Exit codes:
   0  every check passes
@@ -232,7 +242,7 @@ def draft_rule(entries: list[tuple[int, str, str, str, str | None]]) -> tuple[se
 
 def reaches_draft(pattern: str) -> bool:
     """Whether a URL pattern can match a path under /draft/ (check 6)."""
-    path = re.sub(r"^https://[^/]*", "", pattern) or "/"
+    path = (re.sub(r"^https://[^/]*", "", pattern) or "/").lower()
     if path.startswith("/draft"):
         return True
     first = path.split("/")[1] if path.count("/") >= 1 else ""

@@ -505,6 +505,13 @@ class DraftRuleTest(unittest.TestCase):
                 self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  X-Robots-Tag: all"]),
                                  "sets X-Robots-Tag where the draft is served")
 
+    def test_noindex_changed_under_a_draft_pattern_in_another_case_fails(self):
+        # Whether Pages matches patterns case-sensitively is not established, so /Draft/ counts as the draft.
+        for pattern in ("/Draft/*", "/DRAFT/install/*", "https://cleanlanguage.ai/Draft/*"):
+            with self.subTest(pattern=pattern):
+                self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  X-Robots-Tag: all"]),
+                                 "sets X-Robots-Tag where the draft is served")
+
     def test_noindex_on_other_paths_passes(self):
         # The download files' own noindex (GOOD_LINES) and another live path stay allowed.
         code, text = self.run_gate(self.with_draft(DRAFT_LINES + ["", "/sitemap-old.xml", "  X-Robots-Tag: noindex"]))
