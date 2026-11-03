@@ -104,8 +104,12 @@ Residuals, named here because the scan reads text the pull request controls:
   `export 'PATH'=x`;
 - a shell run with -c whose shell is not a shell word on the line: a shell
   held in a variable, such as `"$SHELL" -c` or `$BASH -c`; a shell name
-  broken by quotes or escapes, such as `ba''sh -c`; and a shell other than
-  the five, such as fish, rbash or `busybox ash`;
+  broken by quotes or escapes so that no shell word is left, such as
+  `b''ash -c` (a break that leaves a shell word, as the `sh` of
+  `ba''sh -c`, is still refused); a shell other than the five, such as
+  fish, rbash or `busybox ash`; and a command that runs its argument
+  through a shell it does not name, such as `su -c`, `flock -c` or
+  `script -c`;
 - a shell run with -c whose -c is not a -c cluster on the same line as
   the shell word, such as one held in a variable (`bash $OPTS`) or one on
   a line of its own that no backslash-newline joins to the shell's line;
@@ -494,6 +498,7 @@ RUN_CASES = [
     ("bash tools/a.sh -c config", True),
     ("grep bash -c file", True),
     ('echo "use bash -c to run it"', True),
+    # Other cases, each marked: True is refused, False passes.
     ("bash --noprofile --norc -eo pipefail tools/a.sh", False),
     ("bash tools/a.sh -cache-dir d", False),
     ("bash tools/a.sh -C dir", False),
