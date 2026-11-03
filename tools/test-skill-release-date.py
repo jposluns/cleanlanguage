@@ -821,6 +821,37 @@ class PatternPinTest(unittest.TestCase):
             (1, "", "skill-release-date: more than one Released line (lines 4, 9)\n"),
         )
 
+    def test_every_character_that_folds_onto_a_letter_of_the_key_is_key_like(self):
+        # Fix round 13 (VERIFY round 9.2, finding 2): the key word matches in
+        # any case, and re.IGNORECASE also folds a character outside ASCII
+        # onto a letter of it: the long s (U+017F) onto s, the only one, as
+        # the list, checked against every code point, states. A stale copy
+        # written with it is still a second Released line, and a first
+        # key-like line written with it is malformed.
+        letters = re.compile("[adelrs]", re.IGNORECASE)
+        self.assertEqual(
+            tuple(
+                ch for ch in map(chr, range(sys.maxunicode + 1)) if ch not in "adelrsADELRS" and letters.fullmatch(ch)
+            ),
+            ("\u017f",),
+        )
+        for index, letter in enumerate("Released"):
+            if not re.fullmatch(letter, "\u017f", re.IGNORECASE):
+                continue
+            word = "Released"[:index] + "\u017f" + "Released"[index + 1:]
+            line = word + ": 2025-01-01"
+            with self.subTest(line):
+                self.assertEqual(line, "Relea\u017fed: 2025-01-01")
+                text = VALID + line + "\n"
+                self.assertEqual(self.malformed(srd.extract, text), "more than one Released line (lines 4, 9)")
+                self.assertEqual(
+                    run(text.encode("utf-8")), (1, "", "skill-release-date: more than one Released line (lines 4, 9)\n")
+                )
+                self.assertEqual(
+                    self.malformed(srd.extract, HEAD + line + "\n" + VERSION + RELEASED + TAIL),
+                    f"the first Released line is not spelled exactly Released: {line!r}",
+                )
+
     def test_the_duplicate_message_names_one_based_line_numbers(self):
         self.assertEqual(
             self.malformed(srd.extract, VALID + "Released: 2026-11-16\n"), "more than one Released line (lines 4, 9)"
@@ -991,6 +1022,18 @@ class PatternPinTest(unittest.TestCase):
             run((HEAD + line + "\n" + RELEASED + TAIL).encode("utf-8")),
             (1, "", f"skill-release-date: the first Version: line (line 3) is not a bare X.Y.Z version: {line!r}\n"),
         )
+
+    def test_the_version_line_is_the_first_line_that_starts_with_the_key_and_colon(self):
+        # Fix round 13 (VERIFY round 9.2, finding 3): a line that starts with
+        # "Version" but not "Version:", one that starts with the key in
+        # another case, one that holds the key after other text, and one
+        # that holds it after a blank are not the Version line, so the
+        # Released line after the real one is accepted.
+        for lead in ("Versioning notes", "version: 9.9.9", "See Version: 9.9.9", " Version: 9.9.9"):
+            with self.subTest(lead):
+                text = HEAD + lead + "\n" + VERSION + RELEASED + TAIL
+                self.assertEqual(srd.extract(text), "2026-11-15")
+                self.assertEqual(run(text.encode("utf-8")), (0, "2026-11-15\n", ""))
 
 
 class BuilderCarriesReleasedTest(unittest.TestCase):

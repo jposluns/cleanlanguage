@@ -540,7 +540,10 @@ def api_status(path: str, what: str) -> int:
         cannot_verify("the gh CLI is not available")
     except (OSError, UnicodeError) as error:
         cannot_verify(f"could not read {what}: {error!r}")
-    codes = re.findall(r"^HTTP/[0-9.]+ (\d{3})", proc.stdout + "\n" + proc.stderr, re.M)
+    # A status is three ASCII digits that end the line or are followed by a
+    # space ("HTTP/2.0 404 Not Found"), so int never reads a digit of another
+    # script and a longer number is never cut to its first three digits.
+    codes = re.findall(r"^HTTP/[0-9.]+ ([0-9]{3})(?: |$)", proc.stdout + "\n" + proc.stderr, re.M)
     if not codes:
         cannot_verify(f"could not read {what} (gh exit {proc.returncode})")
     return int(codes[-1])

@@ -1362,6 +1362,64 @@ class ConditionalPassTest(unittest.TestCase):
         )
         self.assertEqual(gate.api_status("repos/x/y", "the status"), 404)
 
+    def test_a_status_is_three_ascii_digits_after_the_protocol(self):
+        # Fix round 13 (VERIFY round 9.2, finding 1): a status is read only
+        # from a line that starts with "HTTP/" and a version of digits and
+        # dots, then one space and three ASCII digits that end the line or
+        # are followed by a space; the last such line wins. Any other line
+        # is no status, so a gh read with no such line is unverifiable.
+        for stdout, status in (
+            ("HTTP/2.0 404 Not Found\n", 404), ("HTTP/2 404", 404), ("HTTP/1.1 200 OK\nX-Note: HTTP/1.1 500\n", 200),
+            ("HTTP/2.0 302 Found\nHTTP/2.0 404 Not Found\n", 404),
+        ):
+            with self.subTest(stdout):
+                gate.gh = lambda *args, check=True, out=stdout: subprocess.CompletedProcess(args, 0, out, "")
+                self.assertEqual(gate.api_status("repos/x/y", "the status"), status)
+        for stdout in (
+            "HTTP/2 \u0664\u0660\u0664\n", "HTTP/2 4\u0660\u0664\n", "HTTP/2 4040\n", "HTTP/2 40\n", "HTTP/2 404x\n",
+            "HTTP/2 404\tNot Found\n", "http/2 404\n", " HTTP/2 404\n", "X-Note: HTTP/1.1 404\n", "HTTP/ 404\n",
+            "HTTP/two 404\n", "HTTP/\u0662 404\n", "HTTP/2  404\n", "HTTP/2\t404\n", "HTTP2 404\n",
+        ):
+            with self.subTest(stdout):
+                gate.gh = lambda *args, check=True, out=stdout: subprocess.CompletedProcess(args, 0, out, "")
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+                    gate.api_status("repos/x/y", "the status")
+                self.assertEqual((stop.exception.code, err.getvalue()),
+                                 (2, self.CV + "could not read the status (gh exit 0)\n"))
+
+    def test_every_part_of_the_skill_version_patterns_is_pinned(self):
+        # Fix round 13 (VERIFY round 9.2, finding 1): the version line is the
+        # first line that starts with "Version:", and it is a bare X.Y.Z of
+        # ASCII digits with any run of spaces and tabs, none included, after
+        # the colon and after the version; anything else exits 3 with the
+        # exact report.
+        for text, version in (
+            ("Version:1.0.14\n", "1.0.14"), ("Version:\t1.0.14\n", "1.0.14"), ("Version: 1.0.14\n", "1.0.14"),
+            ("Version: \t 1.0.14 \t \n", "1.0.14"), ("Version: 1234.567.89\n", "1234.567.89"),
+            ("# Title\n\nVersion: 1.0.14\n", "1.0.14"), ("Versioning notes\nVersion: 1.0.14\n", "1.0.14"),
+            ("See Version: 9.9.9\nVersion: 1.0.14\n", "1.0.14"), ("version: 9.9.9\nVersion: 1.0.14\n", "1.0.14"),
+        ):
+            with self.subTest(text):
+                gate.SKILL.write_text(text, encoding="utf-8")
+                self.assertEqual(gate.skill_version(), version)
+        not_bare = (
+            "check-release-checksum-live: the first 'Version:' line in "
+            "cleanlanguage/skills/cleanlanguage/SKILL.md is not a bare X.Y.Z version\n"
+        )
+        for text in (
+            "Version:\nVersion: 1.0.14\n", "Version: \u0661.0.14\n", "Version: 1.\u0660.14\n",
+            "Version: 1.0.\u0661\u0664\n", "Version:\u00a01.0.14\n", "Version: 1.0.14\u00a0\n", "Version:\x0c1.0.14\n",
+            "Version: 1.0.14\x0b\n", "Version: 1x0.14\n", "Version: 1.0x14\n", "Version: 1..14\n", "Version: .0.14\n",
+            "Version: 1.0.\n", "Version: 1.0.14 x\n", "Version: 1.0.14.1\n",
+        ):
+            with self.subTest(text):
+                gate.SKILL.write_text(text, encoding="utf-8")
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as stop:
+                    gate.skill_version()
+                self.assertEqual((stop.exception.code, err.getvalue()), (3, not_bare))
+
     def test_malformed_first_version_line_is_not_bypassed(self):
         # The first Version line is authoritative (as in release-package.sh); a
         # malformed first line must fail even if a later line is well formed,
@@ -1892,6 +1950,14 @@ class ConditionalPassTest(unittest.TestCase):
              day_form),
             ("a day with a five-digit year", "extract", {"op": "extract", "outcome": "value", "value": "2" + day},
              day_form),
+            # Fix round 13 (VERIFY round 9.2, finding 1): each part of the day
+            # form is its exact number of ASCII digits, joined by hyphens.
+            *((f"the day {value!r}", "extract", {"op": "extract", "outcome": "value", "value": value}, day_form)
+              for value in (
+                  "\u0662\u0660\u0662\u0666-11-15", "2026-\u0661\u0661-15", "2026-11-\u0661\u0665", "20261115",
+                  "2026-1115", "202611-15", "2026-1-15", "2026-11-5", "2026-011-15", "2026-11-015", "2026/11/15",
+                  "2026.11.15", "2026.11-15", "2026-11.15", "2026/11-15", "2026-11/15", " 2026-11-15",
+              )),
             ("a null day", "extract", {"op": "extract", "outcome": "value", "value": None}, day_form),
             ("a published day not in the day form", "release_day_from_published_at",
              {"op": "release_day_from_published_at", "outcome": "value", "value": "2026-11-1x"}, day_form),
@@ -1911,6 +1977,13 @@ class ConditionalPassTest(unittest.TestCase):
              version),
             ("baseline with a trailing newline", "baseline",
              {"op": "baseline", "outcome": "value", "value": "1.0.14\n"}, version),
+            # Fix round 13 (VERIFY round 9.2, finding 1): each part of the
+            # baseline is one or more ASCII digits, joined by dots.
+            *((f"baseline {value!r}", "baseline", {"op": "baseline", "outcome": "value", "value": value}, version)
+              for value in (
+                  "\u0661.0.14", "1.\u0660.14", "1.0.\u0661\u0664", "1x0.14", "1.0x14", "1..14", ".0.14", "1.0.",
+                  " 1.0.14", "1.0.14.1",
+              )),
         )
         for label, op, reply, rule in cases:
             with self.subTest(label):
@@ -2122,6 +2195,87 @@ class ConditionalPassTest(unittest.TestCase):
             with self.subTest(label):
                 self.fixtures(version, checksum, CURRENT)
                 self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {report}\n"))
+
+    def test_every_part_of_the_verify_page_patterns_is_pinned(self):
+        # Fix round 13 (VERIFY round 9.2, finding 1): the checksum block,
+        # the checksum and the version on the verify page are each read by
+        # an exact pattern, so a page that the shipped pattern and a pattern
+        # with one part changed would answer differently exits 3 with its
+        # own report, before any release is read. The checksum is exactly 64
+        # lower-case hex digits once stripped. The version is the shipped
+        # pattern, as the release tooling writes it (tools/set-release-links.py):
+        # an ASCII digit and then any run of ASCII digits and dots, between
+        # "version " and " is"; a version in that form that is not the
+        # current one is read as such, and reported as a release that is
+        # not published.
+        sha = "is not a 64 character lower-case SHA-256"
+        no_block = 'the verify page has no <code id="published-checksum"> block'
+        unstated = "the verify page does not state which version its checksum belongs to"
+        stated = f"<p>The published checksum for version {CURRENT} is:</p>\n"
+        block = '<pre><code id="published-checksum">{}</code></pre>\n'
+        self.assertNotEqual(ZIP_SUM.upper(), ZIP_SUM)
+        other_script = ZIP_SUM[:63] + "\u0661"
+        cases = [
+            ("a block that holds markup", stated + block.format(f"<b>{ZIP_SUM}</b>"), no_block),
+            ("a block closed by another tag", stated + '<code id="published-checksum">abc</span>\n', no_block),
+            ("an upper-case block", stated + '<CODE ID="published-checksum">abc</CODE>\n', no_block),
+            ("a checksum on a line of its own", stated + block.format("\n abc\n"),
+             f"the displayed checksum 'abc' {sha}"),
+            ("an upper-case checksum", stated + block.format(ZIP_SUM.upper()),
+             f"the displayed checksum {ZIP_SUM.upper()!r} {sha}"),
+            ("a checksum with a digit of another script", stated + block.format(other_script),
+             f"the displayed checksum {other_script!r} {sha}"),
+            ("a checksum one digit long", stated + block.format(ZIP_SUM + "0"),
+             f"the displayed checksum {ZIP_SUM + '0'!r} {sha}"),
+        ]
+        for sentence in (
+            "version .0.14 is", "version 1x0.14 is", "version 1.0x14 is", "version \u0661.0.14 is",
+            "version 1.\u0660.14 is", "version 1.0.\u0661\u0664 is", "version 1.0.14 was", "version\n1.0.14 is",
+            "version 1.0.14\nis", "Version 1.0.14 is",
+        ):
+            cases.append((sentence, f"<p>The published checksum for {sentence}:</p>\n" + block.format(ZIP_SUM),
+                          unstated))
+        cases.append(("an upper-case sentence", "<p>The Published Checksum For Version 1.0.14 is:</p>\n"
+                      + block.format(ZIP_SUM), unstated))
+        for label, page, report in cases:
+            with self.subTest(label):
+                gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
+                gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+                self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {report}\n"))
+
+        class Probed(Exception):
+            pass
+
+        def probe(tag):
+            raise Probed(tag)
+
+        for version in (CURRENT, "1234.0.100"):
+            with self.subTest(version):
+                self.fixtures(version, ZIP_SUM, CURRENT)
+                gate.release_status = probe
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    with self.assertRaises(Probed) as caught:
+                        gate.main()
+                self.assertEqual((str(caught.exception), out.getvalue(), err.getvalue()), (f"v{version}", "", ""))
+        # A version of one, two or four parts, or with an empty part, is in
+        # the shipped form, so the gate reads its release status and reports
+        # it, with no release, as a version that is not the current one.
+        for version in ("7", "0.9.1", "1.0", "1.0.14.1", "1..14", "1.0.", "1234.0.100"):
+            with self.subTest(version):
+                self.fixtures(version, ZIP_SUM, CURRENT)
+                probed = []
+                gate.release_status = lambda tag: probed.append(tag) or 404
+                self.assertEqual(self.main_reports(), (1, (
+                    "Release checksum inconsistency found:\n"
+                    f"  - the verify page names version {version}, which has no published release\n"
+                    f"  - cleanlanguage/skills/cleanlanguage/SKILL.md names {CURRENT} as the current version\n"
+                    "\n"
+                    "A site legitimately ahead of its release names the current skill version. This looks like a "
+                    "typo or a stale bump; align the verify page with SKILL.md, or publish release "
+                    f"v{version}.\n"
+                ), ""))
+                self.assertEqual(probed, [f"v{version}"])
 
     def test_a_manifest_digest_one_digit_short_is_unverifiable(self):
         # Fix round 10 (mutation sweep): the digest of the manifest has
