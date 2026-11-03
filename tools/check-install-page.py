@@ -21,10 +21,15 @@ What it verifies
 
 1. On ``/install/``, each family has exactly 1 link, ``<a id=X href="/install/X/">``
    with the classes ``btn`` and ``inline``, none with ``aria-current``, none
-   hidden by itself or an ancestor (``hidden``, ``inert``, ``aria-hidden="true"``
-   in any case, or a class in ``HIDING_CLASSES``: ``vh``, the template's
-   visually-hidden class, ``visually-hidden``, ``only-dark`` or ``skip``, each
-   matched as a whole class name); the 5 links sit
+   hidden by itself or an ancestor (``hidden`` in any value, ``until-found``
+   included; ``inert``; ``aria-hidden="true"`` in any case; ``popover`` in any
+   value, even on an open ``dialog``, which the HTML standard displays; a class
+   in ``HIDING_CLASSES``: ``vh``, the template's visually-hidden class,
+   ``visually-hidden``, ``only-dark`` or ``skip``, each matched as a whole class
+   name; an element in ``HIDING_ELEMENTS``: ``datalist``, ``noscript``, ``rp``
+   or ``title``; a ``dialog`` without ``open``; or a ``details`` without
+   ``open``, which hides all its content except its first ``summary`` child,
+   as the HTML standard's rendering rules do with no stylesheet); the 5 links sit
    in 1 paragraph, in the order Claude, ChatGPT, Gemini, Copilot, other AI
    systems, before the ``get`` id.
 2. No element on any of the 6 pages carries the retired selector attributes
@@ -70,9 +75,19 @@ What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
 
 It does not apply any stylesheet or run any script. It does NOT detect a
-stylesheet rule that hides a link or a step list, a closed ``<details>``
-around them, a custom CLASS outside ``HIDING_CLASSES`` that hides, clips,
-zeroes opacity or positions off-screen, a DESCENDANT wipe, or hiding by id.
+stylesheet rule that hides a link or a step list, a custom CLASS outside
+``HIDING_CLASSES`` that hides, clips, zeroes opacity or positions off-screen,
+a DESCENDANT wipe, or hiding by id. Of the elements the HTML standard hides
+with no stylesheet, it does not list those that cannot hold a checked element:
+the void elements (``area``, ``base``, ``basefont``, ``link``, ``meta``,
+``param``, and ``input`` with ``type=hidden``), ``head`` (a browser moves body
+content out of it), and ``script`` and ``style`` (raw text); check 5 refuses
+``template``, ``noembed`` and ``noframes`` anywhere on the 6 pages. It does
+not model a script that opens a popover, a dialog or a ``details``, or a
+browser's find-in-page that reveals ``hidden=until-found`` content. Nor
+does it detect fallback content, which a browser does not render when the
+element works: the children of ``canvas`` (with scripting on), ``video``,
+``audio``, or an ``object`` that loads.
 Among the descendant wipes, baseline.css hides, each at some widths,
 ``.figure .stack``, ``.figure .wide``, ``.family .cards .cname``, and
 ``.family .sig .pre`` and ``.family .sig .post``; those classes hide only in
@@ -170,15 +185,24 @@ def inline_code(where: str, text: str) -> list[str]:
 # .figure .wide, .family .cards .cname, .family .sig .pre and .post) are not listed; the docstring names them.
 # tools/test-install-page.py fails when a stylesheet the pages load hides a bare single class not listed here.
 HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
+# The HTML standard's rendering rules hide these with no stylesheet: display: none on datalist, rp and title,
+# and on noscript when scripting is on. The parser here reads each as an element that can hold the checked
+# markup (title only before Python 3.14), so each hides itself and everything inside it. Its other hidden
+# elements cannot hold that markup (the docstring names them); a popover attribute, a dialog without open
+# and a details without open are tested in is_hiding_element and PageParser.
+HIDING_ELEMENTS = ("datalist", "noscript", "rp", "title")
 
 
-def is_hiding_element(attrs: dict[str, str]) -> bool:
+def is_hiding_element(tag: str, attrs: dict[str, str]) -> bool:
     classes = attrs.get("class", "").split()
     return (
         "hidden" in attrs
         or "inert" in attrs
+        or "popover" in attrs
         or attrs.get("aria-hidden", "").lower() == "true"
         or any(name in classes for name in HIDING_CLASSES)
+        or tag in HIDING_ELEMENTS
+        or (tag == "dialog" and "open" not in attrs)
     )
 
 
@@ -207,7 +231,14 @@ class PageParser(HTMLParser):
         attrs = {k.lower(): (v if v is not None else "") for k, v in attrs_list}
         self.order += 1
         classes = attrs.get("class", "").split()
-        hiding = is_hiding_element(attrs) or any(frame["hiding"] for frame in self.stack)
+        parent = self.stack[-1] if self.stack else None
+        hiding = is_hiding_element(tag, attrs) or any(frame["hiding"] for frame in self.stack)
+        # A details without open renders only its first summary child; the rest of its content is hidden.
+        if parent and parent["closed"]:
+            if tag == "summary" and not parent["summary"]:
+                parent["summary"] = True
+            else:
+                hiding = True
         if "id" in attrs:
             self.id_counts[attrs["id"]] += 1
             self.id_first.setdefault(attrs["id"], self.order)
@@ -215,7 +246,6 @@ class PageParser(HTMLParser):
             if name in attrs:
                 self.retired.append(f"<{tag} {name}>")
         if tag == "a":
-            parent = self.stack[-1] if self.stack else None
             self.hrefs.append(attrs.get("href", ""))
             self.anchors.append({
                 "id": attrs.get("id"),
@@ -234,7 +264,8 @@ class PageParser(HTMLParser):
         if tag == "ol" and "steps" in classes:
             self.steps.append(hiding)
         if tag not in VOID:
-            self.stack.append({"tag": tag, "hiding": hiding, "order": self.order})
+            closed = tag == "details" and "open" not in attrs
+            self.stack.append({"tag": tag, "hiding": hiding, "order": self.order, "closed": closed, "summary": False})
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "h1":
