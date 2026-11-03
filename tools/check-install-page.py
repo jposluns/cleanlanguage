@@ -22,8 +22,9 @@ What it verifies
 1. On ``/install/``, each family has exactly 1 link, ``<a id=X href="/install/X/">``
    with the classes ``btn`` and ``inline``, none with ``aria-current``, none
    hidden by itself or an ancestor (``hidden``, ``inert``, ``aria-hidden="true"``
-   in any case, or the class ``vh``, the template's visually-hidden class, or
-   ``visually-hidden``, each matched as a whole class name); the 5 links sit
+   in any case, or a class in ``HIDING_CLASSES``: ``vh``, the template's
+   visually-hidden class, ``visually-hidden``, ``only-dark`` or ``skip``, each
+   matched as a whole class name); the 5 links sit
    in 1 paragraph, in the order Claude, ChatGPT, Gemini, Copilot, other AI
    systems, before the ``get`` id.
 2. No element on any of the 6 pages carries the retired selector attributes
@@ -70,8 +71,17 @@ What it does NOT verify (the reviewer's and cross-family QA's job)
 
 It does not apply any stylesheet or run any script. It does NOT detect a
 stylesheet rule that hides a link or a step list, a closed ``<details>``
-around them, a custom CLASS that hides, clips, zeroes opacity or positions
-off-screen, a DESCENDANT wipe, or hiding by id. It does not check the wording
+around them, a custom CLASS outside ``HIDING_CLASSES`` that hides, clips,
+zeroes opacity or positions off-screen, a DESCENDANT wipe, or hiding by id.
+Among the descendant wipes, baseline.css hides, each at some widths,
+``.figure .stack``, ``.figure .wide``, ``.family .cards .cname``, and
+``.family .sig .pre`` and ``.family .sig .post``; those classes hide only in
+that context, so they are not in ``HIDING_CLASSES`` and the gate passes an
+element that carries one of them there. ``tools/test-install-page.py`` fails
+when fonts.css, palettes.css or baseline.css hides a bare single class (a
+selector such as ``.only-dark``) that is not in ``HIDING_CLASSES`` or its
+exempt list; it reads no compound, descendant or attribute selector, and it
+does not treat ``opacity`` as hiding. It does not check the wording
 of the setup steps, only that they are present. Those are visible regressions
 a browser check, a reviewer, or the tri-family QA catches. An exotic heading
 character may still slip through the visible-text check. The inline-code
@@ -150,7 +160,12 @@ def inline_code(where: str, text: str) -> list[str]:
 # The template's visually-hidden class is .vh (site/assets/baseline/baseline.css). The common name
 # visually-hidden is kept although no stylesheet here defines it: an author who adds it means to hide
 # the element, and this gate cannot see whether a later stylesheet defines it, so it fails closed.
-HIDING_CLASSES = ("vh", "visually-hidden")
+# baseline.css also hides 2 classes on any element: only-dark ("img.only-dark, .only-dark { display: none; }"),
+# which it shows again only on an img in the dark scheme, and skip (".skip { position: absolute; left: 1rem;
+# top: -4rem; ... }"), off-screen until it has focus. Classes it hides only as a descendant (.figure .stack,
+# .figure .wide, .family .cards .cname, .family .sig .pre and .post) are not listed; the docstring names them.
+# tools/test-install-page.py fails when a stylesheet the pages load hides a bare single class not listed here.
+HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
 
 
 def is_hiding_element(attrs: dict[str, str]) -> bool:

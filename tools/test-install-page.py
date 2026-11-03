@@ -5,10 +5,22 @@ Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault to the install page, a family page, or
 site/_headers, runs the gate there as a separate process and asserts its exit
 code. Exit 0 when every case passes; 1 otherwise, naming each failing case.
+
+It also reads the stylesheets every install page loads (fonts.css, palettes.css
+and baseline.css under site/assets/baseline/) and fails when a rule whose
+selector list holds a bare single class, such as ``.only-dark``, hides it
+(``display: none``, ``visibility: hidden`` or ``collapse``, a ``clip: rect(...)``
+as ``.vh`` uses, or a negative ``top`` or ``left`` on an absolute or fixed
+position) and the class is in neither the gate's HIDING_CLASSES nor
+EXEMPT_CLASSES below. The parser is deliberately small: it reads no compound,
+descendant or attribute selector, and it fails when a stylesheet cannot be
+read, has an unclosed comment or unbalanced braces, or holds no rule.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import re
 import shutil
 import subprocess
 import sys
@@ -36,6 +48,11 @@ SITE_LINE = "/*\n  X-Frame-Options: DENY"
 SITE_CSP = f"  Content-Security-Policy: {SHARED_CSP}" + NEXT_RULE
 DRAFT_RULE = f"\n/draft/*\n  ! Content-Security-Policy\n  Content-Security-Policy: {SHARED_CSP}\n  X-Robots-Tag: noindex\n"
 OTHER_LINK = '<a class="btn inline" id="other-ai" href="/install/other-ai/">Other AI systems</a>'
+STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
+# Classes a stylesheet may hide as a bare single class although the gate does not refuse them. Add 1 only with a
+# comment saying why no install page can carry it on a checked element or an ancestor. None qualifies today.
+EXEMPT_CLASSES: tuple[str, ...] = ()
+BARE_CLASS = re.compile(r"\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)")
 
 
 def make_root(scratch: Path) -> Path:
@@ -85,6 +102,10 @@ CASES = [
     ("a family link aria-hidden", edit(PAGE, 'id="gemini" href="/install/gemini/"', 'id="gemini" href="/install/gemini/" aria-hidden="TRUE"'), 1),
     ("a family link with the class vh", edit(PAGE, '<a class="btn inline" id="gemini"', '<a class="btn inline vh" id="gemini"'), 1),
     ("the button row with the class vh", edit(PAGE, '<p><a class="btn inline" id="claude"', '<p class="vh"><a class="btn inline" id="claude"'), 1),
+    ("the button row with the class only-dark",
+        edit(PAGE, '<p><a class="btn inline" id="claude"', '<p class="only-dark"><a class="btn inline" id="claude"'), 1),
+    ("the button row with the class skip",
+        edit(PAGE, '<p><a class="btn inline" id="claude"', '<p class="skip"><a class="btn inline" id="claude"'), 1),
     ("a family link outside the button row", both(
         edit(PAGE, " " + OTHER_LINK, ""), edit(PAGE, '<p class="lbl blk">Scope</p>', f"<p>{OTHER_LINK}</p>\n" + '<p class="lbl blk">Scope</p>')), 1),
     ("a family link after Get Clean Language", both(
@@ -107,6 +128,8 @@ CASES = [
     ("a family page with no setup steps", edit(CLAUDE, '<ol class="steps">', "<ol>"), 1),
     ("a family page step list hidden", edit(OTHER, '<ol class="steps">', '<ol class="steps" hidden>'), 1),
     ("a family page step list with the class vh", edit(CHATGPT, '<ol class="steps">', '<ol class="steps vh">'), 1),
+    ("a family page step list with the class only-dark", edit(COPILOT, '<ol class="steps">', '<ol class="steps only-dark">'), 1),
+    ("a family page step list with the class skip", edit(CLAUDE, '<ol class="steps">', '<ol class="skip steps">'), 1),
     ("a family page with no verified line", edit(COPILOT, '<p class="verified">', "<p>"), 1),
     ("a family page verified line with the class vh", edit(GEMINI, '<p class="verified">', '<p class="verified vh">'), 1),
     ("a family page heading hidden", edit(CLAUDE, "<h1>", '<h1 class="vh">'), 1),
@@ -114,6 +137,9 @@ CASES = [
         edit(COPILOT, "<h1>", '<div class="vh"><h1>'), edit(COPILOT, "</h1>", "</h1></div>")), 1),
     ("a family page heading with the class visually-hidden", edit(OTHER, "<h1>", '<h1 class="visually-hidden">'), 1),
     ("a family page heading whose classes only contain vh", edit(CLAUDE, "<h1>", '<h1 class="vhx pre-vh">'), 0),
+    ("a family page heading with the class only-dark", edit(CLAUDE, "<h1>", '<h1 class="only-dark">'), 1),
+    ("a family page heading with the class skip", edit(GEMINI, "<h1>", '<h1 class="skip">'), 1),
+    ("a family page heading whose classes only contain only-dark or skip", edit(CHATGPT, "<h1>", '<h1 class="only-darker skip-link">'), 0),
     ("a family page heading emptied", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>​</h1>"), 1),
     ("a family page inside a hidden wrapper", edit(GEMINI, '<div class="doc">', '<div class="doc" inert>'), 1),
     ("a family page with a second h1", edit(GEMINI, "</main>", "<h1>Again</h1></main>"), 1),
@@ -175,8 +201,66 @@ CASES = [
 ]
 
 
+def hides(declarations: str) -> bool:
+    """True when the declarations hide, clip, or move the element off-screen as the template's own rules do."""
+    props: dict[str, str] = {}
+    for declaration in declarations.split(";"):
+        name, colon, value = declaration.partition(":")
+        if colon:
+            props[name.strip().lower()] = re.sub(r"!\s*important", "", value.lower()).strip()
+    offscreen = any(props.get(side, "").startswith("-") for side in ("top", "left"))
+    return (
+        props.get("display") == "none"
+        or props.get("visibility") in ("hidden", "collapse")
+        or props.get("clip", "").startswith("rect(")
+        or (props.get("position") in ("absolute", "fixed") and offscreen)
+    )
+
+
+def stylesheet_problems() -> list[str]:
+    """Each bare single class the pages' stylesheets hide is in the gate's HIDING_CLASSES or in EXEMPT_CLASSES."""
+    try:
+        spec = importlib.util.spec_from_file_location("check_install_page", GATE)
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        listed = set(gate.HIDING_CLASSES) | set(EXEMPT_CLASSES)
+    except Exception as error:
+        return [f"HIDING_CLASSES could not be read from tools/{GATE.name}: {error!r}"]
+    problems: list[str] = []
+    for relative in STYLESHEETS:
+        try:
+            css = (REPO_ROOT / relative).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            problems.append(f"{relative} could not be read: {error}")
+            continue
+        css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+        depth = 0
+        for char in css:
+            depth += {"{": 1, "}": -1}.get(char, 0)
+            if depth < 0:
+                break
+        if "/*" in css or depth != 0:
+            problems.append(f"{relative} has an unclosed comment or unbalanced braces; it cannot be read.")
+            continue
+        rules = re.findall(r"([^{};]*)\{([^{}]*)\}", css)
+        if not rules:
+            problems.append(f"{relative} holds no rule; it cannot be read.")
+        for prelude, declarations in rules:
+            selectors = " ".join(prelude.split())
+            if selectors.startswith("@") or not hides(declarations):
+                continue
+            for selector in selectors.split(","):
+                bare = BARE_CLASS.fullmatch(selector.strip())
+                if bare and bare.group(1) not in listed:
+                    problems.append(
+                        f"{relative}: the rule {selectors!r} hides the bare class .{bare.group(1)}, which is in neither "
+                        f"HIDING_CLASSES of tools/{GATE.name} nor EXEMPT_CLASSES of this test."
+                    )
+    return problems
+
+
 def main() -> int:
-    failures: list[str] = []
+    failures: list[str] = [f"the stylesheets: {problem}" for problem in stylesheet_problems()]
     for name, fault, expected in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
@@ -190,7 +274,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-install-page: all {len(CASES)} cases passed.")
+    print(f"test-install-page: all {len(CASES)} cases and the stylesheet check passed.")
     return 0
 
 
