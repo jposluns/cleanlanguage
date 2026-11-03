@@ -113,27 +113,26 @@ the gate for up to their sum on each call (the residual below is outside
 these bounds). The gate takes a result from a child only when the child
 exits 0 and prints exactly one JSON object that matches the contract, and
 it reads only a bounded part of what the child prints (see RESULT_LIMIT).
-While the child runs, an ordinary write cannot grow any file it writes past
-its cap: output_cap(limit) bytes, one byte past the larger read bound, or a
-lower file size limit the caller set, soft or hard (applied_cap). The cap
-is RLIMIT_FSIZE, set in the child before exec as both its soft and its hard
-limit, so a child without CAP_SYS_RESOURCE, and any process it starts
-without it, cannot raise it, and an extractor that writes too much by
-accident through any one file, such as its stdout or stderr, cannot fill
-temporary storage through that file within the timeout. After the wait,
-a child whose stdout or stderr has a final size that reached that cap,
-including a lower limit the caller set, is unavailable, and the reason
-names that cap. Residuals: RLIMIT_FSIZE bounds the logical size of a file,
-not the storage allocated to it, so deliberate child code can reserve disk
-blocks past the end of a file (with fallocate, for example) without growing
-it; the check reads only the final size, so a child that fills stdout to
-the cap, truncates it and writes a valid reply is accepted; the cap applies
-to each file, not to their total, so a child that writes many files, by
-accident or not, can still fill temporary storage; a child, or a process it
-starts, that holds CAP_SYS_RESOURCE (as a gate run as root gives it) can
-raise the hard limit and then the soft one, so the cap does not bound it;
-and its stdin file is bounded the same way but not checked, so a child that
-fills it and still replies validly keeps its verdict.
+While the child runs, an ordinary write cannot grow any one file it writes
+past its cap: output_cap(limit) bytes, one byte past the larger read bound,
+or a lower file size limit the caller set, soft or hard (applied_cap). The
+cap is RLIMIT_FSIZE, set in the child before exec as both its soft and its
+hard limit, so a child without CAP_SYS_RESOURCE, and any process it starts
+without it, cannot raise it. After the wait, a child whose stdout or stderr
+has a final size that reached that cap, including a lower limit the caller
+set, is unavailable, and the reason names that cap. Residuals: RLIMIT_FSIZE
+limits the logical size of a file, not the disk space allocated to it, so
+deliberate child code can reserve disk blocks past the end of a file (with
+fallocate, for example) without growing it; the cap is not compared with
+the free space of the file system, so a file below the cap can still run
+out of space; the check reads only the final size, so a child that fills
+stdout to the cap, truncates it and writes a valid reply is accepted; the
+cap applies to each file, not to their total, so a child can write any
+number of files, each up to the cap; a child, or a process it starts, that
+holds CAP_SYS_RESOURCE (as a gate run as root gives it) can raise the hard
+limit and then the soft one, so the cap does not apply to it; and its stdin
+file has the same cap but is not checked, so a child that fills it and
+still replies validly keeps its verdict.
 Every other outcome of a child that the gate observes exits 3 with its
 report, never 2, 1, or 0. On a normal end and on a timeout, the gate kills
 the process group of the child before it reaps the child, or exits 3 when it
@@ -146,10 +145,10 @@ group, by any means, can outlive the gate.
 Separation is not a sandbox. The child runs with the uid, filesystem, and
 network of the gate, so extractor code can do whatever that uid can do,
 including writing files, reaching the network, and signalling the gate.
-While the child runs, its ordinary writes cannot grow a file past
-output_cap(limit) bytes, but the child can still reserve storage past the
-end of a file, create any number of files and use the disk through them,
-and use CPU and memory. A signal it sends to the gate acts on the gate as
+While the child runs, its ordinary writes cannot grow any one file past its
+cap, but the child can still reserve disk blocks past the end of a file,
+create any number of files and write to each up to the cap, and use CPU and
+memory. A signal it sends to the gate acts on the gate as
 that signal acts on any process: it can interrupt, stop, or end the gate
 outside the exit codes above, and no bound of the gate limits its effect.
 More generally, extractor code can act on the gate and on its own children
