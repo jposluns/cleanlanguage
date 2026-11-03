@@ -7,20 +7,20 @@ site-wide security policy allows ``'unsafe-inline'`` scripts, because Cloudflare
 own scripts need it, so a browser no longer blocks an inline script or an inline
 event handler on these pages. This gate enforces the rule instead.
 
-What it verifies
-----------------
+It reads every ``.html`` and ``.htm`` file under ``site/``, at any depth, with
+Python's HTML parser (``html.parser``), and every ``.svg`` file with Python's XML
+parser (``xml.parsers.expat``), because a browser reads an SVG file as XML.
 
-It reads every ``.html``, ``.htm`` and ``.svg`` file under ``site/``, at any
-depth, with Python's HTML parser (``html.parser``). In an HTML page the parser
-reads the content of ``script``, ``style``, ``noscript``, ``title``,
+HTML pages
+----------
+
+The parser reads the content of ``script``, ``style``, ``noscript``, ``title``,
 ``textarea``, ``xmp``, ``iframe``, ``noembed`` and ``noframes`` as raw text on
-every Python version, as a browser with scripting on does
-(``RAW_TEXT_ELEMENTS`` below). It then reads the raw text of each
-``<noscript>`` element again as markup, with checks 1 to 6 below, because a
-browser with scripting off reads it that way; checks 7 to 9 read the whole
-file's text, which holds that content. An SVG file is XML, which has no
-raw-text elements, so the parser reads all of it as markup. In every file it
-refuses:
+every Python version, as a browser with scripting on does (``RAW_TEXT_ELEMENTS``
+below). It then reads the raw text of each ``<noscript>`` element again as
+markup, with checks 1 to 5 and 10, because a browser with scripting off reads it
+that way; checks 6 to 9 read the whole file's text, which holds that content. In
+every HTML page it refuses:
 
 1. A ``<script>`` element without a ``src`` attribute, whatever its ``type``,
    unless its first ``type`` attribute is ``application/ld+json`` (ignoring case
@@ -28,8 +28,7 @@ refuses:
    browser never runs. A browser uses the first of 2 attributes with the same
    name, and so does this check. A ``<script>`` element with ``src`` that also
    holds text other than whitespace fails too: the browser ignores that text,
-   so it can only be dead code or a decoy. In an SVG file every ``<script>``
-   element fails, with or without ``src``.
+   so it can only be dead code or a decoy.
 2. Any attribute whose name starts with ``on``, on any element. The parser reads
    ``/`` as an attribute separator, as a browser does, so
    ``<span/onclick="...">`` counts.
@@ -40,69 +39,89 @@ refuses:
    carriage return is removed, as a browser does before it reads the scheme.
    The scheme compares without regard to case.
 4. Any ``<style>`` element and any ``style`` attribute.
-5. Any ``srcdoc`` attribute, on any element.
-6. An ``<animate>`` or ``<set>`` element whose first ``attributeName`` is
-   ``href`` or ends in ``:href``, ignoring case and surrounding whitespace,
-   because it can change a link to a ``javascript:`` URL after the page loads.
-7. A file where a plain text count differs from what the parser reports: the
+5. Any ``srcdoc`` attribute, on any element. (An ``<animate>`` or ``<set>``
+   element can change a link only inside ``<svg>``, which check 7 refuses.)
+6. A page where a plain text count differs from what the parser reports: the
    number of ``<script`` and ``<style`` start tags, ignoring case, or the number
-   of ``on`` attributes, counted as ``on`` followed by letters and ``=`` (with
-   optional whitespace before the ``=``), ignoring case, after whitespace, a
-   ``/`` or a quote inside a tag. A tag, for this count, is a ``<`` and an ASCII
-   letter up to the next ``>`` that is not inside a pair of single or double
-   quotes, so a quoted ``>`` does not end it. The parser's counts include those
+   of ``on`` attributes, counted anywhere in the file's text as ``on`` followed by
+   ASCII letters and ``=`` (with optional whitespace before the ``=``), ignoring
+   case, after whitespace, a ``/`` or a quote. The parser's counts include those
    of each ``<noscript>`` content read as markup. This catches markup that the
    parser reads differently from a browser, such as an element the parser takes
-   to be text.
-
-In an HTML page it also refuses markup that ``html.parser`` reads differently
-from a browser, and that no page uses, anywhere in the file's text:
-
-8. The elements ``svg``, ``math``, ``iframe``, ``textarea``, ``xmp``,
+   to be text, whatever the shape of the tag around it. Prose that contains such
+   a sequence also fails this check; write it with a character reference (for
+   example ``on&#x63;lick=``).
+7. The elements ``svg``, ``math``, ``iframe``, ``textarea``, ``xmp``,
    ``noembed``, ``noframes``, ``plaintext`` and ``template``, found in the
    text as ``<`` and the name, ignoring case, followed by whitespace, ``/``,
-   ``>`` or the end of the text.
-9. Any ``<![CDATA[`` in the text, ignoring case, and any comment that opens as
-   ``<!-->`` or ``<!--->``.
+   ``>`` or the end of the text. The parser reads them differently from a
+   browser, and no page uses them.
+8. Any ``<![CDATA[`` in the text, ignoring case.
+9. Any comment that opens as ``<!-->`` or ``<!--->``.
+10. On a live page (any page under ``site/`` outside ``site/draft/``), a
+    ``<script>`` element whose first ``src`` is not a same-origin path: after
+    the URL clean-up of check 3, it must start with ``/`` and not with ``//`` or
+    ``/\\``. So no live page loads a script from another origin, such as an
+    analytics beacon. The draft install page keeps its own list of allowed
+    scripts (``tools/check-install-page.py`` check 12).
 
-In an SVG file it also refuses:
+SVG files
+---------
 
-10. Any ``<!DOCTYPE`` or ``<!ENTITY``, ignoring case, because an XML internal
-    entity can carry markup that this parser never expands.
+A file that holds ``<!DOCTYPE`` or ``<!ENTITY``, ignoring case, fails before it
+is parsed, because an XML internal entity can carry markup, so no entity is ever
+expanded. The XML parser then reads the file with namespaces resolved; a file it
+refuses fails, and so does any processing instruction. Each check below applies
+to an element's or attribute's local name, whatever its namespace prefix:
+
+11. Any element outside the SVG namespace (``http://www.w3.org/2000/svg``),
+    including one with no namespace. That covers an XHTML ``<script>`` or any
+    other element from a second vocabulary.
+12. Any ``script``, ``style`` or ``foreignObject`` element.
+13. Any attribute whose local name starts with ``on``, ignoring case, any
+    attribute whose local name is ``style`` or ``srcdoc``, and a ``javascript:``
+    URL (cleaned up as in check 3) in any attribute whose local name is
+    ``href``, ``src``, ``action`` or ``formaction``, in any namespace (so
+    ``xlink:href`` and any other prefix count).
+14. An ``animate`` or ``set`` element whose ``attributeName`` is ``href`` or
+    ends in ``:href``, ignoring case and surrounding whitespace, because it can
+    change a link to a ``javascript:`` URL after the file loads.
 
 Python versions
 ---------------
 
-The gate prints the Python version it ran under. The raw-text element list above
-is set on the parser, so the reading of those elements does not depend on the
+The gate prints the Python version it ran under. The raw-text element list is
+set on the HTML parser, so the reading of those elements does not depend on the
 version. Other ``html.parser`` behaviour does change between versions: how a
 comment ends (``--!>``), how a ``<!`` declaration or a ``<![CDATA[`` section is
 read, which end tags close a raw-text element, and how an unfinished tag at the
-end of a file is reported (3.14 changed these). Checks 7 to 9 are plain text
+end of a file is reported (3.14 changed these). Checks 6 to 9 are plain text
 checks, which read the same on every version, and they refuse or count the cases
 where those changes matter for script, style and ``on`` attributes. A
 ``javascript:`` URL or a ``srcdoc`` attribute inside such markup stays
-version-dependent, as the next section states.
+version-dependent. The XML parser follows the XML specification on every
+version.
 
 What it does not verify
 -----------------------
 
 It reads files only; it runs no browser. ``html.parser`` is not the HTML
-parsing algorithm of the specification, nor an XML parser, so markup built to
-make them disagree can still slip past checks 1 to 6. Checks 7 to 10 narrow that:
-check 7 compares counts only for script and style start tags and for ``on``
+parsing algorithm of the specification, so markup built to make them disagree
+can still slip past checks 1 to 5 in an HTML page. Checks 6 to 9 narrow that:
+check 6 compares counts only for script and style start tags and for ``on``
 attributes, so a ``javascript:`` URL or a ``srcdoc`` attribute that the parser
-reads as text is outside it. The gate does not judge external scripts (the
-``src`` value, the files under ``site/js/`` or ``site/draft/assets/``), other
-URL schemes such as ``data:``, ``<meta http-equiv="refresh">``, or SVG
-animation of attributes other than ``href``. The security policy covers some of
-those cases: ``default-src 'none'`` blocks frames and objects, and ``img-src
-'self'`` blocks ``data:`` images. It does not read files other than HTML pages
-and SVG files, so a document served from another extension is outside it.
+reads as text is outside it. The gate does not judge the files that external
+scripts load (under ``site/js/`` or ``site/draft/assets/``), scripts on draft
+pages beyond check 1, other URL schemes such as ``data:``, ``<meta
+http-equiv="refresh">``, or animation of attributes other than ``href``. The
+security policy covers some of those cases: ``default-src 'none'`` blocks
+frames and objects, and ``img-src 'self'`` blocks ``data:`` images. It does not
+read files other than HTML pages and SVG files, so a document served from
+another extension is outside it.
 
 Exit codes:
   0  no file carries inline code
-  1  a file carries inline code or refused markup, or the parser and a text count disagree
+  1  a file carries inline code or refused markup, the parser and a text count disagree, or the XML parser refuses an SVG file
   3  site/ or a file could not be read, a file is not UTF-8, or no HTML page was found
 """
 
@@ -112,17 +131,21 @@ import os
 import platform
 import re
 import sys
+import xml.parsers.expat
 from html.parser import HTMLParser
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SITE = REPO_ROOT / "site"
+DRAFT = SITE / "draft"
 PAGE_SUFFIXES = (".html", ".htm")
 SVG_SUFFIX = ".svg"
+SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 
 DATA_BLOCK_TYPE = "application/ld+json"
 URL_ATTRIBUTES = ("href", "src", "action", "formaction")
 ANIMATION_ELEMENTS = ("animate", "set")
+SVG_REFUSED_ELEMENTS = ("script", "style", "foreignObject")
 # Elements whose content the parser reads as raw text, on every Python version. A browser with
 # scripting on reads noscript this way; title and textarea are RCDATA in a browser, which holds no
 # tags either. Python 3.14 reads title and textarea as RCDATA and xmp, iframe, noembed and noframes
@@ -133,7 +156,6 @@ RAW_TEXT_ELEMENTS = ("script", "style", "noscript", "title", "textarea", "xmp", 
 URL_EDGES = "".join(chr(code) for code in range(0x21))
 URL_REMOVED = re.compile(r"[\t\n\r]")
 RAW_START = re.compile(r"<(script|style)(?=[\s/>])", re.I)
-RAW_TAG = re.compile(r"<[A-Za-z](?:[^>\"']|\"[^\"]*\"|'[^']*')*>")
 RAW_HANDLER = re.compile(r"(?<=[\s/\"'])on[a-z]+\s*=", re.I)
 REFUSED_ELEMENTS = ("svg", "math", "iframe", "textarea", "xmp", "noembed", "noframes", "plaintext", "template")
 RAW_REFUSED_ELEMENT = re.compile(r"<(" + "|".join(REFUSED_ELEMENTS) + r")(?=[\s/>]|$)", re.I)
@@ -152,8 +174,17 @@ def die(message: str) -> None:
     raise SystemExit(3)
 
 
+def clean_url(value: str) -> str:
+    return URL_REMOVED.sub("", value.strip(URL_EDGES))
+
+
 def is_javascript_url(value: str) -> bool:
-    return URL_REMOVED.sub("", value.strip(URL_EDGES)).lower().startswith("javascript:")
+    return clean_url(value).lower().startswith("javascript:")
+
+
+def is_same_origin_path(value: str) -> bool:
+    url = clean_url(value)
+    return url.startswith("/") and not url.startswith(("//", "/\\"))
 
 
 def is_href_name(name: str) -> bool:
@@ -168,12 +199,9 @@ class InlineCodeParser(HTMLParser):
     CDATA_CONTENT_ELEMENTS = RAW_TEXT_ELEMENTS
     RCDATA_CONTENT_ELEMENTS = ()
 
-    def __init__(self, svg: bool) -> None:
+    def __init__(self, live: bool) -> None:
         super().__init__(convert_charrefs=True)
-        self.svg = svg
-        if svg:
-            # XML has no raw-text elements, so an SVG file is read as markup throughout.
-            self.CDATA_CONTENT_ELEMENTS = ()
+        self.live = live
         self.problems: list[str] = []
         self.starts = {"script": 0, "style": 0}
         self.handlers = 0
@@ -214,10 +242,10 @@ class InlineCodeParser(HTMLParser):
             return
         line, text = self.noscript, "".join(self.noscript_text)
         self.noscript, self.noscript_text = None, []
-        inner = scan(text, svg=False)
+        inner = scan(text, self.live)
         self.starts = {tag: count + inner.starts[tag] for tag, count in self.starts.items()}
         self.handlers += inner.handlers
-        # Checks 7 to 9 read the whole file's text, which holds this content, so only checks 1 to 6 run here.
+        # Checks 6 to 9 read the whole file's text, which holds this content, so only the parser checks run here.
         for problem in inner.problems:
             self.problems.append(f"line {line}: inside <noscript>, read as markup, {problem}")
 
@@ -227,20 +255,17 @@ class InlineCodeParser(HTMLParser):
             self.starts[tag] += 1
         self.handlers += sum(1 for name, _ in attrs if name.startswith("on"))
         names = [name for name, _ in attrs]
-        if tag == "script" and self.svg:
-            self.problems.append(f"line {line}: a <script> element in an SVG file")
-        elif tag == "script" and "src" in names:
+        if tag == "script" and "src" in names:
             self.external_script = line
+            src = next(value or "" for name, value in attrs if name == "src")
+            if self.live and not is_same_origin_path(src):
+                self.problems.append(f"line {line}: a <script> on a live page loads {src!r}, which is not a same-origin path")
         elif tag == "script":
             kind = next((value or "" for name, value in attrs if name == "type"), "")
             if kind.strip(" \t\n\f\r").lower() != DATA_BLOCK_TYPE:
                 self.problems.append(f"line {line}: a <script> element without src (type {kind!r})")
         if tag == "style":
             self.problems.append(f"line {line}: a <style> element")
-        if tag in ANIMATION_ELEMENTS:
-            target = next((value or "" for name, value in attrs if name == "attributename"), "")
-            if is_href_name(target.strip().lower()):
-                self.problems.append(f"line {line}: an <{tag}> element that animates {target!r}")
         for name, value in attrs:
             if name.startswith("on"):
                 self.problems.append(f"line {line}: an event-handler attribute {name!r} on <{tag}>")
@@ -252,15 +277,15 @@ class InlineCodeParser(HTMLParser):
                 self.problems.append(f"line {line}: a javascript: URL in the {name} attribute of <{tag}>")
 
 
-def scan(text: str, svg: bool) -> InlineCodeParser:
-    parser = InlineCodeParser(svg)
+def scan(text: str, live: bool) -> InlineCodeParser:
+    parser = InlineCodeParser(live)
     parser.feed(text)
     parser.close()
     return parser
 
 
 def count_problems(text: str, parser: InlineCodeParser) -> list[str]:
-    """Check 7: the plain text counts against the parser's counts."""
+    """Check 6: the plain text counts against the parser's counts."""
     problems = []
     for tag in ("script", "style"):
         raw = sum(1 for match in RAW_START.finditer(text) if match.group(1).lower() == tag)
@@ -269,17 +294,17 @@ def count_problems(text: str, parser: InlineCodeParser) -> list[str]:
                 f"a text count finds {raw} <{tag}> start tags but the parser reads {parser.starts[tag]}; "
                 "the parser and a browser may read this markup differently, so it cannot be checked"
             )
-    raw_handlers = sum(len(RAW_HANDLER.findall(tag.group(0))) for tag in RAW_TAG.finditer(text))
+    raw_handlers = len(RAW_HANDLER.findall(text))
     if raw_handlers != parser.handlers:
         problems.append(
-            f"a text count finds {raw_handlers} on* attributes inside tags but the parser reads "
+            f"a text count finds {raw_handlers} on* attributes in the file's text but the parser reads "
             f"{parser.handlers}; the parser and a browser may read this markup differently, so it cannot be checked"
         )
     return problems
 
 
 def markup_problems(text: str) -> list[str]:
-    """Checks 8 and 9: markup that the parser reads differently from a browser, in an HTML page."""
+    """Checks 7 to 9: markup that the parser reads differently from a browser, in an HTML page."""
     problems = []
     for match in RAW_REFUSED_ELEMENT.finditer(text):
         problems.append(
@@ -293,16 +318,69 @@ def markup_problems(text: str) -> list[str]:
     return problems
 
 
-def inline_code_problems(text: str, svg: bool = False) -> list[str]:
-    """Each piece of inline code or refused markup in a file, as 'line N: ...', with the count checks."""
-    parser = scan(text, svg)
-    problems = parser.problems + count_problems(text, parser)
-    if svg:
-        for match in RAW_SVG_DECLARATION.finditer(text):
-            problems.append(f"line {line_of(text, match.start())}: a <!{match.group(1).upper()} declaration in an SVG file")
-    else:
-        problems += markup_problems(text)
+def split_name(name: str) -> tuple[str, str]:
+    """(namespace, local name) of an expat name; the namespace is '' when there is none."""
+    namespace, _, local = name.rpartition(" ")
+    return namespace, local
+
+
+def svg_problems(text: str) -> list[str]:
+    """Checks 11 to 14: an SVG file read with the XML parser, namespaces resolved, entities never expanded."""
+    declarations = [
+        f"line {line_of(text, match.start())}: a <!{match.group(1).upper()} declaration in an SVG file"
+        for match in RAW_SVG_DECLARATION.finditer(text)
+    ]
+    if declarations:
+        return declarations
+    problems: list[str] = []
+    parser = xml.parsers.expat.ParserCreate(namespace_separator=" ")
+
+    def where() -> str:
+        return f"line {parser.CurrentLineNumber}"
+
+    def declaration(*_) -> None:
+        problems.append(f"{where()}: a document type or entity declaration in an SVG file")
+
+    def instruction(target: str, _data: str) -> None:
+        problems.append(f"{where()}: a processing instruction <?{target} ...?> in an SVG file")
+
+    def start(name: str, attrs: dict[str, str]) -> None:
+        namespace, local = split_name(name)
+        if namespace != SVG_NAMESPACE:
+            problems.append(f"{where()}: an element <{local}> in the namespace {namespace or '(none)'!r}; "
+                            "an SVG file may hold only SVG elements")
+        if local in SVG_REFUSED_ELEMENTS:
+            problems.append(f"{where()}: a <{local}> element in an SVG file")
+        if local in ANIMATION_ELEMENTS:
+            target = next((value for key, value in attrs.items() if split_name(key) == ("", "attributeName")), "")
+            if is_href_name(target.strip().lower()):
+                problems.append(f"{where()}: an <{local}> element that animates {target!r}")
+        for key, value in attrs.items():
+            lower = split_name(key)[1].lower()
+            if lower.startswith("on"):
+                problems.append(f"{where()}: an event-handler attribute {key!r} on <{local}>")
+            elif lower in ("style", "srcdoc"):
+                problems.append(f"{where()}: a {lower} attribute on <{local}>")
+            elif lower in URL_ATTRIBUTES and is_javascript_url(value):
+                problems.append(f"{where()}: a javascript: URL in the {key!r} attribute of <{local}>")
+
+    parser.StartDoctypeDeclHandler = declaration
+    parser.EntityDeclHandler = declaration
+    parser.ProcessingInstructionHandler = instruction
+    parser.StartElementHandler = start
+    try:
+        parser.Parse(text.encode("utf-8"), True)
+    except xml.parsers.expat.ExpatError as error:
+        problems.append(f"line {error.lineno}: the XML parser refuses the file ({xml.parsers.expat.ErrorString(error.code)})")
     return problems
+
+
+def inline_code_problems(text: str, svg: bool = False, live: bool = False) -> list[str]:
+    """Each piece of inline code or refused markup in a file, as 'line N: ...'."""
+    if svg:
+        return svg_problems(text)
+    parser = scan(text, live)
+    return parser.problems + count_problems(text, parser) + markup_problems(text)
 
 
 def files() -> tuple[list[Path], list[Path]]:
@@ -332,7 +410,8 @@ def main() -> int:
         except (OSError, UnicodeDecodeError) as error:
             die(f"could not read {where} as UTF-8: {error}")
         svg = path.name.lower().endswith(SVG_SUFFIX)
-        problems += [f"{where} {problem}" for problem in inline_code_problems(text, svg)]
+        live = not path.is_relative_to(DRAFT)
+        problems += [f"{where} {problem}" for problem in inline_code_problems(text, svg, live)]
     version = f"Python {platform.python_version()}"
     if problems:
         print(f"Inline code found ({version}); {RULE}. The security policy allows 'unsafe-inline', so a "

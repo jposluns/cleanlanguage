@@ -109,6 +109,8 @@ CASES = [
         edit(HEADERS, SITE_CSP, f"  X-Content-Security-Policy: {SHARED_CSP}\n" + SITE_CSP), 1),
     ("the site-wide policy set twice", edit(HEADERS, SITE_CSP, f"  Content-Security-Policy: {SHARED_CSP}\n" + SITE_CSP), 1),
     ("the site-wide policy missing", edit(HEADERS, SITE_CSP, "\n/draft/*"), 1),
+    ("R3 L2 (P4): the /* rule detaching its own policy after setting it",
+        edit(HEADERS, SITE_CSP, f"  Content-Security-Policy: {SHARED_CSP}\n  ! Content-Security-Policy\n\n/draft/*"), 1),
     ("I1: an application/x-javascript script on the live page",
         edit(LIVE, "</main>", '<script type="application/x-javascript">alert(1)</script></main>'), 1),
     ("I2B: src= inside another attribute's quoted value on the draft page",

@@ -11,9 +11,9 @@ Why the page is static
 ----------------------
 
 The page used to fetch the text with an inline ``<script>``. The site's
-Content-Security-Policy is ``script-src 'self'`` with no ``'unsafe-inline'``,
-nonce, or hash, so a compliant browser blocked that script and the page showed
-"Loading the instructions..." and nothing else. Its only inline ``style``
+Content-Security-Policy was then ``script-src 'self'`` with no
+``'unsafe-inline'``, nonce, or hash, so a compliant browser blocked that script
+and the page showed "Loading the instructions..." and nothing else. Its only inline ``style``
 attribute was blocked by ``style-src 'self'`` for the same reason. Embedding the
 text removes both problems, works with JavaScript switched off, and needs no
 loosening of the policy. Since the owner's decision of 2026-11-03 the site-wide
