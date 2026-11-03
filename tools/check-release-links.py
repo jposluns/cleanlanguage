@@ -77,9 +77,9 @@ SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re
 VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
 # The live verify page's checksum element, exactly as on main: no other attribute (such as hidden) passes.
 DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
-# The draft verify page's element, the template's <code class="sum" id="published-checksum">, matched by
-# its id in any attribute order, while an attribute such as data-id="published-checksum" does not count.
-DRAFT_SUM = re.compile(r'<code(?=[^>]*\sid="published-checksum"[\s>])[^>]*>([^<]*)</code>')
+# The draft verify page's element exactly as the generator writes it (the template's download block):
+# no other attribute, such as hidden, passes.
+DRAFT_SUM = re.compile(r'<code class="sum" id="published-checksum">([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 NAMED_ZIP = re.compile(r"cleanlanguage-([0-9][0-9.]*[0-9])\.zip")
 VERSION_LABEL = re.compile(r"\bversion ([0-9]+\.[0-9]+\.[0-9]+)\b")

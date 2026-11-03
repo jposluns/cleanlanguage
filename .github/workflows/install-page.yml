@@ -15,6 +15,7 @@ on:
       - "site/_headers"
       - "site/js/install.js"
       - "tools/check-install-page.py"
+      - "tools/check-headers.py"
       - "tools/test-install-page.py"
       - ".github/workflows/install-page.yml"
   push:
@@ -27,6 +28,7 @@ on:
       - "site/_headers"
       - "site/js/install.js"
       - "tools/check-install-page.py"
+      - "tools/check-headers.py"
       - "tools/test-install-page.py"
       - ".github/workflows/install-page.yml"
 
@@ -46,4 +48,4 @@ jobs:
 
       - name: Check the install page stays static and complete
         shell: bash
-        run: python3 tools/check-install-page.py
+        run: python3 -I tools/check-install-page.py

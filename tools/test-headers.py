@@ -512,6 +512,13 @@ class DraftRuleTest(unittest.TestCase):
                 self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  X-Robots-Tag: all"]),
                                  "sets X-Robots-Tag where the draft is served")
 
+    def test_noindex_changed_under_a_mid_segment_splat_or_placeholder_fails(self):
+        # A * or : anywhere in the first segment counts as reaching the draft (fail closed).
+        for pattern in ("/d:x/*", "/dr*", "/x*y/install/*"):
+            with self.subTest(pattern=pattern):
+                self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  X-Robots-Tag: all"]),
+                                 "sets X-Robots-Tag where the draft is served")
+
     def test_noindex_on_other_paths_passes(self):
         # The download files' own noindex (GOOD_LINES) and another live path stay allowed.
         code, text = self.run_gate(self.with_draft(DRAFT_LINES + ["", "/sitemap-old.xml", "  X-Robots-Tag: noindex"]))

@@ -135,6 +135,13 @@ class DraftReleaseTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('the verify page has no <code id="published-checksum"> block', output)
 
+    def test_draft_checksum_element_with_another_attribute_fails(self):
+        self.write(gate.DRAFT_VERIFY, DRAFT_VERIFY.format(v="1.0.14", sum=SUM).replace(
+            'id="published-checksum">', 'id="published-checksum" hidden>'))
+        code, output = self.run_gate()
+        self.assertEqual(code, 1)
+        self.assertIn("must show exactly 1", output)
+
     def test_draft_verify_without_its_checksum(self):
         self.write(gate.DRAFT_VERIFY, DRAFT_VERIFY.format(v="1.0.14", sum=SUM).replace('id="published-checksum"', 'id="sum"'))
         code, output = self.run_gate()

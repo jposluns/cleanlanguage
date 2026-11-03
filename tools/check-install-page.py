@@ -91,7 +91,8 @@ markup of the template specification (section 7.12), so it is checked here too:
     cannot drift: no rule detaches ``X-Robots-Tag``, and no rule other than
     ``/draft/*`` sets it where its pattern can reach ``/draft/`` (that check's
     ``reaches_draft`` heuristic, which ignores case). If that file cannot be
-    loaded, this gate fails closed (exit 3).
+    loaded (any exception or exit while it loads) or lacks ``robots_rule``,
+    ``parse`` or ``reaches_draft``, this gate fails closed (exit 3).
 
 At promotion the template page moves to ``site/install/index.html`` and the
 live-only checks (``.platform-actions``, ``#family-reset``, ``styles.css``,
@@ -418,10 +419,12 @@ def load_headers_gate():
         spec = importlib.util.spec_from_file_location("check_headers", path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-    except (OSError, ImportError, AttributeError, SyntaxError) as error:
-        die(f"tools/check-headers.py could not be loaded for its X-Robots-Tag rule: {error}")
-    if not callable(getattr(module, "robots_rule", None)) or not callable(getattr(module, "parse", None)):
-        die("tools/check-headers.py has no robots_rule and parse to share")
+    except (Exception, SystemExit) as error:
+        # Any failure while loading, a module-level exit included (even exit 0), is a cannot-evaluate.
+        die(f"tools/check-headers.py could not be loaded for its X-Robots-Tag rule: {type(error).__name__}: {error}")
+    missing = [name for name in ("robots_rule", "parse", "reaches_draft") if not callable(getattr(module, name, None))]
+    if missing:
+        die(f"tools/check-headers.py lacks {', '.join(missing)}, which this gate shares")
     return module
 
 

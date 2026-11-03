@@ -57,8 +57,9 @@ What it verifies
    carries the policy. A file with no ``/draft/*`` rule passes check 5.
 6. No rule detaches ``X-Robots-Tag``, and no rule other than ``/draft/*`` sets it
    where its pattern can match a path under ``/draft/``: a pattern that starts
-   with ``/draft``, or whose first path segment holds a splat or a placeholder
-   (``/*``, ``/:name``), or a full URL whose path does either. So no later rule
+   with ``/draft``, or whose first path segment holds a ``*`` or a ``:``
+   anywhere (``/*``, ``/:name``, ``/d:x/*``), or a full URL whose path does
+   either. So no later rule
    can remove or dilute the draft's ``X-Robots-Tag: noindex``. Rules for other
    paths, such as the download files' ``noindex``, are unaffected. The pattern
    comparison ignores case (``/Draft/*`` counts as reaching the draft), because
@@ -84,11 +85,11 @@ example ``https://:host/*``) counts as another rule, where it fails check 3 if i
 sets a decided header. Check 6 uses a conservative prefix heuristic,
 ``reaches_draft``, not Pages' matcher: a pattern reaches the draft when its path
 (after any ``https://host``) starts with ``/draft`` in any case, is ``/``, or has
-a splat or placeholder in its first segment. Its residual: it reads pattern text
-only, so it misses a rule that reaches ``/draft/`` through matching behaviour of
-Pages it does not model (for example a placeholder that spans more than 1 path
-segment) or through a redirect or rewrite elsewhere; and it flags some patterns
-Pages would not match to the draft, which can only fail closed.
+a ``*`` or a ``:`` anywhere in its first segment. Its residual: it reads pattern
+text only, so it misses a rule that reaches ``/draft/`` through a redirect or a
+rewrite elsewhere, or through any matching behaviour of Pages beyond those
+cases; and it flags some patterns Pages would not match to the draft, which can
+only fail closed.
 
 Exit codes:
   0  every check passes
@@ -246,7 +247,7 @@ def reaches_draft(pattern: str) -> bool:
     if path.startswith("/draft"):
         return True
     first = path.split("/")[1] if path.count("/") >= 1 else ""
-    return path == "/" or "*" in first or first.startswith(":")
+    return path == "/" or "*" in first or ":" in first
 
 
 def robots_rule(entries: list[tuple[int, str, str, str, str | None]]) -> list[str]:
