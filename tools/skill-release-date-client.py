@@ -45,7 +45,10 @@ and exits with that mode's documented code plus 10, so 0 stays 0:
       so the extractor is unavailable``, followed by ``; it printed: <text>``
       when the extractor wrote anything to stderr (at most STDERR_LIMIT
       bytes of it, its lines joined with `` | `` so the message stays one
-      line)
+      line). When the client machinery itself fails outside the run of the
+      extractor, the line is ``skill-release-date-client:
+      skill-release-date.py could not be run, waited for, or read (<type>:
+      <error>), so the extractor is unavailable``, with no ``in <op>``
   2   a usage error of the client
 
 No code below 10 other than 0 and 2 carries a meaning, so an exit that
@@ -69,7 +72,8 @@ reads only a bounded part of each (RESULT_LIMIT plus
 ECHO_BYTES_PER_CHARACTER bytes for each character of the request values,
 and STDERR_LIMIT). While the child runs, no file it writes can grow past
 output_cap(limit) bytes, one byte past the larger read bound (RLIMIT_FSIZE,
-set in the child before exec), so a child that writes fast cannot fill
+set in the child before exec as both its soft and its hard limit, so the
+child cannot raise it), so a child that writes fast cannot fill
 temporary storage within the timeout; a child whose stdout or stderr
 reaches that cap is unavailable, and the reason names the cap. The client
 waits for the child with a non-blocking
@@ -290,8 +294,9 @@ def output_cap(limit: int) -> int:
 
 
 def applied_cap(cap: int) -> int:
-    """The file size limit the child gets: ``cap``, or the inherited hard
-    limit when that is lower, since a child cannot raise it."""
+    """The file size limit the child gets, as both its soft and its hard
+    limit: ``cap``, or the inherited hard limit when that is lower, since no
+    process can raise its hard limit."""
     _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
     if hard != resource.RLIM_INFINITY and hard < cap:
         return hard
@@ -353,11 +358,11 @@ def run_extractor(op: str, fields: dict, timeout: float = CHILD_TIMEOUT_SECONDS,
     reset_sigchld()
     try:
         cap = applied_cap(output_cap(limit))
-        _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
 
         def limit_output() -> None:
-            # Runs in the child, before exec: no file it writes grows past cap.
-            resource.setrlimit(resource.RLIMIT_FSIZE, (cap, hard))
+            # Runs in the child, before exec: no file it writes grows past
+            # cap, and with the hard limit set to cap too, it cannot raise it.
+            resource.setrlimit(resource.RLIMIT_FSIZE, (cap, cap))
 
         with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, \
                 tempfile.TemporaryFile() as stderr:

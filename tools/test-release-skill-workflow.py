@@ -111,6 +111,48 @@ LAUNCH_PROBES = (
     '"python3" tools/skill-release-date.py --baseline',
 )
 
+# Row 89: the client file name, checked the same way. In a caller, the
+# lines that name it are only the comments and the launches listed with
+# the caller, each launch exactly "python3 -I tools/skill-release-date-
+# client.py" and its arguments, so any other line that names it fails:
+# a launch without -I, with another interpreter word, quoted or from a
+# variable, over a continuation line, by its shebang, or one more launch in
+# the listed form. Residual: a launch that builds the name from parts or
+# reads it from a variable is not seen.
+CLIENT_NAME = 'skill-release-date-client.py'
+
+
+def client_mentions(text: str) -> list:
+    """Each line of ``text`` that names the client, once per mention."""
+    return [line for line in text.split("\n") for _ in range(line.count(CLIENT_NAME))]
+
+
+# The forms another client launch could take; each must fail the check.
+CLIENT_LAUNCH_PROBES = (
+    'python3 tools/skill-release-date-client.py baseline',
+    '"python3" -I tools/skill-release-date-client.py baseline',
+    'python3 -X utf8 tools/skill-release-date-client.py baseline',
+    'python3 -I \\\n  tools/skill-release-date-client.py baseline',
+    'tools/skill-release-date-client.py baseline',
+    '"${PYTHON:-python3}" -I tools/skill-release-date-client.py baseline',
+    'python3 -I tools/skill-release-date-client.py baseline',
+)
+
+# The lines of the release workflow that name the client: its comments and
+# its launches.
+WORKFLOW_CLIENT_MENTIONS = (
+    '          # tools/skill-release-date-client.py (row 89), which runs it in its',
+    '          baseline="$(python3 -I tools/skill-release-date-client.py baseline)" || prc=$?',
+    '          released="$(python3 -I tools/skill-release-date-client.py extract-file cleanlanguage/skills/cleanlanguage/SKILL.md)" || rc=$?',
+    '              requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${VERSION}")" || rc=$?',
+    '              release_date="$(python3 -I tools/skill-release-date-client.py published-day "${published_at}")" || rc=$?',
+    '          # tools/skill-release-date.py, through tools/skill-release-date-client.py,',
+    '            python3 -I tools/skill-release-date-client.py publish-window "${RELEASE_DATE}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >/dev/null || rc=$?',
+    '          # tools/skill-release-date.py, through tools/skill-release-date-client.py.',
+    '            python3 -I tools/skill-release-date-client.py confirm-published "${RELEASE_DATE}" "${published_at}" >/dev/null || rc=$?',
+    '            baseline="$(python3 -I tools/skill-release-date-client.py baseline)" || prc=$?',
+)
+
 # The lines of the release workflow that name the extractor: failure
 # messages and a comment, none of them a launch.
 WORKFLOW_MENTIONS = (
@@ -998,6 +1040,13 @@ class HarnessTest(WorkflowStepTest):
             with self.subTest(probe=probe):
                 injected = WORKFLOW_TEXT + "".join("          " + line + "\n" for line in probe.split("\n"))
                 self.assertNotEqual(extractor_mentions(injected), list(WORKFLOW_MENTIONS))
+
+    def test_every_other_client_launch_fails_the_check(self):
+        self.assertEqual(client_mentions(WORKFLOW_TEXT), list(WORKFLOW_CLIENT_MENTIONS))
+        for probe in CLIENT_LAUNCH_PROBES:
+            with self.subTest(probe=probe):
+                injected = WORKFLOW_TEXT + "".join("          " + line + "\n" for line in probe.split("\n"))
+                self.assertNotEqual(client_mentions(injected), list(WORKFLOW_CLIENT_MENTIONS))
 
     def test_fake_date_refuses_a_call_without_utc(self):
         proc = subprocess.run([str(self.bin / "date"), "+%F"], env={"FAKE_STATE": str(self.state)},

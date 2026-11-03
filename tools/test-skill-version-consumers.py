@@ -57,20 +57,66 @@ LAUNCH_PROBES = (
     '"python3" tools/skill-release-date.py --baseline',
 )
 
+# Row 89: the client file name, checked the same way. In a caller, the
+# lines that name it are only the comments and the launches listed with
+# the caller, each launch exactly "python3 -I tools/skill-release-date-
+# client.py" and its arguments, so any other line that names it fails:
+# a launch without -I, with another interpreter word, quoted or from a
+# variable, over a continuation line, by its shebang, or one more launch in
+# the listed form. Residual: a launch that builds the name from parts or
+# reads it from a variable is not seen.
+CLIENT_NAME = 'skill-release-date-client.py'
+
+
+def client_mentions(text: str) -> list:
+    """Each line of ``text`` that names the client, once per mention."""
+    return [line for line in text.split("\n") for _ in range(line.count(CLIENT_NAME))]
+
+
+# The forms another client launch could take; each must fail the check.
+CLIENT_LAUNCH_PROBES = (
+    'python3 tools/skill-release-date-client.py baseline',
+    '"python3" -I tools/skill-release-date-client.py baseline',
+    'python3 -X utf8 tools/skill-release-date-client.py baseline',
+    'python3 -I \\\n  tools/skill-release-date-client.py baseline',
+    'tools/skill-release-date-client.py baseline',
+    '"${PYTHON:-python3}" -I tools/skill-release-date-client.py baseline',
+    'python3 -I tools/skill-release-date-client.py baseline',
+)
+
+# The lines of release-package.sh and release-dry-run.sh that name the
+# client: its comments and its launches.
+PACKAGER_CLIENT_MENTIONS = (
+    '#      tools/skill-release-date-client.py, and fails on a malformed',
+    '# tools/skill-release-date-client.py (row 89). The client gives a content',
+    'baseline="$(python3 -I tools/skill-release-date-client.py baseline 2>&1)" || probe_rc=$?',
+    '  checked="$(python3 -I tools/skill-release-date-client.py check-date "${release_date}" 2>&1)" || check_rc=$?',
+    '  git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-release-date-client.py extract-stdin 2>&1',
+    '    fail "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is malformed: $(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-release-date-client.py extract-stdin 2>&1 >/dev/null || true)"',
+    '  requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${version}" 2>&1)" || req_rc=$?',
+)
+DRY_RUN_CLIENT_MENTIONS = (
+    '# The client, tools/skill-release-date-client.py, runs the extractor in its',
+    'probe="$(python3 -I tools/skill-release-date-client.py baseline 2>&1)" || probe_rc=$?',
+    'stamped="$(python3 -I tools/skill-release-date-client.py extract-file cleanlanguage/skills/cleanlanguage/SKILL.md)" || stamped_rc=$?',
+)
+
 # The lines of release-package.sh and release-dry-run.sh that name the
 # extractor: failure messages and comments, none of them a launch.
 PACKAGER_MENTIONS = (
     '#      (item 26) through tools/skill-release-date.py, run in its --json mode by',
     '# extractor, tools/skill-release-date.py, run in its --json mode by',
     '  fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc}), so the Released line could not be checked"',
-    '    *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${check_rc}) checking --release-date ${release_date:-nothing}" ;;',
+    '      fail "tools/skill-release-date.py is unavailable or crashed (exit ${check_rc}) checking --release-date ${release_date:-nothing}"',
+    '      || fail "tools/skill-release-date.py gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"',
     '    fail "tools/skill-release-date.py is unavailable or crashed (exit ${released_rc}) reading the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"',
     '    11) fail "tools/skill-release-date.py rejected the version ${version} as not a bare X.Y.Z" ;;',
-    '    *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${req_rc}) deciding whether ${version} needs a Released line" ;;',
+    '      fail "tools/skill-release-date.py is unavailable or crashed (exit ${req_rc}) deciding whether ${version} needs a Released line"',
     '    *) fail "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for whether ${version} needs a Released line" ;;',
 )
 DRY_RUN_MENTIONS = (
-    '  *) fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc})" ;;',
+    '  0) [[ "${probe}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || fail "tools/skill-release-date.py is unavailable or broken (probe exit 0)" ;;',
+    '    fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc})"',
     '  *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${stamped_rc}) reading the stamped SKILL.md" ;;',
 )
 
@@ -95,6 +141,37 @@ CRASH_HOOK = (
     "_crash_mod.category = _crash\n"
 )
 
+# Row 89: a stand-in client that answers the probe and the date check as the
+# real one does, and then, for the read of the Released line, reads its input
+# and ends with the exit code or the stdout given.
+STAND_IN_CLIENT = (
+    "import sys\n"
+    "args = sys.argv[1:]\n"
+    "if args == ['baseline']:\n"
+    "    print('1.0.14')\n"
+    "    raise SystemExit(0)\n"
+    "if args[:1] == ['check-date']:\n"
+    "    print(args[1])\n"
+    "    raise SystemExit(0)\n"
+    "sys.stdin.buffer.read()\n"
+    "sys.stdout.write({out!r})\n"
+    "raise SystemExit({code})\n"
+)
+
+# Row 89: a git that fails its third read of HEAD:cleanlanguage/skills/
+# cleanlanguage/SKILL.md, which is the Released read of the packager (after
+# the skill check and the version read), and runs the real git otherwise.
+FAILING_BLOB_GIT = (
+    "#!/bin/sh\n"
+    "if [ \"$1\" = show ] && [ \"$2\" = HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md ]; then\n"
+    "  n=$(cat {count} 2>/dev/null || echo 0)\n"
+    "  n=$((n + 1))\n"
+    "  echo \"$n\" > {count}\n"
+    "  if [ \"$n\" -eq 3 ]; then echo 'fatal: injected blob read failure' >&2; exit 128; fi\n"
+    "fi\n"
+    "exec {git} \"$@\"\n"
+)
+
 # Row 89: a copy of the extractor whose --json mode breaks for the op named
 # first, in the way the MODE names, while every other op still answers, and
 # whose CLI content modes exit 1 (so the probe passes and an unchanged caller
@@ -117,7 +194,12 @@ def main(argv):
 MODES = {
     "exit1": "    raise SystemExit(1)",
     "notjson": "    print('not json')\n    return 0",
-    "otherop": "    print(json.dumps({'op': 'baseline', 'outcome': 'value', 'value': '1.0.14'}))\n    return 0",
+    "otherop": (
+        "    other = 'extract' if request['op'] == 'baseline' else 'baseline'\n"
+        "    value = '2026-11-15' if other == 'extract' else '1.0.14'\n"
+        "    print(json.dumps({'op': other, 'outcome': 'value', 'value': value}))\n"
+        "    return 0"
+    ),
     "badvalue": "    print(json.dumps({'op': request['op'], 'outcome': 'value', 'value': '2026-11-15 '}))\n    return 0",
     "refused": "    print(json.dumps({'op': request['op'], 'outcome': 'refused', 'message': 'x'}))\n    return 0",
 }
@@ -206,14 +288,15 @@ def gate_verdict(gate, skill_text: str):
     return (True, match.group(1)) if match else (False, None)
 
 
-def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None):
+def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
     CHECKOUT's release-package.sh, tools/skill-release-date.py and
     tools/skill-release-date-client.py (so the code under test, not HEAD's
     copy, is exercised), passing ``--release-date`` when ``release_date`` is
     given and then ``extra_args``. ``extractor`` replaces the extractor and
     ``client`` the client: ``"missing"`` deletes it, any other text is written
-    in its place. Returns (exit_code, stderr)."""
+    in its place. ``path_prefix`` is put first on the PATH of the packager.
+    Returns (exit_code, stderr)."""
     skill = skill_with(version_block, released_block) + extra_tail
     with tempfile.TemporaryDirectory() as tmp:
         wt = Path(tmp) / "wt"
@@ -247,6 +330,8 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             env = dict(os.environ)
             if locale is not None:
                 env["LC_ALL"] = locale
+            if path_prefix is not None:
+                env["PATH"] = path_prefix + os.pathsep + env.get("PATH", "")
             args = ["bash", str(wt / "tools" / "release-package.sh")]
             if release_date is not None:
                 args += ["--release-date", release_date]
@@ -428,6 +513,14 @@ class PackagerReleaseDateTest(unittest.TestCase):
              "Released line",
              ("rejected the version", "unexpected answer")),
         )
+        sites += (
+            ("baseline", "baseline",
+             dict(version_block="Version: 1.2.3  ", plugin_version="1.2.3", release_date="2026-11-15",
+                  released_block="Released: 2026-11-15  "),
+             "tools/skill-release-date.py is unavailable or broken (probe exit 16), so the Released line could not "
+             "be checked",
+             ("malformed", "could not read")),
+        )
         for site, op, fixture, expected, absent in sites:
             for mode in MODES:
                 with self.subTest(site=site, mode=mode):
@@ -436,6 +529,59 @@ class PackagerReleaseDateTest(unittest.TestCase):
                     self.assertIn(expected, stderr)
                     for fragment in absent:
                         self.assertNotIn(fragment, stderr)
+                    # The line in which the client names its reason is relayed
+                    # before the message of the packager.
+                    lines = stderr.splitlines()
+                    self.assertEqual(len(lines), 2, stderr)
+                    self.assertTrue(lines[0].startswith("skill-release-date-client: skill-release-date.py "), stderr)
+                    self.assertTrue(lines[0].endswith(f" in {op}, so the extractor is unavailable")
+                                    or f" in {op}, so the extractor is unavailable; it printed: " in lines[0], stderr)
+                    self.assertTrue(lines[1].startswith("release-package: "), stderr)
+
+    def test_a_probe_value_with_another_line_is_not_accepted(self):
+        stand_in = STAND_IN_CLIENT.replace("    print('1.0.14')\n", "    print('1.0.14')\n    print('noise')\n", 1)
+        self.assertNotEqual(stand_in, STAND_IN_CLIENT)
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", released_block="Released: 2026-11-15  ",
+                                    client=stand_in.format(out="2026-11-15\n", code=0))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("tools/skill-release-date.py is unavailable or broken (probe exit 0)", stderr)
+
+    def test_a_client_exit_125_is_not_a_failed_blob_read(self):
+        # Row 89: 125 is a client exit like any other, not the failed read of
+        # the blob, which the packager reports only from the status of git.
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                    released_block="Released: 2026-11-15  ",
+                                    client=STAND_IN_CLIENT.format(out="", code=125))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("tools/skill-release-date.py is unavailable or crashed (exit 125) reading the Released line", stderr)
+        self.assertNotIn("could not read", stderr)
+
+    def test_a_failed_blob_read_is_named_as_such(self):
+        # Row 89: a git show that fails at the Released read is reported as
+        # that, whatever the client did with the input it got.
+        git = shutil.which("git")
+        self.assertIsNotNone(git)
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "git"
+            fake.write_text(FAILING_BLOB_GIT.format(count=str(Path(tmp) / "count"), git=git), encoding="utf-8")
+            fake.chmod(0o755)
+            code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                        released_block="Released: 2026-11-15  ", path_prefix=tmp)
+            reads = int((Path(tmp) / "count").read_text())
+        self.assertEqual(reads, 3, stderr)
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("release-package: could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its "
+                      "Released line\n", stderr)
+        self.assertNotIn("unavailable or crashed", stderr)
+
+    def test_a_value_that_is_not_a_day_is_not_used(self):
+        # Row 89: an exit 0 whose output is not a bare day (which the client
+        # never gives) fails as an unexpected answer, never as a Released date.
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", released_block="Released: 2026-11-15  ",
+                                    client=STAND_IN_CLIENT.format(out="2026-11-15\nnoise\n", code=0))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("tools/skill-release-date.py gave an unexpected answer (2026-11-15\nnoise) for the Released "
+                      "line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD", stderr)
 
     def test_a_broken_client_is_unavailable(self):
         # Row 89: a client that does not compile (exit 1) or is missing (exit
@@ -474,6 +620,28 @@ class PackagerReleaseDateTest(unittest.TestCase):
                                             released_block="Released: 2026-11-15  ")
                 self.assertEqual(code, 1, stderr)
                 self.assertIn("--release-date must be a real YYYY-MM-DD date", stderr)
+
+
+def dry_run_probe(extractor: str):
+    """Run the probe of release-dry-run.sh, extracted from the real script
+    (from ``probe_rc=0`` to its ``esac``), in a throwaway tree holding
+    ``extractor`` and the real client. Returns (exit code, stdout, stderr)."""
+    lines = DRY_RUN.read_text(encoding="utf-8").split("\n")
+    start = lines.index("probe_rc=0")
+    block = "\n".join(lines[start: lines.index("esac", start) + 1])
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "tools").mkdir()
+        (root / "tools" / "skill-release-date.py").write_text(extractor, encoding="utf-8")
+        (root / "tools" / "skill-release-date-client.py").write_text(CLIENT.read_text(encoding="utf-8"),
+                                                                     encoding="utf-8")
+        script = (
+            "set -euo pipefail\n"
+            "fail() { printf 'release-dry-run: %s\\n' \"$1\" >&2; exit 1; }\n"
+            + block + "\nprintf %s \"${probe}\"\n"
+        )
+        proc = subprocess.run(["bash", "-c", script], cwd=root, capture_output=True, text=True)
+    return proc.returncode, proc.stdout, proc.stderr
 
 
 def dry_run_stamped_read(extractor: str, skill_readable: bool = True, client: str | None = None,
@@ -538,6 +706,16 @@ class DryRunReleasedReadTest(unittest.TestCase):
                               "SKILL.md", err)
                 self.assertNotIn("could not set the dry-run Released date", err)
 
+    def test_the_probe_passes_and_relays_the_client_reason(self):
+        code, out, err = dry_run_probe(RELEASE_DATE_TOOL.read_text(encoding="utf-8"))
+        self.assertEqual((code, out, err), (0, "1.0.14", ""))
+        code, _out, err = dry_run_probe(broken_extractor("baseline", "exit1"))
+        self.assertEqual(code, 1, err)
+        self.assertEqual(err.splitlines(), [
+            "skill-release-date-client: skill-release-date.py exited 1 in baseline, so the extractor is unavailable",
+            "release-dry-run: tools/skill-release-date.py is unavailable or broken (probe exit 16)",
+        ])
+
     def test_a_malformed_stamp_names_the_client_exit(self):
         code, _out, err = dry_run_stamped_read(RELEASE_DATE_TOOL.read_text(encoding="utf-8"),
                                                skill_text="Version: 1.0.15  \nReleased: soon\n")
@@ -551,10 +729,12 @@ class CallerLaunchTest(unittest.TestCase):
 
     def test_every_launch_goes_through_the_client(self):
         self.assertNotIn(EXTRACTOR_NAME, "tools/skill-release-date-client.py")
-        for path, mentions, launches in ((PACKAGER, PACKAGER_MENTIONS, 5), (DRY_RUN, DRY_RUN_MENTIONS, 2)):
+        for path, mentions, client, launches in ((PACKAGER, PACKAGER_MENTIONS, PACKAGER_CLIENT_MENTIONS, 5),
+                                                 (DRY_RUN, DRY_RUN_MENTIONS, DRY_RUN_CLIENT_MENTIONS, 2)):
             with self.subTest(path.name):
                 text = path.read_text(encoding="utf-8")
                 self.assertEqual(extractor_mentions(text), list(mentions))
+                self.assertEqual(client_mentions(text), list(client))
                 self.assertEqual(text.count("python3 -I tools/skill-release-date-client.py"), launches)
 
     def test_every_direct_launch_form_fails_the_check(self):
@@ -563,6 +743,13 @@ class CallerLaunchTest(unittest.TestCase):
             for probe in LAUNCH_PROBES:
                 with self.subTest(path.name, probe=probe):
                     self.assertNotEqual(extractor_mentions(text + probe + "\n"), list(mentions))
+
+    def test_every_other_client_launch_fails_the_check(self):
+        for path, client in ((PACKAGER, PACKAGER_CLIENT_MENTIONS), (DRY_RUN, DRY_RUN_CLIENT_MENTIONS)):
+            text = path.read_text(encoding="utf-8")
+            for probe in CLIENT_LAUNCH_PROBES:
+                with self.subTest(path.name, probe=probe):
+                    self.assertNotEqual(client_mentions(text + probe + "\n"), list(client))
 
 
 def _locale_available(name: str) -> bool:

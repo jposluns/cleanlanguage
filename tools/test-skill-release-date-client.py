@@ -620,6 +620,30 @@ class BoundsTest(unittest.TestCase):
         with mock.patch.object(client.resource, "getrlimit", lambda which: (hard, client.resource.RLIM_INFINITY)):
             self.assertEqual(client.applied_cap(1000), 1000)
 
+    def test_the_child_cannot_raise_its_file_size_limit(self):
+        # The child gets the cap as both its soft and its hard limit, so it
+        # can neither raise its soft limit past the cap nor raise the hard
+        # limit; a child with an infinite hard limit could undo the cap.
+        body = (
+            "import json, resource, sys\n"
+            "request = json.loads(sys.stdin.read())\n"
+            "soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)\n"
+            "try:\n"
+            "    resource.setrlimit(resource.RLIMIT_FSIZE, (soft + 1000, max(hard, soft + 1000)))\n"
+            "    raised = 'raised'\n"
+            "except (ValueError, OSError):\n"
+            "    raised = 'refused'\n"
+            "message = 'fsize=%d/%d %s' % (soft, hard, raised)\n"
+            "print(json.dumps({'op': request['op'], 'outcome': 'malformed', 'message': message}))\n"
+        )
+        cap = client.output_cap(client.RESULT_LIMIT + client.ECHO_BYTES_PER_CHARACTER * len("1.0.15"))
+        pair = Pair(body)
+        try:
+            self.assertEqual(pair.run("requires-date", "1.0.15"),
+                             (11, "", f"skill-release-date: fsize={cap}/{cap} refused\n"))
+        finally:
+            pair.close()
+
     def test_relayed_stderr_is_one_line(self):
         # Every line the child wrote to stderr is relayed on the one line,
         # joined with " | "; blank lines and surrounding blanks are dropped.

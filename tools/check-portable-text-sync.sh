@@ -68,11 +68,25 @@ version_of() {
 # interpreter failure) means the tool itself is unavailable or crashed, which
 # is reported as that, never as malformed content. Every exit but 0 and 13
 # fails closed.
+# The client writes to one stream only: on exit 0 the value on stdout, and on
+# any other exit its message on stderr with nothing on stdout. Each call
+# below captures both streams, so an unavailable branch can relay the
+# line in which the client names its reason (relay_client) before its own
+# message, and a value is checked for its form before it is used.
+relay_client() {
+  [ -z "$1" ] || printf '%s\n' "$1" >&2
+}
 released_of() {
   local out rc=0
-  out="$(python3 -I tools/skill-release-date-client.py extract-file "$1" 2>/dev/null)" || rc=$?
+  out="$(python3 -I tools/skill-release-date-client.py extract-file "$1" 2>&1)" || rc=$?
   case "${rc}" in
-    0) printf '%s\n' "${out}" ;;
+    0)
+      if ! [[ "${out}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+        echo "tools/skill-release-date.py gave an unexpected answer (${out:-nothing}) for the Released line of $1." >&2
+        return 1
+      fi
+      printf '%s\n' "${out}"
+      ;;
     13) ;;
     11)
       echo "Malformed Released: line in $1: $(python3 -I tools/skill-release-date-client.py extract-file "$1" 2>&1 >/dev/null || true)" >&2
@@ -83,6 +97,7 @@ released_of() {
       return 1
       ;;
     *)
+      relay_client "${out}"
       echo "tools/skill-release-date.py is unavailable or crashed (exit ${rc}) reading $1, so its Released line could not be checked." >&2
       return 1
       ;;
@@ -116,19 +131,24 @@ check_common() {
   # spaces. The client is probed first (baseline), so a missing or broken tool
   # is reported as unavailable before any content is judged.
   local sr baseline requirement fr prc=0
-  baseline="$(python3 -I tools/skill-release-date-client.py baseline 2>/dev/null)" || prc=$?
-  if [ "${prc}" -ne 0 ] || ! printf '%s' "${baseline}" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+  baseline="$(python3 -I tools/skill-release-date-client.py baseline 2>&1)" || prc=$?
+  if [ "${prc}" -ne 0 ] || ! [[ "${baseline}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    relay_client "${baseline}"
     echo "tools/skill-release-date.py is unavailable or broken (probe exit ${prc}), so the Released lines could not be checked." >&2
     return 1
   fi
   sr="$(released_of cleanlanguage/skills/cleanlanguage/SKILL.md)" || return 1
   if [ -z "${sr}" ]; then
     prc=0
-    requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${sv}" 2>/dev/null)" || prc=$?
+    requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${sv}" 2>&1)" || prc=$?
     case "${prc}" in
       0) ;;
       11) echo "tools/skill-release-date.py rejected the version ${sv} as not a bare X.Y.Z." >&2; return 1 ;;
-      *) echo "tools/skill-release-date.py is unavailable or crashed (exit ${prc}) deciding whether ${sv} needs a Released line." >&2; return 1 ;;
+      *)
+        relay_client "${requirement}"
+        echo "tools/skill-release-date.py is unavailable or crashed (exit ${prc}) deciding whether ${sv} needs a Released line." >&2
+        return 1
+        ;;
     esac
     if [ "${requirement}" = "required" ]; then
       echo "cleanlanguage/skills/cleanlanguage/SKILL.md is version ${sv}, above the undated baseline ${baseline}, but has no Released: YYYY-MM-DD line directly after its Version line." >&2

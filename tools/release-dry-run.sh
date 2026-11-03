@@ -112,12 +112,17 @@ PYDATE
 # --json mode and is probed first, so a missing or broken tool is reported as
 # that. Then exit 11 or 13 means the stamp did not produce a well-formed line,
 # exit 14 means the stamped file could not be read, and any other exit means
-# the tool is unavailable or crashed, reported as that.
+# the tool is unavailable or crashed, reported as that. The probe captures
+# both streams of the client (which writes the value on stdout on exit 0,
+# and only its message on stderr otherwise), so its reason is relayed.
 probe_rc=0
-probe="$(python3 -I tools/skill-release-date-client.py baseline 2>/dev/null)" || probe_rc=$?
-case "${probe_rc}:${probe}" in
-  0:[0-9]*.[0-9]*.[0-9]*) ;;
-  *) fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc})" ;;
+probe="$(python3 -I tools/skill-release-date-client.py baseline 2>&1)" || probe_rc=$?
+case "${probe_rc}" in
+  0) [[ "${probe}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "tools/skill-release-date.py is unavailable or broken (probe exit 0)" ;;
+  *)
+    [ -z "${probe}" ] || printf '%s\n' "${probe}" >&2
+    fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc})"
+    ;;
 esac
 stamped_rc=0
 stamped="$(python3 -I tools/skill-release-date-client.py extract-file cleanlanguage/skills/cleanlanguage/SKILL.md)" || stamped_rc=$?

@@ -267,6 +267,31 @@ for mode in exit1 notjson otherop badvalue refused; do
     "rejected the version"
 done
 
+# 2d2. Row 89: at each call of the gate, the line in which the client names
+#      its reason is relayed before the message of the gate.
+for op in baseline extract requires_release_date; do
+  undated_fixture 1.0.14
+  break_extractor "${op}" exit1
+  expect_fail "the client reason is relayed at the ${op} call" \
+    "skill-release-date-client: skill-release-date.py exited 1 in ${op}, so the extractor is unavailable"
+done
+
+# 2d3. Row 89: an exit 0 whose output is not a bare day (which the client
+#      never gives) fails as an unexpected answer, never as a Released date.
+undated_fixture 1.0.14
+mv "${work}/tools/skill-release-date-client.py" "${work}/tools/real-client.py"
+cat > "${work}/tools/skill-release-date-client.py" <<'PYCLIENT'
+import os, sys
+if sys.argv[1:2] == ["extract-file"]:
+    print("2026-11-15")
+    print("noise")
+    raise SystemExit(0)
+real = os.path.join(os.path.dirname(os.path.abspath(__file__)), "real-client.py")
+os.execv(sys.executable, [sys.executable, "-I", real, *sys.argv[1:]])
+PYCLIENT
+expect_fail "a value that is not a bare day is not used" \
+  "tools/skill-release-date.py gave an unexpected answer (2026-11-15"
+
 # 2e. Row 89: a missing client fails the probe.
 undated_fixture 1.0.14
 rm -f "${work}/tools/skill-release-date-client.py"
@@ -282,10 +307,11 @@ expect_fail "a missing client is reported as unavailable" "tools/skill-release-d
 allowed_mentions="${scratch}/allowed-mentions.txt"
 cat > "${allowed_mentions}" <<'ALLOWED'
 # return 1. The one shared strict extractor, tools/skill-release-date.py, does
+        echo "tools/skill-release-date.py gave an unexpected answer (${out:-nothing}) for the Released line of $1." >&2
       echo "tools/skill-release-date.py is unavailable or crashed (exit ${rc}) reading $1, so its Released line could not be checked." >&2
     echo "tools/skill-release-date.py is unavailable or broken (probe exit ${prc}), so the Released lines could not be checked." >&2
       11) echo "tools/skill-release-date.py rejected the version ${sv} as not a bare X.Y.Z." >&2; return 1 ;;
-      *) echo "tools/skill-release-date.py is unavailable or crashed (exit ${prc}) deciding whether ${sv} needs a Released line." >&2; return 1 ;;
+        echo "tools/skill-release-date.py is unavailable or crashed (exit ${prc}) deciding whether ${sv} needs a Released line." >&2
       echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for whether ${sv} needs a Released line." >&2
 ALLOWED
 mentions_match() { # file: its lines that name the extractor are exactly the allowed ones
@@ -327,7 +353,62 @@ if [ "${probes_seen}" -eq 5 ] && [ "${probes_caught}" -eq 5 ]; then
 else
   fail "each direct launch form fails the launch check (${probes_caught} of ${probes_seen} caught, 5 expected)"
 fi
+# The client file name, checked the same way: the lines of the gate that
+# name skill-release-date-client.py are only the comment and the launches
+# listed here, each exactly "python3 -I tools/skill-release-date-client.py"
+# and its arguments, so any other line that names it fails, one more launch
+# in the listed form among them.
+allowed_client="${scratch}/allowed-client.txt"
+cat > "${allowed_client}" <<'ALLOWEDCLIENT'
+# the reading, run in its --json mode by tools/skill-release-date-client.py
+  out="$(python3 -I tools/skill-release-date-client.py extract-file "$1" 2>&1)" || rc=$?
+      echo "Malformed Released: line in $1: $(python3 -I tools/skill-release-date-client.py extract-file "$1" 2>&1 >/dev/null || true)" >&2
+      echo "Could not read $1 for its Released line: $(python3 -I tools/skill-release-date-client.py extract-file "$1" 2>&1 >/dev/null || true)" >&2
+  baseline="$(python3 -I tools/skill-release-date-client.py baseline 2>&1)" || prc=$?
+    requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${sv}" 2>&1)" || prc=$?
+ALLOWEDCLIENT
+client_mentions_match() { # file: its lines that name the client are exactly the allowed ones
+  grep -F -- "skill-release-date-client.py" "$1" | cmp -s - "${allowed_client}"
+}
+client_probes="${scratch}/client-probes.txt"
+cat > "${client_probes}" <<'CLIENTPROBES'
+python3 tools/skill-release-date-client.py baseline
+PROBE-END
+"python3" -I tools/skill-release-date-client.py baseline
+PROBE-END
+python3 -X utf8 tools/skill-release-date-client.py baseline
+PROBE-END
+python3 -I \
+  tools/skill-release-date-client.py baseline
+PROBE-END
+tools/skill-release-date-client.py baseline
+PROBE-END
+"${PYTHON:-python3}" -I tools/skill-release-date-client.py baseline
+PROBE-END
+python3 -I tools/skill-release-date-client.py baseline
+PROBE-END
+CLIENTPROBES
+probes_seen=0
+probes_caught=0
+probe_text=""
+while IFS= read -r probe_line; do
+  if [ "${probe_line}" = "PROBE-END" ]; then
+    probes_seen=$((probes_seen + 1))
+    { cat "${repo_root}/tools/check-portable-text-sync.sh"; printf '%s' "${probe_text}"; } > "${probe_copy}"
+    if ! client_mentions_match "${probe_copy}"; then probes_caught=$((probes_caught + 1)); fi
+    probe_text=""
+  else
+    probe_text="${probe_text}${probe_line}
+"
+  fi
+done < "${client_probes}"
+if [ "${probes_seen}" -eq 7 ] && [ "${probes_caught}" -eq 7 ]; then
+  pass "each other client launch form fails the client check (${probes_caught} of ${probes_seen})"
+else
+  fail "each other client launch form fails the client check (${probes_caught} of ${probes_seen} caught, 7 expected)"
+fi
 if mentions_match "${repo_root}/tools/check-portable-text-sync.sh" \
+    && client_mentions_match "${repo_root}/tools/check-portable-text-sync.sh" \
     && [ "$(grep -Fo "python3 -I tools/skill-release-date-client.py" "${repo_root}/tools/check-portable-text-sync.sh" | wc -l)" -eq 5 ]; then
   pass "every extractor launch in the gate goes through the client"
 else
