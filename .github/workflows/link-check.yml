@@ -22,7 +22,6 @@ on:
       - "tools/check-links.py"
       - "tools/check-release-links.py"
       - "tools/set-release-links.py"
-      - "tools/check-release-links.py"
       - "tools/test-release-links.py"
       - ".github/workflows/link-check.yml"
   push:
@@ -36,7 +35,6 @@ on:
       - "tools/check-links.py"
       - "tools/check-release-links.py"
       - "tools/set-release-links.py"
-      - "tools/check-release-links.py"
       - "tools/test-release-links.py"
       - ".github/workflows/link-check.yml"
 
