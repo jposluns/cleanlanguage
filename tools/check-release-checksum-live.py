@@ -130,9 +130,9 @@ stdout to the cap, truncates it and writes a valid reply is accepted; the
 cap applies to each file, not to their total, so a child can write any
 number of files, each up to the cap; a child, or a process it starts, that
 holds CAP_SYS_RESOURCE (as a gate run as root gives it) can raise the hard
-limit and then the soft one, so the cap does not apply to it; and its stdin
-file has the same cap but is not checked, so a child that fills it and
-still replies validly keeps its verdict.
+limit and then the soft one, so the cap holds only until it raises it; and
+its stdin file has the same cap but is not checked, so a child that fills
+it and still replies validly keeps its verdict.
 Every other outcome of a child that the gate observes exits 3 with its
 report, never 2, 1, or 0. On a normal end and on a timeout, the gate kills
 the process group of the child before it reaps the child, or exits 3 when it
