@@ -102,15 +102,19 @@ not compared with the free space of the file system, so a file below the
 cap can still run out of space; the check reads only the final size, so a
 child that fills stdout to the cap, truncates it and writes a valid reply
 is accepted; the cap applies to each file, not to their total, so a child
-can write any number of files, each up to the cap; a child, or a process
-it starts, that holds CAP_SYS_RESOURCE (as a client run as root gives it)
+can write any number of files, each up to the cap; a file already larger
+than the cap keeps its size, the child can write in it only below the cap,
+and a write in it that would cross the cap is cut short at the cap rather
+than refused; a child, or a process it starts, that holds CAP_SYS_RESOURCE
+(as a client run as root gives it)
 can raise the hard limit and then the soft one, so the cap holds only
 until it raises it; and the stdin file has the same cap but is not
 checked, so a child that fills it and still replies validly keeps its
 verdict. The extractor as it is starts no process and writes no file
 other than its stdout and stderr, so the residuals on the group after a
-normal end, on a process that leaves the group, and on the number of
-files cannot arise from it. It also reserves no disk blocks,
+normal end, on a process that leaves the group, on the number of files,
+and on a file already larger than the cap cannot arise from it. It also
+reserves no disk blocks,
 truncates no file, sets no resource limit, and writes nothing to its stdin,
 so the residuals on reserved blocks, truncation, CAP_SYS_RESOURCE, and the
 stdin file do not arise from it either. The other two, on the free space of
@@ -311,11 +315,12 @@ def output_cap(limit: int) -> int:
     """The size limit, in bytes, on each file the child writes, under
     ordinary writes: one byte past the larger of the two read bounds
     (``limit + 1`` bytes of stdout and STDERR_LIMIT bytes of stderr), so a
-    reply one byte too long is still read and refused as too long, and an
-    ordinary write that would grow a file past the cap fails. It does not
-    bound a file already larger than the cap, which the child can write
-    within; for everything else it does not bound, see the residuals in
-    the module docstring."""
+    reply one byte too long is still read and refused as too long. An
+    ordinary write that would cross the cap is cut short at the cap; one
+    that starts at or past the cap fails with EFBIG in a process that
+    ignores SIGXFSZ, as Python does, and ends any other process with that
+    signal. For what the cap does not bound, see the residuals in the
+    module docstring."""
     return max(limit + 1, STDERR_LIMIT) + 1
 
 
