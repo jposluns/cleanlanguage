@@ -119,19 +119,21 @@ lower file size limit the caller set, soft or hard (applied_cap). The cap
 is RLIMIT_FSIZE, set in the child before exec as both its soft and its hard
 limit, so a child without CAP_SYS_RESOURCE, and any process it starts
 without it, cannot raise it, and an extractor that writes too much by
-accident cannot fill temporary storage within the timeout. After the wait,
+accident through any one file, such as its stdout or stderr, cannot fill
+temporary storage through that file within the timeout. After the wait,
 a child whose stdout or stderr has a final size that reached that cap,
 including a lower limit the caller set, is unavailable, and the reason
-names that cap. Residuals: RLIMIT_FSIZE bounds the logical
-size of a file, not the storage allocated to it, so deliberate child code
-can reserve disk blocks past the end of a file (with fallocate, for
-example) without growing it; the check reads only the final size, so a
-child that fills stdout to the cap, truncates it and writes a valid reply
-is accepted; a child, or a process it starts, that holds CAP_SYS_RESOURCE
-(as a gate run as root gives it) can raise the hard limit and then the
-soft one, so the cap does not bound it; and its stdin file is bounded the
-same way but not checked, so a child that fills it and still replies
-validly keeps its verdict.
+names that cap. Residuals: RLIMIT_FSIZE bounds the logical size of a file,
+not the storage allocated to it, so deliberate child code can reserve disk
+blocks past the end of a file (with fallocate, for example) without growing
+it; the check reads only the final size, so a child that fills stdout to
+the cap, truncates it and writes a valid reply is accepted; the cap applies
+to each file, not to their total, so a child that writes many files, by
+accident or not, can still fill temporary storage; a child, or a process it
+starts, that holds CAP_SYS_RESOURCE (as a gate run as root gives it) can
+raise the hard limit and then the soft one, so the cap does not bound it;
+and its stdin file is bounded the same way but not checked, so a child that
+fills it and still replies validly keeps its verdict.
 Every other outcome of a child that the gate observes exits 3 with its
 report, never 2, 1, or 0. On a normal end and on a timeout, the gate kills
 the process group of the child before it reaps the child, or exits 3 when it
