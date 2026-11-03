@@ -21,7 +21,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "tools" / "check-baseline-pin.py"
 
 FILES = {"baseline.css": b"a { color: red; }\n", "fonts/x.woff2": b"\x00\x01font", "marks/NOTICE.md": b"# marks\n"}
-# The rest of the README's runtime and licence set, which the gate requires in the pin.
+# The rest of the files that the gate requires in the pin (its REQUIRED); matrix.js is
+# not among them, as no page here uses it.
 for _name in ("palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "LICENSE", "NOTICE.md"):
     FILES[_name] = f"/* {_name} */\n".encode()
 

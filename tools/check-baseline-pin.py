@@ -25,10 +25,15 @@ What it verifies
 3. Each pinned file exists under the output root as a regular file, not a
    link, and hashes to its pinned digest.
 4. No file under ``<output root>/assets/baseline/`` is missing from the pin.
-5. The pin holds the README's whole runtime and licence set (``REQUIRED``):
-   the 3 stylesheets, the 4 scripts, ``LICENSE``, ``NOTICE.md`` and
-   ``marks/NOTICE.md``, so a copy that drops one, such as ``rail.js``, fails
-   even when the files present match.
+5. The pin holds the files of the README's runtime and licence set that
+   ``REQUIRED`` names: the 3 stylesheets, 4 of the 5 scripts (``copy.js``,
+   ``select.js``, ``search.js`` and ``rail.js``), ``LICENSE``, ``NOTICE.md``
+   and ``marks/NOTICE.md``, so a copy that drops one, such as ``rail.js``,
+   fails even when the files present match. ``REQUIRED`` leaves out
+   ``matrix.js``, which the template owner's 1.5.1 notice says to copy only
+   where a page uses it, and no page here does. A page that starts using
+   ``matrix.js`` needs it added to ``TOP_FILES`` in ``tools/copy-baseline.py``
+   and to ``REQUIRED`` first, or its file will not be copied or pinned.
 
 Every folder is listed with ``os.scandir``, so a folder or file that cannot be
 read fails closed (exit 3) rather than reading as empty.

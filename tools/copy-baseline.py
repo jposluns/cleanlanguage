@@ -12,13 +12,21 @@ refuses to copy unless:
 2. every file listed in ``SHA256SUMS`` exists and hashes to its listed digest,
    and no file in the folder is missing from it.
 
-It then copies the runtime and licence files (the baseline README, "Adoption in
-a repository", step 2: the stylesheets, the fonts with their licence files, the
-4 scripts (``rail.js`` from 1.3.0), the logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and
-``NOTICE.md``; never ``reference/``, ``tools/`` or the documents) byte for byte
+It then copies the runtime and licence files that the baseline README lists
+in "Adoption in a repository", step 2, except ``matrix.js``, byte for byte
 into ``<output root>/assets/baseline/``, where the output root follows the base
-path in ``site-src/site.json`` (``site/draft/`` while staged). It copies
-``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
+path in ``site-src/site.json`` (``site/draft/`` while staged). The copy is the
+stylesheets, the fonts with their licence files, 4 of the 5 scripts
+(``copy.js``, ``select.js``, ``search.js`` and, from 1.3.0, ``rail.js``), the
+logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and ``NOTICE.md``;
+never ``reference/``, ``tools/`` or the documents. The fifth script,
+``matrix.js``, is left out: the template owner's 1.5.1 notice says to copy it
+only where a page uses it, and no page here does. A page that starts using
+``matrix.js`` needs it added to ``TOP_FILES`` here and to ``REQUIRED`` in
+``tools/check-baseline-pin.py`` first, or its file will not be copied or
+pinned.
+
+It copies ``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
 ``.baseline/pin.toml`` in the README's format: a ``version`` key and a
 ``[files]`` table of path to SHA-256, the paths relative to the output root.
 ``tools/check-baseline-pin.py`` checks the copy offline on every pull request.
