@@ -582,6 +582,44 @@ class BoundsTest(unittest.TestCase):
                 self.assertIn(f"skill-release-date.py wrote {stream} up to the output cap of {cap} bytes in baseline", err)
                 self.assertEqual(err.count("\n"), 1, err)
 
+    def test_an_inherited_hard_file_size_limit_below_the_cap_is_applied(self):
+        # A caller (a CI job with ulimit -H -f, say) can leave a hard file
+        # size limit below the cap, which a child cannot raise. The child then
+        # gets that hard limit as its cap, and a normal reply still succeeds.
+        hard = 50000
+        self.assertLess(hard, client.output_cap(client.RESULT_LIMIT))
+        launch = (
+            "import os, resource, sys\n"
+            f"resource.setrlimit(resource.RLIMIT_FSIZE, ({hard}, {hard}))\n"
+            "os.execv(sys.executable, [sys.executable, \"-I\", *sys.argv[1:]])\n"
+        )
+        report = (
+            "import json, resource, sys\n"
+            "request = json.loads(sys.stdin.read())\n"
+            "soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)\n"
+            "message = 'fsize=%d/%d' % (soft, hard)\n"
+            "print(json.dumps({'op': request['op'], 'outcome': 'malformed', 'message': message}))\n"
+        )
+        for label, body, words, expected in (
+            ("the cap the child gets", report, ("requires-date", "1.0.15"),
+             (11, "", f"skill-release-date: fsize={hard}/{hard}\n")),
+            ("a normal reply", EXTRACTOR.read_text(encoding="utf-8"), ("baseline",), (0, "1.0.14\n", "")),
+        ):
+            with self.subTest(label):
+                pair = Pair(body)
+                try:
+                    proc = subprocess.run(
+                        [sys.executable, "-I", "-c", launch, str(pair.client), *words],
+                        capture_output=True, text=True, cwd=pair.root,
+                    )
+                finally:
+                    pair.close()
+                self.assertEqual((proc.returncode, proc.stdout, proc.stderr), expected)
+        with mock.patch.object(client.resource, "getrlimit", lambda which: (hard, hard)):
+            self.assertEqual(client.applied_cap(client.output_cap(client.RESULT_LIMIT)), hard)
+        with mock.patch.object(client.resource, "getrlimit", lambda which: (hard, client.resource.RLIM_INFINITY)):
+            self.assertEqual(client.applied_cap(1000), 1000)
+
     def test_relayed_stderr_is_one_line(self):
         # Every line the child wrote to stderr is relayed on the one line,
         # joined with " | "; blank lines and surrounding blanks are dropped.

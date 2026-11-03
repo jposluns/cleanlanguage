@@ -272,21 +272,62 @@ undated_fixture 1.0.14
 rm -f "${work}/tools/skill-release-date-client.py"
 expect_fail "a missing client is reported as unavailable" "tools/skill-release-date.py is unavailable or broken (probe exit 2)"
 
-# 2f. Row 89: every launch in the gate goes through the client. A direct
-#     launch of the extractor in any python form (python, python3 or a
-#     versioned or pathed interpreter, any options, any path, quoted or not)
-#     is counted; the client does not match.
-direct_launch='python[0-9.]*([[:space:]]+-[^[:space:]]+)*[[:space:]]+["'"'"']?([^[:space:]]*/)?skill-release-date[.]py([^[:alnum:]_.-]|$)'
-direct_launches() { grep -Ec -- "${direct_launch}" "$1"; }
-probe="${scratch}/launch-probe.sh"
-printf '%s\n' 'python3 -I tools/skill-release-date.py --baseline' 'x="$(python3 tools/skill-release-date.py "$1")"' \
-  '/usr/bin/python3.12 -I -B "./tools/skill-release-date.py"' 'python3 -I tools/skill-release-date-client.py baseline' > "${probe}"
-if [ "$(direct_launches "${probe}")" = "3" ]; then
-  pass "the launch pattern finds each python form and not the client"
+# 2f. Row 89: every launch in the gate goes through the client, whose name
+#     does not contain the extractor file name. The lines of the gate that
+#     name skill-release-date.py are only the messages and the comment listed
+#     here, so any other line that names it, a launch in any form among them
+#     (any interpreter, quoted or not, any options, a continuation line, or
+#     the script run by its shebang), fails. Residual: a launch that builds
+#     the name from parts or reads it from a variable is not seen.
+allowed_mentions="${scratch}/allowed-mentions.txt"
+cat > "${allowed_mentions}" <<'ALLOWED'
+# return 1. The one shared strict extractor, tools/skill-release-date.py, does
+      echo "tools/skill-release-date.py is unavailable or crashed (exit ${rc}) reading $1, so its Released line could not be checked." >&2
+    echo "tools/skill-release-date.py is unavailable or broken (probe exit ${prc}), so the Released lines could not be checked." >&2
+      11) echo "tools/skill-release-date.py rejected the version ${sv} as not a bare X.Y.Z." >&2; return 1 ;;
+      *) echo "tools/skill-release-date.py is unavailable or crashed (exit ${prc}) deciding whether ${sv} needs a Released line." >&2; return 1 ;;
+      echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for whether ${sv} needs a Released line." >&2
+ALLOWED
+mentions_match() { # file: its lines that name the extractor are exactly the allowed ones
+  grep -F -- "skill-release-date.py" "$1" | cmp -s - "${allowed_mentions}"
+}
+# The forms a direct launch could take, each ended by a PROBE-END line; each
+# appended to a copy of the gate must fail the check.
+launch_probes="${scratch}/launch-probes.txt"
+cat > "${launch_probes}" <<'PROBES'
+python3 -X utf8 tools/skill-release-date.py --baseline
+PROBE-END
+python3 -I \
+  tools/skill-release-date.py --baseline
+PROBE-END
+tools/skill-release-date.py --baseline
+PROBE-END
+"${PYTHON:-python3}" tools/skill-release-date.py --baseline
+PROBE-END
+"python3" tools/skill-release-date.py --baseline
+PROBE-END
+PROBES
+probe_copy="${scratch}/sync-probe.sh"
+probes_seen=0
+probes_caught=0
+probe_text=""
+while IFS= read -r probe_line; do
+  if [ "${probe_line}" = "PROBE-END" ]; then
+    probes_seen=$((probes_seen + 1))
+    { cat "${repo_root}/tools/check-portable-text-sync.sh"; printf '%s' "${probe_text}"; } > "${probe_copy}"
+    if ! mentions_match "${probe_copy}"; then probes_caught=$((probes_caught + 1)); fi
+    probe_text=""
+  else
+    probe_text="${probe_text}${probe_line}
+"
+  fi
+done < "${launch_probes}"
+if [ "${probes_seen}" -eq 5 ] && [ "${probes_caught}" -eq 5 ]; then
+  pass "each direct launch form fails the launch check (${probes_caught} of ${probes_seen})"
 else
-  fail "the launch pattern finds each python form and not the client"
+  fail "each direct launch form fails the launch check (${probes_caught} of ${probes_seen} caught, 5 expected)"
 fi
-if [ "$(direct_launches "${repo_root}/tools/check-portable-text-sync.sh")" = "0" ] \
+if mentions_match "${repo_root}/tools/check-portable-text-sync.sh" \
     && [ "$(grep -Fo "python3 -I tools/skill-release-date-client.py" "${repo_root}/tools/check-portable-text-sync.sh" | wc -l)" -eq 5 ]; then
   pass "every extractor launch in the gate goes through the client"
 else

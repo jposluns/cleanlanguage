@@ -86,11 +86,41 @@ WORKFLOW = REPO / ".github" / "workflows" / "release-skill.yml"
 EXTRACTOR = REPO / "tools" / "skill-release-date.py"
 CLIENT = REPO / "tools" / "skill-release-date-client.py"
 
-# Any direct launch of the extractor, in any python form: python, python3 or
-# a versioned or pathed interpreter, any options, any path to the script,
-# quoted or not. The client, skill-release-date-client.py, does not match.
-DIRECT_LAUNCH = re.compile(
-    r"(?<![\w-])python[0-9.]*(?:\s+-\S+)*\s+[\"']?(?:\S*/)?skill-release-date\.py(?![\w.-])"
+# Row 89: the extractor file name. Each caller reaches the extractor only
+# through tools/skill-release-date-client.py, whose name does not contain
+# it, so in a caller the lines that name it are only the messages and
+# comments listed with the caller; any other line that names it, a launch
+# in any form among them (any interpreter, quoted or not, any options, a
+# continuation line, or the script run by its shebang), fails the launch
+# test. Residual: a launch that builds the name from parts or reads it from
+# a variable is not seen.
+EXTRACTOR_NAME = 'skill-release-date.py'
+
+
+def extractor_mentions(text: str) -> list:
+    """Each line of ``text`` that names the extractor, once per mention."""
+    return [line for line in text.split("\n") for _ in range(line.count(EXTRACTOR_NAME))]
+
+
+# The forms a direct launch could take; each must fail the launch test.
+LAUNCH_PROBES = (
+    'python3 -X utf8 tools/skill-release-date.py --baseline',
+    'python3 -I \\\n  tools/skill-release-date.py --baseline',
+    'tools/skill-release-date.py --baseline',
+    '"${PYTHON:-python3}" tools/skill-release-date.py --baseline',
+    '"python3" tools/skill-release-date.py --baseline',
+)
+
+# The lines of the release workflow that name the extractor: failure
+# messages and a comment, none of them a launch.
+WORKFLOW_MENTIONS = (
+    '          # op of tools/skill-release-date.py, the one place that states the',
+    '            echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2, so the release date cannot be checked." >&2',
+    '                11) echo "tools/skill-release-date.py rejected the version ${VERSION} (see the error above)." >&2; exit 1 ;;',
+    '                *) echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for ${VERSION}." >&2; exit 1 ;;',
+    '          # tools/skill-release-date.py, through tools/skill-release-date-client.py,',
+    '            echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2." >&2',
+    '          # tools/skill-release-date.py, through tools/skill-release-date-client.py.',
 )
 VCS = "git"
 COMMIT = "c" * 40
@@ -961,10 +991,13 @@ class HarnessTest(WorkflowStepTest):
     def test_every_extractor_launch_goes_through_the_client(self):
         # Row 89: no step runs the extractor CLI; each of the 7 calls runs
         # the client, isolated.
-        self.assertEqual(DIRECT_LAUNCH.findall(WORKFLOW_TEXT), [])
+        self.assertNotIn(EXTRACTOR_NAME, "tools/skill-release-date-client.py")
+        self.assertEqual(extractor_mentions(WORKFLOW_TEXT), list(WORKFLOW_MENTIONS))
         self.assertEqual(WORKFLOW_TEXT.count("python3 -I tools/skill-release-date-client.py"), 7)
-        injected = WORKFLOW_TEXT + "          python3 -I tools/skill-release-date.py --baseline\n"
-        self.assertEqual(len(DIRECT_LAUNCH.findall(injected)), 1)
+        for probe in LAUNCH_PROBES:
+            with self.subTest(probe=probe):
+                injected = WORKFLOW_TEXT + "".join("          " + line + "\n" for line in probe.split("\n"))
+                self.assertNotEqual(extractor_mentions(injected), list(WORKFLOW_MENTIONS))
 
     def test_fake_date_refuses_a_call_without_utc(self):
         proc = subprocess.run([str(self.bin / "date"), "+%F"], env={"FAKE_STATE": str(self.state)},

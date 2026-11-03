@@ -22,7 +22,6 @@ import json
 import os
 import shutil
 import subprocess
-import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -33,11 +32,46 @@ DRY_RUN = REPO / "tools" / "release-dry-run.sh"
 RELEASE_DATE_TOOL = REPO / "tools" / "skill-release-date.py"
 CLIENT = REPO / "tools" / "skill-release-date-client.py"
 
-# Any direct launch of the extractor, in any python form: python, python3 or
-# a versioned or pathed interpreter, any options, any path to the script,
-# quoted or not. The client, skill-release-date-client.py, does not match.
-DIRECT_LAUNCH = re.compile(
-    r"(?<![\w-])python[0-9.]*(?:\s+-\S+)*\s+[\"']?(?:\S*/)?skill-release-date\.py(?![\w.-])"
+# Row 89: the extractor file name. Each caller reaches the extractor only
+# through tools/skill-release-date-client.py, whose name does not contain
+# it, so in a caller the lines that name it are only the messages and
+# comments listed with the caller; any other line that names it, a launch
+# in any form among them (any interpreter, quoted or not, any options, a
+# continuation line, or the script run by its shebang), fails the launch
+# test. Residual: a launch that builds the name from parts or reads it from
+# a variable is not seen.
+EXTRACTOR_NAME = 'skill-release-date.py'
+
+
+def extractor_mentions(text: str) -> list:
+    """Each line of ``text`` that names the extractor, once per mention."""
+    return [line for line in text.split("\n") for _ in range(line.count(EXTRACTOR_NAME))]
+
+
+# The forms a direct launch could take; each must fail the launch test.
+LAUNCH_PROBES = (
+    'python3 -X utf8 tools/skill-release-date.py --baseline',
+    'python3 -I \\\n  tools/skill-release-date.py --baseline',
+    'tools/skill-release-date.py --baseline',
+    '"${PYTHON:-python3}" tools/skill-release-date.py --baseline',
+    '"python3" tools/skill-release-date.py --baseline',
+)
+
+# The lines of release-package.sh and release-dry-run.sh that name the
+# extractor: failure messages and comments, none of them a launch.
+PACKAGER_MENTIONS = (
+    '#      (item 26) through tools/skill-release-date.py, run in its --json mode by',
+    '# extractor, tools/skill-release-date.py, run in its --json mode by',
+    '  fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc}), so the Released line could not be checked"',
+    '    *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${check_rc}) checking --release-date ${release_date:-nothing}" ;;',
+    '    fail "tools/skill-release-date.py is unavailable or crashed (exit ${released_rc}) reading the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"',
+    '    11) fail "tools/skill-release-date.py rejected the version ${version} as not a bare X.Y.Z" ;;',
+    '    *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${req_rc}) deciding whether ${version} needs a Released line" ;;',
+    '    *) fail "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for whether ${version} needs a Released line" ;;',
+)
+DRY_RUN_MENTIONS = (
+    '  *) fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc})" ;;',
+    '  *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${stamped_rc}) reading the stamped SKILL.md" ;;',
 )
 
 # Reads all of standard input, then fails the read, so the client exits 14
@@ -516,23 +550,19 @@ class CallerLaunchTest(unittest.TestCase):
     the client, each launch isolated."""
 
     def test_every_launch_goes_through_the_client(self):
-        for path, launches in ((PACKAGER, 5), (DRY_RUN, 2)):
+        self.assertNotIn(EXTRACTOR_NAME, "tools/skill-release-date-client.py")
+        for path, mentions, launches in ((PACKAGER, PACKAGER_MENTIONS, 5), (DRY_RUN, DRY_RUN_MENTIONS, 2)):
             with self.subTest(path.name):
                 text = path.read_text(encoding="utf-8")
-                self.assertEqual(DIRECT_LAUNCH.findall(text), [])
+                self.assertEqual(extractor_mentions(text), list(mentions))
                 self.assertEqual(text.count("python3 -I tools/skill-release-date-client.py"), launches)
 
-    def test_the_launch_pattern_finds_every_python_form(self):
-        for form in ("python3 tools/skill-release-date.py", "python3 -I tools/skill-release-date.py --baseline",
-                     "python3 -I -B ./tools/skill-release-date.py", "python3.12 tools/skill-release-date.py x",
-                     "/usr/bin/python3 -I \"tools/skill-release-date.py\"", "python tools/skill-release-date.py",
-                     "(python3 -I tools/skill-release-date.py)"):
-            with self.subTest(form):
-                self.assertEqual(len(DIRECT_LAUNCH.findall(form)), 1)
-        for form in ("python3 -I tools/skill-release-date-client.py baseline", "tools/skill-release-date.py",
-                     "python3 tools/skill-release-date.pyc", "python3 tools/test-skill-release-date.py"):
-            with self.subTest(form):
-                self.assertEqual(DIRECT_LAUNCH.findall(form), [])
+    def test_every_direct_launch_form_fails_the_check(self):
+        for path, mentions in ((PACKAGER, PACKAGER_MENTIONS), (DRY_RUN, DRY_RUN_MENTIONS)):
+            text = path.read_text(encoding="utf-8")
+            for probe in LAUNCH_PROBES:
+                with self.subTest(path.name, probe=probe):
+                    self.assertNotEqual(extractor_mentions(text + probe + "\n"), list(mentions))
 
 
 def _locale_available(name: str) -> bool:
