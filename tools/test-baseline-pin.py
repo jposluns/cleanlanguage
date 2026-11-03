@@ -3,7 +3,9 @@
 
 Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
 applies 1 fault, runs the gate on that tree as a separate process and asserts
-its exit code. The last case runs the gate on this repository. Exit 0 when
+its exit code. The last case runs the gate on this repository. The first case
+runs ``tools/copy-baseline.py`` on a small version folder and asserts that the
+pin header it writes, and the committed one, give each key's base. Exit 0 when
 every case passes; 1 otherwise, naming each failing case.
 """
 
@@ -12,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -19,6 +22,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "tools" / "check-baseline-pin.py"
+COPY_TOOL = REPO_ROOT / "tools" / "copy-baseline.py"
 
 FILES = {"baseline.css": b"a { color: red; }\n", "fonts/x.woff2": b"\x00\x01font", "marks/NOTICE.md": b"# marks\n"}
 # The rest of the README's runtime and licence set, which the gate requires in the pin.
@@ -206,9 +210,45 @@ CASES = [
 ]
 
 
+def pin_header_problems() -> list[str]:
+    """The pin's header, as tools/copy-baseline.py writes it and as committed, gives each key's base."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        (root / "tools").mkdir()
+        shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
+        (root / "site-src").mkdir()
+        (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
+        package = {**FILES, "tools/check_palette.py": TOOL}
+        for name, data in package.items():
+            (root / "1.2.1" / name).parent.mkdir(parents=True, exist_ok=True)
+            (root / "1.2.1" / name).write_bytes(data)
+        sums = "".join(f"{digest(data)}  {name}\n" for name, data in sorted(package.items()))
+        (root / "1.2.1" / "SHA256SUMS").write_text(sums, encoding="utf-8")
+        command = [sys.executable, "-I", str(root / "tools" / COPY_TOOL.name), "--from", str(root / "1.2.1"),
+                   "--sums-sha256", digest(sums.encode()), "--archive-sha256", "0" * 64]
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode != 0:
+            return [f"the pin header: copy-baseline exit {result.returncode}: {result.stderr.strip()[:200]}"]
+        written = (root / ".baseline" / "pin.toml").read_text(encoding="utf-8")
+    committed = (REPO_ROOT / ".baseline" / "pin.toml").read_text(encoding="utf-8")
+
+    def header(text: str) -> str:
+        lines = text.splitlines()
+        return " ".join(lines[:next(i for i, line in enumerate(lines) if line.startswith("# Source:"))])
+
+    problems = []
+    if header(written) != header(committed):
+        problems.append("the pin header: the committed .baseline/pin.toml header is not copy-baseline's")
+    for statement in ("assets/baseline/ are relative to the site's output root",
+                      f"{TOOL_KEY} is relative to the repository root"):
+        if statement not in header(written).replace("# ", ""):
+            problems.append(f"the pin header does not say {statement!r}")
+    return problems
+
+
 def main() -> int:
-    failures: list[str] = []
-    ran = 0
+    failures: list[str] = pin_header_problems()
+    ran = 1
     for name, fault, expected in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

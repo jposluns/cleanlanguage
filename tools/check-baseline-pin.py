@@ -4,7 +4,8 @@
 ``tools/copy-baseline.py`` copies the runtime files of a verified baseline
 version into ``<output root>/assets/baseline/`` and records each file's SHA-256
 in ``.baseline/pin.toml``, in the baseline README's format: a ``version`` key
-and a ``[files]`` table of path to digest, the paths relative to the output
+and a ``[files]`` table of path to digest, the paths under ``assets/baseline/``
+relative to the output root and the build tool's key relative to the repository
 root. The output root follows the base path in ``site-src/site.json``
 (``site/draft/`` while staged, ``site/`` after promotion). The copied files are
 never edited. This gate makes an edit, a replacement, a deletion or an addition

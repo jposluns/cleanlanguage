@@ -3,12 +3,16 @@
 
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault to the install page or to site/_headers, runs
-the gate there as a separate process and asserts its exit code. Exit 0 when
-every case passes; 1 otherwise, naming each failing case.
+the gate there as a separate process and asserts its exit code. 1 more case
+asserts that the gate's docstring names exactly the scripts in
+``BASELINE_SCRIPTS``. Exit 0 when every case passes; 1 otherwise, naming each
+failing case.
 """
 
 from __future__ import annotations
 
+import importlib.util
+import re
 import shutil
 import subprocess
 import sys
@@ -54,6 +58,7 @@ def edit(relative: str, old: str, new: str):
 
 # The scheme.js tag of template specification 7.33 (baseline 1.6.0), as the committed page carries it.
 SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.6.0"></script>'
+FONTS = '<link rel="stylesheet" href="/assets/baseline/fonts.css?v=1.6.0">'
 
 
 def both(*faults):
@@ -119,8 +124,19 @@ CASES = [
     ("the scheme.js tag twice", edit(PAGE, SCHEME, SCHEME + SCHEME), 1),
     ("a second scheme.js with defer", edit(PAGE, "</head>",
         '<script src="/assets/baseline/scheme.js?v=1.6.0" defer></script>\n</head>'), 1),
+    ("a second scheme.js in upper case with a character reference", edit(PAGE, "</head>",
+        '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.6.0" defer></SCRIPT>\n</head>'), 1),
+    ("a second scheme.js with spaces around =", edit(PAGE, "</head>",
+        '<script src = "/assets/baseline/scheme.js?v=1.6.0" defer></script>\n</head>'), 1),
+    ("an upper-case stylesheet before the scheme.js tag", edit(PAGE, SCHEME,
+        '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + SCHEME), 1),
+    ("fonts.css loaded only inside a comment", edit(PAGE, FONTS, "<!--" + FONTS + "-->"), 1),
+    ("rail.js with another attribute", edit(PAGE, "</head>",
+        '<script src="/assets/baseline/rail.js?v=1.3.0" type="module" defer></script>\n</head>'), 1),
     ("site.css without its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?w=1">\n</head>'), 1),
     ("site.css with its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">\n</head>'), 0),
+    ("site.css without its token beside a token inside a comment", edit(PAGE, "</head>",
+        '<!--<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">--><link rel="stylesheet" href="/assets/site.css?w=1">\n</head>'), 1),
     ("the install page missing", remove(PAGE), 3),
     ("the headers file missing", remove(HEADERS), 3),
     ("a policy on another rule", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Content-Security-Policy: default-src 'none'\n"), 1),
@@ -150,8 +166,20 @@ CASES = [
 ]
 
 
+def statement_problems() -> list[str]:
+    """The gate's docstring names exactly the scripts that BASELINE_SCRIPTS holds."""
+    spec = importlib.util.spec_from_file_location("check_install_page", GATE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    listed = re.search(r"``BASELINE_SCRIPTS``: (.*?)\)", module.__doc__, re.S)
+    names = tuple(re.findall(r"``([a-z]+\.js)``", listed.group(1))) if listed else ()
+    if names != module.BASELINE_SCRIPTS:
+        return [f"the docstring lists BASELINE_SCRIPTS as {names}; the code holds {module.BASELINE_SCRIPTS}"]
+    return []
+
+
 def main() -> int:
-    failures: list[str] = []
+    failures: list[str] = statement_problems()
     for name, fault, expected in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
@@ -165,7 +193,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-install-page: all {len(CASES)} cases passed.")
+    print(f"test-install-page: all {len(CASES) + 1} cases passed.")
     return 0
 
 

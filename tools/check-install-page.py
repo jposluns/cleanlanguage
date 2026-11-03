@@ -41,7 +41,11 @@ What it verifies
    specification 7.33, baseline 1.6.0). Every other ``<script>`` the page loads
    is 1 of the baseline's other scripts (``BASELINE_SCRIPTS``: ``copy.js``,
    ``select.js``, ``search.js``, ``rail.js``) from ``/assets/baseline/``, with
-   the same token and ``defer``.
+   the same token and ``defer``, as exactly
+   ``<script src="/assets/baseline/NAME?v=X.Y.Z" defer></script>``. Each load is
+   read as the element a browser reads, so a tag inside a comment loads nothing,
+   and a ``<script>`` or stylesheet written in another spelling (letter case,
+   a character reference, attribute order or spacing) is still counted.
 6. ``site/_headers``, read with the parser of ``tools/check-headers.py``
    (header names compared without regard to case, comments ignored), has a
    ``/*`` rule that sets ``Content-Security-Policy`` exactly once, to exactly
@@ -83,6 +87,7 @@ import sys
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PAGE = REPO_ROOT / "site" / "install" / "index.html"
@@ -91,9 +96,12 @@ WHERE = "site/install/index.html"
 
 FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
 TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance"]
-BASELINE_SCRIPTS = ("copy.js", "select.js", "search.js", "rail.js", "scheme.js")
+BASELINE_SCRIPTS = ("copy.js", "select.js", "search.js", "rail.js")
 # scheme.js loads in exactly this form, with no defer, before the stylesheets (specification 7.33).
 SCHEME_TAG = re.compile(r'<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>')
+# Every other script loads in exactly this form.
+DEFERRED_TAG = re.compile(r'<script src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+" defer></script>')
+SITE_SHEET = re.compile(r'<link rel="stylesheet" href="/assets/site\.css\?v=[0-9a-f]{12}">')
 DRAFT_PATTERN = "/draft/*"
 # The shared policy (template specification, baseline 1.6.0, section 9, unchanged), on every page since promotion.
 SHARED_CSP = (
@@ -211,6 +219,25 @@ class TemplateParser(HTMLParser):
             self.family_has_h2[self._h2_family] = True
 
 
+class LoadScan(HTMLParser):
+    """Check 5: where each <script> and stylesheet <link> element starts, read as a browser reads the markup."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.lines = [0] + [match.end() for match in re.finditer("\n", text)]
+        self.scripts: list[tuple[int, dict[str, str], str]] = []
+        self.sheets: list[tuple[int, dict[str, str], str]] = []
+
+    def handle_starttag(self, tag: str, attrs_list) -> None:
+        attrs = {k.lower(): (v if v is not None else "") for k, v in attrs_list}
+        line, column = self.getpos()
+        element = (self.lines[line - 1] + column, attrs, self.get_starttag_text() or "")
+        if tag == "script":
+            self.scripts.append(element)
+        elif tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split():
+            self.sheets.append(element)
+
+
 def check_template_page(text: str) -> list[str]:
     """Checks 1 to 5."""
     parser = TemplateParser()
@@ -257,26 +284,36 @@ def check_template_page(text: str) -> list[str]:
         if parser.id_counts.get(gid, 0) == 0:
             problems.append(f'{where}: the id "{gid}" is missing; existing deep links use it.')
     problems += inline_code(where, text)
+    loads = LoadScan(text)
+    loads.feed(text)
+    loads.close()
     for name in ("fonts.css", "palettes.css", "baseline.css"):
-        if not re.search(r'<link rel="stylesheet" href="' + BASELINE_ASSET.format(name=re.escape(name)), text):
+        sheet = re.compile(r'<link rel="stylesheet" href="' + BASELINE_ASSET.format(name=re.escape(name)))
+        if not any(sheet.match(text, at) for at, _, _ in loads.sheets):
             problems.append(f"{where}: {name} is not loaded from /assets/baseline/ with a ?v=X.Y.Z token.")
+    scheme_tags = [at for at, _, _ in loads.scripts if SCHEME_TAG.match(text, at)]
+    deferred = []
+    for at, attrs, tag in loads.scripts:
+        if "src" not in attrs or at in scheme_tags:
+            continue
+        name = DEFERRED_TAG.match(text, at)
+        if name is None or name.group(1) not in BASELINE_SCRIPTS:
+            problems.append(f"{where}: {tag} is not 1 of the baseline's scripts with a ?v=X.Y.Z token and defer.")
+        else:
+            deferred.append(name.group(1))
     for name in ("copy.js", "select.js"):
-        if not re.search(r'<script src="' + BASELINE_ASSET.format(name=re.escape(name)) + r" defer></script>", text):
+        if name not in deferred:
             problems.append(f"{where}: {name} is not loaded from /assets/baseline/ with a ?v=X.Y.Z token and defer.")
-    scheme_tags = list(SCHEME_TAG.finditer(text))
-    first_sheet = text.find('<link rel="stylesheet"')
+    first_sheet = min((at for at, _, _ in loads.sheets), default=-1)
     if len(scheme_tags) != 1:
         problems.append(
             f'{where}: scheme.js loads {len(scheme_tags)} times as <script data-cfasync="false" '
             'src="/assets/baseline/scheme.js?v=X.Y.Z"></script>; exactly 1 is required.'
         )
-    elif first_sheet == -1 or scheme_tags[0].start() > first_sheet:
+    elif first_sheet == -1 or scheme_tags[0] > first_sheet:
         problems.append(f"{where}: scheme.js does not load before the first stylesheet.")
-    for tag in re.findall(r"<script\b[^>]*\bsrc=[^>]*>", SCHEME_TAG.sub("", text)):
-        name = re.search(r'src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+"', tag)
-        if name is None or name.group(1) not in BASELINE_SCRIPTS or name.group(1) == "scheme.js" or not tag.endswith(" defer>"):
-            problems.append(f"{where}: {tag} is not 1 of the baseline's scripts with a ?v=X.Y.Z token and defer.")
-    if "/assets/site.css" in text and not re.search(r'<link rel="stylesheet" href="/assets/site\.css\?v=[0-9a-f]{12}">', text):
+    site_sheets = [at for at, attrs, _ in loads.sheets if "site.css" in unquote(attrs.get("href", ""))]
+    if ("/assets/site.css" in text or site_sheets) and not (site_sheets and all(SITE_SHEET.match(text, at) for at in site_sheets)):
         problems.append(f"{where}: site.css is not loaded with a ?v= content token.")
     return problems
 

@@ -22,7 +22,9 @@ pinned build tool ``tools/check_palette.py`` (from 1.6.0) to
 ``.baseline/check_palette.py``, which is pinned but never served, and it copies
 ``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
 ``.baseline/pin.toml`` in the README's format: a ``version`` key and a
-``[files]`` table of path to SHA-256, the paths relative to the output root.
+``[files]`` table of path to SHA-256, the paths under ``assets/baseline/``
+relative to the output root and the build tool's ``.baseline/check_palette.py``
+relative to the repository root.
 ``tools/check-baseline-pin.py`` checks the copy offline on every pull request.
 
 Usage:
@@ -177,8 +179,9 @@ def main() -> int:
     shutil.copyfile(sums_path, PIN_DIR / "SHA256SUMS")
     lines = [
         "# Baseline pin, in the format of the baseline README (\"Adoption in a repository\", step 3).",
-        "# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths are",
-        "# relative to the site's output root (site/draft/ while staged, site/ after promotion).",
+        "# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths under",
+        "# assets/baseline/ are relative to the site's output root (site/draft/ while staged, site/ after",
+        f"# promotion), and .baseline/{TOOL_NAME} is relative to the repository root, outside site/.",
         f"# Source: https://posluns.ca/baseline/baseline-{version}.tar.gz, archive sha256 {args.archive_sha256};",
         f"# SHA256SUMS sha256 {args.sums_sha256}, copied to .baseline/SHA256SUMS.",
         "# Never edit a copied file; a new version arrives as a new copy and a new pin.",

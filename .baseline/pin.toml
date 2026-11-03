@@ -1,6 +1,7 @@
 # Baseline pin, in the format of the baseline README ("Adoption in a repository", step 3).
-# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths are
-# relative to the site's output root (site/draft/ while staged, site/ after promotion).
+# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths under
+# assets/baseline/ are relative to the site's output root (site/draft/ while staged, site/ after
+# promotion), and .baseline/check_palette.py is relative to the repository root, outside site/.
 # Source: https://posluns.ca/baseline/baseline-1.6.0.tar.gz, archive sha256 d1cc5b45de9263253109d78b5d868ed92a420101ab76c0600c87ef748a684ec9;
 # SHA256SUMS sha256 57544ba86ba19b0b5a1adf4910f9dd0a28d7e9d3a52d5e150c0c9818c6cc978f, copied to .baseline/SHA256SUMS.
 # Never edit a copied file; a new version arrives as a new copy and a new pin.

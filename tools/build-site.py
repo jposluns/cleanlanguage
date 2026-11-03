@@ -22,11 +22,6 @@ Sources
   writes it, ``tools/check-baseline-pin.py`` checks the copied files). Only the
   keys under ``assets/baseline/`` are served; the pinned build tool
   ``.baseline/check_palette.py`` is not, so no link may resolve to it.
-
-Every page loads ``scheme.js`` in ``<head>`` before the stylesheets, with
-``data-cfasync="false"`` and no ``defer``, and ends ``header.mast`` with the
-light and dark switch (``SCHEME_SWITCH``), as template specification 7.33
-(baseline 1.6.0) requires.
 - ``site-src/release.json``: the release version, tag and checksum, written by
   ``tools/set-release-links.py``. Every version string the pages show comes
   from here, and the build refuses to run if it disagrees with the ``Version:``
@@ -41,6 +36,11 @@ light and dark switch (``SCHEME_SWITCH``), as template specification 7.33
   (``references/examples.md``), the By channel lists
   (``references/context-modes.md``), the checklist (``references/qa-checklist.md``)
   and the Instructions block (``site/downloads/cleanlanguage.md``, exactly).
+
+Every page loads ``scheme.js`` in ``<head>`` before the stylesheets, with
+``data-cfasync="false"`` and no ``defer``, and ends ``header.mast`` with the
+light and dark switch (``SCHEME_SWITCH``), as template specification 7.33
+(baseline 1.6.0) requires.
 
 The baseline files under ``<out>/assets/baseline/`` are copied and pinned by
 ``tools/copy-baseline.py`` and ``tools/check-baseline-pin.py``; this tool reads
@@ -129,8 +129,9 @@ VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
 SKIP_LINK = '<a class="skip" href="#main-content">Skip to content</a>'
 COPY_STATUS = '<p class="vh" id="copy-status" role="status" aria-live="polite"></p>'
 # The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
-# reference pages (reference/install.html line 18): the last child of header.mast on every page. It is
-# the one inline <svg> a page may carry; tools/check-inline-code.py admits exactly this string.
+# reference pages (reference/install.html line 18): the last child of header.mast on every page. Its 2
+# glyphs are the only inline <svg> elements a page may carry; tools/check-inline-code.py admits exactly
+# this string, once.
 SCHEME_SWITCH = (
     '<button class="scheme" type="button" data-scheme-toggle aria-pressed="false" hidden>'
     '<svg class="moon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" '
@@ -648,6 +649,9 @@ class PageScan(HTMLParser):
         self.problems: list[str] = []
         self.anchor: dict | None = None
         self.scripts: list[dict] = []
+        # Where each script with a src, and the first stylesheet, start: (line, column), as getpos() reports.
+        self.loads: list[tuple[tuple[int, int], str]] = []
+        self.first_sheet: tuple[int, int] | None = None
         self.robots: list[str] = []
         self.open: list[tuple[str, bool]] = []
         self.doc_closed = False
@@ -679,6 +683,10 @@ class PageScan(HTMLParser):
             self.robots.append(attrs.get("content", ""))
         if tag == "script":
             self.scripts.append(attrs)
+            if "src" in attrs:
+                self.loads.append((self.getpos(), attrs["src"]))
+        if tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split() and self.first_sheet is None:
+            self.first_sheet = self.getpos()
         canonical = tag == "link" and attrs.get("rel") == "canonical"
         for name in ("href", "src"):
             if name in attrs and not canonical:
@@ -718,6 +726,11 @@ class PageScan(HTMLParser):
             self.anchor = None
 
 
+def line_column(text: str, index: int) -> tuple[int, int]:
+    """The (line, column) of index in text, as HTMLParser.getpos() reports where a tag starts."""
+    return text.count("\n", 0, index) + 1, index - text.rfind("\n", 0, index) - 1
+
+
 def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     where = page["source"]
     problems = []
@@ -734,17 +747,21 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
         problems.append("the light and dark switch must appear exactly once, as the last child of header.mast")
     if re.search(r"<svg", page_html.replace(SCHEME_SWITCH, "", 1), re.I):
         problems.append("an inline <svg> other than the light and dark switch")
-    scheme_tags = list(re.finditer(
-        r'<script data-cfasync="false" src="' + re.escape(base)
-        + r'assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>', page_html))
-    first_sheet = page_html.find('<link rel="stylesheet"')
-    if len(scheme_tags) != 1 or page_html.count("scheme.js") != 1:
-        problems.append("scheme.js must load exactly once, with data-cfasync=\"false\" and no defer")
-    elif first_sheet == -1 or scheme_tags[0].start() > first_sheet:
-        problems.append("scheme.js must load before the first stylesheet")
     scan = PageScan()
     scan.feed(page_html)
     scan.close()
+    scheme_tags = {line_column(page_html, match.start()) for match in re.finditer(
+        r'<script data-cfasync="false" src="' + re.escape(base)
+        + r'assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>', page_html)}
+    # Each script element that loads scheme.js, read as the browser reads it, so another spelling of a
+    # second load counts; resolve_links refuses a root-relative src that names no generated, pinned or
+    # allowlisted path, such as a percent-encoded one.
+    scheme_loads = [at for at, src in scan.loads
+                    if src.split("#", 1)[0].split("?", 1)[0] == base + "assets/baseline/scheme.js"]
+    if len(scheme_loads) != 1 or scheme_loads[0] not in scheme_tags or page_html.count("scheme.js") != 1:
+        problems.append("scheme.js must load exactly once, with data-cfasync=\"false\" and no defer")
+    elif scan.first_sheet is None or scan.first_sheet < scheme_loads[0]:
+        problems.append("scheme.js must load before the first stylesheet")
     problems += scan.problems
     if scan.open:
         problems.append(f"elements left open: {[tag for tag, _ in scan.open]}")
