@@ -3,10 +3,11 @@
 # The Cloudflare Pages build command for cleanlanguage.ai.
 #
 # Pages publishes site/ exactly as it is committed; this script changes no file
-# under site/. It runs the site's offline integrity gates on the tree Pages
-# checked out, and any gate failure fails the build, so a failing commit is
-# never deployed (template specification, section 4, step 3; the owner named
-# these 5 gates on 2026-11-03).
+# under site/. It runs the 5 offline integrity gates that the owner named on
+# 2026-11-03, and no others, on the tree Pages checked out. Any gate failure
+# fails the build, so a failing commit is never deployed (template
+# specification, section 4, step 3). The site's other offline gates, such as
+# tools/generate-sitemap.py, run only in GitHub Actions.
 #
 # Every gate here reads only the checked-out tree: none reaches the network or
 # reads git history, so a shallow checkout is enough. The checks that need git
@@ -17,7 +18,7 @@
 # input that cannot be read; it is never skipped. A failing gate passes its
 # exit code through unchanged (1 for a failed check, 3 for an unreadable
 # input). tools/test-pages-build.py holds the expected gate list and fails if
-# this script stops running a gate, or stops failing when one fails.
+# this script stops running a gate, or stops failing when a gate exits 1 or 3.
 #
 # Usage (the build command in the Cloudflare Pages dashboard):
 #   bash tools/pages-build.sh

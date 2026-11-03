@@ -4,13 +4,16 @@
 Each case copies the build script into a temporary tree whose tools/ folder
 holds a stub in place of each gate. A stub records its name and arguments and
 exits with the code the case sets. The script runs as a separate process with
-bash, exactly as the Cloudflare Pages dashboard runs it.
+bash, the command the Cloudflare Pages dashboard runs, but against the stubs.
 
 EXPECTED is the gate list the owner decided for the Pages build command, kept
 here apart from the script, so a gate dropped from the script, a changed
-argument (build-site.py without --check), a reordered list, a skipped missing
-gate, or a masked failure fails a case. Adding a gate to the script means
-adding it here too, which a reviewer sees.
+argument (build-site.py without --check), a reordered list, or a skipped
+missing gate fails a case. A failing gate stub exits 1 or 3 only, so a case
+fails if the script masks either code, but a failure the script masks only
+for another exit code passes every case. The cases do not test the script's
+Python version check. Adding a gate to the script means adding it here too,
+which a reviewer sees.
 
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
