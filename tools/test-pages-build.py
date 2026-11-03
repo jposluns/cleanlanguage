@@ -15,12 +15,19 @@ for another exit code passes every case. The cases do not test the script's
 Python version check. Adding a gate to the script means adding it here too,
 which a reviewer sees.
 
+It also reads .python-version at the repository root, which names the Python
+release for the Pages build (site/README.md), and fails if the file is missing
+or names a version outside SUPPORTED_PYTHONS in tools/check-inline-code.py,
+which exits 3 on any other version.
+
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +36,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "pages-build.sh"
+PYTHON_VERSION_FILE = REPO_ROOT / ".python-version"
+INLINE_GATE = REPO_ROOT / "tools" / "check-inline-code.py"
 
 EXPECTED = [
     ["tools/check-baseline-pin.py"],
@@ -64,6 +73,23 @@ def run(root: Path) -> tuple[int, list[str], str]:
     return result.returncode, calls, result.stdout + result.stderr
 
 
+def python_version_problem() -> str | None:
+    """The problem with .python-version, or None when it names a version check-inline-code.py supports."""
+    spec = importlib.util.spec_from_file_location("check_inline_code", INLINE_GATE)
+    gate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gate)
+    try:
+        text = PYTHON_VERSION_FILE.read_text(encoding="utf-8")
+    except OSError as error:
+        return f".python-version could not be read: {error}"
+    match = re.fullmatch(r"(\d+)\.(\d+)(\.\d+)?\n?", text)
+    if not match:
+        return f".python-version holds {text!r}, not one Python version such as 3.14.4"
+    if (int(match[1]), int(match[2])) not in gate.SUPPORTED_PYTHONS:
+        return f".python-version names {text.strip()}, outside SUPPORTED_PYTHONS {gate.SUPPORTED_PYTHONS}"
+    return None
+
+
 def main() -> int:
     failures: list[str] = []
     expected_calls = [" ".join(gate) for gate in EXPECTED]
@@ -95,6 +121,9 @@ def main() -> int:
             3,
             expected_calls[:index],
         )
+    problem = python_version_problem()
+    if problem:
+        failures.append(problem)
 
     for failure in failures:
         print(f"FAIL {failure}")
@@ -102,7 +131,8 @@ def main() -> int:
         return 1
     print(
         f"pages-build.sh runs all {len(EXPECTED)} gates in order, fails when one exits 1 or 3, "
-        f"and fails with exit 3 when one is missing ({1 + 3 * len(EXPECTED)} cases)."
+        f"and fails with exit 3 when one is missing ({1 + 3 * len(EXPECTED)} cases); "
+        ".python-version names a version that tools/check-inline-code.py supports."
     )
     return 0
 
