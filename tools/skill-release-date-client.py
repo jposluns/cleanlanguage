@@ -44,7 +44,8 @@ and exits with that mode's documented code plus 10, so 0 stays 0:
       ``skill-release-date-client: skill-release-date.py <reason> in <op>,
       so the extractor is unavailable``, followed by ``; it printed: <text>``
       when the extractor wrote anything to stderr (at most STDERR_LIMIT
-      bytes of it)
+      bytes of it, its lines joined with `` | `` so the message stays one
+      line)
   2   a usage error of the client
 
 No code below 10 other than 0 and 2 carries a meaning, so an exit that
@@ -66,7 +67,12 @@ directory and a session of its own. The request is its stdin and its stdout
 and stderr go to temporary files, so the client never blocks on a pipe and
 reads only a bounded part of each (RESULT_LIMIT plus
 ECHO_BYTES_PER_CHARACTER bytes for each character of the request values,
-and STDERR_LIMIT). The client waits for the child with a non-blocking
+and STDERR_LIMIT). While the child runs, no file it writes can grow past
+output_cap(limit) bytes, one byte past the larger read bound (RLIMIT_FSIZE,
+set in the child before exec), so a child that writes fast cannot fill
+temporary storage within the timeout; a child whose stdout or stderr
+reaches that cap is unavailable, and the reason names the cap. The client
+waits for the child with a non-blocking
 waitpid (wait_child), at most CHILD_TIMEOUT_SECONDS, and exits 16 when the
 wait reports that the child is no longer its child, since its exit status
 is then lost (Popen.wait would read that as exit 0). With SIGCHLD at its
@@ -99,6 +105,7 @@ import io
 import json
 import os
 import re
+import resource
 import signal
 import subprocess
 import sys
@@ -274,6 +281,23 @@ def check_reply(op: str, data: bytes, limit: int) -> dict:
     return reply
 
 
+def output_cap(limit: int) -> int:
+    """The most bytes any file the child writes may hold: one byte past the
+    larger of the two read bounds (``limit + 1`` bytes of stdout and
+    STDERR_LIMIT bytes of stderr), so a reply one byte too long is still
+    read and refused as too long, and anything longer stops at the cap."""
+    return max(limit + 1, STDERR_LIMIT) + 1
+
+
+def applied_cap(cap: int) -> int:
+    """The file size limit the child gets: ``cap``, or the inherited hard
+    limit when that is lower, since a child cannot raise it."""
+    _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    if hard != resource.RLIM_INFINITY and hard < cap:
+        return hard
+    return cap
+
+
 def reset_sigchld() -> None:
     """Reset SIGCHLD to its default disposition before the client starts the
     child. An ignored SIGCHLD, inherited across exec from the caller, makes
@@ -328,6 +352,13 @@ def run_extractor(op: str, fields: dict, timeout: float = CHILD_TIMEOUT_SECONDS,
     limit = RESULT_LIMIT + ECHO_BYTES_PER_CHARACTER * sum(len(value) for value in fields.values())
     reset_sigchld()
     try:
+        cap = applied_cap(output_cap(limit))
+        _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+
+        def limit_output() -> None:
+            # Runs in the child, before exec: no file it writes grows past cap.
+            resource.setrlimit(resource.RLIMIT_FSIZE, (cap, hard))
+
         with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, \
                 tempfile.TemporaryFile() as stderr:
             stdin.write(request)
@@ -336,7 +367,7 @@ def run_extractor(op: str, fields: dict, timeout: float = CHILD_TIMEOUT_SECONDS,
                 proc = subprocess.Popen(
                     [executable, "-I", str(tool), "--json"],
                     stdin=stdin, stdout=stdout, stderr=stderr, env={},
-                    cwd=tool.parent, start_new_session=True,
+                    cwd=tool.parent, start_new_session=True, preexec_fn=limit_output,
                 )
             except OSError as error:
                 raise Unavailable(f"could not run ({type(error).__name__}: {error})") from None
@@ -359,10 +390,14 @@ def run_extractor(op: str, fields: dict, timeout: float = CHILD_TIMEOUT_SECONDS,
             printed = stderr.read(STDERR_LIMIT)
             stdout.seek(0)
             data = stdout.read(limit + 1)
+            capped = [name for name, handle in (("stdout", stdout), ("stderr", stderr))
+                      if os.fstat(handle.fileno()).st_size >= cap]
     except Unavailable:
         raise
     except Exception as error:
         raise Unavailable(f"could not be run, waited for, or read ({type(error).__name__}: {error})") from None
+    if capped:
+        raise Unavailable(f"wrote {' and '.join(capped)} up to the output cap of {cap} bytes", printed)
     code = proc.returncode
     if not ended:
         raise Unavailable(f"was not seen to end within {timeout} seconds", printed)
@@ -437,7 +472,8 @@ def main(argv: list) -> int:
         reply = run_extractor(op, fields)
     except Unavailable as error:
         message = f"{PROG}: {RELEASE_DATE_TOOL.name} {error.reason} in {op}, so the extractor is unavailable"
-        shown = error.printed.decode("utf-8", errors="replace").strip()
+        lines = error.printed.decode("utf-8", errors="replace").splitlines()
+        shown = " | ".join(line.strip() for line in lines if line.strip())
         if shown:
             message += f"; it printed: {shown}"
         print(message, file=sys.stderr)

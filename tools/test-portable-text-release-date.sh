@@ -272,8 +272,21 @@ undated_fixture 1.0.14
 rm -f "${work}/tools/skill-release-date-client.py"
 expect_fail "a missing client is reported as unavailable" "tools/skill-release-date.py is unavailable or broken (probe exit 2)"
 
-# 2f. Row 89: every launch in the gate goes through the client.
-if [ "$(grep -Fc "python3 tools/skill-release-date.py" "${repo_root}/tools/check-portable-text-sync.sh")" = "0" ] \
+# 2f. Row 89: every launch in the gate goes through the client. A direct
+#     launch of the extractor in any python form (python, python3 or a
+#     versioned or pathed interpreter, any options, any path, quoted or not)
+#     is counted; the client does not match.
+direct_launch='python[0-9.]*([[:space:]]+-[^[:space:]]+)*[[:space:]]+["'"'"']?([^[:space:]]*/)?skill-release-date[.]py([^[:alnum:]_.-]|$)'
+direct_launches() { grep -Ec -- "${direct_launch}" "$1"; }
+probe="${scratch}/launch-probe.sh"
+printf '%s\n' 'python3 -I tools/skill-release-date.py --baseline' 'x="$(python3 tools/skill-release-date.py "$1")"' \
+  '/usr/bin/python3.12 -I -B "./tools/skill-release-date.py"' 'python3 -I tools/skill-release-date-client.py baseline' > "${probe}"
+if [ "$(direct_launches "${probe}")" = "3" ]; then
+  pass "the launch pattern finds each python form and not the client"
+else
+  fail "the launch pattern finds each python form and not the client"
+fi
+if [ "$(direct_launches "${repo_root}/tools/check-portable-text-sync.sh")" = "0" ] \
     && [ "$(grep -Fo "python3 -I tools/skill-release-date-client.py" "${repo_root}/tools/check-portable-text-sync.sh" | wc -l)" -eq 5 ]; then
   pass "every extractor launch in the gate goes through the client"
 else

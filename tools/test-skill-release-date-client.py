@@ -549,6 +549,53 @@ class BoundsTest(unittest.TestCase):
             f"skill-release-date-client: skill-release-date.py {reason} in baseline, so the extractor is unavailable\n",
         )
 
+    def test_output_past_the_cap_stops_at_the_cap(self):
+        # A child that writes far past the read bound, on stdout or on
+        # stderr, stops at the cap: its writes past it fail, so the storage
+        # it takes stays bounded while it runs, and the client is unavailable
+        # naming the cap. The child reports how much it wrote.
+        limit = client.RESULT_LIMIT
+        cap = client.output_cap(limit)
+        self.assertEqual(cap, limit + 2)
+        for stream in ("stdout", "stderr"):
+            with self.subTest(stream):
+                body = (
+                    "import os, sys\n"
+                    f"handle = sys.{stream}.buffer\n"
+                    "try:\n"
+                    f"    for _ in range({20 * limit // 65536}):\n"
+                    "        handle.write(b'x' * 65536)\n"
+                    "        handle.flush()\n"
+                    "except OSError:\n"
+                    "    pass\n"
+                    f"size = os.fstat({1 if stream == 'stdout' else 2}).st_size\n"
+                    "open('wrote', 'w').write(str(size))\n"
+                )
+                pair = Pair(body)
+                try:
+                    code, out, err = pair.run("baseline")
+                    wrote = int((pair.root / "wrote").read_text())
+                finally:
+                    pair.close()
+                self.assertEqual(wrote, cap)
+                self.assertEqual((code, out), (16, ""), err)
+                self.assertIn(f"skill-release-date.py wrote {stream} up to the output cap of {cap} bytes in baseline", err)
+                self.assertEqual(err.count("\n"), 1, err)
+
+    def test_relayed_stderr_is_one_line(self):
+        # Every line the child wrote to stderr is relayed on the one line,
+        # joined with " | "; blank lines and surrounding blanks are dropped.
+        body = "import sys\nsys.stderr.write('first line\\n\\n  second line  \\r\\nthird\\n')\nraise SystemExit(3)\n"
+        pair = Pair(body)
+        try:
+            self.assertEqual(
+                pair.run("baseline"),
+                (16, "", "skill-release-date-client: skill-release-date.py exited 3 in baseline, so the extractor "
+                         "is unavailable; it printed: first line | second line | third\n"),
+            )
+        finally:
+            pair.close()
+
     def test_relayed_stderr_is_bounded(self):
         body = f"import sys\nsys.stderr.write('e' * {client.STDERR_LIMIT + 100})\nraise SystemExit(3)\n"
         pair = Pair(body)

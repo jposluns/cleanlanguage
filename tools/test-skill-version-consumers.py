@@ -22,6 +22,7 @@ import json
 import os
 import shutil
 import subprocess
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -31,6 +32,13 @@ PACKAGER = REPO / "tools" / "release-package.sh"
 DRY_RUN = REPO / "tools" / "release-dry-run.sh"
 RELEASE_DATE_TOOL = REPO / "tools" / "skill-release-date.py"
 CLIENT = REPO / "tools" / "skill-release-date-client.py"
+
+# Any direct launch of the extractor, in any python form: python, python3 or
+# a versioned or pathed interpreter, any options, any path to the script,
+# quoted or not. The client, skill-release-date-client.py, does not match.
+DIRECT_LAUNCH = re.compile(
+    r"(?<![\w-])python[0-9.]*(?:\s+-\S+)*\s+[\"']?(?:\S*/)?skill-release-date\.py(?![\w.-])"
+)
 
 # Reads all of standard input, then fails the read, so the client exits 14
 # (its input could not be read) without the writer of the pipe taking a
@@ -511,8 +519,20 @@ class CallerLaunchTest(unittest.TestCase):
         for path, launches in ((PACKAGER, 5), (DRY_RUN, 2)):
             with self.subTest(path.name):
                 text = path.read_text(encoding="utf-8")
-                self.assertEqual(text.count("python3 tools/skill-release-date.py"), 0)
+                self.assertEqual(DIRECT_LAUNCH.findall(text), [])
                 self.assertEqual(text.count("python3 -I tools/skill-release-date-client.py"), launches)
+
+    def test_the_launch_pattern_finds_every_python_form(self):
+        for form in ("python3 tools/skill-release-date.py", "python3 -I tools/skill-release-date.py --baseline",
+                     "python3 -I -B ./tools/skill-release-date.py", "python3.12 tools/skill-release-date.py x",
+                     "/usr/bin/python3 -I \"tools/skill-release-date.py\"", "python tools/skill-release-date.py",
+                     "(python3 -I tools/skill-release-date.py)"):
+            with self.subTest(form):
+                self.assertEqual(len(DIRECT_LAUNCH.findall(form)), 1)
+        for form in ("python3 -I tools/skill-release-date-client.py baseline", "tools/skill-release-date.py",
+                     "python3 tools/skill-release-date.pyc", "python3 tools/test-skill-release-date.py"):
+            with self.subTest(form):
+                self.assertEqual(DIRECT_LAUNCH.findall(form), [])
 
 
 def _locale_available(name: str) -> bool:

@@ -85,6 +85,13 @@ REPO = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO / ".github" / "workflows" / "release-skill.yml"
 EXTRACTOR = REPO / "tools" / "skill-release-date.py"
 CLIENT = REPO / "tools" / "skill-release-date-client.py"
+
+# Any direct launch of the extractor, in any python form: python, python3 or
+# a versioned or pathed interpreter, any options, any path to the script,
+# quoted or not. The client, skill-release-date-client.py, does not match.
+DIRECT_LAUNCH = re.compile(
+    r"(?<![\w-])python[0-9.]*(?:\s+-\S+)*\s+[\"']?(?:\S*/)?skill-release-date\.py(?![\w.-])"
+)
 VCS = "git"
 COMMIT = "c" * 40
 OTHER_COMMIT = "d" * 40
@@ -954,8 +961,10 @@ class HarnessTest(WorkflowStepTest):
     def test_every_extractor_launch_goes_through_the_client(self):
         # Row 89: no step runs the extractor CLI; each of the 7 calls runs
         # the client, isolated.
-        self.assertEqual(WORKFLOW_TEXT.count("python3 tools/skill-release-date.py"), 0)
+        self.assertEqual(DIRECT_LAUNCH.findall(WORKFLOW_TEXT), [])
         self.assertEqual(WORKFLOW_TEXT.count("python3 -I tools/skill-release-date-client.py"), 7)
+        injected = WORKFLOW_TEXT + "          python3 -I tools/skill-release-date.py --baseline\n"
+        self.assertEqual(len(DIRECT_LAUNCH.findall(injected)), 1)
 
     def test_fake_date_refuses_a_call_without_utc(self):
         proc = subprocess.run([str(self.bin / "date"), "+%F"], env={"FAKE_STATE": str(self.state)},
