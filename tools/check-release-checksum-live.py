@@ -128,9 +128,9 @@ the free space of the file system, so a file below the cap can still run
 out of space; the check reads only the final size, so a child that fills
 stdout to the cap, truncates it and writes a valid reply is accepted; the
 cap applies to each file, not to their total, so a child can write any
-number of files, each up to the cap; a file already larger than the cap
-keeps its size, the child can write in it only below the cap, and a write
-in it that would cross the cap is cut short at the cap rather than refused;
+number of files, each up to the cap; the cap limits how far a write can
+extend a file, so a file already larger than the cap keeps its size and
+its content can still be changed;
 a child, or a process it starts, that holds CAP_SYS_RESOURCE (as a gate
 run as root gives it) can raise the hard limit and then the soft one, so
 the cap holds only until it raises it; and its stdin file has the same cap
@@ -353,11 +353,8 @@ def output_cap(limit: int) -> int:
     ordinary writes: one byte past the larger of the two read bounds
     (``limit + 1`` bytes of stdout and STDERR_LIMIT bytes of stderr), so a
     reply one byte too long is still read and refused as too long. An
-    ordinary write that would cross the cap is cut short at the cap; one
-    that starts at or past the cap fails with EFBIG in a process that
-    ignores SIGXFSZ, as Python does, and ends any other process with that
-    signal. For what the cap does not bound, see the residuals in the
-    module docstring."""
+    ordinary write cannot extend a file past the cap. For what the cap
+    does not bound, see the residuals in the module docstring."""
     return max(limit + 1, STDERR_LIMIT) + 1
 
 
@@ -444,7 +441,8 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
             # file past cap; the module docstring lists what the cap does
             # not bound. The cap is the hard limit too, so a child
             # without CAP_SYS_RESOURCE, or a process it starts without it,
-            # cannot raise the soft limit back.
+            # can neither raise the soft limit past the cap nor raise the
+            # hard limit.
             # The gate has no threads (it imports no threading, and
             # reset_sigchld already requires the main thread), so a
             # preexec_fn is safe here.
