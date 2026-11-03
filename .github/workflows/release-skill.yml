@@ -163,7 +163,14 @@ jobs:
           rc=0
           released="$(python3 -I tools/skill-release-date-client.py extract-file cleanlanguage/skills/cleanlanguage/SKILL.md)" || rc=$?
           case "${rc}" in
-            0) dated=1 ;;
+            0)
+              # The value is used only as a bare day, checked as a whole.
+              if ! [[ "${released}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                echo "tools/skill-release-date.py gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md." >&2
+                exit 1
+              fi
+              dated=1
+              ;;
             13)
               rc=0
               requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${VERSION}")" || rc=$?
@@ -219,7 +226,15 @@ jobs:
               rc=0
               release_date="$(python3 -I tools/skill-release-date-client.py published-day "${published_at}")" || rc=$?
               case "${rc}" in
-                0) ;;
+                0)
+                  # The value is written to the step environment file, so it
+                  # must be a bare day, checked as a whole, never one with a
+                  # line of its own after it.
+                  if ! [[ "${release_date}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                    echo "tools/skill-release-date.py gave an unexpected answer (${release_date:-nothing}) for the published_at of ${RELEASE_TAG}." >&2
+                    exit 1
+                  fi
+                  ;;
                 11)
                   echo "The published_at of ${RELEASE_TAG} (${published_at:-empty}) is not a usable UTC instant (see the error above)." >&2
                   exit 1

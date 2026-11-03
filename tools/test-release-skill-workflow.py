@@ -158,8 +158,10 @@ WORKFLOW_CLIENT_MENTIONS = (
 WORKFLOW_MENTIONS = (
     '          # op of tools/skill-release-date.py, the one place that states the',
     '            echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2, so the release date cannot be checked." >&2',
+    '                echo "tools/skill-release-date.py gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md." >&2',
     '                11) echo "tools/skill-release-date.py rejected the version ${VERSION} (see the error above)." >&2; exit 1 ;;',
     '                *) echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for ${VERSION}." >&2; exit 1 ;;',
+    '                    echo "tools/skill-release-date.py gave an unexpected answer (${release_date:-nothing}) for the published_at of ${RELEASE_TAG}." >&2',
     '          # tools/skill-release-date.py, through tools/skill-release-date-client.py,',
     '            echo "tools/skill-release-date.py is unavailable or crashed (exit $1) while $2." >&2',
     '          # tools/skill-release-date.py, through tools/skill-release-date-client.py.',
@@ -2288,6 +2290,60 @@ class InheritedErrexitStepTest(WorkflowStepTest):
                 self.assertEqual(code, 1, err)
                 self.assertIn("Refusing to publish v1.0.15", err)
                 self.set_state(clock="2026-11-15T12:00:00Z")
+
+
+# Row 89: a stand-in client that, for one word, prints a valid value and then
+# a second line at exit 0, and runs the real client for every other word.
+VALUE_AND_A_LINE_CLIENT = (
+    "import os, sys\n"
+    "if sys.argv[1:2] == [{word!r}]:\n"
+    "    print({value!r})\n"
+    "    print(\"X=1\")\n"
+    "    raise SystemExit(0)\n"
+    "real = os.path.join(os.path.dirname(os.path.abspath(__file__)), \"real-client.py\")\n"
+    "os.execv(sys.executable, [sys.executable, \"-I\", real, *sys.argv[1:]])\n"
+)
+
+
+class WholeValueTest(WorkflowStepTest):
+    """Row 89: at each capture of a client value in the Determine step, a
+    valid value followed by a second line at exit 0 is refused before
+    GITHUB_ENV is written, so no extra line can reach it."""
+
+    def stand_in(self, word: str, value: str):
+        tools = self.work / "tools"
+        shutil.move(str(tools / "skill-release-date-client.py"), str(tools / "real-client.py"))
+        (tools / "skill-release-date-client.py").write_text(
+            VALUE_AND_A_LINE_CLIENT.format(word=word, value=value), encoding="utf-8")
+
+    def assert_refused(self, message: str):
+        code, out, err = self.run_step(DETERMINE)
+        self.assertEqual(code, 1, err)
+        self.assertIn(message, err)
+        self.assertEqual(self.env_values(), {})
+        self.assertNotIn("Expected release date", out)
+
+    def test_extract_file_value_with_a_second_line(self):
+        self.set_state(status="404")
+        self.stand_in("extract-file", "2026-11-15")
+        self.assert_refused("tools/skill-release-date.py gave an unexpected answer (2026-11-15\nX=1) for the Released "
+                            "line of cleanlanguage/skills/cleanlanguage/SKILL.md.")
+
+    def test_requires_date_value_with_a_second_line(self):
+        self.carried["VERSION"] = "1.0.14"
+        self.skill("Version: 1.0.14  \nAuthor: x\n")
+        self.stand_in("requires-date", "optional")
+        self.assert_refused("tools/skill-release-date.py gave an unexpected answer (optional\nX=1) for 1.0.14.")
+
+    def test_published_day_value_with_a_second_line(self):
+        # A version above the baseline with no Released line, and a published
+        # release: released is empty, so only the check of release_date stands
+        # between the value and GITHUB_ENV.
+        self.skill("Version: 1.0.15  \nAuthor: x\n")
+        self.set_state(status="200", published_at="2026-11-15T12:00:03Z")
+        self.stand_in("published-day", "2026-11-15")
+        self.assert_refused("tools/skill-release-date.py gave an unexpected answer (2026-11-15\nX=1) for the "
+                            "published_at of v1.0.15.")
 
 
 class WholeBaselineTest(WorkflowStepTest):

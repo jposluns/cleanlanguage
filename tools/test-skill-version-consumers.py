@@ -107,6 +107,7 @@ PACKAGER_MENTIONS = (
     '#      (item 26) through tools/skill-release-date.py, run in its --json mode by',
     '# extractor, tools/skill-release-date.py, run in its --json mode by',
     '  fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc}), so the Released line could not be checked"',
+    '        || fail "tools/skill-release-date.py gave an unexpected answer (${checked:-nothing}) checking --release-date ${release_date}"',
     '      fail "tools/skill-release-date.py is unavailable or crashed (exit ${check_rc}) checking --release-date ${release_date:-nothing}"',
     '      || fail "tools/skill-release-date.py gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"',
     '    fail "tools/skill-release-date.py is unavailable or crashed (exit ${released_rc}) reading the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"',
@@ -546,6 +547,17 @@ class PackagerReleaseDateTest(unittest.TestCase):
                                     client=stand_in.format(out="2026-11-15\n", code=0))
         self.assertEqual(code, 1, stderr)
         self.assertIn("tools/skill-release-date.py is unavailable or broken (probe exit 0)", stderr)
+
+    def test_a_checked_date_with_a_second_line_is_refused(self):
+        # Row 89: the date check must print exactly the --release-date given.
+        stand_in = STAND_IN_CLIENT.replace("    print(args[1])\n", "    print(args[1])\n    print('X=1')\n", 1)
+        self.assertNotEqual(stand_in, STAND_IN_CLIENT)
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                    released_block="Released: 2026-11-15  ",
+                                    client=stand_in.format(out="2026-11-15\n", code=0))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("tools/skill-release-date.py gave an unexpected answer (2026-11-15\nX=1) checking --release-date "
+                      "2026-11-15", stderr)
 
     def test_a_client_exit_125_is_not_a_failed_blob_read(self):
         # Row 89: 125 is a client exit like any other, not the failed read of

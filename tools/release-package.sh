@@ -170,7 +170,11 @@ if [ -n "${release_date_given}" ]; then
   check_rc=0
   checked="$(python3 -I tools/skill-release-date-client.py check-date "${release_date}" 2>&1)" || check_rc=$?
   case "${check_rc}" in
-    0) ;;
+    0)
+      # The client prints the day it was given; anything else is refused.
+      [[ "${checked}" == "${release_date}" ]] \
+        || fail "tools/skill-release-date.py gave an unexpected answer (${checked:-nothing}) checking --release-date ${release_date}"
+      ;;
     11) fail "--release-date must be a real YYYY-MM-DD date, got ${release_date:-nothing}" ;;
     *)
       relay_client "${checked}"
