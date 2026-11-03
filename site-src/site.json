@@ -19,7 +19,7 @@
     "/downloads/cleanlanguage-11k.md",
     "/downloads/cleanlanguage-8k.md"
   ],
-  "nav": ["standard", "examples", "patterns", "install", "verify", "instructions"],
+  "nav": ["standard", "examples", "patterns", "install", "instructions"],
   "about_paths": ["disclosure/", "license/"],
   "about_linkers": ["home", "disclosure", "license"],
   "pages": [
