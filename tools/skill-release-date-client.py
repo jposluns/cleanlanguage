@@ -71,13 +71,15 @@ and stderr go to temporary files, so the client never blocks on a pipe and
 reads only a bounded part of each (RESULT_LIMIT plus
 ECHO_BYTES_PER_CHARACTER bytes for each character of the request values,
 and STDERR_LIMIT). While the child runs, an ordinary write cannot grow any
-file it writes past output_cap(limit) bytes, one byte past the larger read
-bound (RLIMIT_FSIZE, set in the child before exec as both its soft and its
-hard limit, so a child without CAP_SYS_RESOURCE cannot raise it), so an
-extractor that writes too much by accident cannot fill temporary storage
-within the timeout. After
-the wait, a child whose stdout or stderr has a final size that reached
-that cap is unavailable, and the reason names the cap. The client
+file it writes past its cap: output_cap(limit) bytes, one byte past the
+larger read bound, or a lower file size limit the caller set, soft or hard
+(applied_cap). The cap is RLIMIT_FSIZE, set in the child before exec as
+both its soft and its hard limit, so a child without CAP_SYS_RESOURCE
+cannot raise it, and an extractor that writes too much by accident cannot
+fill temporary storage within the timeout. After the wait, a child whose
+stdout or stderr has a final size that reached that cap, including a
+lower limit the caller set, is unavailable, and the reason names that
+cap. The client
 waits for the child with a non-blocking
 waitpid (wait_child), at most CHILD_TIMEOUT_SECONDS, and exits 16 when the
 wait reports that the child is no longer its child, since its exit status
@@ -310,11 +312,14 @@ def output_cap(limit: int) -> int:
 
 def applied_cap(cap: int) -> int:
     """The file size limit the child gets, as both its soft and its hard
-    limit: ``cap``, or the inherited hard limit when that is lower, since a
-    process without CAP_SYS_RESOURCE cannot raise its hard limit."""
-    _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
-    if hard != resource.RLIM_INFINITY and hard < cap:
-        return hard
+    limit: the lowest of ``cap``, a finite inherited soft limit and a
+    finite inherited hard limit. A lower soft limit the caller set is kept
+    for the child rather than raised, and a lower hard limit is one that a
+    process without CAP_SYS_RESOURCE cannot raise."""
+    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    for inherited in (soft, hard):
+        if inherited != resource.RLIM_INFINITY and inherited < cap:
+            cap = inherited
     return cap
 
 

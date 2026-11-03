@@ -584,16 +584,34 @@ class BoundsTest(unittest.TestCase):
                 self.assertIn(f"skill-release-date.py wrote {stream} up to the output cap of {cap} bytes in baseline", err)
                 self.assertEqual(err.count("\n"), 1, err)
 
-    def test_an_inherited_hard_file_size_limit_below_the_cap_is_applied(self):
-        # A caller (a CI job with ulimit -H -f, say) can leave a hard file
-        # size limit below the cap, which a child without CAP_SYS_RESOURCE
-        # cannot raise. The child then
-        # gets that hard limit as its cap, and a normal reply still succeeds.
+    def test_an_inherited_file_size_limit_below_the_cap_is_applied(self):
+        # A caller can leave a file size limit below the cap: a hard one
+        # (a CI job with ulimit -H -f, say), which a child without
+        # CAP_SYS_RESOURCE cannot raise, or a soft one with no hard limit,
+        # which the client keeps rather than raises. The child then gets that
+        # limit as its cap, as both its soft and its hard limit, and a normal
+        # reply still succeeds.
         hard = 50000
         self.assertLess(hard, client.output_cap(client.RESULT_LIMIT))
+        for kind, limits in (("hard", f"({hard}, {hard})"), ("soft", f"({hard}, resource.RLIM_INFINITY)")):
+            self.check_inherited_limit(kind, limits, hard)
+        with mock.patch.object(client.resource, "getrlimit", lambda which: (hard, hard)):
+            self.assertEqual(client.applied_cap(client.output_cap(client.RESULT_LIMIT)), hard)
+        with mock.patch.object(client.resource, "getrlimit", lambda which: (hard, client.resource.RLIM_INFINITY)):
+            self.assertEqual(client.applied_cap(client.output_cap(client.RESULT_LIMIT)), hard)
+            self.assertEqual(client.applied_cap(1000), 1000)
+        with mock.patch.object(client.resource, "getrlimit", lambda which: (100, 400)):
+            self.assertEqual(client.applied_cap(1000), 100)
+        with mock.patch.object(client.resource, "getrlimit", lambda which: (client.resource.RLIM_INFINITY, hard)):
+            self.assertEqual(client.applied_cap(client.output_cap(client.RESULT_LIMIT)), hard)
+
+    def check_inherited_limit(self, kind, limits, hard):
+        """Run the client under the inherited file size limits ``limits``
+        (Python source for a (soft, hard) pair) and check that the child
+        gets ``hard`` as both limits and that a normal reply succeeds."""
         launch = (
             "import os, resource, sys\n"
-            f"resource.setrlimit(resource.RLIMIT_FSIZE, ({hard}, {hard}))\n"
+            f"resource.setrlimit(resource.RLIMIT_FSIZE, {limits})\n"
             "os.execv(sys.executable, [sys.executable, \"-I\", *sys.argv[1:]])\n"
         )
         report = (
@@ -608,7 +626,7 @@ class BoundsTest(unittest.TestCase):
              (11, "", f"skill-release-date: fsize={hard}/{hard}\n")),
             ("a normal reply", EXTRACTOR.read_text(encoding="utf-8"), ("baseline",), (0, "1.0.14\n", "")),
         ):
-            with self.subTest(label):
+            with self.subTest(kind=kind, case=label):
                 pair = Pair(body)
                 try:
                     proc = subprocess.run(
@@ -618,10 +636,6 @@ class BoundsTest(unittest.TestCase):
                 finally:
                     pair.close()
                 self.assertEqual((proc.returncode, proc.stdout, proc.stderr), expected)
-        with mock.patch.object(client.resource, "getrlimit", lambda which: (hard, hard)):
-            self.assertEqual(client.applied_cap(client.output_cap(client.RESULT_LIMIT)), hard)
-        with mock.patch.object(client.resource, "getrlimit", lambda which: (hard, client.resource.RLIM_INFINITY)):
-            self.assertEqual(client.applied_cap(1000), 1000)
 
     def test_an_unprivileged_child_cannot_raise_its_file_size_limit(self):
         # The child gets the cap as both its soft and its hard limit, so a
