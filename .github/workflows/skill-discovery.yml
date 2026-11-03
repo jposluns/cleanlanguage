@@ -50,7 +50,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Run the skill-discovery tests
         shell: bash
-        run: python3 tools/test-skill-discovery.py
+        run: python3 -I tools/test-skill-discovery.py
       - name: Validate skill discovery
         shell: bash
-        run: python3 tools/check-skill-discovery.py
+        run: python3 -I tools/check-skill-discovery.py

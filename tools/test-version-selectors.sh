@@ -93,8 +93,9 @@ for site in tools/release-dry-run.sh tools/check-portable-text-sync.sh .github/w
   else
     pass "structural: no hand-rolled first-line sed selector in ${site}"
   fi
-  # Each site must call the shared extractor, the expected number of times.
-  got="$(grep -Fc 'python3 tools/skill-version.py' "${site}" || true)"
+  # Each site must call the shared extractor, the expected number of times. The
+  # workflow launches it isolated (python3 -I); the shell sites do not yet.
+  got="$(grep -Ec 'python3( -I)? tools/skill-version\.py' "${site}" || true)"
   assert_eq "structural: skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"
 done
 
@@ -157,9 +158,9 @@ extract_block() { # file start end
 DRY_BLOCK="$(extract_block tools/release-dry-run.sh \
   'if ! version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-version.py)"' 'fi')"
 WF_LOCAL_BLOCK="$(extract_block .github/workflows/release-skill.yml \
-  'if ! version="$(python3 tools/skill-version.py cleanlanguage/skills/cleanlanguage/SKILL.md)"' 'fi')"
+  'if ! version="$(python3 -I tools/skill-version.py cleanlanguage/skills/cleanlanguage/SKILL.md)"' 'fi')"
 WF_MAIN_BLOCK="$(extract_block .github/workflows/release-skill.yml \
-  'if ! main_version="$(git show FETCH_HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-version.py)"' 'fi')"
+  'if ! main_version="$(git show FETCH_HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"' 'fi')"
 for name in DRY_BLOCK WF_LOCAL_BLOCK WF_MAIN_BLOCK; do
   [ -n "${!name}" ] || { echo "Could not extract ${name} from its source" >&2; exit 1; }
 done

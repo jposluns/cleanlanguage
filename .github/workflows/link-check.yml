@@ -52,12 +52,12 @@ jobs:
 
       - name: Check internal links resolve
         shell: bash
-        run: python3 tools/check-links.py
+        run: python3 -I tools/check-links.py
 
       - name: Run the release-links gate tests
         shell: bash
-        run: python3 tools/test-release-links.py
+        run: python3 -I tools/test-release-links.py
 
       - name: Check release links name the current version
         shell: bash
-        run: python3 tools/check-release-links.py
+        run: python3 -I tools/check-release-links.py
