@@ -3810,6 +3810,34 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(result, (("exit", 3), self.unavailable(
             f"wrote stdout up to the output cap of {cap} bytes", "extract") + "\n"))
 
+    def test_a_capped_child_that_hangs_reports_the_cap_not_the_timeout(self):
+        # Row 100: the cap check comes before the timeout check, as the
+        # run_release_date_child docstring states, so a child that fills
+        # stdout to the cap and then hangs past the timeout exits 3 naming
+        # the cap, not the timeout. The 1 second timeout starts only once
+        # the child has filled stdout and is ready (timeout_when_ready).
+        gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
+        cap = 300 + 7 * len("xy") + 2
+        tool = self.fake_extractor(extractor_with(
+            "def json_main():\n"
+            "    import os, time\n"
+            "    sys.stdin.buffer.read()\n"
+            "    for _ in range(16):\n"
+            "        try:\n"
+            "            os.write(1, b\"x\" * 65536)\n"
+            "        except OSError:\n"
+            "            pass\n"
+            + SAY_READY +
+            "    time.sleep(300)\n"
+            "    return 0\n"
+        ))
+        gate.CHILD_TIMEOUT_SECONDS = 1
+        with self.timeout_when_ready(tool.parent / "ready"):
+            result, err = self.call_reports("extract", "xy")
+        self.assertTrue((tool.parent / "ready").exists(), "the extract child did not get ready")
+        self.assertEqual((result, err), (("exit", 3), self.unavailable(
+            f"wrote stdout up to the output cap of {cap} bytes", "extract") + "\n"))
+
     def test_only_the_final_size_of_stdout_is_checked_against_the_cap(self):
         # Row 100: the fstat check reads the final size of stdout, as the
         # docstrings state. A child that fills stdout to the cap (its write
