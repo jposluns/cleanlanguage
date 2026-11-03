@@ -16,7 +16,11 @@ nonce, or hash, so a compliant browser blocked that script and the page showed
 "Loading the instructions..." and nothing else. Its only inline ``style``
 attribute was blocked by ``style-src 'self'`` for the same reason. Embedding the
 text removes both problems, works with JavaScript switched off, and needs no
-loosening of the policy.
+loosening of the policy. Since the owner's decision of 2026-11-03 the site-wide
+policy is the shared template policy, which allows ``'unsafe-inline'`` scripts for
+Cloudflare's JavaScript Detections, so a browser would no longer block an inline
+script here; the template rules (specification, section 5) still forbid one, and
+``style-src 'self'`` still blocks an inline style attribute.
 
 So this check also refuses to let that regress: the page must carry no inline
 script and no inline style attribute. Reintroducing either would break the page
@@ -168,9 +172,9 @@ def check_page(page: Path, button: str | None, expected: str) -> list[str]:
 
     if executes_inline(page_text):
         problems.append(
-            f"{name}: the page contains an inline <script>. The site's CSP is "
-            "script-src 'self', which blocks it, and the page silently fails to "
-            "work in the browser. Move the code to a file under site/js/."
+            f"{name}: the page contains an inline <script>. The site's rules forbid "
+            "inline code (the policy allows 'unsafe-inline' only for Cloudflare's "
+            "JavaScript Detections). Move the code to a file under site/js/."
         )
 
     if INLINE_STYLE.search(page_text):

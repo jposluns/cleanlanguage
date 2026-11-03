@@ -72,7 +72,8 @@ CASES = [
     ("site.css without its content token", edit(DRAFT, "</head>", '<link rel="stylesheet" href="/draft/assets/site.css?w=1">\n</head>'), 1),
     ("the draft page missing", remove(DRAFT), 3),
     ("the draft policy loosened", edit(HEADERS, "frame-ancestors 'none'\n  X-Robots-Tag", "frame-ancestors 'none'; worker-src *\n  X-Robots-Tag"), 1),
-    ("the draft policy gaining unsafe-eval", edit(HEADERS, "'unsafe-inline' https://ajax", "'unsafe-inline' 'unsafe-eval' https://ajax"), 1),
+    ("the draft policy gaining unsafe-eval", edit(HEADERS, "  ! Content-Security-Policy\n  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax",
+        "  ! Content-Security-Policy\n  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://ajax"), 1),
     ("the draft rule without its detach", edit(HEADERS, "  ! Content-Security-Policy\n", ""), 1),
     ("the detach after the draft policy", lambda root: (
         edit(HEADERS, "  ! Content-Security-Policy\n" + DRAFT_CSP_LINE, DRAFT_CSP_LINE)(root),
@@ -81,7 +82,12 @@ CASES = [
     ), 1),
     ("the draft rule without X-Robots-Tag", edit(HEADERS, "  X-Robots-Tag: noindex\n\n/downloads/cleanlanguage.md\n", "\n/downloads/cleanlanguage.md\n"), 1),
     ("a policy on another rule", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Content-Security-Policy: default-src 'none'\n"), 1),
-    ("the site-wide policy gaining unsafe-inline", edit(HEADERS, "script-src 'self'; img-src", "script-src 'self' 'unsafe-inline'; img-src"), 1),
+    ("the site-wide policy widened", edit(HEADERS, "frame-ancestors 'none'\n\n/draft/*", "frame-ancestors 'none'; worker-src *\n\n/draft/*"), 1),
+    ("the site-wide policy gaining unsafe-eval", edit(HEADERS,
+        "Cross-Origin-Opener-Policy: same-origin\n  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline'",
+        "Cross-Origin-Opener-Policy: same-origin\n  Content-Security-Policy: default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'"), 1),
+    ("the site-wide policy allowing data: images", edit(HEADERS, "frame-ancestors 'none'\n\n/draft/*",
+        "frame-ancestors 'none'; img-src 'self' data:\n\n/draft/*"), 1),
 ]
 
 

@@ -6,7 +6,7 @@ Gemini, Copilot, and other AI systems). A progressive-enhancement filter,
 ``site/js/install.js``, lets a reader narrow the page to one family: it sets a
 ``data-family`` attribute on the root element, and CSS keyed on that attribute
 collapses the other family sections. The point is that this is an enhancement.
-With JavaScript blocked by the site's Content-Security-Policy, failed, or switched
+With JavaScript blocked, failed, or switched
 off, the attribute is never set, the guarded rule is inert, and all five sections
 show.
 
@@ -37,8 +37,14 @@ What it verifies (reliably)
    positive, boundary-anchored ``html[data-family]`` / ``html[data-family=...]``
    (not ``.html``/``xhtml``/``data-family-mode``) and names ``data-family-section``.
    This catches the feature being deleted or its guard being renamed.
-7. ``site/_headers`` keeps ``script-src 'self'`` and ``style-src 'self'`` with no
-   ``unsafe-inline``, and a ``Cache-Control`` entry for ``/js/install.js``.
+7. The first ``Content-Security-Policy`` line in ``site/_headers`` (the ``/*``
+   rule) is exactly the shared policy, ``DRAFT_CSP`` below (template
+   specification, baseline 1.3.1, section 9; the owner authorized the live pages
+   to adopt it, ``'unsafe-inline'`` included, once https://posluns.ca/privacy/ was
+   published), and ``site/_headers`` keeps a ``Cache-Control`` entry for
+   ``/js/install.js``. The policy no longer blocks an inline script, so check 5
+   refuses inline code on the site's own rules (template specification, section
+   5), not on the policy's.
 
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
@@ -520,8 +526,9 @@ def main() -> int:
     # 4. no inline code
     if executes_inline(page_text):
         problems.append(
-            "the page contains an inline <script>; the CSP is script-src 'self' and it "
-            "would be blocked. Move the code to site/js/."
+            "the page contains an inline <script>; the site's rules forbid inline code "
+            "(the policy allows 'unsafe-inline' only for Cloudflare's JavaScript Detections). "
+            "Move the code to site/js/."
         )
     if INLINE_STYLE.search(page_text):
         problems.append(
@@ -530,8 +537,8 @@ def main() -> int:
         )
     if INLINE_HANDLER.search(page_text):
         problems.append(
-            "the page contains an inline on* event handler; the CSP is script-src 'self' "
-            "and it would be blocked. Bind the listener in site/js/."
+            "the page contains an inline on* event handler; the site's rules forbid inline "
+            "code. Bind the listener in site/js/."
         )
 
     # 5. script and stylesheet tokens
@@ -555,13 +562,10 @@ def main() -> int:
     if not csp_line:
         problems.append("site/_headers has no Content-Security-Policy line.")
     else:
-        if "script-src 'self'" not in csp_line or "style-src 'self'" not in csp_line:
+        if csp_line.split(":", 1)[1].strip() != DRAFT_CSP:
             problems.append(
-                "the CSP no longer names script-src 'self' and style-src 'self'; the "
-                "no-inline guarantee this gate relies on is gone."
+                f"the site-wide Content-Security-Policy is not exactly the shared policy: {csp_line.strip()!r}"
             )
-        if "unsafe-inline" in csp_line:
-            problems.append("the CSP now allows unsafe-inline, defeating the inline-code checks.")
     if not re.search(r"/js/install\.js\s*\n\s*Cache-Control:", headers):
         problems.append("site/_headers has no Cache-Control entry for /js/install.js.")
 

@@ -10,7 +10,7 @@ name: Portable text sync
 #
 # The second checks that site/instructions/index.html still embeds that text
 # exactly, and that it carries no inline script or style. The page renders the
-# text statically because the site's CSP blocks inline code, and a reintroduced
+# text statically because the site's rules forbid inline code, and a reintroduced
 # inline script would break the page in a way no other gate can see.
 
 on:

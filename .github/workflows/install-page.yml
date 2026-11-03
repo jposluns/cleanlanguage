@@ -3,7 +3,7 @@ name: Install page
 # Checks that the install page keeps its five AI-family setup sections static,
 # visible, and complete, so the progressive-enhancement family filter in
 # site/js/install.js stays an enhancement. With JavaScript blocked by the site's
-# CSP, failed, or disabled, no family section may disappear. See
+# rules, failed, or disabled, no family section may disappear. See
 # tools/check-install-page.py for what it proves and does not prove.
 
 on:

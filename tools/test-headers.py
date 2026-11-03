@@ -34,19 +34,25 @@ PERMISSIONS = (
     "display-capture=(), fullscreen=(), geolocation=(), gyroscope=(), hid=(), "
     "magnetometer=(), microphone=(), midi=(), payment=(), serial=(), usb=()"
 )
+SHARED_CSP = (
+    "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com https://static"
+    ".cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; style-src 'self'; fo"
+    "nt-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+)
 DECIDED = {
     "X-Frame-Options": "DENY",
     "Permissions-Policy": PERMISSIONS,
     "Cross-Origin-Opener-Policy": "same-origin",
+    "Content-Security-Policy": SHARED_CSP,
 }
-ONCE = list(DECIDED) + ["Content-Security-Policy"]
+ONCE = list(DECIDED)
 FORBIDDEN = ["X-Content-Type-Options", "Referrer-Policy", "Strict-Transport-Security"]
 GOOD_LINES = [
     "/*",
     "  X-Frame-Options: DENY",
     f"  Permissions-Policy: {PERMISSIONS}",
     "  Cross-Origin-Opener-Policy: same-origin",
-    "  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'",
+    f"  Content-Security-Policy: {SHARED_CSP}",
     "",
     "/downloads/cleanlanguage.md",
     '  Content-Disposition: attachment; filename="cleanlanguage.md"',
@@ -137,6 +143,14 @@ class HeadersGateTest(unittest.TestCase):
             with self.subTest(name=name):
                 lines = self.replace(f"  {name}: {value}", f"  {name}: {value}x")
                 self.expect_fail(lines, f"the decided value is {value!r}")
+
+    def test_site_wide_policy_wider_than_the_shared_policy_fails(self):
+        for value in (SHARED_CSP + "; worker-src *", SHARED_CSP.replace("default-src 'none'", "default-src 'self'"),
+                      SHARED_CSP.replace("img-src 'self'", "img-src 'self' data:"),
+                      "default-src 'self'; style-src 'self'; script-src 'self'"):
+            with self.subTest(value=value):
+                lines = self.replace(f"  Content-Security-Policy: {SHARED_CSP}", f"  Content-Security-Policy: {value}")
+                self.expect_fail(lines, "the decided value is")
 
     def test_permissions_policy_missing_one_feature_fails(self):
         lines = self.replace(f"  Permissions-Policy: {PERMISSIONS}",
