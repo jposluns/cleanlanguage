@@ -807,6 +807,8 @@ for idx in 0 1 2 3 4; do
     "$read_failed: check run app is not an object"
   run_err_case "non-integer app id on run $idx alone -> unreadable" "$(bad_at app.id '"9"' "$idx")" 3 \
     "$read_failed: check run app.id is not an integer"
+  run_err_case "boolean false app id on run $idx alone -> unreadable" "$(bad_at app.id false "$idx")" 3 \
+    "$read_failed: check run app.id is not an integer"
 done
 # A status that is a JSON array or object is not a string, whatever it holds.
 for bad in '[]' '{}' '["completed"]'; do
@@ -988,6 +990,13 @@ gate_bad=(
   "app|an array app slug|app={\"slug\":[]}|non-string check field app.slug|late"
   "app|an object app slug|app={\"slug\":{}}|non-string check field app.slug|late"
   "app|an unencodable app slug|app={\"slug\":\"\\ud800\"}|check field app.slug is not encodable text|late"
+  "app|a true app id|app={\"slug\":\"github-actions\",\"id\":true}|check run app.id is not an integer|early"
+  "app|a false app id|app={\"slug\":\"github-actions\",\"id\":false}|check run app.id is not an integer|early"
+  "app|the app id 9.0|app={\"slug\":\"github-actions\",\"id\":9.0}|check run app.id is not an integer|early"
+  "app|the app id 9e0|app={\"slug\":\"github-actions\",\"id\":9e0}|check run app.id is not an integer|early"
+  "app|an array app id|app={\"slug\":\"github-actions\",\"id\":[]}|check run app.id is not an integer|early"
+  "app|an object app id|app={\"slug\":\"github-actions\",\"id\":{}}|check run app.id is not an integer|early"
+  "app|the app id [9]|app={\"slug\":\"github-actions\",\"id\":[9]}|check run app.id is not an integer|early"
 )
 gate_pm="{\"id\":${gate_pm_id},${PM_OK#\{}"
 run_case "the gated reading with no field changed -> green" \
