@@ -1,0 +1,37 @@
+name: Pages build
+
+# Run the Cloudflare Pages build command, tools/pages-build.sh, as Pages runs
+# it: the owner's 5 offline integrity gates on a shallow checkout, no gate
+# reaching the network or git history. The first step runs the script's tests,
+# which fail if the script stops running a listed gate or stops failing when
+# one fails; the second runs the script itself, so the exact dashboard command
+# is proved here before Pages runs it.
+#
+# This workflow carries no paths filter on purpose, as sitemap.yml explains: a
+# path-filtered required check never reports on a pull request outside its
+# paths, and the gates read files across the repository. The checkout stays
+# shallow, so a gate that starts to need git history fails here first.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Run the Pages build script tests
+        shell: bash
+        run: python3 -I tools/test-pages-build.py
+
+      - name: Run the Pages build command
+        shell: bash
+        run: bash tools/pages-build.sh

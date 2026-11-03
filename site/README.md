@@ -8,13 +8,17 @@ Connect the GitHub repository to Cloudflare Pages using these settings:
 
 - Production branch: `main`
 - Framework preset: `None`
-- Build command: leave blank
+- Build command: `bash tools/pages-build.sh`
 - Build output directory: `site`
 - Root directory: leave blank
 
 Add `cleanlanguage.ai` as the custom domain after the first deployment.
 
-Cloudflare Pages publishes `site/` exactly as it is committed. The site's checks run in GitHub Actions, on pull requests and on `main`; the deployment itself runs none of them.
+Cloudflare Pages publishes `site/` exactly as it is committed; the build changes no file. The build command runs the site's offline integrity gates on the checked-out tree, as the template specification requires (section 4, step 3): [`tools/pages-build.sh`](../tools/pages-build.sh) runs `check-baseline-pin`, `check-security-txt`, `check-headers`, `check-inline-code` and `build-site --check`. Each gate reads only the repository, with no network and no git history, and they need Python 3.11 or later.
+
+If any gate fails, or a gate file is missing, the build fails and that commit is not deployed; the build log names the gate and the problem. Fix the cause in a pull request; never remove a gate to make a deploy pass. The same gates, and the checks that need git history or the network, run in GitHub Actions on pull requests and on `main`. [`tools/test-pages-build.py`](../tools/test-pages-build.py) fails if the build script stops running a listed gate or stops failing when one fails.
+
+To roll back, clear the build command in the Cloudflare Pages settings; Pages then publishes `site/` without running the gates.
 
 ## How the pages are made
 
