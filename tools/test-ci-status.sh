@@ -1020,14 +1020,21 @@ gate_cases() {
 }
 gate_cases gate_checks gate_ctx
 gate_cases gate_bad gate_real
-# Each check is also made once on a run with the small id 9, after a first run
-# with the id 7, so a reader that made a check only on a run whose id is above
-# some size is caught as well as one that made it only below.
+# Each check is also made once with small ids, after a first run with the id 7,
+# so a reader that made a check only on a run whose id is above some size is
+# caught as well as one that made it only below. The decisive run carries the id
+# 9; for the id checks it carries the small string id "9" (not an integer) or
+# the id 7 of the first run (repeated). Each case names the id its decisive run
+# carries.
 for chk in "${gate_checks[@]}"; do
   IFS='|' read -r field what bad needle when <<<"$chk"
-  if [ "$bad" = "id=$gate_pm_id" ]; then bad=id=7; fi
-  run_err_case "$what on a run with the id 9 -> unreadable" \
-    "$(runs "{\"id\":7,${PM_OK#\{}" "$SD_OK" "$APM_OK" "$CF" "$(gated_run id=9 "$bad")")" 3 "$read_failed: $needle"
+  small_id=9
+  case "$bad" in
+    "id=$gate_pm_id") small_id=7 bad="" ;;
+    id=*) small_id='"9"' bad="" ;;
+  esac
+  run_err_case "$what on a run with the id $small_id -> unreadable" \
+    "$(runs "{\"id\":7,${PM_OK#\{}" "$SD_OK" "$APM_OK" "$CF" "$(gated_run "id=$small_id" "$bad")")" 3 "$read_failed: $needle"
 done
 # The repeated-id check applies whatever the first run carrying the id holds: the
 # first run below carries the id 31234567890 and each context above in turn (a
