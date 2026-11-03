@@ -32,6 +32,7 @@ import sys
 import tempfile
 import time
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
@@ -464,9 +465,11 @@ class BoundsTest(unittest.TestCase):
 
     def test_a_child_that_a_kill_does_not_end_is_left_unreaped(self):
         # A child that a kill does not end, such as one in an uninterruptible
-        # sleep, cannot be made in a test, so a stand-in for Popen never ends:
-        # its wait with a timeout always times out, and a wait with no timeout
-        # fails the test, because it would block the client with no bound.
+        # sleep, cannot be made in a test, so a stand-in child never ends:
+        # every non-blocking waitpid sees it still running, and a blocking
+        # wait fails the test, because it would block the client with no
+        # bound. The client waits the timeout, kills the group, waits the
+        # grace, and then gives up.
         waits = []
 
         class NeverEnds:
@@ -477,25 +480,70 @@ class BoundsTest(unittest.TestCase):
                 pass
 
             def wait(self, timeout=None):
-                waits.append(timeout)
-                if timeout is None:
-                    raise AssertionError("a wait with no timeout")
-                raise subprocess.TimeoutExpired("extractor", timeout)
+                raise AssertionError("a Popen wait, which reads a lost status as exit 0")
+
+        def waitpid(pid, options):
+            waits.append((pid, options, time.monotonic()))
+            if options != os.WNOHANG:
+                raise AssertionError("a blocking waitpid")
+            return 0, 0
 
         kills = []
         reason = (f"could not be reaped (the client saw no end of it within "
                   f"{client.REAP_GRACE_SECONDS} seconds after its kill)")
         with mock.patch.object(client.subprocess, "Popen", NeverEnds), \
+                mock.patch.object(client.os, "waitpid", waitpid), \
                 mock.patch.object(client.os, "killpg", lambda pid, sig: kills.append((pid, sig))):
+            started = time.monotonic()
             with self.assertRaises(client.Unavailable) as caught:
                 client.run_extractor("baseline", {}, timeout=1)
+            elapsed = time.monotonic() - started
             self.assertEqual(caught.exception.reason, reason)
-            self.assertEqual(waits, [1, client.REAP_GRACE_SECONDS])
+            self.assertGreaterEqual(elapsed, 1 + client.REAP_GRACE_SECONDS)
+            self.assertLess(elapsed, 1 + client.REAP_GRACE_SECONDS + 5)
+            self.assertTrue(waits and all(pid == NeverEnds.pid for pid, _o, _t in waits), waits)
+            kill_time = [t for _p, _o, t in waits]
             self.assertEqual(kills, [(NeverEnds.pid, signal.SIGKILL)])
+            self.assertTrue(any(t >= started + 1 for t in kill_time))
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
                 code = client.main(["skill-release-date-client", "baseline"])
         self.assertEqual(code, 16)
+        self.assertEqual(
+            stderr.getvalue(),
+            f"skill-release-date-client: skill-release-date.py {reason} in baseline, so the extractor is unavailable\n",
+        )
+
+    def test_a_child_whose_status_is_lost_is_unavailable(self):
+        # The wait reports that the child is no longer a child of the client
+        # (ChildProcessError), so its exit status is lost; Popen.wait would
+        # read that as exit 0 and the reply would pass. The client exits 16.
+        reply = "{\"op\": \"baseline\", \"outcome\": \"value\", \"value\": \"1.0.14\"}"
+        reason = "could not be waited for (it is no longer a child of the client, so its exit status is lost)"
+        pair = Pair(f"print({reply!r})\nraise SystemExit(1)\n")
+        real_waitpid = os.waitpid
+
+        def waitpid(pid, options):
+            # Reap the child here, as another reaper would, then report it lost.
+            real_waitpid(pid, 0)
+            raise ChildProcessError(10, "No child processes")
+
+        try:
+            with mock.patch.object(client.os, "waitpid", waitpid), \
+                    mock.patch.object(client, "RELEASE_DATE_TOOL", pair.root / "skill-release-date.py"), \
+                    warnings.catch_warnings():
+                # The client never saw the status, so it leaves the Popen
+                # object unfinished, which warns when it is collected.
+                warnings.simplefilter("ignore", ResourceWarning)
+                with self.assertRaises(client.Unavailable) as caught:
+                    client.run_extractor("baseline", {})
+                self.assertEqual(caught.exception.reason, reason)
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()) as stdout:
+                    code = client.main(["skill-release-date-client", "baseline"])
+        finally:
+            pair.close()
+        self.assertEqual((code, stdout.getvalue()), (16, ""))
         self.assertEqual(
             stderr.getvalue(),
             f"skill-release-date-client: skill-release-date.py {reason} in baseline, so the extractor is unavailable\n",
@@ -511,6 +559,81 @@ class BoundsTest(unittest.TestCase):
         self.assertEqual(code, 16)
         self.assertEqual(err.count("e" * client.STDERR_LIMIT), 1)
         self.assertNotIn("e" * (client.STDERR_LIMIT + 1), err)
+
+
+class InheritedSigchldTest(unittest.TestCase):
+    """The exit status of the child does not depend on the SIGCHLD
+    disposition the client inherits: an ignored SIGCHLD would make the
+    kernel reap the child, losing its status, so the client resets it."""
+
+    LAUNCH = (
+        "import os, signal, sys\n"
+        "signal.signal(signal.SIGCHLD, signal.{})\n"
+        "os.execv(sys.executable, [sys.executable, \"-I\", *sys.argv[1:]])\n"
+    )
+
+    def test_an_ignored_sigchld_keeps_a_non_zero_exit_unavailable(self):
+        # The child prints a reply that meets the contract and exits 1. With
+        # SIGCHLD ignored and not reset, that exit is lost and the client
+        # would print 1.0.14 and exit 0.
+        reply = "{\"op\": \"baseline\", \"outcome\": \"value\", \"value\": \"1.0.14\"}"
+        pair = Pair(f"print({reply!r})\nraise SystemExit(1)\n")
+        try:
+            for disposition in ("SIG_DFL", "SIG_IGN"):
+                with self.subTest(disposition):
+                    proc = subprocess.run(
+                        [sys.executable, "-I", "-c", self.LAUNCH.format(disposition), str(pair.client), "baseline"],
+                        capture_output=True, text=True, cwd=pair.root,
+                    )
+                    self.assertEqual((proc.returncode, proc.stdout), (16, ""), proc.stderr)
+                    self.assertEqual(
+                        proc.stderr,
+                        "skill-release-date-client: skill-release-date.py exited 1 in baseline, "
+                        "so the extractor is unavailable\n",
+                    )
+        finally:
+            pair.close()
+
+    def test_an_ignored_sigchld_keeps_a_valid_reply(self):
+        pair = Pair(EXTRACTOR.read_text(encoding="utf-8"))
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-I", "-c", self.LAUNCH.format("SIG_IGN"), str(pair.client), "requires-date",
+                 "1.0.15"],
+                capture_output=True, text=True, cwd=pair.root,
+            )
+        finally:
+            pair.close()
+        self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, "required\n", ""))
+
+    def test_a_sigchld_that_cannot_be_reset_starts_no_child(self):
+        # The reset is refused in a thread other than the main thread
+        # (ValueError); the client then exits 16 naming it and starts no child.
+        pair = Pair("open('started', 'w').write('1')\n")
+        script = (
+            "import contextlib, importlib.util, io, sys, threading\n"
+            "spec = importlib.util.spec_from_file_location(\"client_copy\", sys.argv[1])\n"
+            "client = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(client)\n"
+            "codes = []\n"
+            "thread = threading.Thread(target=lambda: codes.append(client.main([\"c\", \"baseline\"])))\n"
+            "thread.start()\n"
+            "thread.join()\n"
+            "sys.exit(codes[0] if codes else 70)\n"
+        )
+        try:
+            proc = subprocess.run([sys.executable, "-I", "-c", script, str(pair.client)],
+                                  capture_output=True, text=True, cwd=pair.root)
+            started = (pair.root / "started").exists()
+        finally:
+            pair.close()
+        self.assertEqual((proc.returncode, proc.stdout), (16, ""), proc.stderr)
+        self.assertTrue(proc.stderr.startswith(
+            "skill-release-date-client: skill-release-date.py could not be run safely (SIGCHLD could not be "
+            "reset to its default disposition: ValueError: "), proc.stderr)
+        self.assertTrue(proc.stderr.endswith(
+            "), so its exit status could be lost in baseline, so the extractor is unavailable\n"), proc.stderr)
+        self.assertFalse(started, "a child was started")
 
 
 class IsolationTest(unittest.TestCase):

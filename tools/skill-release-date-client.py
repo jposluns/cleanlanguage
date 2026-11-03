@@ -56,15 +56,25 @@ The file reads (extract-file and extract-stdin) happen in the client, which
 decodes exactly as the extractor's CLI does (universal newlines, strict
 UTF-8) and sends the text as the ``arg`` of an ``extract`` request.
 
-The extractor runs as ``sys.executable -I skill-release-date.py --json``
-with an empty environment, its own directory as the working directory and a
-session of its own. The request is its stdin and its stdout and stderr go to
-temporary files, so the client never blocks on a pipe and reads only a
-bounded part of each (RESULT_LIMIT plus ECHO_BYTES_PER_CHARACTER bytes for
-each character of the request values, and STDERR_LIMIT). The client waits
-at most CHILD_TIMEOUT_SECONDS; on a timeout it kills the process group of
-the child, which is still unreaped, so the group id cannot have been reused,
-and then reaps the child, waiting at most REAP_GRACE_SECONDS for it to end;
+Before it starts the child, the client resets SIGCHLD to its default
+disposition (reset_sigchld), because an ignored SIGCHLD, inherited across
+exec from the caller, makes the kernel reap the child as it ends, so its
+exit status is lost; when the reset fails, the client exits 16 and starts no
+child. The extractor runs as ``sys.executable -I skill-release-date.py
+--json`` with an empty environment, its own directory as the working
+directory and a session of its own. The request is its stdin and its stdout
+and stderr go to temporary files, so the client never blocks on a pipe and
+reads only a bounded part of each (RESULT_LIMIT plus
+ECHO_BYTES_PER_CHARACTER bytes for each character of the request values,
+and STDERR_LIMIT). The client waits for the child with a non-blocking
+waitpid (wait_child), at most CHILD_TIMEOUT_SECONDS, and exits 16 when the
+wait reports that the child is no longer its child, since its exit status
+is then lost (Popen.wait would read that as exit 0). With SIGCHLD at its
+default and no other reaper in the client, a child that has not been
+reaped by the client is still a zombie or running, so on a timeout the
+client kills the process group of the child, whose group id cannot have
+been reused, and then reaps the child, waiting at most REAP_GRACE_SECONDS
+for it to end;
 a child that a kill does not end within that grace is left unreaped and the
 client exits 16, naming that. Residuals: after a normal end the group is not
 killed, because without a wait that leaves the child unreaped (not
@@ -93,6 +103,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 PROG = "skill-release-date-client"
@@ -263,6 +274,48 @@ def check_reply(op: str, data: bytes, limit: int) -> dict:
     return reply
 
 
+def reset_sigchld() -> None:
+    """Reset SIGCHLD to its default disposition before the client starts the
+    child. An ignored SIGCHLD, inherited across exec from the caller, makes
+    the kernel reap the child as it ends, so its exit status is lost.
+    Raises Unavailable when the disposition cannot be reset, as in a thread
+    other than the main thread (ValueError) or on an OSError."""
+    try:
+        signal.signal(signal.SIGCHLD, signal.SIG_DFL)
+    except (OSError, ValueError) as error:
+        raise Unavailable(
+            f"could not be run safely (SIGCHLD could not be reset to its default disposition: "
+            f"{type(error).__name__}: {error}), so its exit status could be lost"
+        ) from None
+
+
+def wait_child(proc: subprocess.Popen, timeout: float) -> bool:
+    """Wait up to ``timeout`` seconds for the child ``proc`` to end, with a
+    non-blocking waitpid and a short sleep, and reap it when it has ended,
+    setting ``proc.returncode``. Returns True when the child has ended and
+    False on a timeout, leaving it unreaped. Raises Unavailable when the wait
+    reports that the child is no longer a child of the client
+    (ChildProcessError): its exit status is then lost, and Popen.wait would
+    read that as exit 0."""
+    deadline = time.monotonic() + timeout
+    delay = 0.0005
+    while True:
+        try:
+            pid, status = os.waitpid(proc.pid, os.WNOHANG)
+        except ChildProcessError:
+            raise Unavailable(
+                "could not be waited for (it is no longer a child of the client, so its exit status is lost)"
+            ) from None
+        if pid == proc.pid:
+            proc.returncode = os.waitstatus_to_exitcode(status)
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        delay = min(delay * 2, remaining, 0.05)
+        time.sleep(delay)
+
+
 def run_extractor(op: str, fields: dict, timeout: float = CHILD_TIMEOUT_SECONDS, tool: Path | None = None) -> dict:
     """Run the extractor once for ``op`` with ``fields`` (see the module
     docstring) and return its reply once it meets the contract; raise
@@ -273,6 +326,7 @@ def run_extractor(op: str, fields: dict, timeout: float = CHILD_TIMEOUT_SECONDS,
         raise Unavailable(f"could not run (the interpreter path {executable!r} is not absolute)")
     request = build_request(op, fields)
     limit = RESULT_LIMIT + ECHO_BYTES_PER_CHARACTER * sum(len(value) for value in fields.values())
+    reset_sigchld()
     try:
         with tempfile.TemporaryFile() as stdin, tempfile.TemporaryFile() as stdout, \
                 tempfile.TemporaryFile() as stderr:
@@ -286,26 +340,21 @@ def run_extractor(op: str, fields: dict, timeout: float = CHILD_TIMEOUT_SECONDS,
                 )
             except OSError as error:
                 raise Unavailable(f"could not run ({type(error).__name__}: {error})") from None
-            ended = True
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
+            ended = wait_child(proc, timeout)
+            if not ended:
                 # The child is not reaped yet, so its group id is still its own.
-                ended = False
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
-                try:
-                    proc.wait(timeout=REAP_GRACE_SECONDS)
-                except subprocess.TimeoutExpired:
+                if not wait_child(proc, REAP_GRACE_SECONDS):
                     # A child that a kill does not end (for example one in an
                     # uninterruptible sleep) is left unreaped rather than
                     # waited for without a bound.
                     raise Unavailable(
                         f"could not be reaped (the client saw no end of it within "
                         f"{REAP_GRACE_SECONDS} seconds after its kill)"
-                    ) from None
+                    )
             stderr.seek(0)
             printed = stderr.read(STDERR_LIMIT)
             stdout.seek(0)
