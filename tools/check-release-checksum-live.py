@@ -114,13 +114,15 @@ these bounds). The gate takes a result from a child only when the child
 exits 0 and prints exactly one JSON object that matches the contract, and
 it reads only a bounded part of what the child prints (see RESULT_LIMIT).
 While the child runs, an ordinary write cannot grow any file it writes past
-output_cap(limit) bytes, one byte past the larger read bound (RLIMIT_FSIZE,
-set in the child before exec as both its soft and its hard limit, so a
-child without CAP_SYS_RESOURCE, and any process it starts without it,
-cannot raise it), so an extractor that writes too much by accident cannot
-fill temporary storage within the timeout. After the wait, a child whose
-stdout or stderr has a final size that reached that cap is unavailable,
-and the reason names the cap. Residuals: RLIMIT_FSIZE bounds the logical
+its cap: output_cap(limit) bytes, one byte past the larger read bound, or a
+lower file size limit the caller set, soft or hard (applied_cap). The cap
+is RLIMIT_FSIZE, set in the child before exec as both its soft and its hard
+limit, so a child without CAP_SYS_RESOURCE, and any process it starts
+without it, cannot raise it, and an extractor that writes too much by
+accident cannot fill temporary storage within the timeout. After the wait,
+a child whose stdout or stderr has a final size that reached that cap,
+including a lower limit the caller set, is unavailable, and the reason
+names that cap. Residuals: RLIMIT_FSIZE bounds the logical
 size of a file, not the storage allocated to it, so deliberate child code
 can reserve disk blocks past the end of a file (with fallocate, for
 example) without growing it; the check reads only the final size, so a
@@ -211,10 +213,11 @@ RELEASE_DATE_TOOL = Path(__file__).resolve().parent / "skill-release-date.py"
 # escapes, 12 bytes); the allowance is there so that a malformed message that
 # echoes the argument keeps its verdict (see
 # test_an_echoed_request_of_any_size_keeps_its_verdict). Row 100: while the
-# child runs, an ordinary write cannot grow a file past output_cap(limit)
-# bytes (RLIMIT_FSIZE, soft and hard), and after the wait a stdout or stderr
-# file whose final size, checked with fstat, reached the cap exits 3 naming
-# the cap (see the module docstring for what this does not bound).
+# child runs, an ordinary write cannot grow a file past
+# applied_cap(output_cap(limit)) bytes (RLIMIT_FSIZE, soft and hard), and
+# after the wait a stdout or stderr file whose final size, checked with
+# fstat, reached the cap exits 3 naming the cap (see the module docstring
+# for what this does not bound).
 CHILD_TIMEOUT_SECONDS = 20
 REAP_GRACE_SECONDS = 5
 RESULT_LIMIT = 65536
@@ -353,11 +356,14 @@ def output_cap(limit: int) -> int:
 
 def applied_cap(cap: int) -> int:
     """The file size limit the child gets, as both its soft and its hard
-    limit: ``cap``, or the inherited hard limit when that is lower, since
-    a child without CAP_SYS_RESOURCE cannot raise it."""
-    _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
-    if hard != resource.RLIM_INFINITY and hard < cap:
-        return hard
+    limit: the lowest of ``cap``, a finite inherited soft limit and a
+    finite inherited hard limit. A lower soft limit the caller set is kept
+    for the child rather than raised, and a lower hard limit is one that a
+    process without CAP_SYS_RESOURCE cannot raise."""
+    soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
+    for inherited in (soft, hard):
+        if inherited != resource.RLIM_INFINITY and inherited < cap:
+            cap = inherited
     return cap
 
 
@@ -373,14 +379,15 @@ def run_release_date_child(op: str, arg: str | None = None) -> dict:
     stdout and stderr go to temporary files, so the gate never blocks on a
     pipe and reads only a bounded part of each. While the child runs, an
     ordinary write cannot grow any file it writes past
-    applied_cap(output_cap(limit)) bytes (RLIMIT_FSIZE, set by
-    limit_output before exec as both its soft and its hard limit), and
-    after the wait a stdout or stderr file whose final size, checked with
-    fstat, reached that cap exits 3 naming the cap before the exit code is
-    read. The check sees only the final size, so a file filled to the cap
-    and then truncated passes it, and storage reserved past the end of a
-    file is not counted (see the module docstring). The wait, bounded by
-    CHILD_TIMEOUT_SECONDS for this
+    applied_cap(output_cap(limit)) bytes, which is lower than
+    output_cap(limit) when the caller set a lower file size limit
+    (RLIMIT_FSIZE, set by limit_output before exec as both its soft and
+    its hard limit), and after the wait a stdout or stderr file whose
+    final size, checked with fstat, reached that cap exits 3 naming that
+    cap before the exit code is read. The check sees only the final size,
+    so a file filled to the cap and then truncated passes it, and storage
+    reserved past the end of a file is not counted (see the module
+    docstring). The wait, bounded by CHILD_TIMEOUT_SECONDS for this
     child, leaves the child unreaped. On a normal end and on a timeout, the
     process group of the child is then killed before the child is reaped,
     or the call exits 3 when the group cannot be killed; on the other

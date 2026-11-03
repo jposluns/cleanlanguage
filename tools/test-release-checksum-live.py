@@ -3746,9 +3746,9 @@ class ConditionalPassTest(unittest.TestCase):
         # size limit, set by a preexec_fn the gate passes to Popen.
         gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT = 300, 7, 33
         cap = 300 + 7 * len("xy") + 2
-        _soft, hard = resource.getrlimit(resource.RLIMIT_FSIZE)
-        if hard != resource.RLIM_INFINITY and hard < cap:
-            cap = hard
+        for inherited in resource.getrlimit(resource.RLIMIT_FSIZE):
+            if inherited != resource.RLIM_INFINITY and inherited < cap:
+                cap = inherited
         self.fake_extractor(extractor_with(
             "def json_main():\n"
             "    import resource\n"
@@ -3843,12 +3843,14 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(sizes[1], len(absent), sizes)
         self.assertEqual(result, (("value", None), ""))
 
-    def test_the_cap_is_one_byte_past_the_larger_read_bound_or_a_lower_hard_limit(self):
+    def test_the_cap_is_one_byte_past_the_larger_read_bound_or_a_lower_inherited_limit(self):
         # Row 100: the cap is one byte past the larger of limit + 1 and
         # STDERR_LIMIT, so a reply one byte over the bound is still refused
         # as too long (see test_the_output_bounds_follow_the_limits_of_the_gate),
-        # and an inherited hard file size limit below it, which a child
-        # without CAP_SYS_RESOURCE cannot raise, is the cap instead.
+        # and a finite inherited file size limit below it, soft or hard, is
+        # the cap instead: a lower soft limit the caller set is kept rather
+        # than raised, and a lower hard limit is one a child without
+        # CAP_SYS_RESOURCE cannot raise.
         gate.STDERR_LIMIT = 33
         self.assertEqual(gate.output_cap(314), 316)
         self.assertEqual(gate.output_cap(10), 34)
@@ -3857,7 +3859,9 @@ class ConditionalPassTest(unittest.TestCase):
         for limits, expected in (
             ((200, 200), 200),
             ((infinity, 200), 200),
-            ((100, 400), 316),
+            ((100, 400), 100),
+            ((200, infinity), 200),
+            ((1024, infinity), 316),
             ((316, 316), 316),
             ((infinity, infinity), 316),
         ):
@@ -4423,23 +4427,18 @@ class ModuleLoadTest(unittest.TestCase):
         self.assertIn(" in baseline, so the extractor is unavailable", err)
         self.assertNotIn("Traceback", err)
 
-    def test_an_inherited_hard_file_size_limit_below_the_cap_is_the_cap(self):
-        # Row 100: a caller that leaves a hard file size limit below the cap
-        # (ulimit -H -f in a CI job, say) gives the child that limit as its
-        # cap, which it cannot raise without CAP_SYS_RESOURCE, and a child
-        # that writes fast exits 3 naming it, never a traceback.
-        wrapper = (
-            "import importlib.util, resource, sys\n"
-            "resource.setrlimit(resource.RLIMIT_FSIZE, (200, 200))\n"
-            "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
-            "gate = importlib.util.module_from_spec(spec)\n"
-            "spec.loader.exec_module(gate)\n"
-            "sys.exit(gate.main())\n"
-        )
+    def test_an_inherited_file_size_limit_below_the_cap_is_the_cap(self):
+        # Row 100: a caller that leaves a file size limit below the cap, a
+        # hard one (ulimit -H -f in a CI job, say) or a soft one with no hard
+        # limit, gives the child that limit as its cap, as both its soft and
+        # its hard limit, so a soft limit is kept rather than raised. The
+        # child reports its limits on stderr, then writes fast, and the gate
+        # exits 3 naming that cap, never a traceback.
         body = extractor_with(
             "def json_main():\n"
-            "    import os\n"
+            "    import os, resource\n"
             "    sys.stdin.buffer.read()\n"
+            "    os.write(2, (\"%d %d\" % resource.getrlimit(resource.RLIMIT_FSIZE)).encode())\n"
             "    for _ in range(16):\n"
             "        try:\n"
             "            os.write(1, b\"x\" * 65536)\n"
@@ -4447,11 +4446,21 @@ class ModuleLoadTest(unittest.TestCase):
             "            pass\n"
             "    return 0\n"
         )
-        code, err = self.run_with_extractor(body, wrapper=wrapper)
-        self.assertEqual(code, 3, err)
-        self.assertIn("skill-release-date.py wrote stdout up to the output cap of 200 bytes in baseline, "
-                      "so the extractor is unavailable", err)
-        self.assertNotIn("Traceback", err)
+        for label, limits in (("hard", "(200, 200)"), ("soft", "(200, resource.RLIM_INFINITY)")):
+            with self.subTest(label):
+                wrapper = (
+                    "import importlib.util, resource, sys\n"
+                    f"resource.setrlimit(resource.RLIMIT_FSIZE, {limits})\n"
+                    "spec = importlib.util.spec_from_file_location(\"gate_copy\", sys.argv[1])\n"
+                    "gate = importlib.util.module_from_spec(spec)\n"
+                    "spec.loader.exec_module(gate)\n"
+                    "sys.exit(gate.main())\n"
+                )
+                code, err = self.run_with_extractor(body, wrapper=wrapper)
+                self.assertEqual(code, 3, err)
+                self.assertIn("skill-release-date.py wrote stdout up to the output cap of 200 bytes in baseline, "
+                              "so the extractor is unavailable; it printed: 200 200\n", err)
+                self.assertNotIn("Traceback", err)
 
 
 class ControlConstantTest(unittest.TestCase):
