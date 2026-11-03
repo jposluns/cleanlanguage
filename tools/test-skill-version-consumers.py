@@ -191,8 +191,12 @@ EARLY_END_CLIENT = (
 
 # Row 89: a git that, at its third read of HEAD:cleanlanguage/skills/
 # cleanlanguage/SKILL.md (the Released read of the packager), writes the
-# blob and then 300 KB more, far past a pipe buffer, so that when the client
-# ends without reading, git show ends by SIGPIPE (status 141).
+# blob and then writes on until its reader has gone, so that when the client
+# ends without reading, git show ends by SIGPIPE (status 141) whatever the
+# pipe holds and whenever the client ends. A fixed amount more can fit in a
+# larger pipe before the client ends, and git show then ends 0. The writes
+# are the shell's own, so no head or yes decides the status; the stand-in
+# is only for a client that ends without reading all of its input.
 LONG_BLOB_GIT = (
     "#!/bin/sh\n"
     "if [ \"$1\" = show ] && [ \"$2\" = HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md ]; then\n"
@@ -201,8 +205,7 @@ LONG_BLOB_GIT = (
     "  echo \"$n\" > {count}\n"
     "  if [ \"$n\" -eq 3 ]; then\n"
     "    {git} \"$@\" || exit\n"
-    "    yes 'padding past the pipe buffer' | head -c 300000\n"
-    "    exit\n"
+    "    while :; do echo 'padding past the pipe buffer' || exit; done\n"
     "  fi\n"
     "fi\n"
     "exec {git} \"$@\"\n"
