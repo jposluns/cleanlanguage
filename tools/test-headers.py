@@ -500,7 +500,9 @@ class DraftRuleTest(unittest.TestCase):
                 self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  ! X-Robots-Tag"]), "detaches X-Robots-Tag")
 
     def test_noindex_changed_where_the_draft_is_served_fails(self):
-        for pattern in ("/draft/install/*", "/draft/", "/*", "/:page/*", "https://cleanlanguage.ai/draft/*"):
+        # "/" and a path-less full URL pin the root case of reaches_draft (path == "/").
+        for pattern in ("/draft/install/*", "/draft/", "/*", "/:page/*", "https://cleanlanguage.ai/draft/*",
+                        "/", "https://cleanlanguage.ai"):
             with self.subTest(pattern=pattern):
                 self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  X-Robots-Tag: all"]),
                                  "sets X-Robots-Tag where the draft is served")
