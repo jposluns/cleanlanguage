@@ -12,17 +12,34 @@ name: Portable text sync
 # exactly, and that it carries no inline script or style. The page renders the
 # text statically because the site's rules forbid inline code, and a reintroduced
 # inline script would break the page in a way no other gate can see.
+#
+# The paths filters list every file the steps read, directly and through the
+# scripts they run, copy or load (row 119). tools/test-portable-text-sync-workflow.py
+# holds the same list with the line that reads each entry, derives the copies
+# and loads it can from the test sources, and fails when the lists drift;
+# extend the filters and that test in the same change. This workflow is not a
+# required check; if it is promoted to one, drop the pull_request filter and
+# give the job a unique display name, as manifest-icon.yml does and
+# sitemap.yml explains. Checkout attributes are an input too: a .gitattributes
+# file anywhere can change the bytes git writes for the compared files, so
+# both forms are listed.
 
 on:
   pull_request:
     paths:
       - "cleanlanguage/skills/cleanlanguage/SKILL.md"
       - "cleanlanguage/skills/cleanlanguage/references/**"
+      - "cleanlanguage/skills/**"
       - "site/downloads/cleanlanguage.md"
       - "site/downloads/cleanlanguage-29k.md"
       - "site/downloads/cleanlanguage-11k.md"
       - "site/downloads/cleanlanguage-8k.md"
+      - "site/downloads/*.md"
       - "tools/build-portable-text.py"
+      - "tools/build-site.py"
+      - "tools/sitemap-config.json"
+      - "site-src/**"
+      - ".baseline/pin.toml"
       - "site/instructions/index.html"
       - "tools/portable-text-skill-source.sha256"
       - "tools/skill-version.py"
@@ -30,11 +47,15 @@ on:
       - "tools/test-skill-release-date.py"
       - "tools/skill-release-date-client.py"
       - "tools/test-skill-release-date-client.py"
+      - "tools/check-release-checksum-live.py"
       - "tools/test-portable-text-release-date.sh"
       - "tools/check-portable-text-sync.sh"
       - "tools/check-instructions-page.py"
       - "tools/check-inline-code.py"
       - "tools/test-instructions-page.py"
+      - "tools/test-portable-text-sync-workflow.py"
+      - ".gitattributes"
+      - "**/.gitattributes"
       - ".github/workflows/portable-text-sync.yml"
   push:
     branches:
@@ -42,11 +63,17 @@ on:
     paths:
       - "cleanlanguage/skills/cleanlanguage/SKILL.md"
       - "cleanlanguage/skills/cleanlanguage/references/**"
+      - "cleanlanguage/skills/**"
       - "site/downloads/cleanlanguage.md"
       - "site/downloads/cleanlanguage-29k.md"
       - "site/downloads/cleanlanguage-11k.md"
       - "site/downloads/cleanlanguage-8k.md"
+      - "site/downloads/*.md"
       - "tools/build-portable-text.py"
+      - "tools/build-site.py"
+      - "tools/sitemap-config.json"
+      - "site-src/**"
+      - ".baseline/pin.toml"
       - "site/instructions/index.html"
       - "tools/portable-text-skill-source.sha256"
       - "tools/skill-version.py"
@@ -54,11 +81,15 @@ on:
       - "tools/test-skill-release-date.py"
       - "tools/skill-release-date-client.py"
       - "tools/test-skill-release-date-client.py"
+      - "tools/check-release-checksum-live.py"
       - "tools/test-portable-text-release-date.sh"
       - "tools/check-portable-text-sync.sh"
       - "tools/check-instructions-page.py"
       - "tools/check-inline-code.py"
       - "tools/test-instructions-page.py"
+      - "tools/test-portable-text-sync-workflow.py"
+      - ".gitattributes"
+      - "**/.gitattributes"
       - ".github/workflows/portable-text-sync.yml"
 
 permissions:
@@ -70,6 +101,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Check the path filters list every input the steps read
+        shell: bash
+        run: python3 -I tools/test-portable-text-sync-workflow.py
 
       - name: Test the Released-line extractor
         shell: bash
