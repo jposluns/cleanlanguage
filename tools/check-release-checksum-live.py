@@ -146,11 +146,12 @@ Separation is not a sandbox. The child runs with the uid, filesystem, and
 network of the gate, so extractor code can do whatever that uid can do,
 including writing files, reaching the network, and signalling the gate.
 While the child runs, its ordinary writes cannot grow any one file past its
-cap, but the child can still reserve disk blocks past the end of a file,
-create any number of files and write to each up to the cap, and use CPU and
-memory. A signal it sends to the gate acts on the gate as
-that signal acts on any process: it can interrupt, stop, or end the gate
-outside the exit codes above, and no bound of the gate limits its effect.
+cap unless it holds CAP_SYS_RESOURCE and raises the limit, but the child
+can still reserve disk blocks past the end of a file, create any number of
+files and write to each up to the cap, and use CPU and memory. A signal
+it sends to the gate acts on the gate as that signal acts on any process:
+it can interrupt, stop, or end the gate outside the exit codes above, and
+no bound of the gate limits its effect.
 More generally, extractor code can act on the gate and on its own children
 through the uid, by signals, tracing, resource limits, or any other means
 that uid has, and so can hold, stop, or end the gate, or keep from the gate
@@ -351,7 +352,8 @@ def output_cap(limit: int) -> int:
     reply one byte too long is still read and refused as too long, and an
     ordinary write that would grow a file past the cap fails. It does not
     bound a file already larger than the cap, which the child can write
-    within, or storage reserved past the end of a file."""
+    within, storage reserved past the end of a file, or a child holding
+    CAP_SYS_RESOURCE that raises the limit."""
     return max(limit + 1, STDERR_LIMIT) + 1
 
 
