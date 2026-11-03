@@ -40,8 +40,9 @@ What it verifies
      midi=(), payment=(), serial=(), usb=()``
    - ``Cross-Origin-Opener-Policy: same-origin``
 
-   It also sets ``Content-Security-Policy`` exactly once. This gate does not pin
-   the policy's value: ``tools/check-install-page.py`` checks its sources.
+   - ``Content-Security-Policy:`` the shared policy of the template
+     specification (baseline 1.4.1, section 9), ``DRAFT_CSP`` below, the same
+     value a ``/draft/*`` rule sets while a draft is staged.
 3. No other rule sets or detaches any of those 4 headers, so each appears once
    on every response class: pages, files and the 404 response. The 1 exception
    is the staged draft's rule (check 5): its own detach and policy replace the
@@ -118,7 +119,7 @@ DECIDED = {
     ),
     "Cross-Origin-Opener-Policy": "same-origin",
 }
-ONCE_ANY_VALUE = ("Content-Security-Policy",)
+ONCE_ANY_VALUE: tuple[str, ...] = ()
 FORBIDDEN = ("X-Content-Type-Options", "Referrer-Policy", "Strict-Transport-Security")
 
 DRAFT_PATTERN = "/draft/*"
@@ -128,6 +129,9 @@ DRAFT_CSP = (
     "style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
     "frame-ancestors 'none'"
 )
+# The site-wide policy is the same shared policy (owner's decision: the live pages adopted it after
+# https://posluns.ca/privacy/ was published), pinned exactly like the other decided headers.
+DECIDED["Content-Security-Policy"] = DRAFT_CSP
 # (kind, header name in lower case, value) of each line of the /draft/* rule, in order.
 DRAFT_RULE = [
     ("detach", "content-security-policy", None),

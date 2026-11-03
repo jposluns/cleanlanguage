@@ -190,7 +190,8 @@ VERIFY_PAGE = REPO_ROOT / "site" / "verify" / "index.html"
 SKILL = REPO_ROOT / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
 REPO = "jposluns/cleanlanguage"
 
-DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
+# The verify page's checksum element exactly as tools/build-site.py writes it; no other attribute passes.
+DISPLAYED_SUM = re.compile(r'<code class="sum" id="published-checksum">([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
@@ -934,7 +935,7 @@ def check_site_checksum(load_code: int = 0) -> int:
 
     shown = DISPLAYED_SUM.search(verify)
     if shown is None:
-        die('the verify page has no <code id="published-checksum"> block')
+        die('the verify page has no <code class="sum" id="published-checksum"> block')
     site_sum = shown.group(1).strip()
     if not SHA256.match(site_sum):
         die(f"the displayed checksum {site_sum!r} is not a 64 character lower-case SHA-256")

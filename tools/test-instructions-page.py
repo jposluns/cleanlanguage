@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for tools/check-instructions-page.py on the live page and the template page under /draft/.
+"""Tests for tools/check-instructions-page.py on the instructions page generated on the template.
 
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault, runs the gate there as a separate process and
@@ -16,9 +16,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "tools" / "check-instructions-page.py"
-LIVE = "site/instructions/index.html"
-DRAFT = "site/draft/instructions/index.html"
-FILES = ["site/downloads/cleanlanguage.md", LIVE, DRAFT]
+PAGE = "site/instructions/index.html"
+FILES = ["site/downloads/cleanlanguage.md", PAGE, "tools/check-inline-code.py"]
 BUTTON = '<button class="copy" type="button" data-copy="instructions-text" hidden>Copy</button>'
 
 
@@ -44,16 +43,25 @@ def edit(relative: str, old: str, new: str):
 
 CASES = [
     ("the committed tree", None, 0),
-    ("1 character changed in the draft block", edit(DRAFT, "Apply the precedence order", "Apply the precedence orders"), 1),
-    ("1 character changed in the live block", edit(LIVE, "Apply the precedence order", "Apply the precedence orders"), 1),
-    ("the draft copy button removed", edit(DRAFT, BUTTON, ""), 1),
-    ("the draft copy button shown", edit(DRAFT, BUTTON, BUTTON.replace(" hidden", "")), 1),
-    ("markup added inside the draft block", edit(DRAFT, BUTTON, BUTTON + "<span>x</span>"), 1),
-    ("a second copy button in the draft block", edit(DRAFT, BUTTON, BUTTON + BUTTON), 1),
-    ("an inline script on the draft page", edit(DRAFT, "</main>", "<script>x()</script></main>"), 1),
-    ("an inline style on the draft page", edit(DRAFT, "<h1>", '<h1 style="x">'), 1),
-    ("the draft page missing", lambda root: (root / DRAFT).unlink(), 3),
-    ("a second block on the draft page", edit(DRAFT, "</main>", '<pre id="instructions-text">x</pre></main>'), 3),
+    ("1 character changed in the block", edit(PAGE, "Apply the precedence order", "Apply the precedence orders"), 1),
+    ("the copy button removed", edit(PAGE, BUTTON, ""), 1),
+    ("the copy button shown", edit(PAGE, BUTTON, BUTTON.replace(" hidden", "")), 1),
+    ("markup added inside the block", edit(PAGE, BUTTON, BUTTON + "<span>x</span>"), 1),
+    ("a second copy button in the block", edit(PAGE, BUTTON, BUTTON + BUTTON), 1),
+    ("an inline script", edit(PAGE, "</main>", "<script>x()</script></main>"), 1),
+    ("an inline style", edit(PAGE, "<h1>", '<h1 style="x">'), 1),
+    ("I5: an application/x-javascript script",
+        edit(PAGE, "</main>", '<script type="application/x-javascript">alert(1)</script></main>'), 1),
+    ("I2B: src= inside another attribute's quoted value",
+        edit(PAGE, "</main>", "<script title='src=\"/install/\"'>alert(1)</script></main>"), 1),
+    ("I3: an event handler after a slash", edit(PAGE, "</main>", '<span/onclick="alert(1)">x</span></main>'), 1),
+    ("I4: a javascript: link", edit(PAGE, "</main>", '<a href="javascript:alert(1)">x</a></main>'), 1),
+    ("a script from another origin", edit(PAGE, "</main>", '<script src="https://example.com/x.js"></script></main>'), 1),
+    ("the inline-code gate missing", lambda root: (root / "tools/check-inline-code.py").unlink(), 3),
+    ("P3: a javascript: link after a </noscript> inside an attribute", edit(PAGE, "</main>",
+        "<noscript><p title=\"</noscript><a href='javascript:alert(1)' title='>'>x</a>\"></p></noscript></main>"), 1),
+    ("the page missing", lambda root: (root / PAGE).unlink(), 3),
+    ("a second block on the page", edit(PAGE, "</main>", '<pre id="instructions-text">x</pre></main>'), 3),
 ]
 
 

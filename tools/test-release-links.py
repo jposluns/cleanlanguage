@@ -7,9 +7,10 @@ missing, or unreadable SKILL, which fails before the site walk), and the
 fail-closed reads of scanned site files, ``site/_redirects``, and the verify
 page (which build a small site fixture). They also pin the bare file-name
 rule on both sides: the gate fails on a stale version-named file name outside a
-URL, and the writer rewrites such names on the install page as well as the
-verify page. They run offline with the standard library: the fixtures patch
-each module's file paths.
+URL, and the writer, which regenerates the pages with tools/build-site.py,
+writes the new names on the install page as well as the verify page. They run
+offline with the standard library: the fixtures patch each module's file paths,
+and the writer tests run it on a copy of the generator's inputs under $TMPDIR.
 """
 
 from __future__ import annotations
@@ -17,7 +18,10 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
 import os
+import re
+import shutil
 import tempfile
 import unittest
 import unittest.mock
@@ -36,22 +40,18 @@ writer_spec.loader.exec_module(writer)
 
 SUM = "2b57d83fcbe567d5d617a8d2416770e5a832002aa5f01e196ef6d1bcd12f1336"
 URL = "https://github.com/jposluns/cleanlanguage/releases/download/v{v}/cleanlanguage-{v}.zip"
-LIVE_VERIFY = (
-    '<a href="' + URL + '">x</a><p>The published checksum for version {v} is:</p>'
-    '<pre><code id="published-checksum">{sum}</code></pre>'
-)
-DRAFT_INSTALL = '<a href="' + URL + '">cleanlanguage-{v}.zip</a><p class="lbl size">zip, version {v}</p><p>for example <code>cleanlanguage-{v}.zip</code></p>'
-DRAFT_VERIFY = (
+INSTALL = '<a href="' + URL + '">cleanlanguage-{v}.zip</a><p class="lbl size">zip, version {v}</p><p>for example <code>cleanlanguage-{v}.zip</code></p>'
+VERIFY = (
     '<a href="' + URL + '">cleanlanguage-{v}.zip</a><p class="lbl size">zip, version {v}, SHA-256</p>'
     '<p>The published checksum for version {v} is:</p><code class="sum" id="published-checksum">{sum}</code>'
     '<pre>sha256sum cleanlanguage-{v}.zip</pre>'
 )
 
 
-class DraftReleaseTest(unittest.TestCase):
-    """Checks 6 and 7: site-src/release.json and the template pages under site/draft/."""
+class ReleaseSourceTest(unittest.TestCase):
+    """Checks 7 and 8: site-src/release.json and the install and verify pages generated from it."""
 
-    NAMES = ("REPO_ROOT", "SITE_ROOT", "SKILL", "REDIRECTS", "VERIFY_PAGE", "RELEASE_JSON", "DRAFT_PAGES", "DRAFT_VERIFY")
+    NAMES = ("REPO_ROOT", "SITE_ROOT", "SKILL", "REDIRECTS", "INSTALL_PAGE", "VERIFY_PAGE", "RELEASE_JSON")
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -62,16 +62,14 @@ class DraftReleaseTest(unittest.TestCase):
         gate.SITE_ROOT = site
         gate.SKILL = root / "SKILL.md"
         gate.REDIRECTS = site / "_redirects"
+        gate.INSTALL_PAGE = site / "install" / "index.html"
         gate.VERIFY_PAGE = site / "verify" / "index.html"
         gate.RELEASE_JSON = root / "site-src" / "release.json"
-        gate.DRAFT_PAGES = [site / "draft" / "install" / "index.html", site / "draft" / "verify" / "index.html"]
-        gate.DRAFT_VERIFY = gate.DRAFT_PAGES[1]
         self.write(gate.SKILL, "Version: 1.0.14\n")
         self.write(gate.REDIRECTS, "/download " + URL.format(v="1.0.14") + " 302\n")
-        self.write(gate.VERIFY_PAGE, LIVE_VERIFY.format(v="1.0.14", sum=SUM))
         self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % SUM)
-        self.write(gate.DRAFT_PAGES[0], DRAFT_INSTALL.format(v="1.0.14"))
-        self.write(gate.DRAFT_VERIFY, DRAFT_VERIFY.format(v="1.0.14", sum=SUM))
+        self.write(gate.INSTALL_PAGE, INSTALL.format(v="1.0.14"))
+        self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM))
 
     def tearDown(self):
         for name, value in self._saved.items():
@@ -102,51 +100,72 @@ class DraftReleaseTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("release.json names version", output)
 
-    def test_release_json_checksum_differs_from_live_page(self):
+    def test_release_json_checksum_differs_from_the_verify_page(self):
         self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % ("e" * 64))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
-        self.assertIn("different checksums", output)
+        self.assertIn("site/verify/index.html shows a checksum other than site-src/release.json", output)
 
-    def test_draft_install_keeps_an_old_filename(self):
+    def test_install_keeps_an_old_filename(self):
         # The known version-text issue: a bare filename left at the old version.
-        self.write(gate.DRAFT_PAGES[0], DRAFT_INSTALL.format(v="1.0.14").replace("<code>cleanlanguage-1.0.14.zip", "<code>cleanlanguage-1.0.13.zip"))
+        self.write(gate.INSTALL_PAGE, INSTALL.format(v="1.0.14").replace("<code>cleanlanguage-1.0.14.zip", "<code>cleanlanguage-1.0.13.zip"))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
-        self.assertIn("site/draft/install/index.html names the file cleanlanguage-1.0.13.zip", output)
+        self.assertIn("site/install/index.html names the file cleanlanguage-1.0.13.zip", output)
 
-    def test_draft_version_label_left_behind(self):
-        self.write(gate.DRAFT_PAGES[0], DRAFT_INSTALL.format(v="1.0.14").replace("zip, version 1.0.14", "zip, version 1.0.13"))
+    def test_version_label_left_behind(self):
+        self.write(gate.INSTALL_PAGE, INSTALL.format(v="1.0.14").replace("zip, version 1.0.14", "zip, version 1.0.13"))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
-        self.assertIn("names version 1.0.13", output)
+        self.assertIn("site/install/index.html names version 1.0.13", output)
 
-    def test_draft_verify_checksum_differs(self):
-        self.write(gate.DRAFT_VERIFY, DRAFT_VERIFY.format(v="1.0.14", sum="d" * 64))
+    def test_install_page_naming_no_release(self):
+        self.write(gate.INSTALL_PAGE, "<p>No download here.</p>")
+        code, output = self.run_gate()
+        self.assertEqual(code, 1)
+        self.assertIn("site/install/index.html names no release version", output)
+
+    def test_verify_checksum_differs(self):
+        self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum="d" * 64))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
         self.assertIn("checksum other than", output)
 
-    def test_live_checksum_element_with_another_attribute_fails(self):
-        # The live page keeps main's exact element; the template's wider match is for the draft page only.
-        self.write(gate.VERIFY_PAGE, LIVE_VERIFY.format(v="1.0.14", sum=SUM).replace(
-            '<code id="published-checksum">', '<code id="published-checksum" hidden>'))
+    def test_checksum_element_with_another_attribute_fails(self):
+        # The element must be exactly the one the generator writes; no other attribute, such as hidden, passes.
+        self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM).replace(
+            'id="published-checksum">', 'id="published-checksum" hidden>'))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
-        self.assertIn('the verify page has no <code id="published-checksum"> block', output)
+        self.assertIn('the verify page has no <code class="sum" id="published-checksum"> block', output)
+        self.assertIn("must show exactly 1", output)
 
-    def test_draft_checksum_element_with_another_attribute_fails(self):
-        self.write(gate.DRAFT_VERIFY, DRAFT_VERIFY.format(v="1.0.14", sum=SUM).replace(
-            'id="published-checksum">', 'id="published-checksum" hidden>'))
+    def test_the_old_checksum_element_fails(self):
+        # The element of the pages retired at promotion no longer passes.
+        self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM).replace(
+            '<code class="sum" id="published-checksum">', '<code id="published-checksum">'))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
         self.assertIn("must show exactly 1", output)
 
-    def test_draft_verify_without_its_checksum(self):
-        self.write(gate.DRAFT_VERIFY, DRAFT_VERIFY.format(v="1.0.14", sum=SUM).replace('id="published-checksum"', 'id="sum"'))
+    def test_a_second_checksum_element_fails(self):
+        self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM)
+                   + '<code class="sum" id="published-checksum">' + SUM + "</code>")
+        code, output = self.run_gate()
+        self.assertEqual(code, 1)
+        self.assertIn("must show exactly 1", output)
+
+    def test_verify_without_its_checksum(self):
+        self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM).replace('id="published-checksum"', 'id="sum"'))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
         self.assertIn("exactly 1", output)
+
+    def test_missing_install_page_fails_closed(self):
+        gate.INSTALL_PAGE.unlink()
+        code, output = self.run_gate()
+        self.assertEqual(code, 3)
+        self.assertIn("site/install/index.html does not exist", output)
 
     def test_missing_release_json_fails_closed(self):
         gate.RELEASE_JSON.unlink()
@@ -166,22 +185,17 @@ class VersionParseTest(unittest.TestCase):
             gate.REPO_ROOT, gate.SITE_ROOT, gate.SKILL,
             gate.REDIRECTS, gate.VERIFY_PAGE,
         )
-        self._saved_draft = (gate.RELEASE_JSON, gate.DRAFT_PAGES, gate.DRAFT_VERIFY)
+        self._saved_source = (gate.RELEASE_JSON, gate.INSTALL_PAGE)
         root = Path(self._tmp.name)
-        # The draft inputs (checks 7 and 8) sit outside SITE_ROOT and agree with
-        # the 1.0.14 site the bare-name tests write, so no test fails on them.
+        # The release source and the install page (checks 7 and 8) sit outside
+        # SITE_ROOT and agree with the 1.0.14 site the bare-name tests write, so no
+        # test fails on them. The verify page is written by each test.
         gate.RELEASE_JSON = root / "release.json"
-        gate.DRAFT_PAGES = [root / "draft-install.html", root / "draft-verify.html"]
-        gate.DRAFT_VERIFY = gate.DRAFT_PAGES[1]
+        gate.INSTALL_PAGE = root / "install.html"
         gate.RELEASE_JSON.write_text(
             '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % ("a" * 64), encoding="utf-8"
         )
-        gate.DRAFT_PAGES[0].write_text("<p>zip, version 1.0.14</p>", encoding="utf-8")
-        gate.DRAFT_VERIFY.write_text(
-            "<p>The published checksum for version 1.0.14 is:</p>"
-            '<code class="sum" id="published-checksum">' + "a" * 64 + "</code>",
-            encoding="utf-8",
-        )
+        gate.INSTALL_PAGE.write_text("<p>zip, version 1.0.14</p>", encoding="utf-8")
         gate.REPO_ROOT = root
         gate.SITE_ROOT = root / "site"
         gate.SKILL = root / "SKILL.md"
@@ -197,7 +211,7 @@ class VersionParseTest(unittest.TestCase):
     def tearDown(self):
         (gate.REPO_ROOT, gate.SITE_ROOT, gate.SKILL, gate.REDIRECTS,
          gate.VERIFY_PAGE) = self._saved
-        gate.RELEASE_JSON, gate.DRAFT_PAGES, gate.DRAFT_VERIFY = self._saved_draft
+        gate.RELEASE_JSON, gate.INSTALL_PAGE = self._saved_source
         self._tmp.cleanup()
 
     def _expect_die(self, needle: str):
@@ -378,7 +392,7 @@ class VersionParseTest(unittest.TestCase):
         gate.REDIRECTS.write_text(self._valid_url("1.0.14") + "\n", encoding="utf-8")
         gate.VERIFY_PAGE.write_text(
             '<p>The published checksum for version 1.0.14 is:</p>\n'
-            '<code id="published-checksum">' + "a" * 64 + "</code>\n",
+            '<code class="sum" id="published-checksum">' + "a" * 64 + "</code>\n",
             encoding="utf-8",
         )
 
@@ -424,58 +438,98 @@ class VersionParseTest(unittest.TestCase):
         self.assertNotIn("names the file", out)
 
 
-class WriterBareFileNameTest(unittest.TestCase):
-    """set-release-links.py rewrites bare file names on both pages it owns."""
+class WriterTest(unittest.TestCase):
+    """set-release-links.py regenerates the pages it owns, restamps them and keeps every redirect."""
 
-    OLD_URL = (
-        "https://github.com/jposluns/cleanlanguage/releases/download/"
-        "v1.0.14/cleanlanguage-1.0.14.zip"
-    )
-    STAMPS = (
-        '<meta property="article:modified_time" content="2020-01-01">\n'
-        '<script type="application/ld+json">{"dateModified": "2020-01-01"}</script>\n'
+    REPO = Path(__file__).resolve().parent.parent
+    INPUTS = (
+        "tools/build-site.py",
+        "site-src",
+        "cleanlanguage/skills/cleanlanguage/SKILL.md",
+        "cleanlanguage/skills/cleanlanguage/references",
+        "site",
+        ".baseline/pin.toml",
+        "tools/sitemap-config.json",
     )
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self._saved = (writer.REPO_ROOT, writer.SITE)
-        # The temporary repository has no generator; these tests are about the live
-        # pages, so the draft regeneration is replaced by a stub that plans nothing.
-        self._saved_draft_pages = writer.draft_pages
-        writer.draft_pages = lambda release: {}
         root = Path(self._tmp.name)
+        for relative in self.INPUTS:
+            source, target = self.REPO / relative, root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_dir():
+                shutil.copytree(source, target)
+            else:
+                shutil.copyfile(source, target)
+        # The committed site/ is copied whole, so the writer can tell which pages a release changes.
+        skill =root / "cleanlanguage/skills/cleanlanguage/SKILL.md"
+        skill.write_text(re.sub(r"^Version: [0-9.]+", "Version: 1.0.15", skill.read_text(encoding="utf-8"), count=1, flags=re.M),
+                         encoding="utf-8")
         writer.REPO_ROOT = root
         writer.SITE = root / "site"
-        (writer.SITE / "install").mkdir(parents=True)
-        (writer.SITE / "verify").mkdir(parents=True)
-        (writer.SITE / "install" / "index.html").write_text(
-            self.STAMPS
-            + f'<a href="{self.OLD_URL}">dl</a>\n'
-            + "<p>for example <code>cleanlanguage-1.0.14.zip</code></p>\n",
-            encoding="utf-8",
-        )
-        (writer.SITE / "verify" / "index.html").write_text(
-            self.STAMPS
-            + f'<a href="{self.OLD_URL}">dl</a>\n'
-            + "<p>The published checksum for version 1.0.14 is:</p>\n"
-            + '<code id="published-checksum">' + "b" * 64 + "</code>\n"
-            + "<pre><code>sha256sum cleanlanguage-1.0.14.zip</code></pre>\n",
-            encoding="utf-8",
-        )
+        self.root = root
 
     def tearDown(self):
         writer.REPO_ROOT, writer.SITE = self._saved
-        writer.draft_pages = self._saved_draft_pages
         self._tmp.cleanup()
 
+    def plan(self) -> dict:
+        planned = writer.rewrite("1.0.15", "v1.0.15", "a" * 64, "2026-11-04")
+        return {path.relative_to(self.root).as_posix(): (text.decode("utf-8") if isinstance(text, bytes) else text)
+                for path, text in planned.items()}
+
     def test_every_page_names_the_new_release_file(self):
-        planned = writer.rewrite("1.0.15", "v1.0.15", "a" * 64, "2026-11-03")
-        install = planned[writer.SITE / "install" / "index.html"]
-        verify = planned[writer.SITE / "verify" / "index.html"]
+        planned = self.plan()
+        install, verify = planned["site/install/index.html"], planned["site/verify/index.html"]
         for text in (install, verify):
             self.assertNotIn("cleanlanguage-1.0.14.zip", text)
+            self.assertNotIn("version 1.0.14", text)
         self.assertIn("<code>cleanlanguage-1.0.15.zip</code>", install)
         self.assertIn("sha256sum cleanlanguage-1.0.15.zip", verify)
+        self.assertIn('<code class="sum" id="published-checksum">' + "a" * 64 + "</code>", verify)
+        self.assertIn("published checksum for version 1.0.15 is", verify)
+        self.assertEqual(json.loads(planned["site-src/release.json"]),
+                         {"version": "1.0.15", "tag": "v1.0.15", "checksum": "a" * 64})
+
+    def test_only_the_changed_pages_are_restamped(self):
+        planned = self.plan()
+        pages = {page["id"]: page for page in json.loads(planned["site-src/site.json"])["pages"]}
+        before = {page["id"]: page for page in json.loads((self.root / "site-src/site.json").read_text(encoding="utf-8"))["pages"]}
+        for page_id in pages:
+            expected = "2026-11-04" if page_id in ("install", "verify") else before[page_id].get("modified")
+            self.assertEqual(pages[page_id].get("modified"), expected, page_id)
+        for page in ("install", "verify"):
+            self.assertIn('<meta property="article:modified_time" content="2026-11-04">', planned[f"site/{page}/index.html"])
+            self.assertIn('"dateModified": "2026-11-04"', planned[f"site/{page}/index.html"])
+        self.assertNotIn('content="2026-11-04"', planned["site/index.html"])
+        # site.json keeps its layout: 1 line per page entry, only the dates changed.
+        original = (self.root / "site-src/site.json").read_text(encoding="utf-8")
+        self.assertEqual(len(planned["site-src/site.json"].splitlines()), len(original.splitlines()))
+
+    def test_the_redirects_keep_every_fixed_path(self):
+        redirects = self.plan()["site/_redirects"]
+        for line in ("/privacy https://posluns.ca/privacy/ 301", "/privacy/ https://posluns.ca/privacy/ 301",
+                     "/favicon.svg /assets/baseline/logos/cleanlanguage-favicon.svg 301",
+                     "/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301",
+                     "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-11k.md 301",
+                     "/download https://github.com/jposluns/cleanlanguage/releases/download/v1.0.15/cleanlanguage-1.0.15.zip 302"):
+            self.assertIn(line + "\n", redirects)
+        self.assertEqual(len(redirects.splitlines()), 10)
+
+    def test_the_committed_redirects_match_the_writer(self):
+        # The committed file is exactly what the writer writes for the current release, so a release keeps it.
+        release = json.loads((self.REPO / "site-src/release.json").read_text(encoding="utf-8"))
+        url = f"https://github.com/jposluns/cleanlanguage/releases/download/{release['tag']}/cleanlanguage-{release['version']}.zip"
+        self.assertEqual((self.REPO / "site/_redirects").read_text(encoding="utf-8"), writer.redirects_body(url, url + ".sha256"))
+
+    def test_a_release_that_changes_nothing_restamps_nothing(self):
+        (self.root / "cleanlanguage/skills/cleanlanguage/SKILL.md").write_text(
+            (self.REPO / "cleanlanguage/skills/cleanlanguage/SKILL.md").read_text(encoding="utf-8"), encoding="utf-8")
+        release = json.loads((self.REPO / "site-src/release.json").read_text(encoding="utf-8"))
+        planned = writer.rewrite(release["version"], release["tag"], release["checksum"], "2026-11-04")
+        self.assertNotIn(self.root / "site-src/site.json", planned)
 
 
 if __name__ == "__main__":

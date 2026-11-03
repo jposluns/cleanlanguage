@@ -1,20 +1,19 @@
 name: Install page
 
 # Checks that the install page keeps its five AI-family setup sections static,
-# visible, and complete, so the progressive-enhancement family filter in
-# site/js/install.js stays an enhancement. With JavaScript blocked by the site's
-# CSP, failed, or disabled, no family section may disappear. See
+# visible, and complete, so the progressive-enhancement family selector in
+# site/assets/baseline/select.js stays an enhancement. With JavaScript blocked by the site's
+# rules, failed, or disabled, no family section may disappear. See
 # tools/check-install-page.py for what it proves and does not prove.
 
 on:
   pull_request:
     paths:
       - "site/install/index.html"
-      - "site/draft/install/index.html"
-      - "site/styles.css"
       - "site/_headers"
-      - "site/js/install.js"
       - "tools/check-install-page.py"
+      - "tools/check-headers.py"
+      - "tools/check-inline-code.py"
       - "tools/test-install-page.py"
       - ".github/workflows/install-page.yml"
   push:
@@ -22,11 +21,10 @@ on:
       - main
     paths:
       - "site/install/index.html"
-      - "site/draft/install/index.html"
-      - "site/styles.css"
       - "site/_headers"
-      - "site/js/install.js"
       - "tools/check-install-page.py"
+      - "tools/check-headers.py"
+      - "tools/check-inline-code.py"
       - "tools/test-install-page.py"
       - ".github/workflows/install-page.yml"
 

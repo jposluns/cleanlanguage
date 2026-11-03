@@ -13,6 +13,9 @@
 #                         chars) for assistants that cap instruction length.
 #
 # The generated files are checked byte-for-byte by build-portable-text.py --check.
+# The instructions page embeds cleanlanguage.md; tools/build-site.py generates
+# it, --update regenerates it, and build-site.py --check and
+# check-instructions-page.py verify the embed.
 # The hand-maintained files cannot be compared byte for byte, so this gate records
 # a hash of the skill source (SKILL.md and every reference); when the skill changes
 # the hash no longer matches and the gate fails until a maintainer reconciles both
@@ -191,9 +194,10 @@ if [ "${1:-}" = "--update" ]; then
       fi
     done
   fi
-  python3 tools/build-portable-text.py --embed >/dev/null
+  python3 tools/build-portable-text.py >/dev/null
+  python3 -I tools/build-site.py >/dev/null
   check_common || { echo "Refusing to record: the portable files failed a common check." >&2; exit 1; }
-  python3 tools/build-portable-text.py --check || { echo "Refusing to record: a generated file or the embed is out of date." >&2; exit 1; }
+  python3 tools/build-portable-text.py --check || { echo "Refusing to record: a generated file is out of date." >&2; exit 1; }
   printf '%s\n' "${computed}" > "${recorded_file}"
   echo "Recorded skill-source hash ${computed}. Reconcile the condensed files with the skill before committing."
   exit 0
@@ -214,4 +218,4 @@ Computed: ${computed}
 EOF
   exit 1
 fi
-echo "Portable files reconciled with the skill source (${computed}); generated files and embed are current."
+echo "Portable files reconciled with the skill source (${computed}); generated files are current."

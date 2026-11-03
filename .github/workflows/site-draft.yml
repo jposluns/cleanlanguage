@@ -1,17 +1,19 @@
 name: Site draft
 
-# Two offline checks on the site rebuilt on the shared template (baseline),
-# staged at site/draft/ until the owner approves promotion.
+# Two offline checks on the site generated on the shared template (baseline).
+# The workflow and its job keep the names they had while the site was staged at
+# site/draft/, so the names of the checks stay the same.
 #
-# The first verifies that every baseline file copied into site/draft/assets/baseline/
+# The first verifies that every baseline file copied into site/assets/baseline/
 # still matches .baseline/pin.toml and the version's published SHA256SUMS, so a
 # copied file is never edited. See tools/check-baseline-pin.py for scope.
 #
-# The second verifies that the committed site/draft/ is exactly what
-# tools/build-site.py generates from site-src/ and the skill's own files, that
-# no draft page links or loads anything outside /draft/ beyond the recorded root
-# allowlist, and that every page keeps the template's refusals (no dash, no inline
-# code, noindex). See tools/build-site.py for scope.
+# The second verifies that the committed site/ is exactly what
+# tools/build-site.py generates from site-src/ and the skill's own files, beside
+# only the static files that site-src/site.json lists, that every internal link
+# resolves, and that every page keeps the template's refusals (no dash, no inline
+# code, noindex on the 404 and draft holding pages). See tools/build-site.py for
+# scope.
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its
@@ -45,6 +47,6 @@ jobs:
         shell: bash
         run: python3 -I tools/test-build-site.py
 
-      - name: Check the committed draft matches a fresh build
+      - name: Check the committed site matches a fresh build
         shell: bash
         run: python3 -I tools/build-site.py --check

@@ -153,10 +153,19 @@ GIT_AUTHOR_DATE="${dry_date}T12:00:00 +0000" GIT_COMMITTER_DATE="${dry_date}T12:
   commit -q -am "Dry run: version ${dry_version}"
 
 # Seed the modified-date fields with an old sentinel so the writer must restamp
-# them for the gates and assertions to pass. Publish dates are left untouched.
+# them for the gates and assertions to pass: the modified dates of the install
+# and verify pages in site-src/site.json, which the generator stamps into the
+# pages, and the same stamps in the committed pages and the sitemap. Publish
+# dates are left untouched.
 python3 - "${seed_date}" <<'PYSEED'
 import sys, re, pathlib
 d = sys.argv[1]
+sj = pathlib.Path("site-src/site.json"); t = sj.read_text(encoding="utf-8")
+for page_id in ("install", "verify"):
+    t, n = re.subn(r'(\{"id": "' + page_id + r'", [^\n]*?"modified": ")\d{4}-\d{2}-\d{2}(")', rf'\g<1>{d}\g<2>', t, count=1)
+    if n != 1:
+        sys.exit(f"seed: expected one modified date for {page_id} in site-src/site.json, got {n}")
+sj.write_text(t, encoding="utf-8")
 for f in ("site/install/index.html", "site/verify/index.html"):
     p = pathlib.Path(f); t = p.read_text(encoding="utf-8")
     t, a = re.subn(r'(<meta property="article:modified_time" content=")\d{4}-\d{2}-\d{2}(")', rf'\g<1>{d}\g<2>', t, count=1)
@@ -173,6 +182,8 @@ sm.write_text(t, encoding="utf-8")
 PYSEED
 grep -q "article:modified_time\" content=\"${seed_date}\"" site/install/index.html \
   || fail "the sentinel seed did not take on the install page"
+grep -q "\"id\": \"install\", .*\"modified\": \"${seed_date}\"" site-src/site.json \
+  || fail "the sentinel seed did not take in site-src/site.json"
 
 # 1. Validate, package, and verify the zip, exactly as the release does,
 #    including the release-date check the workflow runs with the UTC day.
@@ -223,9 +234,9 @@ python3 tools/check-page-metadata.py
 python3 tools/generate-sitemap.py
 python3 tools/check-links.py
 python3 tools/check-install-page.py
-# The template pages staged under site/draft/ are generated from site-src/release.json,
+# The pages under site/ are generated from site-src/release.json and site-src/site.json,
 # which the writer above rewrote and then regenerated from; the generator's check mode
-# proves the committed output now matches a fresh build, and the pin is untouched.
+# proves the output now matches a fresh build, and the pin is untouched.
 python3 -I tools/build-site.py --check
 python3 -I tools/check-baseline-pin.py
 python3 -I tools/check-instructions-page.py
@@ -242,25 +253,22 @@ assert_contains site/verify/index.html "${checksum}"
 assert_contains site/verify/index.html "published checksum for version ${dry_version} is"
 # No page may still name the release it replaced, in a URL or written out bare
 # (the install page's example download name, the verify page's hash commands).
-# The template pages under site/draft/ are held to the same rule.
-for page in site/install/index.html site/verify/index.html site/draft/install/index.html site/draft/verify/index.html; do
+for page in site/install/index.html site/verify/index.html; do
   if grep -qF "cleanlanguage-${version}.zip" "${page}"; then
     fail "${page} still names cleanlanguage-${version}.zip after the rewrite"
   fi
 done
-# The template pages under site/draft/ name the new version everywhere: the download
-# block, the version labels, the checksum, the hash commands, and the install page's
-# example filename (the version text the old writer left behind), and no old version.
+# The generated pages name the new version everywhere: the download block, the
+# version labels, the checksum, the hash commands, and the install page's example
+# filename (the version text the old writer left behind), and no old version.
 assert_contains site-src/release.json "\"version\": \"${dry_version}\""
 assert_contains site-src/release.json "\"checksum\": \"${checksum}\""
-assert_contains site/draft/install/index.html "releases/download/${dry_tag}/cleanlanguage-${dry_version}.zip"
-assert_contains site/draft/install/index.html "zip, version ${dry_version}"
-assert_contains site/draft/install/index.html "for example <code>cleanlanguage-${dry_version}.zip</code>"
-assert_contains site/draft/verify/index.html "id=\"published-checksum\">${checksum}</code>"
-assert_contains site/draft/verify/index.html "published checksum for version ${dry_version} is"
-assert_contains site/draft/verify/index.html "cleanlanguage-${dry_version}.zip.sha256"
-assert_contains site/draft/verify/index.html "sha256sum cleanlanguage-${dry_version}.zip"
-for page in site/draft/install/index.html site/draft/verify/index.html; do
+assert_contains site/install/index.html "releases/download/${dry_tag}/cleanlanguage-${dry_version}.zip"
+assert_contains site/install/index.html "zip, version ${dry_version}"
+assert_contains site/install/index.html "for example <code>cleanlanguage-${dry_version}.zip</code>"
+assert_contains site/verify/index.html "<code class=\"sum\" id=\"published-checksum\">${checksum}</code>"
+assert_contains site/verify/index.html "sha256sum cleanlanguage-${dry_version}.zip"
+for page in site/install/index.html site/verify/index.html; do
   grep -q "version ${version}\b" "${page}" \
     && fail "${page} still names version ${version} after the flip"
 done
@@ -269,6 +277,16 @@ for page in site/install/index.html site/verify/index.html; do
   assert_contains "${page}" "\"dateModified\": \"${dry_date}\""
   grep -q "${seed_date}" "${page}" && fail "the sentinel date survived in ${page}; stamping did not run"
 done
+for name in install verify; do
+  assert_contains site-src/site.json "\"id\": \"${name}\", .*\"modified\": \"${dry_date}\""
+done
+grep -q "${seed_date}" site-src/site.json && fail "the sentinel date survived in site-src/site.json; stamping did not run"
+# The writer rewrites site/_redirects whole, so the fixed redirects kept since
+# promotion must survive the flip.
+assert_contains site/_redirects "^/privacy https://posluns.ca/privacy/ 301$"
+assert_contains site/_redirects "^/privacy/ https://posluns.ca/privacy/ 301$"
+assert_contains site/_redirects "^/favicon.svg /assets/baseline/logos/cleanlanguage-favicon.svg 301$"
+assert_contains site/_redirects "^/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301$"
 # grep -q exits on its first match, so the entry is captured first and read
 # from a here-string: a pipe into it would rest on the writer making a single
 # write, and any later write would take a SIGPIPE that pipefail reports.
