@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the install pages keep their family links, setup steps, and ids static, visible, and complete.
+"""Check the install pages keep their family links, setup steps, and ids, and do not hide the links or steps.
 
 ``site/install/index.html`` holds what applies to every AI system: the
 downloads, the test, how to use it, spelling, and assurance. Each AI family
@@ -29,9 +29,10 @@ What it verifies
    name; an element in ``HIDING_ELEMENTS``: ``datalist``, ``noscript``, ``rp``
    or ``title``; a ``dialog`` without ``open``; or a ``details`` without
    ``open``, which hides all its content except its first ``summary`` child,
-   as the HTML standard's rendering rules do with no stylesheet); the 5 links sit
-   in 1 paragraph, in the order Claude, ChatGPT, Gemini, Copilot, other AI
-   systems, before the ``get`` id.
+   as the HTML standard's rendering rules do with no stylesheet); the 5 links
+   have 1 ``p`` as their parent, as the parser reads it (see below), and sit in
+   the order Claude, ChatGPT, Gemini, Copilot, other AI systems, before the
+   ``get`` id.
 2. No element on any of the 6 pages carries the retired selector attributes
    ``data-picker``, ``data-family-link``, ``data-family-section``,
    ``data-picker-reset`` or ``data-picker-status``.
@@ -49,15 +50,19 @@ What it verifies
    gate's own code: among them, no ``<script>`` without ``src`` other than a
    structured-data block, no ``on*`` attribute, no ``javascript:`` URL, no
    ``<style>`` element or ``style`` attribute, no script from another origin,
-   and none of the elements that the parser reads differently from a browser.
-6. Versioned asset tokens on each of the 6 pages: ``fonts.css``,
-   ``palettes.css``, ``baseline.css`` and ``copy.js`` load from
-   ``/assets/baseline/`` with ``?v=X.Y.Z``, the script with ``defer``; an
-   optional ``site.css`` loads with ``?v=`` and 12 hexadecimal characters.
-   Every ``<script>`` a page loads is 1 of the baseline scripts this site uses
+   and none of the elements that check 7 of that gate refuses because the
+   parser reads them differently from a browser.
+6. Versioned asset tokens on each of the 6 pages: the text holds a stylesheet
+   tag for each of ``fonts.css``, ``palettes.css`` and ``baseline.css`` and a
+   script tag for ``copy.js``, from ``/assets/baseline/`` with ``?v=X.Y.Z``, the
+   script with ``defer``; where the text names ``/assets/site.css``, it holds a
+   stylesheet tag for it with ``?v=`` and 12 hexadecimal characters. Each of
+   these is matched as text, so a tag in a comment counts.
+   Every ``<script>`` start tag with a ``src``, as the parser reads it and as a
+   text match finds it, is 1 of the baseline scripts this site uses
    (``ALLOWED_SCRIPTS``: ``copy.js``, ``search.js``, ``rail.js``) from
-   ``/assets/baseline/``, with the same token and ``defer``; ``select.js`` is
-   refused.
+   ``/assets/baseline/``, with a ``?v=X.Y.Z`` token and ``defer``; ``select.js``
+   is refused.
 7. ``site/_headers``, read with the parser of ``tools/check-headers.py``
    (header names compared without regard to case, comments ignored), has a
    ``/*`` rule that sets ``Content-Security-Policy`` exactly once, to exactly
@@ -72,8 +77,9 @@ What it verifies
    (template specification, section 5), and check 5 and
    ``tools/check-inline-code.py`` enforce that rule.
 
-It reads the markup with ``html.parser`` and follows a browser where the two
-differ in a way checks 1 and 4 depend on: ``/>`` on an element that is not void
+It reads the markup with ``html.parser``, so an ancestor in checks 1 and 4 is an
+element that the parser holds open, and it follows a browser in these ways where
+the two differ: ``/>`` on an element that is not void
 does not close it, so ``<div hidden/>`` hides what follows; of 2 attributes with
 the same name, the first counts; a heading start tag closes a heading that is
 the current node, and any heading end tag closes the innermost open heading;
@@ -81,7 +87,10 @@ and a hiding ``html`` or ``body`` start tag anywhere hides the whole page,
 because a browser adds its attributes to the page's own element. Where
 ``html.parser`` keeps open an element that a browser closes by an implied end
 tag (a ``p`` before a ``div``, say), the gate sees more ancestors than a
-browser, so a hiding one makes it refuse more, not less.
+browser. A hiding one makes it refuse more, but the paragraph check 1 asks for
+can be one a browser has closed (``<div></div>`` between 2 family links leaves
+the later links outside it), and the end tag of such an element closes here
+what a browser keeps open (see below).
 
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
@@ -112,15 +121,23 @@ exempt list. It counts a rule as hiding only when the rule sets
 or ``absolute`` or ``fixed`` positioning with a negative ``top`` or ``left``.
 It reads no other property, so a class hidden by ``clip-path``, by
 ``height: 0`` with ``overflow: hidden``, or by ``opacity`` passes it, and it
-reads no compound, descendant or attribute selector. It does not check the wording
-of the setup steps, only that they are present. Those are visible regressions
+reads no compound, descendant or attribute selector. It reads no text but the
+heading's, so an empty or swapped family link label, an empty ``p.verified``
+and an empty ``ol.steps`` pass; it checks that the setup steps are present, not
+their wording. Those are visible regressions
 a browser check, a reviewer, or the tri-family QA catches. A heading made only
 of an invisible character that is not whitespace, U+0000 or in ``ZERO_WIDTH``
 (such as U+034F, U+115F, U+180E, U+2061 to U+2064, U+3164, a variation
-selector or a tag character) passes the visible-text check. Nor does the gate
-model 2 browser repairs that can hide markup it reads as visible: an end tag a
-browser ignores because its element is not in scope (``</div>`` inside a table
-cell leaves a hiding ``div`` outside the table open), and a formatting element
+selector or a tag character) passes the visible-text check. An end tag closes
+here the open element it names and every element opened inside it; the gate
+does not model the browser repairs that can hide markup it reads as visible,
+among them: an end tag a browser ignores because its element is not in scope
+(``</div>`` inside a table cell leaves a hiding ``div`` outside the table open)
+or, for an element outside the HTML standard's special category, because a
+special element such as ``div`` is open inside it (after
+``<span hidden><div></span>`` the ``span`` stays open); an end tag whose
+element a browser has already closed by an implied end tag (after
+``<p><div hidden></p>`` the ``div`` stays open); and a formatting element
 (``a``, ``b``, ``big``, ``code``, ``em``, ``font``, ``i``, ``nobr``, ``s``,
 ``small``, ``strike``, ``strong``, ``tt`` or ``u``) that a browser reopens with
 its attributes after an end tag closed it out of order, so after
@@ -130,7 +147,7 @@ to the next ``-->``, so a hiding element between them passes. The inline-code
 checks share the residual that ``tools/check-inline-code.py`` states.
 
 Exit codes:
-  0  the markup is static and complete, and the header discipline holds
+  0  every check above passes
   1  a family link, family page, id, retired attribute, asset token, or header discipline regressed
   3  a file could not be read, or a gate it reuses is missing
 """
@@ -258,6 +275,7 @@ class PageParser(HTMLParser):
         self.h1: list[dict] = []
         self.verified: list[bool] = []
         self.steps: list[bool] = []
+        self.scripts: list[str] = []
         self.page_hidden = False
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
@@ -307,6 +325,10 @@ class PageParser(HTMLParser):
             self.verified.append(hiding)
         if tag == "ol" and "steps" in classes:
             self.steps.append(hiding)
+        # The parser reads the tag whatever its letter case, spacing or quoting, which the text match in
+        # common_checks does not; "" stands for a script without defer.
+        if tag == "script" and "src" in attrs:
+            self.scripts.append(attrs["src"] if "defer" in attrs else "")
         if tag not in VOID:
             closed = tag == "details" and "open" not in attrs
             self.stack.append(
@@ -365,6 +387,13 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
         name = re.search(r'src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+"', tag)
         if name is None or name.group(1) not in ALLOWED_SCRIPTS or not tag.endswith(" defer>"):
             problems.append(f"{where}: {tag} is not 1 of the baseline scripts this site uses ({', '.join(ALLOWED_SCRIPTS)}) with a ?v=X.Y.Z token and defer.")
+    for src in parser.scripts:
+        name = re.fullmatch(r"/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+", src)
+        if name is None or name.group(1) not in ALLOWED_SCRIPTS:
+            problems.append(
+                f"{where}: the parser reads a <script> whose src is not 1 of the baseline scripts this site uses "
+                f"({', '.join(ALLOWED_SCRIPTS)}) with a ?v=X.Y.Z token and defer."
+            )
     if "/assets/site.css" in text and not re.search(r'<link rel="stylesheet" href="/assets/site\.css\?v=[0-9a-f]{12}">', text):
         problems.append(f"{where}: site.css is not loaded with a ?v= content token.")
     return problems
@@ -391,13 +420,13 @@ def check_install_page(text: str) -> list[str]:
         if link["current"]:
             problems.append(f"{where}: the {fam} family link carries aria-current in the static markup.")
         if link["hidden"]:
-            problems.append(f"{where}: the {fam} family link is hidden in the static markup.")
+            problems.append(f"{where}: the {fam} family link reads as hidden in the static markup.")
         if get_at is not None and link["order"] > get_at:
             problems.append(f'{where}: the {fam} family link comes after the "get" id; the family links sit at the top.')
     if len(found) == len(FAMILIES):
         parents = {link["parent"] for link in found}
         if len(parents) != 1 or next(iter(parents)) is None or next(iter(parents))[0] != "p":
-            problems.append(f"{where}: the family links do not sit together in 1 paragraph.")
+            problems.append(f"{where}: the family links do not have 1 paragraph as their parent.")
         if [link["order"] for link in found] != sorted(link["order"] for link in found):
             problems.append(f"{where}: the family links are not in the order {', '.join(FAMILIES)}.")
     for gid in TEMPLATE_IDS + FAMILIES:
@@ -415,17 +444,17 @@ def check_family_page(fam: str, text: str) -> list[str]:
         problems.append(f"{where}: {len(parser.h1)} <h1> elements; exactly 1 is required.")
     else:
         if not parser.h1[0]["text"]:
-            problems.append(f"{where}: the <h1> has no visible text.")
+            problems.append(f"{where}: the <h1> has no text that reads as visible.")
         if parser.h1[0]["hidden"]:
-            problems.append(f"{where}: the <h1> is hidden in the static markup.")
+            problems.append(f"{where}: the <h1> reads as hidden in the static markup.")
     if not parser.verified:
         problems.append(f'{where}: no <p class="verified"> line says when the steps were last verified.')
     elif any(parser.verified):
-        problems.append(f"{where}: a verified line is hidden in the static markup.")
+        problems.append(f"{where}: a verified line reads as hidden in the static markup.")
     if not parser.steps:
         problems.append(f'{where}: no <ol class="steps"> setup steps.')
     elif any(parser.steps):
-        problems.append(f"{where}: a step list is hidden in the static markup.")
+        problems.append(f"{where}: a step list reads as hidden in the static markup.")
     for target in ("/install/#get", "/install/#test"):
         if target not in parser.hrefs:
             problems.append(f"{where}: no link to {target}.")
@@ -493,11 +522,12 @@ def main() -> int:
         return 1
 
     print(
-        "The install page links all five family pages with visible buttons at the top and keeps its ids; "
-        "each family page carries its heading, verified line, and setup steps statically and visibly and "
-        "links back to the downloads and the test; ids are unique, no retired selector markup remains, the "
-        "six pages carry no inline code and load only the baseline's versioned assets, and the /* rule of "
-        "site/_headers carries exactly the shared policy."
+        "The install page links all five family pages in order with buttons before the get id, none of them "
+        "read as hidden, and keeps its ids; each family page has 1 h1 with text read as visible, a verified "
+        "line and a step list, none of them read as hidden, and links back to the downloads and the test; ids "
+        "are unique, no retired selector attribute remains, the six pages pass the inline-code checks, name the "
+        "baseline's versioned stylesheets and copy.js, and load no script but the allowed baseline scripts, and "
+        "the /* rule of site/_headers carries exactly the shared policy."
     )
     return 0
 

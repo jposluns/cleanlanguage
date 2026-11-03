@@ -5,6 +5,9 @@ Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault to the install page, a family page, or
 site/_headers, runs the gate there as a separate process and asserts its exit
 code. Exit 0 when every case passes; 1 otherwise, naming each failing case.
+Each of RESIDUALS is markup the gate passes although a browser hides or empties
+what the gate checks; it must exit 0, and the gate's docstring must name it, so
+that what the gate says it checks cannot outgrow its code unnoticed.
 
 It also reads the stylesheets every install page loads (fonts.css, palettes.css
 and baseline.css under site/assets/baseline/) and fails when a rule whose
@@ -19,6 +22,7 @@ read, has an unclosed comment or unbalanced braces, or holds no rule.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import re
 import shutil
@@ -48,6 +52,8 @@ SITE_LINE = "/*\n  X-Frame-Options: DENY"
 SITE_CSP = f"  Content-Security-Policy: {SHARED_CSP}" + NEXT_RULE
 DRAFT_RULE = f"\n/draft/*\n  ! Content-Security-Policy\n  Content-Security-Policy: {SHARED_CSP}\n  X-Robots-Tag: noindex\n"
 OTHER_LINK = '<a class="btn inline" id="other-ai" href="/install/other-ai/">Other AI systems</a>'
+CLAUDE_LINK = '<a class="btn inline" id="claude" href="/install/claude/">Claude</a>'
+SELECT = "/assets/baseline/select.js?v=1.3.0"
 ROW = '<p><a class="btn inline" id="claude"'
 ROW_END = OTHER_LINK + "</p>"
 STEPS = '<ol class="steps">'
@@ -96,6 +102,16 @@ def both(*faults):
 def wrap(relative: str, start: str, end: str, before: str, after: str):
     """Put before ahead of the first start and after behind the first end, so the markup between sits inside."""
     return both(edit(relative, start, before + start), edit(relative, end, end + after))
+
+
+def decoy(relative: str):
+    """Load baseline.css without its token, and keep the tokened tag only in a comment."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        text = path.read_text(encoding="utf-8")
+        tag = re.search(r'<link rel="stylesheet" href="/assets/baseline/baseline\.css\?v=[^"]*">', text).group(0)
+        path.write_text(text.replace(tag, tag.replace("?v=", "?x=") + "<!-- " + tag + " -->", 1), encoding="utf-8")
+    return apply
 
 
 CASES = [
@@ -233,6 +249,10 @@ CASES = [
     ("a script from outside the baseline", edit(PAGE, "</head>", '<script src="/assets/other.js?v=1.3.0" defer></script>\n</head>'), 1),
     ("the retired install script", edit(PAGE, "</head>", '<script src="/js/install.js?v=20260101-1" defer></script>\n</head>'), 1),
     ("a baseline script under the old draft path", edit(PAGE, "</head>", '<script src="/draft/assets/baseline/rail.js?v=1.3.0" defer></script>\n</head>'), 1),
+    ("select.js in an upper-case tag", edit(PAGE, "</head>", f'<SCRIPT SRC="{SELECT}" defer></SCRIPT>\n</head>'), 1),
+    ("select.js with a space before the =", edit(PAGE, "</head>", f'<script src ="{SELECT}" defer></script>\n</head>'), 1),
+    ("select.js after a > in a quoted value", edit(PAGE, "</head>", f'<script title=">" src="{SELECT}" defer></script>\n</head>'), 1),
+    ("rail.js without defer in an upper-case tag", edit(PAGE, "</head>", '<SCRIPT SRC="/assets/baseline/rail.js?v=1.3.0"></SCRIPT>\n</head>'), 1),
     ("rail.js with its token and defer", edit(PAGE, "</head>", '<script src="/assets/baseline/rail.js?v=1.3.0" defer></script>\n</head>'), 0),
     ("site.css without its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?w=1">\n</head>'), 1),
     ("site.css with its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">\n</head>'), 0),
@@ -262,6 +282,24 @@ CASES = [
     ("the inline-code gate missing", lambda root: (root / "tools/check-inline-code.py").unlink(), 3),
     ("N3 (H1): /install/* detaching the policy", append(HEADERS, "\n/install/*\n  ! Content-Security-Policy\n"), 1),
     ("a staged /draft/* rule with its own detach", append(HEADERS, DRAFT_RULE), 0),
+]
+# Markup the gate passes although a browser hides or empties what it checks, and the words of the gate's docstring
+# that name it (compared with runs of whitespace read as 1 space).
+RESIDUALS = [
+    ("the button row after <span hidden><div></span>", edit(PAGE, ROW, "<span hidden><div></span>" + ROW),
+        "after ``<span hidden><div></span>`` the ``span`` stays open"),
+    ("the button row after <p><div hidden></p>", edit(PAGE, ROW, "<p><div hidden></p>" + ROW),
+        "after ``<p><div hidden></p>`` the ``div`` stays open"),
+    ("a div between 2 family links", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK + "<div></div>"),
+        "``<div></div>`` between 2 family links leaves the later links outside it"),
+    ("a family link with no label", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><")),
+        "an empty or swapped family link label"),
+    ("a family link with another family's label", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">ChatGPT<")),
+        "an empty or swapped family link label"),
+    ("a family page with an empty verified line", edit(GEMINI, '<p class="verified">', '<p class="verified"></p><p>'),
+        "an empty ``p.verified``"),
+    ("a family page with an empty step list", edit(OTHER, STEPS, STEPS + "</ol><ol>"), "an empty ``ol.steps``"),
+    ("the tokened baseline.css tag only in a comment", decoy(PAGE), "matched as text, so a tag in a comment counts"),
 ]
 
 
@@ -325,7 +363,11 @@ def stylesheet_problems() -> list[str]:
 
 def main() -> int:
     failures: list[str] = [f"the stylesheets: {problem}" for problem in stylesheet_problems()]
-    for name, fault, expected in CASES:
+    doc = " ".join((ast.get_docstring(ast.parse(GATE.read_text(encoding="utf-8"))) or "").split())
+    for name, _, words in RESIDUALS:
+        if words not in doc:
+            failures.append(f"{name}: the docstring of tools/{GATE.name} does not name it ({words!r}).")
+    for name, fault, expected in CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
             if fault:
@@ -338,7 +380,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-install-page: all {len(CASES)} cases and the stylesheet check passed.")
+    print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals and the stylesheet check passed.")
     return 0
 
 
