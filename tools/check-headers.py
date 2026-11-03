@@ -55,6 +55,12 @@ What it verifies
    lines under another pattern fails. The owner decided this policy for /draft/
    on 2026-11-03; at promotion the rule is removed and the site-wide rule
    carries the policy. A file with no ``/draft/*`` rule passes check 5.
+6. No rule detaches ``X-Robots-Tag``, and no rule other than ``/draft/*`` sets it
+   where its pattern can match a path under ``/draft/``: a pattern that starts
+   with ``/draft``, or whose first path segment holds a splat or a placeholder
+   (``/*``, ``/:name``), or a full URL whose path does either. So no later rule
+   can remove or dilute the draft's ``X-Robots-Tag: noindex``. Rules for other
+   paths, such as the download files' ``noindex``, are unaffected.
 4. No rule sets or detaches ``X-Content-Type-Options``, ``Referrer-Policy`` or
    ``Strict-Transport-Security``. Cloudflare sends the first 2 by default and the
    zone sends HSTS, so a line here would duplicate or remove them.
@@ -224,8 +230,33 @@ def draft_rule(entries: list[tuple[int, str, str, str, str | None]]) -> tuple[se
     return {entry[0] for entry in mine}, []
 
 
+def reaches_draft(pattern: str) -> bool:
+    """Whether a URL pattern can match a path under /draft/ (check 6)."""
+    path = re.sub(r"^https://[^/]*", "", pattern) or "/"
+    if path.startswith("/draft"):
+        return True
+    first = path.split("/")[1] if path.count("/") >= 1 else ""
+    return path == "/" or "*" in first or first.startswith(":")
+
+
+def robots_rule(entries: list[tuple[int, str, str, str, str | None]]) -> list[str]:
+    """Check 6: the draft's X-Robots-Tag is set only by /draft/* and detached nowhere."""
+    problems = []
+    for number, pattern, kind, name, _ in entries:
+        if name.lower() != "x-robots-tag":
+            continue
+        if kind == "detach":
+            problems.append(f"line {number}: {pattern} detaches X-Robots-Tag; no rule may remove the draft's noindex.")
+        elif pattern != DRAFT_PATTERN and reaches_draft(pattern):
+            problems.append(
+                f"line {number}: {pattern} sets X-Robots-Tag where the draft is served; only {DRAFT_PATTERN} may set it there."
+            )
+    return problems
+
+
 def check(entries: list[tuple[int, str, str, str, str | None]]) -> list[str]:
     allowed, problems = draft_rule(entries)
+    problems += robots_rule(entries)
     for name in FORBIDDEN:
         for number, pattern, kind, found, _ in entries:
             if found.lower() == name.lower():

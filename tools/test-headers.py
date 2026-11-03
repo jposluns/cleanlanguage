@@ -489,6 +489,27 @@ class DraftRuleTest(unittest.TestCase):
                 lines[1] = pattern
                 self.expect_fail(self.with_draft(lines), f"{pattern} detaches Content-Security-Policy; only one set line")
 
+    def test_noindex_detached_under_draft_fails(self):
+        # The review's mutant M9.
+        self.expect_fail(self.with_draft(DRAFT_LINES + ["", "/draft/install/*", "  ! X-Robots-Tag"]),
+                         "/draft/install/* detaches X-Robots-Tag")
+
+    def test_noindex_detached_anywhere_fails(self):
+        for pattern in ("/*", "/sitemap.xml", "https://cleanlanguage.ai/*"):
+            with self.subTest(pattern=pattern):
+                self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  ! X-Robots-Tag"]), "detaches X-Robots-Tag")
+
+    def test_noindex_changed_where_the_draft_is_served_fails(self):
+        for pattern in ("/draft/install/*", "/draft/", "/*", "/:page/*", "https://cleanlanguage.ai/draft/*"):
+            with self.subTest(pattern=pattern):
+                self.expect_fail(self.with_draft(DRAFT_LINES + ["", pattern, "  X-Robots-Tag: all"]),
+                                 "sets X-Robots-Tag where the draft is served")
+
+    def test_noindex_on_other_paths_passes(self):
+        # The download files' own noindex (GOOD_LINES) and another live path stay allowed.
+        code, text = self.run_gate(self.with_draft(DRAFT_LINES + ["", "/sitemap-old.xml", "  X-Robots-Tag: noindex"]))
+        self.assertEqual(code, 0, text)
+
     def test_draft_rule_does_not_relax_the_site_wide_rule(self):
         csp = next(line for line in GOOD_LINES if "Content-Security-Policy" in line)
         lines = [line for line in GOOD_LINES if line != csp] + DRAFT_LINES

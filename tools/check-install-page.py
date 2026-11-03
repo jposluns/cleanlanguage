@@ -425,6 +425,10 @@ def check_draft_headers(text: str) -> list[str]:
         )
     if [line for _, line in draft if line.lower().startswith("x-robots-tag:")] != ["X-Robots-Tag: noindex"]:
         problems.append(f"the {DRAFT_PATTERN} rule must set X-Robots-Tag: noindex exactly once.")
+    for pattern, line in rules:
+        robots = re.fullmatch(r"(!\s*)?x-robots-tag\s*(:.*)?", line, re.I)
+        if robots and (robots.group(1) or (pattern != DRAFT_PATTERN and pattern.startswith("/draft"))):
+            problems.append(f"{pattern} {'detaches' if robots.group(1) else 'sets'} X-Robots-Tag; only {DRAFT_PATTERN} may set it under /draft/, and no rule may detach it.")
     if csp and csp[0][1] == DRAFT_PATTERN:
         problems.append(f"the first Content-Security-Policy line belongs to {DRAFT_PATTERN}; the site-wide rule must come first.")
     return problems

@@ -75,10 +75,11 @@ RELEASE_URL = re.compile(
 ZIP_NAME = re.compile(r"cleanlanguage-(?P<version>[0-9][0-9.]*)\.zip")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
 VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
-# The displayed checksum, matched by its id in any attribute order, so the live page's
-# <code id="published-checksum"> and the template's <code class="sum" id="published-checksum">
-# both count, while an attribute such as data-id="published-checksum" does not.
-DISPLAYED_SUM = re.compile(r'<code(?=[^>]*\sid="published-checksum"[\s>])[^>]*>([^<]*)</code>')
+# The live verify page's checksum element, exactly as on main: no other attribute (such as hidden) passes.
+DISPLAYED_SUM = re.compile(r'<code id="published-checksum">([^<]*)</code>')
+# The draft verify page's element, the template's <code class="sum" id="published-checksum">, matched by
+# its id in any attribute order, while an attribute such as data-id="published-checksum" does not count.
+DRAFT_SUM = re.compile(r'<code(?=[^>]*\sid="published-checksum"[\s>])[^>]*>([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 NAMED_ZIP = re.compile(r"cleanlanguage-([0-9][0-9.]*[0-9])\.zip")
 VERSION_LABEL = re.compile(r"\bversion ([0-9]+\.[0-9]+\.[0-9]+)\b")
@@ -272,7 +273,7 @@ def check_release_source(expected: str, live_sum: str | None) -> list[str]:
         for version in sorted(labels - {expected}):
             problems.append(f"{relative} names version {version}, but SKILL.md says {expected}")
         if page == DRAFT_VERIFY:
-            shown = DISPLAYED_SUM.findall(text)
+            shown = DRAFT_SUM.findall(text)
             if len(shown) != 1:
                 problems.append(f'{relative} must show exactly 1 <code id="published-checksum">, found {len(shown)}')
             elif shown[0].strip() != checksum:

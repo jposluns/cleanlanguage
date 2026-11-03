@@ -569,7 +569,8 @@ def rail(config: dict, page: dict, base: str, content: str) -> str:
         raise BuildError(f"{page['source']}: a list rail needs at least 2 h2 sections with ids")
     items = []
     for anchor, label in entries:
-        text = " ".join(TAGS.sub("", label).split())
+        # A numbered clause heading carries its number in <span class="num">; the rail lists the title only.
+        text = " ".join(TAGS.sub("", re.sub(r'<span class="num">[^<]*</span>', "", label)).split())
         # No link is marked in the markup; rail.js marks the reader's section with aria-current="location".
         items.append(f'<li><a href="#{anchor}">{text}</a></li>')
     return f'<nav class="rail" aria-label="On this page">{image}<p class="lbl">On this page</p><ol>{"".join(items)}</ol></nav>'

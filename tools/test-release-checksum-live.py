@@ -4264,24 +4264,19 @@ class ContractRoutingTest(unittest.TestCase):
 
 
 class DisplayedSumMarkupTest(unittest.TestCase):
-    """The checksum is read by its id in any attribute order (the template's download block)."""
+    """The live verify page's checksum element is read exactly; any other attribute fails."""
 
     def test_live_markup(self):
         match = gate.DISPLAYED_SUM.search(VERIFY.format(version=CURRENT, checksum=ZIP_SUM))
         self.assertIsNotNone(match)
         self.assertEqual(match.group(1), ZIP_SUM)
 
-    def test_template_markup(self):
-        page = f'<p>The published checksum for version {CURRENT} is:</p><code class="sum" id="published-checksum">{ZIP_SUM}</code>'
-        match = gate.DISPLAYED_SUM.search(page)
-        self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), ZIP_SUM)
-
-    def test_other_attributes_do_not_match(self):
+    def test_extra_attributes_do_not_match(self):
         for page in (
+            f'<code id="published-checksum" hidden>{ZIP_SUM}</code>',
+            f'<code class="sum" id="published-checksum">{ZIP_SUM}</code>',
             f'<code data-id="published-checksum">{ZIP_SUM}</code>',
             f'<code id="published-checksum-old">{ZIP_SUM}</code>',
-            f'<code class="sum">{ZIP_SUM}</code>',
         ):
             self.assertIsNone(gate.DISPLAYED_SUM.search(page), page)
 

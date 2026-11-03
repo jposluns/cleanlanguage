@@ -173,6 +173,10 @@ def check_clean_build(failures: list[str]) -> int:
             for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
                 if not value.startswith("/draft/") and not value.startswith("/downloads/"):
                     failures.append(f"clean build: {page} links {value} outside /draft/")
+        checklist = (out / "checklist/index.html").read_text(encoding="utf-8")
+        rail_labels = re.findall(r'<li><a href="#[^"]+">([^<]*)</a></li>', checklist.split('<nav class="rail"', 1)[1].split("</nav>", 1)[0])
+        if rail_labels[:2] != ["Accuracy", "Directness"] or any(label[:1].isdigit() for label in rail_labels):
+            failures.append(f"clean build: the checklist rail labels carry the clause numbers: {rail_labels}")
         examples_md = (root / "cleanlanguage/skills/cleanlanguage/references/examples.md").read_text(encoding="utf-8")
         examples = (out / "examples/index.html").read_text(encoding="utf-8")
         sections = re.findall(r"^## (.+)$", examples_md, re.M)

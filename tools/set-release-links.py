@@ -127,7 +127,7 @@ def rewrite(version: str, tag: str, checksum: str, date: str) -> dict[Path, str]
 
         if name.startswith("verify"):
             text, n = re.subn(
-                r'(<code(?=[^>]*\sid="published-checksum"[\s>])[^>]*>)[^<]*(</code>)',
+                r'(<code id="published-checksum">)[^<]*(</code>)',
                 lambda m: m.group(1) + checksum + m.group(2),
                 text,
             )
