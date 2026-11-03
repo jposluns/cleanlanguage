@@ -13,7 +13,9 @@ function that interprets a release ``published_at`` value, (T2) that the
 portable-text builder carries the line into the generated rendering, and (row
 80) the ``--json`` mode the live checksum gate runs as a separate child: its
 exact replies, its bad requests (exit 2), its internal error (exit 6), and its
-agreement with the functions and the other modes.
+agreement with the functions and the other modes, including (row 89) the ops
+parse_date, publish_window and confirm_published and the refused outcome that
+the shell callers reach through tools/skill-release-date-client.py.
 
 The tests run offline and touch only throwaway directories.
 """
@@ -142,9 +144,11 @@ USAGE_LINE = (
 )
 
 
-def request(op: str, arg: str | None = None) -> bytes:
-    """Encode a --json request, as the gate does."""
+def request(op: str, arg: str | None = None, **fields) -> bytes:
+    """Encode a --json request, as the gate does; ``fields`` are the named
+    keys of a two-value request."""
     body = {"op": op} if arg is None else {"op": op, "arg": arg}
+    body.update(fields)
     return json.dumps(body, ensure_ascii=True).encode("ascii")
 
 
@@ -478,7 +482,21 @@ class FunctionTest(unittest.TestCase):
 
     def test_json_ops_constant(self):
         self.assertEqual(
-            srd.JSON_OPS, ("extract", "requires_release_date", "release_day_from_published_at", "baseline")
+            srd.JSON_OPS,
+            ("extract", "requires_release_date", "release_day_from_published_at", "baseline",
+             "parse_date", "publish_window", "confirm_published"),
+        )
+        self.assertEqual(
+            srd.JSON_REQUEST_KEYS,
+            {
+                "extract": ("arg",),
+                "requires_release_date": ("arg",),
+                "release_day_from_published_at": ("arg",),
+                "baseline": (),
+                "parse_date": ("arg",),
+                "publish_window": ("expected", "now"),
+                "confirm_published": ("expected", "published_at"),
+            },
         )
 
     def test_requires_release_date_sorts_numerically(self):
@@ -647,8 +665,8 @@ class JsonModeTest(unittest.TestCase):
             ("a list", b"[]", "the request is not a JSON object"),
             ("a string", b"\"extract\"", "the request is not a JSON object"),
             ("unknown op", request("nope", "x"), "the request names no known op: 'nope'"),
-            ("op another function of the module", request("parse_date", "2026-11-15"),
-             "the request names no known op: 'parse_date'"),
+            ("op another function of the module", request("parse_instant", "2026-11-15"),
+             "the request names no known op: 'parse_instant'"),
             ("op the main function", request("main", "x"), "the request names no known op: 'main'"),
             ("op in another case", request("Extract", "x"), "the request names no known op: 'Extract'"),
             ("op with a trailing space", request("baseline "), "the request names no known op: 'baseline '"),
@@ -669,6 +687,29 @@ class JsonModeTest(unittest.TestCase):
             ("arg null", b'{"op": "release_day_from_published_at", "arg": null}',
              "the arg of a request for release_day_from_published_at is not a string"),
             ("arg given for baseline", b'{"op": "baseline", "arg": "x"}', "a request for baseline has exactly the keys op"),
+            # Row 89: the ops with named keys take exactly those keys, each a
+            # string, checked in the order JSON_REQUEST_KEYS names them.
+            ("arg given for publish_window", request("publish_window", "x"),
+             "a request for publish_window has exactly the keys expected, now, op"),
+            ("now missing for publish_window", request("publish_window", expected="2026-11-15"),
+             "a request for publish_window has exactly the keys expected, now, op"),
+            ("arg beside expected and now", request("publish_window", "x", expected="2026-11-15", now="x"),
+             "a request for publish_window has exactly the keys expected, now, op"),
+            ("expected not a string", b'{"op": "publish_window", "expected": 5, "now": "x"}',
+             "the expected of a request for publish_window is not a string"),
+            ("now not a string", b'{"op": "publish_window", "expected": "2026-11-15", "now": null}',
+             "the now of a request for publish_window is not a string"),
+            ("both not strings, expected named first", b'{"op": "confirm_published", "published_at": 1, "expected": 2}',
+             "the expected of a request for confirm_published is not a string"),
+            ("published_at not a string", b'{"op": "confirm_published", "expected": "2026-11-15", "published_at": []}',
+             "the published_at of a request for confirm_published is not a string"),
+            ("now given for confirm_published",
+             request("confirm_published", expected="2026-11-15", now="2026-11-15T12:00:00Z"),
+             "a request for confirm_published has exactly the keys expected, op, published_at"),
+            ("expected given for parse_date", request("parse_date", expected="2026-11-15"),
+             "a request for parse_date has exactly the keys arg, op"),
+            ("arg not a string for parse_date", b'{"op": "parse_date", "arg": 20261115}',
+             "the arg of a request for parse_date is not a string"),
         ):
             with self.subTest(label):
                 code, out, err = run(data, "--json", stdin=True)
@@ -733,7 +774,12 @@ class JsonModeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             copy = Path(tmp) / "skill-release-date.py"
             copy.write_text(
-                source.replace(guard, '\nJSON_OPS = JSON_OPS + ("unrouted",)\n' + guard, 1), encoding="utf-8"
+                source.replace(
+                    guard,
+                    '\nJSON_REQUEST_KEYS["unrouted"] = ("arg",)\nJSON_OPS = JSON_OPS + ("unrouted",)\n' + guard,
+                    1,
+                ),
+                encoding="utf-8",
             )
             proc = subprocess.run(
                 [sys.executable, "-I", str(copy), "--json"],
@@ -744,6 +790,125 @@ class JsonModeTest(unittest.TestCase):
             proc.stderr,
             b"skill-release-date: internal error: RuntimeError(\"--json: no branch answers the op 'unrouted'\")\n",
         )
+
+    def refusal_text(self, function, *args):
+        with self.assertRaises(srd.Refused) as caught:
+            function(*args)
+        return str(caught.exception)
+
+    def test_the_ops_of_the_shell_callers_reply_exactly_and_agree_with_the_cli(self):
+        # Row 89: parse_date, publish_window and confirm_published answer as
+        # --check-date, --publish-window and --confirm-published do: a value
+        # is what the CLI prints with exit 0, a malformed reply carries the
+        # message the CLI prints with exit 1, and a refused reply carries the
+        # message the CLI prints with exit 5. The refusal texts are built
+        # once, so the two modes cannot drift.
+        window = srd.publish_window_verdict
+        confirm = srd.confirm_published_verdict
+        rows = (
+            ("parse_date a day", "parse_date", {"arg": "2026-11-15"},
+             ("--check-date", "2026-11-15"), {"outcome": "value", "value": "2026-11-15"}),
+            ("parse_date an impossible day", "parse_date", {"arg": "2026-02-30"},
+             ("--check-date", "2026-02-30"),
+             {"outcome": "malformed", "message": self.malformed_text(srd.parse_date, "2026-02-30")}),
+            ("parse_date not a day", "parse_date", {"arg": "15 November 2026"},
+             ("--check-date", "15 November 2026"),
+             {"outcome": "malformed", "message": self.malformed_text(srd.parse_date, "15 November 2026")}),
+            ("publish_window inside the day", "publish_window",
+             {"expected": "2026-11-15", "now": "2026-11-15T12:00:00Z"},
+             ("--publish-window", "2026-11-15", "2026-11-15T12:00:00Z"),
+             {"outcome": "value", "value": "2026-11-15"}),
+            ("publish_window a malformed day", "publish_window",
+             {"expected": "soon", "now": "2026-11-15T12:00:00Z"},
+             ("--publish-window", "soon", "2026-11-15T12:00:00Z"),
+             {"outcome": "malformed", "message": self.malformed_text(window, "soon", "2026-11-15T12:00:00Z")}),
+            ("publish_window a malformed instant", "publish_window",
+             {"expected": "2026-11-15", "now": "2026-11-15 12:00"},
+             ("--publish-window", "2026-11-15", "2026-11-15 12:00"),
+             {"outcome": "malformed", "message": self.malformed_text(window, "2026-11-15", "2026-11-15 12:00")}),
+            ("publish_window too close to midnight", "publish_window",
+             {"expected": "2026-11-15", "now": "2026-11-15T23:55:00Z"},
+             ("--publish-window", "2026-11-15", "2026-11-15T23:55:00Z"),
+             {"outcome": "refused", "message": self.refusal_text(window, "2026-11-15", "2026-11-15T23:55:00Z")}),
+            ("publish_window another day", "publish_window",
+             {"expected": "2026-11-15", "now": "2026-11-16T00:00:01Z"},
+             ("--publish-window", "2026-11-15", "2026-11-16T00:00:01Z"),
+             {"outcome": "refused", "message": self.refusal_text(window, "2026-11-15", "2026-11-16T00:00:01Z")}),
+            ("confirm_published the same day", "confirm_published",
+             {"expected": "2026-11-15", "published_at": "2026-11-15T23:59:59Z"},
+             ("--confirm-published", "2026-11-15", "2026-11-15T23:59:59Z"),
+             {"outcome": "value", "value": "2026-11-15"}),
+            ("confirm_published a null published_at", "confirm_published",
+             {"expected": "2026-11-15", "published_at": "null"},
+             ("--confirm-published", "2026-11-15", "null"),
+             {"outcome": "malformed", "message": self.malformed_text(confirm, "2026-11-15", "null")}),
+            ("confirm_published another day", "confirm_published",
+             {"expected": "2026-11-15", "published_at": "2026-11-16T00:00:02Z"},
+             ("--confirm-published", "2026-11-15", "2026-11-16T00:00:02Z"),
+             {"outcome": "refused", "message": self.refusal_text(confirm, "2026-11-15", "2026-11-16T00:00:02Z")}),
+        )
+        for label, op, fields, cli, outcome in rows:
+            with self.subTest(label):
+                code, out, err = run(request(op, **fields), "--json", stdin=True)
+                self.assertEqual((code, err), (0, ""))
+                self.assertEqual(out, reply_bytes({"op": op, **outcome}))
+                cli_code, cli_out, cli_err = run(None, *cli)
+                if outcome["outcome"] == "value":
+                    self.assertEqual((cli_code, cli_out, cli_err), (0, outcome["value"] + "\n", ""))
+                else:
+                    expected_code = 5 if outcome["outcome"] == "refused" else 1
+                    self.assertEqual(
+                        (cli_code, cli_out, cli_err),
+                        (expected_code, "", f"skill-release-date: {outcome['message']}\n"),
+                    )
+        # The refusal texts, pinned once so a change to either is seen.
+        self.assertEqual(
+            self.refusal_text(confirm, "2026-11-15", "2026-11-16T00:00:02Z"),
+            "the release was published on 2026-11-16 (UTC; published_at 2026-11-16T00:00:02Z), "
+            "but its Released line names 2026-11-15",
+        )
+        self.assertTrue(
+            self.refusal_text(window, "2026-11-15", "2026-11-15T23:55:00Z").startswith(
+                "refusing to start publishing: only 300 seconds remain in the UTC day 2026-11-15"
+            )
+        )
+
+    def test_refused_is_a_reply_of_the_two_day_checks_only(self):
+        # Row 89: no other op ever replies refused; each, given input it
+        # cannot accept, replies malformed.
+        for op, arg in (
+            ("extract", HEAD + VERSION + "Released: soon\n" + TAIL),
+            ("requires_release_date", "1.0"),
+            ("release_day_from_published_at", "null"),
+            ("parse_date", "2026-13-01"),
+        ):
+            with self.subTest(op):
+                code, out, err = run(request(op, arg), "--json", stdin=True)
+                self.assertEqual(code, 0, err)
+                self.assertEqual(json.loads(out)["outcome"], "malformed")
+        code, out, err = run(request("baseline"), "--json", stdin=True)
+        self.assertEqual((code, json.loads(out)["outcome"]), (0, "value"), err)
+
+    def test_an_internal_error_in_an_op_of_the_shell_callers_exits_6(self):
+        # Row 89: as for the other ops, an Exception inside parse_date,
+        # publish_window or confirm_published is never a reply.
+        for label, target, kind, data in (
+            ("parse_date", "datetime.date", "RuntimeError", request("parse_date", "2026-11-15")),
+            ("publish_window", "datetime.timedelta", "RuntimeError",
+             request("publish_window", expected="2026-11-15", now="2026-11-15T12:00:00Z")),
+            ("publish_window, a ValueError", "datetime.timedelta", "ValueError",
+             request("publish_window", expected="2026-11-15", now="2026-11-15T12:00:00Z")),
+            ("confirm_published", "datetime.datetime", "RuntimeError",
+             request("confirm_published", expected="2026-11-15", published_at="2026-11-15T12:00:00Z")),
+        ):
+            with self.subTest(label):
+                proc = subprocess.run(
+                    [sys.executable, "-I", "-c", JSON_CRASH_RUNNER, target, kind, str(EXTRACTOR)],
+                    input=data, capture_output=True,
+                )
+                self.assertEqual(proc.returncode, 6, proc.stderr)
+                self.assertEqual(proc.stdout, b"")
+                self.assertTrue(proc.stderr.startswith(b"skill-release-date: internal error: "), proc.stderr)
 
 
 class PatternPinTest(unittest.TestCase):

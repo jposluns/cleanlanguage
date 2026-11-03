@@ -18,7 +18,8 @@
 #      with --tag, fails unless the tag is v<version>. Also requires the
 #      skill name line and at least one Markdown reference, the two structural
 #      checks the previous inline validation enforced. Reads the Released line
-#      (item 26) through tools/skill-release-date.py and fails on a malformed
+#      (item 26) through tools/skill-release-date.py, run in its --json mode by
+#      tools/skill-release-date-client.py, and fails on a malformed
 #      one, and on a missing one when the version sorts above the undated
 #      baseline, whether or not --release-date is given; --release-date adds
 #      the check that the line is present, at any version, and names that date.
@@ -137,47 +138,91 @@ if [ -n "${tag}" ] && [ "v${version}" != "${tag}" ]; then
   fail "SKILL.md version (${version}) does not match the tag (${tag})"
 fi
 # The Released line (item 26), read from HEAD through the one shared strict
-# extractor, tools/skill-release-date.py: exit 0 prints the date, exit 3 means
-# no line, exit 1 is a malformed line, exit 4 means the extractor could not
-# read its input (reported as unreadable input), and any other exit (2, 6 for an
-# internal error, 127, an interpreter failure) means the extractor is
-# unavailable or crashed, which is
-# reported as that, never as malformed content. The extractor is probed first
-# (--baseline), so a missing or broken extractor fails here, before an exit 1
-# could be mistaken for a content verdict. A malformed line fails whether or
-# not --release-date is given. The pipeline statuses are read explicitly, so a
-# failed blob read cannot surface as the extractor exit 3 (absent) that
-# pipefail would otherwise report.
+# extractor, tools/skill-release-date.py, run in its --json mode by
+# tools/skill-release-date-client.py (row 89). The client gives a content
+# verdict only from a reply that meets the contract: exit 0 prints the date,
+# 13 means no line, 11 is a malformed line, 14 means the client could not read
+# its input (reported as unreadable input), and any other exit (16 when the
+# client found the extractor unavailable, 1 or 2 from a broken or missing
+# client, 127, an interpreter failure) means the tool is unavailable or
+# crashed, which is reported as that, never as malformed content. The client
+# is probed first (baseline), so a missing or broken tool fails here, before
+# any content is judged. A malformed line fails whether or not --release-date
+# is given. Both pipeline statuses are printed on a last line of their own and
+# read explicitly, so a failed blob read never surfaces as the client exit 13
+# (absent) that pipefail would otherwise report. A non-zero blob status is
+# reported as a failed blob read, with one exception: a blob status of 141
+# (git show ended by SIGPIPE) beside a client exit that is not a content
+# verdict (0, 11 or 13) means the client ended before it read the whole blob,
+# so the client's own exit and reason are reported instead. A content verdict
+# is never taken beside a non-zero blob status, since it may rest on part of
+# the blob.
+# The client writes to one stream only: on exit 0 the value on stdout, and on
+# any other exit its message on stderr with nothing on stdout. Each call
+# below captures both streams, so an unavailable branch can relay the
+# line in which the client names its reason (relay_client) before its own
+# message, and a value is checked for its form before it is used.
+relay_client() {
+  [ -z "$1" ] || printf '%s\n' "$1" >&2
+}
 probe_rc=0
-baseline="$(python3 tools/skill-release-date.py --baseline 2>/dev/null)" || probe_rc=$?
-if [ "${probe_rc}" -ne 0 ] || ! printf '%s' "${baseline}" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+baseline="$(python3 -I tools/skill-release-date-client.py baseline 2>&1)" || probe_rc=$?
+if [ "${probe_rc}" -ne 0 ] || ! [[ "${baseline}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  relay_client "${baseline}"
   fail "tools/skill-release-date.py is unavailable or broken (probe exit ${probe_rc}), so the Released line could not be checked"
 fi
 if [ -n "${release_date_given}" ]; then
   check_rc=0
-  python3 tools/skill-release-date.py --check-date "${release_date}" >/dev/null 2>&1 || check_rc=$?
+  checked="$(python3 -I tools/skill-release-date-client.py check-date "${release_date}" 2>&1)" || check_rc=$?
   case "${check_rc}" in
-    0) ;;
-    1) fail "--release-date must be a real YYYY-MM-DD date, got ${release_date:-nothing}" ;;
-    *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${check_rc}) checking --release-date ${release_date:-nothing}" ;;
+    0)
+      # The client prints the day it was given; anything else is refused.
+      [[ "${checked}" == "${release_date}" ]] \
+        || fail "tools/skill-release-date.py gave an unexpected answer (${checked:-nothing}) checking --release-date ${release_date}"
+      ;;
+    11) fail "--release-date must be a real YYYY-MM-DD date, got ${release_date:-nothing}" ;;
+    *)
+      relay_client "${checked}"
+      fail "tools/skill-release-date.py is unavailable or crashed (exit ${check_rc}) checking --release-date ${release_date:-nothing}"
+      ;;
   esac
 fi
-released_rc=0
-released="$(
-  git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-release-date.py 2>/dev/null
+# The substitution turns errexit off for itself, so its statuses are printed
+# even when errexit is inherited (shopt -s inherit_errexit, or POSIX mode),
+# where a failing client would otherwise end it, and set -e the packager,
+# before any status was read.
+read_out="$(
+  set +e
+  git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-release-date-client.py extract-stdin 2>&1
   statuses=("${PIPESTATUS[@]}")
-  [ "${statuses[0]}" -eq 0 ] || exit 125
-  exit "${statuses[1]}"
-)" || released_rc=$?
+  printf '\n%s %s' "${statuses[0]}" "${statuses[1]}"
+)"
+read_statuses="${read_out##*$'\n'}"
+released="${read_out%$'\n'*}"
+released="${released%$'\n'}"
+blob_rc="${read_statuses% *}"
+released_rc="${read_statuses#* }"
+case "${blob_rc}:${released_rc}" in
+  0:*) ;;
+  141:0 | 141:11 | 141:13) fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line" ;;
+  141:*) ;;
+  *) fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line" ;;
+esac
 case "${released_rc}" in
-  0) ;;
-  3) released="" ;;
-  125) fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line" ;;
-  4) fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line: the extractor could not read its input (exit 4)" ;;
-  1)
-    fail "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is malformed: $(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-release-date.py 2>&1 >/dev/null || true)"
+  0)
+    [[ "${released}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+      || fail "tools/skill-release-date.py gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"
+    ;;
+  13) released="" ;;
+  14)
+    relay_client "${released}"
+    fail "could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released line: the client could not read its input (exit 14)"
+    ;;
+  11)
+    fail "the Released line in cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD is malformed: $(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-release-date-client.py extract-stdin 2>&1 >/dev/null || true)"
     ;;
   *)
+    relay_client "${released}"
     fail "tools/skill-release-date.py is unavailable or crashed (exit ${released_rc}) reading the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"
     ;;
 esac
@@ -187,11 +232,14 @@ if [ -z "${released}" ]; then
   # of it); the extractor decides the comparison. A given --release-date has
   # no line to check, so its absence fails here at any version.
   req_rc=0
-  requirement="$(python3 tools/skill-release-date.py --requires-date "${version}" 2>/dev/null)" || req_rc=$?
+  requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${version}" 2>&1)" || req_rc=$?
   case "${req_rc}" in
     0) ;;
-    1) fail "tools/skill-release-date.py rejected the version ${version} as not a bare X.Y.Z" ;;
-    *) fail "tools/skill-release-date.py is unavailable or crashed (exit ${req_rc}) deciding whether ${version} needs a Released line" ;;
+    11) fail "tools/skill-release-date.py rejected the version ${version} as not a bare X.Y.Z" ;;
+    *)
+      relay_client "${requirement}"
+      fail "tools/skill-release-date.py is unavailable or crashed (exit ${req_rc}) deciding whether ${version} needs a Released line"
+      ;;
   esac
   case "${requirement}" in
     optional)
