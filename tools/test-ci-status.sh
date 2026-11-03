@@ -1293,6 +1293,13 @@ run_case "failed run of a renamed Cloudflare app (slug cloudflare-pages) -> red"
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"failure","name":"Cloudflare Pages","app":{"slug":"cloudflare-pages","id":85455}}')" "" "" 1
 run_case "failed run of a re-registered Cloudflare app (app id 85456) -> red" \
   "$(runs "$REQ_GA" '{"status":"completed","conclusion":"failure","name":"Cloudflare Pages","app":{"slug":"cloudflare-workers-and-pages","id":85456}}')" "" "" 1
+# The app id is checked whatever the slug: a non-integer app id under an app with
+# no slug, or with a null slug, makes the whole reading unreadable.
+for app in '{"id":"9"}' '{"slug":null,"id":"9"}'; do
+  run_err_case "non-integer app id in the app $app -> unreadable" \
+    "$(runs "$REQ_GA" "$CF" "{\"status\":\"completed\",\"conclusion\":\"success\",\"name\":\"extra\",\"app\":$app}")" 3 \
+    "check read failed for 0000000000000000000000000000000000000000: check run app.id is not an integer"
+done
 # An app id that is present and is neither an integer nor null (a string, either
 # boolean, a number with a fraction part or an exponent, an array or an object)
 # makes the whole reading unreadable.
