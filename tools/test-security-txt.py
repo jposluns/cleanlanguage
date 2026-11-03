@@ -7,7 +7,8 @@ its own message: each decided field missing, duplicated or set to another
 value; a field that was not decided; an expired file, against a fixed time and
 against the clock; a malformed line; a line broken by any character but a line
 feed; a control character, a byte order mark or whitespace other than the ASCII
-space; a leading or trailing space or a second space after the colon; invalid
+space; a carriage return at the end of the file with no line feed after it; a
+leading or trailing space or a second space after the colon; invalid
 UTF-8; and an unreadable file. The last test runs the gate on the repository's
 own file. The tests run offline with the standard library.
 """
@@ -107,6 +108,10 @@ class SecurityTxtGateTest(unittest.TestCase):
         self.expect_fail(GOOD_LINES + ["Hiring: https://example.com/"],
                          "Hiring is not a decided field")
 
+    def test_field_name_with_digit_is_a_field(self):
+        self.expect_fail(GOOD_LINES + ["X-Hiring-2: https://example.com/"],
+                         "line 8: X-Hiring-2 is not a decided field")
+
     def test_expired_file_fails(self):
         self.expect_fail(GOOD_LINES, "is not later than now", now=AT_EXPIRY)
 
@@ -183,6 +188,18 @@ class SecurityTxtGateTest(unittest.TestCase):
                 self.assertEqual(code, 3, text)
                 self.assertIn("line 2: holds the control character U+000D", text)
 
+    def test_carriage_return_at_end_without_line_feed_fails_closed(self):
+        for data, number in ((("\n".join(GOOD_LINES) + "\r"), 7),
+                             (("\r\n".join(GOOD_LINES) + "\r\n\r"), 8)):
+            with self.subTest(data=data[-6:]):
+                code, text = self.run_bytes(data.encode("utf-8"))
+                self.assertEqual(code, 3, text)
+                self.assertEqual(
+                    text,
+                    f"check-security-txt: site/.well-known/security.txt line {number}: holds the "
+                    "control character U+000D; a line may end only in a line feed, with at most "
+                    "one carriage return before it\n")
+
     def test_no_final_line_feed_passes(self):
         code, text = self.run_bytes("\n".join(GOOD_LINES).encode("utf-8"))
         self.assertEqual(code, 0, text)
@@ -213,6 +230,9 @@ class SecurityTxtGateTest(unittest.TestCase):
             (" # comment", "line 2: starts with a space"),
             ("Contact: mailto:jeff@posluns.ca ", "line 2: ends in a space"),
             ("Contact:  mailto:jeff@posluns.ca", "line 2: more than one space after the colon"),
+            ("Contact : mailto:jeff@posluns.ca", "line 2: not a 'Field: value' line"),
+            ("Con_tact: mailto:jeff@posluns.ca", "line 2: not a 'Field: value' line"),
+            ("Con.tact: mailto:jeff@posluns.ca", "line 2: not a 'Field: value' line"),
         )
         for line, needle in cases:
             with self.subTest(line=line):

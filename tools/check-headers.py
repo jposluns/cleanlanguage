@@ -13,16 +13,23 @@ What it verifies
 ----------------
 
 1. The file reads as UTF-8 with no byte order mark, and its lines break only
-   at a line feed; one carriage return before a line feed is ignored. A line
-   that holds any other control character (a tab or a lone carriage return
-   included), a Unicode line or paragraph separator, a byte order mark, or any
-   whitespace other than the ASCII space (U+0020) fails closed (exit 3), naming
-   the line. A URL pattern starts in the first column. A header line is
-   indented by one or more ASCII spaces, sits under a URL pattern and has the
-   form ``Name: value`` or ``! Name``, where the name is an HTTP token (RFC 9110
-   ``tchar`` characters only) and only ASCII spaces may follow the colon. An
-   indented line that looks like a URL or a path, a line that ends in a space,
-   a line that holds only spaces, and any other line fail closed (exit 3).
+   at a line feed; one carriage return before a line feed is ignored, and a
+   carriage return at the end of the file, with no line feed after it, counts
+   as a lone carriage return. A line that holds any other control character (a
+   tab or a lone carriage return included), a Unicode line or paragraph
+   separator, a byte order mark, or any whitespace other than the ASCII space
+   (U+0020) fails closed (exit 3), naming the line. A line that starts in the
+   first column is a ``#`` comment or a URL pattern, and a URL pattern is a
+   path that starts with ``/`` or an absolute URL that starts with
+   ``https://``, with no space in it. A header line is indented by one or more
+   ASCII spaces, sits under a URL pattern and has the form ``Name: value`` or
+   ``! Name``, where the name is an HTTP token (RFC 9110 ``tchar`` characters
+   only) and only ASCII spaces may follow the colon. A header name never starts
+   with ``!``, which marks a detach (``!X-Name: value`` fails closed). An indented line that
+   looks like a URL or a path, a first-column line that is neither a comment
+   nor a URL pattern (a header written without its indent, for example), a
+   line that ends in a space, a line that holds only spaces, and any other
+   line fail closed (exit 3).
 2. The ``/*`` rule sets each of these headers exactly once, with exactly this
    value:
 
@@ -88,6 +95,7 @@ TOKEN = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
 HEADER_LINE = re.compile(rf"^({TOKEN}): *(.*)$")
 DETACH_LINE = re.compile(rf"^! *({TOKEN})$")
 URL_OR_PATH = re.compile(r"^(?:/|[A-Za-z][A-Za-z0-9+.-]*://)")
+URL_PATTERN = re.compile(r"^(?:/[^ ]*|https://[^ ]+)$")
 
 
 def die(message: str) -> None:
@@ -98,13 +106,16 @@ def die(message: str) -> None:
 def split_lines(text: str) -> list[tuple[int, str]]:
     """Split at line feeds only and return (line number, line) pairs.
 
-    One carriage return before a line feed is removed. Any other control
-    character, a Unicode line or paragraph separator, a byte order mark, or any
-    whitespace other than the ASCII space fails closed, naming the line.
+    One carriage return before a line feed is removed. A carriage return at the
+    end of the text, with no line feed after it, stays and fails closed. Any
+    other control character, a Unicode line or paragraph separator, a byte order
+    mark, or any whitespace other than the ASCII space fails closed, naming the
+    line.
     """
     lines: list[tuple[int, str]] = []
-    for number, raw in enumerate(text.split("\n"), start=1):
-        if raw.endswith("\r"):
+    pieces = text.split("\n")
+    for number, raw in enumerate(pieces, start=1):
+        if number < len(pieces) and raw.endswith("\r"):
             raw = raw[:-1]
         for char in raw:
             code = f"U+{ord(char):04X}"
@@ -141,6 +152,10 @@ def parse(text: str) -> list[tuple[int, str, str, str, str | None]]:
         if content.startswith("#"):
             continue
         if raw[0] != " ":
+            if not URL_PATTERN.match(raw):
+                die(f"site/_headers line {number}: a first-column line is not a URL pattern: "
+                    f"{raw!r}; a URL pattern is a path that starts with '/' or a URL that "
+                    "starts with 'https://', with no space, and a header line is indented")
             pattern = raw
             continue
         line = content
@@ -153,6 +168,9 @@ def parse(text: str) -> list[tuple[int, str, str, str, str | None]]:
         if detach:
             entries.append((number, pattern, "detach", detach.group(1), None))
             continue
+        if line.startswith("!") and HEADER_LINE.match(line):
+            die(f"site/_headers line {number}: a line that starts with '!' must be a detach, "
+                f"'! Name' alone, not a header to set: {line!r}")
         header = HEADER_LINE.match(line)
         if header:
             entries.append((number, pattern, "set", header.group(1), header.group(2)))

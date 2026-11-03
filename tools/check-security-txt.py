@@ -9,14 +9,16 @@ What it verifies
 ----------------
 
 1. The file reads as UTF-8 with no byte order mark, and its lines break only
-   at a line feed; one carriage return before a line feed is ignored. A line
-   that holds any other control character (a tab or a lone carriage return
-   included), a Unicode line or paragraph separator, a byte order mark, or any
-   whitespace other than the ASCII space (U+0020) fails closed (exit 3), naming
-   the line. Every line is empty, a ``#`` comment, or a ``Field: value`` line
-   with at most one space after the colon, as RFC 9116 shows it. A line that
-   starts or ends with a space, a line with more than one space after the
-   colon, and any other line fail closed (exit 3).
+   at a line feed; one carriage return before a line feed is ignored, and a
+   carriage return at the end of the file, with no line feed after it, counts
+   as a lone carriage return. A line that holds any other control character (a
+   tab or a lone carriage return included), a Unicode line or paragraph
+   separator, a byte order mark, or any whitespace other than the ASCII space
+   (U+0020) fails closed (exit 3), naming the line. Every line is empty, a
+   ``#`` comment, or a ``Field: value`` line with at most one space after the
+   colon, as RFC 9116 shows it. A line that starts or ends with a space, a
+   line with more than one space after the colon, and any other line fail
+   closed (exit 3).
 2. Each of these fields appears exactly once, with exactly this value:
 
    - ``Contact: mailto:jeff@posluns.ca``
@@ -78,13 +80,16 @@ def die(message: str) -> None:
 def split_lines(text: str) -> list[tuple[int, str]]:
     """Split at line feeds only and return (line number, line) pairs.
 
-    One carriage return before a line feed is removed. Any other control
-    character, a Unicode line or paragraph separator, a byte order mark, or any
-    whitespace other than the ASCII space fails closed, naming the line.
+    One carriage return before a line feed is removed. A carriage return at the
+    end of the text, with no line feed after it, stays and fails closed. Any
+    other control character, a Unicode line or paragraph separator, a byte order
+    mark, or any whitespace other than the ASCII space fails closed, naming the
+    line.
     """
     lines: list[tuple[int, str]] = []
-    for number, raw in enumerate(text.split("\n"), start=1):
-        if raw.endswith("\r"):
+    pieces = text.split("\n")
+    for number, raw in enumerate(pieces, start=1):
+        if number < len(pieces) and raw.endswith("\r"):
             raw = raw[:-1]
         for char in raw:
             code = f"U+{ord(char):04X}"

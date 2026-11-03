@@ -7,8 +7,10 @@ decided header missing, duplicated, set to another value, or set or detached by
 another rule, the ``/*`` rule included; the Content-Security-Policy missing or
 duplicated; a forbidden header set or detached anywhere; a malformed line; a
 line broken by any character but a line feed; a control character, a byte order
-mark or whitespace other than the ASCII space; a trailing space; an indented URL
-or path; a header name that is not an HTTP token; invalid UTF-8; and an
+mark or whitespace other than the ASCII space; a carriage return at the end of
+the file with no line feed after it; a trailing space; an indented URL or path;
+a first-column line that is not a URL pattern, such as a header written without
+its indent; a header name that is not an HTTP token; invalid UTF-8; and an
 unreadable file. The last test runs the gate on the repository's own
 ``site/_headers``. The tests run offline with the standard library.
 """
@@ -264,19 +266,112 @@ class HeadersGateTest(unittest.TestCase):
                 self.assertEqual(code, 0, text)
 
     def test_url_or_path_under_rule_fails_closed(self):
-        for line in ("  https://cleanlanguage.ai/nothing", "  /nothing", "  http://:host/*"):
+        for line in ("  https://cleanlanguage.ai/nothing", "  /nothing", "  http://:host/*",
+                     "  ftp://cleanlanguage.ai/", "  git+ssh://host/x", "  a.b-c://host/x",
+                     "  Z9://host/x"):
             with self.subTest(line=line):
                 lines = list(GOOD_LINES)
                 lines.insert(3, line)
                 self.expect_fail(lines, "line 4: an indented line looks like a URL or a path",
                                  code=3)
 
+    def test_a_set_line_that_starts_with_a_bang_fails_closed(self):
+        for line in ("  !X-Frame-Options: SAMEORIGIN", "  !!X-Frame-Options: DENY"):
+            with self.subTest(line=line):
+                lines = list(GOOD_LINES)
+                lines.insert(3, line)
+                self.expect_fail(lines, "line 4: a line that starts with '!' must be a detach",
+                                 code=3)
+        lines = list(GOOD_LINES)
+        lines.insert(3, "  ! X-Frame-Options: DENY")
+        self.expect_fail(lines, "line 4: not a 'Name: value' or '! Name' line", code=3)
+
+    def test_header_in_first_column_fails_closed(self):
+        cases = (
+            (5, "Strict-Transport-Security: max-age=0", 6),
+            (9, "X-Frame-Options: SAMEORIGIN", 10),
+            (5, "! X-Frame-Options", 6),
+            (12, "X-Content-Type-Options: nosniff", 13),
+        )
+        for where, line, number in cases:
+            with self.subTest(line=line):
+                fixture = list(GOOD_LINES)
+                fixture.insert(where, line)
+                code, text = self.run_gate(fixture)
+                self.assertEqual(code, 3, text)
+                self.assertEqual(
+                    text,
+                    f"check-headers: site/_headers line {number}: a first-column line is not a URL "
+                    f"pattern: {line!r}; a URL pattern is a path that starts with '/' or a URL "
+                    "that starts with 'https://', with no space, and a header line is indented\n")
+
+    def test_first_column_line_outside_the_pattern_forms_fails_closed(self):
+        for line in ("http://cleanlanguage.ai/*", "https://", "cleanlanguage.ai/*",
+                     "/downloads/* X-Frame-Options: DENY", "https://:host/ *", "*"):
+            with self.subTest(line=line):
+                lines = GOOD_LINES + [line, "  Cache-Control: no-store"]
+                self.expect_fail(lines, f"line 13: a first-column line is not a URL pattern: "
+                                        f"{line!r}", code=3)
+
+    def test_url_patterns_pass(self):
+        for line in ("/", "/downloads/*", "/:splat", "https://:project.pages.dev/*",
+                     "https://cleanlanguage.ai/sitemap.xml"):
+            with self.subTest(line=line):
+                code, text = self.run_gate(GOOD_LINES + [line, "  Cache-Control: no-store"])
+                self.assertEqual(code, 0, text)
+                self.assertEqual(text, (
+                    "site/_headers sets X-Frame-Options, Permissions-Policy, "
+                    "Cross-Origin-Opener-Policy and Content-Security-Policy exactly once, in "
+                    "the /* rule, with the decided values, and carries no "
+                    "X-Content-Type-Options, Referrer-Policy or Strict-Transport-Security "
+                    "line.\n"))
+
+    def test_first_column_comment_is_skipped(self):
+        lines = list(GOOD_LINES)
+        lines.insert(0, "# Strict-Transport-Security: max-age=0")
+        code, text = self.run_gate(lines)
+        self.assertEqual(code, 0, text)
+
+    def test_carriage_return_at_end_without_line_feed_fails_closed(self):
+        for data, number in ((("\n".join(GOOD_LINES) + "\r"), 12),
+                             (("\r\n".join(GOOD_LINES) + "\r\n\r"), 13)):
+            with self.subTest(data=data[-6:]):
+                code, text = self.run_bytes(data.encode("utf-8"))
+                self.assertEqual(code, 3, text)
+                self.assertEqual(
+                    text,
+                    f"check-headers: site/_headers line {number}: holds the control character "
+                    "U+000D; a line may end only in a line feed, with at most one carriage "
+                    "return before it\n")
+
+    def test_no_final_line_feed_passes(self):
+        code, text = self.run_bytes("\n".join(GOOD_LINES).encode("utf-8"))
+        self.assertEqual(code, 0, text)
+
+    def test_every_tchar_in_a_header_name_passes(self):
+        name = "A!#$%&'*+.^_`|~09az-Z"
+        for line in (f"  {name}: x", f"  ! {name}"):
+            with self.subTest(line=line):
+                code, text = self.run_gate(GOOD_LINES + [line])
+                self.assertEqual(code, 0, text)
+
     def test_header_name_must_be_token(self):
         for line in ("  X-Frame(Options): DENY", "  X-Frame/Options: DENY",
-                     "  X-Frame-Opt\u200bions: DENY", "  X-Frame-Options : DENY"):
+                     "  X-Frame-Opt\u200bions: DENY", "  X-Frame-Options : DENY",
+                     "  X-Fr\u00e9me-Options: DENY"):
             with self.subTest(line=line):
                 lines = self.replace("  X-Frame-Options: DENY", line)
                 self.expect_fail(lines, "line 2: not a 'Name: value' or '! Name' line", code=3)
+
+    def test_each_delimiter_in_a_header_name_fails_closed(self):
+        for char in '"(),/;<=>?@[\\]{} ':
+            with self.subTest(char=char):
+                lines = GOOD_LINES + [f"  X-Robots{char}Tag: noindex"]
+                self.expect_fail(lines, "line 13: not a 'Name: value' or '! Name' line", code=3)
+        for char in '"(),/:;<=>?@[\\]{}':
+            with self.subTest(char=char, detach=True):
+                lines = GOOD_LINES + [f"  ! X-Robots{char}Tag"]
+                self.expect_fail(lines, "line 13: not a 'Name: value' or '! Name' line", code=3)
 
     def test_repository_headers_pass(self):
         gate.HEADERS = self._saved
