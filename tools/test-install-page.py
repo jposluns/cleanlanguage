@@ -2,15 +2,34 @@
 """Tests for tools/check-install-page.py: the install pages' contract and the site-wide policy.
 
 Each case copies the gate and the files it reads into a temporary repository
-(under $TMPDIR), applies 1 fault to the install page or to site/_headers, runs
-the gate there as a separate process and asserts its exit code. 1 more case
-asserts that the gate's docstring names exactly the scripts in
-``BASELINE_SCRIPTS``. Exit 0 when every case passes; 1 otherwise, naming each
-failing case.
+(under $TMPDIR), applies 1 fault to the install page, a family page, or
+site/_headers, runs the gate there as a separate process and asserts its exit
+code. 1 more case asserts that the gate's docstring names exactly the scripts
+in ``ALLOWED_SCRIPTS``. Exit 0 when every case passes; 1 otherwise, naming
+each failing case.
+Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
+hides or empties what the gate checks; it must exit 0, and the gate's docstring
+must name it, so that what the gate says it checks cannot outgrow its code
+unnoticed.
+
+It also reads the stylesheets every install page loads (fonts.css, palettes.css
+and baseline.css under site/assets/baseline/) and fails when a rule whose
+selector list holds a bare single class, such as ``.only-dark``, hides it
+(``display: none``, ``visibility: hidden`` or ``collapse``, a ``clip: rect(...)``
+as ``.vh`` uses, or a negative ``top`` or ``left`` on an absolute or fixed
+position) and the class is in neither the gate's HIDING_CLASSES nor
+EXEMPT_CLASSES below. The parser is deliberately small: it reads no compound,
+descendant or attribute selector, and it fails when a stylesheet cannot be
+read, has an unclosed comment or unbalanced braces, or holds no rule.
+
+It also fails unless the gate's SUPPORTED_PYTHONS is exactly 3.14, and runs the
+gate under a faked Python version outside that set, expecting exit 3, no result
+line, and a one-line message that names 3.14.
 """
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import re
 import shutil
@@ -45,6 +64,10 @@ SELECT = "/assets/baseline/select.js?v=1.3.0"
 ROW = '<p><a class="btn inline" id="claude"'
 ROW_END = OTHER_LINK + "</p>"
 STEPS = '<ol class="steps">'
+# The scheme.js tag of template specification 7.33 (baseline 1.6.0), as the committed pages carry it.
+SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.6.0"></script>'
+FONTS = '<link rel="stylesheet" href="/assets/baseline/fonts.css?v=1.6.0">'
+LATER = '<link rel="stylesheet" href="/assets/baseline/baseline.css?v=1.6.0">'
 STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
 # Classes a stylesheet may hide as a bare single class although the gate does not refuse them. Add 1 only with a
 # comment saying why no install page can carry it on a checked element or an ancestor. None qualifies today.
@@ -78,19 +101,6 @@ def edit(relative: str, old: str, new: str, every: bool = False):
     return apply
 
 
-# The scheme.js tag of template specification 7.33 (baseline 1.6.0), as the committed page carries it.
-SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.6.0"></script>'
-FONTS = '<link rel="stylesheet" href="/assets/baseline/fonts.css?v=1.6.0">'
-LATER = '<link rel="stylesheet" href="/assets/baseline/baseline.css?v=1.6.0">'
-
-
-def both(*faults):
-    def apply(root: Path) -> None:
-        for fault in faults:
-            fault(root)
-    return apply
-
-
 def append(relative: str, text: str):
     def apply(root: Path) -> None:
         path = root / relative
@@ -102,6 +112,15 @@ def remove(relative: str):
     return lambda root: (root / relative).unlink()
 
 
+def both(*faults):
+    return lambda root: [fault(root) for fault in faults][-1]
+
+
+def wrap(relative: str, start: str, end: str, before: str, after: str):
+    """Put before ahead of the first start and after behind the first end, so the markup between sits inside."""
+    return both(edit(relative, start, before + start), edit(relative, end, end + after))
+
+
 def into_body(first: str, before: str = "", after: str = ""):
     """Move the head's lines from first to </head> to the start of the body, in order, between before and after."""
     def apply(root: Path) -> None:
@@ -110,6 +129,16 @@ def into_body(first: str, before: str = "", after: str = ""):
         block = text[text.index(first):text.index("</head>")]
         text = text.replace(block, "", 1).replace("<body>\n", "<body>\n" + before + block + after, 1)
         path.write_text(text, encoding="utf-8")
+    return apply
+
+
+def decoy(relative: str):
+    """Load baseline.css without its token, and keep the tokened tag only in a comment."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        text = path.read_text(encoding="utf-8")
+        tag = re.search(r'<link rel="stylesheet" href="/assets/baseline/baseline\.css\?v=[^"]*">', text).group(0)
+        path.write_text(text.replace(tag, tag.replace("?v=", "?x=") + "<!-- " + tag + " -->", 1), encoding="utf-8")
     return apply
 
 
@@ -319,15 +348,26 @@ CASES = [
     ("a self-closing nav.nav before the switch", edit(PAGE, '<button class="scheme"', '<nav class="nav"/><button class="scheme"'), 1),
     ("a second element with data-scheme-toggle, a button in the content", edit(PAGE, "</main>",
         '<p><button class="scheme" type="button" data-scheme-toggle hidden><span class="vh">Dark mode</span></button></p></main>'), 1),
-    ("a family section hidden by the first of 2 class attributes", edit(PAGE, '<section id="claude" data-family-section="claude">',
-        '<section id="claude" data-family-section="claude" class="visually-hidden" class="x">'), 1),
+    # PR 213 replaced the family sections with family pages; this case moved from the claude section to its page.
+    ("a family page heading hidden by the first of 2 class attributes", edit(CLAUDE, "<h1>",
+        '<h1 class="visually-hidden" class="x">'), 1),
     ("fonts.css loaded only inside a comment", edit(PAGE, FONTS, "<!--" + FONTS + "-->"), 1),
     ("rail.js with another attribute", edit(PAGE, "</head>",
         '<script src="/assets/baseline/rail.js?v=1.3.0" type="module" defer></script>\n</head>'), 1),
+    # The load and switch checks hold on the family pages too.
+    ("the scheme.js tag missing on a family page", edit(GEMINI, SCHEME + "\n", ""), 1),
+    ("the scheme.js tag after the first stylesheet on a family page", both(edit(COPILOT, SCHEME + "\n", ""),
+        edit(COPILOT, "</head>", SCHEME + "\n</head>")), 1),
+    ("a later stylesheet at the end of the body on a family page", both(edit(OTHER, LATER + "\n", ""),
+        edit(OTHER, "</body>", LATER + "\n</body>")), 1),
+    ("a second element with data-scheme-toggle on a family page", edit(CHATGPT, "</main>",
+        '<p><button class="scheme" type="button" data-scheme-toggle hidden><span class="vh">Dark mode</span></button></p></main>'), 1),
     ("site.css without its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?w=1">\n</head>'), 1),
     ("site.css with its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">\n</head>'), 0),
     ("site.css without its token beside a token inside a comment", edit(PAGE, "</head>",
         '<!--<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">--><link rel="stylesheet" href="/assets/site.css?w=1">\n</head>'), 1),
+    # Until PR 218 this was a named residual: the gate matched the tag as text, so a tag in a comment counted.
+    ("the tokened baseline.css tag only in a comment", decoy(PAGE), 1),
     ("the install page missing", remove(PAGE), 3),
     ("the headers file missing", remove(HEADERS), 3),
     ("a policy on another rule", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Content-Security-Policy: default-src 'none'\n"), 1),
@@ -380,7 +420,6 @@ RESIDUALS = [
     ("a family page with 1 setup step dropped",
         edit(OTHER, STEPS + '<li><span>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</span></li>', STEPS),
         "not its steps or their wording"),
-    ("the tokened baseline.css tag only in a comment", decoy(PAGE), "matched as text, so a tag in a comment counts"),
 ]
 
 
@@ -465,20 +504,26 @@ def version_problems() -> list[str]:
 
 
 def statement_problems() -> list[str]:
-    """The gate's docstring names exactly the scripts that BASELINE_SCRIPTS holds."""
+    """The gate's docstring names exactly the scripts that ALLOWED_SCRIPTS holds."""
     spec = importlib.util.spec_from_file_location("check_install_page", GATE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    listed = re.search(r"``BASELINE_SCRIPTS``: (.*?)\)", module.__doc__, re.S)
+    listed = re.search(r"``ALLOWED_SCRIPTS``: (.*?)\)", module.__doc__, re.S)
     names = tuple(re.findall(r"``([a-z]+\.js)``", listed.group(1))) if listed else ()
-    if names != module.BASELINE_SCRIPTS:
-        return [f"the docstring lists BASELINE_SCRIPTS as {names}; the code holds {module.BASELINE_SCRIPTS}"]
+    if names != module.ALLOWED_SCRIPTS:
+        return [f"the docstring lists ALLOWED_SCRIPTS as {names}; the code holds {module.ALLOWED_SCRIPTS}"]
     return []
 
 
 def main() -> int:
     failures: list[str] = statement_problems()
-    for name, fault, expected in CASES:
+    failures += [f"the stylesheets: {problem}" for problem in stylesheet_problems()]
+    failures += [f"the Python version: {problem}" for problem in version_problems()]
+    doc = " ".join((ast.get_docstring(ast.parse(GATE.read_text(encoding="utf-8"))) or "").split())
+    for name, _, words in RESIDUALS:
+        if words not in doc:
+            failures.append(f"{name}: the docstring of tools/{GATE.name} does not name it ({words!r}).")
+    for name, fault, expected in CASES + [(name, fault, 0) for name, fault, _ in RESIDUALS]:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
             if fault:
@@ -491,7 +536,8 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-install-page: all {len(CASES) + 1} cases passed.")
+    print(f"test-install-page: all {len(CASES) + 1} cases, the {len(RESIDUALS)} named residuals, the Python version "
+          "checks and the stylesheet check passed.")
     return 0
 
 

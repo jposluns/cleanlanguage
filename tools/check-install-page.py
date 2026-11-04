@@ -55,13 +55,15 @@ What it verifies
    gate's own code: among them, no ``<script>`` without ``src`` other than a
    structured-data block, no ``on*`` attribute, no ``javascript:`` URL, no
    ``<style>`` element or ``style`` attribute, no script from another origin,
-   and none of the elements that the parser reads differently from a browser;
-   and, by its check 7, exactly 1 element with ``data-scheme-toggle``, the
-   light and dark switch of template specification 7.33, in its place.
-5. Versioned asset tokens: ``fonts.css``, ``palettes.css``, ``baseline.css``,
-   ``copy.js`` and ``select.js`` load from ``/assets/baseline/`` with
-   ``?v=X.Y.Z``, the scripts with ``defer``; an optional ``site.css`` loads with
-   ``?v=`` and 12 hexadecimal characters. ``scheme.js`` loads exactly once, as
+   and none of the elements that check 7 of that gate refuses because the
+   parser reads them differently from a browser; and, by that same check 7,
+   exactly 1 element with ``data-scheme-toggle``, the light and dark switch of
+   template specification 7.33, in its place.
+6. Versioned asset tokens and loads on each of the 6 pages: ``fonts.css``,
+   ``palettes.css`` and ``baseline.css`` load as stylesheets, and ``copy.js``
+   as a script with ``defer``, from ``/assets/baseline/`` with ``?v=X.Y.Z``;
+   where the text names ``/assets/site.css``, or a stylesheet loads it, it loads
+   with ``?v=`` and 12 hexadecimal characters. ``scheme.js`` loads exactly once, as
    exactly ``<script data-cfasync="false" src="/assets/baseline/scheme.js?v=X.Y.Z"></script>``,
    with no ``defer`` or ``async``, before the first stylesheet, and it and every
    stylesheet start inside ``<head>``, read as parsed elements: ``html > head``,
@@ -73,19 +75,20 @@ What it verifies
    browser. The reading fails closed where it does not model HTML5: such a
    start tag inside a ``<template>`` or ``<noscript>`` in the head ends the
    head, and a self-closing tag in ``<math>`` leaves its element open. Every
-   other ``<script>`` the page loads is 1 of the baseline's
-   other scripts that this site copies (``BASELINE_SCRIPTS``: ``copy.js``,
-   ``select.js``, ``search.js``, ``rail.js``) from ``/assets/baseline/``, with
-   the same token and ``defer``, as exactly
-   ``<script src="/assets/baseline/NAME?v=X.Y.Z" defer></script>``; the
-   baseline's 6th script, ``matrix.js``, is left out, by the owner's
-   decision. Each load is
-   read as the parsed element, so a tag inside a comment loads nothing, and a
-   ``<script>`` or stylesheet written in another spelling (letter case, a
-   character reference, attribute order or spacing) is still counted. Any tag
-   that carries an attribute twice fails: a browser reads the first value, and
-   this gate's reading would take the last.
-6. ``site/_headers``, read with the parser of ``tools/check-headers.py``
+   other ``<script>`` the page loads is 1 of the baseline scripts this site uses
+   (``ALLOWED_SCRIPTS``: ``copy.js``, ``search.js``, ``rail.js``) from
+   ``/assets/baseline/``, with the same token and ``defer``, as exactly
+   ``<script src="/assets/baseline/NAME?v=X.Y.Z" defer></script>``;
+   ``select.js`` is refused, and the baseline's ``matrix.js`` is left out, by
+   the owner's decision. Each load is read as the parsed element, so a tag
+   inside a comment loads nothing, and a ``<script>`` or stylesheet written in
+   another spelling (letter case, a character reference, attribute order or
+   spacing) is still counted. Any tag that carries an attribute twice fails: a
+   browser reads the first value, and the load reading would take the last. Every
+   ``<script>`` start tag with a ``src`` that a text match finds, a tag in a
+   comment included, is ``scheme.js`` in its exact form or 1 of
+   ``ALLOWED_SCRIPTS`` with a ``?v=X.Y.Z`` token and ``defer``.
+7. ``site/_headers``, read with the parser of ``tools/check-headers.py``
    (header names compared without regard to case, comments ignored), has a
    ``/*`` rule that sets ``Content-Security-Policy`` exactly once, to exactly
    the shared policy, ``SHARED_CSP`` below (template specification, baseline
@@ -124,13 +127,58 @@ what a browser keeps open (see below).
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
 
-It does not run ``select.js`` or apply any stylesheet. It does NOT detect a
-stylesheet rule that hides a family section, a hiding ANCESTOR (a wrapping
-``hidden`` div, a closed ``<details>``), a custom CLASS that hides, clips, zeroes
-opacity or positions off-screen, a DESCENDANT wipe, or hiding by id. Those are
-visible regressions a browser check, a reviewer, or the tri-family QA catches.
-An exotic heading character may still slip through the visible-text check. The
-inline-code checks, and the load reading of check 5, share the residual that
+It does not apply any stylesheet or run any script. It does NOT detect a
+stylesheet rule that hides a link or a step list, a custom CLASS outside
+``HIDING_CLASSES`` that hides, clips, zeroes opacity or positions off-screen,
+a DESCENDANT wipe, or hiding by id. Of the elements the HTML standard hides
+with no stylesheet, it does not list those that cannot hold a checked element
+or its text: the void elements (``area``, ``base``, ``basefont``, ``link``,
+``meta``, ``param``, and ``input`` with ``type=hidden``) and ``head`` (a
+browser moves body content out of it); check 5 refuses ``style``,
+``template``, ``noembed`` and ``noframes`` anywhere on the 6 pages. Check 5
+also refuses ``iframe``, ``svg`` (other than the 2 in the exact light and dark
+switch) and ``math``, which hold text a browser does
+not render (an iframe's raw text; an SVG ``title``, ``desc`` or ``metadata``,
+the content of ``defs`` or ``symbol``, and SVG text outside a ``text``
+element; a MathML ``annotation`` or ``annotation-xml``). It does
+not model a script that opens a popover, a dialog or a ``details``, or a
+browser's find-in-page that reveals ``hidden=until-found`` content.
+Among the descendant wipes, baseline.css hides, each at some widths,
+``.figure .stack``, ``.figure .wide``, ``.family .cards .cname``, and
+``.family .sig .pre`` and ``.family .sig .post``; those classes hide only in
+that context, so they are not in ``HIDING_CLASSES`` and the gate passes an
+element that carries one of them there. ``tools/test-install-page.py`` fails
+when fonts.css, palettes.css or baseline.css hides a bare single class (a
+selector such as ``.only-dark``) that is not in ``HIDING_CLASSES`` or its
+exempt list. It counts a rule as hiding only when the rule sets
+``display: none``, ``visibility: hidden`` or ``collapse``, ``clip: rect(``,
+or ``absolute`` or ``fixed`` positioning with a negative ``top`` or ``left``.
+It reads no other property, so a class hidden by ``clip-path``, by
+``height: 0`` with ``overflow: hidden``, or by ``opacity`` passes it, and it
+reads no compound, descendant or attribute selector. Of text it reads only
+whether the heading and each family link have visible text, so a wrong family
+link label (another family's, say), an empty ``p.verified``, an empty
+``ol.steps`` and an empty link back to the downloads or the test pass; it checks
+that a step list is present, not its steps or their wording. Those are visible
+regressions a browser check, a reviewer, or the tri-family QA catches. A heading
+or family link label made only
+of an invisible character that is not whitespace, U+0000 or in ``ZERO_WIDTH``
+(such as U+034F, U+115F, U+180E, U+2061 to U+2064, U+3164, a variation
+selector or a tag character) passes the visible-text check. An end tag closes
+here the open element it names and every element opened inside it; the gate
+does not model the browser repairs that can hide markup it reads as visible,
+among them: an end tag a browser ignores because its element is not in scope
+(``</div>`` inside a table cell leaves a hiding ``div`` outside the table open)
+or, for an element outside the HTML standard's special category, because a
+special element such as ``div`` is open inside it (after
+``<span hidden><div></span>`` the ``span`` stays open); an end tag whose
+element a browser has already closed by an implied end tag (after
+``<p><div hidden></p>`` the ``div`` stays open); and a formatting element
+(``a``, ``b``, ``big``, ``code``, ``em``, ``font``, ``i``, ``nobr``, ``s``,
+``small``, ``strike``, ``strong``, ``tt`` or ``u``) that a browser reopens with
+its attributes after an end tag closed it out of order, so after
+``<p><b hidden>x</p>`` a link is hidden in a browser and visible here. The
+inline-code checks, and the load reading of check 6, share the residual that
 ``tools/check-inline-code.py`` states: ``html.parser`` is not a browser's parser.
 
 Python versions
@@ -177,14 +225,19 @@ HEADERS = REPO_ROOT / "site" / "_headers"
 WHERE = "site/install/index.html"
 
 FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
-TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance"]
-BASELINE_SCRIPTS = ("copy.js", "select.js", "search.js", "rail.js")
+FAMILY_PAGES = {fam: REPO_ROOT / "site" / "install" / fam / "index.html" for fam in FAMILIES}
+TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance", "technical"]
+RETIRED_ATTRS = ("data-picker", "data-family-link", "data-family-section", "data-picker-reset", "data-picker-status")
+ALLOWED_SCRIPTS = ("copy.js", "search.js", "rail.js")
 # scheme.js loads in exactly this form, with no defer, before the stylesheets (specification 7.33).
 SCHEME_TAG = re.compile(r'<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>')
 # Every other script loads in exactly this form.
 DEFERRED_TAG = re.compile(r'<script src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+" defer></script>')
 SITE_SHEET = re.compile(r'<link rel="stylesheet" href="/assets/site\.css\?v=[0-9a-f]{12}">')
 DRAFT_PATTERN = "/draft/*"
+# The (major, minor) Python versions the gate is tested on; main() refuses every other version with exit 3
+# before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
+SUPPORTED_PYTHONS = ((3, 14),)
 # The shared policy (template specification, baseline 1.6.0, section 9, unchanged), on every page since promotion.
 SHARED_CSP = (
     "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
@@ -193,12 +246,22 @@ SHARED_CSP = (
     "frame-ancestors 'none'"
 )
 BASELINE_ASSET = r'/assets/baseline/{name}\?v=[0-9]+\.[0-9]+\.[0-9]+"'
-VOID = {"meta", "link", "img", "br", "hr", "input", "source", "wbr", "col"}
+# The elements a browser never keeps open, whether or not the start tag ends in "/>".
+VOID = {
+    "area", "base", "basefont", "bgsound", "br", "col", "embed", "frame", "hr", "img", "input", "keygen", "link", "meta",
+    "param", "source", "track", "wbr",
+}
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
-# Invisible characters a heading might be reduced to: zero-width spaces/joiner/BOM,
-# no-break and soft-hyphen, word joiner, and the bidi marks.
-ZERO_WIDTH = "​‌‍﻿ ⁠‍‌­"
+HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+# Invisible characters a heading might be reduced to, besides the whitespace str.strip removes: the zero-width space,
+# non-joiner and joiner (U+200B to U+200D), the zero-width no-break space or byte order mark (U+FEFF), the no-break
+# space (U+00A0), the word joiner (U+2060), the soft hyphen (U+00AD), and the bidi formatting characters: the marks
+# (U+200E, U+200F and U+061C), the embeddings, overrides and their pop (U+202A to U+202E), and the isolates and
+# their pop (U+2066 to U+2069). has_visible_text also drops U+0000, which a browser ignores in body text.
+ZERO_WIDTH = (
+    "\u200b\u200c\u200d\ufeff\u00a0\u2060\u00ad\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+)
 
 INLINE_RULE = (
     "the site's own pages must not use inline code (template specification, section 5), and this gate "
@@ -284,7 +347,6 @@ class PageParser(HTMLParser):
         self.h1: list[dict] = []
         self.verified: list[bool] = []
         self.steps: list[bool] = []
-        self.scripts: list[str] = []
         self.page_hidden = False
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
@@ -341,10 +403,6 @@ class PageParser(HTMLParser):
             self.verified.append(hiding)
         if tag == "ol" and "steps" in classes:
             self.steps.append(hiding)
-        # The parser reads the tag whatever its letter case, spacing or quoting, which the text match in
-        # common_checks does not; "" stands for a script without defer.
-        if tag == "script" and "src" in attrs:
-            self.scripts.append(attrs["src"] if "defer" in attrs else "")
         if tag not in VOID:
             closed = tag == "details" and "open" not in attrs
             self.stack.append(
@@ -378,7 +436,7 @@ class PageParser(HTMLParser):
 
 
 class LoadScan(HTMLParser):
-    """Check 5: where each <script> and stylesheet <link> element starts, which of them start outside the
+    """Check 6: where each <script> and stylesheet <link> element starts, which of them start outside the
     page's head, and each tag that repeats an attribute."""
 
     def __init__(self, text: str) -> None:
@@ -436,9 +494,8 @@ class LoadScan(HTMLParser):
             self.head_ended = True
 
 
-def check_template_page(text: str) -> list[str]:
-    """Checks 1 to 5."""
-    parser = TemplateParser()
+def parse(text: str) -> PageParser:
+    parser = PageParser()
     parser.feed(text)
     parser.close()
     if parser.page_hidden:
@@ -473,13 +530,26 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
         if "src" not in attrs or at in scheme_tags:
             continue
         name = DEFERRED_TAG.match(text, at)
-        if name is None or name.group(1) not in BASELINE_SCRIPTS:
-            problems.append(f"{where}: {tag} is not 1 of the baseline scripts this site copies with a ?v=X.Y.Z token and defer.")
+        if name is None or name.group(1) not in ALLOWED_SCRIPTS:
+            problems.append(
+                f"{where}: {tag} is not 1 of the baseline scripts this site uses ({', '.join(ALLOWED_SCRIPTS)}) "
+                "with a ?v=X.Y.Z token and defer."
+            )
         else:
             deferred.append(name.group(1))
-    for name in ("copy.js", "select.js"):
-        if name not in deferred:
-            problems.append(f"{where}: {name} is not loaded from /assets/baseline/ with a ?v=X.Y.Z token and defer.")
+    if "copy.js" not in deferred:
+        problems.append(f"{where}: copy.js is not loaded from /assets/baseline/ with a ?v=X.Y.Z token and defer.")
+    # The text match also finds a tag that the parser reads as a comment or as text.
+    for match in re.finditer(r"<script\b[^>]*\bsrc=[^>]*>", text):
+        if SCHEME_TAG.match(text, match.start()):
+            continue
+        tag = match.group(0)
+        name = re.search(r'src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+"', tag)
+        if name is None or name.group(1) not in ALLOWED_SCRIPTS or not tag.endswith(" defer>"):
+            problems.append(
+                f"{where}: {tag} is not 1 of the baseline scripts this site uses ({', '.join(ALLOWED_SCRIPTS)}) "
+                "with a ?v=X.Y.Z token and defer."
+            )
     first_sheet = min((at for at, _, _ in loads.sheets), default=-1)
     if len(scheme_tags) != 1:
         problems.append(
@@ -629,8 +699,9 @@ def main() -> int:
         "read as visible and none of them read as hidden, and keeps its ids; each family page has 1 h1 with text "
         "read as visible, a verified line and a step list, none of them read as hidden, and links, hidden or not, "
         "back to the downloads and the test; ids "
-        "are unique, no retired selector attribute remains, the six pages pass the inline-code checks, name the "
-        "baseline's versioned stylesheets and copy.js, and load no script but the allowed baseline scripts, and "
+        "are unique, no retired selector attribute remains, the six pages pass the inline-code checks, the "
+        "light and dark switch included, load the baseline's versioned stylesheets and copy.js, load scheme.js "
+        "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
         "the /* rule of site/_headers carries exactly the shared policy."
     )
     return 0
