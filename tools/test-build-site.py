@@ -257,25 +257,66 @@ HOME = "site-src/pages/home.html"
 ABOUT_DOT = '<span class="dot" aria-hidden="true">&middot;</span>'
 
 
+# The pinned template's specification, which tools/copy-baseline.py copies to .baseline/ (never served) and
+# tools/check-baseline-pin.py checks against .baseline/SHA256SUMS; its section 7.24 gives the About block at base /.
+SPECIFICATION = REPO_ROOT / ".baseline" / "SPECIFICATION.md"
+SUMS = REPO_ROOT / ".baseline" / "SHA256SUMS"
+ABOUT_HEADING = "### 7.24 About this project (landing page)"
+ABOUT_MARKUP = "Markup, directly after the value paragraph's region: `"
+ABOUT_START = '<p class="about">'
+
+
+def specification_about(specification: Path = SPECIFICATION, sums: Path = SUMS) -> tuple[str, list[str]]:
+    """The About block of section 7.24 at base /, the backtick span that opens the first line under its heading
+    starting with ABOUT_MARKUP, read from .baseline/SPECIFICATION.md only when it hashes to its line in
+    .baseline/SHA256SUMS; and site.json's about_paths, each of whose hrefs the block carries once. A ValueError
+    names what is missing otherwise."""
+    data = specification.read_bytes()
+    listed = [line.split("  ", 1)[0] for line in sums.read_text(encoding="utf-8").split("\n")
+              if line.endswith("  SPECIFICATION.md")]
+    if listed != [hashlib.sha256(data).hexdigest()]:
+        raise ValueError(".baseline/SPECIFICATION.md does not hash to its 1 line in .baseline/SHA256SUMS")
+    lines = data.decode("utf-8").split("\n")
+    if lines.count(ABOUT_HEADING) != 1:
+        raise ValueError(f".baseline/SPECIFICATION.md does not carry the heading {ABOUT_HEADING!r} once")
+    section = lines[lines.index(ABOUT_HEADING) + 1:]
+    section = section[:next((at for at, line in enumerate(section) if line.startswith("#")), len(section))]
+    markup = next((line[len(ABOUT_MARKUP):] for line in section if line.startswith(ABOUT_MARKUP)), "")
+    if "`" not in markup:
+        raise ValueError(f"section 7.24 has no line starting {ABOUT_MARKUP!r} with a closing backtick")
+    block = markup.split("`", 1)[0]
+    paths = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))["about_paths"]
+    if block.count(ABOUT_START) != 1 or any(block.count(f'href="/{path}"') != 1 for path in paths):
+        raise ValueError(f"section 7.24's block does not carry {ABOUT_START} and each about_paths href once")
+    return block, paths
+
+
+try:
+    specification_about()
+except (OSError, UnicodeError, ValueError, KeyError) as error:
+    print(f"test-build-site: failures:\n  - the About block of specification 7.24: {error}")
+    raise SystemExit(1)
+
+
+def about_block(base: str, specification: Path = SPECIFICATION, sums: Path = SUMS) -> str:
+    """The landing page's whole About block of specification 7.24 at base: the region, its label and the div around
+    the About row, read by specification_about() from the specification, the pinned template's SPECIFICATION.md
+    unless given, apart from the generator's ABOUT_BLOCK and about_line(), with base in place of the leading / of
+    each about_paths href."""
+    block, paths = specification_about(specification, sums)
+    for path in paths:
+        block = block.replace(f'href="/{path}"', f'href="{base}{path}"')
+    return block
+
+
 def about_line(base: str) -> str:
-    """The landing page's About row of template specification 7.24 (baseline 1.7.0) at base, spelled out as the
-    template owner's notice gives it: 1 ordinary space after each dot span and none before it."""
-    new_tab = '<span class="vh"> (opens in a new tab)</span>'
-    return (f'<p class="about"><a href="{base}disclosure/">Disclosure</a>{ABOUT_DOT} <a href="{base}license/">Licence</a>{ABOUT_DOT} '
-            f'<a href="https://posluns.ca/privacy/" target="_blank" rel="noopener noreferrer">Privacy{new_tab}</a>{ABOUT_DOT} '
-            f'<a href="https://posluns.ca/security/" target="_blank" rel="noopener noreferrer">Security{new_tab}</a></p>')
+    """The landing page's About row of specification 7.24 at base: the p.about element of about_block()."""
+    block = about_block(base)
+    start = block.index(ABOUT_START)
+    return block[start:block.index("</p>", start) + len("</p>")]
 
 
 ABOUT_ROW = about_line("{{base}}")
-
-
-def about_block(base: str) -> str:
-    """The landing page's whole About block of specification 7.24 (baseline 1.7.0) at base, spelled out from
-    SPECIFICATION.md section 7.24 apart from the generator's ABOUT_BLOCK: the region, its label and the div around
-    the About row."""
-    return f'<div class="region"><p class="lbl">About this project</p><div>{about_line(base)}</div></div>'
-
-
 ABOUT_BLOCK = about_block("{{base}}")
 LABEL = "About this project"
 
@@ -797,8 +838,8 @@ def check_about_block(failures: list[str]) -> int:
 def check_about_spacing(failures: list[str]) -> int:
     """The About row's spacing of specification 7.24 (1 ordinary space after each dot span and none before it) on the
     committed landing page, 1 fault each: validate(), called directly, refuses by the block's rule, and the build
-    test's helper by its own rule. The 1.6.1 markup, no space after a dot, must be refused by the helper's dot check,
-    which does not read about_line(), so the same change to both about_line() copies still fails here."""
+    test's helper by its own rule. The 1.6.1 markup, no space after a dot, must also be refused by the helper's dot
+    check, which reads no copy of the row; the row itself the helper reads from the pinned specification."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["path"] == "")
@@ -852,6 +893,90 @@ def check_generator_header(failures: list[str]) -> int:
                 failures.append(f"generator header: {name} gave exit {result.returncode}, expected 1 with the "
                                 f"header block refusal ({result.stderr.strip()[:200]})")
     return len(mutants)
+
+
+def check_generator_about(failures: list[str]) -> int:
+    """A generator whose about_line() writes 1 byte other than specification 7.24 (a space after the row's start tag,
+    which passed while this test kept its own copy of the row and both copies carried it) builds, since it checks
+    the block against itself, and the build test's helper, which reads the row from the pinned specification,
+    refuses the landing page it writes."""
+    source = GENERATOR.read_text(encoding="utf-8")
+    old = f"return '{ABOUT_START}' + "
+    if source.count(old) != 1:
+        failures.append(f"generator About: {old!r} is not once in tools/build-site.py")
+        return 1
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        mutant = root / "tools" / GENERATOR.name
+        mutant.write_text(source.replace(old, f"return '{ABOUT_START} ' + ", 1), encoding="utf-8")
+        out = Path(scratch) / "out"
+        result = subprocess.run([sys.executable, "-I", str(mutant), "--root", str(root), "--out", str(out)],
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            failures.append(f"generator About: the mutant gave exit {result.returncode}, expected 0 "
+                            f"({result.stderr.strip()[:200]})")
+        elif not about_problems("index.html", (out / "index.html").read_text(encoding="utf-8"), "/"):
+            failures.append("generator About: the helper passes an About row 1 byte off specification 7.24")
+    return 1
+
+
+def check_about_source(failures: list[str]) -> int:
+    """The build test's helper gives the About block that the pinned .baseline/SPECIFICATION.md carries, read here
+    as text: at base /, it is the backtick span of the 1 line starting with ABOUT_MARKUP. A helper that keeps a copy
+    of the block, changed along with the generator's, passes every case but this one and check_about_reader()."""
+    block = about_block("/")
+    lines = SPECIFICATION.read_bytes().decode("utf-8").split("\n")
+    if sum(line.startswith(f"{ABOUT_MARKUP}{block}`") for line in lines) != 1:
+        failures.append("About source: the helper's About block is not the one .baseline/SPECIFICATION.md gives")
+    return 1
+
+
+def check_about_reader(failures: list[str]) -> int:
+    """The helper's About block comes only from specification_about(): on a copy of the pinned specification whose
+    7.24 block is altered, with a SHA256SUMS that lists the copy's digest, the helper gives the altered block at
+    base / and at /draft/. A helper that keeps a literal copy of today's block passes every other case but not this
+    one."""
+    block = about_block("/")
+    old = f"{ABOUT_MARKUP}{block}`"
+    altered = block.replace(f">{LABEL}</p>", ">About this altered project</p>", 1)
+    text = SPECIFICATION.read_bytes().decode("utf-8")
+    if text.count(old) != 1 or altered == block:
+        failures.append("About reader: the 7.24 block or its label is not once in .baseline/SPECIFICATION.md")
+        return 1
+    data = text.replace(old, f"{ABOUT_MARKUP}{altered}`", 1).encode("utf-8")
+    sums = SUMS.read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as scratch:
+        changed, changed_sums = Path(scratch) / SPECIFICATION.name, Path(scratch) / SUMS.name
+        changed.write_bytes(data)
+        changed_sums.write_text(sums.replace(hashlib.sha256(SPECIFICATION.read_bytes()).hexdigest(),
+                                             hashlib.sha256(data).hexdigest(), 1), encoding="utf-8")
+        draft = altered
+        for path in json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))["about_paths"]:
+            draft = draft.replace(f'href="/{path}"', f'href="/draft/{path}"')
+        try:
+            given = about_block("/", changed, changed_sums), about_block("/draft/", changed, changed_sums)
+        except ValueError as error:
+            failures.append(f"About reader: the altered specification is refused ({error})")
+        else:
+            if given != (altered, draft):
+                failures.append("About reader: the helper's About block does not follow the specification's 7.24")
+    return 1
+
+
+def check_specification_digest(failures: list[str]) -> int:
+    """The helper reads section 7.24 only from a specification that hashes to its line in .baseline/SHA256SUMS: a
+    copy of the pinned one with 1 byte added after its end, its block unchanged, is refused."""
+    with tempfile.TemporaryDirectory() as scratch:
+        changed = Path(scratch) / SPECIFICATION.name
+        changed.write_bytes(SPECIFICATION.read_bytes() + b"\n")
+        try:
+            specification_about(changed, SUMS)
+        except ValueError as error:
+            if "does not hash to its 1 line" not in str(error):
+                failures.append(f"specification digest: refused by another rule ({error})")
+        else:
+            failures.append("specification digest: the helper reads a specification that does not match its digest")
+    return 1
 
 
 def check_unreadable(failures: list[str]) -> int:
@@ -1147,6 +1272,10 @@ def main() -> int:
     ran += check_about_block(failures)
     ran += check_about_spacing(failures)
     ran += check_generator_header(failures)
+    ran += check_generator_about(failures)
+    ran += check_about_source(failures)
+    ran += check_about_reader(failures)
+    ran += check_specification_digest(failures)
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
     ran += check_family_pages(failures)

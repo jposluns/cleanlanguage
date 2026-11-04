@@ -2,12 +2,20 @@
 """Tests for tools/check-baseline-pin.py: each check fails on a deliberate fault.
 
 Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
-applies 1 fault, runs the gate on that tree as a separate process and asserts
-its exit code. The last case runs the gate on this repository. The first 4
-cases run ``tools/copy-baseline.py`` on a small version folder and assert that
-the pin header it writes, and the committed one, give each key's base; that it
-copies and pins the build tool and counts it among the copied files; and that a
-version without the build tool exits 1 before any served file is replaced.
+with the version's README and specification under ``.baseline/`` and a root
+``NOTICE.md``, applies 1 fault, runs the gate on that tree as a separate
+process and asserts its exit code, and for some cases a line of its output.
+The last case runs the gate on this repository. The first 13 cases run
+``tools/copy-baseline.py`` on a small version folder and assert that the pin
+header it writes, and the committed one, give each key's base; that it copies
+and pins the build tool and counts it among the copied files; that it copies
+the README and the specification to ``.baseline/`` without pinning them; that
+a version without the build tool, the README or the specification, or whose
+README names another version, lacks its step 7 NOTICE entry, holds a second
+quoted paragraph in step 7 or has CRLF line ends, on every line or on the
+entry line only, exits 1 before any served file is replaced; and that on
+Python older than 3.11, stood in for by a gate whose tomllib import fails, it
+exits 3 with its own message before any served file is replaced.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
@@ -35,6 +43,13 @@ for _name in ("palettes.css", "fonts.css", "copy.js", "select.js", "search.js", 
 # The pinned build tool, kept at .baseline/check_palette.py and never served.
 TOOL = b"# check_palette.py\n"
 TOOL_KEY = ".baseline/check_palette.py"
+# The version's documents, copied to .baseline/ and not pinned: the README's heading names the version, and its
+# step 7 prescribes the NOTICE entry; NOTICE_TEXT carries that entry for 1.2.1.
+README = (b"# Baseline 1.2.1: x\n\n7. Add this entry to the repository's NOTICE:\n\n"
+          b"   > Site template: baseline <version>, with 2 exceptions.\n\n8. Updates.\n")
+DOCS = {"README.md": README, "SPECIFICATION.md": b"# specification\n"}
+NOTICE_TEXT = ("# Notice\n\n## Site template\n\nSite template: baseline 1.2.1, with 2 exceptions.\n\n"
+               "## Other\n\nx\n")
 
 
 def digest(data: bytes) -> str:
@@ -52,9 +67,13 @@ def build(root: Path) -> None:
     sums = "".join(f"{digest(data)}  {name}\n" for name, data in sorted(FILES.items()))
     sums += f"{digest(b'unpinned')}  reference/landing.html\n"
     sums += f"{digest(TOOL)}  tools/check_palette.py\n"
+    sums += "".join(f"{digest(data)}  {name}\n" for name, data in DOCS.items())
     (root / ".baseline").mkdir()
     (root / ".baseline" / "SHA256SUMS").write_text(sums, encoding="utf-8")
     (root / TOOL_KEY).write_bytes(TOOL)
+    for name, data in DOCS.items():
+        (root / ".baseline" / name).write_bytes(data)
+    (root / "NOTICE.md").write_text(NOTICE_TEXT, encoding="utf-8")
     lines = ["# comment", 'version = "1.2.1"', "", "[files]"]
     lines += [f'"assets/baseline/{name}" = "{digest(data)}"' for name, data in sorted(FILES.items())]
     lines += [f'"{TOOL_KEY}" = "{digest(TOOL)}"']
@@ -63,15 +82,29 @@ def build(root: Path) -> None:
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/draft/"}), encoding="utf-8")
 
 
+def run_gate(root: Path) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, "-I", str(GATE), str(root)], capture_output=True, text=True)
+
+
 def run(root: Path) -> int:
-    return subprocess.run([sys.executable, "-I", str(GATE), str(root)], capture_output=True, text=True).returncode
+    return run_gate(root).returncode
+
+
+def edit_file(path: Path, old: str, new: str) -> None:
+    text = path.read_text(encoding="utf-8")
+    assert old in text, old
+    path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
 def edit_pin(root: Path, old: str, new: str) -> None:
-    pin = root / ".baseline" / "pin.toml"
-    text = pin.read_text(encoding="utf-8")
-    assert old in text, old
-    pin.write_text(text.replace(old, new, 1), encoding="utf-8")
+    edit_file(root / ".baseline" / "pin.toml", old, new)
+
+
+def edit_readme(root: Path, old: bytes, new: bytes) -> None:
+    """Change the copied README and its SHA256SUMS digest together, so only the README's text is at fault."""
+    assert old in README, old
+    (root / ".baseline" / "README.md").write_bytes(README.replace(old, new, 1))
+    edit_file(root / ".baseline" / "SHA256SUMS", digest(README), digest(README.replace(old, new, 1)))
 
 
 def fault_flip_byte(root: Path) -> None:
@@ -185,6 +218,160 @@ def fault_unlistable(root: Path) -> None:
     os.chmod(copied(root) / "fonts", 0)
 
 
+def fault_other_version(root: Path) -> None:
+    # NOTICE.md moves with the pin, so only the README's heading can tell that SHA256SUMS belongs to 1.2.1.
+    edit_pin(root, 'version = "1.2.1"', 'version = "1.2.0"')
+    edit_file(root / "NOTICE.md", "baseline 1.2.1", "baseline 1.2.0")
+
+
+def fault_readme_unlisted(root: Path) -> None:
+    edit_file(root / ".baseline" / "SHA256SUMS", f"{digest(README)}  README.md\n", "")
+
+
+def fault_readme_edited(root: Path) -> None:
+    (root / ".baseline" / "README.md").write_bytes(README + b"x\n")
+
+
+def fault_readme_missing(root: Path) -> None:
+    (root / ".baseline" / "README.md").unlink()
+
+
+def fault_readme_no_heading(root: Path) -> None:
+    edit_readme(root, b"# Baseline 1.2.1: x", b"# The template 1.2.1: x")
+
+
+def fault_readme_no_entry(root: Path) -> None:
+    edit_readme(root, b"Add this entry to", b"Add an entry to")
+
+
+def fault_readme_crlf(root: Path) -> None:
+    edit_readme(root, README, README.replace(b"\n", b"\r\n"))
+
+
+def fault_readme_second_quote(root: Path) -> None:
+    edit_readme(root, b"exceptions.\n\n8.", b"exceptions.\n\n   > A 3rd exception: x.\n\n8.")
+
+
+def readme_quote_in_step_8(root: Path) -> None:
+    edit_readme(root, b"8. Updates.\n", b"8. Updates.\n\n   > A quote: x.\n")
+
+
+def fault_spec_edited(root: Path) -> None:
+    (root / ".baseline" / "SPECIFICATION.md").write_bytes(DOCS["SPECIFICATION.md"] + b"x\n")
+
+
+def fault_spec_missing(root: Path) -> None:
+    (root / ".baseline" / "SPECIFICATION.md").unlink()
+
+
+def fault_notice_three_exceptions(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions", "with 3 exceptions")
+
+
+def fault_notice_other_version(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "baseline 1.2.1", "baseline 1.2.0")
+
+
+def fault_notice_no_section(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Site template\n", "## Template\n")
+
+
+def fault_notice_second_paragraph(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n", "with 2 exceptions.\n\nAnd more.\n")
+
+
+def fault_notice_nested_subsection(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n",
+              "with 2 exceptions.\n\n### Exceptions\n\nA 3rd exception: x.\n")
+
+
+def fault_notice_missing(root: Path) -> None:
+    (root / "NOTICE.md").unlink()
+
+
+def fault_readme_entry_crlf(root: Path) -> None:
+    edit_readme(root, b"with 2 exceptions.\n", b"with 2 exceptions.\r\n")
+
+
+def fault_notice_nested_tab_subsection(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n",
+              "with 2 exceptions.\n\n###\tExceptions\n\nA 3rd exception: x.\n")
+
+
+def fault_notice_lookalike_heading(root: Path) -> None:
+    # The exact heading and the prescribed entry sit in an HTML comment that a heading line ends; the rendered file
+    # shows the "## Site template " heading, with a trailing space, and its other entry.
+    edit_file(root / "NOTICE.md", "## Site template\n", "<!--\n## Site template\n")
+    edit_file(root / "NOTICE.md", "## Other\n",
+              "## Other -->\n\n## Site template \n\nSite template: baseline 1.2.1, with 3 exceptions.\n\n"
+              "## Other\n")
+
+
+def fault_notice_comment(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n", "with 2 exceptions.\n\n<!--\nA 3rd exception: x.\n-->\n")
+
+
+def fault_notice_backtick_fence(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n", "with 2 exceptions.\n\n```\nA 3rd exception: x.\n```\n")
+
+
+def fault_notice_tilde_fence(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n", "with 2 exceptions.\n\n~~~\nA 3rd exception: x.\n~~~\n")
+
+
+def fault_notice_lookalike_other_case(root: Path) -> None:
+    # The heading in another letter case, after the section, with its other entry.
+    edit_file(root / "NOTICE.md", "## Other\n\nx\n",
+              "## Other\n\nx\n\n## Site Template\n\nSite template: baseline 1.2.1, with 3 exceptions.\n")
+
+
+def fault_notice_comment_before_section(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "# Notice\n", "# Notice\n\n<!-- x\n")
+
+
+def fault_notice_fence_after_section(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Other\n\nx\n", "## Other\n\n   ~~~~\nx\n   ~~~~\n")
+
+
+def fault_readme_list_item_quote(root: Path) -> None:
+    edit_readme(root, b"exceptions.\n\n8.", b"exceptions.\n\n   - > A 3rd exception: x.\n\n8.")
+
+
+def fault_readme_numbered_item_quote(root: Path) -> None:
+    edit_readme(root, b"exceptions.\n\n8.", b"exceptions.\n\n   1. > A 3rd exception: x.\n\n8.")
+
+
+def fault_readme_blockquote(root: Path) -> None:
+    edit_readme(root, b"exceptions.\n\n8.", b"exceptions.\n\n   <BLOCKQUOTE>A 3rd exception.</BLOCKQUOTE>\n\n8.")
+
+
+def fault_readme_lazy_continuation(root: Path) -> None:
+    # The line continues the entry's quoted paragraph, so the rendered entry is longer than its line.
+    edit_readme(root, b"exceptions.\n\n8.", b"exceptions.\nA 3rd exception: x.\n\n8.")
+
+
+def fault_readme_text_before_entry(root: Path) -> None:
+    edit_readme(root, b"NOTICE:\n\n   > ", b"NOTICE:\n\n   First, a line of text.\n\n   > ")
+
+
+# Valid level 1 or 2 headings that end the Site template section, so the lines after them are not compared: the
+# clean NOTICE.md's "## Other" in another form.
+def end_tab(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Other\n", "##\tOther\n")
+
+
+def end_bare_level_2(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Other\n", "##\n")
+
+
+def end_bare_level_1(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Other\n", "#\n")
+
+
+def end_indented(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Other\n", "   # Other\n")
+
+
 CASES = [
     ("clean tree passes", None, 0),
     ("1 flipped byte", fault_flip_byte, 1),
@@ -200,6 +387,37 @@ CASES = [
     ("the build tool's pin entry removed", fault_tool_unpinned, 1),
     ("the build tool pinned with a digest the published sums do not list", fault_tool_digest_not_published, 1),
     ("a check_palette.py under the served site/ tree", fault_tool_served, 1),
+    ("the pin moved to another version, NOTICE.md with it", fault_other_version, 1, "different versions"),
+    ("the README not listed in SHA256SUMS", fault_readme_unlisted, 1, "SHA256SUMS does not list README.md"),
+    ("the copied README edited", fault_readme_edited, 1),
+    ("the copied specification edited", fault_spec_edited, 1),
+    ("a NOTICE entry with 3 exceptions", fault_notice_three_exceptions, 1, "NOTICE.md's '## Site template'"),
+    ("a NOTICE entry naming another version", fault_notice_other_version, 1),
+    ("no Site template section in NOTICE.md", fault_notice_no_section, 1),
+    ("a second paragraph in the Site template section", fault_notice_second_paragraph, 1),
+    ("a ### subsection under the Site template section", fault_notice_nested_subsection, 1,
+        "NOTICE.md's '## Site template'"),
+    ("a ### subsection with a tab under the Site template section", fault_notice_nested_tab_subsection, 1,
+        "NOTICE.md's '## Site template'"),
+    ("a '## Site template ' heading beside the exact one in an HTML comment", fault_notice_lookalike_heading, 1,
+        "reads as that heading"),
+    ("an HTML comment in the Site template section", fault_notice_comment, 1,
+        "an HTML comment opener or a code fence"),
+    ("a ``` fence in the Site template section", fault_notice_backtick_fence, 1,
+        "an HTML comment opener or a code fence"),
+    ("a ~~~ fence in the Site template section", fault_notice_tilde_fence, 1,
+        "an HTML comment opener or a code fence"),
+    ("a '## Site Template' heading in another letter case after the section", fault_notice_lookalike_other_case, 1,
+        "reads as that heading"),
+    ("an HTML comment opener before the Site template section", fault_notice_comment_before_section, 1,
+        "an HTML comment opener or a code fence"),
+    ("a ~~~~ fence indented 3 spaces after the Site template section", fault_notice_fence_after_section, 1,
+        "an HTML comment opener or a code fence"),
+    ("a README with a quoted line in step 8, outside step 7", readme_quote_in_step_8, 0),
+    ("the Site template section ended by a level 2 heading with a tab", end_tab, 0),
+    ("the Site template section ended by a bare ##", end_bare_level_2, 0),
+    ("the Site template section ended by a bare #", end_bare_level_1, 0),
+    ("the Site template section ended by a level 1 heading indented 3 spaces", end_indented, 0),
     ("malformed TOML", fault_bad_toml, 3),
     ("no version", fault_missing_version, 3),
     ("a key outside the README format", fault_extra_key, 3),
@@ -210,13 +428,28 @@ CASES = [
     ("the base path moved to / with the files still under draft/", fault_promoted_base, 3),
     ("the pin is missing", fault_missing_pin, 3),
     ("SHA256SUMS is missing", fault_missing_sums, 3),
+    ("the copied README is missing", fault_readme_missing, 3),
+    ("a README without its version heading", fault_readme_no_heading, 3),
+    ("a README without its step 7 NOTICE entry", fault_readme_no_entry, 3),
+    ("a README with CRLF line ends", fault_readme_crlf, 3),
+    ("a README whose step 7 holds a second, blank-separated quoted paragraph", fault_readme_second_quote, 3),
+    ("a README with CRLF only on its step 7 entry line", fault_readme_entry_crlf, 3),
+    ("a README whose step 7 holds a list item that is a quote", fault_readme_list_item_quote, 3),
+    ("a README whose step 7 holds a numbered list item that is a quote", fault_readme_numbered_item_quote, 3),
+    ("a README whose step 7 holds a <BLOCKQUOTE>", fault_readme_blockquote, 3),
+    ("a README whose step 7 entry has a line directly after it", fault_readme_lazy_continuation, 3),
+    ("a README whose step 7 holds a line of text before the entry", fault_readme_text_before_entry, 3),
+    ("the copied specification is missing", fault_spec_missing, 3),
+    ("NOTICE.md is missing", fault_notice_missing, 3),
 ]
 
 
-def run_copy(root: Path, package: dict[str, bytes]) -> subprocess.CompletedProcess:
-    """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS."""
+def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None) -> subprocess.CompletedProcess:
+    """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS, with the
+    gate (or the given gate source) beside it, from which it loads notice_entry()."""
     (root / "tools").mkdir()
     shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
+    (root / "tools" / GATE.name).write_bytes(GATE.read_bytes() if gate is None else gate)
     (root / "site-src").mkdir()
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
     for name, data in package.items():
@@ -229,12 +462,58 @@ def run_copy(root: Path, package: dict[str, bytes]) -> subprocess.CompletedProce
     return subprocess.run(command, capture_output=True, text=True)
 
 
+PACKAGE = {**FILES, **DOCS, "tools/check_palette.py": TOOL}
+# Versions copy-baseline refuses (exit 1) before it replaces a served file: each changes PACKAGE in place.
+COPY_REFUSALS = [
+    ("a version without the build tool", lambda package: package.pop("tools/check_palette.py")),
+    ("a version without README.md", lambda package: package.pop("README.md")),
+    ("a version without SPECIFICATION.md", lambda package: package.pop("SPECIFICATION.md")),
+    ("a README whose heading names another version",
+        lambda package: package.update({"README.md": README.replace(b"Baseline 1.2.1", b"Baseline 1.2.0")})),
+    ("a README without its step 7 NOTICE entry",
+        lambda package: package.update({"README.md": README.replace(b"   > ", b"")})),
+    ("a README whose step 7 holds a second, blank-separated quoted paragraph",
+        lambda package: package.update({"README.md": README.replace(
+            b"exceptions.\n\n", b"exceptions.\n\n   > A 3rd exception: x.\n\n")})),
+    # The gate reads the README's bytes without newline translation and refuses this one (exit 3), so copying it
+    # would only fail at deploy.
+    ("a README with CRLF line ends",
+        lambda package: package.update({"README.md": README.replace(b"\n", b"\r\n")})),
+    # The gate refuses this one too (exit 3), as it refuses a carriage return anywhere in the README.
+    ("a README with CRLF only on its step 7 entry line",
+        lambda package: package.update({"README.md": README.replace(b"exceptions.\n", b"exceptions.\r\n")})),
+]
+
+
+def python_floor_problems() -> list[str]:
+    """On Python older than 3.11 the gate's tomllib guard exits 3; copy-baseline catches that and reports it in its
+    own words before it replaces a served file. A gate whose tomllib import fails stands in for the old Python."""
+    source = GATE.read_bytes()
+    if source.count(b"\n    import tomllib\n") != 1:
+        return ["the Python floor: the gate's 'import tomllib' is not once in tools/check-baseline-pin.py"]
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        served = root / "site" / "assets" / "baseline" / "served-before.css"
+        served.parent.mkdir(parents=True)
+        served.write_bytes(b"a { color: red; }\n")
+        gate = source.replace(b"\n    import tomllib\n", b"\n    import tomllib_absent_here\n", 1)
+        result = run_copy(root, dict(PACKAGE), gate)
+        lines = result.stderr.splitlines()
+        if (result.returncode != 3 or not served.is_file() or len(lines) != 1
+                or not lines[0].startswith("copy-baseline: Python 3.11 or later is required")):
+            return [f"the Python floor: copy-baseline exits {result.returncode} with "
+                    f"{result.stderr.strip()[:200]!r}; expected 3 with its own 1 line naming Python 3.11, "
+                    "the served files kept"]
+    return []
+
+
 def copy_problems() -> list[str]:
-    """copy-baseline pins and copies the build tool, counts it, and checks for it before replacing a file."""
+    """copy-baseline pins and copies the build tool, counts it, copies the documents unpinned, and checks for each
+    and for the README's version and NOTICE entry before replacing a file."""
     problems = []
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
-        result = run_copy(root, {**FILES, "tools/check_palette.py": TOOL})
+        result = run_copy(root, dict(PACKAGE))
         pin = (root / ".baseline" / "pin.toml").read_text(encoding="utf-8") if result.returncode == 0 else ""
         if f'"{TOOL_KEY}" = "{digest(TOOL)}"\n' not in pin or (root / TOOL_KEY).read_bytes() != TOOL:
             problems.append(f"copy-baseline: the build tool is not copied to {TOOL_KEY} and pinned "
@@ -242,16 +521,24 @@ def copy_problems() -> list[str]:
         if f"copied {len(FILES) + 1} files " not in result.stdout:
             problems.append(f"copy-baseline: the count of copied files leaves out the build tool: "
                             f"{result.stdout.strip()!r}")
-    with tempfile.TemporaryDirectory() as scratch:
-        root = Path(scratch)
-        served = root / "site" / "assets" / "baseline" / "served-before.css"
-        served.parent.mkdir(parents=True)
-        served.write_bytes(b"a { color: red; }\n")
-        result = run_copy(root, dict(FILES))
-        if result.returncode != 1 or not served.is_file():
-            kept = "keeps" if served.is_file() else "replaces"
-            problems.append(f"copy-baseline: a version without the build tool exits {result.returncode} "
-                            f"and {kept} the served files; expected 1 and keeps")
+        documents = root / ".baseline"
+        if (not pin or any(not (documents / name).is_file() or (documents / name).read_bytes() != data
+                           or name in pin for name, data in DOCS.items())):
+            problems.append(f"copy-baseline: the documents are not copied to .baseline/ unpinned "
+                            f"(exit {result.returncode})")
+    for name, change in COPY_REFUSALS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            served = root / "site" / "assets" / "baseline" / "served-before.css"
+            served.parent.mkdir(parents=True)
+            served.write_bytes(b"a { color: red; }\n")
+            package = dict(PACKAGE)
+            change(package)
+            result = run_copy(root, package)
+            if result.returncode != 1 or not served.is_file():
+                kept = "keeps" if served.is_file() else "replaces"
+                problems.append(f"copy-baseline: {name} exits {result.returncode} "
+                                f"and {kept} the served files; expected 1 and keeps")
     return problems
 
 
@@ -259,7 +546,7 @@ def pin_header_problems() -> list[str]:
     """The pin's header, as tools/copy-baseline.py writes it and as committed, gives each key's base."""
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
-        result = run_copy(root, {**FILES, "tools/check_palette.py": TOOL})
+        result = run_copy(root, dict(PACKAGE))
         if result.returncode != 0:
             return [f"the pin header: copy-baseline exit {result.returncode}: {result.stderr.strip()[:200]}"]
         written = (root / ".baseline" / "pin.toml").read_text(encoding="utf-8")
@@ -280,18 +567,20 @@ def pin_header_problems() -> list[str]:
 
 
 def main() -> int:
-    failures: list[str] = pin_header_problems() + copy_problems()
-    ran = 4
-    for name, fault, expected in CASES:
+    failures: list[str] = pin_header_problems() + copy_problems() + python_floor_problems()
+    ran = 5 + len(COPY_REFUSALS)
+    for name, fault, expected, *needles in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
             build(root)
             if fault:
                 fault(root)
-            code = run(root)
+            result = run_gate(root)
             ran += 1
-            if code != expected:
-                failures.append(f"{name}: exit {code}, expected {expected}")
+            if result.returncode != expected:
+                failures.append(f"{name}: exit {result.returncode}, expected {expected}")
+            elif any(needle not in result.stdout for needle in needles):
+                failures.append(f"{name}: the output does not say {needles}: {result.stdout.strip()[:200]!r}")
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

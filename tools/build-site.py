@@ -138,8 +138,10 @@ is only as right as ``MAST_BLOCK``, ``SKIP_LINK`` and ``SCHEME_SWITCH``: a
 change to one of them made together with the same change to the generator
 passes. The About block pin is only as right as ``ABOUT_BLOCK`` and
 ``about_line()``, from which the generator both writes and checks the block,
-so a change to either alone passes it; ``tools/test-build-site.py`` spells the
-block out apart from them. What guarantees the committed
+so a change to either alone passes it; ``tools/test-build-site.py`` reads the
+block apart from them, from section 7.24 of the pinned template's
+``SPECIFICATION.md`` (``.baseline/SPECIFICATION.md``, checked against
+``.baseline/SHA256SUMS``). What guarantees the committed
 pages is ``--check``, a deploy gate, which compares them byte for byte with a
 fresh build that passed these refusals.
 
