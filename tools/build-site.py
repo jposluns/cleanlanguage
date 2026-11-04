@@ -71,23 +71,36 @@ that is not ``YYYY-MM-DD``; a page without exactly 1 light and dark switch
 ``nav.nav``, and the only element with a ``data-scheme-toggle`` attribute,
 each of which ``scheme.js`` wires and shows), without exactly 1 ``scheme.js``
 script tag before the first stylesheet, it and every stylesheet inside
-``<head>``, or with any other ``<svg``; a landing page without exactly 1 About
-row (``class="about"``), or with one that is not ``about_line()`` byte for
-byte, 1 ordinary space after each dot span and none before it (template
-specification 7.24, baseline 1.7.0), or with that row inside an element of
-``INERT_TAGS`` (which holds every element of ``tools/check-install-page.py``'s
-``HIDING_ELEMENTS``) or inside an element that carries a ``hidden`` attribute
-(in any value); a landing page without, once and byte for byte, the whole
-About block of 7.24 (``ABOUT_BLOCK``: ``div.region``, its label ``About this
-project`` and its ``div`` around that row) directly after the value
-paragraph's region, the ``div.region`` nearest a ``p.value`` among its
-ancestors, with no byte between that region's ``</div>`` and the block, as the
-generator writes them; an About row on any other page; and a
-release version that disagrees with SKILL.md. The About rule does not model
-the other ways ``tools/check-install-page.py`` reads an element as hidden
-(``inert``, ``aria-hidden="true"``, ``popover``, a ``dialog`` or ``details``
-without ``open``, or a class in its ``HIDING_CLASSES``) nor any stylesheet, so
-a block hidden only by one of those passes it. The switch, its place and the
+``<head>``, or with any other ``<svg``; a page source, the landing page's
+included, with an element whose class names include ``about`` or with the
+text ``About this project`` (``ABOUT_LABEL``), as written or in its parsed
+text (character references decoded, attribute values included, each run of
+whitespace, a no-break space included, read as 1 space), since the generator
+writes the About block of template specification 7.24 (baseline 1.7.0)
+itself; a landing page source without exactly 1 ``p.value``, or with that
+``p.value`` inside an element of ``INERT_TAGS`` (which holds every element of
+``tools/check-install-page.py``'s ``HIDING_ELEMENTS``) or inside an element
+that carries a ``hidden`` attribute (in any value), or with no ``div.region``
+among its ancestors; a landing page whose output lacks exactly 1 such
+``p.value`` and, once and byte for byte, the whole About block
+(``about_block()``: ``ABOUT_BLOCK``, the ``div.region`` with its label and its
+``div`` around the row ``about_line()`` gives, 1 ordinary space after each dot
+span and none before it) directly after the end tag of that paragraph's
+region, the ``div.region`` nearest it among its ancestors, with no byte
+between that ``</div>`` and the block, as the generator writes them, or that
+carries any other element whose class names include ``about`` or any other
+``About this project`` text; any other page with either; and a release
+version that disagrees with SKILL.md. The About rules do not model the other
+ways ``tools/check-install-page.py`` reads an element as hidden (``inert``,
+``aria-hidden="true"``, ``popover``, a ``dialog`` or ``details`` without
+``open``, or a class in its ``HIDING_CLASSES``) nor any stylesheet, so a value
+paragraph hidden only by one of those passes them and the block follows it;
+nor the label in another letter case or with other characters between its
+words; nor markup inside an element whose content Python's parser reads as
+text (``script`` and ``style``, and, depending on the Python version, other
+raw-text and RCDATA elements such as ``textarea``), though that text counts
+toward the label, and in a comment only the label as written counts. The
+switch, its place and the
 head are read as parsed elements: each element with ``data-scheme-toggle`` (an
 attribute name in any letter case), the switch's parent, the element before it
 and the end of its parent, and ``html > head``, the first head or body the page
@@ -107,8 +120,8 @@ browser renders only as fallback, only in its control or not at all, so this
 refuses more than a browser hides); a script or stylesheet inside one is not in
 ``html > head``, and an ``h1``, a robots meta, the skip link,
 ``main#main-content``, the family footer, ``#copy-status`` or the landing
-page's About row inside one fails, as does a fragment whose only target is
-inside one. The reading fails closed where it does not model HTML5: such a
+page's value paragraph inside one fails, as does a fragment whose only target
+is inside one. The reading fails closed where it does not model HTML5: such a
 start tag inside a ``<template>`` or ``<noscript>`` in the head ends the head,
 and a self-closing tag in ``<math>`` leaves its element open. It is not a full
 HTML5 tree builder, so each page must also carry, once and byte for byte, the
@@ -122,10 +135,12 @@ header, nor precede it in the body other than the skip link, and a change to
 ``mast()`` or to the lines around it that alters that markup fails. That pin
 covers neither the head nor anything after ``header.mast``, which only the
 parsed reading checks (and, on the landing page, the About block pin), and it
-is only as right as ``MAST_BLOCK``, ``SKIP_LINK`` and ``SCHEME_SWITCH``, as the
-About block pin is only as right as ``ABOUT_BLOCK`` and ``about_line()``: a
-change to one of them made together with the same change to the page sources
-or the generator passes. What guarantees the committed
+is only as right as ``MAST_BLOCK``, ``SKIP_LINK`` and ``SCHEME_SWITCH``: a
+change to one of them made together with the same change to the generator
+passes. The About block pin is only as right as ``ABOUT_BLOCK`` and
+``about_line()``, from which the generator both writes and checks the block,
+so a change to either alone passes it; ``tools/test-build-site.py`` spells the
+block out apart from them. What guarantees the committed
 pages is ``--check``, a deploy gate, which compares them byte for byte with a
 fresh build that passed these refusals.
 
@@ -225,9 +240,11 @@ MAST_ITEM = '<a href="{href}"{current}>{label}</a>'
 # The dot between 2 links of the About row of template specification 7.24 (baseline 1.7.0); about_line() gives the row.
 ABOUT_DOT = '<span class="dot" aria-hidden="true">&middot;</span>'
 # The whole About block of specification 7.24 (baseline 1.7.0), byte for byte as SPECIFICATION.md section 7.24 gives
-# it: the region, its label and the div around the About row, which about_line() gives; validate() requires it once on
-# the landing page, directly after the value paragraph's region.
+# it: the region, its label and the div around the About row, which about_line() gives. The generator writes it on the
+# landing page only, directly after the end tag of the value paragraph's region, and validate() requires it there once.
 ABOUT_BLOCK = '<div class="region"><p class="lbl">About this project</p><div>{row}</div></div>'
+# The About block's label: no page source may carry it, and no generated page may carry it outside that block.
+ABOUT_LABEL = "About this project"
 SLICE_COUNT = 6
 
 
@@ -726,13 +743,14 @@ def substitute(text: str, values: dict, where: str) -> str:
 # Validation -------------------------------------------------------------------
 
 class PageScan(HTMLParser):
-    """The parsed reading validate() checks. Not a full HTML5 tree builder: it models the open elements as tags
-    nest, void elements, the slash only in <svg>, the head's end, class names split on ASCII whitespace, and the
-    INERT_TAGS ancestors of each element with data-scheme-toggle, h1, robots meta and id, and of each element start
-    validate() requires, the element starts with an ancestor that carries a hidden attribute, where the region of
-    each value paragraph ends, and where the page's body starts. validate() also pins the markup from <body> to the
-    end of header.mast, and the landing page's About block; --check compares the committed pages with a build that
-    passed it."""
+    """The parsed reading validate() checks, which build() also reads on each page source. Not a full HTML5 tree
+    builder: it models the open elements as tags nest, void elements, the slash only in <svg>, the head's end, class
+    names split on ASCII whitespace, and the INERT_TAGS ancestors of each element with data-scheme-toggle, h1, robots
+    meta and id, and of each element start validate() requires, the element starts with an ancestor that carries a
+    hidden attribute, where each value paragraph starts and where the region of the first one ends, where each
+    element whose classes include about starts, the parsed text and attribute values, and where the page's body
+    starts. validate() also pins the markup from <body> to the end of header.mast, and the landing page's About
+    block; --check compares the committed pages with a build that passed it."""
 
     def __init__(self, switch_at: tuple[int, int] | None = None) -> None:
         super().__init__(convert_charrefs=True)
@@ -763,17 +781,20 @@ class PageScan(HTMLParser):
         # element or text between them, before the head ends.
         self.body_at: tuple[int, int] | None = None
         self.robots: list[str] = []
-        # Where each element whose classes include about starts, inside an element of INERT_TAGS or not: an About
-        # row, which only the landing page carries.
-        self.about_rows: list[tuple[int, int]] = []
+        # Where each element whose classes include about starts, inside an element of INERT_TAGS or not: on the
+        # landing page, the row of the About block the generator writes; anywhere else, About markup.
+        self.about_classes: list[tuple[int, int]] = []
+        # The text the parser reads (character references decoded) and each attribute value, in order.
+        self.text: list[str] = []
         # Where each element with an open ancestor that carries a hidden attribute (in any value) starts, and the depth
         # in open of each such ancestor.
         self.hidden_starts: set[tuple[int, int]] = set()
         self.hiding: list[int] = []
-        # Where the end tag of each value paragraph's region starts: the div.region nearest a p.value among its open
-        # elements; and the depth in open of each such region still open.
-        self.value_region_ends: set[tuple[int, int]] = set()
-        self.value_regions: list[int] = []
+        # Where each p.value starts; the depth in open of the first one's region, the div.region nearest it among its
+        # open elements, while that region is open; and where the end tag of that region starts.
+        self.values: list[tuple[int, int]] = []
+        self.value_region: int | None = None
+        self.value_region_end: tuple[int, int] | None = None
         # Each open element's name and classes, and the element that ended last (or a void one) since the last
         # start tag: the previous sibling of the next element.
         self.open: list[tuple[str, list[str]]] = []
@@ -796,7 +817,8 @@ class PageScan(HTMLParser):
             self.problems.append(f"<{tag}> carries an attribute twice")
         classes = [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
         if "about" in classes:
-            self.about_rows.append(self.getpos())
+            self.about_classes.append(self.getpos())
+        self.text.extend(f" {value or ''} " for _, value in attrs_list)
         if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
                 and self.previous is not None and self.previous[0] == "head"):
             self.body_at = self.getpos()
@@ -813,9 +835,10 @@ class PageScan(HTMLParser):
         if self.hiding:
             self.hidden_starts.add(self.getpos())
         if tag == "p" and "value" in classes:
+            self.values.append(self.getpos())
             regions = [depth for depth, (name, names) in enumerate(self.open) if name == "div" and "region" in names]
-            if regions and regions[-1] not in self.value_regions:
-                self.value_regions.append(regions[-1])
+            if len(self.values) == 1 and regions:
+                self.value_region = regions[-1]
         if "data-scheme-toggle" in attrs:
             self.toggles.append(self.getpos())
             self.inert_toggle = self.inert_toggle or inert
@@ -875,6 +898,7 @@ class PageScan(HTMLParser):
         if data.strip(" \t\n\f\r") and [name for name, _ in self.open] in ([], ["html"], ["html", "head"]):
             # Text other than whitespace in or before the head ends it (HTML5).
             self.head_ended = True
+        self.text.append(data)
         if self.anchor is not None:
             self.anchor["text"] += data
         if self.in_pre and re.search(r"</?[a-z][a-z0-9]*[\s>]", data):
@@ -892,9 +916,8 @@ class PageScan(HTMLParser):
             self.previous = self.open.pop()
             if tag == "div" and "doc" in self.previous[1]:
                 self.doc_closed = True
-            if len(self.open) in self.value_regions:
-                self.value_regions.remove(len(self.open))
-                self.value_region_ends.add(self.getpos())
+            if len(self.open) == self.value_region:
+                self.value_region, self.value_region_end = None, self.getpos()
             while self.hiding and self.hiding[-1] >= len(self.open):
                 self.hiding.pop()
             if self.switch_parent is not None and self.switch_parent_end is None and len(self.open) < self.switch_depth:
@@ -940,6 +963,42 @@ def about_line(base: str) -> str:
 def about_block(base: str) -> str:
     """The landing page's whole About block at base: ABOUT_BLOCK around about_line(), as specification 7.24 gives it."""
     return ABOUT_BLOCK.format(row=about_line(base))
+
+
+def label_count(text: str, scan: PageScan) -> int:
+    """How often ABOUT_LABEL appears in text as written, or in the text and attribute values scan read from it with
+    each run of whitespace (a no-break space included) read as 1 space, whichever is more."""
+    return max(text.count(ABOUT_LABEL), " ".join("".join(scan.text).split()).count(ABOUT_LABEL))
+
+
+def with_about(content: str, page: dict, base: str) -> str:
+    """A page's content with, on the landing page only, the About block of specification 7.24 written in directly
+    after the end tag of the value paragraph's region. It refuses a source with an element whose classes include
+    about or with ABOUT_LABEL (label_count()), and a landing page source without exactly 1 p.value, with that p.value
+    inside an element of INERT_TAGS or an element with a hidden attribute, or with no div.region among its
+    ancestors."""
+    where = page["source"]
+    scan = PageScan()
+    scan.feed(content)
+    scan.close()
+    if scan.about_classes:
+        raise BuildError(f"{where}: an element whose classes include about; the generator writes the About block of "
+                         "specification 7.24 itself, on the landing page only")
+    if label_count(content, scan):
+        raise BuildError(f"{where}: the text {ABOUT_LABEL!r}; the generator writes the About block of specification "
+                         "7.24 itself, on the landing page only")
+    if page["path"] != "":
+        return content
+    if len(scan.values) != 1 or scan.values[0] not in scan.live_starts or scan.values[0] in scan.hidden_starts:
+        raise BuildError(f"{where}: the landing page source must carry exactly 1 p.value, outside every element of "
+                         "INERT_TAGS and every element with a hidden attribute; the About block goes after its region")
+    if scan.value_region_end is None:
+        raise BuildError(f"{where}: the value paragraph has no enclosing div.region, after which the About block goes")
+    line, column = scan.value_region_end
+    # The index of that end tag in content: the lines before it, each with its "\n", then the column.
+    end = sum(len(part) + 1 for part in content.split("\n")[:line - 1]) + column
+    at = content.index(">", end) + 1
+    return content[:at] + about_block(base) + content[at:]
 
 
 def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
@@ -1022,25 +1081,26 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
         for tag, value in scan.links:
             if tag == "a" and any(value.split("#", 1)[0] == base + config_path for config_path in config["about_paths"]):
                 problems.append(f"{value} links a page only the landing page links (specification 7.24)")
-    # The About row starts as a parsed element outside every element of INERT_TAGS, as the required blocks do, and
-    # outside every element with a hidden attribute; the whole About block holds it, once and byte for byte, and
-    # starts where the end tag of the value paragraph's region ends. ABOUT_BLOCK holds no element of INERT_TAGS and no
-    # hidden attribute, so the row and the block have the same such ancestors. On any other page, no parsed element's
-    # classes include about, inside an element of INERT_TAGS or not.
+    # On the landing page, exactly 1 p.value starts as a parsed element outside every element of INERT_TAGS, as the
+    # required blocks do, and outside every element with a hidden attribute; the whole About block, once and byte for
+    # byte, starts where the end tag of its region ends, so the block's ancestors are the region's, none of which is an
+    # element of INERT_TAGS or carries a hidden attribute, and ABOUT_BLOCK holds neither. The block's row is then the
+    # only parsed element whose classes include about, and its label the only ABOUT_LABEL (label_count()). On any
+    # other page, neither appears, inside an element of INERT_TAGS or not.
     if page["path"] == "":
-        row, block = about_line(base), about_block(base)
-        row_at, at = line_column(page_html, page_html.find(row)), page_html.find(block)
-        if (page_html.count('class="about"') != 1 or page_html.count(row) != 1
-                or row_at not in scan.live_starts or row_at in scan.hidden_starts):
-            problems.append("the About row must appear exactly once, byte for byte as specification 7.24 gives it: "
-                            "1 ordinary space after each dot span and none before it, outside every element of INERT_TAGS "
-                            "and every element with a hidden attribute")
-        elif (page_html.count(block) != 1 or not page_html.startswith("</div>", at - len("</div>"))
-                or line_column(page_html, at - len("</div>")) not in scan.value_region_ends):
+        block, value = about_block(base), scan.values[0] if len(scan.values) == 1 else None
+        at = page_html.find(block)
+        if (value is None or value not in scan.live_starts or value in scan.hidden_starts
+                or page_html.count(block) != 1 or not page_html.startswith("</div>", at - len("</div>"))
+                or line_column(page_html, at - len("</div>")) != scan.value_region_end
+                or len(scan.about_classes) != 1 or label_count(page_html, scan) != 1):
             problems.append("the About block must appear exactly once, byte for byte as specification 7.24 gives it "
-                            "(ABOUT_BLOCK), directly after the end tag of the value paragraph's region")
-    elif scan.about_rows:
-        problems.append("an About row, which only the landing page carries (specification 7.24)")
+                            "(ABOUT_BLOCK), directly after the end tag of the region of the only p.value, which starts "
+                            "outside every element of INERT_TAGS and every element with a hidden attribute, and no "
+                            "other About markup may appear")
+    elif scan.about_classes or label_count(page_html, scan):
+        problems.append(f"About markup (an element whose classes include about, or the text {ABOUT_LABEL!r}), "
+                        "which only the landing page's About block carries (specification 7.24)")
     for tag, value in scan.links:
         if value.startswith(("https://", "http://")):
             if tag != "a":
@@ -1197,6 +1257,7 @@ def build(
         fragment = read_text(root, SRC / "pages" / page["source"])
         content = substitute(fragment, values, page["source"])
         content = content.replace("<!--rail-->", rail(config, page, base, content))
+        content = with_about(content, page, base)
         document = "\n".join(
             [
                 head(config, page, base, asset_tokens, date),

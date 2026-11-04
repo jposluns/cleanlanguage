@@ -139,7 +139,8 @@ class Placement(HTMLParser):
     first head or body the page opens, before the head ends where HTML5 ends it (text other than whitespace, a
     start tag not in HEAD_TAGS, or </body>, </html> or </br>), and in lineage where its open elements start; and
     each end tag's closed element (name, classes, depth, where it starts); keyed by where the tag starts: (line,
-    column), as getpos() reports. A self-closing tag leaves an
+    column), as getpos() reports; and in text the text it reads and each attribute value, in order. A self-closing
+    tag leaves an
     element that is neither void nor in <svg> open, as in a browser, and class names split on ASCII whitespace
     only. It fails closed where it does not model HTML5: a start tag not in HEAD_TAGS inside <template> or
     <noscript> in the head ends the head, and a self-closing tag in <math> leaves its element open. It is not a
@@ -161,9 +162,11 @@ class Placement(HTMLParser):
         self.ends: dict[tuple[int, int], tuple[str, list[str], int, tuple[int, int]]] = {}
         self.open_at: list[tuple[int, int]] = []
         self.lineage: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        self.text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs) -> None:
         first = {name: value or "" for name, value in reversed(attrs)}
+        self.text.extend(f" {value or ''} " for _, value in attrs)
         if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
                 and self.previous is not None and self.previous[0] == "head"):
             self.body = self.getpos()
@@ -193,6 +196,7 @@ class Placement(HTMLParser):
             self.ends[self.getpos()] = (*self.previous, len(self.open), self.open_at.pop())
 
     def handle_data(self, data: str) -> None:
+        self.text.append(data)
         if data.strip(" \t\n\f\r") and [name for name, _ in self.open] in ([], ["html"], ["html", "head"]):
             self.head_ended = True
 
@@ -277,51 +281,49 @@ def about_block(base: str) -> str:
 
 
 ABOUT_BLOCK = about_block("{{base}}")
+LABEL = "About this project"
 
 
-def about_row(row: str):
-    """Replace the About row in the landing page's source with row."""
-    def apply(root: Path) -> None:
-        path = root / HOME
-        text, count = re.subn(r'<p class="about">.*?</p>', lambda _: row, path.read_text(encoding="utf-8"), count=1)
-        if count != 1:
-            raise AssertionError(f"no About row in {HOME}")
-        path.write_text(text, encoding="utf-8")
-    return apply
+def label_count(text: str, parsed: Placement) -> int:
+    """How often LABEL appears in text as written, or in the text and attribute values parsed read from it with each
+    run of whitespace (a no-break space included) read as 1 space, whichever is more."""
+    return max(text.count(LABEL), " ".join("".join(parsed.text).split()).count(LABEL))
 
 
 def about_problems(page: str, text: str, base: str) -> list[str]:
-    """The About row of specification 7.24: exactly once on the landing page, byte for byte, with no INERT ancestor
-    and no ancestor that carries a hidden attribute, inside the whole About block, once and byte for byte, which
-    starts where the end tag of the value paragraph's region (the div.region nearest a p.value among its open
-    elements) ends; and on no other page, where no parsed element's classes include about, with an INERT ancestor or
-    not. Like the generator's rule, it does not model inert, aria-hidden, popover, a dialog or details without open,
-    a hiding class or a stylesheet."""
+    """The About block of specification 7.24, which the generator writes: on the landing page, exactly 1 p.value,
+    with no INERT ancestor and no ancestor that carries a hidden attribute, and the whole About block once, byte for
+    byte, starting where the end tag of that paragraph's region (the div.region nearest it among its open elements)
+    ends, its row the only parsed element whose classes include about and its label the only LABEL; on any other
+    page, neither, with an INERT ancestor or not. Like the generator's rule, it does not model inert, aria-hidden,
+    popover, a dialog or details without open, a hiding class or a stylesheet."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
+    abouts = [at for at, (_, attrs, *_) in parsed.starts.items() if "about" in class_names(attrs.get("class", ""))]
     if page != "index.html":
-        rows = [at for at, (_, attrs, *_) in parsed.starts.items() if "about" in class_names(attrs.get("class", ""))]
-        return [f"{page} carries an About row, which only the landing page may"] if rows else []
-    row, block = about_line(base), about_block(base)
-    if text.count('class="about"') != 1 or text.count(row) != 1 or "&middot;</span><a" in text:
-        return [f"{page} lacks the About row with 1 ordinary space after each dot and none before it (specification 7.24)"]
-    row_at = position(text, text.find(row))
-    start = parsed.starts.get(row_at)
-    if start is None or any(name in INERT for name, _ in start[2]):
-        return [f"{page} carries its About row inside an element of INERT (specification 7.24)"]
-    if any("hidden" in parsed.starts[ancestor][1] for ancestor in parsed.lineage[row_at]):
-        return [f"{page} carries its About row inside an element with a hidden attribute (specification 7.24)"]
+        if abouts or label_count(text, parsed):
+            return [f"{page} carries About markup, which only the landing page's About block may"]
+        return []
+    values = [at for at, (tag, attrs, *_) in parsed.starts.items()
+              if tag == "p" and "value" in class_names(attrs.get("class", ""))]
+    if len(values) != 1:
+        return [f"{page} carries {len(values)} p.value elements; exactly 1 is required (specification 7.24)"]
+    if any(name in INERT for name, _ in parsed.starts[values[0]][2]):
+        return [f"{page} carries its value paragraph inside an element of INERT (specification 7.24)"]
+    if any("hidden" in parsed.starts[ancestor][1] for ancestor in parsed.lineage[values[0]]):
+        return [f"{page} carries its value paragraph inside an element with a hidden attribute (specification 7.24)"]
+    block = about_block(base)
     at = text.find(block)
     if text.count(block) != 1 or text[at - len("</div>"):at] != "</div>":
         return [f"{page} lacks the whole About block once, byte for byte, right after a </div> (specification 7.24)"]
     region = parsed.ends.get(position(text, at - len("</div>")))
-    nearest = [[ancestor for ancestor in parsed.lineage[value] if parsed.starts[ancestor][0] == "div"
-                and "region" in class_names(parsed.starts[ancestor][1].get("class", ""))][-1:]
-               for value, (tag, attrs, *_) in parsed.starts.items()
-               if tag == "p" and "value" in class_names(attrs.get("class", ""))]
-    if region is None or [region[3]] not in nearest:
+    nearest = [ancestor for ancestor in parsed.lineage[values[0]] if parsed.starts[ancestor][0] == "div"
+               and "region" in class_names(parsed.starts[ancestor][1].get("class", ""))][-1:]
+    if region is None or [region[3]] != nearest:
         return [f"{page} carries its About block other than directly after the value paragraph's region (specification 7.24)"]
+    if len(abouts) != 1 or label_count(text, parsed) != 1:
+        return [f"{page} carries About markup outside its About block (specification 7.24)"]
     return []
 
 
@@ -431,36 +433,6 @@ REFUSALS = [
     ("a static aria-current=true mark", inject('<p><a href="#watch" aria-current="true">x</a></p>')),
     ("an inner page linking the Licence page", inject('<p><a href="{{base}}license/">x</a></p>')),
     ("an inner page linking the Disclosure page", inject('<p><a href="{{base}}disclosure/#d-1">x</a></p>')),
-    ("the About row with no space after each dot (the 1.6.1 markup)", about_row(ABOUT_ROW.replace(ABOUT_DOT + " ", ABOUT_DOT))),
-    ("the About row with a space before a dot", about_row(ABOUT_ROW.replace("</a>" + ABOUT_DOT, "</a> " + ABOUT_DOT, 1))),
-    ("the About row with &nbsp; in place of 1 space", about_row(ABOUT_ROW.replace(ABOUT_DOT + " ", ABOUT_DOT + "&nbsp;", 1))),
-    ("the About row with 2 spaces after a dot", about_row(ABOUT_ROW.replace(ABOUT_DOT + " ", ABOUT_DOT + "  ", 1))),
-    # The whole About block of 7.24, directly after the value paragraph's region, with no hidden ancestor.
-    ("the About row without its region and label", lambda root: edit(root, HOME, ABOUT_BLOCK, ABOUT_ROW)),
-    ("the About block without its label", lambda root: edit(root, HOME, ABOUT_BLOCK, ABOUT_BLOCK.replace(
-        '<p class="lbl">About this project</p>', "", 1))),
-    ("the About row moved into the hero", lambda root: (
-        edit(root, HOME, ABOUT_BLOCK, ABOUT_BLOCK.replace(ABOUT_ROW, "", 1)),
-        edit(root, HOME, '<div class="hero-text">', '<div class="hero-text">' + ABOUT_ROW))),
-    ("the whole About block moved into the hero", lambda root: (
-        edit(root, HOME, ABOUT_BLOCK, ""), edit(root, HOME, '<div class="hero-text">', '<div class="hero-text">' + ABOUT_BLOCK))),
-    ("the About block before the value paragraph's region", lambda root: (
-        edit(root, HOME, ABOUT_BLOCK, ""),
-        edit(root, HOME, '<div class="region" id="what-it-fixes">', ABOUT_BLOCK + '<div class="region" id="what-it-fixes">'))),
-    ("a line break between the value paragraph's region and the About block", lambda root: edit(
-        root, HOME, ABOUT_BLOCK, "\n" + ABOUT_BLOCK)),
-    ("the exact About row wrapped in a hidden div", lambda root: edit(root, HOME, ABOUT_ROW, "<div hidden>" + ABOUT_ROW + "</div>")),
-    ("the value paragraph's region and the exact About block inside 1 hidden div", lambda root: (
-        edit(root, HOME, '<div class="region" id="what-it-fixes">', '<div hidden><div class="region" id="what-it-fixes">'),
-        edit(root, HOME, ABOUT_BLOCK, ABOUT_BLOCK + "</div>"))),
-    ("a second exact About row after the About block", lambda root: edit(
-        root, HOME, ABOUT_BLOCK, ABOUT_BLOCK + '<p class="about">x</p>')),
-    ("an About row on an inner page", inject('<p class="about"><a href="{{base}}install/">Install</a></p>')),
-    ("an About row with an unquoted class on an inner page", inject('<p class=about><a href="{{base}}install/">Install</a></p>')),
-    ("an About row with a single-quoted class on an inner page", inject("<p class='about'><a href=\"{{base}}install/\">Install</a></p>")),
-    ("an About row with 2 classes on an inner page", inject('<p class="about x"><a href="{{base}}install/">Install</a></p>')),
-    ("an About row with 2 classes inside noscript on an inner page",
-        inject('<noscript><p class="about x"><a href="{{base}}install/">Install</a></p></noscript>')),
     ("a baseline asset the pin does not list", inject('<img src="{{base}}assets/baseline/logos/missing.svg" alt="">')),
     ("a checklist group that is not 1 bullet list", lambda root: edit(
         root, "cleanlanguage/skills/cleanlanguage/references/qa-checklist.md", "## Tone\n\n", "## Tone\n\nA paragraph.\n\n")),
@@ -480,6 +452,88 @@ STAGED_REFUSALS = [
     ("the staged sitemap config no longer excludes the draft home page", lambda root: edit(
         root, "tools/sitemap-config.json", ', "draft/index.html"', "")),
 ]
+
+
+# The generator writes the About block of 7.24 itself, so a page source with About markup of its own, or a landing
+# page source whose value paragraph gives it no single, live place, is refused before the output is read.
+CLASS_RULE = "an element whose classes include about; the generator writes the About block"
+LABEL_RULE = "the text 'About this project'; the generator writes the About block"
+VALUE_RULE = "the landing page source must carry exactly 1 p.value"
+REGION_RULE = "the value paragraph has no enclosing div.region"
+VALUE = '<p class="value">'
+VALUE_REGION = '<div class="region" id="what-it-fixes">'
+VALUE_END = "outside its aim.</p></div></div>"
+
+
+def after_value(snippet: str):
+    """Put snippet in the landing page's source directly after the end tag of the value paragraph's region."""
+    return lambda root: edit(root, HOME, VALUE_END, VALUE_END + snippet)
+
+
+def wrap_value(start: str, end: str):
+    """Wrap the landing page's value paragraph in start and end."""
+    return lambda root: (edit(root, HOME, VALUE, start + VALUE),
+                         edit(root, HOME, VALUE_END, VALUE_END.replace("</p>", "</p>" + end, 1)))
+
+
+SOURCE_REFUSALS = [
+    ("the whole About block put back in home.html", after_value(ABOUT_BLOCK), CLASS_RULE),
+    ("the About row alone put back in home.html", after_value(ABOUT_ROW), CLASS_RULE),
+    ("an about class added to the intro paragraph in home.html", lambda root: edit(
+        root, HOME, '<p class="intro">', '<p class="intro about">'), CLASS_RULE),
+    ("an about class in single quotes inside noscript in home.html",
+        after_value("<noscript><p class='x about'>x</p></noscript>"), CLASS_RULE),
+    ("an About row on an inner page", inject('<p class="about"><a href="{{base}}install/">Install</a></p>'), CLASS_RULE),
+    ("an About row with an unquoted class on an inner page",
+        inject('<p class=about><a href="{{base}}install/">Install</a></p>'), CLASS_RULE),
+    ("an About row with a single-quoted class on an inner page",
+        inject("<p class='about'><a href=\"{{base}}install/\">Install</a></p>"), CLASS_RULE),
+    ("an About row with 2 classes on an inner page",
+        inject('<p class="about x"><a href="{{base}}install/">Install</a></p>'), CLASS_RULE),
+    ("an About row with 2 classes inside noscript on an inner page",
+        inject('<noscript><p class="about x"><a href="{{base}}install/">Install</a></p></noscript>'), CLASS_RULE),
+    ("the label region alone put back in home.html",
+        after_value(f'<div class="region"><p class="lbl">{LABEL}</p></div>'), LABEL_RULE),
+    ("the label text in home.html with a character reference", after_value("<p>About&#32;this project</p>"), LABEL_RULE),
+    ("the label text in home.html with a no-break space", after_value("<p>About&nbsp;this project</p>"), LABEL_RULE),
+    ("the label text across 2 elements in home.html", after_value("<p>About <em>this</em> project</p>"), LABEL_RULE),
+    ("the label text in an attribute in home.html", after_value(f'<p title="{LABEL}">x</p>'), LABEL_RULE),
+    ("the label text in a comment in home.html", after_value(f"<!-- {LABEL} -->"), LABEL_RULE),
+    ("the label text on an inner page", inject(f"<p>{LABEL}</p>"), LABEL_RULE),
+    ("a second p.value in the hero", lambda root: edit(
+        root, HOME, '<div class="hero-text">', '<div class="hero-text"><p class="value">x</p>'), VALUE_RULE),
+    ("a second p.value in its own region after the value region",
+        after_value('<div class="region"><p class="value">x</p></div>'), VALUE_RULE),
+    ("a second p.value that carries a hidden attribute", after_value('<p class="value" hidden>x</p>'), VALUE_RULE),
+    ("a second p.value region inside a hidden div",
+        after_value('<div hidden><div class="region"><p class="value">x</p></div></div>'), VALUE_RULE),
+    ("a second p.value region inside noscript",
+        after_value('<noscript><div class="region"><p class="value">x</p></div></noscript>'), VALUE_RULE),
+    ("no p.value", lambda root: edit(root, HOME, VALUE, '<p class="lead">'), VALUE_RULE),
+    ("the value paragraph inside noscript", wrap_value("<noscript>", "</noscript>"), VALUE_RULE),
+    ("the value paragraph inside canvas", wrap_value("<canvas>", "</canvas>"), VALUE_RULE),
+    ("the value paragraph inside a div with hidden=until-found", wrap_value('<div hidden="until-found">', "</div>"),
+        VALUE_RULE),
+    ("the value paragraph's region with a hidden attribute", lambda root: edit(
+        root, HOME, VALUE_REGION, VALUE_REGION.replace(">", " hidden>")), VALUE_RULE),
+    ("a p.value with no region", lambda root: edit(root, HOME, VALUE_REGION, '<div id="what-it-fixes">'), REGION_RULE),
+    ("a p.value whose nearest region is a section", lambda root: (
+        edit(root, HOME, VALUE_REGION, '<section class="region" id="what-it-fixes">'),
+        edit(root, HOME, VALUE_END, VALUE_END[:-len("</div>")] + "</section>")), REGION_RULE),
+]
+
+
+def check_source_refusals(failures: list[str]) -> int:
+    """Each source refusal fires by its own rule, whatever the output check would say."""
+    for name, fault, rule in SOURCE_REFUSALS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            fault(root)
+            result = run(root, "--out", str(Path(scratch) / "out"))
+            if result.returncode != 1 or rule not in result.stderr:
+                failures.append(f"source refusal '{name}': exit {result.returncode}, expected 1 with {rule!r} "
+                                f"({result.stderr.strip()[:200]})")
+    return len(SOURCE_REFUSALS)
 
 
 def check_refusals(failures: list[str]) -> int:
@@ -646,9 +700,10 @@ def check_inert_validation(failures: list[str]) -> int:
 
 
 def check_inner_about_rows(failures: list[str]) -> int:
-    """An About row on an inner page, read as the parsed class names of every element (split on ASCII whitespace
-    only), with an INERT ancestor or not: validate(), called directly on the committed licence page, refuses it by
-    its rule, and so does the build test's helper; a class name that only starts with about passes both."""
+    """About markup on an inner page, read as the parsed class names of every element (split on ASCII whitespace
+    only), with an INERT ancestor or not, and as the label text: validate(), called directly on the committed
+    licence page, refuses it by its rule, and so does the build test's helper; a class name that only starts with
+    about, or another label, passes both."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["id"] == "license")
@@ -663,6 +718,10 @@ def check_inner_about_rows(failures: list[str]) -> int:
         (f"<noscript><p class=about>{link}</p></noscript>", False),
         (f'<p class="about-us">{link}</p>', True),
         (f'<p class="about&nbsp;x">{link}</p>', True),
+        (f"<p>{LABEL}</p>", False),
+        ("<p>About&#32;this project</p>", False),
+        (f'<p title="{LABEL}">x</p>', False),
+        ("<p>About these pages</p>", True),
     ]
     for row, passes in cases:
         page_html = text.replace(h1, h1 + row, 1)
@@ -673,7 +732,7 @@ def check_inner_about_rows(failures: list[str]) -> int:
             refusal = str(error)
         if passes and refusal:
             failures.append(f"inner About row {row!r}: refused, expected to pass ({refusal[:200]})")
-        elif not passes and "an About row, which only the landing page carries" not in refusal:
+        elif not passes and "About markup (an element whose classes include about" not in refusal:
             failures.append(f"inner About row {row!r}: not refused by its rule ({refusal[:200] or 'passed'})")
         if (not about_problems("license/index.html", page_html, "/")) != passes:
             failures.append(f"About helper, inner About row {row!r}: {'refused' if passes else 'passed'}, expected the opposite")
@@ -682,16 +741,17 @@ def check_inner_about_rows(failures: list[str]) -> int:
 
 def check_about_block(failures: list[str]) -> int:
     """The whole About block of specification 7.24 on the landing page: validate(), called directly on the committed
-    landing page with 1 fault each, refuses by the row's rule (once, byte for byte, with no INERT ancestor and none
-    that carries a hidden attribute) or by the block's rule (once, byte for byte, directly after the end tag of the
-    value paragraph's region), and the build test's helper judges each case as the generator should."""
+    landing page with 1 fault each, refuses by the block's rule (exactly 1 p.value, with no INERT ancestor and none
+    that carries a hidden attribute; the block once, byte for byte, directly after the end tag of that paragraph's
+    region; no other About markup), and the build test's helper judges each case as the generator should."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["path"] == "")
     text = (REPO_ROOT / "site/index.html").read_text(encoding="utf-8")
-    row, block, label = about_line("/"), about_block("/"), '<p class="lbl">About this project</p>'
-    hero, value = '<div class="hero-text">', '<div class="region" id="what-it-fixes">'
-    row_rule, block_rule = "the About row must appear exactly once", "the About block must appear exactly once"
+    row, block, label = about_line("/"), about_block("/"), f'<p class="lbl">{LABEL}</p>'
+    hero, value = '<div class="hero-text">', VALUE_REGION
+    decoy = '<div class="region"><p class="value">x</p></div>'
+    block_rule = "the About block must appear exactly once"
     cases = [
         ("the committed landing page", [], None),
         ("the row without its region and label", [(block, row)], block_rule),
@@ -700,14 +760,27 @@ def check_about_block(failures: list[str]) -> int:
         ("the whole block moved into the hero", [(block, ""), (hero, hero + block)], block_rule),
         ("the block before the value paragraph's region", [(block, ""), (value, block + value)], block_rule),
         ("a line break before the block", [(block, "\n" + block)], block_rule),
-        ("the exact row wrapped in a hidden div", [(row, f"<div hidden>{row}</div>")], row_rule),
+        ("the exact row wrapped in a hidden div", [(row, f"<div hidden>{row}</div>")], block_rule),
         ("the value region and the block inside 1 hidden div", [(value, "<div hidden>" + value), (block, block + "</div>")],
-            row_rule),
+            block_rule),
         ("the value region and the block inside 1 div with hidden=until-found",
-            [(value, '<div hidden="until-found">' + value), (block, block + "</div>")], row_rule),
+            [(value, '<div hidden="until-found">' + value), (block, block + "</div>")], block_rule),
         ("the value region and the block inside noscript", [(value, "<noscript>" + value), (block, block + "</noscript>")],
-            row_rule),
-        ("a second exact row after the block", [(block, block + '<p class="about">x</p>')], row_rule),
+            block_rule),
+        ("a second exact row after the block", [(block, block + '<p class="about">x</p>')], block_rule),
+        # A decoy p.value region authorized the boundary while any value paragraph's region could; now only the
+        # page's one p.value may.
+        ("the block moved after a decoy p.value region in the hero", [(block, ""), (hero, hero + decoy + block)],
+            block_rule),
+        ("a decoy p.value region directly before the block", [(block, decoy + block)], block_rule),
+        ("a hidden decoy p.value region directly before the block",
+            [(block, decoy.replace('"region"', '"region" hidden', 1) + block)], block_rule),
+        ("a second p.value after the block", [(block, block + '<p class="value">x</p>')], block_rule),
+        ("no p.value", [('<p class="value">', "<p>")], block_rule),
+        ("the value paragraph's region without its class", [(value, '<div id="what-it-fixes">')], block_rule),
+        ("a second label region after the block", [(block, block + f'<div class="region">{label}</div>')], block_rule),
+        ("a second label with a character reference", [(block, block + "<p>About&#32;this project</p>")], block_rule),
+        ("a second label in an attribute", [(hero, hero + f'<p title="{LABEL}">x</p>')], block_rule),
     ]
     for name, edits, rule in cases:
         page_html = text
@@ -1041,6 +1114,7 @@ def main() -> int:
         failures.append("INERT_TAGS, check-inline-code.py's INERT_ELEMENTS and INERT here differ, or leave out an element "
                         "of check-install-page.py's HIDING_ELEMENTS")
     ran += check_refusals(failures)
+    ran += check_source_refusals(failures)
     ran += check_unreadable(failures)
     ran += check_scheme_validation(failures)
     ran += check_inert_validation(failures)
