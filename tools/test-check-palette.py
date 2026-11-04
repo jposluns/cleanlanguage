@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Tests for tools/check-palette.py: the pinned palette gate and its wrapper.
 
-Each case copies the wrapper and the files it reads into a temporary repository
-(under $TMPDIR), applies its changes, runs the wrapper there as a separate
-process and asserts its exit code. The case named "the committed tree" applies
-no change, the 4 cases that copy the palettes to site/draft/ each apply 3
-through both(...), and every other case applies 1. The first case runs the
-wrapper on this repository.
+Each case runs the wrapper as a separate process and asserts its exit code. The
+first runs it on this repository and applies no change. Each other case copies
+the wrapper and the files it reads into a temporary repository (under $TMPDIR)
+and runs it there: the case named "the committed tree" applies no change, the 4
+cases that copy the palettes to site/draft/ each apply 3 changes through
+both(...), and every other case applies 1 mutation function, which may edit
+several places.
 The cases that change the base in site-src/site.json check that the wrapper
 reads the output root from it. Base / reads site/, so a contrast failure only
 in a copy of the palettes under site/draft/ exits 0. Base /draft/ reads
@@ -74,7 +75,11 @@ def delete_tool(root: Path) -> None:
 
 
 def dark_text_muted_on_bg(root: Path, palettes: str = PALETTES) -> None:
-    """Set the dark --text-muted of this site to its dark --bg, in every dark form: a real contrast failure."""
+    """Replace every "--text-muted: X;" in palettes, in any rule, with "--text-muted: B;": a real contrast failure.
+
+    X and B are the first --text-muted and --bg values from the start of this site's first dark rule,
+    .site-cleanlanguage:not([data-scheme="light"]) {.
+    """
     path = root / palettes
     text = path.read_text(encoding="utf-8")
     block = text.index(".site-cleanlanguage:not([data-scheme=\"light\"]) {")
