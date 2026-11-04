@@ -85,7 +85,10 @@ it. No element with ``data-scheme-toggle`` may sit inside an element whose
 content a browser with scripting on, the only case in which ``scheme.js``
 runs, does not render as markup (``INERT_TAGS``: ``noscript``, ``template``,
 and the raw-text and RCDATA elements); a script or stylesheet inside one is
-not in ``html > head``. The reading fails closed where it does not model
+not in ``html > head``, and an ``h1``, a robots meta, the skip link,
+``main#main-content``, the family footer or ``#copy-status`` inside one fails,
+as does a fragment whose only target is inside one (a browser with scripting
+on renders none of them). The reading fails closed where it does not model
 HTML5: such a start tag inside a ``<template>`` or ``<noscript>`` in the head
 ends the head, and a self-closing tag in ``<math>`` leaves its element open.
 It is not a full HTML5 tree builder, so each page's ``header.mast`` block must
@@ -684,7 +687,8 @@ def substitute(text: str, values: dict, where: str) -> str:
 class PageScan(HTMLParser):
     """The parsed reading validate() checks. Not a full HTML5 tree builder: it models the open elements as tags
     nest, void elements, the slash only in <svg>, the head's end, class names split on ASCII whitespace, and the
-    INERT_TAGS ancestors of each element with data-scheme-toggle. The pinned header block and --check cover the rest."""
+    INERT_TAGS ancestors of each element with data-scheme-toggle, h1, robots meta and id, and of each element start
+    validate() requires. The pinned header block and --check cover the rest."""
 
     def __init__(self, switch_at: tuple[int, int] | None = None) -> None:
         super().__init__(convert_charrefs=True)
@@ -699,8 +703,13 @@ class PageScan(HTMLParser):
         self.loads: list[tuple[tuple[int, int], str]] = []
         self.sheets: list[tuple[int, int]] = []
         self.toggles: list[tuple[int, int]] = []
-        # Whether an element with data-scheme-toggle starts inside an element of INERT_TAGS.
+        # Whether an element with data-scheme-toggle, an h1 or a robots meta starts inside an element of INERT_TAGS;
+        # the ids outside them, which a fragment may target; and where each element outside them starts.
         self.inert_toggle = False
+        self.inert_h1 = False
+        self.inert_robots = False
+        self.live_ids: set[str] = set()
+        self.live_starts: set[tuple[int, int]] = set()
         # Where each script and link starts outside the page's head: html > head, the first head or body opened,
         # until the head ends where HTML5 ends it.
         self.outside_head: set[tuple[int, int]] = set()
@@ -735,9 +744,12 @@ class PageScan(HTMLParser):
         if tag in ("script", "link") and ([name for name, _ in self.open] != ["html", "head"] or self.heads != 1
                                           or self.head_ended):
             self.outside_head.add(self.getpos())
+        inert = any(name in INERT_TAGS for name, _ in self.open)
+        if not inert:
+            self.live_starts.add(self.getpos())
         if "data-scheme-toggle" in attrs:
             self.toggles.append(self.getpos())
-            self.inert_toggle = self.inert_toggle or any(name in INERT_TAGS for name, _ in self.open)
+            self.inert_toggle = self.inert_toggle or inert
         if tag == "button" and self.getpos() == self.switch_at:
             self.switch_parent = self.open[-1] if self.open else None
             self.switch_previous = self.previous
@@ -760,10 +772,14 @@ class PageScan(HTMLParser):
             self.problems.append("a <style> element")
         if "id" in attrs:
             self.ids.append(attrs["id"])
+            if not inert:
+                self.live_ids.add(attrs["id"])
         if tag == "h1":
             self.h1 += 1
+            self.inert_h1 = self.inert_h1 or inert
         if tag == "meta" and attrs.get("name") == "robots":
             self.robots.append(attrs.get("content", ""))
+            self.inert_robots = self.inert_robots or inert
         if tag == "script":
             self.scripts.append(attrs)
             if "src" in attrs:
@@ -845,13 +861,14 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
         problems.append("an en or em dash")
     if re.search(r"what this is", TAGS.sub(" ", page_html), re.I):
         problems.append('"what this is" framing')
-    for required in (SKIP_LINK, '<main id="main-content">', '<footer class="family wrap">', COPY_STATUS):
-        if page_html.count(required) != 1:
-            problems.append(f"{required!r} must appear exactly once")
     switch = page_html.find(SCHEME_SWITCH)
     scan = PageScan(line_column(page_html, switch) if switch != -1 else None)
     scan.feed(page_html)
     scan.close()
+    # Each required block starts as a parsed element outside noscript, template and raw text.
+    for required in (SKIP_LINK, '<main id="main-content">', '<footer class="family wrap">', COPY_STATUS):
+        if page_html.count(required) != 1 or line_column(page_html, page_html.find(required)) not in scan.live_starts:
+            problems.append(f"{required!r} must appear exactly once, outside noscript, template and raw text")
     # The switch is the only parsed element with data-scheme-toggle; the element it sits in and the one before it;
     # the end tag of its parent starts where it ends.
     parent, previous = scan.switch_parent or ("", []), scan.switch_previous or ("", [])
@@ -883,8 +900,8 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     problems += scan.problems
     if scan.open:
         problems.append(f"elements left open: {[tag for tag, _ in scan.open]}")
-    if scan.h1 != 1:
-        problems.append(f"{scan.h1} h1 elements; exactly 1 is required")
+    if scan.h1 != 1 or scan.inert_h1:
+        problems.append(f"{scan.h1} h1 elements; exactly 1 is required, outside noscript, template and raw text")
     duplicates = sorted({i for i in scan.ids if scan.ids.count(i) > 1})
     if duplicates:
         problems.append(f"duplicate ids {duplicates}")
@@ -902,6 +919,8 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
         problems.append("a noindex page must carry exactly 1 robots meta, noindex, nofollow")
     elif base == "/" and not page.get("noindex") and scan.robots:
         problems.append("an indexable page carries a robots meta")
+    if scan.inert_robots:
+        problems.append("a robots meta inside noscript, template or raw text")
     allow = set(config["root_allowlist"])
     if page["id"] not in config["about_linkers"]:
         for tag, value in scan.links:
@@ -913,8 +932,8 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
                 problems.append(f"<{tag}> loads an external resource {value}")
             continue
         if value.startswith("#"):
-            if value[1:] not in scan.ids:
-                problems.append(f"the in-page link {value} has no target")
+            if value[1:] not in scan.live_ids:
+                problems.append(f"the in-page link {value} has no target outside noscript, template and raw text")
             continue
         if value.startswith("/"):
             path = value.split("#", 1)[0].split("?", 1)[0]
@@ -1095,7 +1114,7 @@ def resolve_links(root: Path, out: Path, base: str, config: dict, outputs: dict,
     ids_by_file = {}
     for path, scan in scans.items():
         name = path + "index.html" if not path.endswith(".html") else path
-        ids_by_file[name] = set(scan.ids)
+        ids_by_file[name] = scan.live_ids
     problems = []
     for path, scan in scans.items():
         for tag, value in scan.links:

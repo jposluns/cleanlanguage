@@ -66,6 +66,7 @@ ROW_END = OTHER_LINK + "</p>"
 STEPS = '<ol class="steps">'
 # The scheme.js tag of template specification 7.33 (baseline 1.6.0), as the committed pages carry it.
 SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.6.0"></script>'
+COPY = '<script src="/assets/baseline/copy.js?v=1.6.0" defer></script>'
 FONTS = '<link rel="stylesheet" href="/assets/baseline/fonts.css?v=1.6.0">'
 LATER = '<link rel="stylesheet" href="/assets/baseline/baseline.css?v=1.6.0">'
 STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
@@ -204,6 +205,9 @@ CASES = [
     ("the pick id removed", edit(PAGE, 'id="pick"', 'id="pick-gone"'), 1),
     ("the technical id removed", edit(PAGE, '<h2 id="technical">', "<h2>"), 1),
     ("a duplicate id on the install page", edit(PAGE, '<h2 id="spelling">', '<h2 id="spelling"><span id="test"></span>'), 1),
+    # A browser with scripting on renders no markup inside noscript, so neither an id nor a link there is present.
+    ("the test id only inside a noscript", both(
+        edit(PAGE, '<h2 id="test">', "<h2>"), edit(PAGE, "</main>", '<noscript><span id="test"></span></noscript></main>')), 1),
     ("a duplicate id on a family page", edit(CHATGPT, '<p class="verified">', '<p class="verified" id="main-content">'), 1),
     ("a family page missing", remove(GEMINI), 3),
     ("a family page with no setup steps", edit(CLAUDE, '<ol class="steps">', "<ol>"), 1),
@@ -287,6 +291,9 @@ CASES = [
     ("a family page with a second h1", edit(GEMINI, "</main>", "<h1>Again</h1></main>"), 1),
     ("a family page without its link back to #get", edit(OTHER, 'href="/install/#get"', 'href="/install/"', every=True), 1),
     ("a family page without its link to #test", edit(CLAUDE, 'href="/install/#test"', 'href="/install/"', every=True), 1),
+    ("a family page whose only link to #test is inside a noscript", both(
+        edit(CLAUDE, 'href="/install/#test"', 'href="/install/"', every=True),
+        edit(CLAUDE, "</main>", '<noscript><a href="/install/#test">Test it</a></noscript></main>')), 1),
     ("an inline script", edit(PAGE, "</main>", "<script>alert(1)</script></main>"), 1),
     ("an inline script on a family page", edit(COPILOT, "</main>", "<script>alert(1)</script></main>"), 1),
     ("an inline style", edit(PAGE, '<p class="lbl first">', '<p style="x" class="lbl first">'), 1),
@@ -304,6 +311,12 @@ CASES = [
     ("baseline.css without its version token on a family page", edit(CHATGPT, "baseline.css?v=", "baseline.css?x="), 1),
     ("copy.js not loaded", edit(PAGE, "copy.js?v=", "copy-gone.js?v="), 1),
     ("copy.js not loaded on a family page", edit(OTHER, "copy.js?v=", "copy-gone.js?v="), 1),
+    # A script inside noscript never runs: a browser with scripting on reads it as text, and one with scripting off
+    # runs no script.
+    ("copy.js loaded only inside a body noscript",
+        both(edit(PAGE, COPY + "\n", ""), edit(PAGE, "<body>\n", "<body>\n<noscript>" + COPY + "</noscript>\n")), 1),
+    ("copy.js loaded only inside a noscript on a family page",
+        both(edit(OTHER, COPY + "\n", ""), edit(OTHER, "</main>", "</main><noscript>" + COPY + "</noscript>")), 1),
     ("select.js loaded", edit(PAGE, "</head>", '<script src="/assets/baseline/select.js?v=1.3.0" defer></script>\n</head>'), 1),
     ("select.js loaded on a family page", edit(CLAUDE, "</head>", '<script src="/assets/baseline/select.js?v=1.3.0" defer></script>\n</head>'), 1),
     ("a baseline script without its version token", edit(PAGE, "</head>", '<script src="/assets/baseline/rail.js" defer></script>\n</head>'), 1),

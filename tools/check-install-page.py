@@ -43,13 +43,14 @@ What it verifies
 3. On ``/install/``, the ids ``pick``, ``get``, ``test``, ``how-to-use``,
    ``spelling``, ``assurance``, ``technical`` and the 5 family ids exist
    (existing deep links, such as ``/install/#pick`` and ``/install/#claude``),
-   and on every page no id is duplicated.
+   each on an element outside ``noscript``, ``template`` and raw text (see
+   below), and on every page no id is duplicated.
 4. Each family page exists (exit 3 if not) and has exactly 1 ``<h1>`` with
    visible text (a character other than whitespace, U+0000 and those in
    ``ZERO_WIDTH``, in text that no element hides by the rules of check 1), at
    least 1 ``p.verified`` and at least 1 ``ol.steps``, none of them hidden by
    itself or an ancestor, and links, hidden or not, to ``/install/#get`` and
-   ``/install/#test``.
+   ``/install/#test`` outside ``noscript``, ``template`` and raw text.
 5. No inline code and no refused markup on any of the 6 pages, as checks 1 to
    10 of ``tools/check-inline-code.py`` define them for an HTML page, with that
    gate's own code: among them, no ``<script>`` without ``src`` other than a
@@ -61,7 +62,8 @@ What it verifies
    template specification 7.33, in its place.
 6. Versioned asset tokens and loads on each of the 6 pages: ``fonts.css``,
    ``palettes.css`` and ``baseline.css`` load as stylesheets, and ``copy.js``
-   as a script with ``defer``, from ``/assets/baseline/`` with ``?v=X.Y.Z``;
+   as a script with ``defer`` outside ``noscript``, ``template`` and raw text,
+   from ``/assets/baseline/`` with ``?v=X.Y.Z``;
    where the text names ``/assets/site.css``, or a stylesheet loads it, it loads
    with ``?v=`` and 12 hexadecimal characters. ``scheme.js`` loads exactly once, as
    exactly ``<script data-cfasync="false" src="/assets/baseline/scheme.js?v=X.Y.Z"></script>``,
@@ -107,8 +109,11 @@ builder: they model the open elements as tags nest, void elements, the head's
 end (check 6), the hiding rules of check 1, and class names split on ASCII
 whitespace only, as HTML splits them (``class="btn&nbsp;inline"`` is 1 class,
 not ``btn`` and ``inline``). A script or stylesheet inside ``<noscript>``,
-``<template>`` or a raw-text element is not in ``html > head``, so check 6
-never counts it as placed there. What guarantees the committed pages is the
+``<template>`` or a raw-text element (``INERT_ELEMENTS`` of
+``tools/check-inline-code.py``, whose content a browser with scripting on does
+not render as markup) is not in ``html > head``, so check 6 never counts it as
+placed there or as the load of ``copy.js``; nor do checks 3 and 4 count an id
+or a link inside one. What guarantees the committed pages is the
 generator: ``tools/build-site.py --check``, a deploy gate, compares them byte
 for byte with a fresh build, and the generator's validator holds each page's
 ``header.mast`` block to its pinned markup. An ancestor in checks 1 and 4 is an
@@ -304,6 +309,12 @@ def inline_code(where: str, text: str) -> list[str]:
     return [f"{where} {problem}; {INLINE_RULE}." for problem in load_tool("check-inline-code.py").inline_code_problems(text)]
 
 
+def inert_elements() -> tuple[str, ...]:
+    """The elements whose content a browser with scripting on does not render as markup (noscript, template, and
+    the raw-text and RCDATA elements), as tools/check-inline-code.py names them for check 7."""
+    return load_tool("check-inline-code.py").INERT_ELEMENTS
+
+
 # The template's visually-hidden class is .vh (site/assets/baseline/baseline.css). The common name
 # visually-hidden is kept although no stylesheet here defines it: an author who adds it means to hide
 # the element, and this gate cannot see whether a later stylesheet defines it, so it fails closed.
@@ -357,6 +368,8 @@ class PageParser(HTMLParser):
         self.order = 0
         self.id_counts: Counter = Counter()
         self.id_first: dict[str, int] = {}
+        # The ids on an element outside noscript, template and raw text, which a browser with scripting on renders.
+        self.id_live: set[str] = set()
         self.retired: list[str] = []
         self.anchors: list[dict] = []
         self.hrefs: list[str] = []
@@ -388,9 +401,13 @@ class PageParser(HTMLParser):
                 parent["summary"] = True
             else:
                 hiding = True
+        # An id or a link inside noscript, template or a raw-text element is not present for a browser with scripting on.
+        inert = any(frame["tag"] in inert_elements() for frame in self.stack)
         if "id" in attrs:
             self.id_counts[attrs["id"]] += 1
             self.id_first.setdefault(attrs["id"], self.order)
+            if not inert:
+                self.id_live.add(attrs["id"])
         for name in RETIRED_ATTRS:
             if name in attrs:
                 self.retired.append(f"<{tag} {name}>")
@@ -399,7 +416,8 @@ class PageParser(HTMLParser):
             # A browser closes an open link when another starts, so later text is not in it; text stops counting for it.
             for frame in self.stack:
                 frame["a"] = None
-            self.hrefs.append(attrs.get("href", ""))
+            if not inert:
+                self.hrefs.append(attrs.get("href", ""))
             anchor = {
                 "id": attrs.get("id"),
                 "href": attrs.get("href", ""),
@@ -453,9 +471,10 @@ class PageParser(HTMLParser):
 
 class LoadScan(HTMLParser):
     """Check 6: where each <script> and stylesheet <link> element starts, which of them start outside the
-    page's head, and each tag that repeats an attribute. The head is html > head with no other open element, so
-    a load inside noscript, template or a raw-text element never counts as in it. Not a full HTML5 tree builder; the
-    committed pages rest on build-site.py --check and the generator's validator."""
+    page's head, which start inside noscript, template or a raw-text element, and each tag that repeats an
+    attribute. The head is html > head with no other open element, so a load inside such an element never counts as
+    in it, nor as the load of copy.js. Not a full HTML5 tree builder; the committed pages rest on build-site.py
+    --check and the generator's validator."""
 
     def __init__(self, text: str) -> None:
         super().__init__()
@@ -469,6 +488,7 @@ class LoadScan(HTMLParser):
         self.heads = 0
         self.head_ended = False
         self.outside_head: set[int] = set()
+        self.inert: set[int] = set()
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
         attrs = {k.lower(): (v if v is not None else "") for k, v in attrs_list}
@@ -483,6 +503,8 @@ class LoadScan(HTMLParser):
             self.head_ended = True
         if tag in ("script", "link") and (self.stack != ["html", "head"] or self.heads != 1 or self.head_ended):
             self.outside_head.add(element[0])
+        if any(name in inert_elements() for name in self.stack):
+            self.inert.add(element[0])
         if tag not in VOID:
             self.stack.append(tag)
         if tag == "script":
@@ -553,10 +575,13 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
                 f"{where}: {tag} is not 1 of the baseline scripts this site uses ({', '.join(ALLOWED_SCRIPTS)}) "
                 "with a ?v=X.Y.Z token and defer."
             )
-        else:
+        elif at not in loads.inert:
             deferred.append(name.group(1))
     if "copy.js" not in deferred:
-        problems.append(f"{where}: copy.js is not loaded from /assets/baseline/ with a ?v=X.Y.Z token and defer.")
+        problems.append(
+            f"{where}: copy.js is not loaded from /assets/baseline/ with a ?v=X.Y.Z token and defer, "
+            "outside noscript, template and raw text."
+        )
     # The text match also finds a tag that the parser reads as a comment or as text.
     for match in re.finditer(r"<script\b[^>]*\bsrc=[^>]*>", text):
         if SCHEME_TAG.match(text, match.start()):
@@ -617,8 +642,10 @@ def check_install_page(text: str) -> list[str]:
         if [link["order"] for link in found] != sorted(link["order"] for link in found):
             problems.append(f"{where}: the family links are not in the order {', '.join(FAMILIES)}.")
     for gid in TEMPLATE_IDS + FAMILIES:
-        if parser.id_counts.get(gid, 0) == 0:
-            problems.append(f'{where}: the id "{gid}" is missing; existing deep links use it.')
+        if gid not in parser.id_live:
+            problems.append(
+                f'{where}: the id "{gid}" is missing outside noscript, template and raw text; existing deep links use it.'
+            )
     return problems
 
 
@@ -644,7 +671,7 @@ def check_family_page(fam: str, text: str) -> list[str]:
         problems.append(f"{where}: a step list reads as hidden in the static markup.")
     for target in ("/install/#get", "/install/#test"):
         if target not in parser.hrefs:
-            problems.append(f"{where}: no link to {target}.")
+            problems.append(f"{where}: no link to {target} outside noscript, template and raw text.")
     return problems
 
 

@@ -303,6 +303,15 @@ REFUSALS = [
     ("an in-page link with no target", inject('<p><a href="#nowhere">x</a></p>')),
     ("a link to a page that is not generated", inject('<p><a href="{{base}}nope/">x</a></p>')),
     ("a link to an anchor the target lacks", inject('<p><a href="{{base}}install/#nowhere">x</a></p>')),
+    # A browser with scripting on renders no markup inside noscript: an h1 or a link target there is not present.
+    ("the only h1 inside noscript", lambda root: (
+        edit(root, PAGE, "<h1>", "<noscript><h1>"), edit(root, PAGE, "</h1>", "</h1></noscript>"))),
+    ("an in-page link whose only target is inside noscript",
+        inject('<noscript><p id="inert-target">x</p></noscript><p><a href="#inert-target">x</a></p>')),
+    ("a link to an anchor the target page has only inside noscript", lambda root: (
+        edit(root, "site-src/pages/install.html", 'id="test">', 'id="test"><noscript><span id="inert-anchor"></span></noscript>'),
+        inject('<p><a href="{{base}}install/#inert-anchor">x</a></p>')(root),
+    )),
     ("an allowlisted root link to a missing file", lambda root: (
         edit(root, "site-src/site.json", '"/downloads/cleanlanguage-8k.md"', '"/downloads/cleanlanguage-8k.md", "/downloads/gone.md"'),
         inject('<p><a href="/downloads/gone.md">x</a></p>')(root),
@@ -464,6 +473,36 @@ def check_scheme_validation(failures: list[str]) -> int:
         if not any(helper_says in problem for problem in scheme_problems("license/index.html", page_html, "/", config)):
             failures.append(f"scheme helper '{name}': not refused by its rule")
     return 2 * len(cases) + 2 * len(ruled)
+
+
+def check_inert_validation(failures: list[str]) -> int:
+    """The blocks and the robots meta validate() requires, called directly on committed pages, each moved inside
+    noscript or raw text, whose content a browser with scripting on does not render as markup."""
+    generator = load_module(GENERATOR)
+    config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
+    pages = {entry["id"]: entry for entry in config["pages"]}
+    texts = {page_id: (REPO_ROOT / f"site/{page_id}/index.html").read_text(encoding="utf-8") for page_id in ("license", "draft")}
+    skip, status, robots = generator.SKIP_LINK, generator.COPY_STATUS, '<meta name="robots" content="noindex, nofollow">'
+    cases = [
+        ("the committed licence page", "license", None, None, True),
+        ("the committed draft page", "draft", None, None, True),
+        ("the skip link only inside noscript", "license", skip, f"<noscript>{skip}</noscript>", False),
+        ("the skip link only inside a title", "license", skip, f"<title>{skip}</title>", False),
+        ("#copy-status only inside noscript", "license", status, f"<noscript>{status}</noscript>", False),
+        ("the robots meta only inside noscript in the head", "draft", robots, f"<noscript>{robots}</noscript>", False),
+    ]
+    for name, page_id, old, new, passes in cases:
+        page_html = texts[page_id] if old is None else texts[page_id].replace(old, new, 1)
+        if old is not None and old not in texts[page_id]:
+            failures.append(f"inert validation '{name}': {old!r} is not in site/{page_id}/index.html")
+        try:
+            generator.validate(page_html, pages[page_id], config, "/")
+            passed = True
+        except generator.BuildError:
+            passed = False
+        if passed != passes:
+            failures.append(f"inert validation '{name}': {'passed' if passed else 'refused'}, expected the opposite")
+    return len(cases)
 
 
 def check_generator_header(failures: list[str]) -> int:
@@ -759,6 +798,7 @@ def main() -> int:
     ran += check_refusals(failures)
     ran += check_unreadable(failures)
     ran += check_scheme_validation(failures)
+    ran += check_inert_validation(failures)
     ran += check_generator_header(failures)
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
