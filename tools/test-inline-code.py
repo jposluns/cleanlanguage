@@ -32,6 +32,12 @@ HOLDING = "site/draft/index.html"
 FAVICON = "site/assets/baseline/logos/cleanlanguage-favicon.svg"
 DEMO = "site/demo/index.html"
 IMG = '<img src="x" onerror="alert(1)">'
+# Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS and expects exit 3.
+VERSION_PROBE = (
+    "import sys, runpy; "
+    "sys.version_info = (3, 13, 9, 'final', 0); "
+    "runpy.run_path(sys.argv[1], run_name='__main__')"
+)
 # The sha256 of the light and dark switch of template specification 7.33, computed from the 1.6.0
 # reference page reference/install.html line 18 (761 bytes, from <button class="scheme" to </button>).
 SWITCH_SHA256 = "9cbd502757bf584b5b83c5319729a9f33310682f305597b64347bc263f586f00"
@@ -326,12 +332,19 @@ def main() -> int:
             if result.returncode != expected or says not in result.stdout:
                 failures.append(f"{name}: exit {result.returncode}, expected {expected}{' with ' + repr(says) if says else ''}: "
                                 f"{(result.stdout + result.stderr).strip()[:300]}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
+                                capture_output=True, text=True)
+        if result.returncode != 3:
+            failures.append(f"another Python version: exit {result.returncode}, expected 3: "
+                            f"{(result.stdout + result.stderr).strip()[:300]}")
     if failures:
         print("test-inline-code: failures:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-inline-code: all {len(CASES) + len(SWITCH_RULES)} cases passed.")
+    print(f"test-inline-code: all {len(CASES) + len(SWITCH_RULES) + 1} cases passed.")
     return 0
 
 

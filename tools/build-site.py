@@ -83,7 +83,7 @@ tag other than those HTML5 allows in a head (``HEAD_TAGS``), or ``</body>``,
 ``</html>`` or ``</br>``; a script or stylesheet after that point is outside
 it. No element with ``data-scheme-toggle`` may sit inside an element whose
 content a browser with scripting on, the only case in which ``scheme.js``
-runs, does not render as page content (``INERT_TAGS``: ``noscript``,
+runs, does not render as page elements (``INERT_TAGS``: ``noscript``,
 ``template``, ``plaintext``, the raw-text and RCDATA elements, and the elements
 ``tools/check-install-page.py`` hides for that reason, ``audio``, ``canvas``,
 ``datalist``, ``meter``, ``object``, ``progress``, ``rp``, ``select`` and
@@ -170,7 +170,7 @@ VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 # The elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render
-# as page content: noscript, template, plaintext, the raw-text and RCDATA elements, and the elements
+# as page elements: noscript, template, plaintext, the raw-text and RCDATA elements, and the elements
 # tools/check-install-page.py hides (HIDING_ELEMENTS) for the same reason. No switch counts as placed inside one.
 INERT_TAGS = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext",
               "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video"}

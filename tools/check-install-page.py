@@ -111,7 +111,7 @@ whitespace only, as HTML splits them (``class="btn&nbsp;inline"`` is 1 class,
 not ``btn`` and ``inline``). A script or stylesheet inside ``<noscript>``,
 ``<template>``, ``<plaintext>``, a raw-text element or one of ``HIDING_ELEMENTS``
 (``INERT_ELEMENTS`` of ``tools/check-inline-code.py``, whose content a
-browser with scripting on does not render as page content) is not in
+browser with scripting on does not render as page elements) is not in
 ``html > head``, so check 6 never counts it as placed there or as the load of
 ``copy.js``; nor do checks 3 and 4 count an id or a link inside one. What
 guarantees the committed pages is the
@@ -334,7 +334,7 @@ def inline_code(where: str, text: str) -> list[str]:
 
 
 def inert_elements() -> tuple[str, ...]:
-    """The elements whose content a browser with scripting on does not render as page content (noscript, template,
+    """The elements whose content a browser with scripting on does not render as page elements (noscript, template,
     plaintext, the raw-text and RCDATA elements, and HIDING_ELEMENTS), as tools/check-inline-code.py names them for
     check 7."""
     return load_tool("check-inline-code.py").INERT_ELEMENTS
@@ -393,7 +393,8 @@ class PageParser(HTMLParser):
         self.order = 0
         self.id_counts: Counter = Counter()
         self.id_first: dict[str, int] = {}
-        # The ids on an element outside every element of INERT_ELEMENTS, which a browser with scripting on renders.
+        # The ids on an element outside every element of INERT_ELEMENTS. Such an element can still be hidden by
+        # the rules of check 1, so a browser need not render it; check 3 does not ask that it is visible.
         self.id_live: set[str] = set()
         self.retired: list[str] = []
         self.anchors: list[dict] = []

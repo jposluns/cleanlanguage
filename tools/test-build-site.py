@@ -97,7 +97,7 @@ VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "met
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 # The elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render as
-# page content: noscript, template, plaintext, the raw-text and RCDATA elements, and the elements
+# page elements: noscript, template, plaintext, the raw-text and RCDATA elements, and the elements
 # tools/check-install-page.py hides (HIDING_ELEMENTS) for the same reason. No switch counts as placed inside one.
 ADDED_INERT = ("audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video")
 INERT = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext",
@@ -498,7 +498,7 @@ def check_scheme_validation(failures: list[str]) -> int:
 
 def check_inert_validation(failures: list[str]) -> int:
     """The blocks, the h1 and the robots meta validate() requires, called directly on committed pages, each moved
-    inside noscript, raw text or canvas, whose content a browser with scripting on does not render as page content."""
+    inside noscript, raw text or canvas, whose content a browser with scripting on does not render as page elements."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     pages = {entry["id"]: entry for entry in config["pages"]}
