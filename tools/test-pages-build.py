@@ -19,8 +19,10 @@ It also reads .python-version at the repository root, which names the Python
 release for the Pages build (site/README.md), and fails if the file is missing
 or names a version outside SUPPORTED_PYTHONS in tools/check-inline-code.py,
 which exits 3 on any other version. It fails too if a workflow in
-SETUP_PYTHON_WORKFLOWS does not set up that release, with actions/setup-python
-pinned to a commit and reading .python-version, before its first run step.
+VERSION_CHECK_WORKFLOWS does not run tools/check-python-version.py, with shell:
+bash, before its first other run step. It runs that tool in a temporary tree
+against each .python-version in VERSION_CASES: one that names this interpreter,
+one that names another release, a missing file and two malformed files.
 
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -41,14 +44,27 @@ SCRIPT = REPO_ROOT / "tools" / "pages-build.sh"
 PYTHON_VERSION_FILE = REPO_ROOT / ".python-version"
 INLINE_GATE = REPO_ROOT / "tools" / "check-inline-code.py"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
-# The workflows that run tools/check-inline-code.py, directly or through a page check, on the
-# release that .python-version names. release-dry-run.yml keeps the runner's python3, as its
-# header says; the page checks it runs exit 3 on a version the gate does not support.
-SETUP_PYTHON_WORKFLOWS = ("site-hardening.yml", "install-page.yml", "portable-text-sync.yml", "pages-build.yml")
-SETUP_PYTHON = re.compile(
-    r"\n      - name: [^\n]+\n        uses: actions/setup-python@[0-9a-f]{40} # v[0-9.]+\n"
-    r"        with:\n          python-version-file: \.python-version\n"
+VERSION_TOOL = REPO_ROOT / "tools" / "check-python-version.py"
+# The workflows that run tools/check-inline-code.py, directly or through a page check. Each runs
+# tools/check-python-version.py before its first other run step, so a runner whose python3 is not
+# the release that .python-version names fails there.
+VERSION_CHECK_WORKFLOWS = ("site-hardening.yml", "install-page.yml", "portable-text-sync.yml", "pages-build.yml",
+                           "release-dry-run.yml")
+VERSION_STEP = re.compile(
+    r"\n      - name: [^\n]+\n        shell: bash\n        run: python3 -I tools/check-python-version\.py\n"
 )
+FIRST_RUN = re.compile(r"\n      (?:- |  )run: ")
+RUNNING = platform.python_version()
+OTHER = f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2] + 1}"
+# (case, .python-version text or None for no file, wanted exit, text the one output line must hold)
+VERSION_CASES = [
+    ("a .python-version that names this interpreter", f"{RUNNING}\n", 0, [RUNNING]),
+    ("a .python-version that names another release", f"{OTHER}\n", 3, [RUNNING, OTHER]),
+    ("no .python-version", None, 3, [".python-version"]),
+    ("a .python-version that names no patch release", f"{sys.version_info[0]}.{sys.version_info[1]}\n", 3,
+     [".python-version"]),
+    ("a .python-version of two lines", f"{RUNNING}\n{RUNNING}\n", 3, [".python-version"]),
+]
 
 EXPECTED = [
     ["tools/check-baseline-pin.py"],
@@ -101,20 +117,44 @@ def python_version_problem() -> str | None:
     return None
 
 
-def setup_python_problems() -> list[str]:
-    """Each workflow in SETUP_PYTHON_WORKFLOWS that does not set up .python-version before its first run step."""
+def version_step_problems() -> list[str]:
+    """Each workflow in VERSION_CHECK_WORKFLOWS whose first run step is not the version check."""
     problems = []
-    for name in SETUP_PYTHON_WORKFLOWS:
+    for name in VERSION_CHECK_WORKFLOWS:
         try:
             text = (WORKFLOWS / name).read_text(encoding="utf-8")
         except OSError as error:
             problems.append(f".github/workflows/{name} could not be read: {error}")
             continue
-        step = SETUP_PYTHON.search(text)
-        run = text.find("\n        run: ")
-        if step is None or (run != -1 and run < step.start()):
-            problems.append(f".github/workflows/{name} does not set up the release that .python-version names "
-                            "with a pinned actions/setup-python step before its first run step")
+        step = VERSION_STEP.search(text)
+        run = FIRST_RUN.search(text)
+        if step is None or run is None or not step.start() < run.start() < step.end():
+            problems.append(f".github/workflows/{name} does not run python3 -I tools/check-python-version.py, "
+                            "with shell: bash, before its first other run step")
+    return problems
+
+
+def version_tool_problems() -> list[str]:
+    """Each case in VERSION_CASES where tools/check-python-version.py does not exit as wanted with one line."""
+    problems = []
+    for name, text, want, needles in VERSION_CASES:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tools").mkdir()
+            try:
+                shutil.copy2(VERSION_TOOL, root / "tools" / VERSION_TOOL.name)
+            except OSError as error:
+                problems.append(f"check-python-version.py with {name}: the tool could not be copied: {error}")
+                continue
+            if text is not None:
+                (root / ".python-version").write_text(text, encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, "-I", str(root / "tools" / VERSION_TOOL.name)], capture_output=True, text=True
+            )
+            output = result.stdout + result.stderr
+            if result.returncode != want or output.count("\n") != 1 or not all(n in output for n in needles):
+                problems.append(f"check-python-version.py with {name}: exit {result.returncode}, wanted exit "
+                                f"{want} and one line naming {', '.join(needles)}: {output.strip()[:300]}")
     return problems
 
 
@@ -152,7 +192,8 @@ def main() -> int:
     problem = python_version_problem()
     if problem:
         failures.append(problem)
-    failures += setup_python_problems()
+    failures += version_step_problems()
+    failures += version_tool_problems()
 
     for failure in failures:
         print(f"FAIL {failure}")
@@ -161,8 +202,9 @@ def main() -> int:
     print(
         f"pages-build.sh runs all {len(EXPECTED)} gates in order, fails when one exits 1 or 3, "
         f"and fails with exit 3 when one is missing ({1 + 3 * len(EXPECTED)} cases); "
-        ".python-version names a version that tools/check-inline-code.py supports, and "
-        f"{len(SETUP_PYTHON_WORKFLOWS)} workflows set it up before their first run step."
+        ".python-version names a version that tools/check-inline-code.py supports, "
+        f"{len(VERSION_CHECK_WORKFLOWS)} workflows check it before their first other run step, and "
+        f"tools/check-python-version.py passes {len(VERSION_CASES)} cases."
     )
     return 0
 
