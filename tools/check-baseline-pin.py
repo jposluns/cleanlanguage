@@ -51,7 +51,8 @@ What it verifies
    set to the pin's version (its lines other than blank ones, compared byte
    for byte, up to the next heading of level 1 or 2, so a subsection's lines
    count), so an entry edited by hand, extended, or left on an earlier
-   version, fails. It is read only when the README matches its digest.
+   version, fails. It is read only when the README matches its digest, and a
+   README that holds a carriage return anywhere is refused (exit 3).
 
 Every folder is listed with ``os.scandir``, so a folder or file that cannot be
 read fails closed (exit 3) rather than reading as empty.
@@ -73,7 +74,8 @@ Exit codes:
      pin's version is not the README's; or NOTICE.md's Site template entry
      is not the one the README prescribes
   3  the pin or a file could not be read, the pin is malformed, or the README
-     lacks its version heading or its step 7 NOTICE entry
+     lacks its version heading or its step 7 NOTICE entry, or holds a carriage
+     return
 """
 
 from __future__ import annotations
@@ -102,11 +104,11 @@ DOCUMENTS = ("README.md", "SPECIFICATION.md")
 README_HEADING = re.compile(r"^# Baseline ([0-9]+\.[0-9]+\.[0-9]+): ")
 # The README's "Adoption in a repository" step 7 and the prefix of its quoted NOTICE entry, read by notice_entry(),
 # which tools/copy-baseline.py loads from here; the entry's section in NOTICE.md, which only a heading of the same or a
-# higher level (1 or 2 "#" and a space) ends.
+# higher level ends: up to 3 spaces, 1 or 2 "#", then a space, a tab or the end of the line.
 NOTICE_STEP = "7. Add this entry to the repository's NOTICE:"
 ENTRY_PREFIX = "   > "
 NOTICE_SECTION = "## Site template"
-SECTION_END = re.compile(r"^#{1,2} ")
+SECTION_END = re.compile(r"^ {0,3}#{1,2}(?:[ \t]|$)")
 PREFIX = "assets/baseline/"
 # The pinned build tool: its key in the pin, from the repository root, and its name in SHA256SUMS.
 TOOLS = {".baseline/check_palette.py": "tools/check_palette.py"}
@@ -196,7 +198,10 @@ def list_tree(directory: Path) -> list[str]:
 
 
 def notice_entry(readme: str) -> str | None:
-    """The NOTICE entry of the README's step 7, or None unless it is exactly 1 quoted line holding <version> once."""
+    """The NOTICE entry of the README's step 7, or None unless it is exactly 1 quoted line holding <version> once
+    and the README holds no carriage return, so an entry line that alone ends in CRLF is refused too."""
+    if "\r" in readme:
+        return None
     lines = readme.split("\n")
     steps = [number for number, line in enumerate(lines) if NOTICE_STEP[len("7. "):] in line]
     if len(steps) != 1 or lines[steps[0]] != NOTICE_STEP:
@@ -241,8 +246,8 @@ def document_problems(root: Path, version: str, published: dict[str, str]) -> li
                         f"{heading.group(1)}: the pin and SHA256SUMS belong to different versions.")
     entry = notice_entry(readme)
     if entry is None:
-        raise Unreadable(f"{PIN.parent / 'README.md'} has no step 7 {NOTICE_STEP[len('7. '):]!r} "
-                         "with 1 quoted entry holding <version> once")
+        raise Unreadable(f"{PIN.parent / 'README.md'} holds a carriage return or has no step 7 "
+                         f"{NOTICE_STEP[len('7. '):]!r} with 1 quoted entry holding <version> once")
     try:
         lines = read_bytes(root / NOTICE).decode("utf-8").split("\n")
     except UnicodeError as error:

@@ -21,7 +21,7 @@ refuses to copy unless:
    bytes decoded without newline translation, by the gate's own
    ``notice_entry()``, which this tool loads from
    ``tools/check-baseline-pin.py`` next to it, so a README the gate would
-   refuse, such as one with CRLF line ends, is refused here too.
+   refuse, such as one with a carriage return in any line, is refused here too.
 
 It then copies these of the runtime and licence files that the baseline README
 lists ("Adoption in a repository", step 2): the stylesheets, the fonts with
@@ -46,6 +46,8 @@ the README's version against the pin's and its NOTICE entry against
 the copy.
 ``tools/check-baseline-pin.py`` checks the copy offline on every pull request.
 
+It needs Python 3.11 or later, since the gate it loads imports ``tomllib``.
+
 Usage:
     python3 -I tools/copy-baseline.py --from <unpacked version folder> \\
         --sums-sha256 <sha256 of SHA256SUMS> --archive-sha256 <sha256 of the archive>
@@ -53,15 +55,18 @@ Usage:
 Exit codes:
   0  copied and pinned
   1  a digest did not match, the folder is not a complete version, or its README
-     lacks the folder's version heading or the step 7 NOTICE entry
-  3  an input could not be read
+     lacks the folder's version heading or the step 7 NOTICE entry, or holds a
+     carriage return
+  3  an input could not be read, or Python is older than 3.11
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -102,13 +107,17 @@ def sha256(path: Path) -> str:
 
 
 def load_gate():
-    """tools/check-baseline-pin.py as a module, for its notice_entry() and NOTICE_STEP."""
+    """tools/check-baseline-pin.py as a module, for its notice_entry() and NOTICE_STEP. The gate's tomllib guard
+    exits on Python older than 3.11; its message is dropped and this tool reports the floor in its own words."""
     try:
         spec = importlib.util.spec_from_file_location("check_baseline_pin", GATE)
         module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        with contextlib.redirect_stderr(io.StringIO()):
+            spec.loader.exec_module(module)
     except (OSError, SyntaxError) as error:
         die(3, f"{GATE} could not be loaded: {error}")
+    except SystemExit:
+        die(3, f"Python 3.11 or later is required (tomllib, which {GATE.name} imports)")
     return module
 
 
@@ -207,7 +216,8 @@ def main() -> int:
         die(1, f"README.md does not start with the heading '# Baseline {version}: ', the folder's version")
     gate = load_gate()
     if gate.notice_entry(readme) is None:
-        die(1, f"README.md has no step 7 {gate.NOTICE_STEP[len('7. '):]!r} with 1 quoted entry holding <version> once")
+        die(1, f"README.md holds a carriage return or has no step 7 {gate.NOTICE_STEP[len('7. '):]!r} "
+               "with 1 quoted entry holding <version> once")
 
     chosen = sorted(name for name in listed if wanted(name))
     dest = output_root() / PREFIX

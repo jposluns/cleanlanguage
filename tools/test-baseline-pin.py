@@ -5,14 +5,17 @@ Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
 with the version's README and specification under ``.baseline/`` and a root
 ``NOTICE.md``, applies 1 fault, runs the gate on that tree as a separate
 process and asserts its exit code, and for some cases a line of its output.
-The last case runs the gate on this repository. The first 10 cases run
+The last case runs the gate on this repository. The first 12 cases run
 ``tools/copy-baseline.py`` on a small version folder and assert that the pin
 header it writes, and the committed one, give each key's base; that it copies
 and pins the build tool and counts it among the copied files; that it copies
-the README and the specification to ``.baseline/`` without pinning them; and
-that a version without the build tool, the README or the specification, or
-whose README names another version, lacks its step 7 NOTICE entry or has CRLF
-line ends, exits 1 before any served file is replaced.
+the README and the specification to ``.baseline/`` without pinning them; that
+a version without the build tool, the README or the specification, or whose
+README names another version, lacks its step 7 NOTICE entry or has CRLF line
+ends, on every line or on the entry line only, exits 1 before any served file
+is replaced; and that on Python older than 3.11, stood in for by a gate whose
+tomllib import fails, it exits 3 with its own message before any served file
+is replaced.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
@@ -278,6 +281,33 @@ def fault_notice_missing(root: Path) -> None:
     (root / "NOTICE.md").unlink()
 
 
+def fault_readme_entry_crlf(root: Path) -> None:
+    edit_readme(root, b"with 2 exceptions.\n", b"with 2 exceptions.\r\n")
+
+
+def fault_notice_nested_tab_subsection(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n",
+              "with 2 exceptions.\n\n###\tExceptions\n\nA 3rd exception: x.\n")
+
+
+# Valid level 1 or 2 headings that end the Site template section, so the lines after them are not compared: the
+# clean NOTICE.md's "## Other" in another form.
+def end_tab(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Other\n", "##\tOther\n")
+
+
+def end_bare_level_2(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Other\n", "##\n")
+
+
+def end_bare_level_1(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Other\n", "#\n")
+
+
+def end_indented(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Other\n", "   # Other\n")
+
+
 CASES = [
     ("clean tree passes", None, 0),
     ("1 flipped byte", fault_flip_byte, 1),
@@ -303,6 +333,12 @@ CASES = [
     ("a second paragraph in the Site template section", fault_notice_second_paragraph, 1),
     ("a ### subsection under the Site template section", fault_notice_nested_subsection, 1,
         "NOTICE.md's '## Site template'"),
+    ("a ### subsection with a tab under the Site template section", fault_notice_nested_tab_subsection, 1,
+        "NOTICE.md's '## Site template'"),
+    ("the Site template section ended by a level 2 heading with a tab", end_tab, 0),
+    ("the Site template section ended by a bare ##", end_bare_level_2, 0),
+    ("the Site template section ended by a bare #", end_bare_level_1, 0),
+    ("the Site template section ended by a level 1 heading indented 3 spaces", end_indented, 0),
     ("malformed TOML", fault_bad_toml, 3),
     ("no version", fault_missing_version, 3),
     ("a key outside the README format", fault_extra_key, 3),
@@ -317,17 +353,18 @@ CASES = [
     ("a README without its version heading", fault_readme_no_heading, 3),
     ("a README without its step 7 NOTICE entry", fault_readme_no_entry, 3),
     ("a README with CRLF line ends", fault_readme_crlf, 3),
+    ("a README with CRLF only on its step 7 entry line", fault_readme_entry_crlf, 3),
     ("the copied specification is missing", fault_spec_missing, 3),
     ("NOTICE.md is missing", fault_notice_missing, 3),
 ]
 
 
-def run_copy(root: Path, package: dict[str, bytes]) -> subprocess.CompletedProcess:
+def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None) -> subprocess.CompletedProcess:
     """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS, with the
-    gate beside it, from which it loads notice_entry()."""
+    gate (or the given gate source) beside it, from which it loads notice_entry()."""
     (root / "tools").mkdir()
     shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
-    shutil.copyfile(GATE, root / "tools" / GATE.name)
+    (root / "tools" / GATE.name).write_bytes(GATE.read_bytes() if gate is None else gate)
     (root / "site-src").mkdir()
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
     for name, data in package.items():
@@ -354,7 +391,32 @@ COPY_REFUSALS = [
     # would only fail at deploy.
     ("a README with CRLF line ends",
         lambda package: package.update({"README.md": README.replace(b"\n", b"\r\n")})),
+    # The gate refuses this one too (exit 3), as it refuses a carriage return anywhere in the README.
+    ("a README with CRLF only on its step 7 entry line",
+        lambda package: package.update({"README.md": README.replace(b"exceptions.\n", b"exceptions.\r\n")})),
 ]
+
+
+def python_floor_problems() -> list[str]:
+    """On Python older than 3.11 the gate's tomllib guard exits 3; copy-baseline catches that and reports it in its
+    own words before it replaces a served file. A gate whose tomllib import fails stands in for the old Python."""
+    source = GATE.read_bytes()
+    if source.count(b"\n    import tomllib\n") != 1:
+        return ["the Python floor: the gate's 'import tomllib' is not once in tools/check-baseline-pin.py"]
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        served = root / "site" / "assets" / "baseline" / "served-before.css"
+        served.parent.mkdir(parents=True)
+        served.write_bytes(b"a { color: red; }\n")
+        gate = source.replace(b"\n    import tomllib\n", b"\n    import tomllib_absent_here\n", 1)
+        result = run_copy(root, dict(PACKAGE), gate)
+        lines = result.stderr.splitlines()
+        if (result.returncode != 3 or not served.is_file() or len(lines) != 1
+                or not lines[0].startswith("copy-baseline: Python 3.11 or later is required")):
+            return [f"the Python floor: copy-baseline exits {result.returncode} with "
+                    f"{result.stderr.strip()[:200]!r}; expected 3 with its own 1 line naming Python 3.11, "
+                    "the served files kept"]
+    return []
 
 
 def copy_problems() -> list[str]:
@@ -417,8 +479,8 @@ def pin_header_problems() -> list[str]:
 
 
 def main() -> int:
-    failures: list[str] = pin_header_problems() + copy_problems()
-    ran = 4 + len(COPY_REFUSALS)
+    failures: list[str] = pin_header_problems() + copy_problems() + python_floor_problems()
+    ran = 5 + len(COPY_REFUSALS)
     for name, fault, expected, *needles in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

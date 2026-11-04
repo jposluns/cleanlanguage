@@ -292,18 +292,19 @@ def specification_about(specification: Path = SPECIFICATION, sums: Path = SUMS) 
 
 
 try:
-    ABOUT_SPEC, ABOUT_PATHS = specification_about()
+    specification_about()
 except (OSError, UnicodeError, ValueError, KeyError) as error:
     print(f"test-build-site: failures:\n  - the About block of specification 7.24: {error}")
     raise SystemExit(1)
 
 
-def about_block(base: str) -> str:
+def about_block(base: str, specification: Path = SPECIFICATION, sums: Path = SUMS) -> str:
     """The landing page's whole About block of specification 7.24 at base: the region, its label and the div around
-    the About row, read from the pinned template's SPECIFICATION.md (ABOUT_SPEC) apart from the generator's
-    ABOUT_BLOCK and about_line(), with base in place of the leading / of each about_paths href."""
-    block = ABOUT_SPEC
-    for path in ABOUT_PATHS:
+    the About row, read by specification_about() from the specification, the pinned template's SPECIFICATION.md
+    unless given, apart from the generator's ABOUT_BLOCK and about_line(), with base in place of the leading / of
+    each about_paths href."""
+    block, paths = specification_about(specification, sums)
+    for path in paths:
         block = block.replace(f'href="/{path}"', f'href="{base}{path}"')
     return block
 
@@ -922,11 +923,43 @@ def check_generator_about(failures: list[str]) -> int:
 def check_about_source(failures: list[str]) -> int:
     """The build test's helper gives the About block that the pinned .baseline/SPECIFICATION.md carries, read here
     as text: at base /, it is the backtick span of the 1 line starting with ABOUT_MARKUP. A helper that keeps a copy
-    of the block, changed along with the generator's, passes every other case but not this one."""
+    of the block, changed along with the generator's, passes every case but this one and check_about_reader()."""
     block = about_block("/")
     lines = SPECIFICATION.read_bytes().decode("utf-8").split("\n")
     if sum(line.startswith(f"{ABOUT_MARKUP}{block}`") for line in lines) != 1:
         failures.append("About source: the helper's About block is not the one .baseline/SPECIFICATION.md gives")
+    return 1
+
+
+def check_about_reader(failures: list[str]) -> int:
+    """The helper's About block comes only from specification_about(): on a copy of the pinned specification whose
+    7.24 block is altered, with a SHA256SUMS that lists the copy's digest, the helper gives the altered block at
+    base / and at /draft/. A helper that keeps a literal copy of today's block passes every other case but not this
+    one."""
+    block = about_block("/")
+    old = f"{ABOUT_MARKUP}{block}`"
+    altered = block.replace(f">{LABEL}</p>", ">About this altered project</p>", 1)
+    text = SPECIFICATION.read_bytes().decode("utf-8")
+    if text.count(old) != 1 or altered == block:
+        failures.append("About reader: the 7.24 block or its label is not once in .baseline/SPECIFICATION.md")
+        return 1
+    data = text.replace(old, f"{ABOUT_MARKUP}{altered}`", 1).encode("utf-8")
+    sums = SUMS.read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as scratch:
+        changed, changed_sums = Path(scratch) / SPECIFICATION.name, Path(scratch) / SUMS.name
+        changed.write_bytes(data)
+        changed_sums.write_text(sums.replace(hashlib.sha256(SPECIFICATION.read_bytes()).hexdigest(),
+                                             hashlib.sha256(data).hexdigest(), 1), encoding="utf-8")
+        draft = altered
+        for path in json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))["about_paths"]:
+            draft = draft.replace(f'href="/{path}"', f'href="/draft/{path}"')
+        try:
+            given = about_block("/", changed, changed_sums), about_block("/draft/", changed, changed_sums)
+        except ValueError as error:
+            failures.append(f"About reader: the altered specification is refused ({error})")
+        else:
+            if given != (altered, draft):
+                failures.append("About reader: the helper's About block does not follow the specification's 7.24")
     return 1
 
 
@@ -1241,6 +1274,7 @@ def main() -> int:
     ran += check_generator_header(failures)
     ran += check_generator_about(failures)
     ran += check_about_source(failures)
+    ran += check_about_reader(failures)
     ran += check_specification_digest(failures)
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
