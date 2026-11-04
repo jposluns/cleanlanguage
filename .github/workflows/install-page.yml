@@ -15,6 +15,8 @@ on:
       - "tools/check-headers.py"
       - "tools/check-inline-code.py"
       - "tools/test-install-page.py"
+      - "tools/check-python-version.py"
+      - ".python-version"
       - ".github/workflows/install-page.yml"
   push:
     branches:
@@ -27,6 +29,8 @@ on:
       - "tools/check-headers.py"
       - "tools/check-inline-code.py"
       - "tools/test-install-page.py"
+      - "tools/check-python-version.py"
+      - ".python-version"
       - ".github/workflows/install-page.yml"
 
 permissions:
@@ -38,6 +42,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Check that python3 is the release that .python-version names
+        shell: bash
+        run: python3 -I tools/check-python-version.py
 
       - name: Run the install page gate tests
         shell: bash

@@ -6,6 +6,13 @@ name: Release dry run
 # tools/release-dry-run.sh. This workflow holds read-only permissions, keeps
 # no credentials after checkout, uses no secrets, and pushes, tags, releases,
 # and merges nothing.
+#
+# It runs on the runner's python3. The first step after the checkout runs
+# tools/check-python-version.py, which, on Python 3.7 or later, exits 3 unless
+# that python3 is the release that .python-version names. The two page checks
+# that the dry run runs load tools/check-inline-code.py and exit 3 on a Python
+# version that the gate does not support: from 3.7 on for the instructions page
+# check, and from 3.9 on for the install page check.
 
 on:
   pull_request:
@@ -42,6 +49,9 @@ on:
       - "tools/check-links.py"
       - "tools/check-install-page.py"
       - "tools/check-instructions-page.py"
+      - "tools/check-inline-code.py"
+      - "tools/check-python-version.py"
+      - ".python-version"
       - "tools/build-site.py"
       - "tools/check-baseline-pin.py"
       - ".github/workflows/release-skill.yml"
@@ -82,6 +92,9 @@ on:
       - "tools/check-links.py"
       - "tools/check-install-page.py"
       - "tools/check-instructions-page.py"
+      - "tools/check-inline-code.py"
+      - "tools/check-python-version.py"
+      - ".python-version"
       - "tools/build-site.py"
       - "tools/check-baseline-pin.py"
       - ".github/workflows/release-skill.yml"
@@ -103,6 +116,10 @@ jobs:
           fetch-depth: 0
           # The dry run needs no credentials after checkout, so none are kept.
           persist-credentials: false
+
+      - name: Check that python3 is the release that .python-version names
+        shell: bash
+        run: python3 -I tools/check-python-version.py
 
       - name: Cross-consumer version-parse contract
         shell: bash

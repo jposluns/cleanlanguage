@@ -20,7 +20,7 @@ name: Portable text sync
 # load, and a path list cannot be kept complete against those reads. As
 # sitemap.yml explains, running on every pull request also keeps this gate
 # promotable to a required check; to promote it, first give the job a unique
-# display name, as manifest-icon.yml does. The step after checkout runs
+# display name, as manifest-icon.yml does. The second step after checkout runs
 # tools/test-portable-text-sync-workflow.py, which fails if a paths or
 # paths-ignore filter comes back on either trigger. workflow-isolation.yml,
 # which carries no paths filter either, runs it too, so a pull request that
@@ -41,6 +41,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Check that python3 is the release that .python-version names
+        shell: bash
+        run: python3 -I tools/check-python-version.py
 
       - name: Check neither trigger carries a path filter
         shell: bash
