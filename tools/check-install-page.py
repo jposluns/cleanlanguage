@@ -109,11 +109,12 @@ builder: they model the open elements as tags nest, void elements, the head's
 end (check 6), the hiding rules of check 1, and class names split on ASCII
 whitespace only, as HTML splits them (``class="btn&nbsp;inline"`` is 1 class,
 not ``btn`` and ``inline``). A script or stylesheet inside ``<noscript>``,
-``<template>`` or a raw-text element (``INERT_ELEMENTS`` of
-``tools/check-inline-code.py``, whose content a browser with scripting on does
-not render as markup) is not in ``html > head``, so check 6 never counts it as
-placed there or as the load of ``copy.js``; nor do checks 3 and 4 count an id
-or a link inside one. What guarantees the committed pages is the
+``<template>``, a raw-text element or one of ``HIDING_ELEMENTS``
+(``INERT_ELEMENTS`` of ``tools/check-inline-code.py``, whose content a
+browser with scripting on does not render as page content) is not in
+``html > head``, so check 6 never counts it as placed there or as the load of
+``copy.js``; nor do checks 3 and 4 count an id or a link inside one. What
+guarantees the committed pages is the
 generator: ``tools/build-site.py --check``, a deploy gate, compares them byte
 for byte with a fresh build, and the generator's validator holds each page's
 ``header.mast`` block to its pinned markup. An ancestor in checks 1 and 4 is an
@@ -310,8 +311,8 @@ def inline_code(where: str, text: str) -> list[str]:
 
 
 def inert_elements() -> tuple[str, ...]:
-    """The elements whose content a browser with scripting on does not render as markup (noscript, template, and
-    the raw-text and RCDATA elements), as tools/check-inline-code.py names them for check 7."""
+    """The elements whose content a browser with scripting on does not render as page content (noscript, template,
+    the raw-text and RCDATA elements, and HIDING_ELEMENTS), as tools/check-inline-code.py names them for check 7."""
     return load_tool("check-inline-code.py").INERT_ELEMENTS
 
 
@@ -471,7 +472,7 @@ class PageParser(HTMLParser):
 
 class LoadScan(HTMLParser):
     """Check 6: where each <script> and stylesheet <link> element starts, which of them start outside the
-    page's head, which start inside noscript, template or a raw-text element, and each tag that repeats an
+    page's head, which start inside an element of INERT_ELEMENTS (inert_elements()), and each tag that repeats an
     attribute. The head is html > head with no other open element, so a load inside such an element never counts as
     in it, nor as the load of copy.js. Not a full HTML5 tree builder; the committed pages rest on build-site.py
     --check and the generator's validator."""

@@ -68,11 +68,15 @@ every HTML page it refuses:
    ``<noscript>`` read as markup), must be exactly 1, and that 1 must be
    ``SCHEME_SWITCH``, byte for byte, the last child of ``header.mast``, after
    ``nav.nav``, with no ancestor whose content a browser with scripting on,
-   the only case in which ``scheme.js`` runs, does not render as markup
-   (``INERT_ELEMENTS``: ``noscript``, ``template``, and the raw-text and
-   RCDATA elements). Class names are read as HTML reads them, split on ASCII
-   whitespace only, so ``class="mast&nbsp;x"`` is not ``mast``. A page with
-   an end tag that closes no open element before that
+   the only case in which ``scheme.js`` runs, does not render as page content
+   (``INERT_ELEMENTS``: ``noscript``, ``template``, the raw-text and RCDATA
+   elements, and the elements ``tools/check-install-page.py`` hides for that
+   reason, ``audio``, ``canvas``, ``datalist``, ``meter``, ``object``,
+   ``progress``, ``rp``, ``select`` and ``video``, whose content a browser
+   renders only as fallback, only in its control or not at all, so this
+   refuses more than a browser hides). Class names are read as HTML reads
+   them, split on ASCII whitespace only, so ``class="mast&nbsp;x"`` is not
+   ``mast``. A page with an end tag that closes no open element before that
    switch's parent ends fails, since its place is then not known. A
    self-closing tag leaves an element that is neither void nor in ``<svg>``
    open, as in a browser, so ``<nav class="nav"/>`` before the switch makes
@@ -142,8 +146,11 @@ tags nest, void elements, the slash of a self-closing tag (honoured only in
 class names split on ASCII whitespace, and the ancestors in
 ``INERT_ELEMENTS``. What guarantees the committed pages is the generator:
 ``tools/build-site.py --check``, a deploy gate, compares them byte for byte
-with a fresh build, and the generator's validator holds each page's
-``header.mast`` block to its pinned markup. The gate does not judge the files
+with a fresh build, and the generator's validator holds each page's markup
+from ``<body>`` to the end of ``header.mast`` to its pinned bytes, at the
+start of the page's body; it pins nothing after ``header.mast``, and a change
+to its pinned markup made together with the same change to the generator
+passes it. The gate does not judge the files
 that external scripts load (under ``site/assets/baseline/``), other URL
 schemes such as ``data:``, ``<meta
 http-equiv="refresh">``, or animation of attributes other than ``href``. The
@@ -184,8 +191,11 @@ SVG_REFUSED_ELEMENTS = ("script", "style", "foreignObject")
 # as raw text by default; earlier versions read only script and style as raw text.
 RAW_TEXT_ELEMENTS = ("script", "style", "noscript", "title", "textarea", "xmp", "iframe", "noembed", "noframes")
 # Elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render as
-# markup: noscript, template, and the raw-text and RCDATA elements. Check 7 places no switch inside one.
-INERT_ELEMENTS = RAW_TEXT_ELEMENTS + ("template", "plaintext")
+# page content: noscript, template, the raw-text and RCDATA elements, and the elements tools/check-install-page.py
+# hides (HIDING_ELEMENTS) for the same reason. Check 7 places no switch inside one.
+INERT_ELEMENTS = RAW_TEXT_ELEMENTS + (
+    "template", "plaintext", "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video"
+)
 # HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
 ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # A browser removes leading and trailing C0 controls and spaces from a URL, and
@@ -365,7 +375,7 @@ class SwitchScan(HTMLParser):
         self.depth = 0
         self.parent_end: tuple[int, int] | None = None
         self.unbalanced = False
-        # Whether an element with data-scheme-toggle starts inside noscript, template or a raw-text element.
+        # Whether an element with data-scheme-toggle starts inside an element of INERT_ELEMENTS.
         self.inert = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:

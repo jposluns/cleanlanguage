@@ -97,8 +97,11 @@ VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "met
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 # The elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render as
-# markup: noscript, template, and the raw-text and RCDATA elements. No switch counts as placed inside one.
-INERT = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext"}
+# page content: noscript, template, the raw-text and RCDATA elements, and the elements tools/check-install-page.py
+# hides (HIDING_ELEMENTS) for the same reason. No switch counts as placed inside one.
+ADDED_INERT = ("audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video")
+INERT = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext",
+         *ADDED_INERT}
 # HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
 ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # The header block as the generator's mast() is meant to write it, pinned here apart from the generator: only the
@@ -109,6 +112,7 @@ MAST_BLOCK = (
     '<a href="{github}" target="_blank" rel="noopener noreferrer">GitHub<span class="vh"> (opens in a new tab)</span></a>'
     "</nav>{switch}</header>"
 )
+SKIP_LINK = '<a class="skip" href="#main-content">Skip to content</a>'
 
 
 def class_names(value: str) -> list[str]:
@@ -138,8 +142,11 @@ class Placement(HTMLParser):
     only. It fails closed where it does not model HTML5: a start tag not in HEAD_TAGS inside <template> or
     <noscript> in the head ends the head, and a self-closing tag in <math> leaves its element open. It is not a
     full HTML5 tree builder: it models the open elements as tags nest, void elements, the slash only in <svg> and
-    the head's end, so scheme_problems also holds each page's header.mast block to MAST_BLOCK, byte for byte; the
-    committed pages rest on build-site.py --check and the generator's validator."""
+    the head's end, so scheme_problems also holds each page's markup from <body> to the end of header.mast, byte for
+    byte, to the body start tag, the skip link and MAST_BLOCK, at the start of the page's body (body: a body start
+    tag in html right after the only head closes, with no element or text between them, before the head ends). It
+    pins nothing after header.mast; the committed pages rest on build-site.py --check and the generator's
+    validator."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -147,11 +154,15 @@ class Placement(HTMLParser):
         self.previous: tuple[str, list[str]] | None = None
         self.heads = 0
         self.head_ended = False
+        self.body: tuple[int, int] | None = None
         self.starts: dict[tuple[int, int], tuple[str, dict, list[tuple[str, list[str]]], tuple | None, bool]] = {}
         self.ends: dict[tuple[int, int], tuple[str, list[str], int]] = {}
 
     def handle_starttag(self, tag: str, attrs) -> None:
         first = {name: value or "" for name, value in reversed(attrs)}
+        if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
+                and self.previous is not None and self.previous[0] == "head"):
+            self.body = self.getpos()
         if tag in ("head", "body"):
             self.heads += 1
         if tag not in HEAD_TAGS and tag not in ("html", "head"):
@@ -188,7 +199,8 @@ def scheme_problems(page: str, text: str, base: str, config: dict) -> list[str]:
     """Specification 7.33 on 1 generated page, read as parsed elements: the scheme.js line, the only scheme.js
     load, before the stylesheets, it and every stylesheet in html > head; and the switch, the only element with
     data-scheme-toggle (scheme.js wires and shows each), once, the last child of header.mast after nav.nav, with no
-    INERT ancestor; and the header.mast block, once and byte for byte as MAST_BLOCK pins it."""
+    INERT ancestor; and the page's body opening with the skip link and the header.mast block, once and byte for byte
+    as MAST_BLOCK pins it."""
     problems = []
     parsed = Placement()
     parsed.feed(text)
@@ -217,8 +229,11 @@ def scheme_problems(page: str, text: str, base: str, config: dict) -> list[str]:
             or after[0] != "header" or after[2] != len(around) - 1):
         problems.append(f"{page} does not end header.mast with the light and dark switch, the only element with "
                         "data-scheme-toggle, exactly once, after nav.nav, outside noscript, template and raw text")
-    if text.count(pinned_mast(config, page, base)) != 1:
-        problems.append(f"{page} does not carry the header block once, byte for byte as MAST_BLOCK pins it")
+    block = pinned_mast(config, page, base)
+    top = "<body>\n" + SKIP_LINK + "\n" + block
+    if text.count(block) != 1 or text.count(top) != 1 or position(text, text.find(top)) != parsed.body:
+        problems.append(f"{page} does not carry the header block once, byte for byte as MAST_BLOCK pins it, after the "
+                        "skip link at the start of the page's body")
     return problems
 
 
@@ -451,7 +466,7 @@ def check_scheme_validation(failures: list[str]) -> int:
         if (not scheme_problems("license/index.html", page_html, "/", config)) != passes:
             failures.append(f"scheme helper '{name}': {'refused' if passes else 'passed'}, expected the opposite")
     # Each case below must be refused by the rule it names, whatever else refuses it: the switch's place (class names
-    # split on ASCII whitespace only, no noscript, template or raw-text ancestor), or the pinned header block.
+    # split on ASCII whitespace only, no INERT ancestor), or the pinned header block at the start of the body.
     mast, end = '<header class="mast">', SWITCH + "</header>"
     placed = ("as the last child of header.mast", "does not end header.mast")
     pinned = ("the header block", "the header block")
@@ -461,7 +476,13 @@ def check_scheme_validation(failures: list[str]) -> int:
         ("header.mast inside noscript", text.replace(mast, "<noscript>" + mast, 1).replace(end, end + "</noscript>", 1), placed),
         ("header.mast inside template", text.replace(mast, "<template>" + mast, 1).replace(end, end + "</template>", 1), placed),
         ("a header 1 byte from the pinned markup", text.replace('aria-label="Site"', 'aria-label="site"', 1), pinned),
-    ]
+        # HTML5 closes the button and the header in it where the switch's button starts, so the switch leaves header.mast.
+        ("header.mast wrapped in a button", text.replace(mast, "<button>" + mast, 1).replace(end, end + "</button>", 1),
+         pinned),
+        ("a div between the head and the body, around the header", text.replace("</head>\n", "</head>\n<div>", 1).replace(
+            "</body>\n", "</body>\n</div>", 1), pinned),
+    ] + [(f"header.mast inside {name}", text.replace(mast, f"<{name}>" + mast, 1).replace(end, end + f"</{name}>", 1),
+          placed) for name in ADDED_INERT]
     for name, page_html, (generator_says, helper_says) in ruled:
         try:
             generator.validate(page_html, page, config, "/")
@@ -476,14 +497,16 @@ def check_scheme_validation(failures: list[str]) -> int:
 
 
 def check_inert_validation(failures: list[str]) -> int:
-    """The blocks and the robots meta validate() requires, called directly on committed pages, each moved inside
-    noscript or raw text, whose content a browser with scripting on does not render as markup."""
+    """The blocks, the h1 and the robots meta validate() requires, called directly on committed pages, each moved
+    inside noscript, raw text or canvas, whose content a browser with scripting on does not render as page content."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     pages = {entry["id"]: entry for entry in config["pages"]}
     texts = {page_id: (REPO_ROOT / f"site/{page_id}/index.html").read_text(encoding="utf-8") for page_id in ("license", "draft")}
     skip, status, robots = generator.SKIP_LINK, generator.COPY_STATUS, '<meta name="robots" content="noindex, nofollow">'
+    h1 = re.search(r"<h1>[^<]*</h1>", texts["license"]).group(0)
     cases = [
+        ("the h1 only inside canvas", "license", h1, f"<canvas>{h1}</canvas>", False),
         ("the committed licence page", "license", None, None, True),
         ("the committed draft page", "draft", None, None, True),
         ("the skip link only inside noscript", "license", skip, f"<noscript>{skip}</noscript>", False),
@@ -506,19 +529,30 @@ def check_inert_validation(failures: list[str]) -> int:
 
 
 def check_generator_header(failures: list[str]) -> int:
-    """A generator whose header function writes 1 byte other than the pinned header block refuses to build."""
-    with tempfile.TemporaryDirectory() as scratch:
-        root = make_root(Path(scratch))
-        source = GENERATOR.read_text(encoding="utf-8")
-        at = source.index("\ndef mast(")
-        mutant = root / "tools" / GENERATOR.name
-        mutant.write_text(source[:at] + source[at:].replace('aria-label="Site"', 'aria-label="site"', 1), encoding="utf-8")
-        result = subprocess.run([sys.executable, "-I", str(mutant), "--root", str(root), "--out", str(Path(scratch) / "out")],
-                                capture_output=True, text=True)
-        if result.returncode != 1 or "the header block" not in result.stderr:
-            failures.append(f"generator header: a 1-byte change to mast() gave exit {result.returncode}, expected 1 with the "
-                            f"header block refusal ({result.stderr.strip()[:200]})")
-    return 1
+    """A generator whose header function writes 1 byte other than the pinned header block, or wraps the unchanged
+    block in a button, refuses to build."""
+    source = GENERATOR.read_text(encoding="utf-8")
+    at = source.index("\ndef mast(")
+    mutants = [
+        ("a 1-byte change to mast()", source[at:].replace('aria-label="Site"', 'aria-label="site"', 1)),
+        ("mast() wrapping the header block in a button", source[at:].replace(
+            "f'<header class=\"mast\">", "f'<button><header class=\"mast\">", 1).replace(
+            "{SCHEME_SWITCH}</header>'", "{SCHEME_SWITCH}</header></button>'", 1)),
+    ]
+    for name, tail in mutants:
+        if tail == source[at:]:
+            failures.append(f"generator header: {name} changed nothing in tools/build-site.py")
+            continue
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            mutant = root / "tools" / GENERATOR.name
+            mutant.write_text(source[:at] + tail, encoding="utf-8")
+            result = subprocess.run([sys.executable, "-I", str(mutant), "--root", str(root), "--out", str(Path(scratch) / "out")],
+                                    capture_output=True, text=True)
+            if result.returncode != 1 or "the header block" not in result.stderr:
+                failures.append(f"generator header: {name} gave exit {result.returncode}, expected 1 with the "
+                                f"header block refusal ({result.stderr.strip()[:200]})")
+    return len(mutants)
 
 
 def check_unreadable(failures: list[str]) -> int:
@@ -795,6 +829,13 @@ def main() -> int:
         ran += 1
         if hashlib.sha256(module_switch(tool).encode("utf-8")).hexdigest() != SWITCH_SHA256:
             failures.append(f"{tool.name}: SCHEME_SWITCH is not the 7.33 switch of the 1.6.0 reference pages")
+    # Every reader holds the same inert set, and it holds every element the install gate hides for its content.
+    ran += 1
+    inline = set(load_module(REPO_ROOT / "tools" / "check-inline-code.py").INERT_ELEMENTS)
+    hiding = set(load_module(REPO_ROOT / "tools" / "check-install-page.py").HIDING_ELEMENTS)
+    if not load_module(GENERATOR).INERT_TAGS == INERT == inline >= hiding:
+        failures.append("INERT_TAGS, check-inline-code.py's INERT_ELEMENTS and INERT here differ, or leave out an element "
+                        "of check-install-page.py's HIDING_ELEMENTS")
     ran += check_refusals(failures)
     ran += check_unreadable(failures)
     ran += check_scheme_validation(failures)

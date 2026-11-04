@@ -83,19 +83,33 @@ tag other than those HTML5 allows in a head (``HEAD_TAGS``), or ``</body>``,
 ``</html>`` or ``</br>``; a script or stylesheet after that point is outside
 it. No element with ``data-scheme-toggle`` may sit inside an element whose
 content a browser with scripting on, the only case in which ``scheme.js``
-runs, does not render as markup (``INERT_TAGS``: ``noscript``, ``template``,
-and the raw-text and RCDATA elements); a script or stylesheet inside one is
-not in ``html > head``, and an ``h1``, a robots meta, the skip link,
-``main#main-content``, the family footer or ``#copy-status`` inside one fails,
-as does a fragment whose only target is inside one (a browser with scripting
-on renders none of them). The reading fails closed where it does not model
-HTML5: such a start tag inside a ``<template>`` or ``<noscript>`` in the head
-ends the head, and a self-closing tag in ``<math>`` leaves its element open.
-It is not a full HTML5 tree builder, so each page's ``header.mast`` block must
-also be, byte for byte, the markup ``MAST_BLOCK`` pins with the values from
-``site-src/site.json``, which a change to ``mast()`` cannot pass. What
-guarantees the committed pages is ``--check``, a deploy gate, which compares
-them byte for byte with a fresh build that passed these refusals.
+runs, does not render as page content (``INERT_TAGS``: ``noscript``,
+``template``, the raw-text and RCDATA elements, and the elements
+``tools/check-install-page.py`` hides for that reason, ``audio``, ``canvas``,
+``datalist``, ``meter``, ``object``, ``progress``, ``rp``, ``select`` and
+``video``, whose content a browser renders only as fallback, only in its
+control or not at all, so this refuses more than a browser hides); a script
+or stylesheet inside one is not in ``html > head``, and an ``h1``, a robots
+meta, the skip link, ``main#main-content``, the family footer or
+``#copy-status`` inside one fails, as does a fragment whose only target is
+inside one. The reading fails closed where it does not model HTML5: such a
+start tag inside a ``<template>`` or ``<noscript>`` in the head ends the head,
+and a self-closing tag in ``<math>`` leaves its element open. It is not a full
+HTML5 tree builder, so each page must also carry, once and byte for byte, the
+markup from the body start tag to the end of ``header.mast`` as the generator
+writes it: ``<body>``, the skip link and the header block ``MAST_BLOCK`` pins
+with the values from ``site-src/site.json``, each on its own line. That
+``<body>`` must be the page's first body, parsed as a child of ``html`` right
+after its only head closes (whitespace and comments apart), before the head
+ends. As far as the parsed reading models HTML5, no element can then wrap the
+header, nor precede it in the body other than the skip link, and a change to
+``mast()`` or to the lines around it that alters that markup fails. The pin
+covers neither the head nor anything after ``header.mast``, which only the
+parsed reading checks, and it is only as right as ``MAST_BLOCK``,
+``SKIP_LINK`` and ``SCHEME_SWITCH``: a change to one of them made together
+with the same change to the generator passes. What guarantees the committed
+pages is ``--check``, a deploy gate, which compares them byte for byte with a
+fresh build that passed these refusals.
 
 Modes
 -----
@@ -156,8 +170,10 @@ VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 # The elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render
-# as markup: noscript, template, and the raw-text and RCDATA elements. No switch counts as placed inside one.
-INERT_TAGS = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext"}
+# as page content: noscript, template, the raw-text and RCDATA elements, and the elements tools/check-install-page.py
+# hides (HIDING_ELEMENTS) for the same reason. No switch counts as placed inside one.
+INERT_TAGS = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext",
+              "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video"}
 # HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
 ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 SKIP_LINK = '<a class="skip" href="#main-content">Skip to content</a>'
@@ -688,7 +704,8 @@ class PageScan(HTMLParser):
     """The parsed reading validate() checks. Not a full HTML5 tree builder: it models the open elements as tags
     nest, void elements, the slash only in <svg>, the head's end, class names split on ASCII whitespace, and the
     INERT_TAGS ancestors of each element with data-scheme-toggle, h1, robots meta and id, and of each element start
-    validate() requires. The pinned header block and --check cover the rest."""
+    validate() requires, and where the page's body starts. validate() also pins the markup from <body> to the end of
+    header.mast; --check compares the committed pages with a build that passed it."""
 
     def __init__(self, switch_at: tuple[int, int] | None = None) -> None:
         super().__init__(convert_charrefs=True)
@@ -715,6 +732,9 @@ class PageScan(HTMLParser):
         self.outside_head: set[tuple[int, int]] = set()
         self.heads = 0
         self.head_ended = False
+        # Where the page's body starts: a body start tag in html right after the page's only head closes, with no
+        # element or text between them, before the head ends.
+        self.body_at: tuple[int, int] | None = None
         self.robots: list[str] = []
         # Each open element's name and classes, and the element that ended last (or a void one) since the last
         # start tag: the previous sibling of the next element.
@@ -737,6 +757,9 @@ class PageScan(HTMLParser):
             # A browser reads the first of 2 attributes with the same name, and this dict the last.
             self.problems.append(f"<{tag}> carries an attribute twice")
         classes = [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
+        if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
+                and self.previous is not None and self.previous[0] == "head"):
+            self.body_at = self.getpos()
         if tag in ("head", "body"):
             self.heads += 1
         if tag not in HEAD_TAGS and tag not in ("html", "head"):
@@ -878,8 +901,14 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
             or scan.switch_parent_end != line_column(page_html, switch + len(SCHEME_SWITCH))):
         problems.append("the light and dark switch must appear exactly once, as the last child of header.mast, after nav.nav, "
                         "outside noscript, template and raw text, and no other element may carry data-scheme-toggle")
-    if page_html.count(pinned_mast(config, page, base)) != 1:
-        problems.append("the header block is not, once and byte for byte, the header.mast markup MAST_BLOCK pins")
+    # The page's body opens with the skip link and the header block, each on its own line as the generator writes
+    # them, so no element wraps header.mast and only the skip link precedes it in the body.
+    block = pinned_mast(config, page, base)
+    top = "<body>\n" + SKIP_LINK + "\n" + block
+    if (page_html.count(block) != 1 or page_html.count(top) != 1
+            or line_column(page_html, page_html.find(top)) != scan.body_at):
+        problems.append("the header block is not, once and byte for byte, the header.mast markup MAST_BLOCK pins, "
+                        "after the skip link at the start of the page's body")
     if re.search(r"<svg", page_html.replace(SCHEME_SWITCH, "", 1), re.I):
         problems.append("an inline <svg> other than the light and dark switch")
     scheme_tags = {line_column(page_html, match.start()) for match in re.finditer(

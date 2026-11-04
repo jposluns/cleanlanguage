@@ -299,17 +299,14 @@ CASES = [
     ("a self-closing div first in header.mast", edit(LICENSE, '<header class="mast">', '<header class="mast"><div/>'), 1),
 ]
 # Faults that check 7's switch reading itself must refuse, whatever else also refuses them: class names split on
-# ASCII whitespace only, and no switch inside noscript, template or raw text. Its refusal names the place.
+# ASCII whitespace only, and no switch inside an element of INERT_ELEMENTS. Its refusal names the place.
 PLACE = "as the last child of header.mast"
 MAST, MAST_END = '<header class="mast">', SWITCH + "</header>"
 SWITCH_RULES = [
     ("a no-break space in the mast class", edit(LICENSE, MAST, '<header class="mast\u00a0x">')),
     ("a no-break space in the nav class", edit(LICENSE, '<nav class="nav"', '<nav class="nav\u00a0x"')),
-    ("header.mast inside noscript", both(edit(LICENSE, MAST, "<noscript>" + MAST),
-                                         edit(LICENSE, MAST_END, MAST_END + "</noscript>"))),
-    ("header.mast inside template", both(edit(LICENSE, MAST, "<template>" + MAST),
-                                         edit(LICENSE, MAST_END, MAST_END + "</template>"))),
-]
+] + [(f"header.mast inside {name}", both(edit(LICENSE, MAST, f"<{name}>" + MAST), edit(LICENSE, MAST_END, MAST_END + f"</{name}>")))
+     for name in ("noscript", "template", "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video")]
 
 
 def main() -> int:
