@@ -107,10 +107,13 @@ where those changes matter for script, style and ``on`` attributes. A
 version-dependent. The XML parser follows the XML specification on every
 version.
 
-``inline_code_problems`` makes the same version check, so the tools that load it
-as a module, ``tools/check-install-page.py`` and
-``tools/check-instructions-page.py``, refuse another version too: it raises
-``UnsupportedPython``, and each of them exits 3 with its own message.
+``inline_code_problems`` makes the same version check and raises
+``UnsupportedPython``, so the tools that load it as a module refuse another
+version too, each with exit 3 and its own message.
+``tools/check-instructions-page.py`` refuses through that exception.
+``tools/check-install-page.py`` has its own version guard, which fires first,
+before it reads a file; it catches the exception too, should the two lists of
+supported versions part (its docstring, Python versions).
 
 The check reads the minor version only, so it admits every 3.14 release, and
 ``html.parser`` has changed within a minor version before. A pass of

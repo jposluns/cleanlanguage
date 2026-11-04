@@ -2,11 +2,32 @@
 """Tests for tools/check-install-page.py: the install pages' contract and the site-wide policy.
 
 Each case copies the gate and the files it reads into a temporary repository
-(under $TMPDIR), applies 1 fault to the install page or to site/_headers, runs
-the gate there as a separate process and asserts its exit code. Exit 0 when
-every case passes; 1 otherwise, naming each failing case. One further case runs
-the gate under a faked Python version tuple outside the supported set of
-tools/check-inline-code.py and asserts exit 3 with the gate's own message.
+(under $TMPDIR), applies 1 fault to the install page, a family page, or
+site/_headers, runs the gate there as a separate process and asserts its exit
+code. Exit 0 when every case passes; 1 otherwise, naming each failing case.
+Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
+hides or empties what the gate checks; it must exit 0, and the gate's docstring
+must name it, so that what the gate says it checks cannot outgrow its code
+unnoticed.
+
+It also reads the stylesheets every install page loads (fonts.css, palettes.css
+and baseline.css under site/assets/baseline/) and fails when a rule whose
+selector list holds a bare single class, such as ``.only-dark``, hides it
+(``display: none``, ``visibility: hidden`` or ``collapse``, a ``clip: rect(...)``
+as ``.vh`` uses, or a negative ``top`` or ``left`` on an absolute or fixed
+position) and the class is in neither the gate's HIDING_CLASSES nor
+EXEMPT_CLASSES below. The parser is deliberately small: it reads no compound,
+descendant or attribute selector, and it fails when a stylesheet cannot be
+read, has an unclosed comment or unbalanced braces, or holds no rule.
+
+It also fails unless the gate's SUPPORTED_PYTHONS is exactly 3.14 and each of
+its versions is in SUPPORTED_PYTHONS of tools/check-inline-code.py, and runs the
+gate under a faked Python version outside that set, expecting exit 3, no result
+line, and a one-line message from the gate that names 3.14. A last run reaches
+the version check of tools/check-inline-code.py: with a copy of that gate whose
+SUPPORTED_PYTHONS leaves out this version, so that it raises UnsupportedPython,
+it expects exit 3, no result line, and a one-line message from the gate that
+names tools/check-inline-code.py.
 """
 
 from __future__ import annotations
@@ -40,12 +61,28 @@ NEXT_RULE = "\n\n/downloads/cleanlanguage.md"
 SITE_LINE = "/*\n  X-Frame-Options: DENY"
 SITE_CSP = f"  Content-Security-Policy: {SHARED_CSP}" + NEXT_RULE
 DRAFT_RULE = f"\n/draft/*\n  ! Content-Security-Policy\n  Content-Security-Policy: {SHARED_CSP}\n  X-Robots-Tag: noindex\n"
-# Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS of tools/check-inline-code.py.
+OTHER_LINK = '<a class="btn inline" id="other-ai" href="/install/other-ai/">Other AI systems</a>'
+CLAUDE_LINK = '<a class="btn inline" id="claude" href="/install/claude/">Claude</a>'
+SELECT = "/assets/baseline/select.js?v=1.3.0"
+ROW = '<p><a class="btn inline" id="claude"'
+ROW_END = OTHER_LINK + "</p>"
+STEPS = '<ol class="steps">'
+STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
+# Classes a stylesheet may hide as a bare single class although the gate does not refuse them. Add 1 only with a
+# comment saying why no install page can carry it on a checked element or an ancestor. None qualifies today.
+EXEMPT_CLASSES: tuple[str, ...] = ()
+BARE_CLASS = re.compile(r"\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)")
+# Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS (3.13.3, the Cloudflare Pages image default).
 VERSION_PROBE = (
     "import sys, runpy; "
-    "sys.version_info = (3, 13, 9, 'final', 0); "
+    "sys.version_info = (3, 13, 3, 'final', 0); "
     "runpy.run_path(sys.argv[1], run_name='__main__')"
 )
+INLINE_GATE = "tools/check-inline-code.py"
+# The supported list of tools/check-inline-code.py, whatever it holds, and 1 that leaves this version out, so that
+# inline_code_problems raises UnsupportedPython while the gate's own guard passes.
+INLINE_LIST = re.compile(r"^SUPPORTED_PYTHONS = .*$", re.M)
+INLINE_UNSUPPORTED = "SUPPORTED_PYTHONS = ((2, 7),)"
 
 
 def make_root(scratch: Path) -> Path:
@@ -393,14 +430,40 @@ def version_problems() -> list[str]:
             problems.append(f"SUPPORTED_PYTHONS of tools/{GATE.name} is {gate.SUPPORTED_PYTHONS!r}, not ((3, 14),).")
     except Exception as error:
         problems.append(f"SUPPORTED_PYTHONS could not be read from tools/{GATE.name}: {error!r}")
+    else:
+        try:
+            spec = importlib.util.spec_from_file_location("check_inline_code", REPO_ROOT / INLINE_GATE)
+            inline = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(inline)
+            missing = [version for version in gate.SUPPORTED_PYTHONS if version not in inline.SUPPORTED_PYTHONS]
+            if missing:
+                problems.append(f"SUPPORTED_PYTHONS of tools/{GATE.name} lists {missing!r}, which {INLINE_GATE} "
+                                "does not support, so the gate would exit 3 only after it reads the pages.")
+        except Exception as error:
+            problems.append(f"SUPPORTED_PYTHONS could not be read from {INLINE_GATE}: {error!r}")
     with tempfile.TemporaryDirectory() as scratch:
         root = make_root(Path(scratch))
         result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
                                 capture_output=True, text=True)
         lines = result.stderr.splitlines()
-        if result.returncode != 3 or result.stdout or len(lines) != 1 or "Python 3.14" not in lines[0]:
+        if (result.returncode != 3 or result.stdout or len(lines) != 1 or not lines[0].startswith("check-install-page: ")
+                or "Python 3.14" not in lines[0]):
             problems.append(f"under Python 3.13: exit {result.returncode}, expected 3 with no result line and 1 line "
-                            f"naming Python 3.14: {(result.stdout + result.stderr).strip()[:300]}")
+                            f"from check-install-page naming Python 3.14: {(result.stdout + result.stderr).strip()[:300]}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        text, count = INLINE_LIST.subn(INLINE_UNSUPPORTED, (root / INLINE_GATE).read_text(encoding="utf-8"), count=1)
+        if not count:
+            problems.append(f"{INLINE_GATE} has no SUPPORTED_PYTHONS line to change.")
+            return problems
+        (root / INLINE_GATE).write_text(text, encoding="utf-8")
+        result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
+        lines = result.stderr.splitlines()
+        if (result.returncode != 3 or result.stdout or len(lines) != 1
+                or not lines[0].startswith(f"check-install-page: {INLINE_GATE} ")):
+            problems.append(f"with {INLINE_GATE} refusing this version: exit {result.returncode}, expected 3 with no "
+                            f"result line and 1 line from check-install-page naming {INLINE_GATE}: "
+                            f"{(result.stdout + result.stderr).strip()[:300]}")
     return problems
 
 
@@ -419,19 +482,13 @@ def main() -> int:
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
             if result.returncode != expected:
                 failures.append(f"{name}: exit {result.returncode}, expected {expected}: {(result.stdout + result.stderr).strip()[:300]}")
-    with tempfile.TemporaryDirectory() as scratch:
-        root = make_root(Path(scratch))
-        result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
-                                capture_output=True, text=True)
-        if result.returncode != 3 or not result.stderr.startswith("check-install-page: "):
-            failures.append(f"another Python version: exit {result.returncode}, expected 3 from check-install-page: "
-                            f"{(result.stdout + result.stderr).strip()[:300]}")
     if failures:
         print("test-install-page: failures:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-install-page: all {len(CASES) + 1} cases passed.")
+    print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the Python version checks "
+          "and the stylesheet check passed.")
     return 0
 
 

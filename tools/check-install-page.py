@@ -173,6 +173,19 @@ patch release reads markup the same way, because ``html.parser`` also changes
 within a minor version: Python 3.13.3 ends a raw-text element at ``</ script>``,
 and the 3.13 branch has since taken the change that stops it.
 
+Check 5 makes a second version check: ``inline_code_problems`` of
+``tools/check-inline-code.py`` raises ``UnsupportedPython`` on a version outside
+that gate's own ``SUPPORTED_PYTHONS``, and ``inline_code`` below catches it and
+exits 3 with this gate's message. The guard in ``main()`` fires first, before
+any file is read, so on a version outside this gate's list check 5 is never
+reached. Both remain because they guard different code: this guard covers how
+checks 1 to 6 read markup, and that check covers the inline-code gate's own
+guarantees. ``tools/test-install-page.py`` fails unless every version listed
+here is listed there too, so on a tree whose suite passes, an unsupported
+version always meets this guard first. Should the lists part, the catch still
+exits 3 with no result line, after the pages are read; without it, the
+exception would end the gate with exit 1.
+
 ``tools/test-install-page.py`` runs every case on the Python that runs it, and
 ``.github/workflows/install-page.yml`` runs it before the gate in the same job.
 It does not detect a change in any of the 3 readings above: no case contains
@@ -182,9 +195,9 @@ the gate exit 1 whether it reads that markup as text or as hidden elements.
 which runs the gate without the suite.
 
 Exit codes:
-  0  the markup is static and complete, and the header discipline holds
-  1  a family section, picker link, id, reset, asset token, or header discipline regressed
-  3  a file could not be read, a gate it reuses is missing, or the Python version is not one
+  0  every check above passes
+  1  a family link, family page, id, retired attribute, inline code, asset token, or header discipline regressed
+  3  a file could not be read, a gate it reuses is missing, or the Python version is not 3.14 or not one
      that tools/check-inline-code.py supports
 """
 
@@ -261,7 +274,7 @@ def load_tool(name: str):
 
 
 def inline_code(where: str, text: str) -> list[str]:
-    """Check 4: each piece of inline code, read with tools/check-inline-code.py."""
+    """Check 5: each piece of inline code, read with tools/check-inline-code.py."""
     gate = load_tool("check-inline-code.py")
     try:
         problems = gate.inline_code_problems(text)
