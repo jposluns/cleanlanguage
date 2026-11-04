@@ -9,6 +9,10 @@
    Facets: <ul class="chips" data-filter-group="domain"> of links or buttons with data-filter="privacy" (data-filter=""
    is All); rows carry data-domain="privacy risk". The state is read from ?q= and ?<group>= and written back with
    history.replaceState. SPECIFICATION.md section 7.29 has the full contract.
+   From 1.7.0, per group, opt-in: data-filter-empty="disable" on the group's element marks a chip that would show no
+   rows with the current query and other choices aria-disabled="true" (it stays focusable; activating it is refused
+   and the status says why); data-filter-count="live" also sets each chip's .n to its would-show count. A page with
+   no opted-in group runs exactly as in 1.6.1.
    Without this script every row stays visible, the chips are plain links and the input does nothing. */
 (function () {
   "use strict";
@@ -33,8 +37,74 @@
   Array.prototype.forEach.call(groupEls, function (el) {
     var name = low(el, "data-filter-group");
     if (!/^[a-z][a-z0-9-]*$/.test(name) || name === "q") { return; }
-    groups.push({ name: name, chips: Array.prototype.slice.call(el.querySelectorAll("[data-filter]")), value: "" });
+    groups.push({ name: name, chips: Array.prototype.slice.call(el.querySelectorAll("[data-filter]")), value: "",
+      empty: el.getAttribute("data-filter-empty") === "disable", live: el.getAttribute("data-filter-count") === "live" });
   });
+  var counting = groups.some(function (g) { return g.empty || g.live; });
+  var NOTE = "filter-empty-note";
+  /* Opted-in pages only: each row's lowercased text and group tokens, prepared once (live counts change chip text,
+     never row text, but the cache keeps every update to 1 pass over prepared data). */
+  var prep = counting ? rows.map(function (li) {
+    var tok = {};
+    groups.forEach(function (g) { tok[g.name] = words(low(li, "data-" + g.name)).filter(function (v, i, a) { return a.indexOf(v) === i; }); });
+    return { li: li, hay: (li.getAttribute("data-search") || li.textContent).toLowerCase(), tok: tok };
+  }) : null;
+  if (counting && !document.getElementById(NOTE)) {
+    var note = document.createElement("p");
+    note.id = NOTE;
+    note.hidden = true;
+    note.textContent = "Would show no documents with the current choices";
+    document.body.appendChild(note);
+  }
+  function labelOf(c) {
+    var text = c.textContent;
+    Array.prototype.forEach.call(c.querySelectorAll(".vh, .n"), function (v) { text = text.replace(v.textContent, ""); });
+    return text.replace(/\s+/g, " ").trim();
+  }
+  function describe(c, on) {
+    var ids = (c.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+    var has = ids.indexOf(NOTE) >= 0;
+    if (on === has) { return; }
+    ids = on ? ids.concat(NOTE) : ids.filter(function (x) { return x !== NOTE; });
+    if (ids.length) { c.setAttribute("aria-describedby", ids.join(" ")); } else { c.removeAttribute("aria-describedby"); }
+  }
+  /* 1 pass over the rows: a row that fails nothing counts toward its values in every group and every All; a row that
+     fails only 1 group's choice counts toward that group (its values and its All); a row that fails the query, or 2
+     or more groups, counts nowhere. Then each opted-in chip takes its count and state; the DOM changes only where a
+     state or a count changes. Returns 1 flag per row, in the order of rows: true where the row shows. */
+  function count(terms, active, idle) {
+    var tally = {};
+    groups.forEach(function (g) { tally[g.name] = { all: 0, v: {} }; });
+    var shown = prep.map(function (r) {
+      if (!terms.every(function (t) { return r.hay.indexOf(t) >= 0; })) { return false; }
+      var failed = active.filter(function (g) { return r.tok[g.name].indexOf(g.value) < 0; });
+      if (failed.length < 2) {
+        (failed.length ? failed : groups).forEach(function (g) {
+          var t = tally[g.name];
+          t.all += 1;
+          r.tok[g.name].forEach(function (v) { t.v[v] = (t.v[v] || 0) + 1; });
+        });
+      }
+      return !failed.length && !(results && idle);
+    });
+    groups.forEach(function (g) {
+      if (!g.empty && !g.live) { return; }
+      g.chips.forEach(function (c) {
+        var v = low(c, "data-filter");
+        var n = v ? tally[g.name].v[v] || 0 : tally[g.name].all;
+        if (g.live) {
+          var el = c.querySelector(".n");
+          if (el && el.textContent !== String(n)) { el.textContent = String(n); }
+        }
+        var off = g.empty && v !== "" && v !== g.value && n === 0;
+        if (off !== (c.getAttribute("aria-disabled") === "true")) {
+          if (off) { c.setAttribute("aria-disabled", "true"); } else { c.removeAttribute("aria-disabled"); }
+        }
+        if (g.empty) { describe(c, off); }
+      });
+    });
+    return shown;
+  }
 
   function titleOf(li) {
     if (li.hasAttribute("data-title")) { return li.getAttribute("data-title").toLowerCase(); }
@@ -60,11 +130,17 @@
     var first = [];
     var rest = [];
     var out = [];
-    rows.forEach(function (li) {
-      var hay = (li.getAttribute("data-search") || li.textContent).toLowerCase();
-      var ok = !(results && idle) &&
-        terms.every(function (t) { return hay.indexOf(t) >= 0; }) &&
-        active.every(function (g) { return words(low(li, "data-" + g.name)).indexOf(g.value) >= 0; });
+    var pass = counting ? count(terms, active, idle) : null;
+    rows.forEach(function (li, i) {
+      var ok;
+      if (pass) {
+        ok = pass[i];
+      } else {
+        var hay = (li.getAttribute("data-search") || li.textContent).toLowerCase();
+        ok = !(results && idle) &&
+          terms.every(function (t) { return hay.indexOf(t) >= 0; }) &&
+          active.every(function (g) { return words(low(li, "data-" + g.name)).indexOf(g.value) >= 0; });
+      }
       li.hidden = !ok;
       if (ok) {
         shown += 1;
@@ -126,6 +202,10 @@
       c.addEventListener("click", function (e) {
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) { return; }
         e.preventDefault();
+        if (c.getAttribute("aria-disabled") === "true") {
+          if (status) { status.textContent = labelOf(c) + " would show no documents with the current choices."; }
+          return;
+        }
         var v = low(c, "data-filter");
         g.value = v && v !== g.value ? v : "";
         paint();

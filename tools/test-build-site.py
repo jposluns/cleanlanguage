@@ -248,6 +248,50 @@ def inject(snippet: str):
     return lambda root: edit(root, PAGE, ANCHOR, ANCHOR + snippet)
 
 
+HOME = "site-src/pages/home.html"
+ABOUT_DOT = '<span class="dot" aria-hidden="true">&middot;</span>'
+
+
+def about_line(base: str) -> str:
+    """The landing page's About row of template specification 7.24 (baseline 1.7.0) at base, spelled out as the
+    template owner's notice gives it: 1 ordinary space after each dot span and none before it."""
+    new_tab = '<span class="vh"> (opens in a new tab)</span>'
+    return (f'<p class="about"><a href="{base}disclosure/">Disclosure</a>{ABOUT_DOT} <a href="{base}license/">Licence</a>{ABOUT_DOT} '
+            f'<a href="https://posluns.ca/privacy/" target="_blank" rel="noopener noreferrer">Privacy{new_tab}</a>{ABOUT_DOT} '
+            f'<a href="https://posluns.ca/security/" target="_blank" rel="noopener noreferrer">Security{new_tab}</a></p>')
+
+
+ABOUT_ROW = about_line("{{base}}")
+
+
+def about_row(row: str):
+    """Replace the About row in the landing page's source with row."""
+    def apply(root: Path) -> None:
+        path = root / HOME
+        text, count = re.subn(r'<p class="about">.*?</p>', lambda _: row, path.read_text(encoding="utf-8"), count=1)
+        if count != 1:
+            raise AssertionError(f"no About row in {HOME}")
+        path.write_text(text, encoding="utf-8")
+    return apply
+
+
+def about_problems(page: str, text: str, base: str) -> list[str]:
+    """The About row of specification 7.24: exactly once on the landing page, byte for byte, with no INERT ancestor,
+    and on no other page."""
+    if page != "index.html":
+        return [f"{page} carries an About row, which only the landing page may"] if 'class="about"' in text else []
+    row = about_line(base)
+    if text.count('class="about"') != 1 or text.count(row) != 1 or "&middot;</span><a" in text:
+        return [f"{page} lacks the About row with 1 ordinary space after each dot and none before it (specification 7.24)"]
+    parsed = Placement()
+    parsed.feed(text)
+    parsed.close()
+    start = parsed.starts.get(position(text, text.find(row)))
+    if start is None or any(name in INERT for name, _ in start[2]):
+        return [f"{page} carries its About row inside an element of INERT (specification 7.24)"]
+    return []
+
+
 def set_page(root: Path, page_id: str, **changes) -> None:
     """Change (or with None, remove) fields of 1 page entry in site.json."""
     path = root / "site-src" / "site.json"
@@ -287,14 +331,14 @@ REFUSALS = [
     ("a second light and dark switch", inject(SWITCH)),
     ("a second element with data-scheme-toggle, a button in the content", inject(TOGGLE)),
     ("a second element with data-scheme-toggle in upper case", inject('<div DATA-SCHEME-TOGGLE hidden></div>')),
-    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.6.0">')),
-    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.6.0">')),
+    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.7.0">')),
+    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.7.0">')),
     ("a bare svg outside the switch", inject("<svg></svg>")),
     ("an upper-case SVG outside the switch", inject("<SVG></SVG>")),
     ("a second scheme.js load in another spelling",
-        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.6.0" defer></SCRIPT>')),
+        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.7.0" defer></SCRIPT>')),
     ("a second scheme.js load as the first of 2 src attributes", inject(
-        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.6.0" src="{{base}}assets/baseline/copy.js?v=1.6.0" defer></SCRIPT>')),
+        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.7.0" src="{{base}}assets/baseline/copy.js?v=1.7.0" defer></SCRIPT>')),
     ("an attribute repeated on any other tag", inject('<p class="lead" class="x">x</p>')),
     ("a link to the pinned build tool, which is never served",
         inject('<p><a href="/.baseline/check_palette.py">palette gate</a></p>')),
@@ -354,6 +398,11 @@ REFUSALS = [
     ("a static aria-current=true mark", inject('<p><a href="#watch" aria-current="true">x</a></p>')),
     ("an inner page linking the Licence page", inject('<p><a href="{{base}}license/">x</a></p>')),
     ("an inner page linking the Disclosure page", inject('<p><a href="{{base}}disclosure/#d-1">x</a></p>')),
+    ("the About row with no space after each dot (the 1.6.1 markup)", about_row(ABOUT_ROW.replace(ABOUT_DOT + " ", ABOUT_DOT))),
+    ("the About row with a space before a dot", about_row(ABOUT_ROW.replace("</a>" + ABOUT_DOT, "</a> " + ABOUT_DOT, 1))),
+    ("the About row with &nbsp; in place of 1 space", about_row(ABOUT_ROW.replace(ABOUT_DOT + " ", ABOUT_DOT + "&nbsp;", 1))),
+    ("the About row with 2 spaces after a dot", about_row(ABOUT_ROW.replace(ABOUT_DOT + " ", ABOUT_DOT + "  ", 1))),
+    ("an About row on an inner page", inject('<p class="about"><a href="{{base}}install/">Install</a></p>')),
     ("a baseline asset the pin does not list", inject('<img src="{{base}}assets/baseline/logos/missing.svg" alt="">')),
     ("a checklist group that is not 1 bullet list", lambda root: edit(
         root, "cleanlanguage/skills/cleanlanguage/references/qa-checklist.md", "## Tone\n\n", "## Tone\n\nA paragraph.\n\n")),
@@ -422,15 +471,15 @@ def check_scheme_validation(failures: list[str]) -> int:
         ("the scheme.js line after the first stylesheet", text.replace(tag, "", 1).replace("</head>", tag + "</head>", 1), False),
         ("a second scheme.js line", text[:sheet] + tag + text[sheet:], False),
         ("a second scheme.js in upper case with a character reference", text.replace(
-            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.6.0" defer></SCRIPT></head>', 1), False),
+            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.7.0" defer></SCRIPT></head>', 1), False),
         ("the scheme.js line inside a comment, loaded in another spelling", text.replace(tag, "<!--" + tag.rstrip("\n")
-            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.6.0"></script>\n', 1), False),
+            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.7.0"></script>\n', 1), False),
         ("an upper-case stylesheet before the scheme.js line", text.replace(
-            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + tag, 1), False),
+            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.7.0">\n' + tag, 1), False),
         ("a second scheme.js load as the first of 2 src attributes", text.replace("</head>", '<SCRIPT SRC='
-            '"/assets/baseline/sch&#101;me.js?v=1.6.0" src="/assets/baseline/copy.js?v=1.6.0" defer></SCRIPT></head>', 1), False),
+            '"/assets/baseline/sch&#101;me.js?v=1.7.0" src="/assets/baseline/copy.js?v=1.7.0" defer></SCRIPT></head>', 1), False),
         ("a stylesheet before the scheme.js line as the first of 2 rel attributes", text.replace(
-            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + tag, 1), False),
+            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.7.0">\n' + tag, 1), False),
         # The parsed reading allows it, but the header block must be byte for byte what mast() is meant to write.
         ("a newline between nav.nav and the switch", text.replace("</nav>" + SWITCH, "</nav>\n" + SWITCH, 1), False),
         ("a second element with data-scheme-toggle after header.mast", text.replace(
@@ -439,7 +488,7 @@ def check_scheme_validation(failures: list[str]) -> int:
             SWITCH + "</header>", SWITCH + '</header><div DATA-SCHEME-TOGGLE hidden></div>', 1), False),
         ("a later stylesheet moved into the body", text.replace(later, "", 1).replace("<body>\n", "<body>\n" + later, 1), False),
         ("a later stylesheet in upper case at the end of the body", text.replace(
-            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.6.0">\n</body>', 1), False),
+            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.7.0">\n</body>', 1), False),
         ("a later stylesheet in a second head after the body", text.replace(later, "", 1).replace(
             "</body>\n", "</body>\n<head>\n" + later + "</head>\n", 1), False),
         # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>; the loads
@@ -498,15 +547,21 @@ def check_scheme_validation(failures: list[str]) -> int:
 
 
 def check_inert_validation(failures: list[str]) -> int:
-    """The blocks, the h1 and the robots meta validate() requires, called directly on committed pages, each moved
-    inside noscript, raw text or canvas, whose content a browser with scripting on does not render as page elements."""
+    """The blocks, the h1, the robots meta and the landing page's About row validate() requires, called directly on
+    committed pages, each moved inside noscript, raw text or canvas, whose content a browser with scripting on does
+    not render as page elements."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     pages = {entry["id"]: entry for entry in config["pages"]}
     texts = {page_id: (REPO_ROOT / f"site/{page_id}/index.html").read_text(encoding="utf-8") for page_id in ("license", "draft")}
+    texts["home"] = (REPO_ROOT / "site/index.html").read_text(encoding="utf-8")
     skip, status, robots = generator.SKIP_LINK, generator.COPY_STATUS, '<meta name="robots" content="noindex, nofollow">'
     h1 = re.search(r"<h1>[^<]*</h1>", texts["license"]).group(0)
+    about = about_line("/")
     cases = [
+        ("the committed home page", "home", None, None, True),
+        ("the About row only inside noscript", "home", about, f"<noscript>{about}</noscript>", False),
+        ("the About row only inside canvas", "home", about, f"<canvas>{about}</canvas>", False),
         ("the h1 only inside canvas", "license", h1, f"<canvas>{h1}</canvas>", False),
         ("the committed licence page", "license", None, None, True),
         ("the committed draft page", "draft", None, None, True),
@@ -526,7 +581,10 @@ def check_inert_validation(failures: list[str]) -> int:
             passed = False
         if passed != passes:
             failures.append(f"inert validation '{name}': {'passed' if passed else 'refused'}, expected the opposite")
-    return len(cases)
+        # The build test's helper must judge each About row case as the generator should.
+        if page_id == "home" and (not about_problems("index.html", page_html, "/")) != passes:
+            failures.append(f"About helper '{name}': {'refused' if passes else 'passed'}, expected the opposite")
+    return len(cases) + sum(1 for _, page_id, *_ in cases if page_id == "home")
 
 
 def check_generator_header(failures: list[str]) -> int:
@@ -609,6 +667,7 @@ def check_clean_build(failures: list[str]) -> int:
                 if value.startswith("/draft/"):
                     failures.append(f"clean build: {page} links the draft holding page {value}")
             failures += [f"clean build: {problem}" for problem in scheme_problems(page, text, "/", config)]
+            failures += [f"clean build: {problem}" for problem in about_problems(page, text, "/")]
         for page_id, page in (("home", "index.html"), ("install", "install/index.html"), ("license", "license/index.html")):
             stamp = f'<meta property="article:modified_time" content="{modified[page_id]}">'
             if stamp not in (out / page).read_text(encoding="utf-8"):
@@ -813,6 +872,7 @@ def check_staged_build(failures: list[str]) -> int:
             if "application/ld+json" in text or 'rel="canonical"' in text:
                 failures.append(f"staged build: {page} carries publish metadata in the draft")
             failures += [f"staged build: {problem}" for problem in scheme_problems(page, text, "/draft/", config)]
+            failures += [f"staged build: {problem}" for problem in about_problems(page, text, "/draft/")]
             for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
                 if not value.startswith("/draft/") and not value.startswith("/downloads/"):
                     failures.append(f"staged build: {page} links {value} outside /draft/")
