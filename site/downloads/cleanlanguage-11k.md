@@ -87,7 +87,7 @@ Do not mechanically delete:
 - technical subjects that genuinely perform actions, such as a firewall blocking traffic or a service returning an error;
 - domain-specific terminology used precisely;
 - quoted language, official titles, product names, standards text, or contractual wording;
-- the separator in a numeric or date range: replace an en dash with a hyphen or the word "to" (12-14, or 12 to 14), and never delete it or merge the values.
+- the separator in a numeric or date range: replace an en dash with a hyphen or "to" (12-14, or 12 to 14), and never delete it or merge the values.
 
 CONTEXT RULES
 
@@ -124,7 +124,7 @@ Judgement review. Confirm that:
 - fragments, 1-line conclusions, conjunction-opened sentences, and rhetorical contrasts are used sparingly;
 - after any verb that can take either a direct object or a clause, a clause that follows is marked with "that" where its opening words could be read as a direct object;
 - punctuation and capitalization are consistent;
-- no em or en dashes remain outside quoted or verbatim material;
+- no em or en dashes remain except as PRESERVE LEGITIMATE LANGUAGE allows;
 - every citation, source attribution, quotation, link, and footnote is preserved and tied to its claim, with none invented;
 - the response does not end with an optional offer or generic engagement prompt.
 
