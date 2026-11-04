@@ -16,10 +16,12 @@ printed fails them. The probe replaces these 17 attributes (14 of modules, 3 of
 the class pathlib.Path) with a function that writes 1 line to stderr if it can
 and then exits 97, so a version guard placed after the point where the gate,
 directly or inside another function, looks up one of these attributes and calls
-it, fails both cases. This guards against a version guard placed too late by
-mistake; a gate written to stop the trap, for example by rebinding os._exit,
-changing the trap or calling one of these attributes only in a child process,
-is out of its scope. It makes no claim about any other file access. Two more
+it, fails both cases. The trap exists only in the gate's own process, so a call
+made in any other process is out of its scope, whatever the gate intends.
+Within that process it guards against a version guard placed too late by
+mistake; a gate written to stop the trap, for example by rebinding os._exit or
+changing the trap, is also out of its scope. It makes no claim about any other
+file access. Two more
 cases each put 1 read, through ``os.open`` or through ``io.FileIO``, before the
 version check in the gate's main() and assert that the probe stops it with
 exit 97.
@@ -57,9 +59,10 @@ VERSION_PROBES = [(3, 13, 9, "final", 0), (3, 15, 0, "final", 0)]
 # ones are those pathlib reaches (pathlib.io._io, pathlib._os.posix). The probe replaces these 17 attributes (14 of
 # modules, 3 of the class pathlib.Path) with a function that writes 1 line to stderr if it can and then exits 97, so
 # a version guard placed after the point where the gate, directly or inside another function, looks up one of these
-# attributes and calls it, fails the case. This guards against a version guard placed too late by mistake; a gate
-# written to stop the trap, for example by rebinding os._exit, changing the trap or calling one of these attributes
-# only in a child process, is out of its scope. It makes no claim about any other file access.
+# attributes and calls it, fails the case. The trap exists only in the gate's own process, so a call made in any
+# other process is out of its scope, whatever the gate intends. Within that process it guards against a version guard
+# placed too late by mistake; a gate written to stop the trap, for example by rebinding os._exit or changing the
+# trap, is also out of its scope. It makes no claim about any other file access.
 VERSION_PROBE = (
     "import __future__, _io, builtins, io, os, pathlib, platform, posix, re, sys, html.parser, xml.parsers.expat\n"
     "def trap(*args, **kwargs):\n"
