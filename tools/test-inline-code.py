@@ -13,14 +13,14 @@ entry points that the comment above ``VERSION_PROBE`` names replaced by a
 function that exits 97, and assert exit 3, no stdout and 1 stderr line naming
 the supported version and the faked one, so a guard placed after a result is
 printed, or after a call to any of those 17 entry points (a listing or read
-through them, for example), fails them. Beyond what the gate writes to stdout
-and stderr, they catch no file access before the guard that bypasses those 17
-entry points: no read, listing, stat or other access through any other function,
-class or reference, by a child process or an extension module's own code, or
-through a file descriptor already open, such as standard input. Two more cases
-each put 1 read, through ``os.open`` or through ``io.FileIO``, before the
-version check in the gate's main() and assert that the probe stops it with
-exit 97. SUPPORTED_PYTHONS in the gate must equal the one here exactly.
+through them, for example), fails them. The probe catches a version guard
+placed after a call to any of these 17 entry points, whether the gate calls one
+directly or through another function (Path.iterdir, glob.glob and os.fwalk, for
+example, list through os.scandir). It makes no claim about any other file
+access. Two more cases each put 1 read, through ``os.open`` or through
+``io.FileIO``, before the version check in the gate's main() and assert that
+the probe stops it with exit 97. SUPPORTED_PYTHONS in the gate must equal the
+one here exactly.
 """
 
 from __future__ import annotations
@@ -52,9 +52,8 @@ VERSION_PROBES = [(3, 13, 9, "final", 0), (3, 15, 0, "final", 0)]
 # os.open, builtins.open, io.open, io.open_code, io.FileIO, _io.open, _io.open_code, _io.FileIO, posix.scandir,
 # posix.listdir, posix.open, pathlib.Path.read_text, pathlib.Path.read_bytes and pathlib.Path.open. The _io and posix
 # ones are those pathlib reaches (pathlib.io._io, pathlib._os.posix). The probe catches a version guard placed after a
-# call to any of these 17 (a listing or read through them, for example) and catches no file access before the guard
-# that bypasses them: no read, listing, stat or other access through any other function, class or reference, by a
-# child process or an extension module's own code, or through a file descriptor already open, such as standard input.
+# call to any of these 17 entry points, whether the gate calls one directly or through another function (Path.iterdir,
+# glob.glob and os.fwalk, for example, list through os.scandir). It makes no claim about any other file access.
 VERSION_PROBE = (
     "import __future__, _io, builtins, io, os, pathlib, platform, posix, re, sys, html.parser, xml.parsers.expat\n"
     "def trap(*args, **kwargs):\n"

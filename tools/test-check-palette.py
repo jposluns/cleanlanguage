@@ -5,7 +5,7 @@ Each case runs the wrapper as a separate process and asserts its exit code. The
 first runs it on this repository and applies no change. Each other case copies
 the wrapper and the files it reads into a temporary repository (under $TMPDIR)
 and runs it there: the case named "the committed tree" applies no change, the 4
-cases that copy the palettes to site/draft/ each apply 3 changes through
+cases that copy the palettes to site/draft/ each apply 3 mutation functions through
 both(...), and every other case applies 1 mutation function, which may edit
 several places.
 The cases that change the base in site-src/site.json check that the wrapper
