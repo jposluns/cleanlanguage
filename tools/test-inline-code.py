@@ -3,7 +3,8 @@
 
 Each case copies the gate and every HTML page and SVG file under site/ into a
 temporary repository (under $TMPDIR), applies 1 fault to 1 file, runs the gate
-there as a separate process and asserts its exit code. The cases named I1 to I7,
+there as a separate process and asserts its exit code (and, for the switch
+rules in ``SWITCH_RULES``, that the refusal names the switch's place). The cases named I1 to I7,
 I2 and I2B are the inline-code mutants of the PR 206 review, and the cases named
 N1, N2 and N4 are the probes of its first verification round. Exit 0 when every case passes;
 1 otherwise, naming each failing case.
@@ -297,6 +298,18 @@ CASES = [
     ("a self-closing nav.nav before the switch", edit(LICENSE, SWITCH, '<nav class="nav"/>' + SWITCH), 1),
     ("a self-closing div first in header.mast", edit(LICENSE, '<header class="mast">', '<header class="mast"><div/>'), 1),
 ]
+# Faults that check 7's switch reading itself must refuse, whatever else also refuses them: class names split on
+# ASCII whitespace only, and no switch inside noscript, template or raw text. Its refusal names the place.
+PLACE = "as the last child of header.mast"
+MAST, MAST_END = '<header class="mast">', SWITCH + "</header>"
+SWITCH_RULES = [
+    ("a no-break space in the mast class", edit(LICENSE, MAST, '<header class="mast\u00a0x">')),
+    ("a no-break space in the nav class", edit(LICENSE, '<nav class="nav"', '<nav class="nav\u00a0x"')),
+    ("header.mast inside noscript", both(edit(LICENSE, MAST, "<noscript>" + MAST),
+                                         edit(LICENSE, MAST_END, MAST_END + "</noscript>"))),
+    ("header.mast inside template", both(edit(LICENSE, MAST, "<template>" + MAST),
+                                         edit(LICENSE, MAST_END, MAST_END + "</template>"))),
+]
 
 
 def main() -> int:
@@ -306,20 +319,21 @@ def main() -> int:
         failures.append("SCHEME_SWITCH in tools/check-inline-code.py is not the 7.33 switch of the reference pages")
     if (REPO_ROOT / INSTALL).read_text(encoding="utf-8").count(switch) != 1:
         failures.append(f"{INSTALL} does not carry the switch exactly once")
-    for name, fault, expected in CASES:
+    for name, fault, expected, says in [(*case, "") for case in CASES] + [(*rule, 1, PLACE) for rule in SWITCH_RULES]:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
             if fault:
                 fault(root)
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
-            if result.returncode != expected:
-                failures.append(f"{name}: exit {result.returncode}, expected {expected}: {(result.stdout + result.stderr).strip()[:300]}")
+            if result.returncode != expected or says not in result.stdout:
+                failures.append(f"{name}: exit {result.returncode}, expected {expected}{' with ' + repr(says) if says else ''}: "
+                                f"{(result.stdout + result.stderr).strip()[:300]}")
     if failures:
         print("test-inline-code: failures:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-inline-code: all {len(CASES)} cases passed.")
+    print(f"test-inline-code: all {len(CASES) + len(SWITCH_RULES)} cases passed.")
     return 0
 
 

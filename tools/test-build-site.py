@@ -96,6 +96,36 @@ SWITCH = module_switch(GENERATOR)
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
+# The elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render as
+# markup: noscript, template, and the raw-text and RCDATA elements. No switch counts as placed inside one.
+INERT = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext"}
+# HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
+ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
+# The header block as the generator's mast() is meant to write it, pinned here apart from the generator: only the
+# values come from site.json (base path, name, tld, GitHub URL and nav pages, aria-current on the page's own entry).
+MAST_BLOCK = (
+    '<header class="mast"><a class="brand" href="{base}"><span class="name">{name}<span class="tld">{tld}</span></span>'
+    '<span class="rule" aria-hidden="true"></span></a><nav class="nav" aria-label="Site">{items}'
+    '<a href="{github}" target="_blank" rel="noopener noreferrer">GitHub<span class="vh"> (opens in a new tab)</span></a>'
+    "</nav>{switch}</header>"
+)
+
+
+def class_names(value: str) -> list[str]:
+    return [name for name in ASCII_WHITESPACE.split(value) if name]
+
+
+def pinned_mast(config: dict, page: str, base: str) -> str:
+    """MAST_BLOCK for the generated page at page (such as license/index.html), with the values site.json gives."""
+    pages_by_id = {entry["id"]: entry for entry in config["pages"]}
+    own = next((entry["id"] for entry in config["pages"]
+                if (entry["path"] if entry["path"].endswith(".html") else entry["path"] + "index.html") == page), None)
+    current = ' aria-current="page"'
+    items = "".join(
+        f'<a href="{base}{pages_by_id[page_id]["path"]}"{current if page_id == own else ""}>'
+        f'{html.escape(pages_by_id[page_id]["nav_label"], quote=False)}</a>' for page_id in config["nav"])
+    return MAST_BLOCK.format(base=base, name=config["name"], tld=config["tld"], items=items, github=config["github"],
+                             switch=SWITCH)
 
 
 class Placement(HTMLParser):
@@ -104,9 +134,12 @@ class Placement(HTMLParser):
     first head or body the page opens, before the head ends where HTML5 ends it (text other than whitespace, a
     start tag not in HEAD_TAGS, or </body>, </html> or </br>); and each end tag's closed element (name, classes,
     depth); keyed by where the tag starts: (line, column), as getpos() reports. A self-closing tag leaves an
-    element that is neither void nor in <svg> open, as in a browser. It fails closed where it does not model HTML5:
-    a start tag not in HEAD_TAGS inside <template> or <noscript> in the head ends the head, and a self-closing tag
-    in <math> leaves its element open."""
+    element that is neither void nor in <svg> open, as in a browser, and class names split on ASCII whitespace
+    only. It fails closed where it does not model HTML5: a start tag not in HEAD_TAGS inside <template> or
+    <noscript> in the head ends the head, and a self-closing tag in <math> leaves its element open. It is not a
+    full HTML5 tree builder: it models the open elements as tags nest, void elements, the slash only in <svg> and
+    the head's end, so scheme_problems also holds each page's header.mast block to MAST_BLOCK, byte for byte; the
+    committed pages rest on build-site.py --check and the generator's validator."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -125,9 +158,9 @@ class Placement(HTMLParser):
             self.head_ended = True
         in_head = [name for name, _ in self.open] == ["html", "head"] and self.heads == 1 and not self.head_ended
         self.starts[self.getpos()] = (tag, first, list(self.open), self.previous, in_head)
-        self.previous = (tag, first.get("class", "").split()) if tag in VOID else None
+        self.previous = (tag, class_names(first.get("class", ""))) if tag in VOID else None
         if tag not in VOID:
-            self.open.append((tag, first.get("class", "").split()))
+            self.open.append((tag, class_names(first.get("class", ""))))
 
     def handle_startendtag(self, tag: str, attrs) -> None:
         foreign = tag == "svg" or any(name == "svg" for name, _ in self.open)
@@ -151,10 +184,11 @@ def position(text: str, index: int) -> tuple[int, int]:
     return text.count("\n", 0, index) + 1, index - text.rfind("\n", 0, index) - 1
 
 
-def scheme_problems(page: str, text: str, base: str) -> list[str]:
+def scheme_problems(page: str, text: str, base: str, config: dict) -> list[str]:
     """Specification 7.33 on 1 generated page, read as parsed elements: the scheme.js line, the only scheme.js
     load, before the stylesheets, it and every stylesheet in html > head; and the switch, the only element with
-    data-scheme-toggle (scheme.js wires and shows each), once, the last child of header.mast after nav.nav."""
+    data-scheme-toggle (scheme.js wires and shows each), once, the last child of header.mast after nav.nav, with no
+    INERT ancestor; and the header.mast block, once and byte for byte as MAST_BLOCK pins it."""
     problems = []
     parsed = Placement()
     parsed.feed(text)
@@ -177,11 +211,14 @@ def scheme_problems(page: str, text: str, base: str) -> list[str]:
     _, _, around, before, _ = parsed.starts.get(position(text, at), ("", {}, [], None, False))
     around, before = around or [("", [])], before or ("", [])
     after = parsed.ends.get(position(text, at + len(SWITCH)), ("", [], -1))
-    if (text.count(SWITCH) != 1 or toggles != [position(text, at)]
+    inert = any(name in INERT for start in toggles for name, _ in parsed.starts[start][2])
+    if (text.count(SWITCH) != 1 or toggles != [position(text, at)] or inert
             or around[-1][0] != "header" or "mast" not in around[-1][1] or before[0] != "nav" or "nav" not in before[1]
             or after[0] != "header" or after[2] != len(around) - 1):
         problems.append(f"{page} does not end header.mast with the light and dark switch, the only element with "
-                        "data-scheme-toggle, exactly once, after nav.nav")
+                        "data-scheme-toggle, exactly once, after nav.nav, outside noscript, template and raw text")
+    if text.count(pinned_mast(config, page, base)) != 1:
+        problems.append(f"{page} does not carry the header block once, byte for byte as MAST_BLOCK pins it")
     return problems
 
 
@@ -369,7 +406,8 @@ def check_scheme_validation(failures: list[str]) -> int:
             '"/assets/baseline/sch&#101;me.js?v=1.6.0" src="/assets/baseline/copy.js?v=1.6.0" defer></SCRIPT></head>', 1), False),
         ("a stylesheet before the scheme.js line as the first of 2 rel attributes", text.replace(
             tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + tag, 1), False),
-        ("a newline between nav.nav and the switch", text.replace("</nav>" + SWITCH, "</nav>\n" + SWITCH, 1), True),
+        # The parsed reading allows it, but the header block must be byte for byte what mast() is meant to write.
+        ("a newline between nav.nav and the switch", text.replace("</nav>" + SWITCH, "</nav>\n" + SWITCH, 1), False),
         ("a second element with data-scheme-toggle after header.mast", text.replace(
             SWITCH + "</header>", SWITCH + "</header>" + TOGGLE, 1), False),
         ("a second element with data-scheme-toggle in upper case", text.replace(
@@ -401,9 +439,47 @@ def check_scheme_validation(failures: list[str]) -> int:
         if passed != passes:
             failures.append(f"scheme validation '{name}': {'passed' if passed else 'refused'}, expected the opposite")
         # The build test's helper must judge each case as the generator should.
-        if (not scheme_problems("license/index.html", page_html, "/")) != passes:
+        if (not scheme_problems("license/index.html", page_html, "/", config)) != passes:
             failures.append(f"scheme helper '{name}': {'refused' if passes else 'passed'}, expected the opposite")
-    return 2 * len(cases)
+    # Each case below must be refused by the rule it names, whatever else refuses it: the switch's place (class names
+    # split on ASCII whitespace only, no noscript, template or raw-text ancestor), or the pinned header block.
+    mast, end = '<header class="mast">', SWITCH + "</header>"
+    placed = ("as the last child of header.mast", "does not end header.mast")
+    pinned = ("the header block", "the header block")
+    ruled = [
+        ("a no-break space in the mast class", text.replace(mast, '<header class="mast\u00a0x">', 1), placed),
+        ("a no-break space in the nav class", text.replace('<nav class="nav"', '<nav class="nav\u00a0x"', 1), placed),
+        ("header.mast inside noscript", text.replace(mast, "<noscript>" + mast, 1).replace(end, end + "</noscript>", 1), placed),
+        ("header.mast inside template", text.replace(mast, "<template>" + mast, 1).replace(end, end + "</template>", 1), placed),
+        ("a header 1 byte from the pinned markup", text.replace('aria-label="Site"', 'aria-label="site"', 1), pinned),
+    ]
+    for name, page_html, (generator_says, helper_says) in ruled:
+        try:
+            generator.validate(page_html, page, config, "/")
+            refusal = ""
+        except generator.BuildError as error:
+            refusal = str(error)
+        if generator_says not in refusal:
+            failures.append(f"scheme validation '{name}': not refused by its rule ({refusal[:200] or 'passed'})")
+        if not any(helper_says in problem for problem in scheme_problems("license/index.html", page_html, "/", config)):
+            failures.append(f"scheme helper '{name}': not refused by its rule")
+    return 2 * len(cases) + 2 * len(ruled)
+
+
+def check_generator_header(failures: list[str]) -> int:
+    """A generator whose header function writes 1 byte other than the pinned header block refuses to build."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        source = GENERATOR.read_text(encoding="utf-8")
+        at = source.index("\ndef mast(")
+        mutant = root / "tools" / GENERATOR.name
+        mutant.write_text(source[:at] + source[at:].replace('aria-label="Site"', 'aria-label="site"', 1), encoding="utf-8")
+        result = subprocess.run([sys.executable, "-I", str(mutant), "--root", str(root), "--out", str(Path(scratch) / "out")],
+                                capture_output=True, text=True)
+        if result.returncode != 1 or "the header block" not in result.stderr:
+            failures.append(f"generator header: a 1-byte change to mast() gave exit {result.returncode}, expected 1 with the "
+                            f"header block refusal ({result.stderr.strip()[:200]})")
+    return 1
 
 
 def check_unreadable(failures: list[str]) -> int:
@@ -458,7 +534,7 @@ def check_clean_build(failures: list[str]) -> int:
             for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
                 if value.startswith("/draft/"):
                     failures.append(f"clean build: {page} links the draft holding page {value}")
-            failures += [f"clean build: {problem}" for problem in scheme_problems(page, text, "/")]
+            failures += [f"clean build: {problem}" for problem in scheme_problems(page, text, "/", config)]
         for page_id, page in (("home", "index.html"), ("install", "install/index.html"), ("license", "license/index.html")):
             stamp = f'<meta property="article:modified_time" content="{modified[page_id]}">'
             if stamp not in (out / page).read_text(encoding="utf-8"):
@@ -635,9 +711,10 @@ def check_promotion_build(failures: list[str]) -> int:
             text = (out / page).read_text(encoding="utf-8")
             if '<meta name="robots" content="noindex, nofollow">' not in text or "application/ld+json" in text:
                 failures.append(f"promotion build: {page} must stay noindex without publish metadata")
+        config = json.loads((root / "site-src/site.json").read_text(encoding="utf-8"))
         for page in sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html")):
             text = (out / page).read_text(encoding="utf-8")
-            failures += [f"promotion build: {problem}" for problem in scheme_problems(page, text, "/")]
+            failures += [f"promotion build: {problem}" for problem in scheme_problems(page, text, "/", config)]
     return 5
 
 
@@ -652,6 +729,7 @@ def check_staged_build(failures: list[str]) -> int:
             failures.append(f"staged build: exit {result.returncode}: {result.stderr.strip()}")
             return 1
         pages = sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html"))
+        config = json.loads((root / "site-src/site.json").read_text(encoding="utf-8"))
         if len(pages) != 18:
             failures.append(f"staged build: {len(pages)} pages, expected 18: {pages}")
         for page in pages:
@@ -660,7 +738,7 @@ def check_staged_build(failures: list[str]) -> int:
                 failures.append(f"staged build: {page} lacks the noindex meta")
             if "application/ld+json" in text or 'rel="canonical"' in text:
                 failures.append(f"staged build: {page} carries publish metadata in the draft")
-            failures += [f"staged build: {problem}" for problem in scheme_problems(page, text, "/draft/")]
+            failures += [f"staged build: {problem}" for problem in scheme_problems(page, text, "/draft/", config)]
             for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
                 if not value.startswith("/draft/") and not value.startswith("/downloads/"):
                     failures.append(f"staged build: {page} links {value} outside /draft/")
@@ -681,6 +759,7 @@ def main() -> int:
     ran += check_refusals(failures)
     ran += check_unreadable(failures)
     ran += check_scheme_validation(failures)
+    ran += check_generator_header(failures)
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
     ran += check_family_pages(failures)

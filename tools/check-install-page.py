@@ -102,9 +102,18 @@ What it verifies
    (template specification, section 5), and check 5 and
    ``tools/check-inline-code.py`` enforce that rule.
 
-It reads the markup with ``html.parser``, so an ancestor in checks 1 and 4 is an
-element that the parser holds open, and it follows a browser in these ways where
-the two differ: ``/>`` on an element that is not void
+It reads the markup with ``html.parser``. Its readers are not a full HTML5 tree
+builder: they model the open elements as tags nest, void elements, the head's
+end (check 6), the hiding rules of check 1, and class names split on ASCII
+whitespace only, as HTML splits them (``class="btn&nbsp;inline"`` is 1 class,
+not ``btn`` and ``inline``). A script or stylesheet inside ``<noscript>``,
+``<template>`` or a raw-text element is not in ``html > head``, so check 6
+never counts it as placed there. What guarantees the committed pages is the
+generator: ``tools/build-site.py --check``, a deploy gate, compares them byte
+for byte with a fresh build, and the generator's validator holds each page's
+``header.mast`` block to its pinned markup. An ancestor in checks 1 and 4 is an
+element that the parser holds open, and the gate follows a browser in these
+ways where the two differ: ``/>`` on an element that is not void
 does not close it, so ``<div hidden/>`` hides what follows; of 2 attributes with
 the same name, the first counts; a heading start tag closes a heading that is
 the current node, and any heading end tag closes the innermost open heading;
@@ -254,6 +263,8 @@ VOID = {
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+# HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
+ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # Invisible characters a heading might be reduced to, besides the whitespace str.strip removes: the zero-width space,
 # non-joiner and joiner (U+200B to U+200D), the zero-width no-break space or byte order mark (U+FEFF), the no-break
 # space (U+00A0), the word joiner (U+2060), the soft hyphen (U+00AD), and the bidi formatting characters: the marks
@@ -315,8 +326,13 @@ HIDING_ELEMENTS = (
 )
 
 
+def class_names(attrs: dict[str, str]) -> list[str]:
+    """The class names of an element, split on ASCII whitespace only, as a browser splits them."""
+    return [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
+
+
 def is_hiding_element(tag: str, attrs: dict[str, str]) -> bool:
-    classes = attrs.get("class", "").split()
+    classes = class_names(attrs)
     return (
         "hidden" in attrs
         or "inert" in attrs
@@ -355,7 +371,7 @@ class PageParser(HTMLParser):
         for k, v in attrs_list:
             attrs.setdefault(k.lower(), v if v is not None else "")
         self.order += 1
-        classes = attrs.get("class", "").split()
+        classes = class_names(attrs)
         # A heading start tag closes a heading that is the current node, as a browser does: <h1><h2>x leaves the h1 empty.
         if tag in HEADINGS and self.stack and self.stack[-1]["tag"] in HEADINGS:
             del self.stack[-1]
@@ -437,7 +453,9 @@ class PageParser(HTMLParser):
 
 class LoadScan(HTMLParser):
     """Check 6: where each <script> and stylesheet <link> element starts, which of them start outside the
-    page's head, and each tag that repeats an attribute."""
+    page's head, and each tag that repeats an attribute. The head is html > head with no other open element, so
+    a load inside noscript, template or a raw-text element never counts as in it. Not a full HTML5 tree builder; the
+    committed pages rest on build-site.py --check and the generator's validator."""
 
     def __init__(self, text: str) -> None:
         super().__init__()

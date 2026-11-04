@@ -77,12 +77,22 @@ each element with ``data-scheme-toggle`` (an attribute name in any letter
 case), the switch's parent, the element before it and the end of its parent,
 and ``html > head``, the first head or body the page opens. As in a browser, a
 self-closing tag leaves an element that is neither void nor in ``<svg>`` open,
-and the head ends at the first text other than whitespace, start tag other
-than those HTML5 allows in a head (``HEAD_TAGS``), or ``</body>``, ``</html>``
-or ``</br>``; a script or stylesheet after that point is outside it. The
-reading fails closed where it does not model HTML5: such a start tag inside a
-``<template>`` or ``<noscript>`` in the head ends the head, and a self-closing
-tag in ``<math>`` leaves its element open.
+class names split on ASCII whitespace only (``class="mast&nbsp;x"`` is not
+``mast``), and the head ends at the first text other than whitespace, start
+tag other than those HTML5 allows in a head (``HEAD_TAGS``), or ``</body>``,
+``</html>`` or ``</br>``; a script or stylesheet after that point is outside
+it. No element with ``data-scheme-toggle`` may sit inside an element whose
+content a browser with scripting on, the only case in which ``scheme.js``
+runs, does not render as markup (``INERT_TAGS``: ``noscript``, ``template``,
+and the raw-text and RCDATA elements); a script or stylesheet inside one is
+not in ``html > head``. The reading fails closed where it does not model
+HTML5: such a start tag inside a ``<template>`` or ``<noscript>`` in the head
+ends the head, and a self-closing tag in ``<math>`` leaves its element open.
+It is not a full HTML5 tree builder, so each page's ``header.mast`` block must
+also be, byte for byte, the markup ``MAST_BLOCK`` pins with the values from
+``site-src/site.json``, which a change to ``mast()`` cannot pass. What
+guarantees the committed pages is ``--check``, a deploy gate, which compares
+them byte for byte with a fresh build that passed these refusals.
 
 Modes
 -----
@@ -142,6 +152,11 @@ EXECUTABLE_TYPES = {"", "module", "text/javascript", "application/javascript", "
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
+# The elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render
+# as markup: noscript, template, and the raw-text and RCDATA elements. No switch counts as placed inside one.
+INERT_TAGS = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext"}
+# HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
+ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 SKIP_LINK = '<a class="skip" href="#main-content">Skip to content</a>'
 COPY_STATUS = '<p class="vh" id="copy-status" role="status" aria-live="polite"></p>'
 # The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
@@ -159,6 +174,16 @@ SCHEME_SWITCH = (
     '<path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'
     '</svg><span class="vh">Dark mode</span></button>'
 )
+# The header block as mast() is meant to write it, held apart from mast() so that validate() refuses a change to
+# either that the parsed reading misses: the markup is pinned here, and only the values come from site.json (the
+# base path, name, tld, GitHub URL and nav pages, with aria-current on the page's own entry).
+MAST_BLOCK = (
+    '<header class="mast"><a class="brand" href="{base}"><span class="name">{name}<span class="tld">{tld}</span></span>'
+    '<span class="rule" aria-hidden="true"></span></a><nav class="nav" aria-label="Site">{items}'
+    '<a href="{github}" target="_blank" rel="noopener noreferrer">GitHub<span class="vh"> (opens in a new tab)</span></a>'
+    "</nav>{switch}</header>"
+)
+MAST_ITEM = '<a href="{href}"{current}>{label}</a>'
 SLICE_COUNT = 6
 
 
@@ -657,6 +682,10 @@ def substitute(text: str, values: dict, where: str) -> str:
 # Validation -------------------------------------------------------------------
 
 class PageScan(HTMLParser):
+    """The parsed reading validate() checks. Not a full HTML5 tree builder: it models the open elements as tags
+    nest, void elements, the slash only in <svg>, the head's end, class names split on ASCII whitespace, and the
+    INERT_TAGS ancestors of each element with data-scheme-toggle. The pinned header block and --check cover the rest."""
+
     def __init__(self, switch_at: tuple[int, int] | None = None) -> None:
         super().__init__(convert_charrefs=True)
         self.ids: list[str] = []
@@ -670,6 +699,8 @@ class PageScan(HTMLParser):
         self.loads: list[tuple[tuple[int, int], str]] = []
         self.sheets: list[tuple[int, int]] = []
         self.toggles: list[tuple[int, int]] = []
+        # Whether an element with data-scheme-toggle starts inside an element of INERT_TAGS.
+        self.inert_toggle = False
         # Where each script and link starts outside the page's head: html > head, the first head or body opened,
         # until the head ends where HTML5 ends it.
         self.outside_head: set[tuple[int, int]] = set()
@@ -696,7 +727,7 @@ class PageScan(HTMLParser):
         if len(attrs) != len(attrs_list):
             # A browser reads the first of 2 attributes with the same name, and this dict the last.
             self.problems.append(f"<{tag}> carries an attribute twice")
-        classes = attrs.get("class", "").split()
+        classes = [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
         if tag in ("head", "body"):
             self.heads += 1
         if tag not in HEAD_TAGS and tag not in ("html", "head"):
@@ -706,6 +737,7 @@ class PageScan(HTMLParser):
             self.outside_head.add(self.getpos())
         if "data-scheme-toggle" in attrs:
             self.toggles.append(self.getpos())
+            self.inert_toggle = self.inert_toggle or any(name in INERT_TAGS for name, _ in self.open)
         if tag == "button" and self.getpos() == self.switch_at:
             self.switch_parent = self.open[-1] if self.open else None
             self.switch_previous = self.previous
@@ -792,6 +824,18 @@ def line_column(text: str, index: int) -> tuple[int, int]:
     return text.count("\n", 0, index) + 1, index - text.rfind("\n", 0, index) - 1
 
 
+def pinned_mast(config: dict, page: dict, base: str) -> str:
+    """The header block MAST_BLOCK pins for 1 page, with the values site.json gives."""
+    pages_by_id = {entry["id"]: entry for entry in config["pages"]}
+    items = "".join(
+        MAST_ITEM.format(href=base + pages_by_id[page_id]["path"], current=' aria-current="page"' if page_id == page["id"]
+                         else "", label=html.escape(pages_by_id[page_id]["nav_label"], quote=False))
+        for page_id in config["nav"]
+    )
+    return MAST_BLOCK.format(base=base, name=config["name"], tld=config["tld"], items=items, github=config["github"],
+                             switch=SCHEME_SWITCH)
+
+
 def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     where = page["source"]
     problems = []
@@ -811,12 +855,14 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     # The switch is the only parsed element with data-scheme-toggle; the element it sits in and the one before it;
     # the end tag of its parent starts where it ends.
     parent, previous = scan.switch_parent or ("", []), scan.switch_previous or ("", [])
-    if (page_html.count(SCHEME_SWITCH) != 1 or scan.toggles != [line_column(page_html, switch)]
+    if (page_html.count(SCHEME_SWITCH) != 1 or scan.toggles != [line_column(page_html, switch)] or scan.inert_toggle
             or parent[0] != "header" or "mast" not in parent[1]
             or previous[0] != "nav" or "nav" not in previous[1]
             or scan.switch_parent_end != line_column(page_html, switch + len(SCHEME_SWITCH))):
         problems.append("the light and dark switch must appear exactly once, as the last child of header.mast, after nav.nav, "
-                        "and no other element may carry data-scheme-toggle")
+                        "outside noscript, template and raw text, and no other element may carry data-scheme-toggle")
+    if page_html.count(pinned_mast(config, page, base)) != 1:
+        problems.append("the header block is not, once and byte for byte, the header.mast markup MAST_BLOCK pins")
     if re.search(r"<svg", page_html.replace(SCHEME_SWITCH, "", 1), re.I):
         problems.append("an inline <svg> other than the light and dark switch")
     scheme_tags = {line_column(page_html, match.start()) for match in re.finditer(

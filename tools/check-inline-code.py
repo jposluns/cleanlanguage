@@ -67,7 +67,12 @@ every HTML page it refuses:
    as parsed elements (an attribute name in any letter case, and the content of
    ``<noscript>`` read as markup), must be exactly 1, and that 1 must be
    ``SCHEME_SWITCH``, byte for byte, the last child of ``header.mast``, after
-   ``nav.nav``. A page with an end tag that closes no open element before that
+   ``nav.nav``, with no ancestor whose content a browser with scripting on,
+   the only case in which ``scheme.js`` runs, does not render as markup
+   (``INERT_ELEMENTS``: ``noscript``, ``template``, and the raw-text and
+   RCDATA elements). Class names are read as HTML reads them, split on ASCII
+   whitespace only, so ``class="mast&nbsp;x"`` is not ``mast``. A page with
+   an end tag that closes no open element before that
    switch's parent ends fails, since its place is then not known. A
    self-closing tag leaves an element that is neither void nor in ``<svg>``
    open, as in a browser, so ``<nav class="nav"/>`` before the switch makes
@@ -130,9 +135,17 @@ parsing algorithm of the specification, so markup built to make them disagree
 can still slip past checks 1 to 5 in an HTML page. Checks 6 to 9 narrow that:
 check 6 compares counts only for script and style start tags and for ``on``
 attributes, so a ``javascript:`` URL or a ``srcdoc`` attribute that the parser
-reads as text is outside it. The gate does not judge the files that external
-scripts load (under ``site/assets/baseline/``), other URL schemes such as
-``data:``, ``<meta
+reads as text is outside it. The switch reading of check 7 is not a full HTML5
+tree builder either: it models only the open elements as their start and end
+tags nest, void elements, the slash of a self-closing tag (honoured only in
+``<svg>``), the attribute name ``data-scheme-toggle`` in any letter case,
+class names split on ASCII whitespace, and the ancestors in
+``INERT_ELEMENTS``. What guarantees the committed pages is the generator:
+``tools/build-site.py --check``, a deploy gate, compares them byte for byte
+with a fresh build, and the generator's validator holds each page's
+``header.mast`` block to its pinned markup. The gate does not judge the files
+that external scripts load (under ``site/assets/baseline/``), other URL
+schemes such as ``data:``, ``<meta
 http-equiv="refresh">``, or animation of attributes other than ``href``. The
 security policy covers some of those cases: ``default-src 'none'`` blocks
 frames and objects, and ``img-src 'self'`` blocks ``data:`` images. It does not
@@ -170,6 +183,11 @@ SVG_REFUSED_ELEMENTS = ("script", "style", "foreignObject")
 # tags either. Python 3.14 reads title and textarea as RCDATA and xmp, iframe, noembed and noframes
 # as raw text by default; earlier versions read only script and style as raw text.
 RAW_TEXT_ELEMENTS = ("script", "style", "noscript", "title", "textarea", "xmp", "iframe", "noembed", "noframes")
+# Elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render as
+# markup: noscript, template, and the raw-text and RCDATA elements. Check 7 places no switch inside one.
+INERT_ELEMENTS = RAW_TEXT_ELEMENTS + ("template", "plaintext")
+# HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
+ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # A browser removes leading and trailing C0 controls and spaces from a URL, and
 # every ASCII tab or newline inside it, before it reads the scheme.
 URL_EDGES = "".join(chr(code) for code in range(0x21))
@@ -228,6 +246,11 @@ def is_same_origin_path(value: str) -> bool:
 
 def is_href_name(name: str) -> bool:
     return name == "href" or name.endswith(":href")
+
+
+def class_names(value: str) -> list[str]:
+    """The class names in a class attribute's value, split on ASCII whitespace only, as a browser splits them."""
+    return [name for name in ASCII_WHITESPACE.split(value) if name]
 
 
 def line_of(text: str, index: int) -> int:
@@ -324,8 +347,10 @@ def scan(text: str) -> InlineCodeParser:
 
 class SwitchScan(HTMLParser):
     """Check 7: where each element with data-scheme-toggle starts, and for the first, its parent and the element
-    before it (each a name and classes) and where the end tag of its parent starts. The content of <noscript> is
-    read as markup."""
+    before it (each a name and classes) and where the end tag of its parent starts; and whether any of them sits
+    inside an element of INERT_ELEMENTS. The content of <noscript> is read as markup. Not a full HTML5 tree
+    builder: it models the open elements as tags nest, void elements, the slash only in <svg>, and class names
+    split on ASCII whitespace; the committed pages rest on build-site.py --check and the generator's validator."""
     CDATA_CONTENT_ELEMENTS = tuple(name for name in RAW_TEXT_ELEMENTS if name != "noscript")
     RCDATA_CONTENT_ELEMENTS = ()
 
@@ -340,13 +365,16 @@ class SwitchScan(HTMLParser):
         self.depth = 0
         self.parent_end: tuple[int, int] | None = None
         self.unbalanced = False
+        # Whether an element with data-scheme-toggle starts inside noscript, template or a raw-text element.
+        self.inert = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        classes = next((value or "" for name, value in attrs if name == "class"), "").split()
+        classes = class_names(next((value or "" for name, value in attrs if name == "class"), ""))
         if any(name == SCHEME_TOGGLE for name, _ in attrs):
             if not self.toggles:
                 self.parent = self.open[-1] if self.open else None
                 self.before, self.depth = self.previous, len(self.open)
+            self.inert = self.inert or any(name in INERT_ELEMENTS for name, _ in self.open)
             self.toggles.append(self.getpos())
         self.previous = (tag, classes) if tag in VOID_ELEMENTS else None
         if tag not in VOID_ELEMENTS:
@@ -383,14 +411,14 @@ def switch_problems(text: str) -> list[str]:
     found.close()
     at = text.find(SCHEME_SWITCH)
     parent, before = found.parent or ("", []), found.before or ("", [])
-    if (text.count(SCHEME_SWITCH) != 1 or found.toggles != [position(text, at)] or found.unbalanced
+    if (text.count(SCHEME_SWITCH) != 1 or found.toggles != [position(text, at)] or found.unbalanced or found.inert
             or parent[0] != "header" or "mast" not in parent[1] or before[0] != "nav" or "nav" not in before[1]
             or found.parent_end != position(text, at + len(SCHEME_SWITCH))):
         line = found.toggles[0][0] if found.toggles else line_of(text, max(at, 0))
         return [
             f"line {line}: the page carries the light and dark switch {text.count(SCHEME_SWITCH)} times and "
             f"{len(found.toggles)} elements with data-scheme-toggle; exactly 1 of each is required, the same "
-            "element, as the last child of header.mast, after nav.nav"
+            "element, as the last child of header.mast, after nav.nav, outside noscript, template and raw text"
         ]
     return []
 
