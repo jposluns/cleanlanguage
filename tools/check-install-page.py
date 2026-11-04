@@ -111,10 +111,12 @@ whitespace only, as HTML splits them (``class="btn&nbsp;inline"`` is 1 class,
 not ``btn`` and ``inline``). A script or stylesheet inside ``<noscript>``,
 ``<template>``, ``<plaintext>``, a raw-text element or one of ``HIDING_ELEMENTS``
 (``INERT_ELEMENTS`` of ``tools/check-inline-code.py``, whose content a
-browser with scripting on does not render as page elements) is not in
-``html > head``, so check 6 never counts it as placed there or as the load of
-``copy.js``; nor do checks 3 and 4 count an id or a link inside one. What
-guarantees the committed pages is the
+browser with scripting on does not render as page elements or, for ``audio``,
+``canvas``, ``datalist``, ``meter``, ``object``, ``progress``, ``rp``,
+``select`` and ``video``, renders only as fallback, only in its control or not
+at all) is not in ``html > head``, so check 6 never counts it as placed there
+or as the load of ``copy.js``; nor do checks 3 and 4 count an id or a link
+inside one. What guarantees the committed pages is the
 generator: ``tools/build-site.py --check``, a deploy gate, compares them byte
 for byte with a fresh build, and the generator's validator holds each page's
 ``header.mast`` block to its pinned markup. An ancestor in checks 1 and 4 is an
@@ -335,8 +337,8 @@ def inline_code(where: str, text: str) -> list[str]:
 
 def inert_elements() -> tuple[str, ...]:
     """The elements whose content a browser with scripting on does not render as page elements (noscript, template,
-    plaintext, the raw-text and RCDATA elements, and HIDING_ELEMENTS), as tools/check-inline-code.py names them for
-    check 7."""
+    plaintext, the raw-text and RCDATA elements) or renders only as fallback, only in its control or not at all (the
+    other elements of HIDING_ELEMENTS), as tools/check-inline-code.py names them for check 7."""
     return load_tool("check-inline-code.py").INERT_ELEMENTS
 
 
@@ -427,7 +429,9 @@ class PageParser(HTMLParser):
                 parent["summary"] = True
             else:
                 hiding = True
-        # An id or a link inside an element of INERT_ELEMENTS is not present for a browser with scripting on.
+        # An id or a link inside an element of INERT_ELEMENTS does not count: a browser with scripting on does not
+        # render that element's content as page elements, or renders it only as fallback, only in its control or
+        # not at all.
         inert = any(frame["tag"] in inert_elements() for frame in self.stack)
         if "id" in attrs:
             self.id_counts[attrs["id"]] += 1

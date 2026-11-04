@@ -218,8 +218,9 @@ SVG_REFUSED_ELEMENTS = ("script", "style", "foreignObject")
 # as raw text by default; earlier versions read only script and style as raw text.
 RAW_TEXT_ELEMENTS = ("script", "style", "noscript", "title", "textarea", "xmp", "iframe", "noembed", "noframes")
 # Elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render as
-# page elements: noscript, template, plaintext, the raw-text and RCDATA elements, and the elements
-# tools/check-install-page.py hides (HIDING_ELEMENTS) for the same reason. Check 7 places no switch inside one.
+# page elements (noscript, template, plaintext, the raw-text and RCDATA elements) or renders only as fallback,
+# only in its control or not at all (the other elements of tools/check-install-page.py's HIDING_ELEMENTS: audio,
+# canvas, datalist, meter, object, progress, rp, select and video). Check 7 places no switch inside one.
 INERT_ELEMENTS = RAW_TEXT_ELEMENTS + (
     "template", "plaintext", "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video"
 )
