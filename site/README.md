@@ -11,6 +11,7 @@ Connect the GitHub repository to Cloudflare Pages using these settings:
 - Build command: `bash tools/pages-build.sh`
 - Build output directory: `site`
 - Root directory: leave blank
+- Environment variable `PYTHON_VERSION`: leave unset; the `.python-version` file at the repository root names the Python version (see below)
 
 Add `cleanlanguage.ai` as the custom domain after the first deployment.
 
@@ -18,7 +19,13 @@ Cloudflare Pages publishes `site/` exactly as it is committed; the build changes
 
 If any gate fails, or a gate file is missing, the build fails, that commit is not deployed, and the build log names the gate and the problem. Once the build command is set, a branch that does not yet contain `tools/pages-build.sh` also fails its build (bash exits 127 and no gate runs); merging `main` into that branch fixes it. Fix the cause in a pull request; never remove a gate to make a deploy pass. The same 6 gates also run in GitHub Actions on pull requests and on pushes to `main`. The site's other checks run in GitHub Actions, not in the build, on the triggers that each workflow sets: these are the other offline gates, such as `generate-sitemap.py` and `check-release-links.py`, and the checks that need git history or the network. [`tools/test-pages-build.py`](../tools/test-pages-build.py) fails if the build script stops running a listed gate or stops failing when a gate exits 1 or 3.
 
-The first line that the build script writes to the build log names the Python version. If that version is older than 3.11, set the `PYTHON_VERSION` environment variable in the Cloudflare Pages settings; this is Cloudflare's setting, so confirm in Cloudflare's documentation that Pages honours it, since nothing in this repository verifies it.
+Cloudflare's [build image page](https://developers.cloudflare.com/pages/configuration/build-image/) (read on 3 November 2026) gives 3.13.3 as the default Python of its v3 build image, and the first Pages build of this site ran Python 3.13.3. The same page says that a project chooses another version with the `PYTHON_VERSION` environment variable or with a `.python-version` or `runtime.txt` file at its root directory, so the `.python-version` file at the repository root names a 3.14 release, 3.14.4. [`tools/test-pages-build.py`](../tools/test-pages-build.py) fails if `.python-version` is missing or names a version outside the versions that `check-inline-code` supports.
+
+In GitHub Actions, each workflow that runs `check-inline-code`, directly or through a page check, first runs [`tools/check-python-version.py`](../tools/check-python-version.py), which, on Python 3.7 or later, exits 3 unless the runner's `python3` is exactly the release that `.python-version` names, so a runner image that moves to another release fails those workflows until `.python-version` is updated in a pull request. `tools/test-pages-build.py` reads the workflows in `.github/workflows` whose name ends in `.yml` and fails if a job whose steps name the gate, a page check, `tools/pages-build.sh` or `tools/release-dry-run.sh` has an `if:` or `continue-on-error`, or does not run that check exactly, with no other key, as its first step after checkout, or if no job names one. The check confirms only that the runner's interpreter matches the file; it says nothing about the Pages build image.
+
+The same file names the Python of the Pages build, so an edit to `.python-version` also moves the Pages build to that release: merge it only once the pull request's Cloudflare Pages preview build passes.
+
+Nothing in this repository verifies that Pages honours the file: the first line that the build script writes to the build log names the Python version, and so does the pass or fail line of `check-inline-code`; those lines show the version a build ran. If that version is older than 3.11, the script stops before any gate; if it is any version other than 3.14, `check-inline-code` exits 3 and fails the build. In either case, correct `.python-version` in a pull request; if the log shows that Pages ignores the file, set the `PYTHON_VERSION` environment variable in the Cloudflare Pages settings to the release that the file names.
 
 To roll back, clear the build command in the Cloudflare Pages settings; Pages then publishes `site/` without running the gates.
 

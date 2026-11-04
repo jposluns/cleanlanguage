@@ -61,7 +61,8 @@ recorded hash and deliberate review.
 Exit codes:
   0  the page matches and is static
   1  the text drifted, or inline code was reintroduced
-  3  a file could not be read, or the expected markup was not found
+  3  a file could not be read, the expected markup was not found, or the Python version
+     is 3.7 or later and not one that tools/check-inline-code.py supports
 """
 
 from __future__ import annotations
@@ -103,7 +104,10 @@ def inline_code_problems(text: str) -> list[str]:
         die("tools/check-inline-code.py could not be loaded")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.inline_code_problems(text)
+    try:
+        return module.inline_code_problems(text)
+    except module.UnsupportedPython as error:
+        die(f"tools/check-inline-code.py {error}")
 
 
 def first_difference(a: str, b: str) -> str:

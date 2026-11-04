@@ -7,7 +7,8 @@ there as a separate process and asserts its exit code (and, for the switch
 rules in ``SWITCH_RULES``, that the refusal names the switch's place). The cases named I1 to I7,
 I2 and I2B are the inline-code mutants of the PR 206 review, and the cases named
 N1, N2 and N4 are the probes of its first verification round. Exit 0 when every case passes;
-1 otherwise, naming each failing case.
+1 otherwise, naming each failing case. One further case runs the gate under a
+faked Python version tuple outside its supported set and asserts exit 3.
 """
 
 from __future__ import annotations

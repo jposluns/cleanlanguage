@@ -119,7 +119,11 @@ to an element's or attribute's local name, whatever its namespace prefix:
 Python versions
 ---------------
 
-The gate prints the Python version it ran under. The raw-text element list is
+The gate runs only on Python 3.14 (``SUPPORTED_PYTHONS`` below), the version its
+guarantees are stated for; on any other version, 3.7 or later, it exits 3
+before it reads a file. Python 3.6 and older cannot compile the file, which
+imports ``annotations`` from ``__future__``, so they exit 1 instead. The gate
+prints the Python version it ran under. The raw-text element list is
 set on the HTML parser, so the reading of those elements does not depend on the
 version. Other ``html.parser`` behaviour does change between versions: how a
 comment ends (``--!>``), how a ``<!`` declaration or a ``<![CDATA[`` section is
@@ -130,6 +134,21 @@ where those changes matter for script, style and ``on`` attributes. A
 ``javascript:`` URL or a ``srcdoc`` attribute inside such markup stays
 version-dependent. The XML parser follows the XML specification on every
 version.
+
+``inline_code_problems`` makes the same version check and raises
+``UnsupportedPython``, so the tools that load it as a module refuse another
+version too, each with exit 3 and its own message from Python 3.7 on (3.9 for
+``tools/check-install-page.py``, whose docstring says why).
+``tools/check-instructions-page.py`` refuses through that exception.
+``tools/check-install-page.py`` has its own version guard, which fires first,
+before it reads a file; it catches the exception too, should the two lists of
+supported versions part (its docstring, Python versions).
+
+The check reads the minor version only, so it admits every 3.14 release, and
+``html.parser`` has changed within a minor version before. A pass of
+``tools/test-inline-code.py`` is evidence only for the interpreter it ran on.
+The Site hardening workflow runs the suite on the same interpreter just before
+the gate; the Pages build and the tools that load the module do not.
 
 What it does not verify
 -----------------------
@@ -162,7 +181,8 @@ another extension is outside it.
 Exit codes:
   0  no file carries inline code
   1  a file carries inline code or refused markup, the parser and a text count disagree, or the XML parser refuses an SVG file
-  3  site/ or a file could not be read, a file is not UTF-8, or no HTML page was found
+  3  site/ or a file could not be read, a file is not UTF-8, no HTML page was found, or the Python
+     version is 3.7 or later and not a supported one
 """
 
 from __future__ import annotations
@@ -180,6 +200,13 @@ SITE = REPO_ROOT / "site"
 PAGE_SUFFIXES = (".html", ".htm")
 SVG_SUFFIX = ".svg"
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+# The (major, minor) versions the gate runs on: the versions the docstring's guarantees
+# are stated for. From Python 3.7 on, main() and inline_code_problems() refuse every
+# other version, and check-instructions-page.py refuses it through the latter; from 3.9
+# on, check-install-page.py refuses it with its own guard, which fires first.
+# Every patch release of these versions passes the check; tools/test-inline-code.py is
+# evidence only for the interpreter it ran on (docstring, Python versions).
+SUPPORTED_PYTHONS = ((3, 14),)
 
 DATA_BLOCK_TYPE = "application/ld+json"
 URL_ATTRIBUTES = ("href", "src", "action", "formaction")
@@ -236,9 +263,22 @@ RULE = (
 )
 
 
+class UnsupportedPython(Exception):
+    """Raised by inline_code_problems on a Python version outside SUPPORTED_PYTHONS."""
+
+
 def die(message: str) -> None:
     print(f"check-inline-code: {message}", file=sys.stderr)
     raise SystemExit(3)
+
+
+def python_problem() -> str | None:
+    """Why this Python version is not a supported one, or None when it is."""
+    if sys.version_info[:2] in SUPPORTED_PYTHONS:
+        return None
+    supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
+    return (f"runs only on Python {supported}, the versions its guarantees are stated for; "
+            f"this is Python {sys.version_info[0]}.{sys.version_info[1]}")
 
 
 def clean_url(value: str) -> str:
@@ -525,7 +565,10 @@ def svg_problems(text: str) -> list[str]:
 
 
 def inline_code_problems(text: str, svg: bool = False) -> list[str]:
-    """Each piece of inline code or refused markup in a file, as 'line N: ...'."""
+    """Each piece of inline code or refused markup in a file, as 'line N: ...'; raises UnsupportedPython."""
+    unsupported = python_problem()
+    if unsupported:
+        raise UnsupportedPython(unsupported)
     if svg:
         return svg_problems(text)
     problems = switch_problems(text)
@@ -552,6 +595,9 @@ def files() -> tuple[list[Path], list[Path]]:
 
 
 def main() -> int:
+    unsupported = python_problem()
+    if unsupported:
+        die(unsupported)
     problems: list[str] = []
     pages, svgs = files()
     for path in pages + svgs:

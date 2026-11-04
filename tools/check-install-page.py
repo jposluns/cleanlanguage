@@ -203,11 +203,28 @@ Checks 1 to 6 read the markup with ``html.parser`` and rest on how it reads raw
 text and comments on Python 3.14: which end tags close a raw-text element (on
 3.14, as in a browser, ``</ script>`` does not close a ``script``), whether
 ``title`` holds markup, and whether ``--!>`` ends a comment. The gate is tested
-on 3.14, so on any other (major, minor) version it exits 3 before it reads a
-file (``SUPPORTED_PYTHONS`` below). That guard does not prove that a given 3.14
+on 3.14, so on any other (major, minor) version, 3.9 or later, it exits 3
+before it reads a file (``SUPPORTED_PYTHONS`` below). Python 3.6 and older
+cannot compile the file, which imports ``annotations`` from ``__future__``, and
+Python 3.7 and 3.8 have no ``functools.cache``, which the file applies as it
+loads, so they exit 1 instead. That guard does not prove that a given 3.14
 patch release reads markup the same way, because ``html.parser`` also changes
 within a minor version: Python 3.13.3 ends a raw-text element at ``</ script>``,
 and the 3.13 branch has since taken the change that stops it.
+
+Check 5 makes a second version check: ``inline_code_problems`` of
+``tools/check-inline-code.py`` raises ``UnsupportedPython`` on a version outside
+that gate's own ``SUPPORTED_PYTHONS``, and ``inline_code`` below catches it and
+exits 3 with this gate's message. The guard in ``main()`` fires first, before
+any file is read, so on a version outside this gate's list check 5 is never
+reached. Both remain because they guard different code: this guard covers how
+checks 1 to 6 read markup, and that check covers the inline-code gate's own
+guarantees. ``tools/test-install-page.py`` fails unless every version listed
+here is listed there too, and unless this guard, not the catch, refuses a faked
+Python 3.13 and 3.15 with its own message. From 3.9 on, this guard as written
+meets every unsupported version first. Should the lists part, the catch still
+exits 3 with no result line, after the pages are read; without it, the
+exception would end the gate with exit 1.
 
 ``tools/test-install-page.py`` runs every case on the Python that runs it, and
 ``.github/workflows/install-page.yml`` runs it before the gate in the same job.
@@ -220,7 +237,8 @@ which runs the gate without the suite.
 Exit codes:
   0  every check above passes
   1  a family link, family page, id, retired attribute, inline code, asset token, or header discipline regressed
-  3  a file could not be read, a gate it reuses is missing, or the Python version is not 3.14
+  3  a file could not be read, a gate it reuses is missing, or the Python version is 3.9 or later and
+     either not 3.14 or not one that tools/check-inline-code.py supports
 """
 
 from __future__ import annotations
@@ -250,8 +268,8 @@ SCHEME_TAG = re.compile(r'<script data-cfasync="false" src="/assets/baseline/sch
 DEFERRED_TAG = re.compile(r'<script src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+" defer></script>')
 SITE_SHEET = re.compile(r'<link rel="stylesheet" href="/assets/site\.css\?v=[0-9a-f]{12}">')
 DRAFT_PATTERN = "/draft/*"
-# The (major, minor) Python versions the gate is tested on; main() refuses every other version with exit 3
-# before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
+# The (major, minor) Python versions the gate is tested on; main() refuses every other version, 3.9 or later,
+# with exit 3 before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
 SUPPORTED_PYTHONS = ((3, 14),)
 # The shared policy (template specification, baseline 1.6.0, section 9, unchanged), on every page since promotion.
 SHARED_CSP = (
@@ -307,7 +325,12 @@ def load_tool(name: str):
 
 def inline_code(where: str, text: str) -> list[str]:
     """Check 5: each piece of inline code, read with tools/check-inline-code.py."""
-    return [f"{where} {problem}; {INLINE_RULE}." for problem in load_tool("check-inline-code.py").inline_code_problems(text)]
+    gate = load_tool("check-inline-code.py")
+    try:
+        problems = gate.inline_code_problems(text)
+    except gate.UnsupportedPython as error:
+        die(f"tools/check-inline-code.py {error}")
+    return [f"{where} {problem}; {INLINE_RULE}." for problem in problems]
 
 
 def inert_elements() -> tuple[str, ...]:

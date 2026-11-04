@@ -3,7 +3,9 @@
 
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault, runs the gate there as a separate process and
-asserts its exit code. Exit 0 when every case passes; 1 otherwise.
+asserts its exit code. Exit 0 when every case passes; 1 otherwise. One further
+case runs the gate under a faked Python version tuple outside the supported set
+of tools/check-inline-code.py and asserts exit 3 with the gate's own message.
 """
 
 from __future__ import annotations
@@ -19,6 +21,12 @@ GATE = REPO_ROOT / "tools" / "check-instructions-page.py"
 PAGE = "site/instructions/index.html"
 FILES = ["site/downloads/cleanlanguage.md", PAGE, "tools/check-inline-code.py"]
 BUTTON = '<button class="copy" type="button" data-copy="instructions-text" hidden>Copy</button>'
+# Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS of tools/check-inline-code.py.
+VERSION_PROBE = (
+    "import sys, runpy; "
+    "sys.version_info = (3, 13, 9, 'final', 0); "
+    "runpy.run_path(sys.argv[1], run_name='__main__')"
+)
 
 
 def make_root(scratch: Path) -> Path:
@@ -75,12 +83,19 @@ def main() -> int:
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
             if result.returncode != expected:
                 failures.append(f"{name}: exit {result.returncode}, expected {expected}: {(result.stdout + result.stderr).strip()[:300]}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
+                                capture_output=True, text=True)
+        if result.returncode != 3 or not result.stderr.startswith("check-instructions-page: "):
+            failures.append(f"another Python version: exit {result.returncode}, expected 3 from check-instructions-page: "
+                            f"{(result.stdout + result.stderr).strip()[:300]}")
     if failures:
         print("test-instructions-page: failures:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-instructions-page: all {len(CASES)} cases passed.")
+    print(f"test-instructions-page: all {len(CASES) + 1} cases passed.")
     return 0
 
 
