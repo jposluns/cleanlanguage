@@ -14,8 +14,10 @@ The test reads each workflow's bytes and fails unless they decode as UTF-8
 and every character is printable ASCII or a line feed, so a tab or a carriage
 return (a CRLF line end included) fails. It then parses the text with the
 UniqueKeyLoader of tools/test-workflow-launch-isolation.py, a safe PyYAML
-loader that refuses a repeated key, and fails unless the text is one YAML
-document. From the parsed structure, it fails for either workflow unless:
+loader, and fails unless the text is one YAML document that repeats no key
+within a mapping. The loader leaves merge keys (<<), the keys that a merge
+brings in, and the keys of a mapping tagged !!set out of that check. From
+the parsed structure, it fails for either workflow unless:
 
 - its top-level keys are exactly name, on, permissions and jobs, each written
   as a plain key, in that order, so a quoted "on" fails, and so do ON and yes,
@@ -27,6 +29,15 @@ document. From the parsed structure, it fails for either workflow unless:
   its name, exactly shell: bash and a run of the Usage line below. So a
   condition on that step or its job, continue-on-error or any other key on
   that step, and launch lines outside steps: each fail.
+
+The last two checks read the structure after PyYAML applies any merge key,
+so a merge key is not itself a key they see, and a merge fails them only if
+it changes what they compare. A merge that adds a filter, or an if: to the
+guard step or its job, fails. One that the explicit keys override, such as
+a push: that merges branches: [dev] and sets branches: [main], or one that
+brings in no key, leaves the parsed structure unchanged and passes, however
+many merge keys a mapping holds. A merge key among the top-level keys fails
+the first check. How GitHub Actions handles merge keys is not checked.
 
 The test checks no other key of a job that runs it, such as needs: or
 continue-on-error, no condition on any other job or step, and nothing that
@@ -82,9 +93,10 @@ def parse(text: str) -> dict:
     """The workflow, parsed with UniqueKeyLoader.
 
     Raises ValueError for a character other than a line feed outside printable
-    ASCII, text that is not one YAML document or that repeats a key, or
-    top-level keys other than the plain keys name, on, permissions and jobs in
-    that order.
+    ASCII, text that is not one YAML document or that repeats a key within a
+    mapping (other than a merge key, a key that a merge brings in, or a key of
+    a !!set), or top-level keys other than the plain keys name, on,
+    permissions and jobs in that order.
     """
     bad = re.search(r"[^\x20-\x7e\n]", text)
     if bad:
