@@ -137,17 +137,18 @@ class Placement(HTMLParser):
     """Each start tag's name, attributes (the first of 2 with the same name, as a browser reads them), open
     elements (name, classes), the element before it (name, classes) and whether it starts in html > head, the
     first head or body the page opens, before the head ends where HTML5 ends it (text other than whitespace, a
-    start tag not in HEAD_TAGS, or </body>, </html> or </br>); and each end tag's closed element (name, classes,
-    depth); keyed by where the tag starts: (line, column), as getpos() reports. A self-closing tag leaves an
-    element that is neither void nor in <svg> open, as in a browser, and class names split on ASCII whitespace
-    only. It fails closed where it does not model HTML5: a start tag not in HEAD_TAGS inside <template> or
-    <noscript> in the head ends the head, and a self-closing tag in <math> leaves its element open. It is not a
+    start tag not in HEAD_TAGS, or </body>, </html> or </br>), and in lineage where its open elements start; and
+    each end tag's closed element (name, classes, depth, where it starts); keyed by where the tag starts: (line,
+    column), as getpos() reports. A self-closing tag leaves an element that is neither void nor in <svg> open, as
+    in a browser, and class names split on ASCII whitespace only. It fails closed where it does not model HTML5: a
+    start tag not in HEAD_TAGS inside <template> or <noscript> in the head ends the head, and a self-closing tag in
+    <math> leaves its element open. It is not a
     full HTML5 tree builder: it models the open elements as tags nest, void elements, the slash only in <svg> and
     the head's end, so scheme_problems also holds each page's markup from <body> to the end of header.mast, byte for
     byte, to the body start tag, the skip link and MAST_BLOCK, at the start of the page's body (body: a body start
-    tag in html right after the only head closes, with no element or text between them, before the head ends). It
-    pins nothing after header.mast; the committed pages rest on build-site.py --check and the generator's
-    validator."""
+    tag in html right after the only head closes, with no element or text between them, before the head ends).
+    scheme_problems pins nothing after header.mast, and about_problems only the landing page's About block; the
+    committed pages rest on build-site.py --check and the generator's validator."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -157,7 +158,9 @@ class Placement(HTMLParser):
         self.head_ended = False
         self.body: tuple[int, int] | None = None
         self.starts: dict[tuple[int, int], tuple[str, dict, list[tuple[str, list[str]]], tuple | None, bool]] = {}
-        self.ends: dict[tuple[int, int], tuple[str, list[str], int]] = {}
+        self.ends: dict[tuple[int, int], tuple[str, list[str], int, tuple[int, int]]] = {}
+        self.open_at: list[tuple[int, int]] = []
+        self.lineage: dict[tuple[int, int], list[tuple[int, int]]] = {}
 
     def handle_starttag(self, tag: str, attrs) -> None:
         first = {name: value or "" for name, value in reversed(attrs)}
@@ -170,9 +173,11 @@ class Placement(HTMLParser):
             self.head_ended = True
         in_head = [name for name, _ in self.open] == ["html", "head"] and self.heads == 1 and not self.head_ended
         self.starts[self.getpos()] = (tag, first, list(self.open), self.previous, in_head)
+        self.lineage[self.getpos()] = list(self.open_at)
         self.previous = (tag, class_names(first.get("class", ""))) if tag in VOID else None
         if tag not in VOID:
             self.open.append((tag, class_names(first.get("class", ""))))
+            self.open_at.append(self.getpos())
 
     def handle_startendtag(self, tag: str, attrs) -> None:
         foreign = tag == "svg" or any(name == "svg" for name, _ in self.open)
@@ -185,7 +190,7 @@ class Placement(HTMLParser):
             self.head_ended = True
         if self.open and self.open[-1][0] == tag:
             self.previous = self.open.pop()
-            self.ends[self.getpos()] = (*self.previous, len(self.open))
+            self.ends[self.getpos()] = (*self.previous, len(self.open), self.open_at.pop())
 
     def handle_data(self, data: str) -> None:
         if data.strip(" \t\n\f\r") and [name for name, _ in self.open] in ([], ["html"], ["html", "head"]):
@@ -248,6 +253,75 @@ def inject(snippet: str):
     return lambda root: edit(root, PAGE, ANCHOR, ANCHOR + snippet)
 
 
+HOME = "site-src/pages/home.html"
+ABOUT_DOT = '<span class="dot" aria-hidden="true">&middot;</span>'
+
+
+def about_line(base: str) -> str:
+    """The landing page's About row of template specification 7.24 (baseline 1.7.0) at base, spelled out as the
+    template owner's notice gives it: 1 ordinary space after each dot span and none before it."""
+    new_tab = '<span class="vh"> (opens in a new tab)</span>'
+    return (f'<p class="about"><a href="{base}disclosure/">Disclosure</a>{ABOUT_DOT} <a href="{base}license/">Licence</a>{ABOUT_DOT} '
+            f'<a href="https://posluns.ca/privacy/" target="_blank" rel="noopener noreferrer">Privacy{new_tab}</a>{ABOUT_DOT} '
+            f'<a href="https://posluns.ca/security/" target="_blank" rel="noopener noreferrer">Security{new_tab}</a></p>')
+
+
+ABOUT_ROW = about_line("{{base}}")
+
+
+def about_block(base: str) -> str:
+    """The landing page's whole About block of specification 7.24 (baseline 1.7.0) at base, spelled out from
+    SPECIFICATION.md section 7.24 apart from the generator's ABOUT_BLOCK: the region, its label and the div around
+    the About row."""
+    return f'<div class="region"><p class="lbl">About this project</p><div>{about_line(base)}</div></div>'
+
+
+ABOUT_BLOCK = about_block("{{base}}")
+LABEL = "About this project"
+
+
+def about_problems(page: str, text: str, base: str) -> list[str]:
+    """The About block of specification 7.24, which the generator writes: on the landing page, exactly 1 p.value,
+    with no INERT ancestor, no hidden attribute and no ancestor that carries one, no dot span followed directly by a
+    link (the 1.6.1 markup, refused apart from about_line()), and the whole About block once, byte for byte,
+    starting where the end tag of that paragraph's region (the div.region nearest it among its open elements) ends,
+    its row the only parsed element whose classes include about; on any other page, no such element, with an INERT
+    ancestor or not. Like the generator's rule, it reads LABEL only as part of the block, so LABEL elsewhere passes,
+    and it does not model inert, aria-hidden, popover, a dialog or details without open, a hiding class, a
+    stylesheet or a hidden attribute that HTML5 copies from a stray body or html start tag onto the page's body or
+    html element."""
+    parsed = Placement()
+    parsed.feed(text)
+    parsed.close()
+    abouts = [at for at, (_, attrs, *_) in parsed.starts.items() if "about" in class_names(attrs.get("class", ""))]
+    if page != "index.html":
+        if abouts:
+            return [f"{page} carries About markup, which only the landing page's About block may"]
+        return []
+    values = [at for at, (tag, attrs, *_) in parsed.starts.items()
+              if tag == "p" and "value" in class_names(attrs.get("class", ""))]
+    if len(values) != 1:
+        return [f"{page} carries {len(values)} p.value elements; exactly 1 is required (specification 7.24)"]
+    if any(name in INERT for name, _ in parsed.starts[values[0]][2]):
+        return [f"{page} carries its value paragraph inside an element of INERT (specification 7.24)"]
+    if any("hidden" in parsed.starts[at][1] for at in [*parsed.lineage[values[0]], values[0]]):
+        return [f"{page} carries its value paragraph with a hidden attribute or inside an element with one (specification 7.24)"]
+    if "&middot;</span><a" in text:
+        return [f"{page} carries an About row dot with no space after it, the 1.6.1 markup (specification 7.24)"]
+    block = about_block(base)
+    at = text.find(block)
+    if text.count(block) != 1 or text[at - len("</div>"):at] != "</div>":
+        return [f"{page} lacks the whole About block once, byte for byte, right after a </div> (specification 7.24)"]
+    region = parsed.ends.get(position(text, at - len("</div>")))
+    nearest = [ancestor for ancestor in parsed.lineage[values[0]] if parsed.starts[ancestor][0] == "div"
+               and "region" in class_names(parsed.starts[ancestor][1].get("class", ""))][-1:]
+    if region is None or [region[3]] != nearest:
+        return [f"{page} carries its About block other than directly after the value paragraph's region (specification 7.24)"]
+    if len(abouts) != 1:
+        return [f"{page} carries About markup outside its About block (specification 7.24)"]
+    return []
+
+
 def set_page(root: Path, page_id: str, **changes) -> None:
     """Change (or with None, remove) fields of 1 page entry in site.json."""
     path = root / "site-src" / "site.json"
@@ -287,14 +361,14 @@ REFUSALS = [
     ("a second light and dark switch", inject(SWITCH)),
     ("a second element with data-scheme-toggle, a button in the content", inject(TOGGLE)),
     ("a second element with data-scheme-toggle in upper case", inject('<div DATA-SCHEME-TOGGLE hidden></div>')),
-    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.6.0">')),
-    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.6.0">')),
+    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.7.0">')),
+    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.7.0">')),
     ("a bare svg outside the switch", inject("<svg></svg>")),
     ("an upper-case SVG outside the switch", inject("<SVG></SVG>")),
     ("a second scheme.js load in another spelling",
-        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.6.0" defer></SCRIPT>')),
+        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.7.0" defer></SCRIPT>')),
     ("a second scheme.js load as the first of 2 src attributes", inject(
-        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.6.0" src="{{base}}assets/baseline/copy.js?v=1.6.0" defer></SCRIPT>')),
+        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.7.0" src="{{base}}assets/baseline/copy.js?v=1.7.0" defer></SCRIPT>')),
     ("an attribute repeated on any other tag", inject('<p class="lead" class="x">x</p>')),
     ("a link to the pinned build tool, which is never served",
         inject('<p><a href="/.baseline/check_palette.py">palette gate</a></p>')),
@@ -375,6 +449,83 @@ STAGED_REFUSALS = [
 ]
 
 
+# The generator writes the About block of 7.24 itself, so a page source with About markup of its own, or a landing
+# page source whose value paragraph gives it no single, live place, is refused before the output is read.
+CLASS_RULE = "an element whose classes include about; the generator writes the About block"
+VALUE_RULE = "the landing page source must carry exactly 1 p.value"
+REGION_RULE = "the value paragraph has no enclosing div.region"
+VALUE = '<p class="value">'
+VALUE_REGION = '<div class="region" id="what-it-fixes">'
+VALUE_END = "outside its aim.</p></div></div>"
+
+
+def after_value(snippet: str):
+    """Put snippet in the landing page's source directly after the end tag of the value paragraph's region."""
+    return lambda root: edit(root, HOME, VALUE_END, VALUE_END + snippet)
+
+
+def wrap_value(start: str, end: str):
+    """Wrap the landing page's value paragraph in start and end."""
+    return lambda root: (edit(root, HOME, VALUE, start + VALUE),
+                         edit(root, HOME, VALUE_END, VALUE_END.replace("</p>", "</p>" + end, 1)))
+
+
+SOURCE_REFUSALS = [
+    ("the whole About block put back in home.html", after_value(ABOUT_BLOCK), CLASS_RULE),
+    ("the About row alone put back in home.html", after_value(ABOUT_ROW), CLASS_RULE),
+    ("an about class added to the intro paragraph in home.html", lambda root: edit(
+        root, HOME, '<p class="intro">', '<p class="intro about">'), CLASS_RULE),
+    ("an about class in single quotes inside noscript in home.html",
+        after_value("<noscript><p class='x about'>x</p></noscript>"), CLASS_RULE),
+    ("an About row on an inner page", inject('<p class="about"><a href="{{base}}install/">Install</a></p>'), CLASS_RULE),
+    ("an About row with an unquoted class on an inner page",
+        inject('<p class=about><a href="{{base}}install/">Install</a></p>'), CLASS_RULE),
+    ("an About row with a single-quoted class on an inner page",
+        inject("<p class='about'><a href=\"{{base}}install/\">Install</a></p>"), CLASS_RULE),
+    ("an About row with 2 classes on an inner page",
+        inject('<p class="about x"><a href="{{base}}install/">Install</a></p>'), CLASS_RULE),
+    ("an About row with 2 classes inside noscript on an inner page",
+        inject('<noscript><p class="about x"><a href="{{base}}install/">Install</a></p></noscript>'), CLASS_RULE),
+    ("a second p.value in the hero", lambda root: edit(
+        root, HOME, '<div class="hero-text">', '<div class="hero-text"><p class="value">x</p>'), VALUE_RULE),
+    ("a second p.value in its own region after the value region",
+        after_value('<div class="region"><p class="value">x</p></div>'), VALUE_RULE),
+    ("a second p.value that carries a hidden attribute", after_value('<p class="value" hidden>x</p>'), VALUE_RULE),
+    ("a second p.value region inside a hidden div",
+        after_value('<div hidden><div class="region"><p class="value">x</p></div></div>'), VALUE_RULE),
+    ("a second p.value region inside noscript",
+        after_value('<noscript><div class="region"><p class="value">x</p></div></noscript>'), VALUE_RULE),
+    ("no p.value", lambda root: edit(root, HOME, VALUE, '<p class="lead">'), VALUE_RULE),
+    ("the value paragraph inside noscript", wrap_value("<noscript>", "</noscript>"), VALUE_RULE),
+    ("the value paragraph inside canvas", wrap_value("<canvas>", "</canvas>"), VALUE_RULE),
+    ("the value paragraph inside a div with hidden=until-found", wrap_value('<div hidden="until-found">', "</div>"),
+        VALUE_RULE),
+    ("the value paragraph with a hidden attribute", lambda root: edit(root, HOME, VALUE, '<p class="value" hidden>'),
+        VALUE_RULE),
+    ("the value paragraph with hidden=until-found", lambda root: edit(
+        root, HOME, VALUE, '<p class="value" hidden="until-found">'), VALUE_RULE),
+    ("the value paragraph's region with a hidden attribute", lambda root: edit(
+        root, HOME, VALUE_REGION, VALUE_REGION.replace(">", " hidden>")), VALUE_RULE),
+    ("a p.value with no region", lambda root: edit(root, HOME, VALUE_REGION, '<div id="what-it-fixes">'), REGION_RULE),
+    ("a p.value whose nearest region is a section", lambda root: (
+        edit(root, HOME, VALUE_REGION, '<section class="region" id="what-it-fixes">'),
+        edit(root, HOME, VALUE_END, VALUE_END[:-len("</div>")] + "</section>")), REGION_RULE),
+]
+
+
+def check_source_refusals(failures: list[str]) -> int:
+    """Each source refusal fires by its own rule, whatever the output check would say."""
+    for name, fault, rule in SOURCE_REFUSALS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            fault(root)
+            result = run(root, "--out", str(Path(scratch) / "out"))
+            if result.returncode != 1 or rule not in result.stderr:
+                failures.append(f"source refusal '{name}': exit {result.returncode}, expected 1 with {rule!r} "
+                                f"({result.stderr.strip()[:200]})")
+    return len(SOURCE_REFUSALS)
+
+
 def check_refusals(failures: list[str]) -> int:
     ran = 0
     for group, cases in (("", REFUSALS), ("staged ", STAGED_REFUSALS)):
@@ -422,15 +573,15 @@ def check_scheme_validation(failures: list[str]) -> int:
         ("the scheme.js line after the first stylesheet", text.replace(tag, "", 1).replace("</head>", tag + "</head>", 1), False),
         ("a second scheme.js line", text[:sheet] + tag + text[sheet:], False),
         ("a second scheme.js in upper case with a character reference", text.replace(
-            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.6.0" defer></SCRIPT></head>', 1), False),
+            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.7.0" defer></SCRIPT></head>', 1), False),
         ("the scheme.js line inside a comment, loaded in another spelling", text.replace(tag, "<!--" + tag.rstrip("\n")
-            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.6.0"></script>\n', 1), False),
+            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.7.0"></script>\n', 1), False),
         ("an upper-case stylesheet before the scheme.js line", text.replace(
-            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + tag, 1), False),
+            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.7.0">\n' + tag, 1), False),
         ("a second scheme.js load as the first of 2 src attributes", text.replace("</head>", '<SCRIPT SRC='
-            '"/assets/baseline/sch&#101;me.js?v=1.6.0" src="/assets/baseline/copy.js?v=1.6.0" defer></SCRIPT></head>', 1), False),
+            '"/assets/baseline/sch&#101;me.js?v=1.7.0" src="/assets/baseline/copy.js?v=1.7.0" defer></SCRIPT></head>', 1), False),
         ("a stylesheet before the scheme.js line as the first of 2 rel attributes", text.replace(
-            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + tag, 1), False),
+            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.7.0">\n' + tag, 1), False),
         # The parsed reading allows it, but the header block must be byte for byte what mast() is meant to write.
         ("a newline between nav.nav and the switch", text.replace("</nav>" + SWITCH, "</nav>\n" + SWITCH, 1), False),
         ("a second element with data-scheme-toggle after header.mast", text.replace(
@@ -439,7 +590,7 @@ def check_scheme_validation(failures: list[str]) -> int:
             SWITCH + "</header>", SWITCH + '</header><div DATA-SCHEME-TOGGLE hidden></div>', 1), False),
         ("a later stylesheet moved into the body", text.replace(later, "", 1).replace("<body>\n", "<body>\n" + later, 1), False),
         ("a later stylesheet in upper case at the end of the body", text.replace(
-            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.6.0">\n</body>', 1), False),
+            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.7.0">\n</body>', 1), False),
         ("a later stylesheet in a second head after the body", text.replace(later, "", 1).replace(
             "</body>\n", "</body>\n<head>\n" + later + "</head>\n", 1), False),
         # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>; the loads
@@ -498,15 +649,21 @@ def check_scheme_validation(failures: list[str]) -> int:
 
 
 def check_inert_validation(failures: list[str]) -> int:
-    """The blocks, the h1 and the robots meta validate() requires, called directly on committed pages, each moved
-    inside noscript, raw text or canvas, whose content a browser with scripting on does not render as page elements."""
+    """The blocks, the h1, the robots meta and the landing page's About row validate() requires, called directly on
+    committed pages, each moved inside noscript, raw text or canvas, whose content a browser with scripting on does
+    not render as page elements."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     pages = {entry["id"]: entry for entry in config["pages"]}
     texts = {page_id: (REPO_ROOT / f"site/{page_id}/index.html").read_text(encoding="utf-8") for page_id in ("license", "draft")}
+    texts["home"] = (REPO_ROOT / "site/index.html").read_text(encoding="utf-8")
     skip, status, robots = generator.SKIP_LINK, generator.COPY_STATUS, '<meta name="robots" content="noindex, nofollow">'
     h1 = re.search(r"<h1>[^<]*</h1>", texts["license"]).group(0)
+    about = about_line("/")
     cases = [
+        ("the committed home page", "home", None, None, True),
+        ("the About row only inside noscript", "home", about, f"<noscript>{about}</noscript>", False),
+        ("the About row only inside canvas", "home", about, f"<canvas>{about}</canvas>", False),
         ("the h1 only inside canvas", "license", h1, f"<canvas>{h1}</canvas>", False),
         ("the committed licence page", "license", None, None, True),
         ("the committed draft page", "draft", None, None, True),
@@ -518,7 +675,7 @@ def check_inert_validation(failures: list[str]) -> int:
     for name, page_id, old, new, passes in cases:
         page_html = texts[page_id] if old is None else texts[page_id].replace(old, new, 1)
         if old is not None and old not in texts[page_id]:
-            failures.append(f"inert validation '{name}': {old!r} is not in site/{page_id}/index.html")
+            failures.append(f"inert validation '{name}': {old!r} is not in site/{'' if page_id == 'home' else page_id + '/'}index.html")
         try:
             generator.validate(page_html, pages[page_id], config, "/")
             passed = True
@@ -526,7 +683,148 @@ def check_inert_validation(failures: list[str]) -> int:
             passed = False
         if passed != passes:
             failures.append(f"inert validation '{name}': {'passed' if passed else 'refused'}, expected the opposite")
-    return len(cases)
+        # The build test's helper must judge each About row case as the generator should.
+        if page_id == "home" and (not about_problems("index.html", page_html, "/")) != passes:
+            failures.append(f"About helper '{name}': {'refused' if passes else 'passed'}, expected the opposite")
+    return len(cases) + sum(1 for _, page_id, *_ in cases if page_id == "home")
+
+
+def check_inner_about_rows(failures: list[str]) -> int:
+    """About markup on an inner page, read as the parsed class names of every element (split on ASCII whitespace
+    only), with an INERT ancestor or not: validate(), called directly on the committed licence page, refuses it by
+    its rule, and so does the build test's helper; a class name that only starts with about passes both, and so
+    does the label text without the about class, which neither reads apart from the landing page's About block."""
+    generator = load_module(GENERATOR)
+    config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
+    page = next(entry for entry in config["pages"] if entry["id"] == "license")
+    text = (REPO_ROOT / "site/license/index.html").read_text(encoding="utf-8")
+    h1 = re.search(r"<h1>[^<]*</h1>", text).group(0)
+    link = '<a href="/install/">Install</a>'
+    cases = [
+        (f'<p class="about">{link}</p>', False),
+        (f"<p class=about>{link}</p>", False),
+        (f"<p class='about'>{link}</p>", False),
+        (f'<p class="about x">{link}</p>', False),
+        (f"<noscript><p class=about>{link}</p></noscript>", False),
+        (f'<p class="about-us">{link}</p>', True),
+        (f'<p class="about&nbsp;x">{link}</p>', True),
+        (f"<p>{LABEL}</p>", True),
+        (f'<p title="{LABEL}">x</p>', True),
+    ]
+    for row, passes in cases:
+        page_html = text.replace(h1, h1 + row, 1)
+        try:
+            generator.validate(page_html, page, config, "/")
+            refusal = ""
+        except generator.BuildError as error:
+            refusal = str(error)
+        if passes and refusal:
+            failures.append(f"inner About row {row!r}: refused, expected to pass ({refusal[:200]})")
+        elif not passes and "About markup (an element whose classes include about" not in refusal:
+            failures.append(f"inner About row {row!r}: not refused by its rule ({refusal[:200] or 'passed'})")
+        if (not about_problems("license/index.html", page_html, "/")) != passes:
+            failures.append(f"About helper, inner About row {row!r}: {'refused' if passes else 'passed'}, expected the opposite")
+    return 2 * len(cases)
+
+
+def check_about_block(failures: list[str]) -> int:
+    """The whole About block of specification 7.24 on the landing page: validate(), called directly on the committed
+    landing page with 1 fault each, refuses by the block's rule (exactly 1 p.value, with no INERT ancestor, no hidden
+    attribute and no ancestor that carries one; the block once, byte for byte, directly after the end tag of that
+    paragraph's region; no other element whose classes include about), and the build test's helper judges each case
+    as the generator should. The label text without the about class passes both."""
+    generator = load_module(GENERATOR)
+    config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
+    page = next(entry for entry in config["pages"] if entry["path"] == "")
+    text = (REPO_ROOT / "site/index.html").read_text(encoding="utf-8")
+    row, block, label = about_line("/"), about_block("/"), f'<p class="lbl">{LABEL}</p>'
+    hero, value = '<div class="hero-text">', VALUE_REGION
+    decoy = '<div class="region"><p class="value">x</p></div>'
+    block_rule = "the About block must appear exactly once"
+    cases = [
+        ("the committed landing page", [], None),
+        ("the row without its region and label", [(block, row)], block_rule),
+        ("the block without its label", [(label, "")], block_rule),
+        ("the row moved into the hero", [(block, block.replace(row, "", 1)), (hero, hero + row)], block_rule),
+        ("the whole block moved into the hero", [(block, ""), (hero, hero + block)], block_rule),
+        ("the block before the value paragraph's region", [(block, ""), (value, block + value)], block_rule),
+        ("a line break before the block", [(block, "\n" + block)], block_rule),
+        ("the exact row wrapped in a hidden div", [(row, f"<div hidden>{row}</div>")], block_rule),
+        ("the value region and the block inside 1 hidden div", [(value, "<div hidden>" + value), (block, block + "</div>")],
+            block_rule),
+        ("the value region and the block inside 1 div with hidden=until-found",
+            [(value, '<div hidden="until-found">' + value), (block, block + "</div>")], block_rule),
+        ("the value region and the block inside noscript", [(value, "<noscript>" + value), (block, block + "</noscript>")],
+            block_rule),
+        ("the value paragraph with a hidden attribute", [('<p class="value">', '<p class="value" hidden>')], block_rule),
+        ("the value paragraph with hidden=until-found", [('<p class="value">', '<p class="value" hidden="until-found">')],
+            block_rule),
+        ("a second exact row after the block", [(block, block + '<p class="about">x</p>')], block_rule),
+        # A decoy p.value region authorized the boundary while any value paragraph's region could; now only the
+        # page's one p.value may.
+        ("the block moved after a decoy p.value region in the hero", [(block, ""), (hero, hero + decoy + block)],
+            block_rule),
+        ("a decoy p.value region directly before the block", [(block, decoy + block)], block_rule),
+        ("a hidden decoy p.value region directly before the block",
+            [(block, decoy.replace('"region"', '"region" hidden', 1) + block)], block_rule),
+        ("a second p.value after the block", [(block, block + '<p class="value">x</p>')], block_rule),
+        ("no p.value", [('<p class="value">', "<p>")], block_rule),
+        ("the value paragraph's region without its class", [(value, '<div id="what-it-fixes">')], block_rule),
+        # The label is read only as part of the block: a second one without the about class passes.
+        ("a second label region after the block", [(block, block + f'<div class="region">{label}</div>')], None),
+        ("a second label in an attribute", [(hero, hero + f'<p title="{LABEL}">x</p>')], None),
+    ]
+    for name, edits, rule in cases:
+        page_html = text
+        for old, new in edits:
+            if page_html.count(old) != 1:
+                failures.append(f"About block '{name}': {old[:60]!r} is not once in site/index.html")
+            page_html = page_html.replace(old, new, 1)
+        try:
+            generator.validate(page_html, page, config, "/")
+            refusal = ""
+        except generator.BuildError as error:
+            refusal = str(error)
+        if rule is None and refusal:
+            failures.append(f"About block '{name}': refused, expected to pass ({refusal[:200]})")
+        elif rule is not None and rule not in refusal:
+            failures.append(f"About block '{name}': not refused by its rule ({refusal[:200] or 'passed'})")
+        if (not about_problems("index.html", page_html, "/")) != (rule is None):
+            failures.append(f"About helper, block '{name}': {'refused' if rule is None else 'passed'}, expected the opposite")
+    return 2 * len(cases)
+
+
+def check_about_spacing(failures: list[str]) -> int:
+    """The About row's spacing of specification 7.24 (1 ordinary space after each dot span and none before it) on the
+    committed landing page, 1 fault each: validate(), called directly, refuses by the block's rule, and the build
+    test's helper by its own rule. The 1.6.1 markup, no space after a dot, must be refused by the helper's dot check,
+    which does not read about_line(), so the same change to both about_line() copies still fails here."""
+    generator = load_module(GENERATOR)
+    config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
+    page = next(entry for entry in config["pages"] if entry["path"] == "")
+    text = (REPO_ROOT / "site/index.html").read_text(encoding="utf-8")
+    row, block_rule = about_line("/"), "the About block must appear exactly once"
+    spaced, pinned = "with no space after it, the 1.6.1 markup", "lacks the whole About block"
+    cases = [
+        ("no space after a dot (the 1.6.1 markup)", row.replace(ABOUT_DOT + " ", ABOUT_DOT), spaced),
+        ("a space before a dot", row.replace("</a>" + ABOUT_DOT, "</a> " + ABOUT_DOT, 1), pinned),
+        ("&nbsp; in place of a space", row.replace(ABOUT_DOT + " ", ABOUT_DOT + "&nbsp;", 1), pinned),
+        ("2 spaces after a dot", row.replace(ABOUT_DOT + " ", ABOUT_DOT + "  ", 1), pinned),
+    ]
+    for name, new, helper_says in cases:
+        if text.count(row) != 1 or new == row:
+            failures.append(f"About spacing '{name}': the row is not once in site/index.html, or the fault is a no-op")
+        page_html = text.replace(row, new, 1)
+        try:
+            generator.validate(page_html, page, config, "/")
+            refusal = ""
+        except generator.BuildError as error:
+            refusal = str(error)
+        if block_rule not in refusal:
+            failures.append(f"About spacing '{name}': not refused by the block's rule ({refusal[:200] or 'passed'})")
+        if not any(helper_says in problem for problem in about_problems("index.html", page_html, "/")):
+            failures.append(f"About helper, spacing '{name}': not refused by its rule")
+    return 2 * len(cases)
 
 
 def check_generator_header(failures: list[str]) -> int:
@@ -609,6 +907,7 @@ def check_clean_build(failures: list[str]) -> int:
                 if value.startswith("/draft/"):
                     failures.append(f"clean build: {page} links the draft holding page {value}")
             failures += [f"clean build: {problem}" for problem in scheme_problems(page, text, "/", config)]
+            failures += [f"clean build: {problem}" for problem in about_problems(page, text, "/")]
         for page_id, page in (("home", "index.html"), ("install", "install/index.html"), ("license", "license/index.html")):
             stamp = f'<meta property="article:modified_time" content="{modified[page_id]}">'
             if stamp not in (out / page).read_text(encoding="utf-8"):
@@ -789,6 +1088,7 @@ def check_promotion_build(failures: list[str]) -> int:
         for page in sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html")):
             text = (out / page).read_text(encoding="utf-8")
             failures += [f"promotion build: {problem}" for problem in scheme_problems(page, text, "/", config)]
+            failures += [f"promotion build: {problem}" for problem in about_problems(page, text, "/")]
     return 5
 
 
@@ -813,6 +1113,7 @@ def check_staged_build(failures: list[str]) -> int:
             if "application/ld+json" in text or 'rel="canonical"' in text:
                 failures.append(f"staged build: {page} carries publish metadata in the draft")
             failures += [f"staged build: {problem}" for problem in scheme_problems(page, text, "/draft/", config)]
+            failures += [f"staged build: {problem}" for problem in about_problems(page, text, "/draft/")]
             for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
                 if not value.startswith("/draft/") and not value.startswith("/downloads/"):
                     failures.append(f"staged build: {page} links {value} outside /draft/")
@@ -838,9 +1139,13 @@ def main() -> int:
         failures.append("INERT_TAGS, check-inline-code.py's INERT_ELEMENTS and INERT here differ, or leave out an element "
                         "of check-install-page.py's HIDING_ELEMENTS")
     ran += check_refusals(failures)
+    ran += check_source_refusals(failures)
     ran += check_unreadable(failures)
     ran += check_scheme_validation(failures)
     ran += check_inert_validation(failures)
+    ran += check_inner_about_rows(failures)
+    ran += check_about_block(failures)
+    ran += check_about_spacing(failures)
     ran += check_generator_header(failures)
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
