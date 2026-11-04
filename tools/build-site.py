@@ -84,7 +84,7 @@ tag other than those HTML5 allows in a head (``HEAD_TAGS``), or ``</body>``,
 it. No element with ``data-scheme-toggle`` may sit inside an element whose
 content a browser with scripting on, the only case in which ``scheme.js``
 runs, does not render as page content (``INERT_TAGS``: ``noscript``,
-``template``, the raw-text and RCDATA elements, and the elements
+``template``, ``plaintext``, the raw-text and RCDATA elements, and the elements
 ``tools/check-install-page.py`` hides for that reason, ``audio``, ``canvas``,
 ``datalist``, ``meter``, ``object``, ``progress``, ``rp``, ``select`` and
 ``video``, whose content a browser renders only as fallback, only in its
@@ -170,8 +170,8 @@ VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 # The elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render
-# as page content: noscript, template, the raw-text and RCDATA elements, and the elements tools/check-install-page.py
-# hides (HIDING_ELEMENTS) for the same reason. No switch counts as placed inside one.
+# as page content: noscript, template, plaintext, the raw-text and RCDATA elements, and the elements
+# tools/check-install-page.py hides (HIDING_ELEMENTS) for the same reason. No switch counts as placed inside one.
 INERT_TAGS = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext",
               "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video"}
 # HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
@@ -888,10 +888,10 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     scan = PageScan(line_column(page_html, switch) if switch != -1 else None)
     scan.feed(page_html)
     scan.close()
-    # Each required block starts as a parsed element outside noscript, template and raw text.
+    # Each required block starts as a parsed element outside every element of INERT_TAGS.
     for required in (SKIP_LINK, '<main id="main-content">', '<footer class="family wrap">', COPY_STATUS):
         if page_html.count(required) != 1 or line_column(page_html, page_html.find(required)) not in scan.live_starts:
-            problems.append(f"{required!r} must appear exactly once, outside noscript, template and raw text")
+            problems.append(f"{required!r} must appear exactly once, outside every element of INERT_TAGS")
     # The switch is the only parsed element with data-scheme-toggle; the element it sits in and the one before it;
     # the end tag of its parent starts where it ends.
     parent, previous = scan.switch_parent or ("", []), scan.switch_previous or ("", [])
@@ -900,7 +900,7 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
             or previous[0] != "nav" or "nav" not in previous[1]
             or scan.switch_parent_end != line_column(page_html, switch + len(SCHEME_SWITCH))):
         problems.append("the light and dark switch must appear exactly once, as the last child of header.mast, after nav.nav, "
-                        "outside noscript, template and raw text, and no other element may carry data-scheme-toggle")
+                        "outside every element of INERT_TAGS, and no other element may carry data-scheme-toggle")
     # The page's body opens with the skip link and the header block, each on its own line as the generator writes
     # them, so no element wraps header.mast and only the skip link precedes it in the body.
     block = pinned_mast(config, page, base)
@@ -930,7 +930,7 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     if scan.open:
         problems.append(f"elements left open: {[tag for tag, _ in scan.open]}")
     if scan.h1 != 1 or scan.inert_h1:
-        problems.append(f"{scan.h1} h1 elements; exactly 1 is required, outside noscript, template and raw text")
+        problems.append(f"{scan.h1} h1 elements; exactly 1 is required, outside every element of INERT_TAGS")
     duplicates = sorted({i for i in scan.ids if scan.ids.count(i) > 1})
     if duplicates:
         problems.append(f"duplicate ids {duplicates}")
@@ -949,7 +949,7 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     elif base == "/" and not page.get("noindex") and scan.robots:
         problems.append("an indexable page carries a robots meta")
     if scan.inert_robots:
-        problems.append("a robots meta inside noscript, template or raw text")
+        problems.append("a robots meta inside an element of INERT_TAGS")
     allow = set(config["root_allowlist"])
     if page["id"] not in config["about_linkers"]:
         for tag, value in scan.links:
@@ -962,7 +962,7 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
             continue
         if value.startswith("#"):
             if value[1:] not in scan.live_ids:
-                problems.append(f"the in-page link {value} has no target outside noscript, template and raw text")
+                problems.append(f"the in-page link {value} has no target outside every element of INERT_TAGS")
             continue
         if value.startswith("/"):
             path = value.split("#", 1)[0].split("?", 1)[0]

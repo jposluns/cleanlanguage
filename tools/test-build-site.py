@@ -97,8 +97,8 @@ VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "met
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 # The elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render as
-# page content: noscript, template, the raw-text and RCDATA elements, and the elements tools/check-install-page.py
-# hides (HIDING_ELEMENTS) for the same reason. No switch counts as placed inside one.
+# page content: noscript, template, plaintext, the raw-text and RCDATA elements, and the elements
+# tools/check-install-page.py hides (HIDING_ELEMENTS) for the same reason. No switch counts as placed inside one.
 ADDED_INERT = ("audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video")
 INERT = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext",
          *ADDED_INERT}
@@ -228,7 +228,7 @@ def scheme_problems(page: str, text: str, base: str, config: dict) -> list[str]:
             or around[-1][0] != "header" or "mast" not in around[-1][1] or before[0] != "nav" or "nav" not in before[1]
             or after[0] != "header" or after[2] != len(around) - 1):
         problems.append(f"{page} does not end header.mast with the light and dark switch, the only element with "
-                        "data-scheme-toggle, exactly once, after nav.nav, outside noscript, template and raw text")
+                        "data-scheme-toggle, exactly once, after nav.nav, outside every element of INERT")
     block = pinned_mast(config, page, base)
     top = "<body>\n" + SKIP_LINK + "\n" + block
     if text.count(block) != 1 or text.count(top) != 1 or position(text, text.find(top)) != parsed.body:

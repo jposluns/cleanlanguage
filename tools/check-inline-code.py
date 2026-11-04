@@ -69,9 +69,9 @@ every HTML page it refuses:
    ``SCHEME_SWITCH``, byte for byte, the last child of ``header.mast``, after
    ``nav.nav``, with no ancestor whose content a browser with scripting on,
    the only case in which ``scheme.js`` runs, does not render as page content
-   (``INERT_ELEMENTS``: ``noscript``, ``template``, the raw-text and RCDATA
-   elements, and the elements ``tools/check-install-page.py`` hides for that
-   reason, ``audio``, ``canvas``, ``datalist``, ``meter``, ``object``,
+   (``INERT_ELEMENTS``: ``noscript``, ``template``, ``plaintext``, the raw-text
+   and RCDATA elements, and the elements ``tools/check-install-page.py`` hides
+   for that reason, ``audio``, ``canvas``, ``datalist``, ``meter``, ``object``,
    ``progress``, ``rp``, ``select`` and ``video``, whose content a browser
    renders only as fallback, only in its control or not at all, so this
    refuses more than a browser hides). Class names are read as HTML reads
@@ -191,8 +191,8 @@ SVG_REFUSED_ELEMENTS = ("script", "style", "foreignObject")
 # as raw text by default; earlier versions read only script and style as raw text.
 RAW_TEXT_ELEMENTS = ("script", "style", "noscript", "title", "textarea", "xmp", "iframe", "noembed", "noframes")
 # Elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render as
-# page content: noscript, template, the raw-text and RCDATA elements, and the elements tools/check-install-page.py
-# hides (HIDING_ELEMENTS) for the same reason. Check 7 places no switch inside one.
+# page content: noscript, template, plaintext, the raw-text and RCDATA elements, and the elements
+# tools/check-install-page.py hides (HIDING_ELEMENTS) for the same reason. Check 7 places no switch inside one.
 INERT_ELEMENTS = RAW_TEXT_ELEMENTS + (
     "template", "plaintext", "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video"
 )
@@ -428,7 +428,7 @@ def switch_problems(text: str) -> list[str]:
         return [
             f"line {line}: the page carries the light and dark switch {text.count(SCHEME_SWITCH)} times and "
             f"{len(found.toggles)} elements with data-scheme-toggle; exactly 1 of each is required, the same "
-            "element, as the last child of header.mast, after nav.nav, outside noscript, template and raw text"
+            "element, as the last child of header.mast, after nav.nav, outside every element of INERT_ELEMENTS"
         ]
     return []
 
