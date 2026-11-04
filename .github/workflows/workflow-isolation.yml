@@ -8,7 +8,17 @@ name: Workflow launch isolation
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its
-# paths. The scan also runs on its own launch line below.
+# paths. The scan also reads the launch lines below.
+#
+# The third step runs tools/test-portable-text-sync-workflow.py, which fails
+# if the triggers of portable-text-sync.yml or of this workflow are anything
+# but a bare pull_request and a push on main, so a paths or paths-ignore
+# filter on either fails, and fails unless each workflow holds exactly one
+# step that runs the test, with no key but name, shell and run, in a job with
+# no if:. See that test for what it does not catch. portable-text-sync.yml
+# also runs it, but a pull request that adds a filter to that workflow which
+# its own changed files fall outside never starts that run, so the test runs
+# here as well.
 
 on:
   pull_request:
@@ -29,3 +39,7 @@ jobs:
       - name: Check every Python launch in the workflows runs isolated
         shell: bash
         run: python3 -I tools/test-workflow-launch-isolation.py
+
+      - name: Check the portable text sync triggers carry no path filter
+        shell: bash
+        run: python3 -I tools/test-portable-text-sync-workflow.py

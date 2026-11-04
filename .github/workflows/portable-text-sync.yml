@@ -10,56 +10,27 @@ name: Portable text sync
 #
 # The second checks that site/instructions/index.html still embeds that text
 # exactly, and that it carries no inline script or style. The page renders the
-# text statically because the site's rules forbid inline code, and a reintroduced
-# inline script would break the page in a way no other gate can see.
+# text statically because the site's own pages must not use inline code; the
+# security policy allows inline scripts, so a browser would not block one, and
+# site-hardening.yml checks every page for inline code as well.
+#
+# This workflow carries no paths filter on purpose, so it runs on every pull
+# request and every push to main (row 119). The steps read files across the
+# repository, through the scripts they run and the files those scripts copy and
+# load, and a path list cannot be kept complete against those reads. As
+# sitemap.yml explains, running on every pull request also keeps this gate
+# promotable to a required check; to promote it, first give the job a unique
+# display name, as manifest-icon.yml does. The step after checkout runs
+# tools/test-portable-text-sync-workflow.py, which fails if a paths or
+# paths-ignore filter comes back on either trigger. workflow-isolation.yml,
+# which carries no paths filter either, runs it too, so a pull request that
+# adds a filter here which its own changed files fall outside still runs it.
 
 on:
   pull_request:
-    paths:
-      - "cleanlanguage/skills/cleanlanguage/SKILL.md"
-      - "cleanlanguage/skills/cleanlanguage/references/**"
-      - "site/downloads/cleanlanguage.md"
-      - "site/downloads/cleanlanguage-29k.md"
-      - "site/downloads/cleanlanguage-11k.md"
-      - "site/downloads/cleanlanguage-8k.md"
-      - "tools/build-portable-text.py"
-      - "site/instructions/index.html"
-      - "tools/portable-text-skill-source.sha256"
-      - "tools/skill-version.py"
-      - "tools/skill-release-date.py"
-      - "tools/test-skill-release-date.py"
-      - "tools/skill-release-date-client.py"
-      - "tools/test-skill-release-date-client.py"
-      - "tools/test-portable-text-release-date.sh"
-      - "tools/check-portable-text-sync.sh"
-      - "tools/check-instructions-page.py"
-      - "tools/check-inline-code.py"
-      - "tools/test-instructions-page.py"
-      - ".github/workflows/portable-text-sync.yml"
   push:
     branches:
       - main
-    paths:
-      - "cleanlanguage/skills/cleanlanguage/SKILL.md"
-      - "cleanlanguage/skills/cleanlanguage/references/**"
-      - "site/downloads/cleanlanguage.md"
-      - "site/downloads/cleanlanguage-29k.md"
-      - "site/downloads/cleanlanguage-11k.md"
-      - "site/downloads/cleanlanguage-8k.md"
-      - "tools/build-portable-text.py"
-      - "site/instructions/index.html"
-      - "tools/portable-text-skill-source.sha256"
-      - "tools/skill-version.py"
-      - "tools/skill-release-date.py"
-      - "tools/test-skill-release-date.py"
-      - "tools/skill-release-date-client.py"
-      - "tools/test-skill-release-date-client.py"
-      - "tools/test-portable-text-release-date.sh"
-      - "tools/check-portable-text-sync.sh"
-      - "tools/check-instructions-page.py"
-      - "tools/check-inline-code.py"
-      - "tools/test-instructions-page.py"
-      - ".github/workflows/portable-text-sync.yml"
 
 permissions:
   contents: read
@@ -70,6 +41,10 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Check neither trigger carries a path filter
+        shell: bash
+        run: python3 -I tools/test-portable-text-sync-workflow.py
 
       - name: Test the Released-line extractor
         shell: bash
