@@ -8,26 +8,35 @@ paths-ignore filter comes back under either trigger.
 
 That workflow runs this test, and so does workflow-isolation.yml, so a pull
 request that adds a filter to that workflow which its own changed files fall
-outside still runs it. The test also fails unless each workflow holds the
-two lines of LAUNCH together exactly once, and fails if the triggers of
-workflow-isolation.yml fail the checks below. It reads text, so a pull
-request that filters both workflows away from its own files, or that skips
-a launch with a step condition, is not caught; only review catches it.
+outside still runs it.
 
-It reads each file with a small line reader, not a YAML parser, and fails
-closed. Blank lines and lines that hold only a comment are skipped. Every
-other line at the left margin must be a plain key with no quotes; the
-top-level keys must be exactly name, on, permissions and jobs, each once and
-in that order; the on: line must be exactly on:; and the lines under it must
-be exactly a bare pull_request trigger and a push trigger on main. A file
-that cannot be read as UTF-8 text, or that holds a tab, a carriage return
-(a CRLF line end included) or any other character outside printable ASCII,
-also fails. So a filter in block form, in a flow mapping or behind a quoted
-key fails, and so does any other change to the triggers, which is then made
-in this test and the workflow together. YAML syntax is not checked: a value
-outside on: that is not valid YAML passes here, and
-tools/test-workflow-launch-isolation.py, which parses every workflow, fails
-on it.
+The test reads each workflow's bytes and fails unless they decode as UTF-8
+and every character is printable ASCII or a line feed, so a tab or a carriage
+return (a CRLF line end included) fails. It then parses the text with the
+UniqueKeyLoader of tools/test-workflow-launch-isolation.py, a safe PyYAML
+loader that refuses a repeated key, and fails unless the text is one YAML
+document. From the parsed structure, it fails for either workflow unless:
+
+- its top-level keys are exactly name, on, permissions and jobs, each written
+  as a plain key, in that order, so a quoted "on" fails, and so do ON and yes,
+  which PyYAML, reading YAML 1.1, loads as the boolean True, as it loads on;
+- the value of on: is exactly a bare pull_request trigger and a push trigger
+  on main. So a filter in any form fails, and so does any other change to the
+  triggers, which is then made in this test and the workflow together;
+- exactly one step under the steps: of a job with no if: holds, apart from
+  its name, exactly shell: bash and a run of the Usage line below. So a
+  condition on that step or its job, continue-on-error or any other key on
+  that step, and launch lines outside steps: each fail.
+
+The test checks no other key of a job that runs it, such as needs: or
+continue-on-error, no condition on any other job or step, and nothing that
+GitHub Actions reads differently from PyYAML. A deliberate edit that defeats
+this test is caught only by review: a pull request can edit both workflows
+and this test, and no check inside them can stop it. Such edits include, for
+example, a filter on both workflows that the pull request's own files fall
+outside, which starts neither run of this test; a needs: on a job that is
+skipped; a step before this one that changes the files this test reads; and
+an edit to this test.
 
 Usage:
   python3 -I tools/test-portable-text-sync-workflow.py
@@ -35,6 +44,7 @@ Usage:
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import tempfile
 import unittest
@@ -44,10 +54,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "portable-text-sync.yml"
 ISOLATION = REPO_ROOT / ".github" / "workflows" / "workflow-isolation.yml"
 
+# The loader of the launch isolation scan, loaded by its explicit path; it exits if PyYAML is missing.
+ISOLATION_SCAN = REPO_ROOT / "tools" / "test-workflow-launch-isolation.py"
+spec = importlib.util.spec_from_file_location("workflow_launch_isolation", ISOLATION_SCAN)
+isolation = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(isolation)
+yaml, UniqueKeyLoader = isolation.yaml, isolation.UniqueKeyLoader
+
 TOP_KEYS = ["name", "on", "permissions", "jobs"]
-TRIGGERS = ["  pull_request:", "  push:", "    branches:", "      - main"]
-TOP_LINE = re.compile(r"([A-Za-z_][A-Za-z0-9_-]*):(?: .*)?")
-LAUNCH = ["        shell: bash", "        run: python3 -I tools/test-portable-text-sync-workflow.py"]
+TRIGGERS = {"pull_request": None, "push": {"branches": ["main"]}}
+LAUNCH = {"shell": "bash", "run": "python3 -I tools/test-portable-text-sync-workflow.py"}
+STEP = "        shell: bash\n        run: python3 -I tools/test-portable-text-sync-workflow.py"
 
 
 def read(path: Path) -> str:
@@ -61,48 +78,42 @@ def read(path: Path) -> str:
         raise ValueError(f"cannot read {path}: {err}") from err
 
 
-def launches(text: str) -> int:
-    """How many times the two lines of LAUNCH stand together, each a whole line."""
-    lines = text.split("\n")
-    return sum(lines[i:i + 2] == LAUNCH for i in range(len(lines)))
+def parse(text: str) -> dict:
+    """The workflow, parsed with UniqueKeyLoader.
 
-
-def triggers(text: str) -> list[str]:
-    """The lines under the on: key, less blank lines and comment lines.
-
-    Raises ValueError for a character outside printable ASCII, an indented
-    line before any top-level key, a line at the left margin that is not a
-    plain key, a repeated top-level key, an on: line written any other way,
-    or top-level keys other than name, on, permissions and jobs in that
-    order. A filter under a trigger does not raise: its lines come back with
-    the others, for the caller to compare. Past the printable ASCII check,
-    nothing on or under the name, permissions and jobs lines is checked, and
-    nor is the YAML syntax of any line.
+    Raises ValueError for a character other than a line feed outside printable
+    ASCII, text that is not one YAML document or that repeats a key, or
+    top-level keys other than the plain keys name, on, permissions and jobs in
+    that order.
     """
-    blocks: dict[str, list[str]] = {}
-    current = None
-    for number, line in enumerate(text.split("\n"), 1):
-        if re.search(r"[^\x20-\x7e]", line):
-            raise ValueError(f"line {number} holds a character outside printable ASCII")
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if line.startswith(" "):
-            if current is None:
-                raise ValueError(f"line {number} is indented before any top-level key")
-            blocks[current].append(line)
-            continue
-        key = TOP_LINE.fullmatch(line)
-        if key is None:
-            raise ValueError(f"line {number} is not a plain top-level key: {line}")
-        current = key.group(1)
-        if current in blocks:
-            raise ValueError(f"line {number} repeats the top-level key {current}")
-        if current == "on" and line != "on:":
-            raise ValueError(f"line {number} is not written as on:")
-        blocks[current] = []
-    if list(blocks) != TOP_KEYS:
-        raise ValueError(f"the top-level keys are {list(blocks)}, not {TOP_KEYS}")
-    return blocks["on"]
+    bad = re.search(r"[^\x20-\x7e\n]", text)
+    if bad:
+        raise ValueError(f"the workflow holds {bad.group()!r}, outside printable ASCII")
+    try:
+        doc = yaml.load(text, Loader=UniqueKeyLoader)
+        node = yaml.compose(text, Loader=UniqueKeyLoader)
+    except yaml.YAMLError as err:
+        raise ValueError(f"the workflow cannot be parsed: {err}") from err
+    keys = [(key.value, key.style) for key, _ in node.value] if isinstance(node, yaml.MappingNode) else None
+    if keys != [(key, None) for key in TOP_KEYS]:
+        raise ValueError(f"the top-level keys are {keys}, not the plain keys {TOP_KEYS}")
+    return doc
+
+
+def triggers(doc: dict):
+    """The value of on:, which PyYAML loads as the key True, or None if there is no such key."""
+    return doc.get(True)
+
+
+def launches(doc: dict) -> int:
+    """How many steps under the steps: of a job with no if: hold LAUNCH and, apart from a name, nothing else."""
+    jobs = doc["jobs"] if isinstance(doc["jobs"], dict) else {}
+    count = 0
+    for job in jobs.values():
+        if isinstance(job, dict) and "if" not in job and isinstance(job.get("steps"), list):
+            count += sum(isinstance(step, dict) and {k: v for k, v in step.items() if k != "name"} == LAUNCH
+                         for step in job["steps"])
+    return count
 
 
 def edited(text: str, old: str, new: str) -> str:
@@ -113,7 +124,7 @@ def edited(text: str, old: str, new: str) -> str:
 
 class TriggerTests(unittest.TestCase):
     def test_both_triggers_carry_no_filter(self):
-        self.assertEqual(triggers(read(WORKFLOW)), TRIGGERS)
+        self.assertEqual(triggers(parse(read(WORKFLOW))), TRIGGERS)
 
     def test_a_filter_under_either_trigger_fails(self):
         text = read(WORKFLOW)
@@ -124,20 +135,26 @@ class TriggerTests(unittest.TestCase):
                          ("      - main\n", '      - main\n    "paths": ["tools/**"]\n'),
                          ("  pull_request:\n", "  pull_request: {paths: [tools/**]}\n")):
             with self.subTest(new):
-                self.assertNotEqual(triggers(edited(text, old, new)), TRIGGERS)
+                self.assertNotEqual(triggers(parse(edited(text, old, new))), TRIGGERS)
 
     def test_a_commented_filter_is_skipped(self):
         text = edited(read(WORKFLOW), "  pull_request:\n", '  pull_request:\n    # paths:\n#     - "tools/**"\n')
-        self.assertEqual(triggers(text), TRIGGERS)
+        self.assertEqual(triggers(parse(text)), TRIGGERS)
 
     def test_an_unexpected_shape_fails(self):
         text = read(WORKFLOW)
-        for old, new in (("on:\n", '"on":\n'), ("on:\n", "on: [pull_request, push]\n"),
-                         ("on:\n", "on: # triggers\n"), ("permissions:\n", "on:\n  push:\npermissions:\n"),
+        for old, new in (("on:\n", '"on":\n'), ("on:\n", "ON:\n"), ("on:\n", "yes:\n"),
+                         ("on:\n", "on: [pull_request, push]\n"),
+                         ("permissions:\n", "on:\n  push:\npermissions:\n"),
                          ("permissions:\n", "On:\n  push:\npermissions:\n"), ("      - main\n", "\t- main\n"),
-                         ("on:\n", "on:\r\n"), ("name:", "---\nname:")):
+                         ("on:\n", "on:\r\n"), ("jobs:\n", "jobs: [\n"), ("jobs:\n", "---\njobs:\n")):
             with self.subTest(new), self.assertRaises(ValueError):
-                triggers(edited(text, old, new))
+                parse(edited(text, old, new))
+
+    def test_a_name_that_swallows_the_triggers_fails(self):
+        text = edited(read(WORKFLOW), "name: Portable", 'name: "Portable')
+        with self.assertRaises(ValueError):
+            parse(edited(text, "  contents: read\n", '  contents: read"\n'))
 
     def test_an_unreadable_file_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -154,24 +171,34 @@ class TriggerTests(unittest.TestCase):
                 path = Path(tmp) / name
                 path.write_bytes(text.replace("\n", ending).encode("utf-8"))
                 with self.subTest(name), self.assertRaises(ValueError):
-                    triggers(read(path))
+                    parse(read(path))
 
 
 class LaunchTests(unittest.TestCase):
     def test_both_workflows_launch_this_test(self):
         for path in (WORKFLOW, ISOLATION):
             with self.subTest(path.name):
-                self.assertEqual(launches(read(path)), 1)
+                self.assertEqual(launches(parse(read(path))), 1)
 
     def test_workflow_isolation_carries_no_filter(self):
-        self.assertEqual(triggers(read(ISOLATION)), TRIGGERS)
+        self.assertEqual(triggers(parse(read(ISOLATION))), TRIGGERS)
 
     def test_a_removed_or_altered_launch_fails(self):
-        text, step = read(ISOLATION), "\n".join(LAUNCH)
-        for old, new in ((LAUNCH[1] + "\n", ""), (step, "#" + step),
-                         (LAUNCH[1], LAUNCH[1].replace(" -I", ""))):
-            with self.subTest(new):
-                self.assertEqual(launches(edited(text, old, new)), 0)
+        run = STEP.split("\n")[1]
+        for path in (WORKFLOW, ISOLATION):
+            text = read(path)
+            for old, new in ((run + "\n", ""), (STEP, "#" + STEP), (run, run.replace(" -I", "")),
+                             (STEP, "        if: false\n" + STEP),
+                             (STEP, STEP + "\n        continue-on-error: true"),
+                             ("    runs-on:", "    if: false\n    runs-on:")):
+                with self.subTest(path=path.name, new=new):
+                    self.assertEqual(launches(parse(edited(text, old, new))), 0)
+
+    def test_launch_lines_outside_the_steps_fail(self):
+        name = "\n      - name: Check the portable text sync triggers carry no path filter\n"
+        text = edited(read(ISOLATION), name + STEP + "\n", "")
+        text = edited(text, "    steps:\n", "    env:\n      GUARD: |\n" + STEP + "\n    steps:\n")
+        self.assertEqual(launches(parse(text)), 0)
 
 
 if __name__ == "__main__":
