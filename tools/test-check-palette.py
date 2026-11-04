@@ -1,14 +1,27 @@
 #!/usr/bin/env python3
 """Tests for tools/check-palette.py: the pinned palette gate and its wrapper.
 
-Each case copies the wrapper and the files it reads into a temporary repository
-(under $TMPDIR), applies 1 fault, runs the wrapper there as a separate process
-and asserts its exit code. The first case runs the wrapper on this repository.
+Each case runs the wrapper as a separate process and asserts its exit code. The
+first runs it on this repository and applies no change. Each other case copies
+the wrapper and the files it reads into a temporary repository (under $TMPDIR)
+and runs it there: the case named "the committed tree" applies no change, the 4
+cases that copy the palettes to site/draft/ each apply 3 mutation functions through
+both(...), and every other case applies 1 mutation function, which may edit
+several places.
+The cases that change the base in site-src/site.json check that the wrapper
+reads the output root from it. Base / reads site/, so a contrast failure only
+in a copy of the palettes under site/draft/ exits 0. Base /draft/ reads
+site/draft/: a contrast failure in the copy there, with site/ clean, exits 1;
+a clean copy there, with the palettes under site/ removed, exits 0; and a
+site-palette.css under site/draft/assets/, beside a clean copy there and the
+clean palettes under site/, exits 1. An invalid base, a missing base, a JSON
+list and invalid JSON each exit 3.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -20,7 +33,11 @@ WRAPPER = REPO_ROOT / "tools" / "check-palette.py"
 TOOL = ".baseline/check_palette.py"
 PIN = ".baseline/pin.toml"
 PALETTES = "site/assets/baseline/palettes.css"
-FILES = [TOOL, PIN, PALETTES, "site-src/site.json"]
+SITE_JSON = "site-src/site.json"
+FILES = [TOOL, PIN, PALETTES, SITE_JSON]
+# The palettes of the output root at base /draft/.
+DRAFT_PALETTES = "site/draft/assets/baseline/palettes.css"
+MISSING = object()
 
 
 def make_root(scratch: Path) -> Path:
@@ -57,9 +74,13 @@ def delete_tool(root: Path) -> None:
     (root / TOOL).unlink()
 
 
-def dark_text_muted_on_bg(root: Path) -> None:
-    """Set the dark --text-muted of this site to its dark --bg, in every dark form: a real contrast failure."""
-    path = root / PALETTES
+def dark_text_muted_on_bg(root: Path, palettes: str = PALETTES) -> None:
+    """Replace every "--text-muted: X;" in palettes, in any rule, with "--text-muted: B;": a real contrast failure.
+
+    X and B are the first --text-muted and --bg values from the start of this site's first dark rule,
+    .site-cleanlanguage:not([data-scheme="light"]) {.
+    """
+    path = root / palettes
     text = path.read_text(encoding="utf-8")
     block = text.index(".site-cleanlanguage:not([data-scheme=\"light\"]) {")
     bg = text[text.index("--bg: ", block) + 6:text.index(";", text.index("--bg: ", block))]
@@ -70,8 +91,41 @@ def dark_text_muted_on_bg(root: Path) -> None:
     path.write_text(text.replace(old, f"--text-muted: {bg};"), encoding="utf-8")
 
 
-def plant_site_palette(root: Path) -> None:
-    (root / "site" / "assets" / "site-palette.css").write_text(".site-cleanlanguage { --bg: #ffffff; }\n", encoding="utf-8")
+def plant_site_palette(root: Path, assets: str = "site/assets") -> None:
+    (root / assets / "site-palette.css").write_text(".site-cleanlanguage { --bg: #ffffff; }\n", encoding="utf-8")
+
+
+def set_base(value):
+    """Set the base in site-src/site.json to value, or remove it when value is MISSING."""
+    def apply(root: Path) -> None:
+        path = root / SITE_JSON
+        site = json.loads(path.read_text(encoding="utf-8"))
+        if value is MISSING:
+            del site["base"]
+        else:
+            site["base"] = value
+        path.write_text(json.dumps(site, indent=2) + "\n", encoding="utf-8")
+    return apply
+
+
+def write_site_json(text: str):
+    return lambda root: (root / SITE_JSON).write_text(text, encoding="utf-8")
+
+
+def copy_palettes_to_draft(root: Path) -> None:
+    (root / DRAFT_PALETTES).parent.mkdir(parents=True)
+    shutil.copyfile(root / PALETTES, root / DRAFT_PALETTES)
+
+
+def remove_site_palettes(root: Path) -> None:
+    (root / PALETTES).unlink()
+
+
+def both(*faults):
+    def apply(root: Path) -> None:
+        for fault in faults:
+            fault(root)
+    return apply
 
 
 CASES = [
@@ -81,6 +135,21 @@ CASES = [
     ("the pinned gate deleted", delete_tool, 3),
     ("dark --text-muted set to the dark --bg", dark_text_muted_on_bg, 1),
     ("a site-palette.css under site/assets/", plant_site_palette, 1),
+    ("base / with a contrast failure only under site/draft/", both(
+        set_base("/"), copy_palettes_to_draft, lambda root: dark_text_muted_on_bg(root, DRAFT_PALETTES)), 0),
+    ("base /draft/ with a contrast failure only under site/draft/", both(
+        set_base("/draft/"), copy_palettes_to_draft, lambda root: dark_text_muted_on_bg(root, DRAFT_PALETTES)), 1),
+    ("base /draft/ with clean palettes only under site/draft/",
+        both(set_base("/draft/"), copy_palettes_to_draft, remove_site_palettes), 0),
+    ("base /draft/ with a site-palette.css under site/draft/assets/", both(
+        set_base("/draft/"), copy_palettes_to_draft, lambda root: plant_site_palette(root, "site/draft/assets")), 1),
+    ("base /Draft/", set_base("/Draft/"), 3),
+    ("base draft/", set_base("draft/"), 3),
+    ("base /a/b/", set_base("/a/b/"), 3),
+    ("a base that is not a string", set_base(1), 3),
+    ("no base", set_base(MISSING), 3),
+    ("a site.json that holds a JSON list", write_site_json("[]\n"), 3),
+    ("a site.json that is not valid JSON", write_site_json("{\n"), 3),
 ]
 
 

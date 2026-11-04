@@ -23,7 +23,7 @@
 # check-palette.py reports, 3 for an unreadable input or, from
 # tools/check-inline-code.py, an unsupported Python version).
 # tools/test-pages-build.py holds the expected gate list and fails if this
-# script stops running a gate, or stops failing when a gate exits 1 or 3.
+# script stops running a gate, or stops failing when a gate exits 1, 2 or 3.
 #
 # Usage (the build command in the Cloudflare Pages dashboard):
 #   bash tools/pages-build.sh
