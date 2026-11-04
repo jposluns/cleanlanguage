@@ -4,7 +4,9 @@
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault to the install page, a family page, or
 site/_headers, runs the gate there as a separate process and asserts its exit
-code. Exit 0 when every case passes; 1 otherwise, naming each failing case.
+code. 1 more case asserts that the gate's docstring names exactly the scripts
+in ``ALLOWED_SCRIPTS``. Exit 0 when every case passes; 1 otherwise, naming
+each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 hides or empties what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code
@@ -69,6 +71,11 @@ SELECT = "/assets/baseline/select.js?v=1.3.0"
 ROW = '<p><a class="btn inline" id="claude"'
 ROW_END = OTHER_LINK + "</p>"
 STEPS = '<ol class="steps">'
+# The scheme.js tag of template specification 7.33 (baseline 1.6.0), as the committed pages carry it.
+SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.6.0"></script>'
+COPY = '<script src="/assets/baseline/copy.js?v=1.6.0" defer></script>'
+FONTS = '<link rel="stylesheet" href="/assets/baseline/fonts.css?v=1.6.0">'
+LATER = '<link rel="stylesheet" href="/assets/baseline/baseline.css?v=1.6.0">'
 STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
 # Classes a stylesheet may hide as a bare single class although the gate does not refuse them. Add 1 only with a
 # comment saying why no install page can carry it on a checked element or an ancestor. None qualifies today.
@@ -131,6 +138,17 @@ def wrap(relative: str, start: str, end: str, before: str, after: str):
     return both(edit(relative, start, before + start), edit(relative, end, end + after))
 
 
+def into_body(first: str, before: str = "", after: str = ""):
+    """Move the head's lines from first to </head> to the start of the body, in order, between before and after."""
+    def apply(root: Path) -> None:
+        path = root / PAGE
+        text = path.read_text(encoding="utf-8")
+        block = text[text.index(first):text.index("</head>")]
+        text = text.replace(block, "", 1).replace("<body>\n", "<body>\n" + before + block + after, 1)
+        path.write_text(text, encoding="utf-8")
+    return apply
+
+
 def decoy(relative: str):
     """Load baseline.css without its token, and keep the tokened tag only in a comment."""
     def apply(root: Path) -> None:
@@ -148,6 +166,12 @@ CASES = [
     ("a family id removed", edit(PAGE, 'id="gemini" href="/install/gemini/"', 'href="/install/gemini/"'), 1),
     ("a family link duplicated", edit(PAGE, OTHER_LINK, OTHER_LINK + ' <a class="btn inline" id="copilot" href="/install/copilot/">Copilot</a>'), 1),
     ("a family link that is not a button", edit(PAGE, '<a class="btn inline" id="copilot"', '<a id="copilot"'), 1),
+    # HTML splits class names on ASCII whitespace only: btn U+00A0 inline is 1 class, and x U+00A0 vh is not vh.
+    ("a family link whose btn and inline are joined by a no-break space",
+        edit(PAGE, '<a class="btn inline" id="copilot"', '<a class="btn\u00a0inline" id="copilot"'), 1),
+    ("a family page heading whose 1 class joins x and vh by a no-break space", edit(CLAUDE, "<h1>", '<h1 class="x\u00a0vh">'), 0),
+    ("header.mast with a no-break space in its class on a family page",
+        edit(CLAUDE, '<header class="mast">', '<header class="mast\u00a0x">'), 1),
     ("a family link with aria-current", edit(PAGE, 'id="claude" href="/install/claude/"', 'id="claude" href="/install/claude/" aria-current="page"'), 1),
     ("a family link hidden", edit(PAGE, 'id="gemini" href="/install/gemini/"', 'id="gemini" href="/install/gemini/" hidden'), 1),
     ("a family link aria-hidden", edit(PAGE, 'id="gemini" href="/install/gemini/"', 'id="gemini" href="/install/gemini/" aria-hidden="TRUE"'), 1),
@@ -197,6 +221,9 @@ CASES = [
     ("the pick id removed", edit(PAGE, 'id="pick"', 'id="pick-gone"'), 1),
     ("the technical id removed", edit(PAGE, '<h2 id="technical">', "<h2>"), 1),
     ("a duplicate id on the install page", edit(PAGE, '<h2 id="spelling">', '<h2 id="spelling"><span id="test"></span>'), 1),
+    # A browser with scripting on renders no markup inside noscript, so neither an id nor a link there is present.
+    ("the test id only inside a noscript", both(
+        edit(PAGE, '<h2 id="test">', "<h2>"), edit(PAGE, "</main>", '<noscript><span id="test"></span></noscript></main>')), 1),
     ("a duplicate id on a family page", edit(CHATGPT, '<p class="verified">', '<p class="verified" id="main-content">'), 1),
     ("a family page missing", remove(GEMINI), 3),
     ("a family page with no setup steps", edit(CLAUDE, '<ol class="steps">', "<ol>"), 1),
@@ -280,6 +307,9 @@ CASES = [
     ("a family page with a second h1", edit(GEMINI, "</main>", "<h1>Again</h1></main>"), 1),
     ("a family page without its link back to #get", edit(OTHER, 'href="/install/#get"', 'href="/install/"', every=True), 1),
     ("a family page without its link to #test", edit(CLAUDE, 'href="/install/#test"', 'href="/install/"', every=True), 1),
+    ("a family page whose only link to #test is inside a noscript", both(
+        edit(CLAUDE, 'href="/install/#test"', 'href="/install/"', every=True),
+        edit(CLAUDE, "</main>", '<noscript><a href="/install/#test">Test it</a></noscript></main>')), 1),
     ("an inline script", edit(PAGE, "</main>", "<script>alert(1)</script></main>"), 1),
     ("an inline script on a family page", edit(COPILOT, "</main>", "<script>alert(1)</script></main>"), 1),
     ("an inline style", edit(PAGE, '<p class="lbl first">', '<p style="x" class="lbl first">'), 1),
@@ -297,6 +327,12 @@ CASES = [
     ("baseline.css without its version token on a family page", edit(CHATGPT, "baseline.css?v=", "baseline.css?x="), 1),
     ("copy.js not loaded", edit(PAGE, "copy.js?v=", "copy-gone.js?v="), 1),
     ("copy.js not loaded on a family page", edit(OTHER, "copy.js?v=", "copy-gone.js?v="), 1),
+    # A script inside noscript never runs: a browser with scripting on reads it as text, and one with scripting off
+    # runs no script.
+    ("copy.js loaded only inside a body noscript",
+        both(edit(PAGE, COPY + "\n", ""), edit(PAGE, "<body>\n", "<body>\n<noscript>" + COPY + "</noscript>\n")), 1),
+    ("copy.js loaded only inside a noscript on a family page",
+        both(edit(OTHER, COPY + "\n", ""), edit(OTHER, "</main>", "</main><noscript>" + COPY + "</noscript>")), 1),
     ("select.js loaded", edit(PAGE, "</head>", '<script src="/assets/baseline/select.js?v=1.3.0" defer></script>\n</head>'), 1),
     ("select.js loaded on a family page", edit(CLAUDE, "</head>", '<script src="/assets/baseline/select.js?v=1.3.0" defer></script>\n</head>'), 1),
     ("a baseline script without its version token", edit(PAGE, "</head>", '<script src="/assets/baseline/rail.js" defer></script>\n</head>'), 1),
@@ -309,8 +345,64 @@ CASES = [
     ("select.js after a > in a quoted value", edit(PAGE, "</head>", f'<script title=">" src="{SELECT}" defer></script>\n</head>'), 1),
     ("rail.js without defer in an upper-case tag", edit(PAGE, "</head>", '<SCRIPT SRC="/assets/baseline/rail.js?v=1.3.0"></SCRIPT>\n</head>'), 1),
     ("rail.js with its token and defer", edit(PAGE, "</head>", '<script src="/assets/baseline/rail.js?v=1.3.0" defer></script>\n</head>'), 0),
+    ("the scheme.js tag missing", edit(PAGE, SCHEME + "\n", ""), 1),
+    ("the scheme.js tag with defer", edit(PAGE, SCHEME, SCHEME.replace('"></script>', '" defer></script>')), 1),
+    ("the scheme.js tag with async", edit(PAGE, SCHEME, SCHEME.replace('"></script>', '" async></script>')), 1),
+    ("the scheme.js tag with src before data-cfasync", edit(PAGE, SCHEME,
+        '<script src="/assets/baseline/scheme.js?v=1.6.0" data-cfasync="false"></script>'), 1),
+    ("the scheme.js tag after the first stylesheet", both(edit(PAGE, SCHEME + "\n", ""),
+        edit(PAGE, "</head>", SCHEME + "\n</head>")), 1),
+    ("the scheme.js tag twice", edit(PAGE, SCHEME, SCHEME + SCHEME), 1),
+    ("a second scheme.js with defer", edit(PAGE, "</head>",
+        '<script src="/assets/baseline/scheme.js?v=1.6.0" defer></script>\n</head>'), 1),
+    ("a second scheme.js in upper case with a character reference", edit(PAGE, "</head>",
+        '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.6.0" defer></SCRIPT>\n</head>'), 1),
+    ("a second scheme.js with spaces around =", edit(PAGE, "</head>",
+        '<script src = "/assets/baseline/scheme.js?v=1.6.0" defer></script>\n</head>'), 1),
+    ("an upper-case stylesheet before the scheme.js tag", edit(PAGE, SCHEME,
+        '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + SCHEME), 1),
+    ("a stylesheet before the scheme.js tag as the first of 2 rel attributes", edit(PAGE, SCHEME,
+        '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + SCHEME), 1),
+    ("the scheme.js tag and the stylesheets moved into the body, in order", into_body(SCHEME), 1),
+    ("the stylesheets moved into the body, after the scheme.js tag", into_body(FONTS), 1),
+    ("the scheme.js tag and the stylesheets in a second head inside the body", into_body(SCHEME, "<head>\n", "</head>\n"), 1),
+    ("a later stylesheet moved into the body, after the first", into_body(LATER), 1),
+    ("a later stylesheet in upper case at the end of the body", edit(PAGE, "</body>",
+        '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.6.0">\n</body>'), 1),
+    ("a later stylesheet in a second head after the body", both(edit(PAGE, LATER + "\n", ""),
+        edit(PAGE, "</body>\n", "</body>\n<head>\n" + LATER + "\n</head>\n")), 1),
+    # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>, and keeps a
+    # self-closing title open, so all after it is its text; the loads after such a point are not in the head. A
+    # comment and whitespace leave it open.
+    ("text before the scheme.js tag", edit(PAGE, SCHEME, "x\n" + SCHEME), 1),
+    ("a div before the scheme.js tag", edit(PAGE, SCHEME, "<div></div>\n" + SCHEME), 1),
+    ("</br> before the scheme.js tag", edit(PAGE, SCHEME, "</br>\n" + SCHEME), 1),
+    ("a self-closing title before the scheme.js tag, and no </head>", both(
+        edit(PAGE, SCHEME, "<title/>" + SCHEME), edit(PAGE, "</head>\n", "")), 1),
+    ("a comment and whitespace before the scheme.js tag", edit(PAGE, SCHEME, "<!-- x -->\n \t\n" + SCHEME), 0),
+    ("a self-closing nav.nav before the switch", edit(PAGE, '<button class="scheme"', '<nav class="nav"/><button class="scheme"'), 1),
+    ("a second element with data-scheme-toggle, a button in the content", edit(PAGE, "</main>",
+        '<p><button class="scheme" type="button" data-scheme-toggle hidden><span class="vh">Dark mode</span></button></p></main>'), 1),
+    # PR 213 replaced the family sections with family pages; this case moved from the claude section to its page.
+    ("a family page heading hidden by the first of 2 class attributes", edit(CLAUDE, "<h1>",
+        '<h1 class="visually-hidden" class="x">'), 1),
+    ("fonts.css loaded only inside a comment", edit(PAGE, FONTS, "<!--" + FONTS + "-->"), 1),
+    ("rail.js with another attribute", edit(PAGE, "</head>",
+        '<script src="/assets/baseline/rail.js?v=1.3.0" type="module" defer></script>\n</head>'), 1),
+    # The load and switch checks hold on the family pages too.
+    ("the scheme.js tag missing on a family page", edit(GEMINI, SCHEME + "\n", ""), 1),
+    ("the scheme.js tag after the first stylesheet on a family page", both(edit(COPILOT, SCHEME + "\n", ""),
+        edit(COPILOT, "</head>", SCHEME + "\n</head>")), 1),
+    ("a later stylesheet at the end of the body on a family page", both(edit(OTHER, LATER + "\n", ""),
+        edit(OTHER, "</body>", LATER + "\n</body>")), 1),
+    ("a second element with data-scheme-toggle on a family page", edit(CHATGPT, "</main>",
+        '<p><button class="scheme" type="button" data-scheme-toggle hidden><span class="vh">Dark mode</span></button></p></main>'), 1),
     ("site.css without its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?w=1">\n</head>'), 1),
     ("site.css with its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">\n</head>'), 0),
+    ("site.css without its token beside a token inside a comment", edit(PAGE, "</head>",
+        '<!--<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">--><link rel="stylesheet" href="/assets/site.css?w=1">\n</head>'), 1),
+    # Until PR 218 this was a named residual: the gate matched the tag as text, so a tag in a comment counted.
+    ("the tokened baseline.css tag only in a comment", decoy(PAGE), 1),
     ("the install page missing", remove(PAGE), 3),
     ("the headers file missing", remove(HEADERS), 3),
     ("a policy on another rule", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Content-Security-Policy: default-src 'none'\n"), 1),
@@ -363,7 +455,6 @@ RESIDUALS = [
     ("a family page with 1 setup step dropped",
         edit(OTHER, STEPS + '<li><span>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</span></li>', STEPS),
         "not its steps or their wording"),
-    ("the tokened baseline.css tag only in a comment", decoy(PAGE), "matched as text, so a tag in a comment counts"),
 ]
 
 
@@ -475,8 +566,21 @@ def version_problems() -> list[str]:
     return problems
 
 
+def statement_problems() -> list[str]:
+    """The gate's docstring names exactly the scripts that ALLOWED_SCRIPTS holds."""
+    spec = importlib.util.spec_from_file_location("check_install_page", GATE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    listed = re.search(r"``ALLOWED_SCRIPTS``: (.*?)\)", module.__doc__, re.S)
+    names = tuple(re.findall(r"``([a-z]+\.js)``", listed.group(1))) if listed else ()
+    if names != module.ALLOWED_SCRIPTS:
+        return [f"the docstring lists ALLOWED_SCRIPTS as {names}; the code holds {module.ALLOWED_SCRIPTS}"]
+    return []
+
+
 def main() -> int:
-    failures: list[str] = [f"the stylesheets: {problem}" for problem in stylesheet_problems()]
+    failures: list[str] = statement_problems()
+    failures += [f"the stylesheets: {problem}" for problem in stylesheet_problems()]
     failures += [f"the Python version: {problem}" for problem in version_problems()]
     doc = " ".join((ast.get_docstring(ast.parse(GATE.read_text(encoding="utf-8"))) or "").split())
     for name, _, words in RESIDUALS:
@@ -495,8 +599,8 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the Python version checks "
-          "and the stylesheet check passed.")
+    print(f"test-install-page: all {len(CASES) + 1} cases, the {len(RESIDUALS)} named residuals, the Python version "
+          "checks and the stylesheet check passed.")
     return 0
 
 

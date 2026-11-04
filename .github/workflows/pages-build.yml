@@ -1,7 +1,7 @@
 name: Pages build
 
 # Run tools/pages-build.sh, the build command that site/README.md gives for
-# Cloudflare Pages: the owner's 5 offline integrity gates on a shallow
+# Cloudflare Pages: the 6 offline integrity gates on a shallow
 # checkout, no gate reaching the network or git history. After the checkout,
 # one step checks that the runner's python3 is the release that
 # .python-version names, one runs the script's tests, which fail if the script

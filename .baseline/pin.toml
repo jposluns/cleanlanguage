@@ -1,15 +1,16 @@
 # Baseline pin, in the format of the baseline README ("Adoption in a repository", step 3).
-# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths are
-# relative to the site's output root (site/draft/ while staged, site/ after promotion).
-# Source: https://posluns.ca/baseline/baseline-1.4.1.tar.gz, archive sha256 1bba8c486b3050a737ddcba4dd36b5ea4199d42e4e7ff61d93998cf0439f03eb;
-# SHA256SUMS sha256 a08d0d37cd5634daec2049d0f614a566f950b93b1a797d58b7c254bf4881a60c, copied to .baseline/SHA256SUMS.
+# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths under
+# assets/baseline/ are relative to the site's output root (site/draft/ while staged, site/ after
+# promotion), and .baseline/check_palette.py is relative to the repository root, outside site/.
+# Source: https://posluns.ca/baseline/baseline-1.6.0.tar.gz, archive sha256 d1cc5b45de9263253109d78b5d868ed92a420101ab76c0600c87ef748a684ec9;
+# SHA256SUMS sha256 57544ba86ba19b0b5a1adf4910f9dd0a28d7e9d3a52d5e150c0c9818c6cc978f, copied to .baseline/SHA256SUMS.
 # Never edit a copied file; a new version arrives as a new copy and a new pin.
-version = "1.4.1"
+version = "1.6.0"
 
 [files]
 "assets/baseline/LICENSE" = "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
-"assets/baseline/NOTICE.md" = "08b26141bb2ecf0f4cd76e599c21f888fc71c4b3ab7ba769e954f6eea37ac7f3"
-"assets/baseline/baseline.css" = "8af38c8d65033c376475a3c65bcd90496010dd5a396c24aaa08d222d31619490"
+"assets/baseline/NOTICE.md" = "deeffb1a277a0b1f591feea15ecc10fbf4fc916cf0db07885625a288cc6e3b1e"
+"assets/baseline/baseline.css" = "654f9b349acf97860dae417e2bd3cc3de1fe51a2c7b1d7f88d0971efc83bceae"
 "assets/baseline/copy.js" = "9bf99b50471889b768c795af5a4f84f526cecf7622a1f1265ca3d088b31339a4"
 "assets/baseline/fonts.css" = "a309a8ff4026a67fb5d10dea2c02e5b9ea2c1b32d4b18d7892015e038397396a"
 "assets/baseline/fonts/dancing-script-LICENSE.txt" = "c02c0002d3bbd41a16933c162888c400469c7029f1362ca9d60d5ed20ea7d157"
@@ -58,7 +59,9 @@ version = "1.4.1"
 "assets/baseline/marks/github-invertocat-white.svg" = "ccd84c89b1056345608fc3489357f8acc7397e49a3cdc2d418b6c8016911d47b"
 "assets/baseline/marks/linkedin-in-bug.png" = "3c0149f26168b5fe0f43e68664abe40341a6443b3cd435d18a73e12f64f8b600"
 "assets/baseline/marks/orcid-id.svg" = "195be086656233fc1a0089086d9190d28dc6abce39c2290612d1893233e1f166"
-"assets/baseline/palettes.css" = "c67ffe38a93d266150a0bd82ce141fb6e8b544ff6a8d210f70b3d84032650bf7"
+"assets/baseline/palettes.css" = "f1d77366c5bfdae3e7c35420f755cf6a7cbe2a0c8eca081e062635202769cb17"
 "assets/baseline/rail.js" = "36535faf2df8637e694ff2a57af982b9c67c9f410f80d4dfceb193c4f2d601ca"
-"assets/baseline/search.js" = "4f106660b503af5c770a05472f733ababb3a01f3514cd9d1bfe03b983490d88f"
+"assets/baseline/scheme.js" = "39d035d986f53c987cbe92516b9a5fd499af5c7fcdda701ea896c63c45ef1634"
+"assets/baseline/search.js" = "87748d9c9d7bb31f55b35e54b7aa70a3d4585f5bf27a4c54a664d9a34f7e6cbc"
 "assets/baseline/select.js" = "2c4e1f1a2cc00c49dc013fd421b16c14cdc89eb873fc57f7768be90604d4bf90"
+".baseline/check_palette.py" = "d7a9994997ef721e8e7ba3809b18df3f0e9e3c803bd6fcddb3c8125171e21bfc"

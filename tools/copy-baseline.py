@@ -8,19 +8,27 @@ the archive and verified against https://posluns.ca/baseline/SHA256SUMS, and
 refuses to copy unless:
 
 1. ``SHA256SUMS`` in that folder hashes to the digest given on the command line
-   (the value published in https://posluns.dev/hashes.txt), and
+   (the value published in https://posluns.dev/hashes.txt),
 2. every file listed in ``SHA256SUMS`` exists and hashes to its listed digest,
-   and no file in the folder is missing from it.
+   and no file in the folder is missing from it, and
+3. ``SHA256SUMS`` lists the build tool ``tools/check_palette.py``, so the served
+   files are never replaced by a version that lacks it.
 
-It then copies the runtime and licence files (the baseline README, "Adoption in
-a repository", step 2: the stylesheets, the fonts with their licence files, the
-4 scripts (``rail.js`` from 1.3.0), the logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and
-``NOTICE.md``; never ``reference/``, ``tools/`` or the documents) byte for byte
+It then copies these of the runtime and licence files that the baseline README
+lists ("Adoption in a repository", step 2): the stylesheets, the fonts with
+their licence files, 5 of its 6 scripts (``rail.js`` from 1.3.0, ``scheme.js``
+from 1.6.0; this site leaves out ``matrix.js``, by the owner's decision), the
+logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and ``NOTICE.md``
+(never ``reference/``, ``tools/`` or the documents), byte for byte
 into ``<output root>/assets/baseline/``, where the output root follows the base
-path in ``site-src/site.json`` (``site/draft/`` while staged). It copies
+path in ``site-src/site.json`` (``site/draft/`` while staged). It copies the
+pinned build tool ``tools/check_palette.py`` (from 1.6.0) to
+``.baseline/check_palette.py``, which is pinned but never served, and it copies
 ``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
 ``.baseline/pin.toml`` in the README's format: a ``version`` key and a
-``[files]`` table of path to SHA-256, the paths relative to the output root.
+``[files]`` table of path to SHA-256, the paths under ``assets/baseline/``
+relative to the output root and the build tool's ``.baseline/check_palette.py``
+relative to the repository root.
 ``tools/check-baseline-pin.py`` checks the copy offline on every pull request.
 
 Usage:
@@ -48,8 +56,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PIN_DIR = REPO_ROOT / ".baseline"
 PREFIX = "assets/baseline/"
+TOOL_SOURCE = "tools/check_palette.py"
+TOOL_NAME = "check_palette.py"
 
-TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "LICENSE", "NOTICE.md"}
+TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "scheme.js", "LICENSE", "NOTICE.md"}
 FOLDERS = ("fonts/", "logos/", "marks/")
 SUM_LINE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9._/-]+)$")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -149,6 +159,9 @@ def main() -> int:
     for name, digest in listed.items():
         if sha256(source / name) != digest:
             die(1, f"{name} does not match its SHA256SUMS digest")
+    tool_digest = listed.get(TOOL_SOURCE)
+    if tool_digest is None:
+        die(1, f"SHA256SUMS does not list {TOOL_SOURCE}")
 
     chosen = sorted(name for name in listed if wanted(name))
     dest = output_root() / PREFIX
@@ -161,12 +174,18 @@ def main() -> int:
         if sha256(target) != listed[name]:
             die(1, f"the copy of {name} does not match its digest")
 
+    if sha256(source / TOOL_SOURCE) != tool_digest:
+        die(1, f"{TOOL_SOURCE} does not match its SHA256SUMS digest")
     PIN_DIR.mkdir(exist_ok=True)
+    shutil.copyfile(source / TOOL_SOURCE, PIN_DIR / TOOL_NAME)
+    if sha256(PIN_DIR / TOOL_NAME) != tool_digest:
+        die(1, f"the copy of {TOOL_SOURCE} does not match its digest")
     shutil.copyfile(sums_path, PIN_DIR / "SHA256SUMS")
     lines = [
         "# Baseline pin, in the format of the baseline README (\"Adoption in a repository\", step 3).",
-        "# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths are",
-        "# relative to the site's output root (site/draft/ while staged, site/ after promotion).",
+        "# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths under",
+        "# assets/baseline/ are relative to the site's output root (site/draft/ while staged, site/ after",
+        f"# promotion), and .baseline/{TOOL_NAME} is relative to the repository root, outside site/.",
         f"# Source: https://posluns.ca/baseline/baseline-{version}.tar.gz, archive sha256 {args.archive_sha256};",
         f"# SHA256SUMS sha256 {args.sums_sha256}, copied to .baseline/SHA256SUMS.",
         "# Never edit a copied file; a new version arrives as a new copy and a new pin.",
@@ -175,8 +194,10 @@ def main() -> int:
         "[files]",
     ]
     lines += [f'"{PREFIX}{name}" = "{listed[name]}"' for name in chosen]
+    lines += [f'".baseline/{TOOL_NAME}" = "{tool_digest}"']
     (PIN_DIR / "pin.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"copied {len(chosen)} files of baseline {version} and wrote .baseline/pin.toml")
+    print(f"copied {len(chosen) + 1} files of baseline {version} ({len(chosen)} to {PREFIX} and .baseline/{TOOL_NAME}) "
+          "and wrote .baseline/pin.toml")
     return 0
 
 

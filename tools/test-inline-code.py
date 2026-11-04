@@ -3,7 +3,8 @@
 
 Each case copies the gate and every HTML page and SVG file under site/ into a
 temporary repository (under $TMPDIR), applies 1 fault to 1 file, runs the gate
-there as a separate process and asserts its exit code. The cases named I1 to I7,
+there as a separate process and asserts its exit code (and, for the switch
+rules in ``SWITCH_RULES``, that the refusal names the switch's place). The cases named I1 to I7,
 I2 and I2B are the inline-code mutants of the PR 206 review, and the cases named
 N1, N2 and N4 are the probes of its first verification round. Exit 0 when every case passes;
 1 otherwise, naming each failing case. One further case runs the gate under a
@@ -12,6 +13,8 @@ faked Python version tuple outside its supported set and asserts exit 3.
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import shutil
 import subprocess
 import sys
@@ -35,6 +38,33 @@ VERSION_PROBE = (
     "sys.version_info = (3, 13, 9, 'final', 0); "
     "runpy.run_path(sys.argv[1], run_name='__main__')"
 )
+# The sha256 of the light and dark switch of template specification 7.33, computed from the 1.6.0
+# reference page reference/install.html line 18 (761 bytes, from <button class="scheme" to </button>).
+SWITCH_SHA256 = "9cbd502757bf584b5b83c5319729a9f33310682f305597b64347bc263f586f00"
+
+
+def gate_switch() -> str:
+    spec = importlib.util.spec_from_file_location("check_inline_code", GATE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.SCHEME_SWITCH
+
+
+SWITCH_HEAD = '<button class="scheme" type="button" data-scheme-toggle aria-pressed="false" hidden><svg class="moon" '
+SWITCH = gate_switch()
+# A second working switch: scheme.js wires and shows every element with data-scheme-toggle.
+TOGGLE = '<p><button class="scheme" type="button" data-scheme-toggle hidden><span class="vh">Dark mode</span></button></p>'
+
+
+def duplicate_switch(relative: str):
+    """Write the page's own switch a second time, right after the first."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        text = path.read_text(encoding="utf-8")
+        start = text.index(SWITCH_HEAD)
+        end = text.index("</button>", start) + len("</button>")
+        path.write_text(text[:end] + text[start:end] + text[end:], encoding="utf-8")
+    return apply
 
 
 def make_root(scratch: Path) -> Path:
@@ -248,19 +278,60 @@ CASES = [
     ("N4: an inline script in a .htm page", write_text("site/extra/index.htm", "<p>x</p><script>alert(1)</script>"), 1),
     ("a page that is not UTF-8", write_bytes(LICENSE, b"<p>\xff</p>"), 3),
     ("no HTML page under site/", remove_pages, 3),
+    ("the switch with an onload on its first svg",
+        edit(INSTALL, SWITCH_HEAD, SWITCH_HEAD.replace('<svg class="moon" ', '<svg class="moon" onload="alert(1)" ')), 1),
+    ("the switch with 1 byte changed", edit(INSTALL, 'stroke-width="1.8"', 'stroke-width="1.9"'), 1),
+    ("the switch twice on 1 page", duplicate_switch(LICENSE), 1),
+    ("a bare svg next to the switch", edit(LICENSE, '<span class="vh">Dark mode</span></button>',
+                                           '<span class="vh">Dark mode</span></button><svg></svg>'), 1),
+    ("a second element with data-scheme-toggle, a button in the content", before_main_end(LICENSE, TOGGLE), 1),
+    ("a second element with data-scheme-toggle in upper case", before_main_end(HOME, '<div DATA-SCHEME-TOGGLE hidden></div>'), 1),
+    ("a second element with data-scheme-toggle inside noscript",
+        before_main_end(DEMO, "<noscript>" + TOGGLE + "</noscript>"), 1),
+    ("no switch on a page", edit(LICENSE, SWITCH, ""), 1),
+    ("the switch's markup again inside a comment", before_main_end(LICENSE, "<!--" + SWITCH + "-->"), 1),
+    ("the switch after header.mast", edit(LICENSE, SWITCH + "</header>", "</header>" + SWITCH), 1),
+    ("the switch in a header without the mast class", edit(LICENSE, '<header class="mast">', '<header class="other">'), 1),
+    ("the switch in a div.mast inside header.mast", both(
+        edit(LICENSE, '<header class="mast">', '<header class="mast"><div class="mast">'),
+        edit(LICENSE, SWITCH + "</header>", SWITCH + "</div></header>")), 1),
+    ("the switch after a nav without the nav class", edit(LICENSE, '<nav class="nav"', '<nav class="links"'), 1),
+    ("the switch after a div.nav", both(edit(LICENSE, '<nav class="nav"', '<div class="nav"'),
+        edit(LICENSE, "</nav>" + SWITCH, "</div>" + SWITCH)), 1),
+    ("a comment after the switch in header.mast", edit(LICENSE, SWITCH + "</header>", SWITCH + "<!-- x --></header>"), 1),
+    ("an end tag that closes no open element before the switch", edit(LICENSE, '<nav class="nav"', '</div><nav class="nav"'), 1),
+    ("a newline between nav.nav and the switch", edit(LICENSE, "</nav>" + SWITCH, "</nav>\n" + SWITCH), 0),
+    # A browser ignores the slash on an element that is neither void nor in <svg>, so the switch becomes its child.
+    ("a self-closing nav.nav before the switch", edit(LICENSE, SWITCH, '<nav class="nav"/>' + SWITCH), 1),
+    ("a self-closing div first in header.mast", edit(LICENSE, '<header class="mast">', '<header class="mast"><div/>'), 1),
 ]
+# Faults that check 7's switch reading itself must refuse, whatever else also refuses them: class names split on
+# ASCII whitespace only, and no switch inside an element of INERT_ELEMENTS. Its refusal names the place.
+PLACE = "as the last child of header.mast"
+MAST, MAST_END = '<header class="mast">', SWITCH + "</header>"
+SWITCH_RULES = [
+    ("a no-break space in the mast class", edit(LICENSE, MAST, '<header class="mast\u00a0x">')),
+    ("a no-break space in the nav class", edit(LICENSE, '<nav class="nav"', '<nav class="nav\u00a0x"')),
+] + [(f"header.mast inside {name}", both(edit(LICENSE, MAST, f"<{name}>" + MAST), edit(LICENSE, MAST_END, MAST_END + f"</{name}>")))
+     for name in ("noscript", "template", "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video")]
 
 
 def main() -> int:
     failures: list[str] = []
-    for name, fault, expected in CASES:
+    switch = gate_switch()
+    if hashlib.sha256(switch.encode("utf-8")).hexdigest() != SWITCH_SHA256:
+        failures.append("SCHEME_SWITCH in tools/check-inline-code.py is not the 7.33 switch of the reference pages")
+    if (REPO_ROOT / INSTALL).read_text(encoding="utf-8").count(switch) != 1:
+        failures.append(f"{INSTALL} does not carry the switch exactly once")
+    for name, fault, expected, says in [(*case, "") for case in CASES] + [(*rule, 1, PLACE) for rule in SWITCH_RULES]:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
             if fault:
                 fault(root)
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
-            if result.returncode != expected:
-                failures.append(f"{name}: exit {result.returncode}, expected {expected}: {(result.stdout + result.stderr).strip()[:300]}")
+            if result.returncode != expected or says not in result.stdout:
+                failures.append(f"{name}: exit {result.returncode}, expected {expected}{' with ' + repr(says) if says else ''}: "
+                                f"{(result.stdout + result.stderr).strip()[:300]}")
     with tempfile.TemporaryDirectory() as scratch:
         root = make_root(Path(scratch))
         result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
@@ -273,7 +344,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-inline-code: all {len(CASES) + 1} cases passed.")
+    print(f"test-inline-code: all {len(CASES) + len(SWITCH_RULES) + 1} cases passed.")
     return 0
 
 

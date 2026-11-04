@@ -4,7 +4,8 @@
 ``tools/copy-baseline.py`` copies the runtime files of a verified baseline
 version into ``<output root>/assets/baseline/`` and records each file's SHA-256
 in ``.baseline/pin.toml``, in the baseline README's format: a ``version`` key
-and a ``[files]`` table of path to digest, the paths relative to the output
+and a ``[files]`` table of path to digest, the paths under ``assets/baseline/``
+relative to the output root and the build tool's key relative to the repository
 root. The output root follows the base path in ``site-src/site.json``
 (``site/draft/`` while staged, ``site/`` after promotion). The copied files are
 never edited. This gate makes an edit, a replacement, a deletion or an addition
@@ -16,19 +17,28 @@ What it verifies
 
 1. ``.baseline/pin.toml`` parses as TOML and holds exactly ``version`` (X.Y.Z)
    and a non-empty ``[files]`` table whose every key is a relative path under
-   ``assets/baseline/`` and whose every value is a lower-case SHA-256. A
-   malformed pin is a failure (exit 3), never a pass.
+   ``assets/baseline/``, or exactly the build tool key
+   ``.baseline/check_palette.py`` (``TOOLS``), and whose every value is a
+   lower-case SHA-256. Any other key is malformed. A malformed pin is a
+   failure (exit 3), never a pass.
 2. Each pinned file appears in the version's ``SHA256SUMS`` (kept as
    ``.baseline/SHA256SUMS``) under its name within the package, with the same
    digest, so the pin cannot name a file or a digest the published version
-   does not have.
+   does not have. The build tool's name within the package is
+   ``tools/check_palette.py``.
 3. Each pinned file exists under the output root as a regular file, not a
-   link, and hashes to its pinned digest.
-4. No file under ``<output root>/assets/baseline/`` is missing from the pin.
-5. The pin holds the README's whole runtime and licence set (``REQUIRED``):
-   the 3 stylesheets, the 4 scripts, ``LICENSE``, ``NOTICE.md`` and
-   ``marks/NOTICE.md``, so a copy that drops one, such as ``rail.js``, fails
-   even when the files present match.
+   link, and hashes to its pinned digest. The build tool is checked the same
+   way at its path from the repository root, ``.baseline/check_palette.py``.
+4. No file under ``<output root>/assets/baseline/`` is missing from the pin,
+   and no file named ``check_palette.py`` exists anywhere under ``site/``: the
+   build tool is pinned but never served.
+5. The pin holds these files of the README's runtime and licence set
+   (``REQUIRED``): the 3 stylesheets, 5 of the README's 6 scripts (this site
+   leaves out ``matrix.js``, by the owner's decision), ``LICENSE``,
+   ``NOTICE.md`` and
+   ``marks/NOTICE.md``, and the build tool key ``.baseline/check_palette.py``,
+   so a copy that drops one, such as ``rail.js``, fails even when the files
+   present match.
 
 Every folder is listed with ``os.scandir``, so a folder or file that cannot be
 read fails closed (exit 3) rather than reading as empty.
@@ -68,11 +78,13 @@ PIN = Path(".baseline/pin.toml")
 SUMS = Path(".baseline/SHA256SUMS")
 SITE_JSON = Path("site-src/site.json")
 PREFIX = "assets/baseline/"
+# The pinned build tool: its key in the pin, from the repository root, and its name in SHA256SUMS.
+TOOLS = {".baseline/check_palette.py": "tools/check_palette.py"}
 REQUIRED = [
     PREFIX + name
     for name in ("baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js",
-                 "LICENSE", "NOTICE.md", "marks/NOTICE.md")
-]
+                 "scheme.js", "LICENSE", "NOTICE.md", "marks/NOTICE.md")
+] + list(TOOLS)
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
@@ -111,8 +123,10 @@ def load_pin(root: Path) -> tuple[str, dict[str, str]]:
     if not isinstance(files, dict) or not files:
         raise Unreadable(f"{PIN} pins no [files]")
     for path, digest in files.items():
-        if not path.startswith(PREFIX) or not REL_PATH.match(path) or ".." in path.split("/"):
-            raise Unreadable(f"{PIN} pins {path!r}, which is not a relative path under {PREFIX}")
+        if path in TOOLS:
+            pass
+        elif not path.startswith(PREFIX) or not REL_PATH.match(path) or ".." in path.split("/"):
+            raise Unreadable(f"{PIN} pins {path!r}, which is not a relative path under {PREFIX} or a pinned build tool")
         if not isinstance(digest, str) or not HEX64.match(digest):
             raise Unreadable(f"{PIN} pins {path} with a malformed sha256")
     return version, files
@@ -168,21 +182,24 @@ def check(root: Path) -> list[str]:
 
     shown = out.relative_to(root).as_posix()
     for path, digest in sorted(files.items()):
-        if published.get(path[len(PREFIX):]) != digest:
+        if path in TOOLS:
+            package_name, target, label = TOOLS[path], root / path, path
+        else:
+            package_name, target, label = path[len(PREFIX):], out / path, f"{shown}/{path}"
+        if published.get(package_name) != digest:
             problems.append(f"{path} is pinned with a digest the version's SHA256SUMS does not list.")
-        target = out / path
         try:
             info = os.lstat(target)
         except FileNotFoundError:
-            problems.append(f"{shown}/{path} is pinned but missing.")
+            problems.append(f"{label} is pinned but missing.")
             continue
         except OSError as error:
             raise Unreadable(f"{target} could not be read: {error}") from error
         if not stat.S_ISREG(info.st_mode):
-            problems.append(f"{shown}/{path} is not a regular file (a link or a folder).")
+            problems.append(f"{label} is not a regular file (a link or a folder).")
             continue
         if hashlib.sha256(read_bytes(target)).hexdigest() != digest:
-            problems.append(f"{shown}/{path} differs from its pinned digest; never edit a copied file.")
+            problems.append(f"{label} differs from its pinned digest; never edit a copied file.")
 
     for path in REQUIRED:
         if path not in files:
@@ -194,6 +211,12 @@ def check(root: Path) -> list[str]:
     for name in list_tree(copied):
         if PREFIX + name not in files:
             problems.append(f"{shown}/{PREFIX}{name} is not in the pin.")
+
+    served = root / "site"
+    tool_names = {Path(key).name for key in TOOLS}
+    for name in list_tree(served):
+        if Path(name).name in tool_names:
+            problems.append(f"site/{name} is a pinned build tool under the served tree; it is never served.")
     return problems
 
 

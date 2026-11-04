@@ -43,36 +43,58 @@ What it verifies
 3. On ``/install/``, the ids ``pick``, ``get``, ``test``, ``how-to-use``,
    ``spelling``, ``assurance``, ``technical`` and the 5 family ids exist
    (existing deep links, such as ``/install/#pick`` and ``/install/#claude``),
-   and on every page no id is duplicated.
+   each on an element outside every element of ``INERT_ELEMENTS`` (see
+   below), and on every page no id is duplicated.
 4. Each family page exists (exit 3 if not) and has exactly 1 ``<h1>`` with
    visible text (a character other than whitespace, U+0000 and those in
    ``ZERO_WIDTH``, in text that no element hides by the rules of check 1), at
    least 1 ``p.verified`` and at least 1 ``ol.steps``, none of them hidden by
    itself or an ancestor, and links, hidden or not, to ``/install/#get`` and
-   ``/install/#test``.
+   ``/install/#test`` outside every element of ``INERT_ELEMENTS``.
 5. No inline code and no refused markup on any of the 6 pages, as checks 1 to
    10 of ``tools/check-inline-code.py`` define them for an HTML page, with that
    gate's own code: among them, no ``<script>`` without ``src`` other than a
    structured-data block, no ``on*`` attribute, no ``javascript:`` URL, no
    ``<style>`` element or ``style`` attribute, no script from another origin,
    and none of the elements that check 7 of that gate refuses because the
-   parser reads them differently from a browser.
-6. Versioned asset tokens on each of the 6 pages: the text holds a stylesheet
-   tag for each of ``fonts.css``, ``palettes.css`` and ``baseline.css`` and a
-   script tag for ``copy.js``, from ``/assets/baseline/`` with ``?v=X.Y.Z``, the
-   script with ``defer``; where the text names ``/assets/site.css``, it holds a
-   stylesheet tag for it with ``?v=`` and 12 hexadecimal characters. Each of
-   these is matched as text, so a tag in a comment counts.
-   Every ``<script>`` start tag with a ``src``, as the parser reads it and as a
-   text match finds it, is 1 of the baseline scripts this site uses
+   parser reads them differently from a browser; and, by that same check 7,
+   exactly 1 element with ``data-scheme-toggle``, the light and dark switch of
+   template specification 7.33, in its place.
+6. Versioned asset tokens and loads on each of the 6 pages: ``fonts.css``,
+   ``palettes.css`` and ``baseline.css`` load as stylesheets, and ``copy.js``
+   as a script with ``defer`` outside every element of ``INERT_ELEMENTS``,
+   from ``/assets/baseline/`` with ``?v=X.Y.Z``;
+   where the text names ``/assets/site.css``, or a stylesheet loads it, it loads
+   with ``?v=`` and 12 hexadecimal characters. ``scheme.js`` loads exactly once, as
+   exactly ``<script data-cfasync="false" src="/assets/baseline/scheme.js?v=X.Y.Z"></script>``,
+   with no ``defer`` or ``async``, before the first stylesheet, and it and every
+   stylesheet start inside ``<head>``, read as parsed elements: ``html > head``,
+   the first head or body the page opens (template specification 7.33, baseline
+   1.6.0), before the head ends where HTML5 ends it: at the first text other
+   than whitespace, start tag other than those HTML5 allows in a head
+   (``HEAD_TAGS``), or ``</body>``, ``</html>`` or ``</br>``. A self-closing tag
+   leaves an element that is neither void nor in ``<svg>`` open, as in a
+   browser. The reading fails closed where it does not model HTML5: such a
+   start tag inside a ``<template>`` or ``<noscript>`` in the head ends the
+   head, and a self-closing tag in ``<math>`` leaves its element open. Every
+   other ``<script>`` the page loads is 1 of the baseline scripts this site uses
    (``ALLOWED_SCRIPTS``: ``copy.js``, ``search.js``, ``rail.js``) from
-   ``/assets/baseline/``, with a ``?v=X.Y.Z`` token and ``defer``; ``select.js``
-   is refused.
+   ``/assets/baseline/``, with the same token and ``defer``, as exactly
+   ``<script src="/assets/baseline/NAME?v=X.Y.Z" defer></script>``;
+   ``select.js`` is refused, and the baseline's ``matrix.js`` is left out, by
+   the owner's decision. Each load is read as the parsed element, so a tag
+   inside a comment loads nothing, and a ``<script>`` or stylesheet written in
+   another spelling (letter case, a character reference, attribute order or
+   spacing) is still counted. Any tag that carries an attribute twice fails: a
+   browser reads the first value, and the load reading would take the last. Every
+   ``<script>`` start tag with a ``src`` that a text match finds, a tag in a
+   comment included, is ``scheme.js`` in its exact form or 1 of
+   ``ALLOWED_SCRIPTS`` with a ``?v=X.Y.Z`` token and ``defer``.
 7. ``site/_headers``, read with the parser of ``tools/check-headers.py``
    (header names compared without regard to case, comments ignored), has a
    ``/*`` rule that sets ``Content-Security-Policy`` exactly once, to exactly
    the shared policy, ``SHARED_CSP`` below (template specification, baseline
-   1.4.1, section 9), and does not detach it. No rule sets or detaches
+   1.6.0, section 9, unchanged), and does not detach it. No rule sets or detaches
    ``X-Content-Security-Policy``, and no rule other than ``/*`` and ``/draft/*``
    sets, or other than ``/draft/*`` detaches, ``Content-Security-Policy``; a
    ``/draft/*`` rule appears only while a new
@@ -82,9 +104,24 @@ What it verifies
    (template specification, section 5), and check 5 and
    ``tools/check-inline-code.py`` enforce that rule.
 
-It reads the markup with ``html.parser``, so an ancestor in checks 1 and 4 is an
-element that the parser holds open, and it follows a browser in these ways where
-the two differ: ``/>`` on an element that is not void
+It reads the markup with ``html.parser``. Its readers are not a full HTML5 tree
+builder: they model the open elements as tags nest, void elements, the head's
+end (check 6), the hiding rules of check 1, and class names split on ASCII
+whitespace only, as HTML splits them (``class="btn&nbsp;inline"`` is 1 class,
+not ``btn`` and ``inline``). A script or stylesheet inside ``<noscript>``,
+``<template>``, ``<plaintext>``, a raw-text element or one of ``HIDING_ELEMENTS``
+(``INERT_ELEMENTS`` of ``tools/check-inline-code.py``, whose content a
+browser with scripting on does not render as page elements or, for ``audio``,
+``canvas``, ``datalist``, ``meter``, ``object``, ``progress``, ``rp``,
+``select`` and ``video``, renders only as fallback, only in its control or not
+at all) is not in ``html > head``, so check 6 never counts it as placed there
+or as the load of ``copy.js``; nor do checks 3 and 4 count an id or a link
+inside one. What guarantees the committed pages is the
+generator: ``tools/build-site.py --check``, a deploy gate, compares them byte
+for byte with a fresh build, and the generator's validator holds each page's
+``header.mast`` block to its pinned markup. An ancestor in checks 1 and 4 is an
+element that the parser holds open, and the gate follows a browser in these
+ways where the two differ: ``/>`` on an element that is not void
 does not close it, so ``<div hidden/>`` hides what follows; of 2 attributes with
 the same name, the first counts; a heading start tag closes a heading that is
 the current node, and any heading end tag closes the innermost open heading;
@@ -116,7 +153,8 @@ or its text: the void elements (``area``, ``base``, ``basefont``, ``link``,
 ``meta``, ``param``, and ``input`` with ``type=hidden``) and ``head`` (a
 browser moves body content out of it); check 5 refuses ``style``,
 ``template``, ``noembed`` and ``noframes`` anywhere on the 6 pages. Check 5
-also refuses ``iframe``, ``svg`` and ``math``, which hold text a browser does
+also refuses ``iframe``, ``svg`` (other than the 2 in the exact light and dark
+switch) and ``math``, which hold text a browser does
 not render (an iframe's raw text; an SVG ``title``, ``desc`` or ``metadata``,
 the content of ``defs`` or ``symbol``, and SVG text outside a ``text``
 element; a MathML ``annotation`` or ``annotation-xml``). It does
@@ -157,8 +195,8 @@ element a browser has already closed by an implied end tag (after
 ``small``, ``strike``, ``strong``, ``tt`` or ``u``) that a browser reopens with
 its attributes after an end tag closed it out of order, so after
 ``<p><b hidden>x</p>`` a link is hidden in a browser and visible here. The
-inline-code checks share the residual that ``tools/check-inline-code.py``
-states.
+inline-code checks, and the load reading of check 6, share the residual that
+``tools/check-inline-code.py`` states: ``html.parser`` is not a browser's parser.
 
 Python versions
 ---------------
@@ -214,6 +252,7 @@ import sys
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.parse import unquote
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PAGE = REPO_ROOT / "site" / "install" / "index.html"
@@ -225,11 +264,16 @@ FAMILY_PAGES = {fam: REPO_ROOT / "site" / "install" / fam / "index.html" for fam
 TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance", "technical"]
 RETIRED_ATTRS = ("data-picker", "data-family-link", "data-family-section", "data-picker-reset", "data-picker-status")
 ALLOWED_SCRIPTS = ("copy.js", "search.js", "rail.js")
+# scheme.js loads in exactly this form, with no defer, before the stylesheets (specification 7.33).
+SCHEME_TAG = re.compile(r'<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>')
+# Every other script loads in exactly this form.
+DEFERRED_TAG = re.compile(r'<script src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+" defer></script>')
+SITE_SHEET = re.compile(r'<link rel="stylesheet" href="/assets/site\.css\?v=[0-9a-f]{12}">')
 DRAFT_PATTERN = "/draft/*"
 # The (major, minor) Python versions the gate is tested on; main() refuses every other version, 3.9 or later,
 # with exit 3 before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
 SUPPORTED_PYTHONS = ((3, 14),)
-# The shared policy (template specification, baseline 1.4.1, section 9), on every page since promotion.
+# The shared policy (template specification, baseline 1.6.0, section 9, unchanged), on every page since promotion.
 SHARED_CSP = (
     "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
     "https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; "
@@ -242,7 +286,11 @@ VOID = {
     "area", "base", "basefont", "bgsound", "br", "col", "embed", "frame", "hr", "img", "input", "keygen", "link", "meta",
     "param", "source", "track", "wbr",
 }
+# The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
+HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+# HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
+ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # Invisible characters a heading might be reduced to, besides the whitespace str.strip removes: the zero-width space,
 # non-joiner and joiner (U+200B to U+200D), the zero-width no-break space or byte order mark (U+FEFF), the no-break
 # space (U+00A0), the word joiner (U+2060), the soft hyphen (U+00AD), and the bidi formatting characters: the marks
@@ -287,6 +335,13 @@ def inline_code(where: str, text: str) -> list[str]:
     return [f"{where} {problem}; {INLINE_RULE}." for problem in problems]
 
 
+def inert_elements() -> tuple[str, ...]:
+    """The elements whose content a browser with scripting on does not render as page elements (noscript, template,
+    plaintext, the raw-text and RCDATA elements) or renders only as fallback, only in its control or not at all (the
+    other elements of HIDING_ELEMENTS), as tools/check-inline-code.py names them for check 7."""
+    return load_tool("check-inline-code.py").INERT_ELEMENTS
+
+
 # The template's visually-hidden class is .vh (site/assets/baseline/baseline.css). The common name
 # visually-hidden is kept although no stylesheet here defines it: an author who adds it means to hide
 # the element, and this gate cannot see whether a later stylesheet defines it, so it fails closed.
@@ -309,8 +364,13 @@ HIDING_ELEMENTS = (
 )
 
 
+def class_names(attrs: dict[str, str]) -> list[str]:
+    """The class names of an element, split on ASCII whitespace only, as a browser splits them."""
+    return [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
+
+
 def is_hiding_element(tag: str, attrs: dict[str, str]) -> bool:
-    classes = attrs.get("class", "").split()
+    classes = class_names(attrs)
     return (
         "hidden" in attrs
         or "inert" in attrs
@@ -335,13 +395,15 @@ class PageParser(HTMLParser):
         self.order = 0
         self.id_counts: Counter = Counter()
         self.id_first: dict[str, int] = {}
+        # The ids on an element outside every element of INERT_ELEMENTS. Such an element can still be hidden by
+        # the rules of check 1, so a browser need not render it; check 3 does not ask that it is visible.
+        self.id_live: set[str] = set()
         self.retired: list[str] = []
         self.anchors: list[dict] = []
         self.hrefs: list[str] = []
         self.h1: list[dict] = []
         self.verified: list[bool] = []
         self.steps: list[bool] = []
-        self.scripts: list[str] = []
         self.page_hidden = False
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
@@ -350,7 +412,7 @@ class PageParser(HTMLParser):
         for k, v in attrs_list:
             attrs.setdefault(k.lower(), v if v is not None else "")
         self.order += 1
-        classes = attrs.get("class", "").split()
+        classes = class_names(attrs)
         # A heading start tag closes a heading that is the current node, as a browser does: <h1><h2>x leaves the h1 empty.
         if tag in HEADINGS and self.stack and self.stack[-1]["tag"] in HEADINGS:
             del self.stack[-1]
@@ -367,9 +429,15 @@ class PageParser(HTMLParser):
                 parent["summary"] = True
             else:
                 hiding = True
+        # An id or a link inside an element of INERT_ELEMENTS does not count: a browser with scripting on does not
+        # render that element's content as page elements, or renders it only as fallback, only in its control or
+        # not at all.
+        inert = any(frame["tag"] in inert_elements() for frame in self.stack)
         if "id" in attrs:
             self.id_counts[attrs["id"]] += 1
             self.id_first.setdefault(attrs["id"], self.order)
+            if not inert:
+                self.id_live.add(attrs["id"])
         for name in RETIRED_ATTRS:
             if name in attrs:
                 self.retired.append(f"<{tag} {name}>")
@@ -378,7 +446,8 @@ class PageParser(HTMLParser):
             # A browser closes an open link when another starts, so later text is not in it; text stops counting for it.
             for frame in self.stack:
                 frame["a"] = None
-            self.hrefs.append(attrs.get("href", ""))
+            if not inert:
+                self.hrefs.append(attrs.get("href", ""))
             anchor = {
                 "id": attrs.get("id"),
                 "href": attrs.get("href", ""),
@@ -398,10 +467,6 @@ class PageParser(HTMLParser):
             self.verified.append(hiding)
         if tag == "ol" and "steps" in classes:
             self.steps.append(hiding)
-        # The parser reads the tag whatever its letter case, spacing or quoting, which the text match in
-        # common_checks does not; "" stands for a script without defer.
-        if tag == "script" and "src" in attrs:
-            self.scripts.append(attrs["src"] if "defer" in attrs else "")
         if tag not in VOID:
             closed = tag == "details" and "open" not in attrs
             self.stack.append(
@@ -434,6 +499,71 @@ class PageParser(HTMLParser):
                     record["text"] = True
 
 
+class LoadScan(HTMLParser):
+    """Check 6: where each <script> and stylesheet <link> element starts, which of them start outside the
+    page's head, which start inside an element of INERT_ELEMENTS (inert_elements()), and each tag that repeats an
+    attribute. The head is html > head with no other open element, so a load inside such an element never counts as
+    in it, nor as the load of copy.js. Not a full HTML5 tree builder; the committed pages rest on build-site.py
+    --check and the generator's validator."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.lines = [0] + [match.end() for match in re.finditer("\n", text)]
+        self.scripts: list[tuple[int, dict[str, str], str]] = []
+        self.sheets: list[tuple[int, dict[str, str], str]] = []
+        self.repeats: list[str] = []
+        # The open elements, and the head or body elements opened so far: the page's head is html > head,
+        # the first of them, until the head ends where HTML5 ends it.
+        self.stack: list[str] = []
+        self.heads = 0
+        self.head_ended = False
+        self.outside_head: set[int] = set()
+        self.inert: set[int] = set()
+
+    def handle_starttag(self, tag: str, attrs_list) -> None:
+        attrs = {k.lower(): (v if v is not None else "") for k, v in attrs_list}
+        line, column = self.getpos()
+        element = (self.lines[line - 1] + column, attrs, self.get_starttag_text() or "")
+        if len(attrs) != len(attrs_list):
+            # A browser reads the first of 2 attributes with the same name, and these dicts the last.
+            self.repeats.append(element[2])
+        if tag in ("head", "body"):
+            self.heads += 1
+        if tag not in HEAD_TAGS and tag not in ("html", "head"):
+            self.head_ended = True
+        if tag in ("script", "link") and (self.stack != ["html", "head"] or self.heads != 1 or self.head_ended):
+            self.outside_head.add(element[0])
+        if any(name in inert_elements() for name in self.stack):
+            self.inert.add(element[0])
+        if tag not in VOID:
+            self.stack.append(tag)
+        if tag == "script":
+            self.scripts.append(element)
+        elif tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split():
+            self.sheets.append(element)
+
+    def handle_startendtag(self, tag: str, attrs_list) -> None:
+        # A browser honours the slash only in <svg> (foreign content); any other element that is not void stays open.
+        foreign = tag == "svg" or "svg" in self.stack
+        self.handle_starttag(tag, attrs_list)
+        if tag not in VOID and foreign:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("body", "html", "br"):
+            # HTML5 ends the head at each of these end tags (</br> reads as <br>).
+            self.head_ended = True
+        for i in range(len(self.stack) - 1, -1, -1):
+            if self.stack[i] == tag:
+                del self.stack[i:]
+                break
+
+    def handle_data(self, data: str) -> None:
+        if data.strip(" \t\n\f\r") and self.stack in ([], ["html"], ["html", "head"]):
+            # Text other than whitespace in or before the head ends it (HTML5).
+            self.head_ended = True
+
+
 def parse(text: str) -> PageParser:
     parser = PageParser()
     parser.feed(text)
@@ -455,23 +585,56 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
         if count > 1:
             problems.append(f'{where}: the id "{dup_id}" appears {count} times.')
     problems += inline_code(where, text)
+    loads = LoadScan(text)
+    loads.feed(text)
+    loads.close()
+    for tag in loads.repeats:
+        problems.append(f"{where}: {tag} carries an attribute twice; a browser reads the first, this gate the last.")
     for name in ("fonts.css", "palettes.css", "baseline.css"):
-        if not re.search(r'<link rel="stylesheet" href="' + BASELINE_ASSET.format(name=re.escape(name)), text):
+        sheet = re.compile(r'<link rel="stylesheet" href="' + BASELINE_ASSET.format(name=re.escape(name)))
+        if not any(sheet.match(text, at) for at, _, _ in loads.sheets):
             problems.append(f"{where}: {name} is not loaded from /assets/baseline/ with a ?v=X.Y.Z token.")
-    if not re.search(r'<script src="' + BASELINE_ASSET.format(name=re.escape("copy.js")) + r" defer></script>", text):
-        problems.append(f"{where}: copy.js is not loaded from /assets/baseline/ with a ?v=X.Y.Z token and defer.")
-    for tag in re.findall(r"<script\b[^>]*\bsrc=[^>]*>", text):
-        name = re.search(r'src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+"', tag)
-        if name is None or name.group(1) not in ALLOWED_SCRIPTS or not tag.endswith(" defer>"):
-            problems.append(f"{where}: {tag} is not 1 of the baseline scripts this site uses ({', '.join(ALLOWED_SCRIPTS)}) with a ?v=X.Y.Z token and defer.")
-    for src in parser.scripts:
-        name = re.fullmatch(r"/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+", src)
+    scheme_tags = [at for at, _, _ in loads.scripts if SCHEME_TAG.match(text, at)]
+    deferred = []
+    for at, attrs, tag in loads.scripts:
+        if "src" not in attrs or at in scheme_tags:
+            continue
+        name = DEFERRED_TAG.match(text, at)
         if name is None or name.group(1) not in ALLOWED_SCRIPTS:
             problems.append(
-                f"{where}: the parser reads a <script> whose src is not 1 of the baseline scripts this site uses "
-                f"({', '.join(ALLOWED_SCRIPTS)}) with a ?v=X.Y.Z token and defer."
+                f"{where}: {tag} is not 1 of the baseline scripts this site uses ({', '.join(ALLOWED_SCRIPTS)}) "
+                "with a ?v=X.Y.Z token and defer."
             )
-    if "/assets/site.css" in text and not re.search(r'<link rel="stylesheet" href="/assets/site\.css\?v=[0-9a-f]{12}">', text):
+        elif at not in loads.inert:
+            deferred.append(name.group(1))
+    if "copy.js" not in deferred:
+        problems.append(
+            f"{where}: copy.js is not loaded from /assets/baseline/ with a ?v=X.Y.Z token and defer, "
+            "outside every element of INERT_ELEMENTS."
+        )
+    # The text match also finds a tag that the parser reads as a comment or as text.
+    for match in re.finditer(r"<script\b[^>]*\bsrc=[^>]*>", text):
+        if SCHEME_TAG.match(text, match.start()):
+            continue
+        tag = match.group(0)
+        name = re.search(r'src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+"', tag)
+        if name is None or name.group(1) not in ALLOWED_SCRIPTS or not tag.endswith(" defer>"):
+            problems.append(
+                f"{where}: {tag} is not 1 of the baseline scripts this site uses ({', '.join(ALLOWED_SCRIPTS)}) "
+                "with a ?v=X.Y.Z token and defer."
+            )
+    first_sheet = min((at for at, _, _ in loads.sheets), default=-1)
+    if len(scheme_tags) != 1:
+        problems.append(
+            f'{where}: scheme.js loads {len(scheme_tags)} times as <script data-cfasync="false" '
+            'src="/assets/baseline/scheme.js?v=X.Y.Z"></script>; exactly 1 is required.'
+        )
+    elif first_sheet == -1 or scheme_tags[0] > first_sheet:
+        problems.append(f"{where}: scheme.js does not load before the first stylesheet.")
+    elif scheme_tags[0] in loads.outside_head or any(at in loads.outside_head for at, _, _ in loads.sheets):
+        problems.append(f"{where}: scheme.js or a stylesheet does not load inside <head>.")
+    site_sheets = [at for at, attrs, _ in loads.sheets if "site.css" in unquote(attrs.get("href", ""))]
+    if ("/assets/site.css" in text or site_sheets) and not (site_sheets and all(SITE_SHEET.match(text, at) for at in site_sheets)):
         problems.append(f"{where}: site.css is not loaded with a ?v= content token.")
     return problems
 
@@ -509,8 +672,10 @@ def check_install_page(text: str) -> list[str]:
         if [link["order"] for link in found] != sorted(link["order"] for link in found):
             problems.append(f"{where}: the family links are not in the order {', '.join(FAMILIES)}.")
     for gid in TEMPLATE_IDS + FAMILIES:
-        if parser.id_counts.get(gid, 0) == 0:
-            problems.append(f'{where}: the id "{gid}" is missing; existing deep links use it.')
+        if gid not in parser.id_live:
+            problems.append(
+                f'{where}: the id "{gid}" is missing outside every element of INERT_ELEMENTS; existing deep links use it.'
+            )
     return problems
 
 
@@ -536,7 +701,7 @@ def check_family_page(fam: str, text: str) -> list[str]:
         problems.append(f"{where}: a step list reads as hidden in the static markup.")
     for target in ("/install/#get", "/install/#test"):
         if target not in parser.hrefs:
-            problems.append(f"{where}: no link to {target}.")
+            problems.append(f"{where}: no link to {target} outside every element of INERT_ELEMENTS.")
     return problems
 
 
@@ -609,8 +774,9 @@ def main() -> int:
         "read as visible and none of them read as hidden, and keeps its ids; each family page has 1 h1 with text "
         "read as visible, a verified line and a step list, none of them read as hidden, and links, hidden or not, "
         "back to the downloads and the test; ids "
-        "are unique, no retired selector attribute remains, the six pages pass the inline-code checks, name the "
-        "baseline's versioned stylesheets and copy.js, and load no script but the allowed baseline scripts, and "
+        "are unique, no retired selector attribute remains, the six pages pass the inline-code checks, the "
+        "light and dark switch included, load the baseline's versioned stylesheets and copy.js, load scheme.js "
+        "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
         "the /* rule of site/_headers carries exactly the shared policy."
     )
     return 0

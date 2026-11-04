@@ -55,7 +55,33 @@ every HTML page it refuses:
    ``noembed``, ``noframes``, ``plaintext`` and ``template``, found in the
    text as ``<`` and the name, ignoring case, followed by whitespace, ``/``,
    ``>`` or the end of the text. The parser reads them differently from a
-   browser, and no page uses them.
+   browser, and no page uses them, with 1 exception: the light and dark switch
+   of template specification 7.33 (baseline 1.6.0), which carries 2 inline
+   ``<svg>`` glyphs that the specification requires. Before checks 1 to 10 run,
+   the gate replaces that switch, byte for byte as ``SCHEME_SWITCH`` below holds
+   it, with the same button without its 2 ``<svg>`` children, so its own
+   button and text are still checked. Any other ``<svg``, including a switch
+   that differs by 1 byte, still fails check 7. Each page must carry the switch
+   exactly once, in the place 7.33 sets: the page's elements that carry a
+   ``data-scheme-toggle`` attribute, which ``scheme.js`` wires and shows, read
+   as parsed elements (an attribute name in any letter case, and the content of
+   ``<noscript>`` read as markup), must be exactly 1, and that 1 must be
+   ``SCHEME_SWITCH``, byte for byte, the last child of ``header.mast``, after
+   ``nav.nav``, with no ancestor whose content a browser with scripting on,
+   the only case in which ``scheme.js`` runs, does not render as page elements
+   (``INERT_ELEMENTS``: ``noscript``, ``template``, ``plaintext``, the raw-text
+   and RCDATA elements, and the elements ``tools/check-install-page.py`` hides
+   for that reason, ``audio``, ``canvas``, ``datalist``, ``meter``, ``object``,
+   ``progress``, ``rp``, ``select`` and ``video``, whose content a browser
+   renders only as fallback, only in its control or not at all, so this
+   refuses more than a browser hides). Class names are read as HTML reads
+   them, split on ASCII whitespace only, so ``class="mast&nbsp;x"`` is not
+   ``mast``. A page with an end tag that closes no open element before that
+   switch's parent ends fails, since its place is then not known. A
+   self-closing tag leaves an element that is neither void nor in ``<svg>``
+   open, as in a browser, so ``<nav class="nav"/>`` before the switch makes
+   the switch its child; a self-closing tag in ``<math>``, which a browser
+   would close, also stays open here, so such a page fails.
 8. Any ``<![CDATA[`` in the text, ignoring case.
 9. Any comment that opens as ``<!-->`` or ``<!--->``.
 10. On every page, a ``<script>`` element whose first ``src`` is not a
@@ -132,9 +158,20 @@ parsing algorithm of the specification, so markup built to make them disagree
 can still slip past checks 1 to 5 in an HTML page. Checks 6 to 9 narrow that:
 check 6 compares counts only for script and style start tags and for ``on``
 attributes, so a ``javascript:`` URL or a ``srcdoc`` attribute that the parser
-reads as text is outside it. The gate does not judge the files that external
-scripts load (under ``site/assets/baseline/``), other URL schemes such as
-``data:``, ``<meta
+reads as text is outside it. The switch reading of check 7 is not a full HTML5
+tree builder either: it models only the open elements as their start and end
+tags nest, void elements, the slash of a self-closing tag (honoured only in
+``<svg>``), the attribute name ``data-scheme-toggle`` in any letter case,
+class names split on ASCII whitespace, and the ancestors in
+``INERT_ELEMENTS``. What guarantees the committed pages is the generator:
+``tools/build-site.py --check``, a deploy gate, compares them byte for byte
+with a fresh build, and the generator's validator holds each page's markup
+from ``<body>`` to the end of ``header.mast`` to its pinned bytes, at the
+start of the page's body; it pins nothing after ``header.mast``, and a change
+to its pinned markup made together with the same change to the generator
+passes it. The gate does not judge the files
+that external scripts load (under ``site/assets/baseline/``), other URL
+schemes such as ``data:``, ``<meta
 http-equiv="refresh">``, or animation of attributes other than ``href``. The
 security policy covers some of those cases: ``default-src 'none'`` blocks
 frames and objects, and ``img-src 'self'`` blocks ``data:`` images. It does not
@@ -180,6 +217,15 @@ SVG_REFUSED_ELEMENTS = ("script", "style", "foreignObject")
 # tags either. Python 3.14 reads title and textarea as RCDATA and xmp, iframe, noembed and noframes
 # as raw text by default; earlier versions read only script and style as raw text.
 RAW_TEXT_ELEMENTS = ("script", "style", "noscript", "title", "textarea", "xmp", "iframe", "noembed", "noframes")
+# Elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render as
+# page elements (noscript, template, plaintext, the raw-text and RCDATA elements) or renders only as fallback,
+# only in its control or not at all (the other elements of tools/check-install-page.py's HIDING_ELEMENTS: audio,
+# canvas, datalist, meter, object, progress, rp, select and video). Check 7 places no switch inside one.
+INERT_ELEMENTS = RAW_TEXT_ELEMENTS + (
+    "template", "plaintext", "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video"
+)
+# HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
+ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # A browser removes leading and trailing C0 controls and spaces from a URL, and
 # every ASCII tab or newline inside it, before it reads the scheme.
 URL_EDGES = "".join(chr(code) for code in range(0x21))
@@ -191,6 +237,26 @@ RAW_REFUSED_ELEMENT = re.compile(r"<(" + "|".join(REFUSED_ELEMENTS) + r")(?=[\s/
 RAW_CDATA = re.compile(r"<!\[CDATA\[", re.I)
 RAW_SHORT_COMMENT = re.compile(r"<!---?>")
 RAW_SVG_DECLARATION = re.compile(r"<!(DOCTYPE|ENTITY)", re.I)
+# The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
+# reference pages (reference/install.html line 18), as tools/build-site.py writes it. Check 7 requires
+# this exact string once per page, as the only element with data-scheme-toggle, and admits its 2 <svg>
+# elements only inside it.
+SCHEME_SWITCH = (
+    '<button class="scheme" type="button" data-scheme-toggle aria-pressed="false" hidden>'
+    '<svg class="moon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+    '<path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>'
+    '<svg class="sun" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+    '<circle cx="12" cy="12" r="4.2"/>'
+    '<path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'
+    '</svg><span class="vh">Dark mode</span></button>'
+)
+# The switch as checks 1 to 10 read it: the same button without its 2 <svg> children.
+SCHEME_SWITCH_READ = re.sub(r"<svg\b.*?</svg>", "", SCHEME_SWITCH)
+# scheme.js wires and shows every element that carries this attribute ("[data-scheme-toggle]").
+SCHEME_TOGGLE = "data-scheme-toggle"
+VOID_ELEMENTS = ("area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr")
 
 RULE = (
     "the site's own pages must not use inline code (template specification, section 5), "
@@ -231,6 +297,11 @@ def is_same_origin_path(value: str) -> bool:
 
 def is_href_name(name: str) -> bool:
     return name == "href" or name.endswith(":href")
+
+
+def class_names(value: str) -> list[str]:
+    """The class names in a class attribute's value, split on ASCII whitespace only, as a browser splits them."""
+    return [name for name in ASCII_WHITESPACE.split(value) if name]
 
 
 def line_of(text: str, index: int) -> int:
@@ -323,6 +394,84 @@ def scan(text: str) -> InlineCodeParser:
     parser.feed(text)
     parser.close()
     return parser
+
+
+class SwitchScan(HTMLParser):
+    """Check 7: where each element with data-scheme-toggle starts, and for the first, its parent and the element
+    before it (each a name and classes) and where the end tag of its parent starts; and whether any of them sits
+    inside an element of INERT_ELEMENTS. The content of <noscript> is read as markup. Not a full HTML5 tree
+    builder: it models the open elements as tags nest, void elements, the slash only in <svg>, and class names
+    split on ASCII whitespace; the committed pages rest on build-site.py --check and the generator's validator."""
+    CDATA_CONTENT_ELEMENTS = tuple(name for name in RAW_TEXT_ELEMENTS if name != "noscript")
+    RCDATA_CONTENT_ELEMENTS = ()
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.toggles: list[tuple[int, int]] = []
+        # The open elements, and the element that ended last (or a void one) since the last start tag.
+        self.open: list[tuple[str, list[str]]] = []
+        self.previous: tuple[str, list[str]] | None = None
+        self.parent: tuple[str, list[str]] | None = None
+        self.before: tuple[str, list[str]] | None = None
+        self.depth = 0
+        self.parent_end: tuple[int, int] | None = None
+        self.unbalanced = False
+        # Whether an element with data-scheme-toggle starts inside an element of INERT_ELEMENTS.
+        self.inert = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        classes = class_names(next((value or "" for name, value in attrs if name == "class"), ""))
+        if any(name == SCHEME_TOGGLE for name, _ in attrs):
+            if not self.toggles:
+                self.parent = self.open[-1] if self.open else None
+                self.before, self.depth = self.previous, len(self.open)
+            self.inert = self.inert or any(name in INERT_ELEMENTS for name, _ in self.open)
+            self.toggles.append(self.getpos())
+        self.previous = (tag, classes) if tag in VOID_ELEMENTS else None
+        if tag not in VOID_ELEMENTS:
+            self.open.append((tag, classes))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # A browser honours the slash only in <svg> (foreign content); any other element that is not void stays open.
+        foreign = tag == "svg" or any(name == "svg" for name, _ in self.open)
+        self.handle_starttag(tag, attrs)
+        if tag not in VOID_ELEMENTS and foreign:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in VOID_ELEMENTS:
+            return
+        if not self.open or self.open[-1][0] != tag:
+            # A browser may close other elements here, so the switch's place is not known.
+            self.unbalanced = self.unbalanced or self.parent_end is None
+            return
+        self.previous = self.open.pop()
+        if self.toggles and self.parent_end is None and len(self.open) < self.depth:
+            self.parent_end = self.getpos()
+
+
+def position(text: str, index: int) -> tuple[int, int]:
+    """The (line, column) of index in text, as HTMLParser.getpos() reports where a tag starts."""
+    return text.count("\n", 0, index) + 1, index - text.rfind("\n", 0, index) - 1
+
+
+def switch_problems(text: str) -> list[str]:
+    """Check 7: the light and dark switch exactly once, the only element with data-scheme-toggle, in its place."""
+    found = SwitchScan()
+    found.feed(text)
+    found.close()
+    at = text.find(SCHEME_SWITCH)
+    parent, before = found.parent or ("", []), found.before or ("", [])
+    if (text.count(SCHEME_SWITCH) != 1 or found.toggles != [position(text, at)] or found.unbalanced or found.inert
+            or parent[0] != "header" or "mast" not in parent[1] or before[0] != "nav" or "nav" not in before[1]
+            or found.parent_end != position(text, at + len(SCHEME_SWITCH))):
+        line = found.toggles[0][0] if found.toggles else line_of(text, max(at, 0))
+        return [
+            f"line {line}: the page carries the light and dark switch {text.count(SCHEME_SWITCH)} times and "
+            f"{len(found.toggles)} elements with data-scheme-toggle; exactly 1 of each is required, the same "
+            "element, as the last child of header.mast, after nav.nav, outside every element of INERT_ELEMENTS"
+        ]
+    return []
 
 
 def count_problems(text: str, parser: InlineCodeParser) -> list[str]:
@@ -423,8 +572,10 @@ def inline_code_problems(text: str, svg: bool = False) -> list[str]:
         raise UnsupportedPython(unsupported)
     if svg:
         return svg_problems(text)
+    problems = switch_problems(text)
+    text = text.replace(SCHEME_SWITCH, SCHEME_SWITCH_READ)
     parser = scan(text)
-    return parser.problems + count_problems(text, parser) + markup_problems(text)
+    return problems + parser.problems + count_problems(text, parser) + markup_problems(text)
 
 
 def files() -> tuple[list[Path], list[Path]]:

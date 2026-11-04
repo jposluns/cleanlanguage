@@ -19,7 +19,9 @@ Sources
   the pages allowed to link the Disclosure and Licence pages.
 - ``.baseline/pin.toml``: the baseline version (for the ``?v=`` asset tokens)
   and the pinned file list, the one source of both (``tools/copy-baseline.py``
-  writes it, ``tools/check-baseline-pin.py`` checks the copied files).
+  writes it, ``tools/check-baseline-pin.py`` checks the copied files). Only the
+  keys under ``assets/baseline/`` are served; the pinned build tool
+  ``.baseline/check_palette.py`` is not, so no link may resolve to it.
 - ``site-src/release.json``: the release version, tag and checksum, written by
   ``tools/set-release-links.py``. Every version string the pages show comes
   from here, and the build refuses to run if it disagrees with the ``Version:``
@@ -35,6 +37,11 @@ Sources
   (``references/context-modes.md``), the checklist (``references/qa-checklist.md``)
   and the Instructions block (``site/downloads/cleanlanguage.md``, exactly).
 
+Every page loads ``scheme.js`` in ``<head>`` before the stylesheets, with
+``data-cfasync="false"`` and no ``defer``, and ends ``header.mast`` with the
+light and dark switch (``SCHEME_SWITCH``), as template specification 7.33
+(baseline 1.6.0) requires.
+
 The baseline files under ``<out>/assets/baseline/`` are copied and pinned by
 ``tools/copy-baseline.py`` and ``tools/check-baseline-pin.py``; this tool reads
 them but never writes them.
@@ -48,7 +55,8 @@ tag text such as ``<code>`` shown inside a ``pre`` block (each a defect found
 in the 1.2.1 reference demo page);
 an en or em dash; an inline ``style`` attribute or ``<style>`` element; an
 inline executable ``<script>`` (a ``application/ld+json`` data block is
-allowed, and emitted only at base ``/``); an ``on*`` attribute; "what this is"
+allowed, and emitted only at base ``/``); an ``on*`` attribute; an attribute
+repeated on 1 tag, which a browser reads by its first value; "what this is"
 framing; not exactly 1 ``h1``; a missing skip link, ``main#main-content``,
 family footer or ``#copy-status``; a duplicate ``id``; an unreplaced token; an
 in-page fragment with no target; a root-relative link or asset outside the base
@@ -58,7 +66,50 @@ tab)" text; a draft page, or a ``noindex`` page at base ``/``, without
 exactly 1 ``noindex, nofollow`` robots meta, and an indexable page at base
 ``/`` with one; a JSON-LD block on a draft page or a ``noindex`` page; a page
 of the ``/`` build with no ``modified`` date (and no ``--date``), or a date
-that is not ``YYYY-MM-DD``; and a release version that disagrees with SKILL.md.
+that is not ``YYYY-MM-DD``; a page without exactly 1 light and dark switch
+(``SCHEME_SWITCH``, exactly, as the last child of ``header.mast``, after
+``nav.nav``, and the only element with a ``data-scheme-toggle`` attribute,
+each of which ``scheme.js`` wires and shows), without exactly 1 ``scheme.js``
+script tag before the first stylesheet, it and every stylesheet inside
+``<head>``, or with any other ``<svg``; and a release version that disagrees
+with SKILL.md. The switch, its place and the head are read as parsed elements:
+each element with ``data-scheme-toggle`` (an attribute name in any letter
+case), the switch's parent, the element before it and the end of its parent,
+and ``html > head``, the first head or body the page opens. As in a browser, a
+self-closing tag leaves an element that is neither void nor in ``<svg>`` open,
+class names split on ASCII whitespace only (``class="mast&nbsp;x"`` is not
+``mast``), and the head ends at the first text other than whitespace, start
+tag other than those HTML5 allows in a head (``HEAD_TAGS``), or ``</body>``,
+``</html>`` or ``</br>``; a script or stylesheet after that point is outside
+it. No element with ``data-scheme-toggle`` may sit inside an element whose
+content a browser with scripting on, the only case in which ``scheme.js``
+runs, does not render as page elements (``INERT_TAGS``: ``noscript``,
+``template``, ``plaintext``, the raw-text and RCDATA elements, and the elements
+``tools/check-install-page.py`` hides for that reason, ``audio``, ``canvas``,
+``datalist``, ``meter``, ``object``, ``progress``, ``rp``, ``select`` and
+``video``, whose content a browser renders only as fallback, only in its
+control or not at all, so this refuses more than a browser hides); a script
+or stylesheet inside one is not in ``html > head``, and an ``h1``, a robots
+meta, the skip link, ``main#main-content``, the family footer or
+``#copy-status`` inside one fails, as does a fragment whose only target is
+inside one. The reading fails closed where it does not model HTML5: such a
+start tag inside a ``<template>`` or ``<noscript>`` in the head ends the head,
+and a self-closing tag in ``<math>`` leaves its element open. It is not a full
+HTML5 tree builder, so each page must also carry, once and byte for byte, the
+markup from the body start tag to the end of ``header.mast`` as the generator
+writes it: ``<body>``, the skip link and the header block ``MAST_BLOCK`` pins
+with the values from ``site-src/site.json``, each on its own line. That
+``<body>`` must be the page's first body, parsed as a child of ``html`` right
+after its only head closes (whitespace and comments apart), before the head
+ends. As far as the parsed reading models HTML5, no element can then wrap the
+header, nor precede it in the body other than the skip link, and a change to
+``mast()`` or to the lines around it that alters that markup fails. The pin
+covers neither the head nor anything after ``header.mast``, which only the
+parsed reading checks, and it is only as right as ``MAST_BLOCK``,
+``SKIP_LINK`` and ``SCHEME_SWITCH``: a change to one of them made together
+with the same change to the generator passes. What guarantees the committed
+pages is ``--check``, a deploy gate, which compares them byte for byte with a
+fresh build that passed these refusals.
 
 Modes
 -----
@@ -116,8 +167,43 @@ TAGS = re.compile(r"<[^>]+>")
 NEW_TAB = "<span class=\"vh\"> (opens in a new tab)</span>"
 EXECUTABLE_TYPES = {"", "module", "text/javascript", "application/javascript", "text/ecmascript"}
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+# The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
+HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
+# The elements whose content a browser with scripting on (the only case in which scheme.js runs) does not render
+# as page elements (noscript, template, plaintext, the raw-text and RCDATA elements) or renders only as fallback,
+# only in its control or not at all (the other elements of tools/check-install-page.py's HIDING_ELEMENTS: audio,
+# canvas, datalist, meter, object, progress, rp, select and video). No switch counts as placed inside one.
+INERT_TAGS = {"noscript", "template", "script", "style", "title", "textarea", "xmp", "iframe", "noembed", "noframes", "plaintext",
+              "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video"}
+# HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
+ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 SKIP_LINK = '<a class="skip" href="#main-content">Skip to content</a>'
 COPY_STATUS = '<p class="vh" id="copy-status" role="status" aria-live="polite"></p>'
+# The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
+# reference pages (reference/install.html line 18): the last child of header.mast on every page. Its 2
+# glyphs are the only inline <svg> elements a page may carry; tools/check-inline-code.py admits exactly
+# this string, once.
+SCHEME_SWITCH = (
+    '<button class="scheme" type="button" data-scheme-toggle aria-pressed="false" hidden>'
+    '<svg class="moon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+    '<path d="M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5a8.5 8.5 0 1 0 10.7 10.7z"/></svg>'
+    '<svg class="sun" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" '
+    'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+    '<circle cx="12" cy="12" r="4.2"/>'
+    '<path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'
+    '</svg><span class="vh">Dark mode</span></button>'
+)
+# The header block as mast() is meant to write it, held apart from mast() so that validate() refuses a change to
+# either that the parsed reading misses: the markup is pinned here, and only the values come from site.json (the
+# base path, name, tld, GitHub URL and nav pages, with aria-current on the page's own entry).
+MAST_BLOCK = (
+    '<header class="mast"><a class="brand" href="{base}"><span class="name">{name}<span class="tld">{tld}</span></span>'
+    '<span class="rule" aria-hidden="true"></span></a><nav class="nav" aria-label="Site">{items}'
+    '<a href="{github}" target="_blank" rel="noopener noreferrer">GitHub<span class="vh"> (opens in a new tab)</span></a>'
+    "</nav>{switch}</header>"
+)
+MAST_ITEM = '<a href="{href}"{current}>{label}</a>'
 SLICE_COUNT = 6
 
 
@@ -404,7 +490,8 @@ def load_pin(root: Path) -> tuple[str, set[str]]:
         raise Unreadable(".baseline/pin.toml version is not X.Y.Z")
     if not isinstance(files, dict) or not files:
         raise Unreadable(".baseline/pin.toml pins no files")
-    return version, set(files)
+    # Only the copied files under assets/baseline/ are served; the pinned build tool is not.
+    return version, {path for path in files if path.startswith("assets/baseline/")}
 
 
 def operating_mode_count(root: Path) -> int:
@@ -443,6 +530,7 @@ def head(config: dict, page: dict, base: str, asset_tokens: dict, date: str | No
     key = config["site_key"]
     lines.append(f'<link rel="icon" href="{base}assets/baseline/logos/{key}-favicon.svg" type="image/svg+xml">')
     lines.append(f'<link rel="apple-touch-icon" href="{base}assets/baseline/logos/{key}-touch.png">')
+    lines.append(f'<script data-cfasync="false" src="{base}assets/baseline/scheme.js?v={asset_tokens["baseline"]}"></script>')
     for sheet in ("fonts.css", "palettes.css", "baseline.css"):
         lines.append(f'<link rel="stylesheet" href="{base}assets/baseline/{sheet}?v={asset_tokens["baseline"]}">')
     if "site.css" in asset_tokens:
@@ -530,7 +618,7 @@ def mast(config: dict, page: dict, base: str, pages_by_id: dict) -> str:
     return (
         f'<header class="mast"><a class="brand" href="{base}"><span class="name">{config["name"]}'
         f'<span class="tld">{config["tld"]}</span></span><span class="rule" aria-hidden="true"></span></a>'
-        f'<nav class="nav" aria-label="Site">{"".join(items)}</nav></header>'
+        f'<nav class="nav" aria-label="Site">{"".join(items)}</nav>{SCHEME_SWITCH}</header>'
     )
 
 
@@ -614,7 +702,13 @@ def substitute(text: str, values: dict, where: str) -> str:
 # Validation -------------------------------------------------------------------
 
 class PageScan(HTMLParser):
-    def __init__(self) -> None:
+    """The parsed reading validate() checks. Not a full HTML5 tree builder: it models the open elements as tags
+    nest, void elements, the slash only in <svg>, the head's end, class names split on ASCII whitespace, and the
+    INERT_TAGS ancestors of each element with data-scheme-toggle, h1, robots meta and id, and of each element start
+    validate() requires, and where the page's body starts. validate() also pins the markup from <body> to the end of
+    header.mast; --check compares the committed pages with a build that passed it."""
+
+    def __init__(self, switch_at: tuple[int, int] | None = None) -> None:
         super().__init__(convert_charrefs=True)
         self.ids: list[str] = []
         self.links: list[tuple[str, str]] = []
@@ -622,16 +716,71 @@ class PageScan(HTMLParser):
         self.problems: list[str] = []
         self.anchor: dict | None = None
         self.scripts: list[dict] = []
+        # Where each script with a src, each stylesheet, and each element with data-scheme-toggle (the elements
+        # scheme.js wires and shows) start: (line, column), as getpos() reports.
+        self.loads: list[tuple[tuple[int, int], str]] = []
+        self.sheets: list[tuple[int, int]] = []
+        self.toggles: list[tuple[int, int]] = []
+        # Whether an element with data-scheme-toggle, an h1 or a robots meta starts inside an element of INERT_TAGS;
+        # the ids outside them, which a fragment may target; and where each element outside them starts.
+        self.inert_toggle = False
+        self.inert_h1 = False
+        self.inert_robots = False
+        self.live_ids: set[str] = set()
+        self.live_starts: set[tuple[int, int]] = set()
+        # Where each script and link starts outside the page's head: html > head, the first head or body opened,
+        # until the head ends where HTML5 ends it.
+        self.outside_head: set[tuple[int, int]] = set()
+        self.heads = 0
+        self.head_ended = False
+        # Where the page's body starts: a body start tag in html right after the page's only head closes, with no
+        # element or text between them, before the head ends.
+        self.body_at: tuple[int, int] | None = None
         self.robots: list[str] = []
-        self.open: list[tuple[str, bool]] = []
+        # Each open element's name and classes, and the element that ended last (or a void one) since the last
+        # start tag: the previous sibling of the next element.
+        self.open: list[tuple[str, list[str]]] = []
+        self.previous: tuple[str, list[str]] | None = None
+        # The switch, the button that starts at switch_at: its parent, its previous sibling, its depth, and where
+        # the end tag of its parent starts.
+        self.switch_at = switch_at
+        self.switch_parent: tuple[str, list[str]] | None = None
+        self.switch_previous: tuple[str, list[str]] | None = None
+        self.switch_depth = 0
+        self.switch_parent_end: tuple[int, int] | None = None
         self.doc_closed = False
         self.in_main = False
         self.in_pre = 0
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
         attrs = {k.lower(): (v or "") for k, v in attrs_list}
+        if len(attrs) != len(attrs_list):
+            # A browser reads the first of 2 attributes with the same name, and this dict the last.
+            self.problems.append(f"<{tag}> carries an attribute twice")
+        classes = [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
+        if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
+                and self.previous is not None and self.previous[0] == "head"):
+            self.body_at = self.getpos()
+        if tag in ("head", "body"):
+            self.heads += 1
+        if tag not in HEAD_TAGS and tag not in ("html", "head"):
+            self.head_ended = True
+        if tag in ("script", "link") and ([name for name, _ in self.open] != ["html", "head"] or self.heads != 1
+                                          or self.head_ended):
+            self.outside_head.add(self.getpos())
+        inert = any(name in INERT_TAGS for name, _ in self.open)
+        if not inert:
+            self.live_starts.add(self.getpos())
+        if "data-scheme-toggle" in attrs:
+            self.toggles.append(self.getpos())
+            self.inert_toggle = self.inert_toggle or inert
+        if tag == "button" and self.getpos() == self.switch_at:
+            self.switch_parent = self.open[-1] if self.open else None
+            self.switch_previous = self.previous
+            self.switch_depth = len(self.open)
+        self.previous = (tag, classes) if tag in VOID_TAGS else None
         if tag not in VOID_TAGS:
-            self.open.append((tag, tag == "div" and "doc" in attrs.get("class", "").split()))
+            self.open.append((tag, classes))
         if self.doc_closed and self.in_main:
             self.problems.append(f"<{tag}> follows the end of .doc inside main; .doc closes early")
         if tag == "main":
@@ -647,12 +796,20 @@ class PageScan(HTMLParser):
             self.problems.append("a <style> element")
         if "id" in attrs:
             self.ids.append(attrs["id"])
+            if not inert:
+                self.live_ids.add(attrs["id"])
         if tag == "h1":
             self.h1 += 1
+            self.inert_h1 = self.inert_h1 or inert
         if tag == "meta" and attrs.get("name") == "robots":
             self.robots.append(attrs.get("content", ""))
+            self.inert_robots = self.inert_robots or inert
         if tag == "script":
             self.scripts.append(attrs)
+            if "src" in attrs:
+                self.loads.append((self.getpos(), attrs["src"]))
+        if tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split():
+            self.sheets.append(self.getpos())
         canonical = tag == "link" and attrs.get("rel") == "canonical"
         for name in ("href", "src"):
             if name in attrs and not canonical:
@@ -661,25 +818,35 @@ class PageScan(HTMLParser):
             self.anchor = {"href": attrs["href"], "attrs": attrs, "text": ""}
 
     def handle_startendtag(self, tag, attrs):
+        # A browser honours the slash only in <svg> (foreign content); any other element that is not void stays open.
+        foreign = tag == "svg" or any(name == "svg" for name, _ in self.open)
         self.handle_starttag(tag, attrs)
-        if tag not in VOID_TAGS:
+        if tag not in VOID_TAGS and foreign:
             self.handle_endtag(tag)
 
     def handle_data(self, data: str) -> None:
+        if data.strip(" \t\n\f\r") and [name for name, _ in self.open] in ([], ["html"], ["html", "head"]):
+            # Text other than whitespace in or before the head ends it (HTML5).
+            self.head_ended = True
         if self.anchor is not None:
             self.anchor["text"] += data
         if self.in_pre and re.search(r"</?[a-z][a-z0-9]*[\s>]", data):
             self.problems.append("tag text such as <code> shown inside a <pre> block")
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in ("body", "html", "br"):
+            # HTML5 ends the head at each of these end tags (</br> reads as <br>).
+            self.head_ended = True
         if tag in VOID_TAGS:
             return
         if not self.open or self.open[-1][0] != tag:
             self.problems.append(f"</{tag}> does not close the open element {self.open[-1][0] if self.open else 'none'}")
         else:
-            _, is_doc = self.open.pop()
-            if is_doc:
+            self.previous = self.open.pop()
+            if tag == "div" and "doc" in self.previous[1]:
                 self.doc_closed = True
+            if self.switch_parent is not None and self.switch_parent_end is None and len(self.open) < self.switch_depth:
+                self.switch_parent_end = self.getpos()
         if tag == "main":
             self.in_main = False
         if tag == "pre":
@@ -692,6 +859,23 @@ class PageScan(HTMLParser):
             self.anchor = None
 
 
+def line_column(text: str, index: int) -> tuple[int, int]:
+    """The (line, column) of index in text, as HTMLParser.getpos() reports where a tag starts."""
+    return text.count("\n", 0, index) + 1, index - text.rfind("\n", 0, index) - 1
+
+
+def pinned_mast(config: dict, page: dict, base: str) -> str:
+    """The header block MAST_BLOCK pins for 1 page, with the values site.json gives."""
+    pages_by_id = {entry["id"]: entry for entry in config["pages"]}
+    items = "".join(
+        MAST_ITEM.format(href=base + pages_by_id[page_id]["path"], current=' aria-current="page"' if page_id == page["id"]
+                         else "", label=html.escape(pages_by_id[page_id]["nav_label"], quote=False))
+        for page_id in config["nav"]
+    )
+    return MAST_BLOCK.format(base=base, name=config["name"], tld=config["tld"], items=items, github=config["github"],
+                             switch=SCHEME_SWITCH)
+
+
 def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     where = page["source"]
     problems = []
@@ -701,17 +885,53 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
         problems.append("an en or em dash")
     if re.search(r"what this is", TAGS.sub(" ", page_html), re.I):
         problems.append('"what this is" framing')
-    for required in (SKIP_LINK, '<main id="main-content">', '<footer class="family wrap">', COPY_STATUS):
-        if page_html.count(required) != 1:
-            problems.append(f"{required!r} must appear exactly once")
-    scan = PageScan()
+    switch = page_html.find(SCHEME_SWITCH)
+    scan = PageScan(line_column(page_html, switch) if switch != -1 else None)
     scan.feed(page_html)
     scan.close()
+    # Each required block starts as a parsed element outside every element of INERT_TAGS.
+    for required in (SKIP_LINK, '<main id="main-content">', '<footer class="family wrap">', COPY_STATUS):
+        if page_html.count(required) != 1 or line_column(page_html, page_html.find(required)) not in scan.live_starts:
+            problems.append(f"{required!r} must appear exactly once, outside every element of INERT_TAGS")
+    # The switch is the only parsed element with data-scheme-toggle; the element it sits in and the one before it;
+    # the end tag of its parent starts where it ends.
+    parent, previous = scan.switch_parent or ("", []), scan.switch_previous or ("", [])
+    if (page_html.count(SCHEME_SWITCH) != 1 or scan.toggles != [line_column(page_html, switch)] or scan.inert_toggle
+            or parent[0] != "header" or "mast" not in parent[1]
+            or previous[0] != "nav" or "nav" not in previous[1]
+            or scan.switch_parent_end != line_column(page_html, switch + len(SCHEME_SWITCH))):
+        problems.append("the light and dark switch must appear exactly once, as the last child of header.mast, after nav.nav, "
+                        "outside every element of INERT_TAGS, and no other element may carry data-scheme-toggle")
+    # The page's body opens with the skip link and the header block, each on its own line as the generator writes
+    # them, so no element wraps header.mast and only the skip link precedes it in the body.
+    block = pinned_mast(config, page, base)
+    top = "<body>\n" + SKIP_LINK + "\n" + block
+    if (page_html.count(block) != 1 or page_html.count(top) != 1
+            or line_column(page_html, page_html.find(top)) != scan.body_at):
+        problems.append("the header block is not, once and byte for byte, the header.mast markup MAST_BLOCK pins, "
+                        "after the skip link at the start of the page's body")
+    if re.search(r"<svg", page_html.replace(SCHEME_SWITCH, "", 1), re.I):
+        problems.append("an inline <svg> other than the light and dark switch")
+    scheme_tags = {line_column(page_html, match.start()) for match in re.finditer(
+        r'<script data-cfasync="false" src="' + re.escape(base)
+        + r'assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>', page_html)}
+    # Each script element that loads scheme.js, read with character references decoded and names in lower
+    # case, so another spelling of a second load counts; PageScan refuses a tag that carries an attribute
+    # twice, and resolve_links refuses a root-relative src that names no generated, pinned or allowlisted
+    # path, such as a percent-encoded one.
+    scheme_loads = [at for at, src in scan.loads
+                    if src.split("#", 1)[0].split("?", 1)[0] == base + "assets/baseline/scheme.js"]
+    if len(scheme_loads) != 1 or scheme_loads[0] not in scheme_tags or page_html.count("scheme.js") != 1:
+        problems.append("scheme.js must load exactly once, with data-cfasync=\"false\" and no defer")
+    elif not scan.sheets or scan.sheets[0] < scheme_loads[0]:
+        problems.append("scheme.js must load before the first stylesheet")
+    elif scheme_loads[0] in scan.outside_head or any(at in scan.outside_head for at in scan.sheets):
+        problems.append("scheme.js and every stylesheet must load inside <head>")
     problems += scan.problems
     if scan.open:
         problems.append(f"elements left open: {[tag for tag, _ in scan.open]}")
-    if scan.h1 != 1:
-        problems.append(f"{scan.h1} h1 elements; exactly 1 is required")
+    if scan.h1 != 1 or scan.inert_h1:
+        problems.append(f"{scan.h1} h1 elements; exactly 1 is required, outside every element of INERT_TAGS")
     duplicates = sorted({i for i in scan.ids if scan.ids.count(i) > 1})
     if duplicates:
         problems.append(f"duplicate ids {duplicates}")
@@ -729,6 +949,8 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
         problems.append("a noindex page must carry exactly 1 robots meta, noindex, nofollow")
     elif base == "/" and not page.get("noindex") and scan.robots:
         problems.append("an indexable page carries a robots meta")
+    if scan.inert_robots:
+        problems.append("a robots meta inside an element of INERT_TAGS")
     allow = set(config["root_allowlist"])
     if page["id"] not in config["about_linkers"]:
         for tag, value in scan.links:
@@ -740,8 +962,8 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
                 problems.append(f"<{tag}> loads an external resource {value}")
             continue
         if value.startswith("#"):
-            if value[1:] not in scan.ids:
-                problems.append(f"the in-page link {value} has no target")
+            if value[1:] not in scan.live_ids:
+                problems.append(f"the in-page link {value} has no target outside every element of INERT_TAGS")
             continue
         if value.startswith("/"):
             path = value.split("#", 1)[0].split("?", 1)[0]
@@ -922,7 +1144,7 @@ def resolve_links(root: Path, out: Path, base: str, config: dict, outputs: dict,
     ids_by_file = {}
     for path, scan in scans.items():
         name = path + "index.html" if not path.endswith(".html") else path
-        ids_by_file[name] = set(scan.ids)
+        ids_by_file[name] = scan.live_ids
     problems = []
     for path, scan in scans.items():
         for tag, value in scan.links:
