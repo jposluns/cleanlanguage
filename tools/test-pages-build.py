@@ -18,8 +18,10 @@ which a reviewer sees.
 It also reads .python-version at the repository root, which names the Python
 release for the Pages build (site/README.md), and fails if the file is missing
 or names a version outside SUPPORTED_PYTHONS in tools/check-inline-code.py,
-which exits 3 on any other version. It reads each workflow under
-.github/workflows with PyYAML's safe loader, finds every job with a step whose
+which exits 3 on any other version, 3.7 or later. It reads each workflow
+under .github/workflows whose name ends in .yml (any other .yml or .yaml file
+under .github fails tools/test-workflow-launch-isolation.py instead) with
+PyYAML's safe loader, finds every job with a step whose
 run text names a tool in GATE_RUNNERS, and fails if there is none, or if such
 a job has an if: or continue-on-error, has a run step before its checkout, or
 does not run exactly VERSION_RUN, with shell: bash and no key but name, shell

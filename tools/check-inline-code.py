@@ -94,8 +94,10 @@ Python versions
 ---------------
 
 The gate runs only on Python 3.14 (``SUPPORTED_PYTHONS`` below), the version its
-guarantees are stated for; on any other version it exits 3 before it reads a
-file. The gate prints the Python version it ran under. The raw-text element list is
+guarantees are stated for; on any other version, 3.7 or later, it exits 3
+before it reads a file. Python 3.6 and older cannot compile the file, which
+imports ``annotations`` from ``__future__``, so they exit 1 instead. The gate
+prints the Python version it ran under. The raw-text element list is
 set on the HTML parser, so the reading of those elements does not depend on the
 version. Other ``html.parser`` behaviour does change between versions: how a
 comment ends (``--!>``), how a ``<!`` declaration or a ``<![CDATA[`` section is
@@ -142,7 +144,7 @@ Exit codes:
   0  no file carries inline code
   1  a file carries inline code or refused markup, the parser and a text count disagree, or the XML parser refuses an SVG file
   3  site/ or a file could not be read, a file is not UTF-8, no HTML page was found, or the Python
-     version is not a supported one
+     version is 3.7 or later and not a supported one
 """
 
 from __future__ import annotations

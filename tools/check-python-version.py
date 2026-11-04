@@ -7,7 +7,9 @@ Cloudflare's build image page says that the Pages build reads it
 directly or through a page check, runs this check first, as
 ``python3 -I tools/check-python-version.py``. A runner image that moves to
 another release then fails here, naming both versions, until
-``.python-version`` is updated in a pull request.
+``.python-version`` is updated in a pull request. On Python 3.6 and older it
+fails with exit 1 and names no version: this file imports ``annotations``
+from ``__future__``, which those versions cannot compile.
 
 What it verifies
 ----------------
@@ -24,7 +26,7 @@ nothing about the Pages build image: only the Pages build log, and the exit 3
 of ``tools/check-inline-code.py`` on another version, show the version a Pages
 build ran.
 
-Exit codes:
+Exit codes, on Python 3.7 or later:
   0  the interpreter is the release that .python-version names
   3  .python-version is missing, unreadable or malformed, or names another release
 """

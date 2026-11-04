@@ -20,7 +20,7 @@ name: Portable text sync
 # load, and a path list cannot be kept complete against those reads. As
 # sitemap.yml explains, running on every pull request also keeps this gate
 # promotable to a required check; to promote it, first give the job a unique
-# display name, as manifest-icon.yml does. The step after checkout runs
+# display name, as manifest-icon.yml does. The second step after checkout runs
 # tools/test-portable-text-sync-workflow.py, which fails if a paths or
 # paths-ignore filter comes back on either trigger. workflow-isolation.yml,
 # which carries no paths filter either, runs it too, so a pull request that
@@ -28,55 +28,9 @@ name: Portable text sync
 
 on:
   pull_request:
-    paths:
-      - "cleanlanguage/skills/cleanlanguage/SKILL.md"
-      - "cleanlanguage/skills/cleanlanguage/references/**"
-      - "site/downloads/cleanlanguage.md"
-      - "site/downloads/cleanlanguage-29k.md"
-      - "site/downloads/cleanlanguage-11k.md"
-      - "site/downloads/cleanlanguage-8k.md"
-      - "tools/build-portable-text.py"
-      - "site/instructions/index.html"
-      - "tools/portable-text-skill-source.sha256"
-      - "tools/skill-version.py"
-      - "tools/skill-release-date.py"
-      - "tools/test-skill-release-date.py"
-      - "tools/skill-release-date-client.py"
-      - "tools/test-skill-release-date-client.py"
-      - "tools/test-portable-text-release-date.sh"
-      - "tools/check-portable-text-sync.sh"
-      - "tools/check-instructions-page.py"
-      - "tools/check-inline-code.py"
-      - "tools/test-instructions-page.py"
-      - "tools/check-python-version.py"
-      - ".python-version"
-      - ".github/workflows/portable-text-sync.yml"
   push:
     branches:
       - main
-    paths:
-      - "cleanlanguage/skills/cleanlanguage/SKILL.md"
-      - "cleanlanguage/skills/cleanlanguage/references/**"
-      - "site/downloads/cleanlanguage.md"
-      - "site/downloads/cleanlanguage-29k.md"
-      - "site/downloads/cleanlanguage-11k.md"
-      - "site/downloads/cleanlanguage-8k.md"
-      - "tools/build-portable-text.py"
-      - "site/instructions/index.html"
-      - "tools/portable-text-skill-source.sha256"
-      - "tools/skill-version.py"
-      - "tools/skill-release-date.py"
-      - "tools/test-skill-release-date.py"
-      - "tools/skill-release-date-client.py"
-      - "tools/test-skill-release-date-client.py"
-      - "tools/test-portable-text-release-date.sh"
-      - "tools/check-portable-text-sync.sh"
-      - "tools/check-instructions-page.py"
-      - "tools/check-inline-code.py"
-      - "tools/test-instructions-page.py"
-      - "tools/check-python-version.py"
-      - ".python-version"
-      - ".github/workflows/portable-text-sync.yml"
 
 permissions:
   contents: read
@@ -91,6 +45,10 @@ jobs:
       - name: Check that python3 is the release that .python-version names
         shell: bash
         run: python3 -I tools/check-python-version.py
+
+      - name: Check neither trigger carries a path filter
+        shell: bash
+        run: python3 -I tools/test-portable-text-sync-workflow.py
 
       - name: Test the Released-line extractor
         shell: bash
