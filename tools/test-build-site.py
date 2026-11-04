@@ -277,15 +277,16 @@ def about_row(row: str):
 
 def about_problems(page: str, text: str, base: str) -> list[str]:
     """The About row of specification 7.24: exactly once on the landing page, byte for byte, with no INERT ancestor,
-    and on no other page."""
-    if page != "index.html":
-        return [f"{page} carries an About row, which only the landing page may"] if 'class="about"' in text else []
-    row = about_line(base)
-    if text.count('class="about"') != 1 or text.count(row) != 1 or "&middot;</span><a" in text:
-        return [f"{page} lacks the About row with 1 ordinary space after each dot and none before it (specification 7.24)"]
+    and on no other page, where no parsed element's classes include about, with an INERT ancestor or not."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
+    if page != "index.html":
+        rows = [at for at, (_, attrs, *_) in parsed.starts.items() if "about" in class_names(attrs.get("class", ""))]
+        return [f"{page} carries an About row, which only the landing page may"] if rows else []
+    row = about_line(base)
+    if text.count('class="about"') != 1 or text.count(row) != 1 or "&middot;</span><a" in text:
+        return [f"{page} lacks the About row with 1 ordinary space after each dot and none before it (specification 7.24)"]
     start = parsed.starts.get(position(text, text.find(row)))
     if start is None or any(name in INERT for name, _ in start[2]):
         return [f"{page} carries its About row inside an element of INERT (specification 7.24)"]
@@ -403,6 +404,11 @@ REFUSALS = [
     ("the About row with &nbsp; in place of 1 space", about_row(ABOUT_ROW.replace(ABOUT_DOT + " ", ABOUT_DOT + "&nbsp;", 1))),
     ("the About row with 2 spaces after a dot", about_row(ABOUT_ROW.replace(ABOUT_DOT + " ", ABOUT_DOT + "  ", 1))),
     ("an About row on an inner page", inject('<p class="about"><a href="{{base}}install/">Install</a></p>')),
+    ("an About row with an unquoted class on an inner page", inject('<p class=about><a href="{{base}}install/">Install</a></p>')),
+    ("an About row with a single-quoted class on an inner page", inject("<p class='about'><a href=\"{{base}}install/\">Install</a></p>")),
+    ("an About row with 2 classes on an inner page", inject('<p class="about x"><a href="{{base}}install/">Install</a></p>')),
+    ("an About row with 2 classes inside noscript on an inner page",
+        inject('<noscript><p class="about x"><a href="{{base}}install/">Install</a></p></noscript>')),
     ("a baseline asset the pin does not list", inject('<img src="{{base}}assets/baseline/logos/missing.svg" alt="">')),
     ("a checklist group that is not 1 bullet list", lambda root: edit(
         root, "cleanlanguage/skills/cleanlanguage/references/qa-checklist.md", "## Tone\n\n", "## Tone\n\nA paragraph.\n\n")),
@@ -585,6 +591,41 @@ def check_inert_validation(failures: list[str]) -> int:
         if page_id == "home" and (not about_problems("index.html", page_html, "/")) != passes:
             failures.append(f"About helper '{name}': {'refused' if passes else 'passed'}, expected the opposite")
     return len(cases) + sum(1 for _, page_id, *_ in cases if page_id == "home")
+
+
+def check_inner_about_rows(failures: list[str]) -> int:
+    """An About row on an inner page, read as the parsed class names of every element (split on ASCII whitespace
+    only), with an INERT ancestor or not: validate(), called directly on the committed licence page, refuses it by
+    its rule, and so does the build test's helper; a class name that only starts with about passes both."""
+    generator = load_module(GENERATOR)
+    config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
+    page = next(entry for entry in config["pages"] if entry["id"] == "license")
+    text = (REPO_ROOT / "site/license/index.html").read_text(encoding="utf-8")
+    h1 = re.search(r"<h1>[^<]*</h1>", text).group(0)
+    link = '<a href="/install/">Install</a>'
+    cases = [
+        (f'<p class="about">{link}</p>', False),
+        (f"<p class=about>{link}</p>", False),
+        (f"<p class='about'>{link}</p>", False),
+        (f'<p class="about x">{link}</p>', False),
+        (f"<noscript><p class=about>{link}</p></noscript>", False),
+        (f'<p class="about-us">{link}</p>', True),
+        (f'<p class="about&nbsp;x">{link}</p>', True),
+    ]
+    for row, passes in cases:
+        page_html = text.replace(h1, h1 + row, 1)
+        try:
+            generator.validate(page_html, page, config, "/")
+            refusal = ""
+        except generator.BuildError as error:
+            refusal = str(error)
+        if passes and refusal:
+            failures.append(f"inner About row {row!r}: refused, expected to pass ({refusal[:200]})")
+        elif not passes and "an About row, which only the landing page carries" not in refusal:
+            failures.append(f"inner About row {row!r}: not refused by its rule ({refusal[:200] or 'passed'})")
+        if (not about_problems("license/index.html", page_html, "/")) != passes:
+            failures.append(f"About helper, inner About row {row!r}: {'refused' if passes else 'passed'}, expected the opposite")
+    return 2 * len(cases)
 
 
 def check_generator_header(failures: list[str]) -> int:
@@ -848,6 +889,7 @@ def check_promotion_build(failures: list[str]) -> int:
         for page in sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html")):
             text = (out / page).read_text(encoding="utf-8")
             failures += [f"promotion build: {problem}" for problem in scheme_problems(page, text, "/", config)]
+            failures += [f"promotion build: {problem}" for problem in about_problems(page, text, "/")]
     return 5
 
 
@@ -901,6 +943,7 @@ def main() -> int:
     ran += check_unreadable(failures)
     ran += check_scheme_validation(failures)
     ran += check_inert_validation(failures)
+    ran += check_inner_about_rows(failures)
     ran += check_generator_header(failures)
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)

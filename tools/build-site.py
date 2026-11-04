@@ -76,30 +76,29 @@ row (``class="about"``), or with one that is not ``about_line()`` byte for
 byte, 1 ordinary space after each dot span and none before it (template
 specification 7.24, baseline 1.7.0); an About row on any other page; and a
 release version that disagrees with SKILL.md. The switch, its place and the
-head are read as parsed elements:
-each element with ``data-scheme-toggle`` (an attribute name in any letter
-case), the switch's parent, the element before it and the end of its parent,
-and ``html > head``, the first head or body the page opens. As in a browser, a
-self-closing tag leaves an element that is neither void nor in ``<svg>`` open,
-class names split on ASCII whitespace only (``class="mast&nbsp;x"`` is not
-``mast``), and the head ends at the first text other than whitespace, start
-tag other than those HTML5 allows in a head (``HEAD_TAGS``), or ``</body>``,
-``</html>`` or ``</br>``; a script or stylesheet after that point is outside
-it. No element with ``data-scheme-toggle`` may sit inside an element whose
-content a browser with scripting on, the only case in which ``scheme.js``
-runs, does not render as page elements (``INERT_TAGS``: ``noscript``,
-``template``, ``plaintext``, the raw-text and RCDATA elements, and the elements
-``tools/check-install-page.py`` hides for that reason, ``audio``, ``canvas``,
-``datalist``, ``meter``, ``object``, ``progress``, ``rp``, ``select`` and
-``video``, whose content a browser renders only as fallback, only in its
-control or not at all, so this refuses more than a browser hides); a script
-or stylesheet inside one is not in ``html > head``, and an ``h1``, a robots
-meta, the skip link, ``main#main-content``, the family footer,
-``#copy-status`` or the landing page's About row inside one fails, as does a
-fragment whose only target is inside one. The reading fails closed where it
-does not model HTML5: such a start tag inside a ``<template>`` or
-``<noscript>`` in the head ends the head, and a self-closing tag in
-``<math>`` leaves its element open. It is not a full
+head are read as parsed elements: each element with ``data-scheme-toggle`` (an
+attribute name in any letter case), the switch's parent, the element before it
+and the end of its parent, and ``html > head``, the first head or body the page
+opens. As in a browser, a self-closing tag leaves an element that is neither
+void nor in ``<svg>`` open, class names split on ASCII whitespace only
+(``class="mast&nbsp;x"`` is not ``mast``), and the head ends at the first text
+other than whitespace, start tag other than those HTML5 allows in a head
+(``HEAD_TAGS``), or ``</body>``, ``</html>`` or ``</br>``; a script or
+stylesheet after that point is outside it. No element with
+``data-scheme-toggle`` may sit inside an element whose content a browser with
+scripting on, the only case in which ``scheme.js`` runs, does not render as
+page elements (``INERT_TAGS``: ``noscript``, ``template``, ``plaintext``, the
+raw-text and RCDATA elements, and the elements ``tools/check-install-page.py``
+hides for that reason, ``audio``, ``canvas``, ``datalist``, ``meter``,
+``object``, ``progress``, ``rp``, ``select`` and ``video``, whose content a
+browser renders only as fallback, only in its control or not at all, so this
+refuses more than a browser hides); a script or stylesheet inside one is not in
+``html > head``, and an ``h1``, a robots meta, the skip link,
+``main#main-content``, the family footer, ``#copy-status`` or the landing
+page's About row inside one fails, as does a fragment whose only target is
+inside one. The reading fails closed where it does not model HTML5: such a
+start tag inside a ``<template>`` or ``<noscript>`` in the head ends the head,
+and a self-closing tag in ``<math>`` leaves its element open. It is not a full
 HTML5 tree builder, so each page must also carry, once and byte for byte, the
 markup from the body start tag to the end of ``header.mast`` as the generator
 writes it: ``<body>``, the skip link and the header block ``MAST_BLOCK`` pins
@@ -744,6 +743,9 @@ class PageScan(HTMLParser):
         # element or text between them, before the head ends.
         self.body_at: tuple[int, int] | None = None
         self.robots: list[str] = []
+        # Where each element whose classes include about starts, inside an element of INERT_TAGS or not: an About
+        # row, which only the landing page carries.
+        self.about_rows: list[tuple[int, int]] = []
         # Each open element's name and classes, and the element that ended last (or a void one) since the last
         # start tag: the previous sibling of the next element.
         self.open: list[tuple[str, list[str]]] = []
@@ -765,6 +767,8 @@ class PageScan(HTMLParser):
             # A browser reads the first of 2 attributes with the same name, and this dict the last.
             self.problems.append(f"<{tag}> carries an attribute twice")
         classes = [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
+        if "about" in classes:
+            self.about_rows.append(self.getpos())
         if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
                 and self.previous is not None and self.previous[0] == "head"):
             self.body_at = self.getpos()
@@ -972,14 +976,15 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
         for tag, value in scan.links:
             if tag == "a" and any(value.split("#", 1)[0] == base + config_path for config_path in config["about_paths"]):
                 problems.append(f"{value} links a page only the landing page links (specification 7.24)")
-    # The About row starts as a parsed element outside every element of INERT_TAGS, as the required blocks do.
+    # The About row starts as a parsed element outside every element of INERT_TAGS, as the required blocks do; on any
+    # other page, no parsed element's classes include about, inside an element of INERT_TAGS or not.
     if page["path"] == "":
         row = about_line(base)
         if (page_html.count('class="about"') != 1 or page_html.count(row) != 1
                 or line_column(page_html, page_html.find(row)) not in scan.live_starts):
             problems.append("the About row must appear exactly once, byte for byte as specification 7.24 gives it: "
                             "1 ordinary space after each dot span and none before it, outside every element of INERT_TAGS")
-    elif 'class="about"' in page_html:
+    elif scan.about_rows:
         problems.append("an About row, which only the landing page carries (specification 7.24)")
     for tag, value in scan.links:
         if value.startswith(("https://", "http://")):

@@ -71,7 +71,7 @@ SELECT = "/assets/baseline/select.js?v=1.3.0"
 ROW = '<p><a class="btn inline" id="claude"'
 ROW_END = OTHER_LINK + "</p>"
 STEPS = '<ol class="steps">'
-# The scheme.js tag of template specification 7.33 (baseline 1.6.0), as the committed pages carry it.
+# The scheme.js tag of template specification 7.33 (baseline 1.7.0), as the committed pages carry it.
 SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.7.0"></script>'
 COPY = '<script src="/assets/baseline/copy.js?v=1.7.0" defer></script>'
 FONTS = '<link rel="stylesheet" href="/assets/baseline/fonts.css?v=1.7.0">'
