@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -331,14 +332,18 @@ LABELS = (LABEL, LABEL.upper())
 
 def labels(text: str) -> int:
     """How many times the parsed text of text (attribute values and comments apart, character references decoded),
-    joined across elements, carries LABELS, case-sensitive, with each character of the install gate's ZERO_WIDTH
-    other than U+00A0, and U+0000, deleted, and then each run of whitespace (as str.split() reads it, U+00A0
-    included) read as 1 space."""
+    joined across elements, carries LABELS, case-sensitive, with each character of general category Cf, each
+    Default_Ignorable_Code_Point (the generator's DEFAULT_IGNORABLE ranges), each character of the install gate's
+    ZERO_WIDTH other than U+00A0, and U+0000 deleted, and then each run of whitespace (as str.split() reads it,
+    U+00A0 included) read as 1 space."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
-    deleted = {ord(character): None for character in GATE.ZERO_WIDTH.replace("\u00a0", "") + "\0"}
-    joined = " ".join("".join(parsed.text).translate(deleted).split())
+    joined = "".join(parsed.text)
+    deleted = {ord(character): None for character in set(joined)
+               if unicodedata.category(character) == "Cf" or character in GATE.ZERO_WIDTH.replace("\u00a0", "") + "\0"
+               or any(first <= ord(character) <= last for first, last in LOADED.DEFAULT_IGNORABLE)}
+    joined = " ".join(joined.translate(deleted).split())
     return sum(joined.count(label) for label in LABELS)
 
 
@@ -557,15 +562,24 @@ REGION_RULE = "the value paragraph has no enclosing div.region"
 # tools/check-install-page.py reads as hiding the whole page.
 DOCUMENT_RULE = "the generator writes the page's html, head and body"
 # Inside math, a browser can read a title or textarea's content as markup, which the generator's parser reads as text.
-MATH_RULE = "a <math> start tag; inside math, a browser can read"
+MATH_RULE = "; inside math, a browser can read"
 # The generator reads each page again for a math start tag, as its parser reads it.
 PAGE_MATH_RULE = "a <math> start tag in the page"
 # Markup outside the page source grammar, on which the generator's parser and a browser read the same tokens: a < in
 # text, a comment whose text holds <, > or --, an attribute value holding < or >, a raw-text or escapable raw-text
 # element, template, a CDATA section, a processing instruction or a DOCTYPE.
 GRAMMAR_RULE = "a page source holds only markup on which Python's parser and a browser read the same tokens"
+# A start tag outside the generator's SOURCE_ELEMENTS, such as select or input, at which a browser ends an open select
+# and places what follows outside it; and a noscript inside a noscript, which a browser with scripting on ends at the
+# inner one's end tag. Each moved the value paragraph out of the first summary of a closed details as a browser reads
+# it, while the parser read it inside.
+ELEMENT_RULE = "a page source carries only the elements of SOURCE_ELEMENTS"
+NOSCRIPT_RULE = "a <noscript> start tag inside a noscript"
 # The About block's label in a page source's text: the generator writes it, in the block, on the landing page only.
 LABEL_RULE = "the About block's label in the page source's text"
+# Characters the label rule deletes beyond the install gate's ZERO_WIDTH and U+0000: the format characters (Cf)
+# U+2061, U+2063, U+180E and U+E0020, and the default-ignorable U+034F and U+FE0F (Mn).
+LABEL_IGNORED = ("\u2061", "\u2063", "\u180e", "\U000e0020", "\u034f", "\ufe0f")
 VALUE = '<p class="value">'
 VALUE_REGION = '<div class="region" id="what-it-fixes">'
 VALUE_END = "outside its aim.</p></div></div>"
@@ -643,7 +657,7 @@ SOURCE_REFUSALS = [
         after_value('<noscript><div class="region"><p class="value">x</p></div></noscript>'), VALUE_RULE),
     ("no p.value", lambda root: edit(root, HOME, VALUE, '<p class="lead">'), VALUE_RULE),
     ("the value paragraph inside noscript", wrap_value("<noscript>", "</noscript>"), VALUE_RULE),
-    ("the value paragraph inside canvas", wrap_value("<canvas>", "</canvas>"), VALUE_RULE),
+    ("the value paragraph inside canvas", wrap_value("<canvas>", "</canvas>"), ELEMENT_RULE),
     ("the value paragraph inside a div with hidden=until-found", wrap_value('<div hidden="until-found">', "</div>"),
         VALUE_RULE),
     ("the value paragraph with a hidden attribute", lambda root: edit(root, HOME, VALUE, '<p class="value" hidden>'),
@@ -698,6 +712,24 @@ SOURCE_REFUSALS = [
         GRAMMAR_RULE),
     ("a JSON script with a comment opener and a script before the value paragraph", lambda root: edit(
         root, HOME, VALUE, '<script type="application/json"><!--<script></script>' + VALUE), GRAMMAR_RULE),
+    # A browser, with scripting on, ends the outer noscript at the inner end tag, so </summary> closes the summary and
+    # the value paragraph becomes a hidden child of the closed details; under legacy select parsing, a nested select
+    # or an input ends the select, with the same effect. The parser read the paragraph inside the first summary.
+    ("the value paragraph after a noscript inside a noscript in a summary", wrap_value(
+        "<details><summary><noscript><summary><noscript></noscript></summary></noscript>", "</summary></details>"),
+        NOSCRIPT_RULE),
+    ("a noscript inside a noscript", inject("<noscript><noscript><p>x</p></noscript></noscript>"), NOSCRIPT_RULE),
+    ("a noscript in upper case inside a noscript", inject("<noscript><p>x</p><NOSCRIPT></NOSCRIPT></noscript>"),
+        NOSCRIPT_RULE),
+    ("a self-closing noscript inside a noscript", inject("<noscript><noscript/></noscript>"), NOSCRIPT_RULE),
+    ("the value paragraph after a select inside a select in a summary", wrap_value(
+        "<details><summary><select><summary><select></select></summary></select>", "</summary></details>"),
+        ELEMENT_RULE),
+    ("the value paragraph after an input inside a select in a summary", wrap_value(
+        "<details><summary><select><summary><input></summary></select>", "</summary></details>"), ELEMENT_RULE),
+    ("an input in a page source", inject('<p><input type="text"></p>'), ELEMENT_RULE),
+    ("a select in upper case in a page source", inject("<SELECT></SELECT>"), ELEMENT_RULE),
+    ("the value paragraph inside a dialog with open", wrap_value("<dialog open>", "</dialog>"), ELEMENT_RULE),
     ("a comment that holds <math>", inject("<!-- a <math> element -->"), GRAMMAR_RULE),
     ("a comment that holds --", inject("<!-- a -- b -->"), GRAMMAR_RULE),
     ("a comment that holds >", inject("<!-- a > b -->"), GRAMMAR_RULE),
@@ -715,7 +747,8 @@ SOURCE_REFUSALS = [
 ] + [
     # The About block's label in a page source's text, split across elements or lines, written with a character
     # reference or in upper case, or interrupted by a character of the install gate's ZERO_WIDTH other than U+00A0
-    # (whitespace here, as str.split() reads it) or by U+0000; never in other letter cases.
+    # (whitespace here, as str.split() reads it), by U+0000, by another character of general category Cf or by a
+    # Default_Ignorable_Code_Point of another category (U+034F and U+FE0F are Mn); never in other letter cases.
     ("the label in a paragraph on another page", inject(f"<p>{LABEL}</p>"), LABEL_RULE),
     ("the label split across inline elements", inject("<p>About <em>this</em> project</p>"), LABEL_RULE),
     ("the label split by an element with an attribute", inject('<p>About <span title="a b">this</span> project</p>'),
@@ -730,7 +763,12 @@ SOURCE_REFUSALS = [
     ("the label in a paragraph in home.html", after_value(f"<p>{LABEL}</p>"), LABEL_RULE),
     ("a label region without the about class in home.html",
         after_value(f'<div class="region"><p class="lbl">{LABEL}</p></div>'), LABEL_RULE),
-] + [(f"the value paragraph inside {name}", wrap_value(start, end), VALUE_RULE) for name, start, end in HIDING_WRAPPERS]
+] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
+     for character in LABEL_IGNORED] + [
+    # A page source carries no dialog (SOURCE_ELEMENTS); check_about_block() holds validate() to each dialog wrapper.
+    (f"the value paragraph inside {name}", wrap_value(start, end),
+     ELEMENT_RULE if start.startswith("<dialog") else VALUE_RULE) for name, start, end in HIDING_WRAPPERS
+]
 
 
 # Page sources that build: inside the grammar, a comment or an attribute value names math or carries the About
@@ -740,6 +778,7 @@ SOURCE_PASSES = [
     ("an attribute value that names <math> by character references", inject('<p title="a &lt;math&gt; element">x</p>')),
     ("a single quote in a double-quoted attribute value", inject("<p title=\"the project's aim\">x</p>")),
     ("a noscript around a plain paragraph", inject("<noscript><p>x</p></noscript>")),
+    ("a noscript after a noscript", inject("<noscript><p>x</p></noscript><noscript><p>y</p></noscript>")),
     ("lower-case prose about this project", inject("<p>Send questions about this project to the maintainer.</p>")),
     ("the label in a comment", inject(f"<!-- {LABEL} -->")),
     ("the label in an attribute value", inject(f'<p title="{LABEL}">x</p>')),
@@ -761,9 +800,10 @@ def check_source_refusals(failures: list[str]) -> int:
 
 
 def check_source_passes(failures: list[str]) -> int:
-    """Each wrapper of SHOWING_WRAPPERS around the landing page source's value paragraph builds, and so does each
-    case of SOURCE_PASSES."""
-    cases = [(f"the value paragraph inside {name}", wrap_value(start, end)) for name, start, end in SHOWING_WRAPPERS]
+    """Each wrapper of SHOWING_WRAPPERS but the open dialog, which no page source may carry (SOURCE_ELEMENTS), around
+    the landing page source's value paragraph builds, and so does each case of SOURCE_PASSES."""
+    cases = [(f"the value paragraph inside {name}", wrap_value(start, end)) for name, start, end in SHOWING_WRAPPERS
+             if not start.startswith("<dialog")]
     for name, fault in cases + SOURCE_PASSES:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
@@ -944,7 +984,8 @@ def check_inner_about_rows(failures: list[str]) -> int:
     its rule, and so does the build test's helper; a class name that only starts with about passes both. Both also
     refuse the About block's label in the page's text, split across elements (one with an attribute value that holds
     >, which a reader that strips tags misreads, included), written with a character reference or in upper case, or
-    interrupted by a soft hyphen or a zero-width joiner, the generator by its own rule (row 144, for which the
+    interrupted by a soft hyphen, a zero-width joiner or a character of LABEL_IGNORED (format characters and
+    default-ignorable code points), the generator by its own rule (row 144, for which the
     paragraph case here flipped from passing); in an attribute value (one that holds > included), a comment or
     lower-case prose, the label passes both. A page is not held to the page source grammar, so > in a value can
     reach this reading."""
@@ -970,6 +1011,7 @@ def check_inner_about_rows(failures: list[str]) -> int:
         ("<p>About this pro&shy;ject</p>", label_rule),
         ("<p>About this pro\u00adject</p>", label_rule),
         ("<p>About\u200d this project</p>", label_rule),
+        *[(f"<p>About th{character}is project</p>", label_rule) for character in LABEL_IGNORED],
         ("<p>ABOUT THIS PROJECT</p>", label_rule),
         (f'<div class="region"><p class="lbl">{LABEL}</p></div>', label_rule),
         (f'<p title="{LABEL}">x</p>', None),
@@ -1338,6 +1380,7 @@ def check_page_rules(failures: list[str]) -> int:
         ("a JSON-LD block on a draft page", "license", "/draft/", '<script type="application/ld+json">{}</script>',
             "a JSON-LD block on a draft page"),
         ("a math element", "license", "/", "<math></math>", PAGE_MATH_RULE),
+        ("a bare svg outside the switch", "license", "/", "<svg></svg>", "an inline <svg> other than the light and dark"),
     ]
     for name, page_id, base, snippet, rule in cases:
         h1 = re.search(r"<h1>[^<]*</h1>", texts[page_id]).group(0)
@@ -1349,6 +1392,39 @@ def check_page_rules(failures: list[str]) -> int:
         if rule not in refusal:
             failures.append(f"page rule '{name}': not refused by its rule ({refusal[:200] or 'passed'})")
     return len(cases)
+
+
+def check_source_positions(failures: list[str]) -> int:
+    """Each source refusal names where the refused markup starts in the source as the generator reads it, with its
+    tokens and rail written in (the line counted from 1, the column from 0, as getpos() counts them): called directly
+    on 2 lines for each kind, and once through a build, where a < in text on line 11 of instructions.html is reported
+    on a later line, after the lines that {{instructions}} writes in."""
+    cases = [
+        ("a < in text", "<p>x</p>\n<p>1 < 2</p>"),
+        ("a body start tag", "<p>x</p>\n<p>1 <body hidden></p>"),
+        ("a math start tag", "<p>x</p>\n<p>1 <math></math></p>"),
+        ("a script start tag", "<p>x</p>\n<p>1 <script></script></p>"),
+        ("a select start tag", "<p>x</p>\n<p>1 <select></select></p>"),
+        ("a noscript inside a noscript", "<noscript>\n<p>1 <noscript></noscript></p></noscript>"),
+    ]
+    where = "at line 2, column 5 of the source with its tokens and rail written in"
+    for name, content in cases:
+        problem = LOADED.source_problem(content) or ""
+        if where not in problem:
+            failures.append(f"source position '{name}': {where!r} is not in the refusal ({problem[:200] or 'none'})")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        path = root / "site-src" / "pages" / "instructions.html"
+        lines = path.read_text(encoding="utf-8").split("\n")
+        lines[10] += "<p>1 < 2</p>"
+        path.write_text("\n".join(lines), encoding="utf-8")
+        result = run(root, "--out", str(Path(scratch) / "out"))
+        reported = re.search(r"a < that begins no start tag, end tag or comment of the grammar at line ([0-9]+), "
+                             r"column [0-9]+ of the source with its tokens and rail written in", result.stderr)
+        if result.returncode != 1 or reported is None or int(reported.group(1)) <= 11:
+            failures.append(f"source position 'a < in text on line 11 of instructions.html': exit {result.returncode}, "
+                            f"expected 1 with a later line ({result.stderr.strip()[:200]})")
+    return len(cases) + 1
 
 
 def check_clean_build(failures: list[str]) -> int:
@@ -1625,6 +1701,7 @@ def main() -> int:
     ran += check_unreadable_reader(failures)
     ran += check_helper_reader(failures)
     ran += check_page_rules(failures)
+    ran += check_source_positions(failures)
     ran += check_scheme_validation(failures)
     ran += check_inert_validation(failures)
     ran += check_inner_about_rows(failures)

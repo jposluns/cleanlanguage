@@ -105,15 +105,20 @@ or that carries any other element whose class names include ``about``; any
 other page with one; a page source whose text carries the About block's
 label (``ABOUT_LABELS``: ``About this project`` or ``ABOUT THIS PROJECT``,
 case-sensitive, in the text the parser reads, joined across elements, with
-character references decoded, each character of ``tools/check-install-page.py``'s
-``ZERO_WIDTH`` other than U+00A0 (zero-width, soft hyphen and bidi formatting
-characters), and U+0000, deleted, and each run of whitespace read as 1 space,
-attribute values and comments apart), a landing page whose text carries it
-other than once, from inside the About block, and any other page whose text
-carries it; and a release version that disagrees with SKILL.md. The page
-source grammar leaves no element whose content the parser reads as text in a
-source, so on a page only the generator's own ``title`` and JSON-LD
-``script`` are read that way. The About rules read hiding from the
+character references decoded, each character of general category Cf (format
+characters, such as the zero-width, soft hyphen and bidi formatting
+characters), each Default_Ignorable_Code_Point (``DEFAULT_IGNORABLE``, such
+as U+034F and the variation selectors), each character of
+``tools/check-install-page.py``'s ``ZERO_WIDTH`` other than U+00A0, and
+U+0000 deleted, and each run of whitespace read as 1 space, attribute values
+and comments apart), a landing page whose text carries it other than once,
+from inside the About block, and any other page whose text carries it; and a
+release version that disagrees with SKILL.md. The page source grammar leaves
+no element whose content the parser reads as text in a source, so on a page
+only the generator's own elements in the head are read that way: the
+``title``, the JSON-LD ``script``, and the empty ``script`` elements that
+load ``scheme.js`` and the page's other scripts by ``src``. The About rules
+read hiding from the
 markup alone, as ``tools/check-install-page.py`` does: no stylesheet rule
 other than a bare single class its ``HIDING_CLASSES`` lists (that gate's
 tests fail when a stylesheet the pages load hides another bare single class),
@@ -134,8 +139,9 @@ page elements (``INERT_TAGS``: ``noscript``, ``template``, ``plaintext``, the
 raw-text and RCDATA elements, and the elements ``tools/check-install-page.py``
 hides for that reason, ``audio``, ``canvas``, ``datalist``, ``meter``,
 ``object``, ``progress``, ``rp``, ``select`` and ``video``, whose content a
-browser renders only as fallback, only in its control or not at all, so this
-refuses more than a browser hides); a script or stylesheet inside one is not in
+browser renders only as fallback, only in its control or not at all, so for
+an element that a browser also places inside one, this refuses at least what
+a browser hides); a script or stylesheet inside one is not in
 ``html > head``, and an ``h1``, a robots meta, the skip link,
 ``main#main-content``, the family footer, ``#copy-status`` or the landing
 page's value paragraph inside one fails, as does a fragment whose only target
@@ -181,10 +187,14 @@ rail written in, is held to a small grammar on which the two agree
 - a start tag holds only attributes separated by ASCII whitespace, and no
   attribute value holds ``<`` or ``>`` (an unquoted one holds only ASCII
   letters, digits and ``_.:-``); an end tag holds only its name;
+- a start tag names an element of ``SOURCE_ELEMENTS`` (in any letter case),
+  the elements the committed sources use as ``with_about()`` reads them, and
+  no ``noscript`` starts inside a ``noscript``;
 - no element of ``RAW_TEXT_TAGS``, whose content a browser reads as raw or
   escapable raw text (script, style, textarea, title, xmp, iframe, noembed,
   noframes, plaintext) or does not render (template), no ``math``, no CDATA
-  section, no processing instruction and no DOCTYPE.
+  section, no processing instruction and no DOCTYPE (each of these elements is
+  also outside ``SOURCE_ELEMENTS``, and is refused with its own message).
 
 Why the two then agree: outside raw text, foreign content and the constructs
 refused above, a browser's tokenizer stays in its data state, where it ends
@@ -194,16 +204,35 @@ outside a quoted value, and a comment whose text holds no ``--`` or ``>`` at
 the first ``-->``. With no ``<`` in text, no ``<`` or ``>`` in a value or a
 comment and no raw-text element, there is no other place a token can end or
 begin, so the parser, which splits markup at the same characters, reads the
-same tokens. A noscript element stays allowed: with scripting on, a browser
-reads its content as text up to the first ``</noscript``, which under these
-rules can only be a ``</noscript>`` end tag the parser reads too, never text
-inside a comment, an attribute value or raw text. A noscript inside a
-noscript makes the parser read more as inside noscript than a browser does,
-and the rules above read that content as not rendered, so it can make them
-refuse more than a browser needs, never pass more.
-What the grammar does not settle is decoding: a browser leaves a legacy named
-character reference without ``;`` undecoded in an attribute value before
-``=`` or a letter or digit, and the parser decodes it.
+same tokens, with 1 deliberate exception: the content of a noscript element,
+which a browser with scripting on reads as text up to the first
+``</noscript``, and the parser reads as elements. The rules stay safe for it.
+They read everything inside a noscript as not rendered, so nothing there can
+meet a rule that needs a rendered element; and under these rules the first
+``</noscript`` after a noscript start tag is that element's own end tag, the
+one the parser reads as closing it on a page ``validate()`` accepts, since no
+``<`` sits in text, a comment or an attribute value and no noscript starts
+inside another. A noscript inside a noscript was allowed before: with
+scripting on, a browser ended the outer one at the inner one's end tag, so a
+later ``</summary>`` closed a summary the parser read as still open, and the
+value paragraph and the About block after it became hidden children of a
+closed details while every rule passed.
+
+``SOURCE_ELEMENTS`` admits only the elements the committed sources use, which
+keeps out ``select`` and ``input``: under legacy select parsing, a browser
+ends an open ``select`` at a nested ``select`` or an ``input`` and places what
+follows outside it, where the parser reads it as still inside, which moved
+the value paragraph out of the summary of a closed details. The list settles
+which elements a source may carry, not how a browser builds the tree from
+them; an element is added only after a review of its parsing rules.
+
+Decoding is left to the parser. Python 3.14.4, which ``.python-version``
+pins, leaves a legacy named character reference without ``;`` undecoded in
+an attribute value before ``=`` or an ASCII letter or digit (``&notx`` stays
+as written) and decodes it in text (``&notx`` reads as U+00AC and ``x``), as
+the HTML Standard's named character reference state does; a parser that
+decodes otherwise can read a class name or the About label that a browser
+does not.
 
 Threat model: these rules catch editing mistakes in the repository's own
 sources. A source written to exploit a parser difference outside this grammar
@@ -249,6 +278,7 @@ import re
 import stat
 import sys
 import types
+import unicodedata
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -283,7 +313,7 @@ ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # holds attributes separated by ASCII whitespace, each value quoted with no < or > in it, or unquoted of ASCII letters,
 # digits and _.:- only.
 SOURCE_TOKEN = re.compile(
-    r"(?P<text>[^<]+)|<!--(?:[^<>-]|-(?!-))*-->|</[a-zA-Z][a-zA-Z0-9]*>"
+    r"(?P<text>[^<]+)|<!--(?:[^<>-]|-(?!-))*-->|</(?P<end>[a-zA-Z][a-zA-Z0-9]*)>"
     r"|<(?P<start>[a-zA-Z][a-zA-Z0-9]*)(?:[ \t\n\f\r]+[a-zA-Z][a-zA-Z0-9_.:-]*"
     r"""(?:="[^"<>]*"|='[^'<>]*'|=[a-zA-Z0-9_.:-]+(?=[ \t\n\f\r>]))?)*[ \t\n\f\r]*/?>"""
 )
@@ -291,6 +321,13 @@ SOURCE_TOKEN = re.compile(
 # parser need not read alike, or (template) does not render it; and the start tags the generator writes for each page.
 RAW_TEXT_TAGS = {"script", "style", "template", "textarea", "title", "xmp", "iframe", "noembed", "noframes", "plaintext"}
 DOCUMENT_TAGS = ("html", "head", "body", "frameset")
+# The only elements a page source may carry (module docstring, "Page source grammar"): those the committed sources
+# use, as with_about() reads them (rail() writes nav). Adding an element is a deliberate change: review first how a
+# browser's tree builder places it and what follows it (as at select and input, which end an open select), against
+# the rules that read the parsed page.
+SOURCE_ELEMENTS = {"a", "button", "caption", "code", "details", "div", "em", "h1", "h2", "h3", "img", "li", "nav",
+                   "noscript", "ol", "p", "pre", "section", "small", "span", "strong", "summary", "table", "tbody", "td",
+                   "th", "thead", "tr", "ul"}
 SKIP_LINK = '<a class="skip" href="#main-content">Skip to content</a>'
 COPY_STATUS = '<p class="vh" id="copy-status" role="status" aria-live="polite"></p>'
 # The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
@@ -327,6 +364,15 @@ ABOUT_BLOCK = '<div class="region"><p class="lbl">About this project</p><div>{ro
 # The About block's label, as written and in upper case: the text of a page source carries neither, and the text of
 # the landing page carries 1, inside the block (PageScan.labels() counts them).
 ABOUT_LABELS = ("About this project", "ABOUT THIS PROJECT")
+# Every Default_Ignorable_Code_Point, as (first, last) ranges, from DerivedCoreProperties.txt of the Unicode Character
+# Database, version 16.0.0 (unicodedata.unidata_version on Python 3.14): 4174 code points that Unicode says to render
+# invisibly where they are not supported. Python's unicodedata does not expose this property; the label rule deletes
+# them, with every character of general category Cf, which unicodedata does expose.
+DEFAULT_IGNORABLE = (
+    (0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F),
+    (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF),
+)
 SLICE_COUNT = 6
 
 
@@ -859,34 +905,54 @@ def install_gate():
 
 def source_problem(content: str) -> str | None:
     """The first markup in a page source outside the page source grammar (SOURCE_TOKEN), or the first html, head,
-    body, frameset or math start tag or element of RAW_TEXT_TAGS in it, as a refusal naming its line and column (as
-    getpos() reports them); None if there is none."""
-    at = 0
+    body, frameset or math start tag, start tag of an element of RAW_TEXT_TAGS or outside SOURCE_ELEMENTS, or noscript
+    start tag inside a noscript in it, as a refusal naming where it starts (source_at()); None if there is none."""
+    at, noscript = 0, False
     while at < len(content):
         token = SOURCE_TOKEN.match(content, at)
         name = (token.group("start") or "").lower() if token else ""
-        line, column = line_column(content, at) if token is None or name in RAW_TEXT_TAGS else (0, 0)
+        # What is refused, and why; the place goes between them.
+        refusal = None
         if token is None:
             rest = content[at:at + len("<![cdata[")].lower()
             what = ("a CDATA section" if rest.startswith("<![cdata[") else "a DOCTYPE" if rest.startswith("<!doctype")
                     else "a processing instruction" if rest.startswith("<?")
                     else "a comment whose text holds <, > or --, or that does not end" if rest.startswith("<!--")
                     else "a < that begins no start tag, end tag or comment of the grammar")
-            return (f"{what} at line {line}, column {column}; a page source holds only markup on which Python's "
-                    "parser and a browser read the same tokens: text with no <, start and end tags whose attribute "
-                    "values hold no < or >, and comments whose text holds no <, > or --")
-        if name in DOCUMENT_TAGS:
-            return (f"a stray <{name}> start tag; the generator writes the page's html, head and body, so a page "
-                    "source may carry none of them, nor a frameset")
-        if name == "math":
-            return ("a <math> start tag; inside math, a browser can read a title, textarea, script or style element's "
-                    "content as markup, which the parser reads as text")
-        if name in RAW_TEXT_TAGS:
-            return (f"a <{name}> start tag at line {line}, column {column}; a page source holds only markup on which "
-                    "Python's parser and a browser read the same tokens, so no element whose content a browser reads "
-                    "as raw or escapable raw text, nor template")
+            refusal = (what, "a page source holds only markup on which Python's parser and a browser read the same "
+                       "tokens: text with no <, start and end tags whose attribute values hold no < or >, and comments "
+                       "whose text holds no <, > or --")
+        elif name in DOCUMENT_TAGS:
+            refusal = (f"a stray <{name}> start tag", "the generator writes the page's html, head and body, so a page "
+                       "source may carry none of them, nor a frameset")
+        elif name == "math":
+            refusal = ("a <math> start tag", "inside math, a browser can read a title, textarea, script or style "
+                       "element's content as markup, which the parser reads as text")
+        elif name in RAW_TEXT_TAGS:
+            refusal = (f"a <{name}> start tag", "a page source holds only markup on which Python's parser and a browser "
+                       "read the same tokens, so no element whose content a browser reads as raw or escapable raw "
+                       "text, nor template")
+        elif name and name not in SOURCE_ELEMENTS:
+            refusal = (f"a <{name}> start tag", "a page source carries only the elements of SOURCE_ELEMENTS; adding "
+                       "one needs a review of how a browser's tree builder places it and what follows it")
+        elif name == "noscript" and noscript:
+            refusal = ("a <noscript> start tag inside a noscript", "with scripting on, a browser ends the outer "
+                       "noscript at the inner one's end tag, where the parser reads the outer one as still open")
+        if refusal is not None:
+            return f"{refusal[0]} {source_at(line_column(content, at))}; {refusal[1]}"
+        if name == "noscript" or (token.group("end") or "").lower() == "noscript":
+            noscript = bool(name)
         at = token.end()
     return None
+
+
+def source_at(position: tuple[int, int]) -> str:
+    """Where a refused tag or markup starts in a page source, as a refusal names it: position is (line, column) as
+    getpos() and line_column() give it, the line counted from 1 and the column from 0, in the source as with_about()
+    reads it, with its {{tokens}} and rail written in. A token that writes in several lines (such as {{instructions}})
+    puts what follows it on a later line than in the committed file."""
+    line, column = position
+    return f"at line {line}, column {column} of the source with its tokens and rail written in"
 
 
 class PageScan(HTMLParser):
@@ -1113,12 +1179,21 @@ class PageScan(HTMLParser):
 
 
 def label_count(text: str) -> int:
-    """How many times text carries the About block's label (ABOUT_LABELS, case-sensitive), with each character of
-    tools/check-install-page.py's ZERO_WIDTH other than U+00A0, and U+0000 (which a browser ignores in body text),
-    deleted, and then each run of whitespace (as str.split() reads it, U+00A0 included) read as 1 space."""
-    deleted = {ord(character): None for character in install_gate().ZERO_WIDTH.replace("\u00a0", "") + "\0"}
+    """How many times text carries the About block's label (ABOUT_LABELS, case-sensitive), with each character that
+    label_ignored() names deleted, and then each run of whitespace (as str.split() reads it, U+00A0 included) read as
+    1 space."""
+    deleted = {ord(character): None for character in set(text) if label_ignored(character)}
     text = " ".join(text.translate(deleted).split())
     return sum(text.count(label) for label in ABOUT_LABELS)
+
+
+def label_ignored(character: str) -> bool:
+    """Whether the label rule deletes character: a character of general category Cf (format), a
+    Default_Ignorable_Code_Point (DEFAULT_IGNORABLE), a character of tools/check-install-page.py's ZERO_WIDTH other
+    than U+00A0, or U+0000 (which a browser ignores in body text)."""
+    code = ord(character)
+    return (unicodedata.category(character) == "Cf" or any(first <= code <= last for first, last in DEFAULT_IGNORABLE)
+            or character in install_gate().ZERO_WIDTH.replace("\u00a0", "") + "\0")
 
 
 def line_column(text: str, index: int) -> tuple[int, int]:
@@ -1155,7 +1230,8 @@ def about_block(base: str) -> str:
 def with_about(content: str, page: dict, base: str) -> str:
     """A page's content with, on the landing page only, the About block of specification 7.24 written in directly
     after the end tag of the value paragraph's region. It refuses, first, a source outside the page source grammar
-    (source_problem(), whose tokens the parser and a browser read alike) or with an html, head, body or frameset start
+    (source_problem(): tokens the parser and a browser read alike, elements of SOURCE_ELEMENTS only, no noscript
+    inside a noscript) or with an html, head, body or frameset start
     tag (the generator writes the page's html, head and body: HTML5 copies a stray html or body start tag's attributes
     onto the page's own, a stray head is refused because the generator writes the head, and
     tools/check-install-page.py reads a frameset start tag as hiding the whole page) or a math start tag (inside math,
@@ -1172,11 +1248,12 @@ def with_about(content: str, page: dict, base: str) -> str:
     scan.feed(content)
     scan.close()
     if scan.document_tags:
-        raise BuildError(f"{where}: a stray <{scan.document_tags[0][0]}> start tag; the generator writes the page's html, "
+        tag, at = scan.document_tags[0]
+        raise BuildError(f"{where}: a stray <{tag}> start tag {source_at(at)}; the generator writes the page's html, "
                          "head and body, so a page source may carry none of them, nor a frameset")
     if scan.maths:
-        raise BuildError(f"{where}: a <math> start tag; inside math, a browser can read a title, textarea, script or "
-                         "style element's content as markup, which the parser reads as text")
+        raise BuildError(f"{where}: a <math> start tag {source_at(scan.maths[0])}; inside math, a browser can read a "
+                         "title, textarea, script or style element's content as markup, which the parser reads as text")
     if scan.about_classes:
         raise BuildError(f"{where}: an element whose classes include about; the generator writes the About block of "
                          "specification 7.24 itself, on the landing page only")
