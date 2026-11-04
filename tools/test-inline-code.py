@@ -12,12 +12,14 @@ faked Python version tuple, 1 below and 1 above its supported set, with the 17
 entry points that the comment above ``VERSION_PROBE`` names replaced by a
 function that exits 97, and assert exit 3, no stdout and 1 stderr line naming
 the supported version and the faked one, so a guard placed after a result is
-printed fails them. The probe replaces these 17 module attributes with a
-function that exits 97, so it catches a version guard placed after the gate,
-directly or inside another function, looks up one of these attributes and
-calls it. It makes no claim about any other file access. Two more cases each
-put 1 read, through ``os.open`` or through ``io.FileIO``, before the version
-check in the gate's main() and assert that the probe stops it with exit 97.
+printed fails them. The probe replaces these 17 attributes (14 of modules, 3 of
+the class pathlib.Path) with a function that writes 1 line to stderr if it can
+and then exits 97, so a version guard placed after the point where the gate,
+directly or inside another function, looks up one of these attributes and calls
+it, fails both cases. It makes no claim about any other file access. Two more
+cases each put 1 read, through ``os.open`` or through ``io.FileIO``, before the
+version check in the gate's main() and assert that the probe stops it with
+exit 97.
 SUPPORTED_PYTHONS in the gate must equal the one here exactly.
 """
 
@@ -49,14 +51,17 @@ VERSION_PROBES = [(3, 13, 9, "final", 0), (3, 15, 0, "final", 0)]
 # gate first, then replaces these 17 entry points with a function that exits 97: os.walk, os.scandir, os.listdir,
 # os.open, builtins.open, io.open, io.open_code, io.FileIO, _io.open, _io.open_code, _io.FileIO, posix.scandir,
 # posix.listdir, posix.open, pathlib.Path.read_text, pathlib.Path.read_bytes and pathlib.Path.open. The _io and posix
-# ones are those pathlib reaches (pathlib.io._io, pathlib._os.posix). The probe replaces these 17 module attributes
-# with a function that exits 97, so it catches a version guard placed after the gate, directly or inside another
-# function, looks up one of these attributes and calls it. It makes no claim about any other file access.
+# ones are those pathlib reaches (pathlib.io._io, pathlib._os.posix). The probe replaces these 17 attributes (14 of
+# modules, 3 of the class pathlib.Path) with a function that writes 1 line to stderr if it can and then exits 97, so
+# a version guard placed after the point where the gate, directly or inside another function, looks up one of these
+# attributes and calls it, fails the case. It makes no claim about any other file access.
 VERSION_PROBE = (
     "import __future__, _io, builtins, io, os, pathlib, platform, posix, re, sys, html.parser, xml.parsers.expat\n"
     "def trap(*args, **kwargs):\n"
-    "    os.write(2, b'the gate listed or read a file before its version check\\n')\n"
-    "    os._exit(97)\n"
+    "    try:\n"
+    "        os.write(2, b'the gate listed or read a file before its version check\\n')\n"
+    "    finally:\n"
+    "        os._exit(97)\n"
     "with io.open_code(sys.argv[2]) as source:\n"
     "    code = compile(source.read(), sys.argv[2], 'exec')\n"
     "os.walk = os.scandir = os.listdir = os.open = builtins.open = trap\n"
