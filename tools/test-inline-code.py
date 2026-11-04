@@ -9,10 +9,16 @@ I2 and I2B are the inline-code mutants of the PR 206 review, and the cases named
 N1, N2 and N4 are the probes of its first verification round. Exit 0 when every case passes;
 1 otherwise, naming each failing case. Two further cases run the gate under a
 faked Python version tuple, 1 below and 1 above its supported set, with every
-way the gate lists or reads a file replaced by an exit 97, and assert exit 3,
-no stdout and 1 stderr line naming the supported version and the faked one, so
-a guard that runs after a file is listed or read, or after a result is printed,
-fails them. SUPPORTED_PYTHONS in the gate must equal the one here exactly.
+function the gate's imports expose to list a directory or open a file replaced
+by an exit 97, and assert exit 3, no stdout and 1 stderr line naming the
+supported version and the faked one, so a guard that runs after a file is
+listed or read, or after a result is printed, fails them. The comment above
+``VERSION_PROBE`` names those functions and what the probe leaves open: a
+child process, loading an extension module, and a file descriptor open before
+the gate runs, such as standard input. Two more cases each put 1 read, through
+``os.open`` or through ``io.FileIO``, before the version check in the gate's
+main() and assert that the probe stops it with exit 97. SUPPORTED_PYTHONS in
+the gate must equal the one here exactly.
 """
 
 from __future__ import annotations
@@ -39,18 +45,33 @@ IMG = '<img src="x" onerror="alert(1)">'
 # The versions the gate must run on, kept here apart from the gate, and a faked version tuple below and above them.
 SUPPORTED_PYTHONS = ((3, 14),)
 VERSION_PROBES = [(3, 13, 9, "final", 0), (3, 15, 0, "final", 0)]
-# Runs the gate (argv[2]) under the faked version tuple in argv[1]. It imports what the gate imports first, then
-# makes every way the gate lists or reads a file exit 97, so a version guard after a read fails the case.
+# Runs the gate (argv[2]) under the faked version tuple in argv[1]. It imports what the gate imports and compiles the
+# gate first, then makes every function those imports expose to list a directory or open a file exit 97, so a version
+# guard after a read fails the case: those of os, builtins, io and pathlib, and of _io and posix beneath them, which
+# pathlib reaches (pathlib.io._io, pathlib._os.posix). Path.iterdir, glob, rglob and walk and os.fwalk list through
+# os.scandir, and a new import of a Python module opens it through _io.open_code. Left open: a child process
+# (os.system, os.fork and the exec functions), loading an extension module, and a file descriptor open before the
+# gate runs, such as standard input.
 VERSION_PROBE = (
-    "import builtins, io, os, pathlib, platform, re, runpy, pkgutil, sys, html.parser, xml.parsers.expat\n"
+    "import __future__, _io, builtins, io, os, pathlib, platform, posix, re, sys, html.parser, xml.parsers.expat\n"
     "def trap(*args, **kwargs):\n"
     "    os.write(2, b'the gate listed or read a file before its version check\\n')\n"
     "    os._exit(97)\n"
-    "os.walk = os.scandir = os.listdir = builtins.open = io.open = trap\n"
+    "with io.open_code(sys.argv[2]) as source:\n"
+    "    code = compile(source.read(), sys.argv[2], 'exec')\n"
+    "os.walk = os.scandir = os.listdir = os.open = builtins.open = trap\n"
+    "io.open = io.open_code = io.FileIO = _io.open = _io.open_code = _io.FileIO = trap\n"
+    "posix.scandir = posix.listdir = posix.open = trap\n"
     "pathlib.Path.read_text = pathlib.Path.read_bytes = pathlib.Path.open = trap\n"
     "sys.version_info = tuple(int(part) if part.isdigit() else part for part in sys.argv[1].split())\n"
-    "runpy.run_path(sys.argv[2], run_name='__main__')\n"
+    "exec(code, {'__name__': '__main__', '__file__': sys.argv[2], '__builtins__': builtins})\n"
 )
+# Reads put before the version check in the gate's main(); the probe must stop each with exit 97.
+READ_MUTANTS = [
+    ("os.open", "fd = os.open(__file__, os.O_RDONLY); os.read(fd, 1); os.close(fd)"),
+    ("io.FileIO", "import io; io.FileIO(__file__).read(1)"),
+]
+TRAPPED = "the gate listed or read a file before its version check"
 # The sha256 of the light and dark switch of template specification 7.33, computed from the 1.6.0
 # reference page reference/install.html line 18 (761 bytes, from <button class="scheme" to </button>).
 SWITCH_SHA256 = "9cbd502757bf584b5b83c5319729a9f33310682f305597b64347bc263f586f00"
@@ -333,6 +354,12 @@ SWITCH_RULES = [
      for name in ("noscript", "template", "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video")]
 
 
+def run_version_probe(root: Path, probe: tuple) -> subprocess.CompletedProcess:
+    """Run the gate copy in root through VERSION_PROBE under the faked version tuple probe."""
+    return subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, " ".join(map(str, probe)),
+                           str(root / "tools" / GATE.name)], capture_output=True, text=True)
+
+
 def main() -> int:
     failures: list[str] = []
     switch = gate_switch()
@@ -355,20 +382,27 @@ def main() -> int:
     for probe in VERSION_PROBES:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
-            result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, " ".join(map(str, probe)),
-                                     str(root / "tools" / GATE.name)], capture_output=True, text=True)
+            result = run_version_probe(root, probe)
             lines = result.stderr.splitlines()
             needles = (f"runs only on Python {supported}", f"this is Python {probe[0]}.{probe[1]}")
             if result.returncode != 3 or result.stdout or len(lines) != 1 or not all(n in lines[0] for n in needles):
                 failures.append(f"Python {probe[0]}.{probe[1]}: exit {result.returncode}, expected 3 with no stdout and "
                                 f"1 stderr line naming {' and '.join(needles)}: "
                                 f"{(result.stdout + result.stderr).strip()[:300]}")
+    for name, statement in READ_MUTANTS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            edit(f"tools/{GATE.name}", "def main() -> int:\n", f"def main() -> int:\n    {statement}\n")(root)
+            result = run_version_probe(root, VERSION_PROBES[0])
+            if result.returncode != 97 or TRAPPED not in result.stderr:
+                failures.append(f"a read through {name} before the version check: exit {result.returncode}, expected 97 "
+                                f"with {TRAPPED!r}: {(result.stdout + result.stderr).strip()[:300]}")
     if failures:
         print("test-inline-code: failures:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-inline-code: all {len(CASES) + len(SWITCH_RULES) + len(VERSION_PROBES)} cases passed.")
+    print(f"test-inline-code: all {len(CASES) + len(SWITCH_RULES) + len(VERSION_PROBES) + len(READ_MUTANTS)} cases passed.")
     return 0
 
 

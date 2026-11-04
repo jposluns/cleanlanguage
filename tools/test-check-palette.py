@@ -5,10 +5,13 @@ Each case copies the wrapper and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault, runs the wrapper there as a separate process
 and asserts its exit code. The first case runs the wrapper on this repository.
 The cases that change the base in site-src/site.json check that the wrapper
-reads the output root from it: base / reads site/ and base /draft/ reads
-site/draft/, each with a palette failure or a site-palette.css only in the
-other root, and an invalid base, a missing base, a JSON list and invalid JSON
-each exit 3.
+reads the output root from it. Base / reads site/, so a contrast failure only
+in a copy of the palettes under site/draft/ exits 0. Base /draft/ reads
+site/draft/: a contrast failure in the copy there, with site/ clean, exits 1;
+a clean copy there, with the palettes under site/ removed, exits 0; and a
+site-palette.css under site/draft/assets/, beside a clean copy there and the
+clean palettes under site/, exits 1. An invalid base, a missing base, a JSON
+list and invalid JSON each exit 3.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
