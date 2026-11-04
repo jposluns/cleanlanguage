@@ -2,8 +2,11 @@
 """Tests for tools/check-palette.py: the pinned palette gate and its wrapper.
 
 Each case copies the wrapper and the files it reads into a temporary repository
-(under $TMPDIR), applies 1 fault, runs the wrapper there as a separate process
-and asserts its exit code. The first case runs the wrapper on this repository.
+(under $TMPDIR), applies its changes, runs the wrapper there as a separate
+process and asserts its exit code. The case named "the committed tree" applies
+no change, the 4 cases that copy the palettes to site/draft/ each apply 3
+through both(...), and every other case applies 1. The first case runs the
+wrapper on this repository.
 The cases that change the base in site-src/site.json check that the wrapper
 reads the output root from it. Base / reads site/, so a contrast failure only
 in a copy of the palettes under site/draft/ exits 0. Base /draft/ reads

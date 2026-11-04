@@ -8,14 +8,17 @@ rules in ``SWITCH_RULES``, that the refusal names the switch's place). The cases
 I2 and I2B are the inline-code mutants of the PR 206 review, and the cases named
 N1, N2 and N4 are the probes of its first verification round. Exit 0 when every case passes;
 1 otherwise, naming each failing case. Two further cases run the gate under a
-faked Python version tuple, 1 below and 1 above its supported set, with every
-function the gate's imports expose to list a directory or open a file replaced
-by an exit 97, and assert exit 3, no stdout and 1 stderr line naming the
-supported version and the faked one, so a guard that runs after a file is
-listed or read, or after a result is printed, fails them. The comment above
-``VERSION_PROBE`` names those functions and what the probe leaves open: a
-child process, loading an extension module, and a file descriptor open before
-the gate runs, such as standard input. Two more cases each put 1 read, through
+faked Python version tuple, 1 below and 1 above its supported set, with the 17
+entry points that the comment above ``VERSION_PROBE`` names replaced by a
+function that exits 97, and assert exit 3, no stdout and 1 stderr line naming
+the supported version and the faked one, so a guard placed after a result is
+printed, or after a listing or read through any of those entry points, fails
+them. The probe does not catch a read through any other reference to the
+original functions or classes (for example the objects kept in
+os.supports_dir_fd and os.supports_fd, or the class of sys.stderr.buffer.raw),
+a child process started by any means, an extension module, or a file
+descriptor already open, such as standard input. Two more cases each put 1
+read, through
 ``os.open`` or through ``io.FileIO``, before the version check in the gate's
 main() and assert that the probe stops it with exit 97. SUPPORTED_PYTHONS in
 the gate must equal the one here exactly.
@@ -46,12 +49,16 @@ IMG = '<img src="x" onerror="alert(1)">'
 SUPPORTED_PYTHONS = ((3, 14),)
 VERSION_PROBES = [(3, 13, 9, "final", 0), (3, 15, 0, "final", 0)]
 # Runs the gate (argv[2]) under the faked version tuple in argv[1]. It imports what the gate imports and compiles the
-# gate first, then makes every function those imports expose to list a directory or open a file exit 97, so a version
-# guard after a read fails the case: those of os, builtins, io and pathlib, and of _io and posix beneath them, which
-# pathlib reaches (pathlib.io._io, pathlib._os.posix). Path.iterdir, glob, rglob and walk and os.fwalk list through
-# os.scandir, and a new import of a Python module opens it through _io.open_code. Left open: a child process
-# (os.system, os.fork and the exec functions), loading an extension module, and a file descriptor open before the
-# gate runs, such as standard input.
+# gate first, then replaces these entry points with a function that exits 97: os.walk, os.scandir, os.listdir, os.open,
+# builtins.open, io.open, io.open_code, io.FileIO, _io.open, _io.open_code, _io.FileIO, posix.scandir, posix.listdir,
+# posix.open, pathlib.Path.read_text, pathlib.Path.read_bytes and pathlib.Path.open. The _io and posix ones are those
+# pathlib reaches (pathlib.io._io, pathlib._os.posix). The probe catches a version guard placed after a listing or read
+# through any of them. Path.iterdir, glob, rglob and walk and os.fwalk list through os.scandir, and a new import of a
+# Python module is opened through _io.open_code unless the module is frozen. The probe does not catch a read through
+# any other reference to the original functions or classes (for example the objects kept in os.supports_dir_fd and
+# os.supports_fd, or the class of sys.stderr.buffer.raw), a child process started by any means (os.system, os.fork,
+# the exec functions or os.posix_spawn, for example), an extension module, or a file descriptor open before the gate
+# runs, such as standard input.
 VERSION_PROBE = (
     "import __future__, _io, builtins, io, os, pathlib, platform, posix, re, sys, html.parser, xml.parsers.expat\n"
     "def trap(*args, **kwargs):\n"
