@@ -94,19 +94,26 @@ SWITCH = module_switch(GENERATOR)
 
 
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+# The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
+HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 
 
 class Placement(HTMLParser):
     """Each start tag's name, attributes (the first of 2 with the same name, as a browser reads them), open
     elements (name, classes), the element before it (name, classes) and whether it starts in html > head, the
-    first head or body the page opens; and each end tag's closed element (name, classes, depth); keyed by where
-    the tag starts: (line, column), as getpos() reports."""
+    first head or body the page opens, before the head ends where HTML5 ends it (text other than whitespace, a
+    start tag not in HEAD_TAGS, or </body>, </html> or </br>); and each end tag's closed element (name, classes,
+    depth); keyed by where the tag starts: (line, column), as getpos() reports. A self-closing tag leaves an
+    element that is neither void nor in <svg> open, as in a browser. It fails closed where it does not model HTML5:
+    a start tag not in HEAD_TAGS inside <template> or <noscript> in the head ends the head, and a self-closing tag
+    in <math> leaves its element open."""
 
     def __init__(self) -> None:
         super().__init__()
         self.open: list[tuple[str, list[str]]] = []
         self.previous: tuple[str, list[str]] | None = None
         self.heads = 0
+        self.head_ended = False
         self.starts: dict[tuple[int, int], tuple[str, dict, list[tuple[str, list[str]]], tuple | None, bool]] = {}
         self.ends: dict[tuple[int, int], tuple[str, list[str], int]] = {}
 
@@ -114,16 +121,30 @@ class Placement(HTMLParser):
         first = {name: value or "" for name, value in reversed(attrs)}
         if tag in ("head", "body"):
             self.heads += 1
-        in_head = [name for name, _ in self.open] == ["html", "head"] and self.heads == 1
+        if tag not in HEAD_TAGS and tag not in ("html", "head"):
+            self.head_ended = True
+        in_head = [name for name, _ in self.open] == ["html", "head"] and self.heads == 1 and not self.head_ended
         self.starts[self.getpos()] = (tag, first, list(self.open), self.previous, in_head)
         self.previous = (tag, first.get("class", "").split()) if tag in VOID else None
         if tag not in VOID:
             self.open.append((tag, first.get("class", "").split()))
 
+    def handle_startendtag(self, tag: str, attrs) -> None:
+        foreign = tag == "svg" or any(name == "svg" for name, _ in self.open)
+        self.handle_starttag(tag, attrs)
+        if tag not in VOID and foreign:
+            self.handle_endtag(tag)
+
     def handle_endtag(self, tag: str) -> None:
+        if tag in ("body", "html", "br"):
+            self.head_ended = True
         if self.open and self.open[-1][0] == tag:
             self.previous = self.open.pop()
             self.ends[self.getpos()] = (*self.previous, len(self.open))
+
+    def handle_data(self, data: str) -> None:
+        if data.strip(" \t\n\f\r") and [name for name, _ in self.open] in ([], ["html"], ["html", "head"]):
+            self.head_ended = True
 
 
 def position(text: str, index: int) -> tuple[int, int]:
@@ -354,6 +375,18 @@ def check_scheme_validation(failures: list[str]) -> int:
             "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.6.0">\n</body>', 1), False),
         ("a later stylesheet in a second head after the body", text.replace(later, "", 1).replace(
             "</body>\n", "</body>\n<head>\n" + later + "</head>\n", 1), False),
+        # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>; the loads
+        # after it are in the body. A comment and whitespace leave it open.
+        ("text before the scheme.js line", text.replace(tag, "x\n" + tag, 1), False),
+        ("a no-break space before the scheme.js line", text.replace(tag, "&nbsp;\n" + tag, 1), False),
+        ("a div before the scheme.js line", text.replace(tag, "<div></div>\n" + tag, 1), False),
+        ("</br> before the scheme.js line", text.replace(tag, "</br>\n" + tag, 1), False),
+        ("a comment and whitespace before the scheme.js line", text.replace(tag, "<!-- x -->\n \t\n" + tag, 1), True),
+        # A browser ignores the slash on an element that is neither void nor in <svg>: it stays open, so the switch
+        # becomes its child.
+        ("a self-closing nav.nav before the switch", text.replace(SWITCH, '<nav class="nav"/>' + SWITCH, 1), False),
+        ("a self-closing div first in header.mast", text.replace(
+            '<header class="mast">', '<header class="mast"><div/>', 1), False),
     ]
     for name, page_html, passes in cases:
         try:

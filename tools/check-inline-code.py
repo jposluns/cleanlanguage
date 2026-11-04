@@ -68,7 +68,11 @@ every HTML page it refuses:
    ``<noscript>`` read as markup), must be exactly 1, and that 1 must be
    ``SCHEME_SWITCH``, byte for byte, the last child of ``header.mast``, after
    ``nav.nav``. A page with an end tag that closes no open element before that
-   switch's parent ends fails, since its place is then not known.
+   switch's parent ends fails, since its place is then not known. A
+   self-closing tag leaves an element that is neither void nor in ``<svg>``
+   open, as in a browser, so ``<nav class="nav"/>`` before the switch makes
+   the switch its child; a self-closing tag in ``<math>``, which a browser
+   would close, also stays open here, so such a page fails.
 8. Any ``<![CDATA[`` in the text, ignoring case.
 9. Any comment that opens as ``<!-->`` or ``<!--->``.
 10. On every page, a ``<script>`` element whose first ``src`` is not a
@@ -349,8 +353,10 @@ class SwitchScan(HTMLParser):
             self.open.append((tag, classes))
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # A browser honours the slash only in <svg> (foreign content); any other element that is not void stays open.
+        foreign = tag == "svg" or any(name == "svg" for name, _ in self.open)
         self.handle_starttag(tag, attrs)
-        if tag not in VOID_ELEMENTS:
+        if tag not in VOID_ELEMENTS and foreign:
             self.handle_endtag(tag)
 
     def handle_endtag(self, tag: str) -> None:

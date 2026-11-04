@@ -42,7 +42,14 @@ What it verifies
    with no ``defer`` or ``async``, before the first stylesheet, and it and every
    stylesheet start inside ``<head>``, read as parsed elements: ``html > head``,
    the first head or body the page opens (template specification 7.33, baseline
-   1.6.0). Every other ``<script>`` the page loads is 1 of the baseline's
+   1.6.0), before the head ends where HTML5 ends it: at the first text other
+   than whitespace, start tag other than those HTML5 allows in a head
+   (``HEAD_TAGS``), or ``</body>``, ``</html>`` or ``</br>``. A self-closing tag
+   leaves an element that is neither void nor in ``<svg>`` open, as in a
+   browser. The reading fails closed where it does not model HTML5: such a
+   start tag inside a ``<template>`` or ``<noscript>`` in the head ends the
+   head, and a self-closing tag in ``<math>`` leaves its element open. Every
+   other ``<script>`` the page loads is 1 of the baseline's
    other scripts that this site copies (``BASELINE_SCRIPTS``: ``copy.js``,
    ``select.js``, ``search.js``, ``rail.js``) from ``/assets/baseline/``, with
    the same token and ``defer``, as exactly
@@ -120,6 +127,8 @@ SHARED_CSP = (
 )
 BASELINE_ASSET = r'/assets/baseline/{name}\?v=[0-9]+\.[0-9]+\.[0-9]+"'
 VOID = {"meta", "link", "img", "br", "hr", "input", "source", "wbr", "col"}
+# The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
+HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 # Invisible characters a heading might be reduced to: zero-width spaces/joiner/BOM,
 # no-break and soft-hyphen, word joiner, and the bidi marks.
 ZERO_WIDTH = "​‌‍﻿ ⁠‍‌­"
@@ -238,9 +247,10 @@ class LoadScan(HTMLParser):
         self.sheets: list[tuple[int, dict[str, str], str]] = []
         self.repeats: list[str] = []
         # The open elements, and the head or body elements opened so far: the page's head is html > head,
-        # the first of them.
+        # the first of them, until the head ends where HTML5 ends it.
         self.stack: list[str] = []
         self.heads = 0
+        self.head_ended = False
         self.outside_head: set[int] = set()
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
@@ -252,7 +262,9 @@ class LoadScan(HTMLParser):
             self.repeats.append(element[2])
         if tag in ("head", "body"):
             self.heads += 1
-        if tag in ("script", "link") and (self.stack != ["html", "head"] or self.heads != 1):
+        if tag not in HEAD_TAGS and tag not in ("html", "head"):
+            self.head_ended = True
+        if tag in ("script", "link") and (self.stack != ["html", "head"] or self.heads != 1 or self.head_ended):
             self.outside_head.add(element[0])
         if tag not in VOID:
             self.stack.append(tag)
@@ -261,11 +273,26 @@ class LoadScan(HTMLParser):
         elif tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split():
             self.sheets.append(element)
 
+    def handle_startendtag(self, tag: str, attrs_list) -> None:
+        # A browser honours the slash only in <svg> (foreign content); any other element that is not void stays open.
+        foreign = tag == "svg" or "svg" in self.stack
+        self.handle_starttag(tag, attrs_list)
+        if tag not in VOID and foreign:
+            self.handle_endtag(tag)
+
     def handle_endtag(self, tag: str) -> None:
+        if tag in ("body", "html", "br"):
+            # HTML5 ends the head at each of these end tags (</br> reads as <br>).
+            self.head_ended = True
         for i in range(len(self.stack) - 1, -1, -1):
             if self.stack[i] == tag:
                 del self.stack[i:]
                 break
+
+    def handle_data(self, data: str) -> None:
+        if data.strip(" \t\n\f\r") and self.stack in ([], ["html"], ["html", "head"]):
+            # Text other than whitespace in or before the head ends it (HTML5).
+            self.head_ended = True
 
 
 def check_template_page(text: str) -> list[str]:

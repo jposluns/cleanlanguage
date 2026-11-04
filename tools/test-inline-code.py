@@ -293,6 +293,9 @@ CASES = [
     ("a comment after the switch in header.mast", edit(LICENSE, SWITCH + "</header>", SWITCH + "<!-- x --></header>"), 1),
     ("an end tag that closes no open element before the switch", edit(LICENSE, '<nav class="nav"', '</div><nav class="nav"'), 1),
     ("a newline between nav.nav and the switch", edit(LICENSE, "</nav>" + SWITCH, "</nav>\n" + SWITCH), 0),
+    # A browser ignores the slash on an element that is neither void nor in <svg>, so the switch becomes its child.
+    ("a self-closing nav.nav before the switch", edit(LICENSE, SWITCH, '<nav class="nav"/>' + SWITCH), 1),
+    ("a self-closing div first in header.mast", edit(LICENSE, '<header class="mast">', '<header class="mast"><div/>'), 1),
 ]
 
 

@@ -152,6 +152,16 @@ CASES = [
         '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.6.0">\n</body>'), 1),
     ("a later stylesheet in a second head after the body", both(edit(PAGE, LATER + "\n", ""),
         edit(PAGE, "</body>\n", "</body>\n<head>\n" + LATER + "\n</head>\n")), 1),
+    # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>, and keeps a
+    # self-closing title open, so all after it is its text; the loads after such a point are not in the head. A
+    # comment and whitespace leave it open.
+    ("text before the scheme.js tag", edit(PAGE, SCHEME, "x\n" + SCHEME), 1),
+    ("a div before the scheme.js tag", edit(PAGE, SCHEME, "<div></div>\n" + SCHEME), 1),
+    ("</br> before the scheme.js tag", edit(PAGE, SCHEME, "</br>\n" + SCHEME), 1),
+    ("a self-closing title before the scheme.js tag, and no </head>", both(
+        edit(PAGE, SCHEME, "<title/>" + SCHEME), edit(PAGE, "</head>\n", "")), 1),
+    ("a comment and whitespace before the scheme.js tag", edit(PAGE, SCHEME, "<!-- x -->\n \t\n" + SCHEME), 0),
+    ("a self-closing nav.nav before the switch", edit(PAGE, '<button class="scheme"', '<nav class="nav"/><button class="scheme"'), 1),
     ("a second element with data-scheme-toggle, a button in the content", edit(PAGE, "</main>",
         '<p><button class="scheme" type="button" data-scheme-toggle hidden><span class="vh">Dark mode</span></button></p></main>'), 1),
     ("a family section hidden by the first of 2 class attributes", edit(PAGE, '<section id="claude" data-family-section="claude">',

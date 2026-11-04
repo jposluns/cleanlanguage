@@ -75,7 +75,14 @@ script tag before the first stylesheet, it and every stylesheet inside
 with SKILL.md. The switch, its place and the head are read as parsed elements:
 each element with ``data-scheme-toggle`` (an attribute name in any letter
 case), the switch's parent, the element before it and the end of its parent,
-and ``html > head``, the first head or body the page opens.
+and ``html > head``, the first head or body the page opens. As in a browser, a
+self-closing tag leaves an element that is neither void nor in ``<svg>`` open,
+and the head ends at the first text other than whitespace, start tag other
+than those HTML5 allows in a head (``HEAD_TAGS``), or ``</body>``, ``</html>``
+or ``</br>``; a script or stylesheet after that point is outside it. The
+reading fails closed where it does not model HTML5: such a start tag inside a
+``<template>`` or ``<noscript>`` in the head ends the head, and a self-closing
+tag in ``<math>`` leaves its element open.
 
 Modes
 -----
@@ -133,6 +140,8 @@ TAGS = re.compile(r"<[^>]+>")
 NEW_TAB = "<span class=\"vh\"> (opens in a new tab)</span>"
 EXECUTABLE_TYPES = {"", "module", "text/javascript", "application/javascript", "text/ecmascript"}
 VOID_TAGS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+# The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
+HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 SKIP_LINK = '<a class="skip" href="#main-content">Skip to content</a>'
 COPY_STATUS = '<p class="vh" id="copy-status" role="status" aria-live="polite"></p>'
 # The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
@@ -661,9 +670,11 @@ class PageScan(HTMLParser):
         self.loads: list[tuple[tuple[int, int], str]] = []
         self.sheets: list[tuple[int, int]] = []
         self.toggles: list[tuple[int, int]] = []
-        # Where each script and link starts outside the page's head: html > head, the first head or body opened.
+        # Where each script and link starts outside the page's head: html > head, the first head or body opened,
+        # until the head ends where HTML5 ends it.
         self.outside_head: set[tuple[int, int]] = set()
         self.heads = 0
+        self.head_ended = False
         self.robots: list[str] = []
         # Each open element's name and classes, and the element that ended last (or a void one) since the last
         # start tag: the previous sibling of the next element.
@@ -688,7 +699,10 @@ class PageScan(HTMLParser):
         classes = attrs.get("class", "").split()
         if tag in ("head", "body"):
             self.heads += 1
-        if tag in ("script", "link") and ([name for name, _ in self.open] != ["html", "head"] or self.heads != 1):
+        if tag not in HEAD_TAGS and tag not in ("html", "head"):
+            self.head_ended = True
+        if tag in ("script", "link") and ([name for name, _ in self.open] != ["html", "head"] or self.heads != 1
+                                          or self.head_ended):
             self.outside_head.add(self.getpos())
         if "data-scheme-toggle" in attrs:
             self.toggles.append(self.getpos())
@@ -732,17 +746,25 @@ class PageScan(HTMLParser):
             self.anchor = {"href": attrs["href"], "attrs": attrs, "text": ""}
 
     def handle_startendtag(self, tag, attrs):
+        # A browser honours the slash only in <svg> (foreign content); any other element that is not void stays open.
+        foreign = tag == "svg" or any(name == "svg" for name, _ in self.open)
         self.handle_starttag(tag, attrs)
-        if tag not in VOID_TAGS:
+        if tag not in VOID_TAGS and foreign:
             self.handle_endtag(tag)
 
     def handle_data(self, data: str) -> None:
+        if data.strip(" \t\n\f\r") and [name for name, _ in self.open] in ([], ["html"], ["html", "head"]):
+            # Text other than whitespace in or before the head ends it (HTML5).
+            self.head_ended = True
         if self.anchor is not None:
             self.anchor["text"] += data
         if self.in_pre and re.search(r"</?[a-z][a-z0-9]*[\s>]", data):
             self.problems.append("tag text such as <code> shown inside a <pre> block")
 
     def handle_endtag(self, tag: str) -> None:
+        if tag in ("body", "html", "br"):
+            # HTML5 ends the head at each of these end tags (</br> reads as <br>).
+            self.head_ended = True
         if tag in VOID_TAGS:
             return
         if not self.open or self.open[-1][0] != tag:
