@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""check_palette.py: the contrast gate for a site's palette (baseline 1.6.0 and later).
+"""check_palette.py: the contrast gate for a site's palette (baseline 1.6.0 and later; matrix tokens from 1.7.0).
 
 Reads the package's palettes.css and, optionally, the site's own site-palette.css (loaded after it), works
 out the value of every palette token on <html class="site-<name>"> in each of the 6 states a page can be in
 (device light or dark, with no data-scheme, data-scheme="light" or data-scheme="dark"), and checks every
 pairing that contrast-report.txt checks, with the same thresholds: text pairs 4.5:1, the focus ring and the
-strong rule 3:1, rainbow ink on its slice 3:1. It also checks that the 3 light states agree on every token and
+strong rule 3:1, rainbow ink on its slice 3:1; from 1.7.0 also the matrix tints (text on the row tints and heat
+steps 4.5:1, the focus ring on them 3:1) and the column-group accents as text on every surface and tint (4.5:1),
+so a palette from before 1.7.0, which lacks these tokens, fails. It also checks that the 3 light states agree on every token and
 the 3 dark states agree, so an override written in only 1 of a scheme's 2 forms fails.
 
 Usage (from the repository root; Python 3 standard library only, no network):
@@ -27,7 +29,9 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 TOKENS = ["bg", "surface-raised", "surface-sunken", "text", "text-muted", "rule", "rule-strong", "accent",
-          "on-accent", "link", "link-hover", "focus", "selection", "code-bg", "callout-bg", "glow", "brand"]
+          "on-accent", "link", "link-hover", "focus", "selection", "code-bg", "callout-bg", "glow", "brand",
+          # matrix tables (from 1.7.0)
+          "row-tint", "row-hover"] + ["heat-%d" % i for i in range(5)] + ["grp-%d" % i for i in range(1, 7)]
 RAINBOW = (["rainbow-%d" % i for i in range(1, 7)] + ["rainbow-join-%d" % i for i in range(1, 7)]
            + ["rainbow-ink-%d" % i for i in range(1, 7)] + ["band-grey"])
 SURFACES = ["bg", "surface-raised", "surface-sunken", "code-bg", "callout-bg"]
@@ -42,6 +46,14 @@ EXTRA = [  # (label, foreground, background, threshold), as in contrast-report.t
     ("rule-strong on bg", "rule-strong", "bg", 3.0),
     ("rule-strong on surface-raised", "rule-strong", "surface-raised", 3.0),
 ]
+# Matrix tints (from 1.7.0), as in contrast-report.txt: every text token on the 2 row tints; --text, --link and
+# --link-hover on the 5 heat steps (baseline.css draws a heat cell's own text in --text, so muted text and the accent
+# never sit on a heat step); the focus ring on all 7 at 3:1; each column-group accent as text on the 5 surfaces and
+# the 2 row tints.
+ROW_TINTS = ["row-tint", "row-hover"]
+HEATS = ["heat-%d" % i for i in range(5)]
+HEAT_FG = ["text", "link", "link-hover"]
+GRPS = ["grp-%d" % i for i in range(1, 7)]
 # The 6 states: (device prefers dark, data-scheme attribute or None) and the scheme each shows.
 STATES = [(False, None, "light"), (False, "light", "light"), (True, "light", "light"),
           (True, None, "dark"), (False, "dark", "dark"), (True, "dark", "dark")]
@@ -353,6 +365,23 @@ def check_site(sheets, site, out):
                 bad = r < thr
                 failures += bad
                 out.append("  %-34s %6.2f:1  needs %.1f%s" % (label, r, thr, "  FAIL" if bad else ""))
+        out.append("  matrix tints (text 4.5:1, focus 3:1)")
+        for tint in ROW_TINTS + HEATS:
+            for fg in (TEXT_FG if tint in ROW_TINTS else HEAT_FG) + ["focus"]:
+                thr = 3.0 if fg == "focus" else 4.5
+                if fg in rgb and tint in rgb:
+                    r = contrast(rgb[fg], rgb[tint])
+                    bad = r < thr
+                    failures += bad
+                    if bad or fg in ("text-muted", "focus") or (fg == "link" and tint in HEATS):
+                        out.append("  %-34s %6.2f:1  needs %.1f%s" % ("%s on %s" % (fg, tint), r, thr, "  FAIL" if bad else ""))
+        for g in GRPS:
+            grounds = [b for b in SURFACES + ROW_TINTS if b in rgb]
+            if g in rgb and grounds:
+                r, on = min((contrast(rgb[g], rgb[b]), b) for b in grounds)
+                bad = r < 4.5
+                failures += bad
+                out.append("  %-34s %6.2f:1  needs 4.5%s" % ("%s on %s (lowest)" % (g, on), r, "  FAIL" if bad else ""))
         for i in range(1, 7):
             ink, own = "rainbow-ink-%d" % i, "rainbow-%d" % i
             joins = ["rainbow-join-%d" % i, "rainbow-join-%d" % (6 if i == 1 else i - 1)]

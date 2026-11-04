@@ -24,6 +24,19 @@
   --callout-bg: #ffe9e6;
   --glow: #ffd2cc;
   --brand: #c9302d;
+  --row-tint: #fae8e6;
+  --row-hover: #ffe3df;
+  --heat-0: #ffffff;
+  --heat-1: #fff6f5;
+  --heat-2: #ffedea;
+  --heat-3: #ffe4e0;
+  --heat-4: #fedbd6;
+  --grp-1: #bc3732;
+  --grp-2: #a25100;
+  --grp-3: #7c6300;
+  --grp-4: #3a732c;
+  --grp-5: #2a68a8;
+  --grp-6: #8a509c;
 }
 @media (prefers-color-scheme: dark) {
   .site-secureconfig:not([data-scheme="light"]) {
@@ -44,6 +57,19 @@
     --callout-bg: #2a1310;
     --glow: #601f1b;
     --brand: #ef5f55;
+    --row-tint: #1e0f0f;
+    --row-hover: #2d1516;
+    --heat-0: #170e0e;
+    --heat-1: #251011;
+    --heat-2: #341214;
+    --heat-3: #431217;
+    --heat-4: #52111a;
+    --grp-1: #fd7468;
+    --grp-2: #ef852e;
+    --grp-3: #c6a000;
+    --grp-4: #7bb76e;
+    --grp-5: #6aa9ed;
+    --grp-6: #c689d9;
 }
 }
 [data-scheme="light"].site-secureconfig {
@@ -64,6 +90,19 @@
   --callout-bg: #ffe9e6;
   --glow: #ffd2cc;
   --brand: #c9302d;
+  --row-tint: #fae8e6;
+  --row-hover: #ffe3df;
+  --heat-0: #ffffff;
+  --heat-1: #fff6f5;
+  --heat-2: #ffedea;
+  --heat-3: #ffe4e0;
+  --heat-4: #fedbd6;
+  --grp-1: #bc3732;
+  --grp-2: #a25100;
+  --grp-3: #7c6300;
+  --grp-4: #3a732c;
+  --grp-5: #2a68a8;
+  --grp-6: #8a509c;
 }
 [data-scheme="dark"].site-secureconfig {
   --bg: #170707;
@@ -83,6 +122,19 @@
   --callout-bg: #2a1310;
   --glow: #601f1b;
   --brand: #ef5f55;
+  --row-tint: #1e0f0f;
+  --row-hover: #2d1516;
+  --heat-0: #170e0e;
+  --heat-1: #251011;
+  --heat-2: #341214;
+  --heat-3: #431217;
+  --heat-4: #52111a;
+  --grp-1: #fd7468;
+  --grp-2: #ef852e;
+  --grp-3: #c6a000;
+  --grp-4: #7bb76e;
+  --grp-5: #6aa9ed;
+  --grp-6: #c689d9;
 }
 
 /* opfiles: orange, OKLCH hue 55 */
@@ -104,6 +156,19 @@
   --callout-bg: #ffeadc;
   --glow: #ffd4b8;
   --brand: #ec7c0e;
+  --row-tint: #f8eae0;
+  --row-hover: #fbe4d5;
+  --heat-0: #ffffff;
+  --heat-1: #fff8f3;
+  --heat-2: #fff1e8;
+  --heat-3: #ffe9dc;
+  --heat-4: #ffe2d0;
+  --grp-1: #ba3630;
+  --grp-2: #a25100;
+  --grp-3: #7c6300;
+  --grp-4: #3a732c;
+  --grp-5: #2a68a8;
+  --grp-6: #8a509c;
 }
 @media (prefers-color-scheme: dark) {
   .site-opfiles:not([data-scheme="light"]) {
@@ -124,6 +189,19 @@
     --callout-bg: #291507;
     --glow: #582900;
     --brand: #f68622;
+    --row-tint: #1d1108;
+    --row-hover: #2b1709;
+    --heat-0: #160f0a;
+    --heat-1: #231307;
+    --heat-2: #311602;
+    --heat-3: #3d1a00;
+    --heat-4: #482000;
+    --grp-1: #fd7468;
+    --grp-2: #ef852e;
+    --grp-3: #c6a000;
+    --grp-4: #7bb76e;
+    --grp-5: #6aa9ed;
+    --grp-6: #c689d9;
 }
 }
 [data-scheme="light"].site-opfiles {
@@ -144,6 +222,19 @@
   --callout-bg: #ffeadc;
   --glow: #ffd4b8;
   --brand: #ec7c0e;
+  --row-tint: #f8eae0;
+  --row-hover: #fbe4d5;
+  --heat-0: #ffffff;
+  --heat-1: #fff8f3;
+  --heat-2: #fff1e8;
+  --heat-3: #ffe9dc;
+  --heat-4: #ffe2d0;
+  --grp-1: #ba3630;
+  --grp-2: #a25100;
+  --grp-3: #7c6300;
+  --grp-4: #3a732c;
+  --grp-5: #2a68a8;
+  --grp-6: #8a509c;
 }
 [data-scheme="dark"].site-opfiles {
   --bg: #160802;
@@ -163,6 +254,19 @@
   --callout-bg: #291507;
   --glow: #582900;
   --brand: #f68622;
+  --row-tint: #1d1108;
+  --row-hover: #2b1709;
+  --heat-0: #160f0a;
+  --heat-1: #231307;
+  --heat-2: #311602;
+  --heat-3: #3d1a00;
+  --heat-4: #482000;
+  --grp-1: #fd7468;
+  --grp-2: #ef852e;
+  --grp-3: #c6a000;
+  --grp-4: #7bb76e;
+  --grp-5: #6aa9ed;
+  --grp-6: #c689d9;
 }
 
 /* auditthis: yellow, OKLCH hue 92 */
@@ -184,6 +288,19 @@
   --callout-bg: #f7eed5;
   --glow: #f2dd9d;
   --brand: #f4c929;
+  --row-tint: #f1edde;
+  --row-hover: #f0e9d1;
+  --heat-0: #ffffff;
+  --heat-1: #fffae8;
+  --heat-2: #fff4d1;
+  --heat-3: #ffeeb9;
+  --heat-4: #ffe8a0;
+  --grp-1: #bc3732;
+  --grp-2: #a25100;
+  --grp-3: #7d6500;
+  --grp-4: #3a732c;
+  --grp-5: #2c6aaa;
+  --grp-6: #8a509c;
 }
 @media (prefers-color-scheme: dark) {
   .site-auditthis:not([data-scheme="light"]) {
@@ -204,6 +321,19 @@
     --callout-bg: #211a03;
     --glow: #453600;
     --brand: #f8cc2f;
+    --row-tint: #171406;
+    --row-hover: #231d05;
+    --heat-0: #121009;
+    --heat-1: #1c1704;
+    --heat-2: #261d00;
+    --heat-3: #2e2400;
+    --heat-4: #362c00;
+    --grp-1: #fd7468;
+    --grp-2: #ef852e;
+    --grp-3: #c6a000;
+    --grp-4: #7bb76e;
+    --grp-5: #6aa9ed;
+    --grp-6: #c689d9;
 }
 }
 [data-scheme="light"].site-auditthis {
@@ -224,6 +354,19 @@
   --callout-bg: #f7eed5;
   --glow: #f2dd9d;
   --brand: #f4c929;
+  --row-tint: #f1edde;
+  --row-hover: #f0e9d1;
+  --heat-0: #ffffff;
+  --heat-1: #fffae8;
+  --heat-2: #fff4d1;
+  --heat-3: #ffeeb9;
+  --heat-4: #ffe8a0;
+  --grp-1: #bc3732;
+  --grp-2: #a25100;
+  --grp-3: #7d6500;
+  --grp-4: #3a732c;
+  --grp-5: #2c6aaa;
+  --grp-6: #8a509c;
 }
 [data-scheme="dark"].site-auditthis {
   --bg: #100c01;
@@ -243,6 +386,19 @@
   --callout-bg: #211a03;
   --glow: #453600;
   --brand: #f8cc2f;
+  --row-tint: #171406;
+  --row-hover: #231d05;
+  --heat-0: #121009;
+  --heat-1: #1c1704;
+  --heat-2: #261d00;
+  --heat-3: #2e2400;
+  --heat-4: #362c00;
+  --grp-1: #fd7468;
+  --grp-2: #ef852e;
+  --grp-3: #c6a000;
+  --grp-4: #7bb76e;
+  --grp-5: #6aa9ed;
+  --grp-6: #c689d9;
 }
 
 /* cleanlanguage: green, OKLCH hue 140 */
@@ -264,6 +420,19 @@
   --callout-bg: #e3f5df;
   --glow: #c1edb7;
   --brand: #59a847;
+  --row-tint: #e6f0e4;
+  --row-hover: #deeeda;
+  --heat-0: #ffffff;
+  --heat-1: #eaffe6;
+  --heat-2: #d4ffca;
+  --heat-3: #baffab;
+  --heat-4: #9dff87;
+  --grp-1: #bc3732;
+  --grp-2: #a25100;
+  --grp-3: #7d6500;
+  --grp-4: #3b752e;
+  --grp-5: #2c6aaa;
+  --grp-6: #8a509c;
 }
 @media (prefers-color-scheme: dark) {
   .site-cleanlanguage:not([data-scheme="light"]) {
@@ -284,6 +453,19 @@
     --callout-bg: #101f0d;
     --glow: #18430d;
     --brand: #65b553;
+    --row-tint: #0d170b;
+    --row-hover: #12210f;
+    --heat-0: #0d120c;
+    --heat-1: #0e1b0b;
+    --heat-2: #0e2409;
+    --heat-3: #0d2d06;
+    --heat-4: #0a3700;
+    --grp-1: #fd7468;
+    --grp-2: #ef852e;
+    --grp-3: #c6a000;
+    --grp-4: #7bb76e;
+    --grp-5: #6aa9ed;
+    --grp-6: #c689d9;
 }
 }
 [data-scheme="light"].site-cleanlanguage {
@@ -304,6 +486,19 @@
   --callout-bg: #e3f5df;
   --glow: #c1edb7;
   --brand: #59a847;
+  --row-tint: #e6f0e4;
+  --row-hover: #deeeda;
+  --heat-0: #ffffff;
+  --heat-1: #eaffe6;
+  --heat-2: #d4ffca;
+  --heat-3: #baffab;
+  --heat-4: #9dff87;
+  --grp-1: #bc3732;
+  --grp-2: #a25100;
+  --grp-3: #7d6500;
+  --grp-4: #3b752e;
+  --grp-5: #2c6aaa;
+  --grp-6: #8a509c;
 }
 [data-scheme="dark"].site-cleanlanguage {
   --bg: #060f04;
@@ -323,6 +518,19 @@
   --callout-bg: #101f0d;
   --glow: #18430d;
   --brand: #65b553;
+  --row-tint: #0d170b;
+  --row-hover: #12210f;
+  --heat-0: #0d120c;
+  --heat-1: #0e1b0b;
+  --heat-2: #0e2409;
+  --heat-3: #0d2d06;
+  --heat-4: #0a3700;
+  --grp-1: #fd7468;
+  --grp-2: #ef852e;
+  --grp-3: #c6a000;
+  --grp-4: #7bb76e;
+  --grp-5: #6aa9ed;
+  --grp-6: #c689d9;
 }
 
 /* aiqt: blue, OKLCH hue 252 */
@@ -344,6 +552,19 @@
   --callout-bg: #e3f0ff;
   --glow: #c7e1ff;
   --brand: #136dbf;
+  --row-tint: #e4eefa;
+  --row-hover: #daebfe;
+  --heat-0: #ffffff;
+  --heat-1: #f5faff;
+  --heat-2: #ecf5ff;
+  --heat-3: #e2efff;
+  --heat-4: #d8eaff;
+  --grp-1: #bc3732;
+  --grp-2: #a25100;
+  --grp-3: #7d6500;
+  --grp-4: #3a732c;
+  --grp-5: #2c6aaa;
+  --grp-6: #8a509c;
 }
 @media (prefers-color-scheme: dark) {
   .site-aiqt:not([data-scheme="light"]) {
@@ -364,6 +585,19 @@
     --callout-bg: #0c1b2c;
     --glow: #073967;
     --brand: #4495ea;
+    --row-tint: #0b151f;
+    --row-hover: #0e1e2f;
+    --heat-0: #0c1117;
+    --heat-1: #0b1827;
+    --heat-2: #081f37;
+    --heat-3: #032648;
+    --heat-4: #002d58;
+    --grp-1: #fd7468;
+    --grp-2: #ef852e;
+    --grp-3: #c6a000;
+    --grp-4: #7bb76e;
+    --grp-5: #6aa9ed;
+    --grp-6: #c689d9;
 }
 }
 [data-scheme="light"].site-aiqt {
@@ -384,6 +618,19 @@
   --callout-bg: #e3f0ff;
   --glow: #c7e1ff;
   --brand: #136dbf;
+  --row-tint: #e4eefa;
+  --row-hover: #daebfe;
+  --heat-0: #ffffff;
+  --heat-1: #f5faff;
+  --heat-2: #ecf5ff;
+  --heat-3: #e2efff;
+  --heat-4: #d8eaff;
+  --grp-1: #bc3732;
+  --grp-2: #a25100;
+  --grp-3: #7d6500;
+  --grp-4: #3a732c;
+  --grp-5: #2c6aaa;
+  --grp-6: #8a509c;
 }
 [data-scheme="dark"].site-aiqt {
   --bg: #040d19;
@@ -403,6 +650,19 @@
   --callout-bg: #0c1b2c;
   --glow: #073967;
   --brand: #4495ea;
+  --row-tint: #0b151f;
+  --row-hover: #0e1e2f;
+  --heat-0: #0c1117;
+  --heat-1: #0b1827;
+  --heat-2: #081f37;
+  --heat-3: #032648;
+  --heat-4: #002d58;
+  --grp-1: #fd7468;
+  --grp-2: #ef852e;
+  --grp-3: #c6a000;
+  --grp-4: #7bb76e;
+  --grp-5: #6aa9ed;
+  --grp-6: #c689d9;
 }
 
 /* grclibrary: purple, OKLCH hue 318 */
@@ -424,6 +684,19 @@
   --callout-bg: #f9e8fe;
   --glow: #f3cfff;
   --brand: #9049a5;
+  --row-tint: #f3e9f6;
+  --row-hover: #f3e3f8;
+  --heat-0: #ffffff;
+  --heat-1: #fdf6ff;
+  --heat-2: #fbedff;
+  --heat-3: #f8e3ff;
+  --heat-4: #f6daff;
+  --grp-1: #ba3630;
+  --grp-2: #a25100;
+  --grp-3: #7c6300;
+  --grp-4: #3a732c;
+  --grp-5: #2a68a8;
+  --grp-6: #8a509c;
 }
 @media (prefers-color-scheme: dark) {
   .site-grclibrary:not([data-scheme="light"]) {
@@ -444,6 +717,19 @@
     --callout-bg: #221426;
     --glow: #4c2557;
     --brand: #bb75d0;
+    --row-tint: #19101b;
+    --row-hover: #251729;
+    --heat-0: #130e15;
+    --heat-1: #1e1221;
+    --heat-2: #29152f;
+    --heat-3: #34173c;
+    --heat-4: #3f194b;
+    --grp-1: #fd7468;
+    --grp-2: #ef852e;
+    --grp-3: #c6a000;
+    --grp-4: #7bb76e;
+    --grp-5: #6aa9ed;
+    --grp-6: #c689d9;
 }
 }
 [data-scheme="light"].site-grclibrary {
@@ -464,6 +750,19 @@
   --callout-bg: #f9e8fe;
   --glow: #f3cfff;
   --brand: #9049a5;
+  --row-tint: #f3e9f6;
+  --row-hover: #f3e3f8;
+  --heat-0: #ffffff;
+  --heat-1: #fdf6ff;
+  --heat-2: #fbedff;
+  --heat-3: #f8e3ff;
+  --heat-4: #f6daff;
+  --grp-1: #ba3630;
+  --grp-2: #a25100;
+  --grp-3: #7c6300;
+  --grp-4: #3a732c;
+  --grp-5: #2a68a8;
+  --grp-6: #8a509c;
 }
 [data-scheme="dark"].site-grclibrary {
   --bg: #110814;
@@ -483,6 +782,19 @@
   --callout-bg: #221426;
   --glow: #4c2557;
   --brand: #bb75d0;
+  --row-tint: #19101b;
+  --row-hover: #251729;
+  --heat-0: #130e15;
+  --heat-1: #1e1221;
+  --heat-2: #29152f;
+  --heat-3: #34173c;
+  --heat-4: #3f194b;
+  --grp-1: #fd7468;
+  --grp-2: #ef852e;
+  --grp-3: #c6a000;
+  --grp-4: #7bb76e;
+  --grp-5: #6aa9ed;
+  --grp-6: #c689d9;
 }
 
 /* The cyclic 6-stop warm rainbow for the sliced cards and the family footer.

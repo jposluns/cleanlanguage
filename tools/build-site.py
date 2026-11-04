@@ -71,8 +71,12 @@ that is not ``YYYY-MM-DD``; a page without exactly 1 light and dark switch
 ``nav.nav``, and the only element with a ``data-scheme-toggle`` attribute,
 each of which ``scheme.js`` wires and shows), without exactly 1 ``scheme.js``
 script tag before the first stylesheet, it and every stylesheet inside
-``<head>``, or with any other ``<svg``; and a release version that disagrees
-with SKILL.md. The switch, its place and the head are read as parsed elements:
+``<head>``, or with any other ``<svg``; a landing page without exactly 1 About
+row (``class="about"``), or with one that is not ``about_line()`` byte for
+byte, 1 ordinary space after each dot span and none before it (template
+specification 7.24, baseline 1.7.0); an About row on any other page; and a
+release version that disagrees with SKILL.md. The switch, its place and the
+head are read as parsed elements:
 each element with ``data-scheme-toggle`` (an attribute name in any letter
 case), the switch's parent, the element before it and the end of its parent,
 and ``html > head``, the first head or body the page opens. As in a browser, a
@@ -159,6 +163,8 @@ SCHEME_SWITCH = (
     '<path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/>'
     '</svg><span class="vh">Dark mode</span></button>'
 )
+# The dot between 2 links of the About row of template specification 7.24 (baseline 1.7.0); about_line() gives the row.
+ABOUT_DOT = '<span class="dot" aria-hidden="true">&middot;</span>'
 SLICE_COUNT = 6
 
 
@@ -792,6 +798,15 @@ def line_column(text: str, index: int) -> tuple[int, int]:
     return text.count("\n", 0, index) + 1, index - text.rfind("\n", 0, index) - 1
 
 
+def about_line(base: str) -> str:
+    """The landing page's About row at base, as specification 7.24 (baseline 1.7.0) gives it: 1 ordinary space
+    after each dot span and none before it, so a line breaks only after a dot."""
+    links = (f'<a href="{base}disclosure/">Disclosure</a>', f'<a href="{base}license/">Licence</a>',
+             f'<a href="https://posluns.ca/privacy/" target="_blank" rel="noopener noreferrer">Privacy{NEW_TAB}</a>',
+             f'<a href="https://posluns.ca/security/" target="_blank" rel="noopener noreferrer">Security{NEW_TAB}</a>')
+    return '<p class="about">' + (ABOUT_DOT + " ").join(links) + "</p>"
+
+
 def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     where = page["source"]
     problems = []
@@ -861,6 +876,12 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
         for tag, value in scan.links:
             if tag == "a" and any(value.split("#", 1)[0] == base + config_path for config_path in config["about_paths"]):
                 problems.append(f"{value} links a page only the landing page links (specification 7.24)")
+    if page["path"] == "":
+        if page_html.count('class="about"') != 1 or page_html.count(about_line(base)) != 1:
+            problems.append("the About row must appear exactly once, byte for byte as specification 7.24 gives it: "
+                            "1 ordinary space after each dot span and none before it")
+    elif 'class="about"' in page_html:
+        problems.append("an About row, which only the landing page carries (specification 7.24)")
     for tag, value in scan.links:
         if value.startswith(("https://", "http://")):
             if tag != "a":

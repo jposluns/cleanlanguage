@@ -1,4 +1,4 @@
-/* baseline.css 1.6.0: the shared stylesheet of the project sites (the Atrium direction).
+/* baseline.css 1.7.0: the shared stylesheet of the project sites (the Atrium direction).
    Newsreader for text and headings, Public Sans for labels and navigation, JetBrains Mono for code,
    Dancing Script for the signature; the fonts are declared in fonts.css.
    Scale: perfect fourth (1.333) on a 1.1875rem base. No rules except the table header hairline.
@@ -8,6 +8,8 @@
 /* Family signature tokens (the link-preview cards): gold and silver, checked at 4.5:1 or better on every site background in each mode;
    the 3 ordering colours for aiqt are the text-safe accents of the green, orange and red sites from palettes.css. */
 :root { --gold-rule: #d4a52a; --gold: #8a6a0a; --silver: #6a6a6a; --ord-progress: #3b752e; --ord-speed: #a25100; --ord-cost: #bc3732; }
+/* Print tokens (from 1.7.0): paper and ink for matrix tables on paper, the same in both schemes (the print rules at the end). */
+:root { --print-paper: #ffffff; --print-ink: #000000; }
 /* Layout tokens: the page gutter, the hero logo column, the rail column, the label column of the document and
    region grids, and the footer's band, tile, logo and mark sizes. */
 :root { --pad: clamp(1rem, 3vw, 3.2rem); --art: clamp(11rem, 22vw, 30rem); --railw: clamp(13rem, 13vw, 17rem); --label-col: 9rem; --band: 0.55rem; --tile: 3.4rem; --tile-logo: 2.75rem; --mark: 2rem; }
@@ -315,6 +317,67 @@ td.num { text-align: right; font-variant-numeric: lining-nums tabular-nums; }
 .tag.accent { color: var(--accent); border-color: var(--brand); }
 .tag.fill { background: var(--surface-sunken); border-color: transparent; }
 
+/* Large matrix tables (from 1.7.0, specification 7.34): opt-in classes and attributes; markup without them renders
+   as in 1.6.1.
+   Column widths in rem for fixed-layout tables: col.r6 to col.r24 (steps of 2) set --colw, and 1 rule applies it,
+   so a table whose columns add up to more than the page grows past it and scrolls inside .tablewrap. A col without
+   a width class leaves --colw unset, so its width stays auto, and the col.w<N> percentages outrank this rule. */
+col.r6 { --colw: 6rem; } col.r8 { --colw: 8rem; } col.r10 { --colw: 10rem; } col.r12 { --colw: 12rem; } col.r14 { --colw: 14rem; }
+col.r16 { --colw: 16rem; } col.r18 { --colw: 18rem; } col.r20 { --colw: 20rem; } col.r22 { --colw: 22rem; } col.r24 { --colw: 24rem; }
+.fixed col { width: var(--colw); }
+/* Wrapping cells: table.matrix.cells-wrap lets data cells wrap inside their column; headers keep their rules;
+   td.nowrap (and td.id) stay on 1 line, for example a count-only column. */
+td.nowrap, td.nowrap code { white-space: nowrap; }
+table.matrix.cells-wrap td:not(.nowrap, .id), table.matrix.cells-wrap td:not(.nowrap, .id) code { white-space: normal; }
+/* The capped pinned column, opt-in: table.sticky-col.pin-cap gives the first column a capped width, overridable with
+   --pin-col (the pin-r<N> classes set it), and lets its labels wrap. table.sticky-col without pin-cap renders as in
+   1.6.1. The default's 8rem minimum keeps half of a 320 px window for data. */
+table.sticky-col.pin-cap :is(th, td):first-child { width: var(--pin-col, clamp(8rem, 30vw, 15rem)); white-space: normal; overflow-wrap: break-word; }
+table.pin-cap.pin-r6 { --pin-col: 6rem; } table.pin-cap.pin-r8 { --pin-col: 8rem; }
+table.pin-cap.pin-r10 { --pin-col: clamp(8rem, 30vw, 10rem); } table.pin-cap.pin-r12 { --pin-col: clamp(8rem, 30vw, 12rem); }
+table.pin-cap.pin-r14 { --pin-col: clamp(8rem, 30vw, 14rem); } table.pin-cap.pin-r16 { --pin-col: clamp(8rem, 30vw, 16rem); }
+table.pin-cap.pin-r18 { --pin-col: clamp(8rem, 30vw, 18rem); } table.pin-cap.pin-r20 { --pin-col: clamp(8rem, 30vw, 20rem); }
+/* Row guides: table.zebra tints even body rows, table.rowhover the row under the pointer. The tints are opaque
+   palette tokens and reach every cell of the row, sticky cells included, so a pinned cell keeps the row's colour
+   and scrolled content never shows through. No transition. */
+table.zebra tbody tr:nth-child(even) > * { background: var(--row-tint); }
+table.rowhover tbody tr:hover > * { background: var(--row-hover); }
+/* Column highlight (matrix.js, data-col-highlight on the table): every cell of the hovered or focused column. */
+table.matrix tr > :is(th, td).colhl { background: var(--row-hover); }
+/* An empty cell: the word stays in the cell, centred, in muted text (4.5:1 on every surface and row tint). */
+table td.na { color: var(--text-muted); text-align: center; }
+/* Heat shading: td[data-heat="0"] to "4" in a matrix, 5 steps per site and scheme from palettes.css. The count stays
+   printed; the cell's own text is --text (links keep --link), the colours each step is checked against. A heat
+   cell keeps its step under the row and column tints. */
+table.matrix tbody tr > td[data-heat], table.matrix tbody tr > td[data-heat] :is(.sub, .n) { color: var(--text); }
+table.matrix tbody tr > td[data-heat="0"], .tag[data-heat="0"] { background: var(--heat-0); }
+table.matrix tbody tr > td[data-heat="1"], .tag[data-heat="1"] { background: var(--heat-1); }
+table.matrix tbody tr > td[data-heat="2"], .tag[data-heat="2"] { background: var(--heat-2); }
+table.matrix tbody tr > td[data-heat="3"], .tag[data-heat="3"] { background: var(--heat-3); }
+table.matrix tbody tr > td[data-heat="4"], .tag[data-heat="4"] { background: var(--heat-4); }
+/* The heat legend: <ul class="chips heat-legend"> of .tag swatches, each with its step's words. */
+ul.chips.heat-legend { align-items: center; padding-left: 0; }
+.heat-legend .tag { color: var(--text); border-color: var(--rule-strong); }
+/* Rotated column headers: th.rot sets the header text vertically, read from the bottom up, capped at 11rem (it
+   wraps to a 2nd line beyond that). The text is unchanged, so screen readers read it as written. */
+table th.rot { writing-mode: vertical-rl; white-space: normal; max-height: 11rem; text-align: left; vertical-align: bottom; padding: 0.6rem 0.4rem 0.6rem 0; }
+@supports (writing-mode: sideways-lr) { table th.rot { writing-mode: sideways-lr; } }
+table.matrix th.rot .org, table.matrix th.rot .grp { margin: 0 0 0 0.15rem; }
+/* Column groups: a tag line naming the group (.grp) under the heading and a 3px accent under the header cell
+   (th[data-grp="1"] to "6", the family's 6 hues made text-safe on each site). The group is named in text; the
+   colour only reinforces it. */
+table.matrix th .grp { display: block; font: 600 0.62rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; margin-top: 0.2rem; }
+table.matrix thead th[data-grp="1"] { border-bottom: 3px solid var(--grp-1); } table.matrix thead th[data-grp="1"] .grp { color: var(--grp-1); }
+table.matrix thead th[data-grp="2"] { border-bottom: 3px solid var(--grp-2); } table.matrix thead th[data-grp="2"] .grp { color: var(--grp-2); }
+table.matrix thead th[data-grp="3"] { border-bottom: 3px solid var(--grp-3); } table.matrix thead th[data-grp="3"] .grp { color: var(--grp-3); }
+table.matrix thead th[data-grp="4"] { border-bottom: 3px solid var(--grp-4); } table.matrix thead th[data-grp="4"] .grp { color: var(--grp-4); }
+table.matrix thead th[data-grp="5"] { border-bottom: 3px solid var(--grp-5); } table.matrix thead th[data-grp="5"] .grp { color: var(--grp-5); }
+table.matrix thead th[data-grp="6"] { border-bottom: 3px solid var(--grp-6); } table.matrix thead th[data-grp="6"] .grp { color: var(--grp-6); }
+/* Column toggles (matrix.js): groups of chips as buttons, hidden until the script reveals them. */
+.matrix-toggles { margin: 0 0 0.8rem; }
+.matrix-toggles .lbl { margin: 0 0 0.4rem; }
+.matrix-toggles .chips { margin: 0 0 0.8rem; }
+
 /* Definition lists: tracked dt, serif dd */
 dl.record { margin: 0; }
 dl.record dt { font: 500 0.68rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); margin: 0 0 0.15rem; }
@@ -366,6 +429,11 @@ dl.record.cols div { break-inside: avoid; }
 .chips button:hover { color: var(--text); border-color: var(--text); }
 .chips [aria-pressed="true"], .chips [aria-current="true"] { color: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .plan li[hidden] { display: none; }
+/* A chip that would show no documents (from 1.7.0, search.js with data-filter-empty="disable"): aria-disabled="true",
+   still focusable. A dashed border in place of the solid one and the not-allowed cursor, with no hover change; the
+   text and border keep the chip's colours (--text-muted, --rule-strong), with no fading and no transition. */
+.chips a[aria-disabled="true"], .chips button[aria-disabled="true"] { border-style: dashed; cursor: not-allowed; }
+.chips a[aria-disabled="true"]:hover, .chips button[aria-disabled="true"]:hover { color: var(--text-muted); border-color: var(--rule-strong); }
 
 /* Diagram: 3 rounded nodes, currentColor strokes, brand-coloured arrows */
 .figure { margin: 0.4rem 0 1.6rem; }
@@ -397,6 +465,13 @@ dl.record.cols div { break-inside: avoid; }
 .region .about a { color: var(--text-muted); text-decoration: none; }
 .region .about a:hover { color: var(--text); }
 .region .about .dot { padding: 0 0.5rem; }
+/* From 1.7.0 the markup has 1 space after each dot, so the line breaks only after a dot; the dot's right padding
+   gives up the space's width (0.36em: the space and its 0.12em tracking in Public Sans), so the gaps either side
+   of a dot are equal. */
+.region .about .dot { padding-right: calc(0.5rem - 0.36em); }
+/* A safety net for pages still on the older markup, whose links and dots touch: it lets the line break inside a word, which happens
+   only when nothing else fits (at 320 px the older line was 379 px wide). */
+.region .about { overflow-wrap: anywhere; }
 
 /* Family footer: 1 bar at the content width. The 6 project cards, current site first, on the rotated
    spectrum; then the GitHub, LinkedIn and ORCID tiles under a grey tail of the band; then the signature tile as the
@@ -667,4 +742,20 @@ mark.marker { color: inherit; padding: 0 0.08em; background: linear-gradient(tra
 @supports not (container-type: inline-size) {
   .family .bar { flex-wrap: wrap; }
   .family .cards { flex: 1 1 100%; flex-wrap: wrap; }
+}
+
+/* Matrix tables on paper (from 1.7.0): the whole matrix prints. The bounded box loses its height cap and its inner
+   scroll, sticky cells stay in place, the header row repeats on each page, the column controls are hidden, and every
+   cell is black text on white, with no tint or heat. table.matrix.matrix doubles the class so that these rules
+   outrank the heat steps and the group tags; the preset selectors name the contexts whose display rules they
+   must outrank. */
+@media print {
+  .tablewrap:has(> table.matrix) { max-height: none; overflow: visible; }
+  table.matrix.sticky thead th, table.matrix.sticky-col :is(th, td):first-child { position: static; }
+  table.matrix thead { display: table-header-group; }
+  table.matrix tr { break-inside: avoid; }
+  [data-col-toggles], .lrail li [data-preset], .chips [data-preset], [data-preset] { display: none; }
+  table.matrix.matrix :is(thead, tbody) tr > :is(th, td) { background: var(--print-paper); color: var(--print-ink); }
+  table.matrix.matrix :is(thead, tbody) tr > :is(th, td) :is(a, code, .org, .grp, .sub, .n) { color: var(--print-ink); background: var(--print-paper); }
+  .heat-legend .tag { background: var(--print-paper); color: var(--print-ink); }
 }
