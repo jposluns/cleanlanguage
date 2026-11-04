@@ -72,10 +72,19 @@ that is not ``YYYY-MM-DD``; a page without exactly 1 light and dark switch
 each of which ``scheme.js`` wires and shows), without exactly 1 ``scheme.js``
 script tag before the first stylesheet, it and every stylesheet inside
 ``<head>``, or with any other ``<svg``; a page source, the landing page's
-included, with an ``html``, ``head`` or ``body`` start tag, read as the parser
-reads it (in any letter case, self-closing or inside any element), since the
-generator writes the page's html, head and body and HTML5 copies a stray
-one's attributes onto them; a page source, the landing page's included, with
+included, with an ``html``, ``head``, ``body`` or ``frameset`` start tag, read
+as the parser reads it (in any letter case, self-closing or inside any element
+whose content the parser reads as markup, so not inside a raw-text or
+escapable raw-text element such as ``script``, ``style``, ``title`` or
+``textarea``), since the generator writes the page's html, head and body:
+HTML5 copies a stray html or body start tag's attributes onto the page's own,
+a stray head is refused because the generator writes the head, and
+``tools/check-install-page.py`` reads a frameset start tag as hiding the whole
+page; a page source with ``<math`` in any letter case, since inside
+``<math>``, as inside ``<svg>`` (refused above), a browser reads a ``title``,
+``textarea``, ``script`` or ``style`` element's content as markup, which the
+parser reads as text (``tools/check-inline-code.py`` refuses any ``math``
+element too); a page source, the landing page's included, with
 an element whose class names include ``about``, since the generator writes
 the About block of template specification 7.24 (baseline 1.7.0) itself; a
 landing page source without exactly 1 ``p.value``, or with that ``p.value``
@@ -183,7 +192,6 @@ from __future__ import annotations
 import argparse
 import functools
 import hashlib
-import importlib.util
 import tomllib
 import html
 import json
@@ -191,6 +199,7 @@ import os
 import re
 import stat
 import sys
+import types
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -752,14 +761,24 @@ def substitute(text: str, values: dict, where: str) -> str:
 
 @functools.cache
 def install_gate():
-    """tools/check-install-page.py, beside this tool, loaded as a module, so that the value paragraph rule reads an
-    element as hidden exactly as that gate's is_hiding_element() does."""
+    """tools/check-install-page.py, beside this tool, read, compiled and run as a fresh module, so that the value
+    paragraph rule reads an element as hidden exactly as that gate's is_hiding_element() does. The source is always
+    read, so no cached bytecode stands in for it; a source that cannot be read, compiled or run, or that defines no
+    is_hiding_element(), is an input that cannot be read or is malformed (exit 3)."""
     path = Path(__file__).resolve().parent / "check-install-page.py"
-    spec = importlib.util.spec_from_file_location("check_install_page", path)
-    if not path.is_file() or spec is None or spec.loader is None:
-        raise Unreadable(f"tools/{path.name}, whose hiding reader the value paragraph rule applies, could not be loaded")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    where = f"tools/{path.name}, whose hiding reader the value paragraph rule applies,"
+    try:
+        source = path.read_bytes()
+    except OSError as error:
+        raise Unreadable(f"{where} could not be read: {error}") from error
+    module = types.ModuleType("check_install_page")
+    module.__file__ = str(path)
+    try:
+        exec(compile(source, str(path), "exec", dont_inherit=True), module.__dict__)
+    except (Exception, SystemExit) as error:
+        raise Unreadable(f"{where} could not be loaded: {error!r}") from error
+    if not callable(getattr(module, "is_hiding_element", None)):
+        raise Unreadable(f"{where} defines no is_hiding_element()")
     return module
 
 
@@ -770,9 +789,9 @@ class PageScan(HTMLParser):
     meta and id, and of each element start validate() requires, the element starts hidden by themselves or by an
     ancestor as tools/check-install-page.py reads hiding (its is_hiding_element(), and a details without open, which
     shows only its first summary child), where each value paragraph starts and where the region of the first one
-    ends, where each element whose classes include about starts, where each html, head and body start tag is, and
-    where the page's body starts. validate() also pins the markup from <body> to the end of header.mast, and the
-    landing page's About block; --check compares the committed pages with a build that passed it."""
+    ends, where each element whose classes include about starts, where each html, head, body and frameset start tag
+    is, and where the page's body starts. validate() also pins the markup from <body> to the end of header.mast, and
+    the landing page's About block; --check compares the committed pages with a build that passed it."""
 
     def __init__(self, switch_at: tuple[int, int] | None = None) -> None:
         super().__init__(convert_charrefs=True)
@@ -806,8 +825,8 @@ class PageScan(HTMLParser):
         # Where each element whose classes include about starts, inside an element of INERT_TAGS or not: on the
         # landing page, the row of the About block the generator writes; anywhere else, About markup.
         self.about_classes: list[tuple[int, int]] = []
-        # Each html, head and body start tag and where it starts: in a page source, which the generator wraps in its
-        # own, a stray one.
+        # Each html, head, body and frameset start tag and where it starts: in a page source, which the generator
+        # wraps in its own html, head and body, a stray one.
         self.document_tags: list[tuple[str, tuple[int, int]]] = []
         # Where each element hidden by itself or by an open ancestor starts, as tools/check-install-page.py reads
         # hiding; the depth in open of each such ancestor; and, for each open details without open, by its depth,
@@ -843,7 +862,7 @@ class PageScan(HTMLParser):
         classes = [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
         if "about" in classes:
             self.about_classes.append(self.getpos())
-        if tag in ("html", "head", "body"):
+        if tag in ("html", "head", "body", "frameset"):
             self.document_tags.append((tag, self.getpos()))
         if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
                 and self.previous is not None and self.previous[0] == "head"):
@@ -1003,8 +1022,12 @@ def about_block(base: str) -> str:
 
 def with_about(content: str, page: dict, base: str) -> str:
     """A page's content with, on the landing page only, the About block of specification 7.24 written in directly
-    after the end tag of the value paragraph's region. It refuses a source with an html, head or body start tag
-    (the generator writes the page's own, and HTML5 copies a stray one's attributes onto them), a source with an
+    after the end tag of the value paragraph's region. It refuses a source with an html, head, body or frameset start
+    tag that the parser reads as markup (the generator writes the page's html, head and body: HTML5 copies a stray
+    html or body start tag's attributes onto the page's own, a stray head is refused because the generator writes
+    the head, and tools/check-install-page.py reads a frameset start tag as hiding the whole page), a source with
+    <math in any letter case (inside math, a browser reads a title, textarea, script or style element's content as
+    markup, which the parser reads as text; validate() refuses svg, the other such element), a source with an
     element whose classes include about, and a landing page source without exactly 1 p.value, with that p.value
     inside an element of INERT_TAGS, hidden by itself or by an ancestor as tools/check-install-page.py reads hiding,
     or with no div.region among its ancestors."""
@@ -1014,7 +1037,10 @@ def with_about(content: str, page: dict, base: str) -> str:
     scan.close()
     if scan.document_tags:
         raise BuildError(f"{where}: a stray <{scan.document_tags[0][0]}> start tag; the generator writes the page's html, "
-                         "head and body, and HTML5 copies a stray one's attributes onto them")
+                         "head and body, so a page source may carry none of them, nor a frameset")
+    if re.search(r"<math", content, re.I):
+        raise BuildError(f"{where}: a <math> element; inside one, a browser reads a title, textarea, script or style "
+                         "element's content as markup, which the parser reads as text")
     if scan.about_classes:
         raise BuildError(f"{where}: an element whose classes include about; the generator writes the About block of "
                          "specification 7.24 itself, on the landing page only")

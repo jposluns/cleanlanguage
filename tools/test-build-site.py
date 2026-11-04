@@ -16,6 +16,7 @@ import hashlib
 import html
 import importlib.util
 import json
+import py_compile
 import re
 import shutil
 import subprocess
@@ -347,8 +348,10 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     its row the only parsed element whose classes include about; on any other page, no such element, with an INERT
     ancestor or not. Like the generator's rule, it reads LABEL only as part of the block, so LABEL elsewhere passes,
     and it does not model a stylesheet beyond the install gate's HIDING_CLASSES, or a hidden attribute that HTML5
-    copies from a stray body or html start tag onto the page's body or html element, which the generator refuses in
-    every page source."""
+    copies from a stray body or html start tag onto the page's body or html element. The generator refuses such a
+    start tag in a page source wherever its parser reads markup; it does not scan the content of a raw-text or
+    escapable raw-text element (script, style, title, textarea), which a browser reads as markup only inside math
+    or svg, and it refuses any <math in a page source and any <svg other than the switch in a page."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
@@ -515,8 +518,11 @@ CLASS_RULE = "an element whose classes include about; the generator writes the A
 VALUE_RULE = "the landing page source must carry exactly 1 p.value"
 REGION_RULE = "the value paragraph has no enclosing div.region"
 # The generator writes each page's html, head and body, so a page source may carry none: HTML5 copies the attributes
-# of a stray html or body start tag, such as hidden, onto the page's own.
+# of a stray html or body start tag, such as hidden, onto the page's own. Nor may it carry a frameset start tag, which
+# tools/check-install-page.py reads as hiding the whole page.
 DOCUMENT_RULE = "the generator writes the page's html, head and body"
+# Inside math a browser reads a title or textarea as markup, which the generator's parser reads as text.
+MATH_RULE = "a <math> element; inside one, a browser reads"
 VALUE = '<p class="value">'
 VALUE_REGION = '<div class="region" id="what-it-fixes">'
 VALUE_END = "outside its aim.</p></div></div>"
@@ -540,6 +546,8 @@ SHOWING_WRAPPERS = [
     ("a details with open", "<details open>", "</details>"),
     ("a div with the vh-x class", '<div class="vh-x">', "</div>"),
     ("the first summary of a details without open", "<details><summary>", "</summary></details>"),
+    # A details without open stops hiding at its end tag: a div after one, and the value paragraph in it, show.
+    ("a div after a closed details without open", "<details><summary></summary></details><div>", "</div>"),
 ]
 
 
@@ -605,6 +613,13 @@ SOURCE_REFUSALS = [
     ("a self-closing body start tag in a page source", inject("<body/>"), DOCUMENT_RULE),
     ("a body start tag inside noscript in a page source", inject("<noscript><body hidden></noscript>"), DOCUMENT_RULE),
     ("an html start tag after the value paragraph's region in home.html", after_value("<html hidden>"), DOCUMENT_RULE),
+    ("a frameset element in a page source", inject("<frameset></frameset>"), DOCUMENT_RULE),
+    ("a frameset start tag in upper case in a page source", inject("<FRAMESET>"), DOCUMENT_RULE),
+    ("a body start tag inside a math title in a page source", inject("<math><title><body hidden></title></math>"),
+        MATH_RULE),
+    ("a body start tag inside a math textarea in a page source",
+        inject("<math><textarea><body hidden></textarea></math>"), MATH_RULE),
+    ("a math element in upper case in a page source", inject("<MATH></MATH>"), MATH_RULE),
 ] + [(f"the value paragraph inside {name}", wrap_value(start, end), VALUE_RULE) for name, start, end in HIDING_WRAPPERS]
 
 
@@ -619,6 +634,19 @@ def check_source_refusals(failures: list[str]) -> int:
                 failures.append(f"source refusal '{name}': exit {result.returncode}, expected 1 with {rule!r} "
                                 f"({result.stderr.strip()[:200]})")
     return len(SOURCE_REFUSALS)
+
+
+def check_source_passes(failures: list[str]) -> int:
+    """Each wrapper of SHOWING_WRAPPERS around the landing page source's value paragraph builds."""
+    for name, start, end in SHOWING_WRAPPERS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            wrap_value(start, end)(root)
+            result = run(root, "--out", str(Path(scratch) / "out"))
+            if result.returncode != 0:
+                failures.append(f"source pass 'the value paragraph inside {name}': exit {result.returncode}, "
+                                f"expected 0 ({result.stderr.strip()[:200]})")
+    return len(SHOWING_WRAPPERS)
 
 
 def check_refusals(failures: list[str]) -> int:
@@ -1055,6 +1083,51 @@ def check_unreadable(failures: list[str]) -> int:
     return ran
 
 
+def check_unreadable_reader(failures: list[str]) -> int:
+    """A copy of the generator, beside a check-install-page.py that is missing, unreadable (with a cache of its
+    bytecode or without), not Python, or without is_hiding_element(), exits 3: the hiding reader is an input. A
+    reader that this test cannot make unreadable, as when it runs as root, fails the case rather than skipping it."""
+    def unreadable(cache: bool):
+        def apply(reader: Path) -> None:
+            if cache:
+                # A timestamp cache, which an import trusts on the source's size and mtime alone, without reading it.
+                py_compile.compile(str(reader), doraise=True,
+                                   invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+                if not Path(importlib.util.cache_from_source(str(reader))).is_file():
+                    raise AssertionError("no bytecode cache was written")
+            reader.chmod(0)
+            try:
+                reader.read_bytes()
+            except PermissionError:
+                return
+            raise AssertionError("the reader is still readable after chmod 0 (running as root?)")
+        return apply
+
+    cases = [
+        ("a missing reader", lambda reader: reader.unlink()),
+        ("an unreadable reader with a cache of its bytecode", unreadable(True)),
+        ("an unreadable reader without a cache", unreadable(False)),
+        ("a reader with a syntax error", lambda reader: reader.write_bytes(b"def is_hiding_element(:\n")),
+        ("a reader without is_hiding_element()", lambda reader: reader.write_bytes(b"HIDING_CLASSES = ()\n")),
+    ]
+    for name, fault in cases:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            generator = root / "tools" / GENERATOR.name
+            shutil.copyfile(GENERATOR, generator)
+            try:
+                fault(root / "tools" / "check-install-page.py")
+            except (AssertionError, OSError, py_compile.PyCompileError) as error:
+                failures.append(f"unreadable reader '{name}': the fault could not be made ({error})")
+                continue
+            result = subprocess.run([sys.executable, "-I", str(generator), "--root", str(root), "--out",
+                                     str(Path(scratch) / "out")], capture_output=True, text=True)
+            if result.returncode != 3 or "whose hiding reader" not in result.stderr:
+                failures.append(f"unreadable reader '{name}': exit {result.returncode}, expected 3 "
+                                f"({result.stderr.strip()[:200]})")
+    return len(cases)
+
+
 def check_clean_build(failures: list[str]) -> int:
     with tempfile.TemporaryDirectory() as scratch:
         root = make_root(Path(scratch))
@@ -1324,7 +1397,9 @@ def main() -> int:
                         "of check-install-page.py's HIDING_ELEMENTS")
     ran += check_refusals(failures)
     ran += check_source_refusals(failures)
+    ran += check_source_passes(failures)
     ran += check_unreadable(failures)
+    ran += check_unreadable_reader(failures)
     ran += check_scheme_validation(failures)
     ran += check_inert_validation(failures)
     ran += check_inner_about_rows(failures)
