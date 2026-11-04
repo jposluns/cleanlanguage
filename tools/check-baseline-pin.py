@@ -55,17 +55,27 @@ What it verifies
    subsection's lines count, and its lines other than blank ones are compared
    byte for byte with the entry. Since the rendering can differ from the
    lines, the file also fails if any other line reads as that heading once
-   trailing whitespace is stripped and case folded, or if a line of the
-   section holds an HTML comment opener (``<!--``) or a code fence (3
-   backticks or 3 tildes). Nothing else about the rendering is checked: a
-   comment or fence that opens before the section, or another line that
-   renders as the heading in another form, such as indented, closed with
-   ``#`` or underlined, is not refused. The README's step 7 is every line
-   after its step line up to the next unindented numbered step or the next
-   heading outside the step, and must hold exactly 1 quoted line, the entry,
-   as its first line other than blank ones. The README is read only when it
-   matches its digest, and a README that holds a carriage return anywhere is
-   refused (exit 3).
+   trailing whitespace is stripped and case folded, or if any line of the
+   file, in the section or not, holds an HTML comment opener (``<!--``) or
+   is a code fence line: up to 3 spaces, then 3 or more backticks or tildes.
+   Nothing else about the rendering is checked: a fence after a list or
+   quote marker, or another line that renders as the heading in another
+   form, such as indented, closed with ``#`` or underlined, is not refused
+   as such. The README's step 7 is every line after its step line up to the
+   first line that ``STEP_END`` matches: 1 or more digits, ``.`` and a
+   space, with no indent, or up to 2 spaces, 1 to 6 ``#``, then a space, a
+   tab or the end of the line. It must hold exactly 1 quoted line, the
+   entry, as its first line other than blank ones, with a blank line or the
+   step's end directly after it, and no ``<blockquote`` in any letter case.
+   A quoted line starts with ``>`` after leading whitespace and any list
+   markers (``-``, ``+``, ``*``, or 1 to 9 digits and ``.`` or ``)``, each
+   followed by whitespace), such as ``> x``, ``- > x`` or ``1. > x``. A step
+   or heading in any other form does not end the step: the lines after it,
+   up to a line that ``STEP_END`` matches, are read as part of step 7, so
+   the README fails closed (exit 3) if they hold a quoted line or a
+   ``<blockquote``, or if that form's line directly follows the entry. The
+   README is read only when it matches its digest, and a README that holds
+   a carriage return anywhere is refused (exit 3).
 
 Every folder is listed with ``os.scandir``, so a folder or file that cannot be
 read fails closed (exit 3) rather than reading as empty.
@@ -86,10 +96,10 @@ Exit codes:
   1  a file drifted, is missing, is extra, or disagrees with SHA256SUMS; the
      pin's version is not the README's; or NOTICE.md's Site template entry
      is not the one the README prescribes, or NOTICE.md has another line that
-     reads as its heading or a comment opener or code fence in the section
+     reads as its heading, or a comment opener or code fence line anywhere
   3  the pin or a file could not be read, the pin is malformed, or the README
-     lacks its version heading or its step 7 NOTICE entry, or holds a carriage
-     return
+     lacks its version heading or a step 7 NOTICE entry in the form item 7
+     gives, or holds a carriage return
 """
 
 from __future__ import annotations
@@ -117,16 +127,21 @@ NOTICE = Path("NOTICE.md")
 DOCUMENTS = ("README.md", "SPECIFICATION.md")
 README_HEADING = re.compile(r"^# Baseline ([0-9]+\.[0-9]+\.[0-9]+): ")
 # The README's "Adoption in a repository" step 7 and the prefix of its quoted NOTICE entry, read by notice_entry(),
-# which tools/copy-baseline.py loads from here; the step ends at the next unindented numbered step or the next heading
-# outside it: up to 2 spaces, 1 to 6 "#", then a space, a tab or the end of the line. The entry's section in NOTICE.md,
-# which only a heading of the same or a higher level ends: up to 3 spaces, 1 or 2 "#", then a space, a tab or the end
-# of the line; a line of it may hold none of HIDING, an HTML comment opener and the 2 code fences.
+# which tools/copy-baseline.py loads from here; the step ends at its first line that STEP_END matches: 1 or more
+# digits, "." and a space, with no indent, or up to 2 spaces, 1 to 6 "#", then a space, a tab or the end of the line.
+# A QUOTED line starts with ">" after leading whitespace and any list markers; BLOCKQUOTE is the HTML form. The entry's
+# section in NOTICE.md, which only a heading of the same or a higher level ends: up to 3 spaces, 1 or 2 "#", then a
+# space, a tab or the end of the line. No line of NOTICE.md may hold COMMENT, an HTML comment opener, or match FENCE,
+# a code fence line: up to 3 spaces, then 3 or more backticks or tildes.
 NOTICE_STEP = "7. Add this entry to the repository's NOTICE:"
 STEP_END = re.compile(r"^(?:[0-9]+\. | {0,2}#{1,6}(?:[ \t]|$))")
+QUOTED = re.compile(r"^\s*(?:(?:[-+*]|[0-9]{1,9}[.)])\s+)*>")
+BLOCKQUOTE = re.compile(r"<blockquote", re.IGNORECASE)
 ENTRY_PREFIX = "   > "
 NOTICE_SECTION = "## Site template"
 SECTION_END = re.compile(r"^ {0,3}#{1,2}(?:[ \t]|$)")
-HIDING = ("<!--", "```", "~~~")
+COMMENT = "<!--"
+FENCE = re.compile(r"^ {0,3}(?:`{3}|~{3})")
 PREFIX = "assets/baseline/"
 # The pinned build tool: its key in the pin, from the repository root, and its name in SHA256SUMS.
 TOOLS = {".baseline/check_palette.py": "tools/check_palette.py"}
@@ -217,8 +232,9 @@ def list_tree(directory: Path) -> list[str]:
 
 def notice_entry(readme: str) -> str | None:
     """The NOTICE entry of the README's step 7, or None unless the step, every line after the step line up to
-    STEP_END, holds exactly 1 quoted line, its first line other than blank ones, holding <version> once, and the
-    README holds no carriage return, so an entry line that alone ends in CRLF is refused too."""
+    STEP_END, holds exactly 1 QUOTED line, its first line other than blank ones, holding <version> once, with a
+    blank line or the step's end directly after it, and no BLOCKQUOTE, and the README holds no carriage return, so
+    an entry line that alone ends in CRLF is refused too."""
     if "\r" in readme:
         return None
     lines = readme.split("\n")
@@ -227,12 +243,14 @@ def notice_entry(readme: str) -> str | None:
         return None
     rest = lines[steps[0] + 1:]
     rest = rest[:next((number for number, line in enumerate(rest) if STEP_END.match(line)), len(rest))]
-    quoted = [number for number, line in enumerate(rest) if line.lstrip().startswith(">")]
-    first = next((number for number, line in enumerate(rest) if line.strip()), None)
-    if (len(quoted) != 1 or quoted[0] != first or not rest[first].startswith(ENTRY_PREFIX)
-            or rest[first].count("<version>") != 1):
+    quoted = [number for number, line in enumerate(rest) if QUOTED.match(line)]
+    if len(quoted) != 1 or any(BLOCKQUOTE.search(line) for line in rest):
         return None
-    return rest[first][len(ENTRY_PREFIX):]
+    entry = quoted[0]
+    if (any(line.strip() for line in rest[:entry]) or any(line.strip() for line in rest[entry + 1:entry + 2])
+            or not rest[entry].startswith(ENTRY_PREFIX) or rest[entry].count("<version>") != 1):
+        return None
+    return rest[entry][len(ENTRY_PREFIX):]
 
 
 def document_problems(root: Path, version: str, published: dict[str, str]) -> list[str]:
@@ -265,7 +283,9 @@ def document_problems(root: Path, version: str, published: dict[str, str]) -> li
     entry = notice_entry(readme)
     if entry is None:
         raise Unreadable(f"{PIN.parent / 'README.md'} holds a carriage return or has no step 7 "
-                         f"{NOTICE_STEP[len('7. '):]!r} with 1 quoted entry holding <version> once")
+                         f"{NOTICE_STEP[len('7. '):]!r} that opens with its 1 quoted line, the entry, starting "
+                         f"{ENTRY_PREFIX!r} and holding <version> once, followed by a blank line or the step's end, "
+                         "and holds no '<blockquote'")
     try:
         lines = read_bytes(root / NOTICE).decode("utf-8").split("\n")
     except UnicodeError as error:
@@ -280,17 +300,16 @@ def document_problems(root: Path, version: str, published: dict[str, str]) -> li
                         "once trailing whitespace is stripped and case folded; the gate compares lines, not the "
                         "rendering.")
         return problems
-    section, hiding = [], False
+    if any(COMMENT in line or FENCE.match(line) for line in lines):
+        problems.append(f"{NOTICE} holds an HTML comment opener or a code fence line, which can hide lines from the "
+                        "rendering; the gate compares lines, not the rendering.")
+        return problems
+    section = []
     for line in lines[start + 1:]:
         if SECTION_END.match(line):
             break
-        hiding = hiding or any(marker in line for marker in HIDING)
         if line.strip():
             section.append(line)
-    if hiding:
-        problems.append(f"{NOTICE}'s {NOTICE_SECTION!r} section holds an HTML comment opener or a code fence, which "
-                        "can hide lines from the rendering; the gate compares lines, not the rendering.")
-        return problems
     if section != [entry.replace("<version>", version)]:
         problems.append(f"{NOTICE}'s {NOTICE_SECTION!r} section is not exactly the entry the baseline README's step 7 "
                         f"prescribes for baseline {version}.")

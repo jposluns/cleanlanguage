@@ -319,6 +319,41 @@ def fault_notice_tilde_fence(root: Path) -> None:
     edit_file(root / "NOTICE.md", "with 2 exceptions.\n", "with 2 exceptions.\n\n~~~\nA 3rd exception: x.\n~~~\n")
 
 
+def fault_notice_lookalike_other_case(root: Path) -> None:
+    # The heading in another letter case, after the section, with its other entry.
+    edit_file(root / "NOTICE.md", "## Other\n\nx\n",
+              "## Other\n\nx\n\n## Site Template\n\nSite template: baseline 1.2.1, with 3 exceptions.\n")
+
+
+def fault_notice_comment_before_section(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "# Notice\n", "# Notice\n\n<!-- x\n")
+
+
+def fault_notice_fence_after_section(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "## Other\n\nx\n", "## Other\n\n   ~~~~\nx\n   ~~~~\n")
+
+
+def fault_readme_list_item_quote(root: Path) -> None:
+    edit_readme(root, b"exceptions.\n\n8.", b"exceptions.\n\n   - > A 3rd exception: x.\n\n8.")
+
+
+def fault_readme_numbered_item_quote(root: Path) -> None:
+    edit_readme(root, b"exceptions.\n\n8.", b"exceptions.\n\n   1. > A 3rd exception: x.\n\n8.")
+
+
+def fault_readme_blockquote(root: Path) -> None:
+    edit_readme(root, b"exceptions.\n\n8.", b"exceptions.\n\n   <BLOCKQUOTE>A 3rd exception.</BLOCKQUOTE>\n\n8.")
+
+
+def fault_readme_lazy_continuation(root: Path) -> None:
+    # The line continues the entry's quoted paragraph, so the rendered entry is longer than its line.
+    edit_readme(root, b"exceptions.\n\n8.", b"exceptions.\nA 3rd exception: x.\n\n8.")
+
+
+def fault_readme_text_before_entry(root: Path) -> None:
+    edit_readme(root, b"NOTICE:\n\n   > ", b"NOTICE:\n\n   First, a line of text.\n\n   > ")
+
+
 # Valid level 1 or 2 headings that end the Site template section, so the lines after them are not compared: the
 # clean NOTICE.md's "## Other" in another form.
 def end_tab(root: Path) -> None:
@@ -372,6 +407,12 @@ CASES = [
         "an HTML comment opener or a code fence"),
     ("a ~~~ fence in the Site template section", fault_notice_tilde_fence, 1,
         "an HTML comment opener or a code fence"),
+    ("a '## Site Template' heading in another letter case after the section", fault_notice_lookalike_other_case, 1,
+        "reads as that heading"),
+    ("an HTML comment opener before the Site template section", fault_notice_comment_before_section, 1,
+        "an HTML comment opener or a code fence"),
+    ("a ~~~~ fence indented 3 spaces after the Site template section", fault_notice_fence_after_section, 1,
+        "an HTML comment opener or a code fence"),
     ("a README with a quoted line in step 8, outside step 7", readme_quote_in_step_8, 0),
     ("the Site template section ended by a level 2 heading with a tab", end_tab, 0),
     ("the Site template section ended by a bare ##", end_bare_level_2, 0),
@@ -393,6 +434,11 @@ CASES = [
     ("a README with CRLF line ends", fault_readme_crlf, 3),
     ("a README whose step 7 holds a second, blank-separated quoted paragraph", fault_readme_second_quote, 3),
     ("a README with CRLF only on its step 7 entry line", fault_readme_entry_crlf, 3),
+    ("a README whose step 7 holds a list item that is a quote", fault_readme_list_item_quote, 3),
+    ("a README whose step 7 holds a numbered list item that is a quote", fault_readme_numbered_item_quote, 3),
+    ("a README whose step 7 holds a <BLOCKQUOTE>", fault_readme_blockquote, 3),
+    ("a README whose step 7 entry has a line directly after it", fault_readme_lazy_continuation, 3),
+    ("a README whose step 7 holds a line of text before the entry", fault_readme_text_before_entry, 3),
     ("the copied specification is missing", fault_spec_missing, 3),
     ("NOTICE.md is missing", fault_notice_missing, 3),
 ]

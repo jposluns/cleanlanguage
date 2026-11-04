@@ -107,8 +107,9 @@ def sha256(path: Path) -> str:
 
 
 def load_gate():
-    """tools/check-baseline-pin.py as a module, for its notice_entry() and NOTICE_STEP. The gate's tomllib guard
-    exits on Python older than 3.11; its message is dropped and this tool reports the floor in its own words."""
+    """tools/check-baseline-pin.py as a module, for its notice_entry(), NOTICE_STEP and ENTRY_PREFIX. The gate's
+    tomllib guard exits on Python older than 3.11; its message is dropped and this tool reports the floor in its own
+    words."""
     try:
         spec = importlib.util.spec_from_file_location("check_baseline_pin", GATE)
         module = importlib.util.module_from_spec(spec)
@@ -217,7 +218,8 @@ def main() -> int:
     gate = load_gate()
     if gate.notice_entry(readme) is None:
         die(1, f"README.md holds a carriage return or has no step 7 {gate.NOTICE_STEP[len('7. '):]!r} "
-               "with 1 quoted entry holding <version> once")
+               f"that opens with its 1 quoted line, the entry, starting {gate.ENTRY_PREFIX!r} and holding "
+               "<version> once, followed by a blank line or the step's end, and holds no '<blockquote'")
 
     chosen = sorted(name for name in listed if wanted(name))
     dest = output_root() / PREFIX
