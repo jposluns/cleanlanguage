@@ -97,8 +97,9 @@ hidden (``inert``, ``aria-hidden="true"``, ``popover``, a ``dialog`` or
 stylesheet, so a value paragraph hidden only by one of those passes them and
 the block follows it; nor markup inside an element whose content Python's
 parser reads as text (``script`` and ``style``, and, depending on the Python
-version, other raw-text and RCDATA elements such as ``textarea``). The
-switch, its place and the
+version, other raw-text and RCDATA elements such as ``textarea``); nor a
+``hidden`` attribute that HTML5 copies from a stray ``<body>`` or ``<html>``
+start tag onto the page's body or html element. The switch, its place and the
 head are read as parsed elements: each element with ``data-scheme-toggle`` (an
 attribute name in any letter case), the switch's parent, the element before it
 and the end of its parent, and ``html > head``, the first head or body the page

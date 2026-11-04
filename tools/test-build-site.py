@@ -287,8 +287,9 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     starting where the end tag of that paragraph's region (the div.region nearest it among its open elements) ends,
     its row the only parsed element whose classes include about; on any other page, no such element, with an INERT
     ancestor or not. Like the generator's rule, it reads LABEL only as part of the block, so LABEL elsewhere passes,
-    and it does not model inert, aria-hidden, popover, a dialog or details without open, a hiding class or a
-    stylesheet."""
+    and it does not model inert, aria-hidden, popover, a dialog or details without open, a hiding class, a
+    stylesheet or a hidden attribute that HTML5 copies from a stray body or html start tag onto the page's body or
+    html element."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
@@ -674,7 +675,7 @@ def check_inert_validation(failures: list[str]) -> int:
     for name, page_id, old, new, passes in cases:
         page_html = texts[page_id] if old is None else texts[page_id].replace(old, new, 1)
         if old is not None and old not in texts[page_id]:
-            failures.append(f"inert validation '{name}': {old!r} is not in site/{page_id}/index.html")
+            failures.append(f"inert validation '{name}': {old!r} is not in site/{'' if page_id == 'home' else page_id + '/'}index.html")
         try:
             generator.validate(page_html, pages[page_id], config, "/")
             passed = True
