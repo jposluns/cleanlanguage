@@ -30,10 +30,10 @@ to stop a later editor correcting something deliberate. Treat a change to any of
 them as a change to the standard, not as a defect fix.
 
 **The name collision with the coaching technique is accepted.** "Clean Language"
-is also the name of an established questioning technique. Page titles and meta
-descriptions carry no "AI writing" disambiguation, with one exception already in
-place: the checklist page title, "Clean Language - AI writing quality assurance".
-Do not add disambiguation elsewhere.
+is also the name of an established questioning technique. No page title or meta
+description is written to tell the two apart. Three name AI writing as their
+subject: the checklist page title, "AI writing quality assurance", and the meta
+descriptions of the home and patterns pages. Do not add disambiguation elsewhere.
 
 **Condensed site renderings of the skill are intentional.** The website presents
 the standard more briefly than `cleanlanguage/skills/cleanlanguage/SKILL.md` does. Brevity against the
