@@ -12,23 +12,24 @@ What it verifies
 
 It reads only ``cleanlanguage/skills/cleanlanguage/SKILL.md`` and
 ``cleanlanguage/skills/cleanlanguage/references/qa-checklist.md``, and keeps no
-copy of the carve-out list. It reads each file as blocks (headings, bullets
-and paragraphs) with HTML comments and the lines inside fenced code blocks
-left out, so a sentence, heading or bullet that exists only inside them is
-missing:
+copy of the carve-out list. It reads each file as raw text, with no region of
+either file left out, split into blocks (headings, bullets and paragraphs):
 
-1. SKILL.md holds exactly one sentence "the carve-outs in <section>.", and
+1. Neither file holds "<!--" anywhere, or three backticks or three tildes in
+   a row anywhere, so neither holds an HTML comment or a fenced code block,
+   which this check does not model. The check exits 3 at the first such line
+   and names its file and line number.
+2. SKILL.md holds exactly one sentence "the carve-outs in <section>.", and
    exactly one heading "## <section>".
-2. That section, which runs to the next heading of level 1 or 2, holds exactly
+3. That section, which runs to the next heading of level 1 or 2, holds exactly
    one bullet that lists "quoted language" as one of its items, in any place.
    That phrase is a hand-kept anchor: if SKILL.md loses it, this check exits 3
    rather than passing. Items are found by splitting at each comma, then at
    each " or " and " and ", with a leading "or" or "and" dropped. An empty
    item in that bullet is malformed.
-3. The checklist holds exactly one block that mentions a dash, that block is a
-   bullet, and no HTML comment or fenced code block in the checklist mentions
-   a dash.
-4. That whole bullet, with every line and sub-bullet that continues it, reads
+4. The checklist holds exactly one block that mentions a dash, and that block
+   is a bullet.
+5. That whole bullet, with every line and sub-bullet that continues it, reads
    exactly OPENING, then " Keep a dash only in ", then the SKILL.md bullet as
    SKILL.md writes it, without its closing ";" or ".", then ".". A line break
    or a run of spaces counts as 1 space. Any other wording, order or sentence
@@ -37,11 +38,16 @@ missing:
    a dash only in <list>." or "Keep a dash only inside <list>.", each SKILL.md
    item that clause lacks and each item it adds.
 
-A bullet starts with "-", "*" or "+" at the start of a line. It runs on over
-each later line that is indented, across blank lines too, and over each
-unindented line until a blank line or a line that starts another block (a
-heading, a "-", "*", "+" or "1." list marker, a quotation, a rule or a fence).
-The generated copies of the checklist need no check here:
+A bullet starts with "-", "*" or "+" at the start of a line, followed by a
+space, a tab or the end of the line, unless the line is a rule. It runs on over
+each later line that starts with a space or tab, across blank lines too, and
+over each other line until a blank line or a line that starts with one of: "#"
+to "######" followed by a space, a tab or the end of the line; "-", "*" or "+"
+followed by a space or tab; "1." or "1)" followed by a space or tab; ">"; or a
+rule, 3 or more of "-", "*" and "_" with only spaces or tabs between and after
+them. So a line that is a lone "-", "*" or "+", or that starts "2.", continues
+the bullet when no blank line comes before it. The generated copies of the
+checklist need no check here:
 tools/build-portable-text.py --check and tools/build-site.py --check compare
 them with this source.
 
@@ -51,9 +57,18 @@ What it does not verify
 Residuals, named here because the check reads text by fixed rules:
 
 - only the one SKILL.md bullet is compared: a carve-out SKILL.md states in
-  another bullet, another section, another sentence or an HTML comment is not
-  read, and the section's other bullets, including the range separator rule,
-  are not compared;
+  another bullet, another section or another sentence is not read, and the
+  section's other bullets, including the range separator rule, are not
+  compared;
+- the check does not read HTML comments or fenced code blocks; it refuses
+  them. A future edit that adds a comment or a fence to either file makes the
+  check exit 3 until the check is extended. The refusal is wider than a fence:
+  a run of three backticks or three tildes anywhere, such as in inline code,
+  also makes it exit 3;
+- other Markdown that a rendered page does not show, such as the title of a
+  link reference definition or raw HTML other than a comment, is read as text
+  like the rest of the file, so a pointer sentence there is found although a
+  reader of the page does not see it;
 - OPENING, the first sentence of the expected bullet, is a second hand-kept
   copy: rewording that sentence in the checklist fails until OPENING follows
   it;
@@ -65,12 +80,14 @@ Residuals, named here because the check reads text by fixed rules:
   "dashes" is not read;
 - the reader handles a small part of Markdown: a heading or list marker
   indented by 1 to 3 spaces is read as text, a list item nested under a
-  bullet is read as part of it, and an HTML comment opener written inside
-  inline code is read as a comment. A fence keeps its opening line, so a
-  fenced block inside the dash bullet still fails the comparison;
-- the items an exit 1 report names come from the split above, so an item that
-  holds a comma, " or " or " and " is named in pieces; the comparison itself
-  is of the whole bullet;
+  bullet is read as part of it, and "<!--" written inside inline code is
+  refused like a comment;
+- the items an exit 1 report names come only from the one Keep clause, so a
+  carve-out the bullet adds anywhere else, such as in another sentence or a
+  sub-bullet, is named by no item line, and with no Keep clause or more than
+  one no item is named; the check still exits 1 and prints both bullets. The
+  items come from the split above, so an item that holds a comma, " or " or
+  " and " is named in pieces; the comparison itself is of the whole bullet;
 - the pointer sentence is found by its words, not by its place in the dash
   rule;
 - other restatements of the carve-outs, such as the hand-maintained portable
@@ -82,9 +99,9 @@ Exit codes:
   0  the checklist dash bullet matches the bullet built from the SKILL.md one
   1  the checklist dash bullet differs from it
   2  the command line was wrong
-  3  a file could not be read, a sentence, heading, bullet or block above is
-     missing or not unique, a comment or fenced code block in the checklist
-     mentions a dash, or the SKILL.md bullet holds an empty item
+  3  a file could not be read, a file holds "<!--" or three backticks or three
+     tildes in a row, a sentence, heading, bullet or block above is missing or
+     not unique, or the SKILL.md bullet holds an empty item
 """
 
 from __future__ import annotations
@@ -108,11 +125,12 @@ DASH = re.compile(r"\bdash(?:es)?\b", re.IGNORECASE)
 KEEP = re.compile(r"\bKeep a dash only in(?:side)? (.+?)\.(?=\s|$)")
 JOINER = re.compile(r"\s+(?:or|and)\s+")
 LEADING_JOINER = re.compile(r"^(?:or|and)\s+")
-FENCE = re.compile(r"[ \t]*(`{3,}|~{3,})")
+COMMENT = "<!--"
+FENCE = re.compile(r"`{3}|~{3}")
 HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
 BULLET = re.compile(r"[-*+](?:[ \t]+|$)")
 RULE = re.compile(r"(?:[-*_][ \t]*){3,}$")
-BLOCK = re.compile(r"#{1,6}(?:[ \t]|$)|[-*+][ \t]|1[.)][ \t]|>|`{3}|~{3}|(?:[-*_][ \t]*){3,}$")
+BLOCK = re.compile(r"#{1,6}(?:[ \t]|$)|[-*+][ \t]|1[.)][ \t]|>|(?:[-*_][ \t]*){3,}$")
 
 
 class Unreadable(Exception):
@@ -132,51 +150,28 @@ def read_text(path: Path) -> str:
         raise Unreadable(f"{path} could not be read: {error}") from error
 
 
-def visible(text: str) -> list[str]:
-    """The lines of text with HTML comments and the lines inside fenced code blocks blanked.
-
-    A fence keeps its opening line, so a fence inside a bullet still changes that bullet's text.
-    """
-    lines: list[str] = []
-    fence = ""
-    in_comment = False
-    for line in text.split("\n"):
-        if fence:
-            if line.strip().startswith(fence) and not line.strip().strip(fence[0]):
-                fence = ""
-            lines.append("")
-            continue
-        opened = None if in_comment else FENCE.match(line)
-        if opened:
-            fence = opened.group(1)
-            lines.append(line)
-            continue
-        kept = ""
-        while line:
-            if in_comment:
-                end = line.find("-->")
-                if end < 0:
-                    break
-                line, in_comment = line[end + 3:], False
-            else:
-                start = line.find("<!--")
-                if start < 0:
-                    kept += line
-                    break
-                kept, line, in_comment = kept + line[:start], line[start + 4:], True
-        lines.append(kept)
-    return lines
+def plain_text(path: Path) -> str:
+    """The text of path, which must hold no HTML comment opener and no run of 3 backticks or 3 tildes."""
+    text = read_text(path)
+    for number, line in enumerate(text.split("\n"), start=1):
+        if COMMENT in line:
+            raise Unreadable(f'{path}, line {number}: holds "{COMMENT}"; this check reads no HTML comments, '
+                             "so the file must hold none")
+        if FENCE.search(line):
+            raise Unreadable(f"{path}, line {number}: holds 3 backticks or 3 tildes in a row; this check reads "
+                             "no fenced code blocks, so the file must hold none")
+    return text
 
 
 def blocks(text: str) -> list[tuple[str, str]]:
-    """Each heading, bullet and paragraph of the visible text, as (kind, text) with spaces collapsed.
+    """Each heading, bullet and paragraph of the text, as (kind, text) with spaces collapsed.
 
     A bullet's text holds every line that continues it and drops its marker.
     """
     found: list[list[str]] = []
     open_kind = ""
     after_blank = False
-    for line in visible(text):
+    for line in text.split("\n"):
         if not line.strip():
             after_blank = True
             continue
@@ -234,11 +229,10 @@ def carve_out_list(text: str) -> tuple[str, str]:
 def dash_bullet(text: str) -> str:
     """The text of the checklist's one block that mentions a dash, which must be a bullet."""
     dashes = [(kind, words) for kind, words in blocks(text) if DASH.search(words)]
-    hidden = len(DASH.findall(text)) - sum(len(DASH.findall(words)) for kind, words in dashes)
-    if len(dashes) != 1 or dashes[0][0] != "bullet" or hidden:
+    if len(dashes) != 1 or dashes[0][0] != "bullet":
         kinds = ", ".join(kind for kind, words in dashes) or "none"
-        raise Unreadable(f"{CHECKLIST}: expected exactly one block that mentions a dash, a bullet, and no mention "
-                         f"in a comment or fenced code; found {len(dashes)} ({kinds}) and {hidden} hidden")
+        raise Unreadable(f"{CHECKLIST}: expected exactly one block that mentions a dash, a bullet; "
+                         f"found {len(dashes)} ({kinds})")
     return dashes[0][1]
 
 
@@ -249,8 +243,9 @@ def main() -> int:
     parser.parse_args()
 
     try:
-        section, listing = carve_out_list(read_text(SKILL))
-        found = dash_bullet(read_text(CHECKLIST))
+        skill, checklist = plain_text(SKILL), plain_text(CHECKLIST)
+        section, listing = carve_out_list(skill)
+        found = dash_bullet(checklist)
     except Unreadable as error:
         print(f"check-skill-consistency: {error}", file=sys.stderr)
         return 3

@@ -7,10 +7,11 @@ repository (under $TMPDIR), applies 1 fault, runs the gate there as a separate
 process and asserts its exit code and the fragments the case lists. An exit 1
 case also asserts that the output says the bullet differs and names no item
 beyond the case's list; an exit 3 case lists the structure the message must
-name. The case named "main's checklist line" restores the exact line the
-checklist carried before row 98 and expects the gate to name the 5 items it
-lacks and the 2 it adds. One further case passes the gate an argument and
-asserts exit 2.
+name, or, for a comment or fence the gate refuses, the file and the line,
+counted in the committed file, that the message must name. The case named
+"main's checklist line" restores the exact line the checklist carried before
+row 98 and expects the gate to name the 5 items it lacks and the 2 it adds.
+One further case passes the gate an argument and asserts exit 2.
 
 ITEMS is the carve-out list as SKILL.md states it today, in its order. The
 faults that rewrite a list check that ITEMS is still there first, so a change
@@ -51,6 +52,9 @@ NO_HEADING = 'heading "' + HEADING.strip() + '"'
 NO_ANCHOR = 'bullet in section "Preserve legitimate language" that lists "quoted language"'
 NO_DASH = "one block that mentions a dash"
 EMPTY = "holds an empty item"
+COMMENT = 'holds "<!--"'
+FENCED = "holds 3 backticks or 3 tildes in a row"
+SPLIT = "Code samples may keep one too."
 
 
 def listed(items: list[str]) -> str:
@@ -92,6 +96,20 @@ def dash_line(root: Path) -> str:
     if len(lines) != 1:
         raise AssertionError(f"{CHECKLIST} holds {len(lines)} lines with {KEEP!r}, not 1")
     return lines[0]
+
+
+def prepend(relative: str, new: str):
+    def apply(root: Path) -> None:
+        path = root / relative
+        path.write_text(new + path.read_text(encoding="utf-8"), encoding="utf-8")
+    return apply
+
+
+def at(relative: str, old: str, below: int = 0) -> str:
+    """The gate's "<file>, line <n>: " for the line below lines after the one where old starts in the committed file."""
+    text = (REPO_ROOT / relative).read_text(encoding="utf-8")
+    number = text[:text.find(old)].count("\n") + 1 + below if old in text else "?"
+    return f"{relative}, line {number}: "
 
 
 def checklist_lists(items: list[str], keep: str = KEEP):
@@ -150,7 +168,16 @@ CASES = [
     ("an indented sub-bullet under the dash bullet", change_dash_line(lambda line: line + "  - " + EXTRA + "\n"), 1, []),
     ("an indented paragraph in the dash bullet", change_dash_line(lambda line: line + "\n  " + EXTRA + "\n"), 1, []),
     ("an unindented line continuing the dash bullet", change_dash_line(lambda line: line + EXTRA + "\n"), 1, []),
-    ("a fenced block in the dash bullet", change_dash_line(lambda line: line + "  ```\n  code samples\n  ```\n"), 1, []),
+    ("a fenced block in the dash bullet", change_dash_line(lambda line: line + "  ```\n  code samples\n  ```\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + FENCED]),
+    ("a comment appended to the dash bullet",
+        change_dash_line(lambda line: line.rstrip("\n") + " <!-- " + SPLIT + " -->\n"), 3,
+        [at(CHECKLIST, KEEP) + COMMENT]),
+    ("a comment on an indented line in the dash bullet",
+        change_dash_line(lambda line: line + "  <!-- " + SPLIT + " -->\n"), 3, [at(CHECKLIST, KEEP, 1) + COMMENT]),
+    ("a comment inside a dash word, with a comment appended",
+        change_dash_line(lambda line: line.replace("en dash", "en da<!-- -->sh", 1).rstrip("\n")
+                         + " <!-- Code samples may keep a dash. -->\n"), 3, [at(CHECKLIST, KEEP) + COMMENT]),
     ("a skill item on an unindented line", edit(SKILL, SKILL_LINE, SKILL_LINE.replace(", or", ",").rstrip(";")
         + "\nor code samples;"), 1, [lacks("code samples")]),
     ("a skill item on an indented line", edit(SKILL, SKILL_LINE, SKILL_LINE.replace(", or", ",").rstrip(";")
@@ -164,29 +191,49 @@ CASES = [
     ("no pointer sentence", edit(SKILL, POINTER, "the exceptions below."), 3, [NO_POINTER]),
     ("2 pointer sentences", edit(SKILL, POINTER, POINTER + " See " + POINTER), 3, [NO_POINTER]),
     ("the pointer sentence only in a comment", edit(SKILL, POINTER, "the exceptions below. <!-- " + POINTER + " -->"),
-        3, [NO_POINTER]),
+        3, [at(SKILL, POINTER) + COMMENT]),
+    ("the pointer sentence only on a fence opening line",
+        edit(SKILL, POINTER, "the exceptions below.\n\n``` " + POINTER + "\n```"), 3, [at(SKILL, POINTER, 2) + FENCED]),
+    ("the pointer sentence only in a comment on a fence opening line",
+        edit(SKILL, POINTER, "the exceptions below.\n\n``` <!-- " + POINTER + " -->\n```"), 3,
+        [at(SKILL, POINTER, 2) + COMMENT]),
+    ("a comment in SKILL.md", edit(SKILL, HEADING, HEADING + "<!-- note -->\n"), 3, [at(SKILL, HEADING, 1) + COMMENT]),
+    ("a fence at the start of SKILL.md", prepend(SKILL, "```\ncode\n```\n\n"), 3, [f"{SKILL}, line 1: " + FENCED]),
+    ("an indented fence in SKILL.md", edit(SKILL, HEADING, HEADING + "\n   ~~~\n   code\n   ~~~\n"), 3,
+        [at(SKILL, HEADING, 2) + FENCED]),
+    ("a fence opened by a bullet in SKILL.md",
+        edit(SKILL, SKILL_LINE, SKILL_LINE + "\n- ```text\n  code samples;\n  ```"), 3, [at(SKILL, SKILL_LINE, 1) + FENCED]),
+    ("a comment at the start of the checklist", prepend(CHECKLIST, "<!-- note -->\n"), 3,
+        [f"{CHECKLIST}, line 1: " + COMMENT]),
+    ("a fence at the start of the checklist", prepend(CHECKLIST, "~~~\ncode\n~~~\n\n"), 3,
+        [f"{CHECKLIST}, line 1: " + FENCED]),
+    ("3 backticks in inline code in the checklist", prepend(CHECKLIST, "Write ```` ``` ```` to open a fence.\n\n"),
+        3, [f"{CHECKLIST}, line 1: " + FENCED]),
     ("the carve-out section renamed", edit(SKILL, HEADING, "## Keep legitimate language\n"), 3, [NO_HEADING]),
     ("the carve-out section repeated", edit(SKILL, HEADING, HEADING + "\n" + HEADING), 3, [NO_HEADING]),
-    ("the carve-out heading only in fenced code", edit(SKILL, HEADING, "```\n" + HEADING + "```\n"), 3, [NO_HEADING]),
+    ("the carve-out heading only in fenced code", edit(SKILL, HEADING, "```\n" + HEADING + "```\n"), 3,
+        [at(SKILL, HEADING) + FENCED]),
     ("no quoted language bullet", edit(SKILL, "- " + ITEMS[0] + ",", "- quoted text,"), 3, [NO_ANCHOR]),
     ("the quoted language bullet outside the section",
         edit(SKILL, HEADING, HEADING + "\n## Moved\n"), 3, [NO_ANCHOR]),
     ("2 quoted language bullets", edit(SKILL, HEADING + "\n", HEADING + "\n- quoted language or code samples;\n\n"),
         3, [NO_ANCHOR]),
     ("the quoted language bullet only in a comment", edit(SKILL, SKILL_LINE, "<!--\n" + SKILL_LINE + "\n-->"),
-        3, [NO_ANCHOR]),
+        3, [at(SKILL, SKILL_LINE) + COMMENT]),
     ("the quoted language bullet only in fenced code", edit(SKILL, SKILL_LINE, "~~~\n" + SKILL_LINE + "\n~~~"),
-        3, [NO_ANCHOR]),
+        3, [at(SKILL, SKILL_LINE) + FENCED]),
     ("an empty item in the skill list", skill_lists(ITEMS[:1] + [""] + ITEMS[1:]), 3, [EMPTY]),
     ("no dash bullet", replace_dash_line(""), 3, [NO_DASH]),
     ("2 dash bullets", change_dash_line(lambda line: line + "- Count every dash.\n"), 3, [NO_DASH]),
     ("a paragraph that mentions a dash", change_dash_line(lambda line: line + "\n" + EXTRA + "\n"), 3, [NO_DASH]),
-    ("the dash bullet only in a comment", change_dash_line(lambda line: "<!--\n" + line + "-->\n"), 3, [NO_DASH]),
-    ("the dash bullet only in fenced code", change_dash_line(lambda line: "```\n" + line + "```\n"), 3, [NO_DASH]),
+    ("the dash bullet only in a comment", change_dash_line(lambda line: "<!--\n" + line + "-->\n"), 3,
+        [at(CHECKLIST, KEEP) + COMMENT]),
+    ("the dash bullet only in fenced code", change_dash_line(lambda line: "```\n" + line + "```\n"), 3,
+        [at(CHECKLIST, KEEP) + FENCED]),
     ("a comment that mentions a dash", change_dash_line(lambda line: line + "<!-- - Keep a dash in code. -->\n"),
-        3, [NO_DASH]),
+        3, [at(CHECKLIST, KEEP, 1) + COMMENT]),
     ("fenced code that mentions a dash", change_dash_line(lambda line: line + "\n```\n- " + EXTRA + "\n```\n"),
-        3, [NO_DASH]),
+        3, [at(CHECKLIST, KEEP, 2) + FENCED]),
 ]
 
 
