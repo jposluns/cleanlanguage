@@ -32,8 +32,9 @@ them as a change to the standard, not as a defect fix.
 **The name collision with the coaching technique is accepted.** "Clean Language"
 is also the name of an established questioning technique. Page titles and meta
 descriptions carry no "AI writing" disambiguation, with one exception already in
-place: the checklist page title, "AI writing quality assurance |
-CleanLanguage.ai". Do not add disambiguation elsewhere.
+place: the checklist page title,
+"AI writing quality assurance | CleanLanguage.ai". Do not add disambiguation
+elsewhere.
 
 **Condensed site renderings of the skill are intentional.** The website presents
 the standard more briefly than `cleanlanguage/skills/cleanlanguage/SKILL.md` does. Brevity against the
