@@ -80,11 +80,19 @@ escapable raw-text element such as ``script``, ``style``, ``title`` or
 HTML5 copies a stray html or body start tag's attributes onto the page's own,
 a stray head is refused because the generator writes the head, and
 ``tools/check-install-page.py`` reads a frameset start tag as hiding the whole
-page; a page source with ``<math`` in any letter case, since inside
-``<math>``, as inside ``<svg>`` (refused above), a browser reads a ``title``,
-``textarea``, ``script`` or ``style`` element's content as markup, which the
-parser reads as text (``tools/check-inline-code.py`` refuses any ``math``
-element too); a page source, the landing page's included, with
+page; a page source or page with a ``math`` start tag, read as the parser
+reads it, since inside ``<math>``, as inside ``<svg>`` (refused above), a
+browser can read a ``title``, ``textarea``, ``script`` or ``style``
+element's content as markup, which the parser reads as text
+(``tools/check-inline-code.py`` refuses any ``math`` element too); a page
+source or page with markup that the parser and a browser can read
+differently, where a ``math``, ``html`` or ``body`` start tag would escape
+both rules (a comment a browser ends earlier, such as ``<!-->``, ``<!--->``
+or one holding ``--!>``; a ``<![`` section holding ``>``, which a browser
+outside ``<svg>`` and ``<math>`` ends at its first ``>``; and a
+``</noscript`` that the parser does not read as a ``noscript`` end tag,
+where a browser with scripting on ends that element's text); a page source,
+the landing page's included, with
 an element whose class names include ``about``, since the generator writes
 the About block of template specification 7.24 (baseline 1.7.0) itself; a
 landing page source without exactly 1 ``p.value``, or with that ``p.value``
@@ -104,10 +112,13 @@ each dot span and none before it) directly after the end tag of that
 paragraph's region, the ``div.region`` nearest it among its ancestors, with
 no byte between that ``</div>`` and the block, as the generator writes them,
 or that carries any other element whose class names include ``about``; any
-other page with one; and a release version that disagrees with SKILL.md. The
-About rules read the About block's label only as part of that block: a
-hand-written ``About this project`` text or label region without the
-``about`` class, on any page, is not refused. They read hiding from the
+other page with one; a page source whose text carries the About block's
+label (``ABOUT_LABELS``: ``About this project`` or ``ABOUT THIS PROJECT``,
+case-sensitive, in the text the parser reads, joined across elements, with
+each run of whitespace read as 1 space, attribute values and comments
+apart), a landing page whose text carries it other than once, from inside
+the About block, and any other page whose text carries it; and a release
+version that disagrees with SKILL.md. The About rules read hiding from the
 markup alone, as ``tools/check-install-page.py`` does: no stylesheet rule
 other than a bare single class its ``HIDING_CLASSES`` lists (that gate's
 tests fail when a stylesheet the pages load hides another bare single class),
@@ -229,6 +240,8 @@ INERT_TAGS = {"noscript", "template", "script", "style", "title", "textarea", "x
               "audio", "canvas", "datalist", "meter", "object", "progress", "rp", "select", "video"}
 # HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
 ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
+# Where a browser with scripting on ends a noscript element's text, which the parser reads as markup.
+NOSCRIPT_END = re.compile(r"</noscript[ \t\n\f\r/>]", re.I | re.A)
 SKIP_LINK = '<a class="skip" href="#main-content">Skip to content</a>'
 COPY_STATUS = '<p class="vh" id="copy-status" role="status" aria-live="polite"></p>'
 # The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
@@ -262,6 +275,9 @@ ABOUT_DOT = '<span class="dot" aria-hidden="true">&middot;</span>'
 # it: the region, its label and the div around the About row, which about_line() gives. The generator writes it on the
 # landing page only, directly after the end tag of the value paragraph's region, and validate() requires it there once.
 ABOUT_BLOCK = '<div class="region"><p class="lbl">About this project</p><div>{row}</div></div>'
+# The About block's label, as written and in upper case: the text of a page source carries neither, and the text of
+# the landing page carries 1, inside the block (PageScan.labels() counts them).
+ABOUT_LABELS = ("About this project", "ABOUT THIS PROJECT")
 SLICE_COUNT = 6
 
 
@@ -763,10 +779,17 @@ def substitute(text: str, values: dict, where: str) -> str:
 def install_gate():
     """tools/check-install-page.py, beside this tool, read, compiled and run as a fresh module, so that the value
     paragraph rule reads an element as hidden exactly as that gate's is_hiding_element() does. The source is always
-    read, so no cached bytecode stands in for it; a source that cannot be read, compiled or run, or that defines no
-    is_hiding_element(), is an input that cannot be read or is malformed (exit 3)."""
+    read, so no cached bytecode stands in for it; a source that is not a regular file, as read_text() requires, or
+    that cannot be read, compiled or run, or that defines no is_hiding_element(), is an input that cannot be read or
+    is malformed (exit 3)."""
     path = Path(__file__).resolve().parent / "check-install-page.py"
     where = f"tools/{path.name}, whose hiding reader the value paragraph rule applies,"
+    try:
+        info = os.lstat(path)
+    except OSError as error:
+        raise Unreadable(f"{where} could not be read: {error}") from error
+    if not stat.S_ISREG(info.st_mode):
+        raise Unreadable(f"{where} is not a regular file")
     try:
         source = path.read_bytes()
     except OSError as error:
@@ -789,9 +812,10 @@ class PageScan(HTMLParser):
     meta and id, and of each element start validate() requires, the element starts hidden by themselves or by an
     ancestor as tools/check-install-page.py reads hiding (its is_hiding_element(), and a details without open, which
     shows only its first summary child), where each value paragraph starts and where the region of the first one
-    ends, where each element whose classes include about starts, where each html, head, body and frameset start tag
-    is, and where the page's body starts. validate() also pins the markup from <body> to the end of header.mast, and
-    the landing page's About block; --check compares the committed pages with a build that passed it."""
+    ends, where each element whose classes include about starts, where each html, head, body, frameset and math start
+    tag is, the markup that it and a browser can read differently, its text (labels()), and where the page's body
+    starts. validate() also pins the markup from <body> to the end of header.mast, and the landing page's About block;
+    --check compares the committed pages with a build that passed it."""
 
     def __init__(self, switch_at: tuple[int, int] | None = None) -> None:
         super().__init__(convert_charrefs=True)
@@ -828,6 +852,14 @@ class PageScan(HTMLParser):
         # Each html, head, body and frameset start tag and where it starts: in a page source, which the generator
         # wraps in its own html, head and body, a stray one.
         self.document_tags: list[tuple[str, tuple[int, int]]] = []
+        # Where each math start tag starts; the markup that the parser and a browser can read differently, so that a
+        # browser can read a start tag where the parser reads none; the source fed, and the noscript end tags the
+        # parser reads in it; and the text the parser reads (attribute values and comments apart).
+        self.maths: list[tuple[int, int]] = []
+        self.ambiguous: list[str] = []
+        self.source = ""
+        self.noscript_ends = 0
+        self.text: list[str] = []
         # Where each element hidden by itself or by an open ancestor starts, as tools/check-install-page.py reads
         # hiding; the depth in open of each such ancestor; and, for each open details without open, by its depth,
         # whether its first summary child has started.
@@ -864,6 +896,8 @@ class PageScan(HTMLParser):
             self.about_classes.append(self.getpos())
         if tag in ("html", "head", "body", "frameset"):
             self.document_tags.append((tag, self.getpos()))
+        if tag == "math":
+            self.maths.append(self.getpos())
         if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
                 and self.previous is not None and self.previous[0] == "head"):
             self.body_at = self.getpos()
@@ -950,6 +984,7 @@ class PageScan(HTMLParser):
             self.handle_endtag(tag)
 
     def handle_data(self, data: str) -> None:
+        self.text.append(data)
         if data.strip(" \t\n\f\r") and [name for name, _ in self.open] in ([], ["html"], ["html", "head"]):
             # Text other than whitespace in or before the head ends it (HTML5).
             self.head_ended = True
@@ -962,6 +997,8 @@ class PageScan(HTMLParser):
         if tag in ("body", "html", "br"):
             # HTML5 ends the head at each of these end tags (</br> reads as <br>).
             self.head_ended = True
+        if tag == "noscript":
+            self.noscript_ends += 1
         if tag in VOID_TAGS:
             return
         if not self.open or self.open[-1][0] != tag:
@@ -987,6 +1024,35 @@ class PageScan(HTMLParser):
             if attrs.get("target") != "_blank" or attrs.get("rel") != "noopener noreferrer" or "(opens in a new tab)" not in label:
                 self.problems.append(f"the external link {self.anchor['href']} lacks target, rel or the new-tab text")
             self.anchor = None
+
+    def handle_comment(self, data: str) -> None:
+        # A browser ends a comment at <!--> and <!---> and at --!>, where a parser may read on (HTML5).
+        if data.startswith((">", "->")) or "--!>" in data:
+            self.ambiguous.append("a comment that a browser ends earlier than the parser")
+
+    def unknown_decl(self, data: str) -> None:
+        # Outside svg and math, a browser ends a <![ section, such as <![CDATA[, at its first >; the parser reads a
+        # CDATA section on to ]]>.
+        if ">" in data:
+            self.ambiguous.append("a <![ section holding >, which a browser ends at its first >")
+
+    def feed(self, data: str) -> None:
+        self.source += data
+        super().feed(data)
+
+    def close(self) -> None:
+        super().close()
+        # A browser with scripting on reads a noscript element's content as text up to the first </noscript, which
+        # the parser may read inside a comment, an attribute value or a raw-text element instead.
+        if len(NOSCRIPT_END.findall(self.source)) != self.noscript_ends:
+            self.ambiguous.append("a </noscript that the parser does not read as a noscript end tag")
+
+    def labels(self) -> int:
+        """How many times the text the parser reads (attribute values and comments apart), joined across elements
+        with each run of whitespace (as str.split() reads it, U+00A0 included) read as 1 space, carries the About
+        block's label (ABOUT_LABELS, case-sensitive)."""
+        text = " ".join("".join(self.text).split())
+        return sum(text.count(label) for label in ABOUT_LABELS)
 
 
 def line_column(text: str, index: int) -> tuple[int, int]:
@@ -1026,9 +1092,11 @@ def with_about(content: str, page: dict, base: str) -> str:
     tag that the parser reads as markup (the generator writes the page's html, head and body: HTML5 copies a stray
     html or body start tag's attributes onto the page's own, a stray head is refused because the generator writes
     the head, and tools/check-install-page.py reads a frameset start tag as hiding the whole page), a source with
-    <math in any letter case (inside math, a browser reads a title, textarea, script or style element's content as
-    markup, which the parser reads as text; validate() refuses svg, the other such element), a source with an
-    element whose classes include about, and a landing page source without exactly 1 p.value, with that p.value
+    markup that the parser and a browser can read differently (PageScan.ambiguous), a source with a math start tag
+    that the parser reads as markup (inside math, a browser can read a title, textarea, script or style element's
+    content as markup, which the parser reads as text; validate() refuses svg, the other such element), a source
+    with an element whose classes include about, a source whose text carries the About block's label
+    (PageScan.labels()), and a landing page source without exactly 1 p.value, with that p.value
     inside an element of INERT_TAGS, hidden by itself or by an ancestor as tools/check-install-page.py reads hiding,
     or with no div.region among its ancestors."""
     where = page["source"]
@@ -1038,12 +1106,18 @@ def with_about(content: str, page: dict, base: str) -> str:
     if scan.document_tags:
         raise BuildError(f"{where}: a stray <{scan.document_tags[0][0]}> start tag; the generator writes the page's html, "
                          "head and body, so a page source may carry none of them, nor a frameset")
-    if re.search(r"<math", content, re.I):
-        raise BuildError(f"{where}: a <math> element; inside one, a browser reads a title, textarea, script or style "
-                         "element's content as markup, which the parser reads as text")
+    if scan.ambiguous:
+        raise BuildError(f"{where}: {scan.ambiguous[0]}; a page source may carry no markup that the parser and a "
+                         "browser can read differently")
+    if scan.maths:
+        raise BuildError(f"{where}: a <math> start tag; inside math, a browser can read a title, textarea, script or "
+                         "style element's content as markup, which the parser reads as text")
     if scan.about_classes:
         raise BuildError(f"{where}: an element whose classes include about; the generator writes the About block of "
                          "specification 7.24 itself, on the landing page only")
+    if scan.labels():
+        raise BuildError(f"{where}: the About block's label in the page source's text; the generator writes it, in "
+                         "the About block of specification 7.24, on the landing page only")
     if page["path"] != "":
         return content
     if len(scan.values) != 1 or scan.values[0] not in scan.live_starts or scan.values[0] in scan.hidden_starts:
@@ -1095,6 +1169,11 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
                         "after the skip link at the start of the page's body")
     if re.search(r"<svg", page_html.replace(SCHEME_SWITCH, "", 1), re.I):
         problems.append("an inline <svg> other than the light and dark switch")
+    # A source can end inside a tag or a comment that only the generator's markup after it closes, so the page is read
+    # again for what with_about() refuses in a source.
+    if scan.maths:
+        problems.append("a <math> start tag in the page, which no page source may carry")
+    problems += [f"{what}, in the page" for what in scan.ambiguous]
     scheme_tags = {line_column(page_html, match.start()) for match in re.finditer(
         r'<script data-cfasync="false" src="' + re.escape(base)
         + r'assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>', page_html)}
@@ -1144,7 +1223,8 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     # the whole About block, once and byte for byte, starts where the end tag of its region ends, so the block's
     # ancestors are the region's, none of which is an element of INERT_TAGS or hides it, and ABOUT_BLOCK holds
     # neither. The block's row is then the only parsed element whose classes include about. On any other page, no
-    # such element appears, inside an element of INERT_TAGS or not. The label is read only as part of the block.
+    # such element appears, inside an element of INERT_TAGS or not. The page's text carries the block's label once on
+    # the landing page, inside the block (with the block's label taken out, it carries none), and nowhere else.
     if page["path"] == "":
         block, value = about_block(base), scan.values[0] if len(scan.values) == 1 else None
         at = page_html.find(block)
@@ -1156,9 +1236,19 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
                             "(ABOUT_BLOCK), directly after the end tag of the region of the only p.value, which "
                             "starts outside every element of INERT_TAGS and is not hidden by itself or by an ancestor "
                             "as tools/check-install-page.py reads hiding, and no other About markup may appear")
-    elif scan.about_classes:
-        problems.append("About markup (an element whose classes include about), which only the landing page's About "
-                        "block carries (specification 7.24)")
+        unlabelled = PageScan()
+        unlabelled.feed(page_html.replace(block, block.replace(f">{ABOUT_LABELS[0]}<", "><", 1), 1))
+        unlabelled.close()
+        if scan.labels() != 1 or unlabelled.labels():
+            problems.append("the About block's label must appear in the page's text exactly once, inside the About "
+                            "block (specification 7.24)")
+    else:
+        if scan.about_classes:
+            problems.append("About markup (an element whose classes include about), which only the landing page's "
+                            "About block carries (specification 7.24)")
+        if scan.labels():
+            problems.append("the About block's label in the page's text, which only the landing page's About block "
+                            "carries (specification 7.24)")
     for tag, value in scan.links:
         if value.startswith(("https://", "http://")):
             if tag != "a":

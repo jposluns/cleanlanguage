@@ -16,6 +16,7 @@ import hashlib
 import html
 import importlib.util
 import json
+import os
 import py_compile
 import re
 import shutil
@@ -163,6 +164,8 @@ class Placement(HTMLParser):
         self.ends: dict[tuple[int, int], tuple[str, list[str], int, tuple[int, int]]] = {}
         self.open_at: list[tuple[int, int]] = []
         self.lineage: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        # The text the parser reads, in order; attribute values and comments are not text.
+        self.text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs) -> None:
         first = {name: value or "" for name, value in reversed(attrs)}
@@ -195,6 +198,7 @@ class Placement(HTMLParser):
             self.ends[self.getpos()] = (*self.previous, len(self.open), self.open_at.pop())
 
     def handle_data(self, data: str) -> None:
+        self.text.append(data)
         if data.strip(" \t\n\f\r") and [name for name, _ in self.open] in ([], ["html"], ["html", "head"]):
             self.head_ended = True
 
@@ -321,6 +325,20 @@ def about_line(base: str) -> str:
 ABOUT_ROW = about_line("{{base}}")
 ABOUT_BLOCK = about_block("{{base}}")
 LABEL = "About this project"
+# The label as written and in upper case: no page source's text carries either, and the landing page's 1, in its block.
+LABELS = (LABEL, LABEL.upper())
+
+
+def labels(text: str) -> int:
+    """How many times the parsed text of text (attribute values and comments apart), joined across elements with
+    each run of whitespace (as str.split() reads it, U+00A0 included) read as 1 space, carries LABELS, case-sensitive."""
+    parsed = Placement()
+    parsed.feed(text)
+    parsed.close()
+    joined = " ".join("".join(parsed.text).split())
+    return sum(joined.count(label) for label in LABELS)
+
+
 # The install gate's hiding reader, which the generator's value paragraph rule also applies.
 IS_HIDING = load_module(REPO_ROOT / "tools" / "check-install-page.py").is_hiding_element
 
@@ -345,13 +363,14 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     is_hiding_element(), and a details without open outside its first summary child), no dot span followed directly
     by a link (the 1.6.1 markup, refused apart from about_line()), and the whole About block once, byte for byte,
     starting where the end tag of that paragraph's region (the div.region nearest it among its open elements) ends,
-    its row the only parsed element whose classes include about; on any other page, no such element, with an INERT
-    ancestor or not. Like the generator's rule, it reads LABEL only as part of the block, so LABEL elsewhere passes,
-    and it does not model a stylesheet beyond the install gate's HIDING_CLASSES, or a hidden attribute that HTML5
-    copies from a stray body or html start tag onto the page's body or html element. The generator refuses such a
-    start tag in a page source wherever its parser reads markup; it does not scan the content of a raw-text or
-    escapable raw-text element (script, style, title, textarea), which a browser reads as markup only inside math
-    or svg, and it refuses any <math in a page source and any <svg other than the switch in a page."""
+    its row the only parsed element whose classes include about, and the page's text carrying LABELS once, inside
+    the block (labels(): with the block's label taken out, none); on any other page, no such element, with an INERT
+    ancestor or not, and no LABELS in its text. It does not model a stylesheet beyond the install gate's
+    HIDING_CLASSES, or a hidden attribute that HTML5 copies from a stray body or html start tag onto the page's body
+    or html element. The generator refuses such a start tag in a page source wherever its parser reads markup; it
+    does not scan the content of a raw-text or escapable raw-text element (script, style, title, textarea), which a
+    browser can read as markup inside math or svg, and it refuses a math start tag in a page source or page, markup
+    that its parser and a browser can read differently, and any <svg other than the switch in a page."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
@@ -359,6 +378,8 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     if page != "index.html":
         if abouts:
             return [f"{page} carries About markup, which only the landing page's About block may"]
+        if labels(text):
+            return [f"{page} carries the About block's label in its text; only the landing page's About block may"]
         return []
     values = [at for at, (tag, attrs, *_) in parsed.starts.items()
               if tag == "p" and "value" in class_names(attrs.get("class", ""))]
@@ -382,6 +403,9 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
         return [f"{page} carries its About block other than directly after the value paragraph's region (specification 7.24)"]
     if len(abouts) != 1:
         return [f"{page} carries About markup outside its About block (specification 7.24)"]
+    if labels(text) != 1 or labels(text.replace(block, block.replace(f">{LABEL}<", "><", 1), 1)):
+        return [f"{page} carries the About block's label in its text other than once, inside its About block "
+                "(specification 7.24)"]
     return []
 
 
@@ -521,8 +545,15 @@ REGION_RULE = "the value paragraph has no enclosing div.region"
 # of a stray html or body start tag, such as hidden, onto the page's own. Nor may it carry a frameset start tag, which
 # tools/check-install-page.py reads as hiding the whole page.
 DOCUMENT_RULE = "the generator writes the page's html, head and body"
-# Inside math a browser reads a title or textarea as markup, which the generator's parser reads as text.
-MATH_RULE = "a <math> element; inside one, a browser reads"
+# Inside math, a browser can read a title or textarea's content as markup, which the generator's parser reads as text.
+MATH_RULE = "a <math> start tag; inside math, a browser can read"
+# A source can end inside a tag that only the generator's markup after it closes; the generator reads the page too.
+PAGE_MATH_RULE = "a <math> start tag in the page"
+# Markup that the generator's parser and a browser read differently, where a browser can read a start tag that the
+# parser reads inside a comment, a CDATA section, an attribute value or a raw-text element.
+AMBIGUOUS_RULE = "a page source may carry no markup that the parser and a browser can read differently"
+# The About block's label in a page source's text: the generator writes it, in the block, on the landing page only.
+LABEL_RULE = "the About block's label in the page source's text"
 VALUE = '<p class="value">'
 VALUE_REGION = '<div class="region" id="what-it-fixes">'
 VALUE_END = "outside its aim.</p></div></div>"
@@ -560,6 +591,14 @@ def wrap_value(start: str, end: str):
     """Wrap the landing page's value paragraph in start and end."""
     return lambda root: (edit(root, HOME, VALUE, start + VALUE),
                          edit(root, HOME, VALUE_END, VALUE_END.replace("</p>", "</p>" + end, 1)))
+
+
+def at_end(snippet: str):
+    """Put snippet at the end of the demo page's source, where the generator's own markup follows it."""
+    def apply(root: Path) -> None:
+        path = root / PAGE
+        path.write_text(path.read_text(encoding="utf-8") + snippet, encoding="utf-8")
+    return apply
 
 
 SOURCE_REFUSALS = [
@@ -620,7 +659,46 @@ SOURCE_REFUSALS = [
     ("a body start tag inside a math textarea in a page source",
         inject("<math><textarea><body hidden></textarea></math>"), MATH_RULE),
     ("a math element in upper case in a page source", inject("<MATH></MATH>"), MATH_RULE),
+    ("a math element with an attribute in a page source", inject('<math display="block"></math>'), MATH_RULE),
+    ("a self-closing math start tag in a page source", inject("<math/>"), MATH_RULE),
+    ("a math start tag after a comment that --!> ends", inject("<!-- x --!><math><title><body hidden></title></math>"),
+        MATH_RULE),
+    # The generator's parser reads each of these as a comment, a CDATA section, an attribute value or text; a browser
+    # (for noscript, one with scripting on) reads the math and body start tags in them as tags.
+    ("a math title after a comment that <!--> ends",
+        inject("<!--><math><title><body hidden></title></math>-->"), AMBIGUOUS_RULE),
+    ("a body start tag after a comment that <!---> ends", inject("<!---><body hidden>-->"), AMBIGUOUS_RULE),
+    ("a math title after a CDATA start in a page source",
+        inject("<![CDATA[><math><title><body hidden></title></math>]]>"), AMBIGUOUS_RULE),
+    ("a math title after a noscript end tag in a comment",
+        inject("<noscript><!-- </noscript><math><title><body hidden></title></math> --></noscript>"), AMBIGUOUS_RULE),
+    ("a body start tag after a noscript end tag in an attribute value",
+        inject('<noscript><p title="</noscript><body hidden>">x</p></noscript>'), AMBIGUOUS_RULE),
+    ("a body start tag after a noscript end tag in a title",
+        inject("<noscript><title></noscript><body hidden></title></noscript>"), AMBIGUOUS_RULE),
+    ("a page source that ends inside a math start tag", at_end("<math/"), PAGE_MATH_RULE),
+    # The About block's label in a page source's text, however its elements split it or its characters are written.
+    ("the label in a paragraph on another page", inject(f"<p>{LABEL}</p>"), LABEL_RULE),
+    ("the label split across inline elements", inject("<p>About <em>this</em> project</p>"), LABEL_RULE),
+    ("the label split across lines", inject("<p>About\n  this project</p>"), LABEL_RULE),
+    ("the label with a character reference", inject("<p>About th&#105;s project</p>"), LABEL_RULE),
+    ("the label in upper case", inject("<p>ABOUT THIS PROJECT</p>"), LABEL_RULE),
+    ("the label in a paragraph in home.html", after_value(f"<p>{LABEL}</p>"), LABEL_RULE),
+    ("a label region without the about class in home.html",
+        after_value(f'<div class="region"><p class="lbl">{LABEL}</p></div>'), LABEL_RULE),
 ] + [(f"the value paragraph inside {name}", wrap_value(start, end), VALUE_RULE) for name, start, end in HIDING_WRAPPERS]
+
+
+# Page sources that build: a comment or an attribute value names math or carries the About block's label, or
+# lower-case prose names the project.
+SOURCE_PASSES = [
+    ("a comment that names <math>", inject("<!-- a <math> element -->")),
+    ("an attribute value that names <math>", inject('<p title="a &lt;math&gt; or <math> element">x</p>')),
+    ("lower-case prose about this project", inject("<p>Send questions about this project to the maintainer.</p>")),
+    ("the label in a comment", inject(f"<!-- {LABEL} -->")),
+    ("the label in an attribute value", inject(f'<p title="{LABEL}">x</p>')),
+    ("the label in a comment in home.html", after_value(f"<!-- {LABEL} -->")),
+]
 
 
 def check_source_refusals(failures: list[str]) -> int:
@@ -637,16 +715,18 @@ def check_source_refusals(failures: list[str]) -> int:
 
 
 def check_source_passes(failures: list[str]) -> int:
-    """Each wrapper of SHOWING_WRAPPERS around the landing page source's value paragraph builds."""
-    for name, start, end in SHOWING_WRAPPERS:
+    """Each wrapper of SHOWING_WRAPPERS around the landing page source's value paragraph builds, and so does each
+    case of SOURCE_PASSES."""
+    cases = [(f"the value paragraph inside {name}", wrap_value(start, end)) for name, start, end in SHOWING_WRAPPERS]
+    for name, fault in cases + SOURCE_PASSES:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
-            wrap_value(start, end)(root)
+            fault(root)
             result = run(root, "--out", str(Path(scratch) / "out"))
             if result.returncode != 0:
-                failures.append(f"source pass 'the value paragraph inside {name}': exit {result.returncode}, "
-                                f"expected 0 ({result.stderr.strip()[:200]})")
-    return len(SHOWING_WRAPPERS)
+                failures.append(f"source pass '{name}': exit {result.returncode}, expected 0 "
+                                f"({result.stderr.strip()[:200]})")
+    return len(cases) + len(SOURCE_PASSES)
 
 
 def check_refusals(failures: list[str]) -> int:
@@ -815,26 +895,36 @@ def check_inert_validation(failures: list[str]) -> int:
 def check_inner_about_rows(failures: list[str]) -> int:
     """About markup on an inner page, read as the parsed class names of every element (split on ASCII whitespace
     only), with an INERT ancestor or not: validate(), called directly on the committed licence page, refuses it by
-    its rule, and so does the build test's helper; a class name that only starts with about passes both, and so
-    does the label text without the about class, which neither reads apart from the landing page's About block."""
+    its rule, and so does the build test's helper; a class name that only starts with about passes both. Both also
+    refuse the About block's label in the page's text, however its elements split it or its characters are written,
+    the generator by its own rule (row 144, for which the paragraph case here flipped from passing); in an attribute
+    value, a comment or lower-case prose, the label passes both."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["id"] == "license")
     text = (REPO_ROOT / "site/license/index.html").read_text(encoding="utf-8")
     h1 = re.search(r"<h1>[^<]*</h1>", text).group(0)
     link = '<a href="/install/">Install</a>'
+    class_rule, label_rule = "About markup (an element whose classes include about", "the About block's label in"
     cases = [
-        (f'<p class="about">{link}</p>', False),
-        (f"<p class=about>{link}</p>", False),
-        (f"<p class='about'>{link}</p>", False),
-        (f'<p class="about x">{link}</p>', False),
-        (f"<noscript><p class=about>{link}</p></noscript>", False),
-        (f'<p class="about-us">{link}</p>', True),
-        (f'<p class="about&nbsp;x">{link}</p>', True),
-        (f"<p>{LABEL}</p>", True),
-        (f'<p title="{LABEL}">x</p>', True),
+        (f'<p class="about">{link}</p>', class_rule),
+        (f"<p class=about>{link}</p>", class_rule),
+        (f"<p class='about'>{link}</p>", class_rule),
+        (f'<p class="about x">{link}</p>', class_rule),
+        (f"<noscript><p class=about>{link}</p></noscript>", class_rule),
+        (f'<p class="about-us">{link}</p>', None),
+        (f'<p class="about&nbsp;x">{link}</p>', None),
+        (f"<p>{LABEL}</p>", label_rule),
+        ("<p>About <em>this</em> project</p>", label_rule),
+        ("<p>About th&#105;s project</p>", label_rule),
+        ("<p>ABOUT THIS PROJECT</p>", label_rule),
+        (f'<div class="region"><p class="lbl">{LABEL}</p></div>', label_rule),
+        (f'<p title="{LABEL}">x</p>', None),
+        (f"<!-- {LABEL} -->", None),
+        ("<p>Send questions about this project to the maintainer.</p>", None),
     ]
-    for row, passes in cases:
+    for row, rule in cases:
+        passes = rule is None
         page_html = text.replace(h1, h1 + row, 1)
         try:
             generator.validate(page_html, page, config, "/")
@@ -843,7 +933,7 @@ def check_inner_about_rows(failures: list[str]) -> int:
             refusal = str(error)
         if passes and refusal:
             failures.append(f"inner About row {row!r}: refused, expected to pass ({refusal[:200]})")
-        elif not passes and "About markup (an element whose classes include about" not in refusal:
+        elif not passes and rule not in refusal:
             failures.append(f"inner About row {row!r}: not refused by its rule ({refusal[:200] or 'passed'})")
         if (not about_problems("license/index.html", page_html, "/")) != passes:
             failures.append(f"About helper, inner About row {row!r}: {'refused' if passes else 'passed'}, expected the opposite")
@@ -854,8 +944,9 @@ def check_about_block(failures: list[str]) -> int:
     """The whole About block of specification 7.24 on the landing page: validate(), called directly on the committed
     landing page with 1 fault each, refuses by the block's rule (exactly 1 p.value, with no INERT ancestor, not
     hidden by itself or by an ancestor as tools/check-install-page.py reads hiding; the block once, byte for byte,
-    directly after the end tag of that paragraph's region; no other element whose classes include about), and the
-    build test's helper judges each case as the generator should. The label text without the about class passes
+    directly after the end tag of that paragraph's region; no other element whose classes include about) or by the
+    label's rule (the page's text carries the block's label once, inside the block), and the build test's helper
+    judges each case as the generator should. The label in an attribute value, a comment or lower-case prose passes
     both, and so does each wrapper of SHOWING_WRAPPERS around the value paragraph."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
@@ -864,7 +955,7 @@ def check_about_block(failures: list[str]) -> int:
     row, block, label = about_line("/"), about_block("/"), f'<p class="lbl">{LABEL}</p>'
     hero, value = '<div class="hero-text">', VALUE_REGION
     decoy = '<div class="region"><p class="value">x</p></div>'
-    block_rule = "the About block must appear exactly once"
+    block_rule, label_rule = "the About block must appear exactly once", "the About block's label must appear"
     cases = [
         ("the committed landing page", [], None),
         ("the row without its region and label", [(block, row)], block_rule),
@@ -894,9 +985,20 @@ def check_about_block(failures: list[str]) -> int:
         ("a second p.value after the block", [(block, block + '<p class="value">x</p>')], block_rule),
         ("no p.value", [('<p class="value">', "<p>")], block_rule),
         ("the value paragraph's region without its class", [(value, '<div id="what-it-fixes">')], block_rule),
-        # The label is read only as part of the block: a second one without the about class passes.
-        ("a second label region after the block", [(block, block + f'<div class="region">{label}</div>')], None),
+        # The page's text carries the block's label once, inside the block (since row 144; the first case here
+        # passed before it): a copy elsewhere is refused, and so is the label moved out of the block, which only the
+        # condition that it come from inside the block refuses by the label's rule.
+        ("a second label region after the block", [(block, block + f'<div class="region">{label}</div>')], label_rule),
+        ("a second label in a paragraph in the hero", [(hero, hero + f"<p>{LABEL}</p>")], label_rule),
+        ("a second label in upper case after the block", [(block, block + f"<p>{LABEL.upper()}</p>")], label_rule),
+        ("a second label split across inline elements after the block",
+            [(block, block + "<p>About <em>this</em> project</p>")], label_rule),
+        ("the block's label moved into the hero",
+            [(label, '<p class="lbl"></p>'), (hero, hero + f"<p>{LABEL}</p>")], label_rule),
         ("a second label in an attribute", [(hero, hero + f'<p title="{LABEL}">x</p>')], None),
+        ("a second label in a comment", [(hero, hero + f"<!-- {LABEL} -->")], None),
+        ("lower-case prose about this project",
+            [(hero, hero + "<p>Send questions about this project to the maintainer.</p>")], None),
     ] + [
         (f"the value paragraph inside {name}",
          [(VALUE, start + VALUE), (VALUE_END, VALUE_END.replace("</p>", "</p>" + end, 1))], rule)
@@ -1085,8 +1187,10 @@ def check_unreadable(failures: list[str]) -> int:
 
 def check_unreadable_reader(failures: list[str]) -> int:
     """A copy of the generator, beside a check-install-page.py that is missing, unreadable (with a cache of its
-    bytecode or without), not Python, or without is_hiding_element(), exits 3: the hiding reader is an input. A
-    reader that this test cannot make unreadable, as when it runs as root, fails the case rather than skipping it."""
+    bytecode or without), a FIFO (not a regular file, on which a read would wait for a writer), not Python, or
+    without is_hiding_element(), exits 3: the hiding reader is an input. A reader that this test cannot make
+    unreadable, as when it runs as root, or a FIFO it cannot make, as where os.mkfifo() is missing, fails the case
+    rather than skipping it, and so does a generator that has not exited within 60 seconds."""
     def unreadable(cache: bool):
         def apply(reader: Path) -> None:
             if cache:
@@ -1107,6 +1211,7 @@ def check_unreadable_reader(failures: list[str]) -> int:
         ("a missing reader", lambda reader: reader.unlink()),
         ("an unreadable reader with a cache of its bytecode", unreadable(True)),
         ("an unreadable reader without a cache", unreadable(False)),
+        ("a FIFO in place of the reader", lambda reader: (reader.unlink(), os.mkfifo(reader))),
         ("a reader with a syntax error", lambda reader: reader.write_bytes(b"def is_hiding_element(:\n")),
         ("a reader without is_hiding_element()", lambda reader: reader.write_bytes(b"HIDING_CLASSES = ()\n")),
     ]
@@ -1117,11 +1222,15 @@ def check_unreadable_reader(failures: list[str]) -> int:
             shutil.copyfile(GENERATOR, generator)
             try:
                 fault(root / "tools" / "check-install-page.py")
-            except (AssertionError, OSError, py_compile.PyCompileError) as error:
+            except (AssertionError, AttributeError, OSError, py_compile.PyCompileError) as error:
                 failures.append(f"unreadable reader '{name}': the fault could not be made ({error})")
                 continue
-            result = subprocess.run([sys.executable, "-I", str(generator), "--root", str(root), "--out",
-                                     str(Path(scratch) / "out")], capture_output=True, text=True)
+            try:
+                result = subprocess.run([sys.executable, "-I", str(generator), "--root", str(root), "--out",
+                                         str(Path(scratch) / "out")], capture_output=True, text=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                failures.append(f"unreadable reader '{name}': no exit within 60 seconds, expected 3")
+                continue
             if result.returncode != 3 or "whose hiding reader" not in result.stderr:
                 failures.append(f"unreadable reader '{name}': exit {result.returncode}, expected 3 "
                                 f"({result.stderr.strip()[:200]})")
