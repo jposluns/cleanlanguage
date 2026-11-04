@@ -31,7 +31,9 @@ What it verifies
    gate's own code: among them, no ``<script>`` without ``src`` other than a
    structured-data block, no ``on*`` attribute, no ``javascript:`` URL, no
    ``<style>`` element or ``style`` attribute, no script from another origin,
-   and none of the elements that the parser reads differently from a browser.
+   and none of the elements that the parser reads differently from a browser;
+   and, by its check 7, exactly 1 element with ``data-scheme-toggle``, the
+   light and dark switch of template specification 7.33, in its place.
 5. Versioned asset tokens: ``fonts.css``, ``palettes.css``, ``baseline.css``,
    ``copy.js`` and ``select.js`` load from ``/assets/baseline/`` with
    ``?v=X.Y.Z``, the scripts with ``defer``; an optional ``site.css`` loads with

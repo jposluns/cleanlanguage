@@ -59,6 +59,7 @@ def edit(relative: str, old: str, new: str):
 # The scheme.js tag of template specification 7.33 (baseline 1.6.0), as the committed page carries it.
 SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.6.0"></script>'
 FONTS = '<link rel="stylesheet" href="/assets/baseline/fonts.css?v=1.6.0">'
+LATER = '<link rel="stylesheet" href="/assets/baseline/baseline.css?v=1.6.0">'
 
 
 def both(*faults):
@@ -146,6 +147,13 @@ CASES = [
     ("the scheme.js tag and the stylesheets moved into the body, in order", into_body(SCHEME), 1),
     ("the stylesheets moved into the body, after the scheme.js tag", into_body(FONTS), 1),
     ("the scheme.js tag and the stylesheets in a second head inside the body", into_body(SCHEME, "<head>\n", "</head>\n"), 1),
+    ("a later stylesheet moved into the body, after the first", into_body(LATER), 1),
+    ("a later stylesheet in upper case at the end of the body", edit(PAGE, "</body>",
+        '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.6.0">\n</body>'), 1),
+    ("a later stylesheet in a second head after the body", both(edit(PAGE, LATER + "\n", ""),
+        edit(PAGE, "</body>\n", "</body>\n<head>\n" + LATER + "\n</head>\n")), 1),
+    ("a second element with data-scheme-toggle, a button in the content", edit(PAGE, "</main>",
+        '<p><button class="scheme" type="button" data-scheme-toggle hidden><span class="vh">Dark mode</span></button></p></main>'), 1),
     ("a family section hidden by the first of 2 class attributes", edit(PAGE, '<section id="claude" data-family-section="claude">',
         '<section id="claude" data-family-section="claude" class="visually-hidden" class="x">'), 1),
     ("fonts.css loaded only inside a comment", edit(PAGE, FONTS, "<!--" + FONTS + "-->"), 1),

@@ -60,9 +60,15 @@ every HTML page it refuses:
    ``<svg>`` glyphs that the specification requires. Before checks 1 to 10 run,
    the gate replaces that switch, byte for byte as ``SCHEME_SWITCH`` below holds
    it, with the same button without its 2 ``<svg>`` children, so its own
-   button and text are still checked. A page that carries the switch more than
-   once fails. Any other ``<svg``, including a switch that differs by 1 byte,
-   still fails check 7.
+   button and text are still checked. Any other ``<svg``, including a switch
+   that differs by 1 byte, still fails check 7. Each page must carry the switch
+   exactly once, in the place 7.33 sets: the page's elements that carry a
+   ``data-scheme-toggle`` attribute, which ``scheme.js`` wires and shows, read
+   as parsed elements (an attribute name in any letter case, and the content of
+   ``<noscript>`` read as markup), must be exactly 1, and that 1 must be
+   ``SCHEME_SWITCH``, byte for byte, the last child of ``header.mast``, after
+   ``nav.nav``. A page with an end tag that closes no open element before that
+   switch's parent ends fails, since its place is then not known.
 8. Any ``<![CDATA[`` in the text, ignoring case.
 9. Any comment that opens as ``<!-->`` or ``<!--->``.
 10. On every page, a ``<script>`` element whose first ``src`` is not a
@@ -172,8 +178,9 @@ RAW_CDATA = re.compile(r"<!\[CDATA\[", re.I)
 RAW_SHORT_COMMENT = re.compile(r"<!---?>")
 RAW_SVG_DECLARATION = re.compile(r"<!(DOCTYPE|ENTITY)", re.I)
 # The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
-# reference pages (reference/install.html line 18), as tools/build-site.py writes it. Check 7 admits
-# its 2 <svg> elements only inside this exact string, once per page.
+# reference pages (reference/install.html line 18), as tools/build-site.py writes it. Check 7 requires
+# this exact string once per page, as the only element with data-scheme-toggle, and admits its 2 <svg>
+# elements only inside it.
 SCHEME_SWITCH = (
     '<button class="scheme" type="button" data-scheme-toggle aria-pressed="false" hidden>'
     '<svg class="moon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" '
@@ -187,6 +194,9 @@ SCHEME_SWITCH = (
 )
 # The switch as checks 1 to 10 read it: the same button without its 2 <svg> children.
 SCHEME_SWITCH_READ = re.sub(r"<svg\b.*?</svg>", "", SCHEME_SWITCH)
+# scheme.js wires and shows every element that carries this attribute ("[data-scheme-toggle]").
+SCHEME_TOGGLE = "data-scheme-toggle"
+VOID_ELEMENTS = ("area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr")
 
 RULE = (
     "the site's own pages must not use inline code (template specification, section 5), "
@@ -308,6 +318,77 @@ def scan(text: str) -> InlineCodeParser:
     return parser
 
 
+class SwitchScan(HTMLParser):
+    """Check 7: where each element with data-scheme-toggle starts, and for the first, its parent and the element
+    before it (each a name and classes) and where the end tag of its parent starts. The content of <noscript> is
+    read as markup."""
+    CDATA_CONTENT_ELEMENTS = tuple(name for name in RAW_TEXT_ELEMENTS if name != "noscript")
+    RCDATA_CONTENT_ELEMENTS = ()
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.toggles: list[tuple[int, int]] = []
+        # The open elements, and the element that ended last (or a void one) since the last start tag.
+        self.open: list[tuple[str, list[str]]] = []
+        self.previous: tuple[str, list[str]] | None = None
+        self.parent: tuple[str, list[str]] | None = None
+        self.before: tuple[str, list[str]] | None = None
+        self.depth = 0
+        self.parent_end: tuple[int, int] | None = None
+        self.unbalanced = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        classes = next((value or "" for name, value in attrs if name == "class"), "").split()
+        if any(name == SCHEME_TOGGLE for name, _ in attrs):
+            if not self.toggles:
+                self.parent = self.open[-1] if self.open else None
+                self.before, self.depth = self.previous, len(self.open)
+            self.toggles.append(self.getpos())
+        self.previous = (tag, classes) if tag in VOID_ELEMENTS else None
+        if tag not in VOID_ELEMENTS:
+            self.open.append((tag, classes))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+        if tag not in VOID_ELEMENTS:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in VOID_ELEMENTS:
+            return
+        if not self.open or self.open[-1][0] != tag:
+            # A browser may close other elements here, so the switch's place is not known.
+            self.unbalanced = self.unbalanced or self.parent_end is None
+            return
+        self.previous = self.open.pop()
+        if self.toggles and self.parent_end is None and len(self.open) < self.depth:
+            self.parent_end = self.getpos()
+
+
+def position(text: str, index: int) -> tuple[int, int]:
+    """The (line, column) of index in text, as HTMLParser.getpos() reports where a tag starts."""
+    return text.count("\n", 0, index) + 1, index - text.rfind("\n", 0, index) - 1
+
+
+def switch_problems(text: str) -> list[str]:
+    """Check 7: the light and dark switch exactly once, the only element with data-scheme-toggle, in its place."""
+    found = SwitchScan()
+    found.feed(text)
+    found.close()
+    at = text.find(SCHEME_SWITCH)
+    parent, before = found.parent or ("", []), found.before or ("", [])
+    if (text.count(SCHEME_SWITCH) != 1 or found.toggles != [position(text, at)] or found.unbalanced
+            or parent[0] != "header" or "mast" not in parent[1] or before[0] != "nav" or "nav" not in before[1]
+            or found.parent_end != position(text, at + len(SCHEME_SWITCH))):
+        line = found.toggles[0][0] if found.toggles else line_of(text, max(at, 0))
+        return [
+            f"line {line}: the page carries the light and dark switch {text.count(SCHEME_SWITCH)} times and "
+            f"{len(found.toggles)} elements with data-scheme-toggle; exactly 1 of each is required, the same "
+            "element, as the last child of header.mast, after nav.nav"
+        ]
+    return []
+
+
 def count_problems(text: str, parser: InlineCodeParser) -> list[str]:
     """Check 6: the plain text counts against the parser's counts."""
     problems = []
@@ -403,13 +484,7 @@ def inline_code_problems(text: str, svg: bool = False) -> list[str]:
     """Each piece of inline code or refused markup in a file, as 'line N: ...'."""
     if svg:
         return svg_problems(text)
-    problems: list[str] = []
-    switches = text.count(SCHEME_SWITCH)
-    if switches > 1:
-        problems.append(
-            f"line {line_of(text, text.index(SCHEME_SWITCH))}: the light and dark switch appears {switches} times; "
-            "a page may carry it once"
-        )
+    problems = switch_problems(text)
     text = text.replace(SCHEME_SWITCH, SCHEME_SWITCH_READ)
     parser = scan(text)
     return problems + parser.problems + count_problems(text, parser) + markup_problems(text)

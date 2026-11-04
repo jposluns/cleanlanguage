@@ -68,11 +68,14 @@ exactly 1 ``noindex, nofollow`` robots meta, and an indexable page at base
 of the ``/`` build with no ``modified`` date (and no ``--date``), or a date
 that is not ``YYYY-MM-DD``; a page without exactly 1 light and dark switch
 (``SCHEME_SWITCH``, exactly, as the last child of ``header.mast``, after
-``nav.nav``), without exactly 1 ``scheme.js`` script tag before the first
-stylesheet, both inside ``<head>``, or with any other ``<svg``; and a release
-version that disagrees with SKILL.md. The switch's place and the head are read
-as parsed elements: the switch's parent, the element before it and the end of
-its parent, and ``html > head``, the first head or body the page opens.
+``nav.nav``, and the only element with a ``data-scheme-toggle`` attribute,
+each of which ``scheme.js`` wires and shows), without exactly 1 ``scheme.js``
+script tag before the first stylesheet, it and every stylesheet inside
+``<head>``, or with any other ``<svg``; and a release version that disagrees
+with SKILL.md. The switch, its place and the head are read as parsed elements:
+each element with ``data-scheme-toggle`` (an attribute name in any letter
+case), the switch's parent, the element before it and the end of its parent,
+and ``html > head``, the first head or body the page opens.
 
 Modes
 -----
@@ -653,9 +656,11 @@ class PageScan(HTMLParser):
         self.problems: list[str] = []
         self.anchor: dict | None = None
         self.scripts: list[dict] = []
-        # Where each script with a src, and the first stylesheet, start: (line, column), as getpos() reports.
+        # Where each script with a src, each stylesheet, and each element with data-scheme-toggle (the elements
+        # scheme.js wires and shows) start: (line, column), as getpos() reports.
         self.loads: list[tuple[tuple[int, int], str]] = []
-        self.first_sheet: tuple[int, int] | None = None
+        self.sheets: list[tuple[int, int]] = []
+        self.toggles: list[tuple[int, int]] = []
         # Where each script and link starts outside the page's head: html > head, the first head or body opened.
         self.outside_head: set[tuple[int, int]] = set()
         self.heads = 0
@@ -685,6 +690,8 @@ class PageScan(HTMLParser):
             self.heads += 1
         if tag in ("script", "link") and ([name for name, _ in self.open] != ["html", "head"] or self.heads != 1):
             self.outside_head.add(self.getpos())
+        if "data-scheme-toggle" in attrs:
+            self.toggles.append(self.getpos())
         if tag == "button" and self.getpos() == self.switch_at:
             self.switch_parent = self.open[-1] if self.open else None
             self.switch_previous = self.previous
@@ -715,8 +722,8 @@ class PageScan(HTMLParser):
             self.scripts.append(attrs)
             if "src" in attrs:
                 self.loads.append((self.getpos(), attrs["src"]))
-        if tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split() and self.first_sheet is None:
-            self.first_sheet = self.getpos()
+        if tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split():
+            self.sheets.append(self.getpos())
         canonical = tag == "link" and attrs.get("rel") == "canonical"
         for name in ("href", "src"):
             if name in attrs and not canonical:
@@ -779,12 +786,15 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     scan = PageScan(line_column(page_html, switch) if switch != -1 else None)
     scan.feed(page_html)
     scan.close()
-    # The parsed element the switch sits in and the one before it; the end tag of its parent starts where it ends.
+    # The switch is the only parsed element with data-scheme-toggle; the element it sits in and the one before it;
+    # the end tag of its parent starts where it ends.
     parent, previous = scan.switch_parent or ("", []), scan.switch_previous or ("", [])
-    if (page_html.count(SCHEME_SWITCH) != 1 or parent[0] != "header" or "mast" not in parent[1]
+    if (page_html.count(SCHEME_SWITCH) != 1 or scan.toggles != [line_column(page_html, switch)]
+            or parent[0] != "header" or "mast" not in parent[1]
             or previous[0] != "nav" or "nav" not in previous[1]
             or scan.switch_parent_end != line_column(page_html, switch + len(SCHEME_SWITCH))):
-        problems.append("the light and dark switch must appear exactly once, as the last child of header.mast, after nav.nav")
+        problems.append("the light and dark switch must appear exactly once, as the last child of header.mast, after nav.nav, "
+                        "and no other element may carry data-scheme-toggle")
     if re.search(r"<svg", page_html.replace(SCHEME_SWITCH, "", 1), re.I):
         problems.append("an inline <svg> other than the light and dark switch")
     scheme_tags = {line_column(page_html, match.start()) for match in re.finditer(
@@ -798,10 +808,10 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
                     if src.split("#", 1)[0].split("?", 1)[0] == base + "assets/baseline/scheme.js"]
     if len(scheme_loads) != 1 or scheme_loads[0] not in scheme_tags or page_html.count("scheme.js") != 1:
         problems.append("scheme.js must load exactly once, with data-cfasync=\"false\" and no defer")
-    elif scan.first_sheet is None or scan.first_sheet < scheme_loads[0]:
+    elif not scan.sheets or scan.sheets[0] < scheme_loads[0]:
         problems.append("scheme.js must load before the first stylesheet")
-    elif scheme_loads[0] in scan.outside_head or scan.first_sheet in scan.outside_head:
-        problems.append("scheme.js and the first stylesheet must load inside <head>")
+    elif scheme_loads[0] in scan.outside_head or any(at in scan.outside_head for at in scan.sheets):
+        problems.append("scheme.js and every stylesheet must load inside <head>")
     problems += scan.problems
     if scan.open:
         problems.append(f"elements left open: {[tag for tag, _ in scan.open]}")

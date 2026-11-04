@@ -43,6 +43,9 @@ def gate_switch() -> str:
 
 
 SWITCH_HEAD = '<button class="scheme" type="button" data-scheme-toggle aria-pressed="false" hidden><svg class="moon" '
+SWITCH = gate_switch()
+# A second working switch: scheme.js wires and shows every element with data-scheme-toggle.
+TOGGLE = '<p><button class="scheme" type="button" data-scheme-toggle hidden><span class="vh">Dark mode</span></button></p>'
 
 
 def duplicate_switch(relative: str):
@@ -273,6 +276,23 @@ CASES = [
     ("the switch twice on 1 page", duplicate_switch(LICENSE), 1),
     ("a bare svg next to the switch", edit(LICENSE, '<span class="vh">Dark mode</span></button>',
                                            '<span class="vh">Dark mode</span></button><svg></svg>'), 1),
+    ("a second element with data-scheme-toggle, a button in the content", before_main_end(LICENSE, TOGGLE), 1),
+    ("a second element with data-scheme-toggle in upper case", before_main_end(HOME, '<div DATA-SCHEME-TOGGLE hidden></div>'), 1),
+    ("a second element with data-scheme-toggle inside noscript",
+        before_main_end(DEMO, "<noscript>" + TOGGLE + "</noscript>"), 1),
+    ("no switch on a page", edit(LICENSE, SWITCH, ""), 1),
+    ("the switch's markup again inside a comment", before_main_end(LICENSE, "<!--" + SWITCH + "-->"), 1),
+    ("the switch after header.mast", edit(LICENSE, SWITCH + "</header>", "</header>" + SWITCH), 1),
+    ("the switch in a header without the mast class", edit(LICENSE, '<header class="mast">', '<header class="other">'), 1),
+    ("the switch in a div.mast inside header.mast", both(
+        edit(LICENSE, '<header class="mast">', '<header class="mast"><div class="mast">'),
+        edit(LICENSE, SWITCH + "</header>", SWITCH + "</div></header>")), 1),
+    ("the switch after a nav without the nav class", edit(LICENSE, '<nav class="nav"', '<nav class="links"'), 1),
+    ("the switch after a div.nav", both(edit(LICENSE, '<nav class="nav"', '<div class="nav"'),
+        edit(LICENSE, "</nav>" + SWITCH, "</div>" + SWITCH)), 1),
+    ("a comment after the switch in header.mast", edit(LICENSE, SWITCH + "</header>", SWITCH + "<!-- x --></header>"), 1),
+    ("an end tag that closes no open element before the switch", edit(LICENSE, '<nav class="nav"', '</div><nav class="nav"'), 1),
+    ("a newline between nav.nav and the switch", edit(LICENSE, "</nav>" + SWITCH, "</nav>\n" + SWITCH), 0),
 ]
 
 

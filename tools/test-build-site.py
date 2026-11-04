@@ -97,24 +97,33 @@ VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "met
 
 
 class Placement(HTMLParser):
-    """Each start tag's open elements (name, classes), and each end tag's closed element (name, classes, depth),
-    keyed by where the tag starts: (line, column), as getpos() reports."""
+    """Each start tag's name, attributes (the first of 2 with the same name, as a browser reads them), open
+    elements (name, classes), the element before it (name, classes) and whether it starts in html > head, the
+    first head or body the page opens; and each end tag's closed element (name, classes, depth); keyed by where
+    the tag starts: (line, column), as getpos() reports."""
 
     def __init__(self) -> None:
         super().__init__()
         self.open: list[tuple[str, list[str]]] = []
-        self.starts: dict[tuple[int, int], list[tuple[str, list[str]]]] = {}
+        self.previous: tuple[str, list[str]] | None = None
+        self.heads = 0
+        self.starts: dict[tuple[int, int], tuple[str, dict, list[tuple[str, list[str]]], tuple | None, bool]] = {}
         self.ends: dict[tuple[int, int], tuple[str, list[str], int]] = {}
 
     def handle_starttag(self, tag: str, attrs) -> None:
-        self.starts[self.getpos()] = list(self.open)
+        first = {name: value or "" for name, value in reversed(attrs)}
+        if tag in ("head", "body"):
+            self.heads += 1
+        in_head = [name for name, _ in self.open] == ["html", "head"] and self.heads == 1
+        self.starts[self.getpos()] = (tag, first, list(self.open), self.previous, in_head)
+        self.previous = (tag, first.get("class", "").split()) if tag in VOID else None
         if tag not in VOID:
-            self.open.append((tag, (dict(attrs).get("class") or "").split()))
+            self.open.append((tag, first.get("class", "").split()))
 
     def handle_endtag(self, tag: str) -> None:
         if self.open and self.open[-1][0] == tag:
-            name, classes = self.open.pop()
-            self.ends[self.getpos()] = (name, classes, len(self.open))
+            self.previous = self.open.pop()
+            self.ends[self.getpos()] = (*self.previous, len(self.open))
 
 
 def position(text: str, index: int) -> tuple[int, int]:
@@ -122,8 +131,9 @@ def position(text: str, index: int) -> tuple[int, int]:
 
 
 def scheme_problems(page: str, text: str, base: str) -> list[str]:
-    """Specification 7.33 on 1 generated page, read as parsed elements: the scheme.js line once, before the
-    stylesheets, all of them in html > head, and the switch once, the last child of header.mast after nav.nav."""
+    """Specification 7.33 on 1 generated page, read as parsed elements: the scheme.js line, the only scheme.js
+    load, before the stylesheets, it and every stylesheet in html > head; and the switch, the only element with
+    data-scheme-toggle (scheme.js wires and shows each), once, the last child of header.mast after nav.nav."""
     problems = []
     parsed = Placement()
     parsed.feed(text)
@@ -131,27 +141,33 @@ def scheme_problems(page: str, text: str, base: str) -> list[str]:
     line = re.compile(r'^<script data-cfasync="false" src="' + re.escape(base)
                       + r'assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>$', re.M)
     found = list(line.finditer(text))
-    sheets = [match.start() for match in re.finditer('<link rel="stylesheet"', text)]
-    if len(found) != 1 or text.count("scheme.js") != 1:
+    loads = [at for at, (tag, attrs, *_) in parsed.starts.items() if tag == "script"
+             and attrs.get("src", "").split("#", 1)[0].split("?", 1)[0] == base + "assets/baseline/scheme.js"]
+    sheets = [at for at, (tag, attrs, *_) in parsed.starts.items()
+              if tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split()]
+    if len(found) != 1 or loads != [position(text, found[0].start())] or text.count("scheme.js") != 1:
         problems.append(f"{page} does not load scheme.js exactly once, with data-cfasync and no defer")
-    elif not sheets or found[0].start() > sheets[0]:
+    elif not sheets or loads[0] > sheets[0]:
         problems.append(f"{page} loads scheme.js after the first stylesheet")
-    elif any([name for name, _ in parsed.starts.get(position(text, at), [])] != ["html", "head"]
-             for at in [found[0].start()] + sheets):
+    elif not all(parsed.starts[at][4] for at in loads + sheets):
         problems.append(f"{page} loads scheme.js or a stylesheet outside html > head")
+    toggles = [at for at, (_, attrs, *_) in parsed.starts.items() if "data-scheme-toggle" in attrs]
     at = text.find(SWITCH)
-    around = parsed.starts.get(position(text, at), [("", [])])
-    before = parsed.ends.get(position(text, at - len("</nav>")), ("", [], -1))
+    _, _, around, before, _ = parsed.starts.get(position(text, at), ("", {}, [], None, False))
+    around, before = around or [("", [])], before or ("", [])
     after = parsed.ends.get(position(text, at + len(SWITCH)), ("", [], -1))
-    if (text.count(SWITCH) != 1 or around[-1][0] != "header" or "mast" not in around[-1][1]
-            or before[0] != "nav" or "nav" not in before[1] or before[2] != len(around)
+    if (text.count(SWITCH) != 1 or toggles != [position(text, at)]
+            or around[-1][0] != "header" or "mast" not in around[-1][1] or before[0] != "nav" or "nav" not in before[1]
             or after[0] != "header" or after[2] != len(around) - 1):
-        problems.append(f"{page} does not end header.mast with the light and dark switch exactly once, after nav.nav")
+        problems.append(f"{page} does not end header.mast with the light and dark switch, the only element with "
+                        "data-scheme-toggle, exactly once, after nav.nav")
     return problems
 
 
 PAGE = "site-src/pages/demo.html"
 ANCHOR = "<p>This pair preserves every fact; only the style changes.</p>"
+# A second working switch: scheme.js wires and shows every element with data-scheme-toggle.
+TOGGLE = '<p><button class="scheme" type="button" data-scheme-toggle hidden><span class="vh">Dark mode</span></button></p>'
 
 
 def inject(snippet: str):
@@ -195,6 +211,10 @@ REFUSALS = [
     ("a style element", inject("<style>p { color: red; }</style>")),
     ("an inline script", inject("<script>alert(1)</script>")),
     ("a second light and dark switch", inject(SWITCH)),
+    ("a second element with data-scheme-toggle, a button in the content", inject(TOGGLE)),
+    ("a second element with data-scheme-toggle in upper case", inject('<div DATA-SCHEME-TOGGLE hidden></div>')),
+    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.6.0">')),
+    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.6.0">')),
     ("a bare svg outside the switch", inject("<svg></svg>")),
     ("an upper-case SVG outside the switch", inject("<SVG></SVG>")),
     ("a second scheme.js load in another spelling",
@@ -292,8 +312,9 @@ def check_scheme_validation(failures: list[str]) -> int:
     text = (REPO_ROOT / "site/license/index.html").read_text(encoding="utf-8")
     tag = re.search(r'<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9.]+"></script>\n', text).group(0)
     sheet = text.index('<link rel="stylesheet"')
-    # The head's lines from the scheme.js line, and from the first stylesheet, to </head>.
+    # The head's lines from the scheme.js line, and from the first stylesheet, to </head>; and its last stylesheet.
     loads, sheets = text[text.index(tag):text.index("</head>")], text[sheet:text.index("</head>")]
+    later = re.findall(r'<link rel="stylesheet"[^>]*>\n', text)[-1]
     cases = [
         ("the committed licence page", text, True),
         ("no switch", text.replace(SWITCH, "", 1), False),
@@ -323,6 +344,16 @@ def check_scheme_validation(failures: list[str]) -> int:
             '"/assets/baseline/sch&#101;me.js?v=1.6.0" src="/assets/baseline/copy.js?v=1.6.0" defer></SCRIPT></head>', 1), False),
         ("a stylesheet before the scheme.js line as the first of 2 rel attributes", text.replace(
             tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + tag, 1), False),
+        ("a newline between nav.nav and the switch", text.replace("</nav>" + SWITCH, "</nav>\n" + SWITCH, 1), True),
+        ("a second element with data-scheme-toggle after header.mast", text.replace(
+            SWITCH + "</header>", SWITCH + "</header>" + TOGGLE, 1), False),
+        ("a second element with data-scheme-toggle in upper case", text.replace(
+            SWITCH + "</header>", SWITCH + '</header><div DATA-SCHEME-TOGGLE hidden></div>', 1), False),
+        ("a later stylesheet moved into the body", text.replace(later, "", 1).replace("<body>\n", "<body>\n" + later, 1), False),
+        ("a later stylesheet in upper case at the end of the body", text.replace(
+            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.6.0">\n</body>', 1), False),
+        ("a later stylesheet in a second head after the body", text.replace(later, "", 1).replace(
+            "</body>\n", "</body>\n<head>\n" + later + "</head>\n", 1), False),
     ]
     for name, page_html, passes in cases:
         try:
@@ -332,7 +363,10 @@ def check_scheme_validation(failures: list[str]) -> int:
             passed = False
         if passed != passes:
             failures.append(f"scheme validation '{name}': {'passed' if passed else 'refused'}, expected the opposite")
-    return len(cases)
+        # The build test's helper must judge each case as the generator should.
+        if (not scheme_problems("license/index.html", page_html, "/")) != passes:
+            failures.append(f"scheme helper '{name}': {'refused' if passes else 'passed'}, expected the opposite")
+    return 2 * len(cases)
 
 
 def check_unreadable(failures: list[str]) -> int:
