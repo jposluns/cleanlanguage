@@ -402,14 +402,14 @@ REFUSALS = [
     ("a second light and dark switch", inject(SWITCH)),
     ("a second element with data-scheme-toggle, a button in the content", inject(TOGGLE)),
     ("a second element with data-scheme-toggle in upper case", inject('<div DATA-SCHEME-TOGGLE hidden></div>')),
-    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.7.0">')),
-    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.7.0">')),
+    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.8.0">')),
+    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.8.0">')),
     ("a bare svg outside the switch", inject("<svg></svg>")),
     ("an upper-case SVG outside the switch", inject("<SVG></SVG>")),
     ("a second scheme.js load in another spelling",
-        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.7.0" defer></SCRIPT>')),
+        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.8.0" defer></SCRIPT>')),
     ("a second scheme.js load as the first of 2 src attributes", inject(
-        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.7.0" src="{{base}}assets/baseline/copy.js?v=1.7.0" defer></SCRIPT>')),
+        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.8.0" src="{{base}}assets/baseline/copy.js?v=1.8.0" defer></SCRIPT>')),
     ("an attribute repeated on any other tag", inject('<p class="lead" class="x">x</p>')),
     ("a link to the pinned build tool, which is never served",
         inject('<p><a href="/.baseline/check_palette.py">palette gate</a></p>')),
@@ -614,15 +614,15 @@ def check_scheme_validation(failures: list[str]) -> int:
         ("the scheme.js line after the first stylesheet", text.replace(tag, "", 1).replace("</head>", tag + "</head>", 1), False),
         ("a second scheme.js line", text[:sheet] + tag + text[sheet:], False),
         ("a second scheme.js in upper case with a character reference", text.replace(
-            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.7.0" defer></SCRIPT></head>', 1), False),
+            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.8.0" defer></SCRIPT></head>', 1), False),
         ("the scheme.js line inside a comment, loaded in another spelling", text.replace(tag, "<!--" + tag.rstrip("\n")
-            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.7.0"></script>\n', 1), False),
+            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.8.0"></script>\n', 1), False),
         ("an upper-case stylesheet before the scheme.js line", text.replace(
-            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.7.0">\n' + tag, 1), False),
+            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.8.0">\n' + tag, 1), False),
         ("a second scheme.js load as the first of 2 src attributes", text.replace("</head>", '<SCRIPT SRC='
-            '"/assets/baseline/sch&#101;me.js?v=1.7.0" src="/assets/baseline/copy.js?v=1.7.0" defer></SCRIPT></head>', 1), False),
+            '"/assets/baseline/sch&#101;me.js?v=1.8.0" src="/assets/baseline/copy.js?v=1.8.0" defer></SCRIPT></head>', 1), False),
         ("a stylesheet before the scheme.js line as the first of 2 rel attributes", text.replace(
-            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.7.0">\n' + tag, 1), False),
+            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.8.0">\n' + tag, 1), False),
         # The parsed reading allows it, but the header block must be byte for byte what mast() is meant to write.
         ("a newline between nav.nav and the switch", text.replace("</nav>" + SWITCH, "</nav>\n" + SWITCH, 1), False),
         ("a second element with data-scheme-toggle after header.mast", text.replace(
@@ -631,7 +631,7 @@ def check_scheme_validation(failures: list[str]) -> int:
             SWITCH + "</header>", SWITCH + '</header><div DATA-SCHEME-TOGGLE hidden></div>', 1), False),
         ("a later stylesheet moved into the body", text.replace(later, "", 1).replace("<body>\n", "<body>\n" + later, 1), False),
         ("a later stylesheet in upper case at the end of the body", text.replace(
-            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.7.0">\n</body>', 1), False),
+            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.8.0">\n</body>', 1), False),
         ("a later stylesheet in a second head after the body", text.replace(later, "", 1).replace(
             "</body>\n", "</body>\n<head>\n" + later + "</head>\n", 1), False),
         # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>; the loads
