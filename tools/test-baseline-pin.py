@@ -5,17 +5,17 @@ Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
 with the version's README and specification under ``.baseline/`` and a root
 ``NOTICE.md``, applies 1 fault, runs the gate on that tree as a separate
 process and asserts its exit code, and for some cases a line of its output.
-The last case runs the gate on this repository. The first 12 cases run
+The last case runs the gate on this repository. The first 13 cases run
 ``tools/copy-baseline.py`` on a small version folder and assert that the pin
 header it writes, and the committed one, give each key's base; that it copies
 and pins the build tool and counts it among the copied files; that it copies
 the README and the specification to ``.baseline/`` without pinning them; that
 a version without the build tool, the README or the specification, or whose
-README names another version, lacks its step 7 NOTICE entry or has CRLF line
-ends, on every line or on the entry line only, exits 1 before any served file
-is replaced; and that on Python older than 3.11, stood in for by a gate whose
-tomllib import fails, it exits 3 with its own message before any served file
-is replaced.
+README names another version, lacks its step 7 NOTICE entry, holds a second
+quoted paragraph in step 7 or has CRLF line ends, on every line or on the
+entry line only, exits 1 before any served file is replaced; and that on
+Python older than 3.11, stood in for by a gate whose tomllib import fails, it
+exits 3 with its own message before any served file is replaced.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
@@ -248,6 +248,14 @@ def fault_readme_crlf(root: Path) -> None:
     edit_readme(root, README, README.replace(b"\n", b"\r\n"))
 
 
+def fault_readme_second_quote(root: Path) -> None:
+    edit_readme(root, b"exceptions.\n\n8.", b"exceptions.\n\n   > A 3rd exception: x.\n\n8.")
+
+
+def readme_quote_in_step_8(root: Path) -> None:
+    edit_readme(root, b"8. Updates.\n", b"8. Updates.\n\n   > A quote: x.\n")
+
+
 def fault_spec_edited(root: Path) -> None:
     (root / ".baseline" / "SPECIFICATION.md").write_bytes(DOCS["SPECIFICATION.md"] + b"x\n")
 
@@ -288,6 +296,27 @@ def fault_readme_entry_crlf(root: Path) -> None:
 def fault_notice_nested_tab_subsection(root: Path) -> None:
     edit_file(root / "NOTICE.md", "with 2 exceptions.\n",
               "with 2 exceptions.\n\n###\tExceptions\n\nA 3rd exception: x.\n")
+
+
+def fault_notice_lookalike_heading(root: Path) -> None:
+    # The exact heading and the prescribed entry sit in an HTML comment that a heading line ends; the rendered file
+    # shows the "## Site template " heading, with a trailing space, and its other entry.
+    edit_file(root / "NOTICE.md", "## Site template\n", "<!--\n## Site template\n")
+    edit_file(root / "NOTICE.md", "## Other\n",
+              "## Other -->\n\n## Site template \n\nSite template: baseline 1.2.1, with 3 exceptions.\n\n"
+              "## Other\n")
+
+
+def fault_notice_comment(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n", "with 2 exceptions.\n\n<!--\nA 3rd exception: x.\n-->\n")
+
+
+def fault_notice_backtick_fence(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n", "with 2 exceptions.\n\n```\nA 3rd exception: x.\n```\n")
+
+
+def fault_notice_tilde_fence(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n", "with 2 exceptions.\n\n~~~\nA 3rd exception: x.\n~~~\n")
 
 
 # Valid level 1 or 2 headings that end the Site template section, so the lines after them are not compared: the
@@ -335,6 +364,15 @@ CASES = [
         "NOTICE.md's '## Site template'"),
     ("a ### subsection with a tab under the Site template section", fault_notice_nested_tab_subsection, 1,
         "NOTICE.md's '## Site template'"),
+    ("a '## Site template ' heading beside the exact one in an HTML comment", fault_notice_lookalike_heading, 1,
+        "reads as that heading"),
+    ("an HTML comment in the Site template section", fault_notice_comment, 1,
+        "an HTML comment opener or a code fence"),
+    ("a ``` fence in the Site template section", fault_notice_backtick_fence, 1,
+        "an HTML comment opener or a code fence"),
+    ("a ~~~ fence in the Site template section", fault_notice_tilde_fence, 1,
+        "an HTML comment opener or a code fence"),
+    ("a README with a quoted line in step 8, outside step 7", readme_quote_in_step_8, 0),
     ("the Site template section ended by a level 2 heading with a tab", end_tab, 0),
     ("the Site template section ended by a bare ##", end_bare_level_2, 0),
     ("the Site template section ended by a bare #", end_bare_level_1, 0),
@@ -353,6 +391,7 @@ CASES = [
     ("a README without its version heading", fault_readme_no_heading, 3),
     ("a README without its step 7 NOTICE entry", fault_readme_no_entry, 3),
     ("a README with CRLF line ends", fault_readme_crlf, 3),
+    ("a README whose step 7 holds a second, blank-separated quoted paragraph", fault_readme_second_quote, 3),
     ("a README with CRLF only on its step 7 entry line", fault_readme_entry_crlf, 3),
     ("the copied specification is missing", fault_spec_missing, 3),
     ("NOTICE.md is missing", fault_notice_missing, 3),
@@ -387,6 +426,9 @@ COPY_REFUSALS = [
         lambda package: package.update({"README.md": README.replace(b"Baseline 1.2.1", b"Baseline 1.2.0")})),
     ("a README without its step 7 NOTICE entry",
         lambda package: package.update({"README.md": README.replace(b"   > ", b"")})),
+    ("a README whose step 7 holds a second, blank-separated quoted paragraph",
+        lambda package: package.update({"README.md": README.replace(
+            b"exceptions.\n\n", b"exceptions.\n\n   > A 3rd exception: x.\n\n")})),
     # The gate reads the README's bytes without newline translation and refuses this one (exit 3), so copying it
     # would only fail at deploy.
     ("a README with CRLF line ends",

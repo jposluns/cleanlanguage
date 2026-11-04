@@ -48,11 +48,24 @@ What it verifies
    ``tools/test-build-site.py``, must hash to its listed digest too.
 7. ``NOTICE.md``'s ``## Site template`` section is exactly the entry that the
    README's "Adoption in a repository" step 7 prescribes, with ``<version>``
-   set to the pin's version (its lines other than blank ones, compared byte
-   for byte, up to the next heading of level 1 or 2, so a subsection's lines
-   count), so an entry edited by hand, extended, or left on an earlier
-   version, fails. It is read only when the README matches its digest, and a
-   README that holds a carriage return anywhere is refused (exit 3).
+   set to the pin's version, so an entry edited by hand, extended, or left on
+   an earlier version, fails. The gate compares the file's lines, not its
+   rendering: the section is the lines after the 1 line that is exactly
+   ``## Site template``, up to the next heading of level 1 or 2, so a
+   subsection's lines count, and its lines other than blank ones are compared
+   byte for byte with the entry. Since the rendering can differ from the
+   lines, the file also fails if any other line reads as that heading once
+   trailing whitespace is stripped and case folded, or if a line of the
+   section holds an HTML comment opener (``<!--``) or a code fence (3
+   backticks or 3 tildes). Nothing else about the rendering is checked: a
+   comment or fence that opens before the section, or another line that
+   renders as the heading in another form, such as indented, closed with
+   ``#`` or underlined, is not refused. The README's step 7 is every line
+   after its step line up to the next unindented numbered step or the next
+   heading outside the step, and must hold exactly 1 quoted line, the entry,
+   as its first line other than blank ones. The README is read only when it
+   matches its digest, and a README that holds a carriage return anywhere is
+   refused (exit 3).
 
 Every folder is listed with ``os.scandir``, so a folder or file that cannot be
 read fails closed (exit 3) rather than reading as empty.
@@ -72,7 +85,8 @@ Exit codes:
   0  every copied file matches the pin
   1  a file drifted, is missing, is extra, or disagrees with SHA256SUMS; the
      pin's version is not the README's; or NOTICE.md's Site template entry
-     is not the one the README prescribes
+     is not the one the README prescribes, or NOTICE.md has another line that
+     reads as its heading or a comment opener or code fence in the section
   3  the pin or a file could not be read, the pin is malformed, or the README
      lacks its version heading or its step 7 NOTICE entry, or holds a carriage
      return
@@ -103,12 +117,16 @@ NOTICE = Path("NOTICE.md")
 DOCUMENTS = ("README.md", "SPECIFICATION.md")
 README_HEADING = re.compile(r"^# Baseline ([0-9]+\.[0-9]+\.[0-9]+): ")
 # The README's "Adoption in a repository" step 7 and the prefix of its quoted NOTICE entry, read by notice_entry(),
-# which tools/copy-baseline.py loads from here; the entry's section in NOTICE.md, which only a heading of the same or a
-# higher level ends: up to 3 spaces, 1 or 2 "#", then a space, a tab or the end of the line.
+# which tools/copy-baseline.py loads from here; the step ends at the next unindented numbered step or the next heading
+# outside it: up to 2 spaces, 1 to 6 "#", then a space, a tab or the end of the line. The entry's section in NOTICE.md,
+# which only a heading of the same or a higher level ends: up to 3 spaces, 1 or 2 "#", then a space, a tab or the end
+# of the line; a line of it may hold none of HIDING, an HTML comment opener and the 2 code fences.
 NOTICE_STEP = "7. Add this entry to the repository's NOTICE:"
+STEP_END = re.compile(r"^(?:[0-9]+\. | {0,2}#{1,6}(?:[ \t]|$))")
 ENTRY_PREFIX = "   > "
 NOTICE_SECTION = "## Site template"
 SECTION_END = re.compile(r"^ {0,3}#{1,2}(?:[ \t]|$)")
+HIDING = ("<!--", "```", "~~~")
 PREFIX = "assets/baseline/"
 # The pinned build tool: its key in the pin, from the repository root, and its name in SHA256SUMS.
 TOOLS = {".baseline/check_palette.py": "tools/check_palette.py"}
@@ -198,8 +216,9 @@ def list_tree(directory: Path) -> list[str]:
 
 
 def notice_entry(readme: str) -> str | None:
-    """The NOTICE entry of the README's step 7, or None unless it is exactly 1 quoted line holding <version> once
-    and the README holds no carriage return, so an entry line that alone ends in CRLF is refused too."""
+    """The NOTICE entry of the README's step 7, or None unless the step, every line after the step line up to
+    STEP_END, holds exactly 1 quoted line, its first line other than blank ones, holding <version> once, and the
+    README holds no carriage return, so an entry line that alone ends in CRLF is refused too."""
     if "\r" in readme:
         return None
     lines = readme.split("\n")
@@ -207,14 +226,13 @@ def notice_entry(readme: str) -> str | None:
     if len(steps) != 1 or lines[steps[0]] != NOTICE_STEP:
         return None
     rest = lines[steps[0] + 1:]
-    while rest and not rest[0].strip():
-        rest = rest[1:]
-    quoted = []
-    while rest and rest[0].lstrip().startswith(">"):
-        quoted.append(rest.pop(0))
-    if len(quoted) != 1 or not quoted[0].startswith(ENTRY_PREFIX) or quoted[0].count("<version>") != 1:
+    rest = rest[:next((number for number, line in enumerate(rest) if STEP_END.match(line)), len(rest))]
+    quoted = [number for number, line in enumerate(rest) if line.lstrip().startswith(">")]
+    first = next((number for number, line in enumerate(rest) if line.strip()), None)
+    if (len(quoted) != 1 or quoted[0] != first or not rest[first].startswith(ENTRY_PREFIX)
+            or rest[first].count("<version>") != 1):
         return None
-    return quoted[0][len(ENTRY_PREFIX):]
+    return rest[first][len(ENTRY_PREFIX):]
 
 
 def document_problems(root: Path, version: str, published: dict[str, str]) -> list[str]:
@@ -256,12 +274,23 @@ def document_problems(root: Path, version: str, published: dict[str, str]) -> li
         problems.append(f"{NOTICE} has no single {NOTICE_SECTION!r} section for the entry the baseline README's step 7 "
                         "prescribes.")
         return problems
-    section = []
-    for line in lines[lines.index(NOTICE_SECTION) + 1:]:
+    start = lines.index(NOTICE_SECTION)
+    if any(line.rstrip().casefold() == NOTICE_SECTION.casefold() for line in lines[:start] + lines[start + 1:]):
+        problems.append(f"{NOTICE} has a line other than its {NOTICE_SECTION!r} heading that reads as that heading "
+                        "once trailing whitespace is stripped and case folded; the gate compares lines, not the "
+                        "rendering.")
+        return problems
+    section, hiding = [], False
+    for line in lines[start + 1:]:
         if SECTION_END.match(line):
             break
+        hiding = hiding or any(marker in line for marker in HIDING)
         if line.strip():
             section.append(line)
+    if hiding:
+        problems.append(f"{NOTICE}'s {NOTICE_SECTION!r} section holds an HTML comment opener or a code fence, which "
+                        "can hide lines from the rendering; the gate compares lines, not the rendering.")
+        return problems
     if section != [entry.replace("<version>", version)]:
         problems.append(f"{NOTICE}'s {NOTICE_SECTION!r} section is not exactly the entry the baseline README's step 7 "
                         f"prescribes for baseline {version}.")
