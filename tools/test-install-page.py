@@ -71,11 +71,11 @@ SELECT = "/assets/baseline/select.js?v=1.3.0"
 ROW = '<p><a class="btn inline" id="claude"'
 ROW_END = OTHER_LINK + "</p>"
 STEPS = '<ol class="steps">'
-# The scheme.js tag of template specification 7.33 (baseline 1.7.0), as the committed pages carry it.
-SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.7.0"></script>'
-COPY = '<script src="/assets/baseline/copy.js?v=1.7.0" defer></script>'
-FONTS = '<link rel="stylesheet" href="/assets/baseline/fonts.css?v=1.7.0">'
-LATER = '<link rel="stylesheet" href="/assets/baseline/baseline.css?v=1.7.0">'
+# The scheme.js tag of template specification 7.33 (baseline 1.8.0), as the committed pages carry it.
+SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.8.0"></script>'
+COPY = '<script src="/assets/baseline/copy.js?v=1.8.0" defer></script>'
+FONTS = '<link rel="stylesheet" href="/assets/baseline/fonts.css?v=1.8.0">'
+LATER = '<link rel="stylesheet" href="/assets/baseline/baseline.css?v=1.8.0">'
 STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
 # Classes a stylesheet may hide as a bare single class although the gate does not refuse them. Add 1 only with a
 # comment saying why no install page can carry it on a checked element or an ancestor. None qualifies today.
@@ -349,26 +349,26 @@ CASES = [
     ("the scheme.js tag with defer", edit(PAGE, SCHEME, SCHEME.replace('"></script>', '" defer></script>')), 1),
     ("the scheme.js tag with async", edit(PAGE, SCHEME, SCHEME.replace('"></script>', '" async></script>')), 1),
     ("the scheme.js tag with src before data-cfasync", edit(PAGE, SCHEME,
-        '<script src="/assets/baseline/scheme.js?v=1.7.0" data-cfasync="false"></script>'), 1),
+        '<script src="/assets/baseline/scheme.js?v=1.8.0" data-cfasync="false"></script>'), 1),
     ("the scheme.js tag after the first stylesheet", both(edit(PAGE, SCHEME + "\n", ""),
         edit(PAGE, "</head>", SCHEME + "\n</head>")), 1),
     ("the scheme.js tag twice", edit(PAGE, SCHEME, SCHEME + SCHEME), 1),
     ("a second scheme.js with defer", edit(PAGE, "</head>",
-        '<script src="/assets/baseline/scheme.js?v=1.7.0" defer></script>\n</head>'), 1),
+        '<script src="/assets/baseline/scheme.js?v=1.8.0" defer></script>\n</head>'), 1),
     ("a second scheme.js in upper case with a character reference", edit(PAGE, "</head>",
-        '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.7.0" defer></SCRIPT>\n</head>'), 1),
+        '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.8.0" defer></SCRIPT>\n</head>'), 1),
     ("a second scheme.js with spaces around =", edit(PAGE, "</head>",
-        '<script src = "/assets/baseline/scheme.js?v=1.7.0" defer></script>\n</head>'), 1),
+        '<script src = "/assets/baseline/scheme.js?v=1.8.0" defer></script>\n</head>'), 1),
     ("an upper-case stylesheet before the scheme.js tag", edit(PAGE, SCHEME,
-        '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.7.0">\n' + SCHEME), 1),
+        '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.8.0">\n' + SCHEME), 1),
     ("a stylesheet before the scheme.js tag as the first of 2 rel attributes", edit(PAGE, SCHEME,
-        '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.7.0">\n' + SCHEME), 1),
+        '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.8.0">\n' + SCHEME), 1),
     ("the scheme.js tag and the stylesheets moved into the body, in order", into_body(SCHEME), 1),
     ("the stylesheets moved into the body, after the scheme.js tag", into_body(FONTS), 1),
     ("the scheme.js tag and the stylesheets in a second head inside the body", into_body(SCHEME, "<head>\n", "</head>\n"), 1),
     ("a later stylesheet moved into the body, after the first", into_body(LATER), 1),
     ("a later stylesheet in upper case at the end of the body", edit(PAGE, "</body>",
-        '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.7.0">\n</body>'), 1),
+        '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.8.0">\n</body>'), 1),
     ("a later stylesheet in a second head after the body", both(edit(PAGE, LATER + "\n", ""),
         edit(PAGE, "</body>\n", "</body>\n<head>\n" + LATER + "\n</head>\n")), 1),
     # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>, and keeps a

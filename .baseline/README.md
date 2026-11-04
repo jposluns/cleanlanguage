@@ -1,6 +1,6 @@
-# Baseline 1.7.0: the shared site template
+# Baseline 1.8.0: the shared site template
 
-This package is the shared template of Jeff Posluns's 6 project sites (secureconfig.ai, opfiles.ai, auditthis.ai, cleanlanguage.ai, aiqt.ai, grclibrary.ai): 1 stylesheet, 1 palette file, 4 fonts, 6 scripts, the logos, marks and touch icons, 15 reference pages that fix the markup, a palette contrast gate and a template for a site's own palette file, and the 2 documents that govern the sites. A site that copies the runtime files, sets its site class and generates its pages with the reference markup looks and behaves as part of the family and differs only in its colours, logo and content. The normative description is `SPECIFICATION.md` (1.7); `CONTENT-GUIDELINES.md` (1.4) governs the wording, and the Clean Language standard (https://cleanlanguage.ai) governs the prose. `CHANGELOG.md` lists what changed in each version and why.
+This package is the shared template of Jeff Posluns's 6 project sites (secureconfig.ai, opfiles.ai, auditthis.ai, cleanlanguage.ai, aiqt.ai, grclibrary.ai): 1 stylesheet, 1 palette file, 4 fonts, 6 scripts, the logos, marks and touch icons, 15 reference pages that fix the markup, a palette contrast gate and a template for a site's own palette file, and the 2 documents that govern the sites. A site that copies the runtime files, sets its site class and generates its pages with the reference markup looks and behaves as part of the family and differs only in its colours, logo and content. The normative description is `SPECIFICATION.md` (1.8); `CONTENT-GUIDELINES.md` (1.4) governs the wording, and the Clean Language standard (https://cleanlanguage.ai) governs the prose. `CHANGELOG.md` lists what changed in each version and why.
 
 A published version never changes. Any change is a new version at `https://posluns.ca/baseline/<version>/`, with its archive `https://posluns.ca/baseline/baseline-<version>.tar.gz` and the archives' digests in `https://posluns.ca/baseline/SHA256SUMS`.
 
@@ -16,6 +16,7 @@ A published version never changes. Any change is a new version at `https://poslu
 | `scheme.js` | The light and dark switch in the top bar (from 1.6.0), on every page. Load it in `<head>`, before the stylesheets, without `defer` or `async`: `<script data-cfasync="false" src=".../scheme.js"></script>`. | yes |
 | `site-palette.example.css` | The template of a site's own `site-palette.css` (from 1.6.0; section "Site-owned palette colours"). | no (the site writes its own file only when the owner asks) |
 | `tools/check_palette.py` | The palette contrast gate (from 1.6.0), mandatory in every site's build. | yes, to `.baseline/check_palette.py`, not served |
+| `tools/check_overflow.js` | The sideways-scroll check (from 1.8.0): loads the site's pages at 320, 360, 390 and 1512 px in both schemes and fails on sideways scroll, a table box past the window edge, a script error or an HTTP error. Needs Node.js 18 or later and Playwright; recommended, not mandatory. | yes, to `.baseline/check_overflow.js`, not served, where the site runs it |
 | `logos/` | Per site: `<site>.svg` (full colour: hero, rail, footer), `<site>-mono.svg`, `<site>-favicon.svg`, `<site>-card.svg` (link preview), `<site>-touch.png` (Apple touch icon, 180 by 180, opaque). | yes |
 | `marks/` | GitHub, LinkedIn and ORCID marks for the footer, with `marks/NOTICE.md` (sources, dates, terms). | yes, with `marks/NOTICE.md` |
 | `reference/` | 15 reference pages, 1 per page type (section "The reference pages" below). | no |
@@ -31,7 +32,7 @@ A published version never changes. Any change is a new version at `https://poslu
 3. Record the baseline version and each copied file's SHA-256 in `.baseline/pin.toml`:
 
    ```toml
-   version = "1.7.0"
+   version = "1.8.0"
 
    [files]
    "assets/baseline/baseline.css" = "<sha256>"
@@ -50,6 +51,17 @@ A published version never changes. Any change is a new version at `https://poslu
    ```
 
    It prints a contrast table per scheme and exits 0 when every check passes, 1 on any failure or on input it cannot read or evaluate, and 2 on a usage error. The exit code is the contract: a build reads the exit code, never the wording of the printed result line, which may change between releases.
+
+   From 1.8.0 the palette gate also fails when neighbouring heat steps lie less than 2.5 apart (OKLab x 100), and no longer checks `--focus` on the heat steps, because the focus ring in a heat cell is drawn in `--text`. Copy `palettes.css` and `check_palette.py` from the same version: the 1.8.0 gate fails the 1.7.0 palettes.
+
+   Recommended from 1.8.0, where the build or the site's CI has Node.js 18 or later and the `playwright` package: the overflow check, run on the built pages served locally. List the site's pages in a file, 1 path per line:
+
+   ```sh
+   python3 -m http.server 8000 --bind 127.0.0.1 --directory <build output> &
+   node .baseline/check_overflow.js --base http://127.0.0.1:8000 --pages .baseline/pages.txt
+   ```
+
+   It checks each page at 320, 360, 390 and 1512 px in both schemes and fails on sideways scroll, a table box past the window edge, a script error or an HTTP error; requests to any other origin are refused. Exit codes as for the palette gate. If the site pins it, add `.baseline/check_overflow.js` to `.baseline/pin.toml`.
 4. Put `class="site-<name>"` on `<html>` (`site-secureconfig`, `site-opfiles`, `site-auditthis`, `site-cleanlanguage`, `site-aiqt`, `site-grclibrary`). That class, the logo files, the content and an optional `site-palette.css` are the only per-site differences. A site must not add CSS that overrides `baseline.css`, with 2 exceptions: an optional `site.css`, loaded after it, may set only the measured per-site constants `--sw` and `--logo-inset` when the site's statement or logo changes (section "Per-site constants"); and, from 1.6.0, an optional `site-palette.css`, loaded immediately after `palettes.css`, may override palette tokens, only at the owner's explicit request (section "Site-owned palette colours"). A need the template cannot meet is a change request to the baseline.
 5. Generate every page from the site's own sources with the markup of the reference pages; they are the contract. Every page loads `scheme.js` in `<head>` before the stylesheets (no `defer`), links `fonts.css`, `palettes.css`, the site's `site-palette.css` where it has one, and `baseline.css` in that order, carries the favicon and touch-icon links, the skip link, the top bar with the light and dark switch, 1 `h1`, the footer and the `#copy-status` live region, and contains no inline style, inline script or `on*` attribute. A `<script type="application/ld+json">` block is data and is allowed, on live pages only, never on a noindex draft.
 6. Update the site's own gates where they conflict (`SPECIFICATION.md`, section 11).

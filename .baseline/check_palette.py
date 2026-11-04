@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""check_palette.py: the contrast gate for a site's palette (baseline 1.6.0 and later; matrix tokens from 1.7.0).
+"""check_palette.py: the contrast gate for a site's palette (baseline 1.6.0 and later; matrix tokens from 1.7.0;
+heat step distances from 1.8.0).
 
 Reads the package's palettes.css and, optionally, the site's own site-palette.css (loaded after it), works
 out the value of every palette token on <html class="site-<name>"> in each of the 6 states a page can be in
 (device light or dark, with no data-scheme, data-scheme="light" or data-scheme="dark"), and checks every
 pairing that contrast-report.txt checks, with the same thresholds: text pairs 4.5:1, the focus ring and the
 strong rule 3:1, rainbow ink on its slice 3:1; from 1.7.0 also the matrix tints (text on the row tints and heat
-steps 4.5:1, the focus ring on them 3:1) and the column-group accents as text on every surface and tint (4.5:1),
-so a palette from before 1.7.0, which lacks these tokens, fails. It also checks that the 3 light states agree on every token and
+steps 4.5:1, the focus ring on the row tints 3:1) and the column-group accents as text on every surface and tint
+(4.5:1), so a palette from before 1.7.0, which lacks these tokens, fails. From 1.8.0 the focus ring inside a heat
+cell is drawn in --text (baseline.css), so --focus is not checked on the heat steps; instead neighbouring heat steps
+must lie at least 2.5 apart in OKLab (x 100), so the 5 steps stay distinguishable. It also checks that the 3 light states agree on every token and
 the 3 dark states agree, so an override written in only 1 of a scheme's 2 forms fails.
 
 Usage (from the repository root; Python 3 standard library only, no network):
@@ -48,12 +51,14 @@ EXTRA = [  # (label, foreground, background, threshold), as in contrast-report.t
 ]
 # Matrix tints (from 1.7.0), as in contrast-report.txt: every text token on the 2 row tints; --text, --link and
 # --link-hover on the 5 heat steps (baseline.css draws a heat cell's own text in --text, so muted text and the accent
-# never sit on a heat step); the focus ring on all 7 at 3:1; each column-group accent as text on the 5 surfaces and
-# the 2 row tints.
+# never sit on a heat step); the focus ring on the 2 row tints at 3:1 (from 1.8.0 a heat cell's ring is drawn in
+# --text); each column-group accent as text on the 5 surfaces and the 2 row tints; and, from 1.8.0, the OKLab
+# distance between neighbouring heat steps (HEAT_MIN_STEP, as in gen_palettes.py).
 ROW_TINTS = ["row-tint", "row-hover"]
 HEATS = ["heat-%d" % i for i in range(5)]
 HEAT_FG = ["text", "link", "link-hover"]
 GRPS = ["grp-%d" % i for i in range(1, 7)]
+HEAT_MIN_STEP = 0.025
 # The 6 states: (device prefers dark, data-scheme attribute or None) and the scheme each shows.
 STATES = [(False, None, "light"), (False, "light", "light"), (True, "light", "light"),
           (True, None, "dark"), (False, "dark", "dark"), (True, "dark", "dark")]
@@ -84,6 +89,19 @@ def rel_lum(rgb):
 def contrast(a, b):
     la, lb = rel_lum(a), rel_lum(b)
     return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def oklab(rgb):
+    """OKLab coordinates of an sRGB colour (Ottosson's matrices, as in gen_palettes.py)."""
+    def lin(c):
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (lin(c) for c in rgb)
+    l = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) ** (1 / 3)
+    m = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) ** (1 / 3)
+    s = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b) ** (1 / 3)
+    return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+            1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+            0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
 
 
 # ------------------------------------------------------------------ a small CSS reader
@@ -365,9 +383,9 @@ def check_site(sheets, site, out):
                 bad = r < thr
                 failures += bad
                 out.append("  %-34s %6.2f:1  needs %.1f%s" % (label, r, thr, "  FAIL" if bad else ""))
-        out.append("  matrix tints (text 4.5:1, focus 3:1)")
+        out.append("  matrix tints (text 4.5:1, focus 3:1 on the row tints)")
         for tint in ROW_TINTS + HEATS:
-            for fg in (TEXT_FG if tint in ROW_TINTS else HEAT_FG) + ["focus"]:
+            for fg in (TEXT_FG + ["focus"] if tint in ROW_TINTS else HEAT_FG):
                 thr = 3.0 if fg == "focus" else 4.5
                 if fg in rgb and tint in rgb:
                     r = contrast(rgb[fg], rgb[tint])
@@ -375,6 +393,14 @@ def check_site(sheets, site, out):
                     failures += bad
                     if bad or fg in ("text-muted", "focus") or (fg == "link" and tint in HEATS):
                         out.append("  %-34s %6.2f:1  needs %.1f%s" % ("%s on %s" % (fg, tint), r, thr, "  FAIL" if bad else ""))
+        if all(h in rgb for h in HEATS):
+            steps = [sum((x - y) ** 2 for x, y in zip(oklab(rgb[HEATS[i]]), oklab(rgb[HEATS[i + 1]]))) ** 0.5
+                     for i in range(4)]
+            bad = min(steps) < HEAT_MIN_STEP
+            failures += bad
+            out.append("  %-34s %s  needs %.1f%s" % ("heat step distance (OKLab x 100)",
+                                                      ", ".join("%.1f" % (100 * d) for d in steps),
+                                                      100 * HEAT_MIN_STEP, "  FAIL" if bad else ""))
         for g in GRPS:
             grounds = [b for b in SURFACES + ROW_TINTS if b in rgb]
             if g in rgb and grounds:

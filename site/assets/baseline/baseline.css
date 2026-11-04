@@ -1,4 +1,4 @@
-/* baseline.css 1.7.0: the shared stylesheet of the project sites (the Atrium direction).
+/* baseline.css 1.8.0: the shared stylesheet of the project sites (the Atrium direction).
    Newsreader for text and headings, Public Sans for labels and navigation, JetBrains Mono for code,
    Dancing Script for the signature; the fonts are declared in fonts.css.
    Scale: perfect fourth (1.333) on a 1.1875rem base. No rules except the table header hairline.
@@ -155,6 +155,11 @@ a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
 /* Document page: label column, text column, contents rail */
 .doc { display: grid; grid-template-columns: var(--label-col) minmax(0, 1fr) var(--railw); gap: 0 clamp(2rem, 3vw, 4rem); padding: 0.6rem 0 2rem; align-items: start; }
 :is(.doc, .doc > section, .doc > article) > :is(p, h1, h2, h3, ul, ol.num, dl.record:not(.cols), blockquote, .callout, .download, details, .pair, .search) { max-width: 72ch; }
+/* From 1.8.0: a token in a document's text blocks that is longer than the line (a URL as link text or as plain
+   text, a long identifier or hash) may break where nothing else fits, so a document page never scrolls sideways at
+   320 px. A break inside a word happens only when that word alone is wider than the line, so ordinary words still
+   wrap at spaces. Table cells keep their own rules: a wide table scrolls inside its .tablewrap. */
+.doc :is(p, li, dt, dd, h1, h2, h3, h4, blockquote, figcaption, .callout) { overflow-wrap: anywhere; }
 :is(.doc, .doc > section, .doc > article) > .steps { max-width: 84ch; }
 .rail-logo { width: 100%; height: auto; display: block; margin: 0.3rem 0 1.2rem; }
 :is(.doc, .doc > section, .doc > article) > * { grid-column: 2; min-width: 0; }
@@ -200,6 +205,9 @@ details ul ul { margin: 0.2rem 0 0.4rem; }
 .doc .meta { font: 400 1.05rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: 0 0 1.6rem; max-width: 66ch; }
 .doc .lead { margin-bottom: 1.4rem; }
 .doc ul { padding-left: 1.2rem; }
+/* From 1.8.0: a chip list is a row of controls, not a bulleted list, so it starts at the text edge (.doc ul indented
+   it by 1.2rem). */
+.doc ul.chips { padding-left: 0; }
 .doc li { margin-bottom: 0.45rem; }
 .doc ol.num { padding-left: 0; list-style: none; counter-reset: c; }
 .doc ol.num > li { counter-increment: c; position: relative; padding-left: 2.6rem; margin-bottom: 0.9rem; }
@@ -355,6 +363,9 @@ table.matrix tbody tr > td[data-heat="1"], .tag[data-heat="1"] { background: var
 table.matrix tbody tr > td[data-heat="2"], .tag[data-heat="2"] { background: var(--heat-2); }
 table.matrix tbody tr > td[data-heat="3"], .tag[data-heat="3"] { background: var(--heat-3); }
 table.matrix tbody tr > td[data-heat="4"], .tag[data-heat="4"] { background: var(--heat-4); }
+/* From 1.8.0: the focus ring inside a heat cell (on its count link, or on the cell) is drawn in --text, which every
+   heat step holds at 4.5:1, so the ring keeps 3:1 on any step and --focus no longer limits the light ramp. */
+table.matrix td[data-heat] :focus-visible, table.matrix td[data-heat]:focus-visible { outline-color: var(--text); }
 /* The heat legend: <ul class="chips heat-legend"> of .tag swatches, each with its step's words. */
 ul.chips.heat-legend { align-items: center; padding-left: 0; }
 .heat-legend .tag { color: var(--text); border-color: var(--rule-strong); }
@@ -366,6 +377,9 @@ table.matrix th.rot .org, table.matrix th.rot .grp { margin: 0 0 0 0.15rem; }
 /* Column groups: a tag line naming the group (.grp) under the heading and a 3px accent under the header cell
    (th[data-grp="1"] to "6", the family's 6 hues made text-safe on each site). The group is named in text; the
    colour only reinforces it. */
+/* From 1.8.0: while every visible column belongs to 1 group, matrix.js sets data-one-grp on the table and the tags,
+   which would repeat 1 name and only add width, are not shown; the accent under each header stays. */
+table.matrix[data-one-grp] th .grp { display: none; }
 table.matrix th .grp { display: block; font: 600 0.62rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; margin-top: 0.2rem; }
 table.matrix thead th[data-grp="1"] { border-bottom: 3px solid var(--grp-1); } table.matrix thead th[data-grp="1"] .grp { color: var(--grp-1); }
 table.matrix thead th[data-grp="2"] { border-bottom: 3px solid var(--grp-2); } table.matrix thead th[data-grp="2"] .grp { color: var(--grp-2); }
@@ -744,16 +758,27 @@ mark.marker { color: inherit; padding: 0 0.08em; background: linear-gradient(tra
   .family .cards { flex: 1 1 100%; flex-wrap: wrap; }
 }
 
-/* Matrix tables on paper (from 1.7.0): the whole matrix prints. The bounded box loses its height cap and its inner
-   scroll, sticky cells stay in place, the header row repeats on each page, the column controls are hidden, and every
-   cell is black text on white, with no tint or heat. table.matrix.matrix doubles the class so that these rules
-   outrank the heat steps and the group tags; the preset selectors name the contexts whose display rules they
-   must outrank. */
+/* Tables on paper. From 1.7.0 a matrix printed its full height; from 1.8.0 every table prints whole, in both
+   directions. Every .tablewrap loses its height cap and its scrolling, sticky cells stay in place, the header row
+   repeats on each page and a row is kept on 1 page where it fits. Each table fits the page width: it takes the
+   page's width; a fixed table drops its 56rem minimum and its rem column widths and is laid out by its content
+   (a matrix keeps its fixed layout; col.w<N> percentages stay); and every cell wraps, a long token breaking
+   anywhere, so no column runs past the paper's edge. A matrix with many columns becomes narrow per column on
+   paper: print a preset view, which keeps only its columns. A rotated header runs its organization and group on
+   after its name, so it stays 1 line wide. For matrix tables the column controls are hidden, and every cell is
+   black text on white, with no tint or heat. table.matrix.matrix doubles the class so that these rules outrank
+   the heat steps and the group tags; the preset selectors name the contexts whose display rules they must
+   outrank. */
 @media print {
-  .tablewrap:has(> table.matrix) { max-height: none; overflow: visible; }
-  table.matrix.sticky thead th, table.matrix.sticky-col :is(th, td):first-child { position: static; }
-  table.matrix thead { display: table-header-group; }
-  table.matrix tr { break-inside: avoid; }
+  .tablewrap, .tablewrap.bounded, .tablewrap:has(> table.sticky) { max-height: none; overflow: visible; }
+  table.sticky thead th, table.sticky-col :is(th, td):first-child { position: static; }
+  table thead { display: table-header-group; }
+  table tr { break-inside: avoid; }
+  table, table.fixed { width: 100%; min-width: 0; table-layout: auto; }
+  table.matrix.fixed { table-layout: fixed; }
+  .fixed col { width: auto; }
+  :is(table, table.matrix.matrix) :is(th, td), :is(table, table.matrix.matrix) :is(th, td) :is(code, .mono, .hash) { white-space: normal; overflow-wrap: anywhere; }
+  table.matrix th.rot .org, table.matrix:not([data-one-grp]) th.rot .grp { display: inline; margin: 0 0 0 0.4em; }
   [data-col-toggles], .lrail li [data-preset], .chips [data-preset], [data-preset] { display: none; }
   table.matrix.matrix :is(thead, tbody) tr > :is(th, td) { background: var(--print-paper); color: var(--print-ink); }
   table.matrix.matrix :is(thead, tbody) tr > :is(th, td) :is(a, code, .org, .grp, .sub, .n) { color: var(--print-ink); background: var(--print-paper); }
