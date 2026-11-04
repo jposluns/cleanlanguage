@@ -297,6 +297,10 @@ REFUSALS = [
         root, "cleanlanguage/skills/cleanlanguage/references/qa-checklist.md", "## Tone\n\n", "## Tone\n\nA paragraph.\n\n")),
     ("a list rail with fewer than 2 sections", lambda root: edit(
         root, "site-src/site.json", '"source": "404.html", ', '"source": "404.html", "rail": "list", ')),
+    ("a family page linking #get in-page, left on /install/", lambda root: edit(
+        root, "site-src/pages/install-claude.html", 'href="{{base}}install/#get"', 'href="#get"')),
+    ("a family page linking an anchor /install/ lacks", lambda root: edit(
+        root, "site-src/pages/install-gemini.html", 'href="{{base}}install/#test"', 'href="{{base}}install/#gemini-test"')),
 ]
 
 
@@ -428,8 +432,8 @@ def check_clean_build(failures: list[str]) -> int:
             failures.append(f"clean build: exit {result.returncode}: {result.stderr.strip()}")
             return 1
         pages = sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html"))
-        if len(pages) != 14:
-            failures.append(f"clean build: {len(pages)} pages, expected 14: {pages}")
+        if len(pages) != 19:
+            failures.append(f"clean build: {len(pages)} pages, expected 19: {pages}")
         config = json.loads((root / "site-src/site.json").read_text(encoding="utf-8"))
         noindex = {p["path"] if p["path"].endswith(".html") else p["path"] + "index.html"
                    for p in config["pages"] if p.get("noindex")}
@@ -491,6 +495,49 @@ def check_clean_build(failures: list[str]) -> int:
         if match is None or html.unescape(match.group(1)) != source:
             failures.append("clean build: the instructions page does not embed cleanlanguage.md exactly")
     return 1
+
+
+FAMILY_TITLES = {
+    "claude": "Install in Claude",
+    "chatgpt": "Install in ChatGPT",
+    "gemini": "Install in Gemini",
+    "copilot": "Install in Copilot",
+    "other-ai": "Install in other AI systems",
+}
+
+
+def check_family_pages(failures: list[str]) -> int:
+    """The 5 family install pages build with publish metadata, and the home page counts them."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        out = Path(scratch) / "out"
+        result = run(root, "--out", str(out))
+        if result.returncode != 0:
+            failures.append(f"family pages: exit {result.returncode}: {result.stderr.strip()}")
+            return 1
+        for family, title in FAMILY_TITLES.items():
+            path = out / "install" / family / "index.html"
+            if not path.is_file():
+                failures.append(f"family pages: install/{family}/index.html was not generated")
+                continue
+            text = path.read_text(encoding="utf-8")
+            for needed in (f"<title>{title} | CleanLanguage.ai</title>", f'<link rel="canonical" href="https://cleanlanguage.ai/install/{family}/">',
+                           '<meta property="article:published_time" content="', 'href="/install/#get"', 'href="/install/#test"'):
+                if needed not in text:
+                    failures.append(f"family pages: install/{family}/index.html lacks {needed!r}")
+        home = (out / "index.html").read_text(encoding="utf-8")
+        if '<span class="n">5 assistants</span>' not in home:
+            failures.append("family pages: the home page does not count 5 assistants")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        path = root / "site-src" / "site.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["pages"] = [page for page in data["pages"] if not page["path"].startswith("install/") or page["path"] == "install/"]
+        path.write_text(json.dumps(data), encoding="utf-8")
+        result = run(root, "--out", str(Path(scratch) / "out"))
+        if result.returncode != 1 or "no family install pages" not in result.stderr:
+            failures.append(f"family pages: no family pages gave exit {result.returncode}, expected 1 with the count refusal: {result.stderr.strip()[:200]}")
+    return 2
 
 
 def check_release_flip(failures: list[str]) -> int:
@@ -605,8 +652,8 @@ def check_staged_build(failures: list[str]) -> int:
             failures.append(f"staged build: exit {result.returncode}: {result.stderr.strip()}")
             return 1
         pages = sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html"))
-        if len(pages) != 13:
-            failures.append(f"staged build: {len(pages)} pages, expected 13: {pages}")
+        if len(pages) != 18:
+            failures.append(f"staged build: {len(pages)} pages, expected 18: {pages}")
         for page in pages:
             text = (out / page).read_text(encoding="utf-8")
             if text.count('<meta name="robots" content="noindex, nofollow">') != 1:
@@ -636,6 +683,7 @@ def main() -> int:
     ran += check_scheme_validation(failures)
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
+    ran += check_family_pages(failures)
     ran += check_release_flip(failures)
     ran += check_check_mode(failures)
     ran += check_promotion_build(failures)

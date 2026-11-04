@@ -82,8 +82,8 @@ every HTML page it refuses:
     Web Analytics beacon from ``https://static.cloudflareinsights.com`` and the
     JavaScript Detections loader), which the site-wide security policy allows,
     so a served page does load a script from another origin; no committed page
-    may. The install page keeps its own list of allowed scripts
-    (``tools/check-install-page.py`` check 5).
+    may. The install pages keep their own list of allowed scripts
+    (``tools/check-install-page.py`` check 6).
 
 SVG files
 ---------

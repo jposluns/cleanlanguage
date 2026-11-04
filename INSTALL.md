@@ -1,6 +1,6 @@
 # Install Clean Language
 
-These instructions cover ChatGPT, Claude, Gemini, and other AI systems. The public click-by-click version is also available at [cleanlanguage.ai/install](https://cleanlanguage.ai/install/).
+These instructions cover ChatGPT, Claude, Gemini, Copilot, and other AI systems. The public click-by-click version is also available on cleanlanguage.ai, as a page for each AI linked from [cleanlanguage.ai/install](https://cleanlanguage.ai/install/).
 
 Upgrading from a version before 1.0.11? The skill's internal name changed from `clean-language` to `cleanlanguage`, so uploading the new file adds a second skill beside the old one. Remove the old Clean Language skill first, then install the new file.
 
