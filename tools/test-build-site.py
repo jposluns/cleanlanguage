@@ -41,6 +41,7 @@ INPUTS = [
     "site/images",
     ".baseline/pin.toml",
     "tools/sitemap-config.json",
+    "tools/check-install-page.py",
 ]
 
 
@@ -319,18 +320,35 @@ def about_line(base: str) -> str:
 ABOUT_ROW = about_line("{{base}}")
 ABOUT_BLOCK = about_block("{{base}}")
 LABEL = "About this project"
+# The install gate's hiding reader, which the generator's value paragraph rule also applies.
+IS_HIDING = load_module(REPO_ROOT / "tools" / "check-install-page.py").is_hiding_element
+
+
+def closed_details(parsed: Placement, path: list[tuple[int, int]]) -> bool:
+    """Whether the element whose ancestors and own start are path, outermost first, is hidden by a details without
+    open: it or an ancestor is a child of one other than its first summary child, as the install gate's PageParser
+    reads it."""
+    for at, child in zip(path, path[1:]):
+        tag, attrs, *_ = parsed.starts[at]
+        if tag == "details" and "open" not in attrs:
+            summaries = sorted(start for start, (name, *_) in parsed.starts.items()
+                               if name == "summary" and parsed.lineage[start] == [*parsed.lineage[at], at])
+            if summaries[:1] != [child]:
+                return True
+    return False
 
 
 def about_problems(page: str, text: str, base: str) -> list[str]:
     """The About block of specification 7.24, which the generator writes: on the landing page, exactly 1 p.value,
-    with no INERT ancestor, no hidden attribute and no ancestor that carries one, no dot span followed directly by a
-    link (the 1.6.1 markup, refused apart from about_line()), and the whole About block once, byte for byte,
+    with no INERT ancestor, not hidden by itself or by an ancestor as tools/check-install-page.py reads hiding (its
+    is_hiding_element(), and a details without open outside its first summary child), no dot span followed directly
+    by a link (the 1.6.1 markup, refused apart from about_line()), and the whole About block once, byte for byte,
     starting where the end tag of that paragraph's region (the div.region nearest it among its open elements) ends,
     its row the only parsed element whose classes include about; on any other page, no such element, with an INERT
     ancestor or not. Like the generator's rule, it reads LABEL only as part of the block, so LABEL elsewhere passes,
-    and it does not model inert, aria-hidden, popover, a dialog or details without open, a hiding class, a
-    stylesheet or a hidden attribute that HTML5 copies from a stray body or html start tag onto the page's body or
-    html element."""
+    and it does not model a stylesheet beyond the install gate's HIDING_CLASSES, or a hidden attribute that HTML5
+    copies from a stray body or html start tag onto the page's body or html element, which the generator refuses in
+    every page source."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
@@ -345,8 +363,9 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
         return [f"{page} carries {len(values)} p.value elements; exactly 1 is required (specification 7.24)"]
     if any(name in INERT for name, _ in parsed.starts[values[0]][2]):
         return [f"{page} carries its value paragraph inside an element of INERT (specification 7.24)"]
-    if any("hidden" in parsed.starts[at][1] for at in [*parsed.lineage[values[0]], values[0]]):
-        return [f"{page} carries its value paragraph with a hidden attribute or inside an element with one (specification 7.24)"]
+    path = [*parsed.lineage[values[0]], values[0]]
+    if any(IS_HIDING(*parsed.starts[at][:2]) for at in path) or closed_details(parsed, path):
+        return [f"{page} carries its value paragraph hidden, by itself or by an ancestor (specification 7.24)"]
     if "&middot;</span><a" in text:
         return [f"{page} carries an About row dot with no space after it, the 1.6.1 markup (specification 7.24)"]
     block = about_block(base)
@@ -495,9 +514,33 @@ STAGED_REFUSALS = [
 CLASS_RULE = "an element whose classes include about; the generator writes the About block"
 VALUE_RULE = "the landing page source must carry exactly 1 p.value"
 REGION_RULE = "the value paragraph has no enclosing div.region"
+# The generator writes each page's html, head and body, so a page source may carry none: HTML5 copies the attributes
+# of a stray html or body start tag, such as hidden, onto the page's own.
+DOCUMENT_RULE = "the generator writes the page's html, head and body"
 VALUE = '<p class="value">'
 VALUE_REGION = '<div class="region" id="what-it-fixes">'
 VALUE_END = "outside its aim.</p></div></div>"
+# Wrappers around the value paragraph that tools/check-install-page.py reads as hiding it, and wrappers it reads as
+# showing it, by is_hiding_element() and, for details, as its PageParser reads one: (name, start, end).
+HIDING_WRAPPERS = [
+    ("an inert div", "<div inert>", "</div>"),
+    ('a div with aria-hidden="true"', '<div aria-hidden="true">', "</div>"),
+    ('a div with aria-hidden="TRUE"', '<div aria-hidden="TRUE">', "</div>"),
+    ("a div with popover", "<div popover>", "</div>"),
+    ('a div with popover="manual"', '<div popover="manual">', "</div>"),
+    ("a dialog without open", "<dialog>", "</dialog>"),
+    ("a dialog with open and popover", "<dialog open popover>", "</dialog>"),
+    ("a details without open", "<details>", "</details>"),
+    ("a details without open, after its first summary", "<details><summary>x</summary>", "</details>"),
+] + [(f"a div with the {name} class", f'<div class="{name}">', "</div>")
+     for name in ("vh", "visually-hidden", "only-dark", "skip")]
+SHOWING_WRAPPERS = [
+    ('a div with aria-hidden="false"', '<div aria-hidden="false">', "</div>"),
+    ("a dialog with open", "<dialog open>", "</dialog>"),
+    ("a details with open", "<details open>", "</details>"),
+    ("a div with the vh-x class", '<div class="vh-x">', "</div>"),
+    ("the first summary of a details without open", "<details><summary>", "</summary></details>"),
+]
 
 
 def after_value(snippet: str):
@@ -551,7 +594,18 @@ SOURCE_REFUSALS = [
     ("a p.value whose nearest region is a section", lambda root: (
         edit(root, HOME, VALUE_REGION, '<section class="region" id="what-it-fixes">'),
         edit(root, HOME, VALUE_END, VALUE_END[:-len("</div>")] + "</section>")), REGION_RULE),
-]
+    ("the value paragraph with the vh class", lambda root: edit(root, HOME, VALUE, '<p class="value vh">'), VALUE_RULE),
+    ("a body start tag with a hidden attribute in a page source", inject("<body hidden>"), DOCUMENT_RULE),
+    ("a closed body element with a hidden attribute in a page source", inject("<body hidden></body>"), DOCUMENT_RULE),
+    ("an html start tag with a hidden attribute in a page source", inject("<html hidden>"), DOCUMENT_RULE),
+    ("a closed html element with a hidden attribute in a page source", inject("<html hidden></html>"), DOCUMENT_RULE),
+    ("a head start tag in a page source", inject("<head>"), DOCUMENT_RULE),
+    ("a closed head element in a page source", inject("<head></head>"), DOCUMENT_RULE),
+    ("a body start tag in upper case in a page source", inject("<BODY HIDDEN>"), DOCUMENT_RULE),
+    ("a self-closing body start tag in a page source", inject("<body/>"), DOCUMENT_RULE),
+    ("a body start tag inside noscript in a page source", inject("<noscript><body hidden></noscript>"), DOCUMENT_RULE),
+    ("an html start tag after the value paragraph's region in home.html", after_value("<html hidden>"), DOCUMENT_RULE),
+] + [(f"the value paragraph inside {name}", wrap_value(start, end), VALUE_RULE) for name, start, end in HIDING_WRAPPERS]
 
 
 def check_source_refusals(failures: list[str]) -> int:
@@ -770,10 +824,11 @@ def check_inner_about_rows(failures: list[str]) -> int:
 
 def check_about_block(failures: list[str]) -> int:
     """The whole About block of specification 7.24 on the landing page: validate(), called directly on the committed
-    landing page with 1 fault each, refuses by the block's rule (exactly 1 p.value, with no INERT ancestor, no hidden
-    attribute and no ancestor that carries one; the block once, byte for byte, directly after the end tag of that
-    paragraph's region; no other element whose classes include about), and the build test's helper judges each case
-    as the generator should. The label text without the about class passes both."""
+    landing page with 1 fault each, refuses by the block's rule (exactly 1 p.value, with no INERT ancestor, not
+    hidden by itself or by an ancestor as tools/check-install-page.py reads hiding; the block once, byte for byte,
+    directly after the end tag of that paragraph's region; no other element whose classes include about), and the
+    build test's helper judges each case as the generator should. The label text without the about class passes
+    both, and so does each wrapper of SHOWING_WRAPPERS around the value paragraph."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["path"] == "")
@@ -814,6 +869,10 @@ def check_about_block(failures: list[str]) -> int:
         # The label is read only as part of the block: a second one without the about class passes.
         ("a second label region after the block", [(block, block + f'<div class="region">{label}</div>')], None),
         ("a second label in an attribute", [(hero, hero + f'<p title="{LABEL}">x</p>')], None),
+    ] + [
+        (f"the value paragraph inside {name}",
+         [(VALUE, start + VALUE), (VALUE_END, VALUE_END.replace("</p>", "</p>" + end, 1))], rule)
+        for wrappers, rule in ((HIDING_WRAPPERS, block_rule), (SHOWING_WRAPPERS, None)) for name, start, end in wrappers
     ]
     for name, edits, rule in cases:
         page_html = text

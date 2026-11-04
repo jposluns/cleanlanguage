@@ -72,13 +72,22 @@ that is not ``YYYY-MM-DD``; a page without exactly 1 light and dark switch
 each of which ``scheme.js`` wires and shows), without exactly 1 ``scheme.js``
 script tag before the first stylesheet, it and every stylesheet inside
 ``<head>``, or with any other ``<svg``; a page source, the landing page's
-included, with an element whose class names include ``about``, since the
-generator writes the About block of template specification 7.24 (baseline
-1.7.0) itself; a landing page source without exactly 1 ``p.value``, or with
-that ``p.value`` inside an element of ``INERT_TAGS`` (which holds every
-element of ``tools/check-install-page.py``'s ``HIDING_ELEMENTS``), or carrying
-a ``hidden`` attribute (in any value) or inside an element that carries one,
-or with no ``div.region`` among its ancestors; a landing page whose output
+included, with an ``html``, ``head`` or ``body`` start tag, read as the parser
+reads it (in any letter case, self-closing or inside any element), since the
+generator writes the page's html, head and body and HTML5 copies a stray
+one's attributes onto them; a page source, the landing page's included, with
+an element whose class names include ``about``, since the generator writes
+the About block of template specification 7.24 (baseline 1.7.0) itself; a
+landing page source without exactly 1 ``p.value``, or with that ``p.value``
+inside an element of ``INERT_TAGS`` (which holds every element of
+``tools/check-install-page.py``'s ``HIDING_ELEMENTS``), or hidden by itself or
+by an ancestor as that gate's ``is_hiding_element()`` reads an element (a
+``hidden``, ``inert`` or ``popover`` attribute in any value,
+``aria-hidden="true"`` in any letter case, a class in its ``HIDING_CLASSES``,
+an element of its ``HIDING_ELEMENTS``, or a ``dialog`` without ``open``), or
+inside a ``details`` without ``open`` other than in its first ``summary``
+child, as that gate's ``PageParser`` reads it, or with no ``div.region``
+among its ancestors; a landing page whose output
 lacks exactly 1 such ``p.value`` and, once and byte for byte, the whole About
 block (``about_block()``: ``ABOUT_BLOCK``, the ``div.region`` with its label
 and its ``div`` around the row ``about_line()`` gives, 1 ordinary space after
@@ -89,17 +98,15 @@ or that carries any other element whose class names include ``about``; any
 other page with one; and a release version that disagrees with SKILL.md. The
 About rules read the About block's label only as part of that block: a
 hand-written ``About this project`` text or label region without the
-``about`` class, on any page, is not refused. They count a ``hidden``
-attribute on the value paragraph itself or on any of its ancestors, but do
-not model the other ways ``tools/check-install-page.py`` reads an element as
-hidden (``inert``, ``aria-hidden="true"``, ``popover``, a ``dialog`` or
-``details`` without ``open``, or a class in its ``HIDING_CLASSES``) nor any
-stylesheet, so a value paragraph hidden only by one of those passes them and
-the block follows it; nor markup inside an element whose content Python's
-parser reads as text (``script`` and ``style``, and, depending on the Python
-version, other raw-text and RCDATA elements such as ``textarea``); nor a
-``hidden`` attribute that HTML5 copies from a stray ``<body>`` or ``<html>``
-start tag onto the page's body or html element. The switch, its place and the
+``about`` class, on any page, is not refused. They read hiding from the
+markup alone, as ``tools/check-install-page.py`` does: no stylesheet rule
+other than a bare single class its ``HIDING_CLASSES`` lists (that gate's
+tests fail when a stylesheet the pages load hides another bare single class),
+so a value paragraph hidden only by another rule, such as a descendant
+selector, passes them and the block follows it; nor do they read markup
+inside an element whose content Python's parser reads as text (``script`` and
+``style``, and, depending on the Python version, other raw-text and RCDATA
+elements such as ``textarea``). The switch, its place and the
 head are read as parsed elements: each element with ``data-scheme-toggle`` (an
 attribute name in any letter case), the switch's parent, the element before it
 and the end of its parent, and ``html > head``, the first head or body the page
@@ -174,7 +181,9 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
+import importlib.util
 import tomllib
 import html
 import json
@@ -741,15 +750,29 @@ def substitute(text: str, values: dict, where: str) -> str:
 
 # Validation -------------------------------------------------------------------
 
+@functools.cache
+def install_gate():
+    """tools/check-install-page.py, beside this tool, loaded as a module, so that the value paragraph rule reads an
+    element as hidden exactly as that gate's is_hiding_element() does."""
+    path = Path(__file__).resolve().parent / "check-install-page.py"
+    spec = importlib.util.spec_from_file_location("check_install_page", path)
+    if not path.is_file() or spec is None or spec.loader is None:
+        raise Unreadable(f"tools/{path.name}, whose hiding reader the value paragraph rule applies, could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class PageScan(HTMLParser):
     """The parsed reading validate() checks, which build() also reads on each page source. Not a full HTML5 tree
     builder: it models the open elements as tags nest, void elements, the slash only in <svg>, the head's end, class
     names split on ASCII whitespace, and the INERT_TAGS ancestors of each element with data-scheme-toggle, h1, robots
-    meta and id, and of each element start validate() requires, the element starts that carry a hidden attribute or
-    have an ancestor that does, where each value paragraph starts and where the region of the first one ends, where
-    each element whose classes include about starts, and where the page's body starts. validate() also pins the
-    markup from <body> to the end of header.mast, and the landing page's About block; --check compares the committed
-    pages with a build that passed it."""
+    meta and id, and of each element start validate() requires, the element starts hidden by themselves or by an
+    ancestor as tools/check-install-page.py reads hiding (its is_hiding_element(), and a details without open, which
+    shows only its first summary child), where each value paragraph starts and where the region of the first one
+    ends, where each element whose classes include about starts, where each html, head and body start tag is, and
+    where the page's body starts. validate() also pins the markup from <body> to the end of header.mast, and the
+    landing page's About block; --check compares the committed pages with a build that passed it."""
 
     def __init__(self, switch_at: tuple[int, int] | None = None) -> None:
         super().__init__(convert_charrefs=True)
@@ -783,10 +806,15 @@ class PageScan(HTMLParser):
         # Where each element whose classes include about starts, inside an element of INERT_TAGS or not: on the
         # landing page, the row of the About block the generator writes; anywhere else, About markup.
         self.about_classes: list[tuple[int, int]] = []
-        # Where each element that carries a hidden attribute (in any value), or has an open ancestor that does, starts,
-        # and the depth in open of each such ancestor.
+        # Each html, head and body start tag and where it starts: in a page source, which the generator wraps in its
+        # own, a stray one.
+        self.document_tags: list[tuple[str, tuple[int, int]]] = []
+        # Where each element hidden by itself or by an open ancestor starts, as tools/check-install-page.py reads
+        # hiding; the depth in open of each such ancestor; and, for each open details without open, by its depth,
+        # whether its first summary child has started.
         self.hidden_starts: set[tuple[int, int]] = set()
         self.hiding: list[int] = []
+        self.closed: dict[int, bool] = {}
         # Where each p.value starts; the depth in open of the first one's region, the div.region nearest it among its
         # open elements, while that region is open; and where the end tag of that region starts.
         self.values: list[tuple[int, int]] = []
@@ -815,6 +843,8 @@ class PageScan(HTMLParser):
         classes = [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
         if "about" in classes:
             self.about_classes.append(self.getpos())
+        if tag in ("html", "head", "body"):
+            self.document_tags.append((tag, self.getpos()))
         if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
                 and self.previous is not None and self.previous[0] == "head"):
             self.body_at = self.getpos()
@@ -828,7 +858,15 @@ class PageScan(HTMLParser):
         inert = any(name in INERT_TAGS for name, _ in self.open)
         if not inert:
             self.live_starts.add(self.getpos())
-        if self.hiding or "hidden" in attrs:
+        # Whether the element hides itself and its content: by tools/check-install-page.py's is_hiding_element(), or,
+        # as that gate's PageParser reads it, as a child of a details without open other than its first summary.
+        hides = install_gate().is_hiding_element(tag, attrs)
+        if len(self.open) - 1 in self.closed:
+            if tag == "summary" and not self.closed[len(self.open) - 1]:
+                self.closed[len(self.open) - 1] = True
+            else:
+                hides = True
+        if self.hiding or hides:
             self.hidden_starts.add(self.getpos())
         if tag == "p" and "value" in classes:
             self.values.append(self.getpos())
@@ -845,8 +883,10 @@ class PageScan(HTMLParser):
         self.previous = (tag, classes) if tag in VOID_TAGS else None
         if tag not in VOID_TAGS:
             self.open.append((tag, classes))
-            if "hidden" in attrs:
+            if hides:
                 self.hiding.append(len(self.open) - 1)
+            if tag == "details" and "open" not in attrs:
+                self.closed[len(self.open) - 1] = False
         if self.doc_closed and self.in_main:
             self.problems.append(f"<{tag}> follows the end of .doc inside main; .doc closes early")
         if tag == "main":
@@ -915,6 +955,7 @@ class PageScan(HTMLParser):
                 self.value_region, self.value_region_end = None, self.getpos()
             while self.hiding and self.hiding[-1] >= len(self.open):
                 self.hiding.pop()
+            self.closed.pop(len(self.open), None)
             if self.switch_parent is not None and self.switch_parent_end is None and len(self.open) < self.switch_depth:
                 self.switch_parent_end = self.getpos()
         if tag == "main":
@@ -962,22 +1003,27 @@ def about_block(base: str) -> str:
 
 def with_about(content: str, page: dict, base: str) -> str:
     """A page's content with, on the landing page only, the About block of specification 7.24 written in directly
-    after the end tag of the value paragraph's region. It refuses a source with an element whose classes include
-    about, and a landing page source without exactly 1 p.value, with that p.value inside an element of INERT_TAGS,
-    carrying a hidden attribute or inside an element with one, or with no div.region among its ancestors."""
+    after the end tag of the value paragraph's region. It refuses a source with an html, head or body start tag
+    (the generator writes the page's own, and HTML5 copies a stray one's attributes onto them), a source with an
+    element whose classes include about, and a landing page source without exactly 1 p.value, with that p.value
+    inside an element of INERT_TAGS, hidden by itself or by an ancestor as tools/check-install-page.py reads hiding,
+    or with no div.region among its ancestors."""
     where = page["source"]
     scan = PageScan()
     scan.feed(content)
     scan.close()
+    if scan.document_tags:
+        raise BuildError(f"{where}: a stray <{scan.document_tags[0][0]}> start tag; the generator writes the page's html, "
+                         "head and body, and HTML5 copies a stray one's attributes onto them")
     if scan.about_classes:
         raise BuildError(f"{where}: an element whose classes include about; the generator writes the About block of "
                          "specification 7.24 itself, on the landing page only")
     if page["path"] != "":
         return content
     if len(scan.values) != 1 or scan.values[0] not in scan.live_starts or scan.values[0] in scan.hidden_starts:
-        raise BuildError(f"{where}: the landing page source must carry exactly 1 p.value, with no hidden attribute, "
-                         "outside every element of INERT_TAGS and every element with a hidden attribute; the About "
-                         "block goes after its region")
+        raise BuildError(f"{where}: the landing page source must carry exactly 1 p.value, outside every element of "
+                         "INERT_TAGS and not hidden by itself or by an ancestor as tools/check-install-page.py reads "
+                         "hiding; the About block goes after its region")
     if scan.value_region_end is None:
         raise BuildError(f"{where}: the value paragraph has no enclosing div.region, after which the About block goes")
     line, column = scan.value_region_end
@@ -1068,9 +1114,9 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
             if tag == "a" and any(value.split("#", 1)[0] == base + config_path for config_path in config["about_paths"]):
                 problems.append(f"{value} links a page only the landing page links (specification 7.24)")
     # On the landing page, exactly 1 p.value starts as a parsed element outside every element of INERT_TAGS, as the
-    # required blocks do, carries no hidden attribute and starts outside every element with one; the whole About
-    # block, once and byte for byte, starts where the end tag of its region ends, so the block's ancestors are the
-    # region's, none of which is an element of INERT_TAGS or carries a hidden attribute, and ABOUT_BLOCK holds
+    # required blocks do, and is not hidden by itself or by an ancestor as tools/check-install-page.py reads hiding;
+    # the whole About block, once and byte for byte, starts where the end tag of its region ends, so the block's
+    # ancestors are the region's, none of which is an element of INERT_TAGS or hides it, and ABOUT_BLOCK holds
     # neither. The block's row is then the only parsed element whose classes include about. On any other page, no
     # such element appears, inside an element of INERT_TAGS or not. The label is read only as part of the block.
     if page["path"] == "":
@@ -1082,8 +1128,8 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
                 or len(scan.about_classes) != 1):
             problems.append("the About block must appear exactly once, byte for byte as specification 7.24 gives it "
                             "(ABOUT_BLOCK), directly after the end tag of the region of the only p.value, which "
-                            "carries no hidden attribute and starts outside every element of INERT_TAGS and every "
-                            "element with a hidden attribute, and no other About markup may appear")
+                            "starts outside every element of INERT_TAGS and is not hidden by itself or by an ancestor "
+                            "as tools/check-install-page.py reads hiding, and no other About markup may appear")
     elif scan.about_classes:
         problems.append("About markup (an element whose classes include about), which only the landing page's About "
                         "block carries (specification 7.24)")
