@@ -22,7 +22,9 @@ name: Portable text sync
 # promotable to a required check; to promote it, first give the job a unique
 # display name, as manifest-icon.yml does. The step after checkout runs
 # tools/test-portable-text-sync-workflow.py, which fails if a paths or
-# paths-ignore filter comes back on either trigger.
+# paths-ignore filter comes back on either trigger. workflow-isolation.yml,
+# which carries no paths filter either, runs it too, so a pull request that
+# adds a filter here which its own changed files fall outside still runs it.
 
 on:
   pull_request:
