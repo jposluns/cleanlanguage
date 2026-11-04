@@ -184,8 +184,9 @@ any file is read, so on a version outside this gate's list check 5 is never
 reached. Both remain because they guard different code: this guard covers how
 checks 1 to 6 read markup, and that check covers the inline-code gate's own
 guarantees. ``tools/test-install-page.py`` fails unless every version listed
-here is listed there too, so on a tree whose suite passes, an unsupported
-version always meets this guard first. Should the lists part, the catch still
+here is listed there too, and unless this guard, not the catch, refuses a faked
+Python 3.13 and 3.15 with its own message. From 3.9 on, this guard as written
+meets every unsupported version first. Should the lists part, the catch still
 exits 3 with no result line, after the pages are read; without it, the
 exception would end the gate with exit 1.
 

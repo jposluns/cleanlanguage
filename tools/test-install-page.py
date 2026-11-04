@@ -22,8 +22,10 @@ read, has an unclosed comment or unbalanced braces, or holds no rule.
 
 It also fails unless the gate's SUPPORTED_PYTHONS is exactly 3.14 and each of
 its versions is in SUPPORTED_PYTHONS of tools/check-inline-code.py, and runs the
-gate under a faked Python version outside that set, expecting exit 3, no result
-line, and a one-line message from the gate that names 3.14. A last run reaches
+gate under 2 faked Python versions outside that set, 3.13 and 3.15, expecting
+for each exit 3, no result line, and exactly the one-line refusal of the gate's
+own guard (OWN_REFUSAL below), which its catch of UnsupportedPython does not
+print, so it fails when that guard is gone or admits either. A last run reaches
 the version check of tools/check-inline-code.py: with a copy of that gate whose
 SUPPORTED_PYTHONS leaves out this version, so that it raises UnsupportedPython,
 it expects exit 3, no result line, and a one-line message from the gate that
@@ -72,12 +74,16 @@ STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.
 # comment saying why no install page can carry it on a checked element or an ancestor. None qualifies today.
 EXEMPT_CLASSES: tuple[str, ...] = ()
 BARE_CLASS = re.compile(r"\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)")
-# Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS (3.13.3, the Cloudflare Pages image default).
+# Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS, 1 on each side of 3.14: 3.13.3, the
+# Cloudflare Pages image default, and 3.15.0. Only the gate's own guard prints OWN_REFUSAL; the catch of
+# UnsupportedPython prints its line after the pages are read.
+FAKED_VERSIONS = ((3, 13, 3), (3, 15, 0))
 VERSION_PROBE = (
     "import sys, runpy; "
-    "sys.version_info = (3, 13, 3, 'final', 0); "
+    "sys.version_info = ({}, {}, {}, 'final', 0); "
     "runpy.run_path(sys.argv[1], run_name='__main__')"
 )
+OWN_REFUSAL = "check-install-page: runs only on Python 3.14, the version it is tested on; this is Python {}.{}"
 INLINE_GATE = "tools/check-inline-code.py"
 # The supported list of tools/check-inline-code.py, whatever it holds, and 1 that leaves this version out, so that
 # inline_code_problems raises UnsupportedPython while the gate's own guard passes.
@@ -441,15 +447,17 @@ def version_problems() -> list[str]:
                                 "does not support, so the gate would exit 3 only after it reads the pages.")
         except Exception as error:
             problems.append(f"SUPPORTED_PYTHONS could not be read from {INLINE_GATE}: {error!r}")
-    with tempfile.TemporaryDirectory() as scratch:
-        root = make_root(Path(scratch))
-        result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
-                                capture_output=True, text=True)
-        lines = result.stderr.splitlines()
-        if (result.returncode != 3 or result.stdout or len(lines) != 1 or not lines[0].startswith("check-install-page: ")
-                or "Python 3.14" not in lines[0]):
-            problems.append(f"under Python 3.13: exit {result.returncode}, expected 3 with no result line and 1 line "
-                            f"from check-install-page naming Python 3.14: {(result.stdout + result.stderr).strip()[:300]}")
+    for version in FAKED_VERSIONS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            probe = VERSION_PROBE.format(*version)
+            result = subprocess.run([sys.executable, "-I", "-c", probe, str(root / "tools" / GATE.name)],
+                                    capture_output=True, text=True)
+            refusal = OWN_REFUSAL.format(*version[:2])
+            if result.returncode != 3 or result.stdout or result.stderr.splitlines() != [refusal]:
+                problems.append(f"under Python {version[0]}.{version[1]}: exit {result.returncode}, expected 3 with no "
+                                f"result line and only the gate's own refusal {refusal!r}: "
+                                f"{(result.stdout + result.stderr).strip()[:300]}")
     with tempfile.TemporaryDirectory() as scratch:
         root = make_root(Path(scratch))
         text, count = INLINE_LIST.subn(INLINE_UNSUPPORTED, (root / INLINE_GATE).read_text(encoding="utf-8"), count=1)

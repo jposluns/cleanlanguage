@@ -164,8 +164,9 @@ PAGE_SUFFIXES = (".html", ".htm")
 SVG_SUFFIX = ".svg"
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 # The (major, minor) versions the gate runs on: the versions the docstring's guarantees
-# are stated for. main() and inline_code_problems() refuse every other version, so the
-# module loaders in check-install-page.py and check-instructions-page.py refuse it too.
+# are stated for. From Python 3.7 on, main() and inline_code_problems() refuse every
+# other version, and check-instructions-page.py refuses it through the latter; from 3.9
+# on, check-install-page.py refuses it with its own guard, which fires first.
 # Every patch release of these versions passes the check; tools/test-inline-code.py is
 # evidence only for the interpreter it ran on (docstring, Python versions).
 SUPPORTED_PYTHONS = ((3, 14),)
