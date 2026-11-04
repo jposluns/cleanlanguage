@@ -164,11 +164,22 @@ Python versions
 ---------------
 
 Checks 1 to 6 read the markup with ``html.parser`` and rest on how it reads raw
-text and comments, which changed in Python 3.14: which end tags close a raw-text
-element (on 3.14, as in a browser, ``</ script>`` does not close a ``script``),
-whether ``title`` holds markup, and whether ``--!>`` ends a comment. So the
-gate's guarantees hold on Python 3.14 only (``SUPPORTED_PYTHONS`` below), and on
-any other version it exits 3 before it reads a file.
+text and comments on Python 3.14: which end tags close a raw-text element (on
+3.14, as in a browser, ``</ script>`` does not close a ``script``), whether
+``title`` holds markup, and whether ``--!>`` ends a comment. The gate is tested
+on 3.14, so on any other (major, minor) version it exits 3 before it reads a
+file (``SUPPORTED_PYTHONS`` below). That guard does not prove that a given 3.14
+patch release reads markup the same way, because ``html.parser`` also changes
+within a minor version: Python 3.13.3 ends a raw-text element at ``</ script>``,
+and the 3.13 branch has since taken the change that stops it.
+
+``tools/test-install-page.py`` runs every case on the Python that runs it, and
+``.github/workflows/install-page.yml`` runs it before the gate in the same job.
+It does not detect a change in any of the 3 readings above: no case contains
+``</ script>`` or ``--!>``, and a case that puts markup in a ``title`` makes
+the gate exit 1 whether it reads that markup as text or as hidden elements.
+``.github/workflows/release-dry-run.yml`` runs ``tools/release-dry-run.sh``,
+which runs the gate without the suite.
 
 Exit codes:
   0  every check above passes
@@ -197,8 +208,8 @@ TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance", "t
 RETIRED_ATTRS = ("data-picker", "data-family-link", "data-family-section", "data-picker-reset", "data-picker-status")
 ALLOWED_SCRIPTS = ("copy.js", "search.js", "rail.js")
 DRAFT_PATTERN = "/draft/*"
-# The (major, minor) Python versions the gate runs on: those the docstring's guarantees hold on (see Python
-# versions). main() refuses every other version with exit 3 before it reads a file.
+# The (major, minor) Python versions the gate is tested on; main() refuses every other version with exit 3
+# before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
 SUPPORTED_PYTHONS = ((3, 14),)
 # The shared policy (template specification, baseline 1.4.1, section 9), on every page since promotion.
 SHARED_CSP = (
@@ -547,7 +558,7 @@ def check_headers(headers: str) -> list[str]:
 def main() -> int:
     if sys.version_info[:2] not in SUPPORTED_PYTHONS:
         supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
-        die(f"runs only on Python {supported}, the version its guarantees hold on; "
+        die(f"runs only on Python {supported}, the version it is tested on; "
             f"this is Python {sys.version_info[0]}.{sys.version_info[1]}")
     for path in (PAGE, *FAMILY_PAGES.values(), HEADERS):
         if not path.is_file():
