@@ -111,7 +111,8 @@ version.
 
 ``inline_code_problems`` makes the same version check and raises
 ``UnsupportedPython``, so the tools that load it as a module refuse another
-version too, each with exit 3 and its own message.
+version too, each with exit 3 and its own message from Python 3.7 on (3.9 for
+``tools/check-install-page.py``, whose docstring says why).
 ``tools/check-instructions-page.py`` refuses through that exception.
 ``tools/check-install-page.py`` has its own version guard, which fires first,
 before it reads a file; it catches the exception too, should the two lists of

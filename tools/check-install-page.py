@@ -167,8 +167,11 @@ Checks 1 to 6 read the markup with ``html.parser`` and rest on how it reads raw
 text and comments on Python 3.14: which end tags close a raw-text element (on
 3.14, as in a browser, ``</ script>`` does not close a ``script``), whether
 ``title`` holds markup, and whether ``--!>`` ends a comment. The gate is tested
-on 3.14, so on any other (major, minor) version it exits 3 before it reads a
-file (``SUPPORTED_PYTHONS`` below). That guard does not prove that a given 3.14
+on 3.14, so on any other (major, minor) version, 3.9 or later, it exits 3
+before it reads a file (``SUPPORTED_PYTHONS`` below). Python 3.6 and older
+cannot compile the file, which imports ``annotations`` from ``__future__``, and
+Python 3.7 and 3.8 have no ``functools.cache``, which the file applies as it
+loads, so they exit 1 instead. That guard does not prove that a given 3.14
 patch release reads markup the same way, because ``html.parser`` also changes
 within a minor version: Python 3.13.3 ends a raw-text element at ``</ script>``,
 and the 3.13 branch has since taken the change that stops it.
@@ -197,8 +200,8 @@ which runs the gate without the suite.
 Exit codes:
   0  every check above passes
   1  a family link, family page, id, retired attribute, inline code, asset token, or header discipline regressed
-  3  a file could not be read, a gate it reuses is missing, or the Python version is not 3.14 or not one
-     that tools/check-inline-code.py supports
+  3  a file could not be read, a gate it reuses is missing, or the Python version is 3.9 or later and
+     either not 3.14 or not one that tools/check-inline-code.py supports
 """
 
 from __future__ import annotations
@@ -222,8 +225,8 @@ TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance", "t
 RETIRED_ATTRS = ("data-picker", "data-family-link", "data-family-section", "data-picker-reset", "data-picker-status")
 ALLOWED_SCRIPTS = ("copy.js", "search.js", "rail.js")
 DRAFT_PATTERN = "/draft/*"
-# The (major, minor) Python versions the gate is tested on; main() refuses every other version with exit 3
-# before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
+# The (major, minor) Python versions the gate is tested on; main() refuses every other version, 3.9 or later,
+# with exit 3 before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
 SUPPORTED_PYTHONS = ((3, 14),)
 # The shared policy (template specification, baseline 1.4.1, section 9), on every page since promotion.
 SHARED_CSP = (

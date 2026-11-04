@@ -420,7 +420,7 @@ def stylesheet_problems() -> list[str]:
 
 
 def version_problems() -> list[str]:
-    """The gate runs only on 3.14, and under another version exits 3 before it prints a result line."""
+    """The gate runs only on 3.14, and under another version, 3.9 or later, exits 3 before it prints a result line."""
     problems: list[str] = []
     try:
         spec = importlib.util.spec_from_file_location("check_install_page", GATE)

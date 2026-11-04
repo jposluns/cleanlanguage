@@ -159,8 +159,8 @@ def python_version_problem() -> str | None:
 
 
 def version_step_problems(workflows: Path) -> tuple[list[str], int]:
-    """Each job under workflows that runs a tool in GATE_RUNNERS without the version step, and the
-    number of workflows that run one; no such workflow is a problem too."""
+    """Each job in a .yml workflow under workflows that runs a tool in GATE_RUNNERS without the version
+    step, and the number of .yml workflows that run one; no such workflow is a problem too."""
     problems = []
     found = 0
     for path in sorted(workflows.glob("*.yml")):
@@ -193,7 +193,8 @@ def version_step_problems(workflows: Path) -> tuple[list[str], int]:
                                 f"{VERSION_RUN} with shell: bash and no key but name, shell and run")
         found += runs_gate
     if not found:
-        problems.append(f"no workflow under .github/workflows runs a step that names {', '.join(GATE_RUNNERS)}")
+        problems.append(f"no workflow under .github/workflows whose name ends in .yml runs a step that names "
+                        f"{', '.join(GATE_RUNNERS)}")
     return problems, found
 
 
@@ -281,7 +282,7 @@ def main() -> int:
         f"pages-build.sh runs all {len(EXPECTED)} gates in order, fails when one exits 1 or 3, "
         f"and fails with exit 3 when one is missing ({1 + 3 * len(EXPECTED)} cases); "
         ".python-version names a version that tools/check-inline-code.py supports, "
-        f"the {gated} workflows that run the gate check it in their first step after checkout, "
+        f"the {gated} .yml workflows that run the gate check it in their first step after checkout, "
         f"the workflow check refuses {len(WORKFLOW_CASES)} cases, and "
         f"tools/check-python-version.py passes {len(VERSION_CASES)} cases."
     )

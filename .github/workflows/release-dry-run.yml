@@ -8,10 +8,11 @@ name: Release dry run
 # and merges nothing.
 #
 # It runs on the runner's python3. The first step after the checkout runs
-# tools/check-python-version.py, which exits 3 unless that python3 is the
-# release that .python-version names. The two page checks that the dry run
-# runs load tools/check-inline-code.py and exit 3 on a Python version that the
-# gate does not support.
+# tools/check-python-version.py, which, on Python 3.7 or later, exits 3 unless
+# that python3 is the release that .python-version names. The two page checks
+# that the dry run runs load tools/check-inline-code.py and exit 3 on a Python
+# version that the gate does not support: from 3.7 on for the instructions page
+# check, and from 3.9 on for the install page check.
 
 on:
   pull_request:
