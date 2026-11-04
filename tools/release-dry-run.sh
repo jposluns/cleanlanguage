@@ -221,13 +221,16 @@ tools/set-release-links.py --version "${dry_version}" --tag "${dry_tag}" \
 # generator owns it.
 python3 tools/generate-sitemap.py --write
 
-# 3. The writer's own gate, then every gate the site pull request
-#    triggers (link check, page metadata, the sitemap, and the install page; the portable
-#    text gate does not run on a site-only pull request, and the synthetic
-#    version bump above stands in for a human commit that gate already
+# 3. The writer's own gate, then these gates that the site pull request
+#    also triggers: link check, page metadata, the sitemap, and the install
+#    page. The portable text gate runs on every pull request, the site pull
+#    request included (row 119), but it is not run here: the synthetic
+#    version bump above changes the skill without the portable renderings
+#    that gate compares, and stands in for a human commit that gate already
 #    covers in real pull requests; the Released date agreement across the
 #    renderings is likewise proved by that gate on the real bump pull
-#    request). check-page-metadata can only pass if the writer restamped the
+#    request. Of that workflow's steps, only the instructions page gate runs
+#    below. check-page-metadata can only pass if the writer restamped the
 #    sentinel dates seeded above.
 tools/check-release-links.py
 python3 tools/check-page-metadata.py
