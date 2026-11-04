@@ -6,7 +6,9 @@ name: Site draft
 #
 # The first verifies that every baseline file copied into site/assets/baseline/
 # still matches .baseline/pin.toml and the version's published SHA256SUMS, so a
-# copied file is never edited. See tools/check-baseline-pin.py for scope.
+# copied file is never edited, that the pin's version is the one the version's
+# README (kept unserved in .baseline/) names, and that NOTICE.md carries the
+# README's Site template entry for it. See tools/check-baseline-pin.py for scope.
 #
 # The second verifies that the committed site/ is exactly what
 # tools/build-site.py generates from site-src/ and the skill's own files, beside

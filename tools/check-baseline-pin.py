@@ -39,6 +39,18 @@ What it verifies
    ``marks/NOTICE.md``, and the build tool key ``.baseline/check_palette.py``,
    so a copy that drops one, such as ``rail.js``, fails even when the files
    present match.
+6. The pin's version is the version that ``SHA256SUMS`` belongs to:
+   ``SHA256SUMS`` lines carry no version, so the gate reads it from the
+   version's own README, copied unserved to ``.baseline/README.md``, which
+   must hash to the ``README.md`` digest that ``SHA256SUMS`` lists and start
+   with ``# Baseline X.Y.Z: `` naming the pin's version. The specification,
+   copied unserved to ``.baseline/SPECIFICATION.md`` and read by
+   ``tools/test-build-site.py``, must hash to its listed digest too.
+7. ``NOTICE.md``'s ``## Site template`` section is exactly the entry that the
+   README's "Adoption in a repository" step 7 prescribes, with ``<version>``
+   set to the pin's version (its lines other than blank ones, compared byte
+   for byte), so an entry edited by hand, or left on an earlier version,
+   fails. It is read only when the README matches its digest.
 
 Every folder is listed with ``os.scandir``, so a folder or file that cannot be
 read fails closed (exit 3) rather than reading as empty.
@@ -49,12 +61,18 @@ What it does not verify
 It does not fetch anything, and the README's pin format carries no digest of
 ``SHA256SUMS`` itself: ``tools/copy-baseline.py`` checks that digest at copy
 time against the published value the operator supplies, and the pin's comment
-records it for review.
+records it for review. The README's heading and the wording of its step 7 are
+the template's conventions, not a published format: a version that rewords
+either fails closed (exit 3) until this gate and ``tools/copy-baseline.py``
+learn the new form.
 
 Exit codes:
   0  every copied file matches the pin
-  1  a file drifted, is missing, is extra, or disagrees with SHA256SUMS
-  3  the pin or a file could not be read, or the pin is malformed
+  1  a file drifted, is missing, is extra, or disagrees with SHA256SUMS; the
+     pin's version is not the README's; or NOTICE.md's Site template entry
+     is not the one the README prescribes
+  3  the pin or a file could not be read, the pin is malformed, or the README
+     lacks its version heading or its step 7 NOTICE entry
 """
 
 from __future__ import annotations
@@ -77,6 +95,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PIN = Path(".baseline/pin.toml")
 SUMS = Path(".baseline/SHA256SUMS")
 SITE_JSON = Path("site-src/site.json")
+NOTICE = Path("NOTICE.md")
+# The version's documents, copied unserved to .baseline/ by tools/copy-baseline.py: their names in SHA256SUMS.
+DOCUMENTS = ("README.md", "SPECIFICATION.md")
+README_HEADING = re.compile(r"^# Baseline ([0-9]+\.[0-9]+\.[0-9]+): ")
+# The README's "Adoption in a repository" step 7 and the prefix of its quoted NOTICE entry, as
+# tools/copy-baseline.py reads them; the entry's section in NOTICE.md.
+NOTICE_STEP = "7. Add this entry to the repository's NOTICE:"
+ENTRY_PREFIX = "   > "
+NOTICE_SECTION = "## Site template"
 PREFIX = "assets/baseline/"
 # The pinned build tool: its key in the pin, from the repository root, and its name in SHA256SUMS.
 TOOLS = {".baseline/check_palette.py": "tools/check_palette.py"}
@@ -165,8 +192,73 @@ def list_tree(directory: Path) -> list[str]:
     return sorted(found)
 
 
+def notice_entry(readme: str) -> str | None:
+    """The NOTICE entry of the README's step 7, or None unless it is exactly 1 quoted line holding <version> once."""
+    lines = readme.split("\n")
+    steps = [number for number, line in enumerate(lines) if NOTICE_STEP[len("7. "):] in line]
+    if len(steps) != 1 or lines[steps[0]] != NOTICE_STEP:
+        return None
+    rest = lines[steps[0] + 1:]
+    while rest and not rest[0].strip():
+        rest = rest[1:]
+    quoted = []
+    while rest and rest[0].lstrip().startswith(">"):
+        quoted.append(rest.pop(0))
+    if len(quoted) != 1 or not quoted[0].startswith(ENTRY_PREFIX) or quoted[0].count("<version>") != 1:
+        return None
+    return quoted[0][len(ENTRY_PREFIX):]
+
+
+def document_problems(root: Path, version: str, published: dict[str, str]) -> list[str]:
+    """Items 6 and 7: the copied documents match SHA256SUMS, the README names the pin's version, and NOTICE.md's
+    Site template section is the README's step 7 entry for that version."""
+    problems: list[str] = []
+    texts: dict[str, str] = {}
+    for name in DOCUMENTS:
+        path = PIN.parent / name
+        data = read_bytes(root / path)
+        if hashlib.sha256(data).hexdigest() != published.get(name):
+            problems.append(f"{path} does not hash to the {name} digest the version's SHA256SUMS lists.")
+            continue
+        try:
+            texts[name] = data.decode("utf-8")
+        except UnicodeError as error:
+            raise Unreadable(f"{path} is not UTF-8: {error}") from error
+    readme = texts.get("README.md")
+    if readme is None:
+        return problems
+    heading = README_HEADING.match(readme)
+    if heading is None:
+        raise Unreadable(f"{PIN.parent / 'README.md'} does not start with a '# Baseline X.Y.Z: ' heading")
+    if heading.group(1) != version:
+        problems.append(f"{PIN} names version {version}, but the README that SHA256SUMS lists is baseline "
+                        f"{heading.group(1)}: the pin and SHA256SUMS belong to different versions.")
+    entry = notice_entry(readme)
+    if entry is None:
+        raise Unreadable(f"{PIN.parent / 'README.md'} has no step 7 {NOTICE_STEP[len('7. '):]!r} "
+                         "with 1 quoted entry holding <version> once")
+    try:
+        lines = read_bytes(root / NOTICE).decode("utf-8").split("\n")
+    except UnicodeError as error:
+        raise Unreadable(f"{NOTICE} is not UTF-8: {error}") from error
+    if lines.count(NOTICE_SECTION) != 1:
+        problems.append(f"{NOTICE} has no single {NOTICE_SECTION!r} section for the entry the baseline README's step 7 "
+                        "prescribes.")
+        return problems
+    section = []
+    for line in lines[lines.index(NOTICE_SECTION) + 1:]:
+        if line.startswith("#"):
+            break
+        if line.strip():
+            section.append(line)
+    if section != [entry.replace("<version>", version)]:
+        problems.append(f"{NOTICE}'s {NOTICE_SECTION!r} section is not exactly the entry the baseline README's step 7 "
+                        f"prescribes for baseline {version}.")
+    return problems
+
+
 def check(root: Path) -> list[str]:
-    _, files = load_pin(root)
+    version, files = load_pin(root)
     out = output_root(root)
     problems: list[str] = []
     published: dict[str, str] = {}
@@ -217,7 +309,7 @@ def check(root: Path) -> list[str]:
     for name in list_tree(served):
         if Path(name).name in tool_names:
             problems.append(f"site/{name} is a pinned build tool under the served tree; it is never served.")
-    return problems
+    return problems + document_problems(root, version, published)
 
 
 def main(argv: list[str]) -> int:
@@ -233,7 +325,8 @@ def main(argv: list[str]) -> int:
             print(f"  - {problem}")
         return 1
     version, files = load_pin(root)
-    print(f"All {len(files)} copied files of baseline {version} match the pin and the version's SHA256SUMS, and no file is unpinned.")
+    print(f"All {len(files)} copied files of baseline {version} match the pin and the version's SHA256SUMS, and no file is unpinned; "
+          f"its README names {version} and NOTICE.md carries its Site template entry.")
     return 0
 
 
