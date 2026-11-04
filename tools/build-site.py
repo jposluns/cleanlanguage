@@ -67,9 +67,12 @@ exactly 1 ``noindex, nofollow`` robots meta, and an indexable page at base
 ``/`` with one; a JSON-LD block on a draft page or a ``noindex`` page; a page
 of the ``/`` build with no ``modified`` date (and no ``--date``), or a date
 that is not ``YYYY-MM-DD``; a page without exactly 1 light and dark switch
-(``SCHEME_SWITCH``, exactly, as the last child of ``header.mast``), without
-exactly 1 ``scheme.js`` script tag before the first stylesheet, or with any
-other ``<svg``; and a release version that disagrees with SKILL.md.
+(``SCHEME_SWITCH``, exactly, as the last child of ``header.mast``, after
+``nav.nav``), without exactly 1 ``scheme.js`` script tag before the first
+stylesheet, both inside ``<head>``, or with any other ``<svg``; and a release
+version that disagrees with SKILL.md. The switch's place and the head are read
+as parsed elements: the switch's parent, the element before it and the end of
+its parent, and ``html > head``, the first head or body the page opens.
 
 Modes
 -----
@@ -642,7 +645,7 @@ def substitute(text: str, values: dict, where: str) -> str:
 # Validation -------------------------------------------------------------------
 
 class PageScan(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, switch_at: tuple[int, int] | None = None) -> None:
         super().__init__(convert_charrefs=True)
         self.ids: list[str] = []
         self.links: list[tuple[str, str]] = []
@@ -653,8 +656,21 @@ class PageScan(HTMLParser):
         # Where each script with a src, and the first stylesheet, start: (line, column), as getpos() reports.
         self.loads: list[tuple[tuple[int, int], str]] = []
         self.first_sheet: tuple[int, int] | None = None
+        # Where each script and link starts outside the page's head: html > head, the first head or body opened.
+        self.outside_head: set[tuple[int, int]] = set()
+        self.heads = 0
         self.robots: list[str] = []
-        self.open: list[tuple[str, bool]] = []
+        # Each open element's name and classes, and the element that ended last (or a void one) since the last
+        # start tag: the previous sibling of the next element.
+        self.open: list[tuple[str, list[str]]] = []
+        self.previous: tuple[str, list[str]] | None = None
+        # The switch, the button that starts at switch_at: its parent, its previous sibling, its depth, and where
+        # the end tag of its parent starts.
+        self.switch_at = switch_at
+        self.switch_parent: tuple[str, list[str]] | None = None
+        self.switch_previous: tuple[str, list[str]] | None = None
+        self.switch_depth = 0
+        self.switch_parent_end: tuple[int, int] | None = None
         self.doc_closed = False
         self.in_main = False
         self.in_pre = 0
@@ -664,8 +680,18 @@ class PageScan(HTMLParser):
         if len(attrs) != len(attrs_list):
             # A browser reads the first of 2 attributes with the same name, and this dict the last.
             self.problems.append(f"<{tag}> carries an attribute twice")
+        classes = attrs.get("class", "").split()
+        if tag in ("head", "body"):
+            self.heads += 1
+        if tag in ("script", "link") and ([name for name, _ in self.open] != ["html", "head"] or self.heads != 1):
+            self.outside_head.add(self.getpos())
+        if tag == "button" and self.getpos() == self.switch_at:
+            self.switch_parent = self.open[-1] if self.open else None
+            self.switch_previous = self.previous
+            self.switch_depth = len(self.open)
+        self.previous = (tag, classes) if tag in VOID_TAGS else None
         if tag not in VOID_TAGS:
-            self.open.append((tag, tag == "div" and "doc" in attrs.get("class", "").split()))
+            self.open.append((tag, classes))
         if self.doc_closed and self.in_main:
             self.problems.append(f"<{tag}> follows the end of .doc inside main; .doc closes early")
         if tag == "main":
@@ -715,9 +741,11 @@ class PageScan(HTMLParser):
         if not self.open or self.open[-1][0] != tag:
             self.problems.append(f"</{tag}> does not close the open element {self.open[-1][0] if self.open else 'none'}")
         else:
-            _, is_doc = self.open.pop()
-            if is_doc:
+            self.previous = self.open.pop()
+            if tag == "div" and "doc" in self.previous[1]:
                 self.doc_closed = True
+            if self.switch_parent is not None and self.switch_parent_end is None and len(self.open) < self.switch_depth:
+                self.switch_parent_end = self.getpos()
         if tag == "main":
             self.in_main = False
         if tag == "pre":
@@ -747,13 +775,18 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     for required in (SKIP_LINK, '<main id="main-content">', '<footer class="family wrap">', COPY_STATUS):
         if page_html.count(required) != 1:
             problems.append(f"{required!r} must appear exactly once")
-    if page_html.count(SCHEME_SWITCH) != 1 or page_html.count("</nav>" + SCHEME_SWITCH + "</header>") != 1:
-        problems.append("the light and dark switch must appear exactly once, as the last child of header.mast")
-    if re.search(r"<svg", page_html.replace(SCHEME_SWITCH, "", 1), re.I):
-        problems.append("an inline <svg> other than the light and dark switch")
-    scan = PageScan()
+    switch = page_html.find(SCHEME_SWITCH)
+    scan = PageScan(line_column(page_html, switch) if switch != -1 else None)
     scan.feed(page_html)
     scan.close()
+    # The parsed element the switch sits in and the one before it; the end tag of its parent starts where it ends.
+    parent, previous = scan.switch_parent or ("", []), scan.switch_previous or ("", [])
+    if (page_html.count(SCHEME_SWITCH) != 1 or parent[0] != "header" or "mast" not in parent[1]
+            or previous[0] != "nav" or "nav" not in previous[1]
+            or scan.switch_parent_end != line_column(page_html, switch + len(SCHEME_SWITCH))):
+        problems.append("the light and dark switch must appear exactly once, as the last child of header.mast, after nav.nav")
+    if re.search(r"<svg", page_html.replace(SCHEME_SWITCH, "", 1), re.I):
+        problems.append("an inline <svg> other than the light and dark switch")
     scheme_tags = {line_column(page_html, match.start()) for match in re.finditer(
         r'<script data-cfasync="false" src="' + re.escape(base)
         + r'assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>', page_html)}
@@ -767,6 +800,8 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
         problems.append("scheme.js must load exactly once, with data-cfasync=\"false\" and no defer")
     elif scan.first_sheet is None or scan.first_sheet < scheme_loads[0]:
         problems.append("scheme.js must load before the first stylesheet")
+    elif scheme_loads[0] in scan.outside_head or scan.first_sheet in scan.outside_head:
+        problems.append("scheme.js and the first stylesheet must load inside <head>")
     problems += scan.problems
     if scan.open:
         problems.append(f"elements left open: {[tag for tag, _ in scan.open]}")

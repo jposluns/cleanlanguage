@@ -79,6 +79,17 @@ def remove(relative: str):
     return lambda root: (root / relative).unlink()
 
 
+def into_body(first: str, before: str = "", after: str = ""):
+    """Move the head's lines from first to </head> to the start of the body, in order, between before and after."""
+    def apply(root: Path) -> None:
+        path = root / PAGE
+        text = path.read_text(encoding="utf-8")
+        block = text[text.index(first):text.index("</head>")]
+        text = text.replace(block, "", 1).replace("<body>\n", "<body>\n" + before + block + after, 1)
+        path.write_text(text, encoding="utf-8")
+    return apply
+
+
 CASES = [
     ("the committed tree", None, 0),
     ("a family section removed", edit(PAGE, 'data-family-section="gemini"', 'data-family-gone="gemini"'), 1),
@@ -132,6 +143,9 @@ CASES = [
         '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + SCHEME), 1),
     ("a stylesheet before the scheme.js tag as the first of 2 rel attributes", edit(PAGE, SCHEME,
         '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.6.0">\n' + SCHEME), 1),
+    ("the scheme.js tag and the stylesheets moved into the body, in order", into_body(SCHEME), 1),
+    ("the stylesheets moved into the body, after the scheme.js tag", into_body(FONTS), 1),
+    ("the scheme.js tag and the stylesheets in a second head inside the body", into_body(SCHEME, "<head>\n", "</head>\n"), 1),
     ("a family section hidden by the first of 2 class attributes", edit(PAGE, '<section id="claude" data-family-section="claude">',
         '<section id="claude" data-family-section="claude" class="visually-hidden" class="x">'), 1),
     ("fonts.css loaded only inside a comment", edit(PAGE, FONTS, "<!--" + FONTS + "-->"), 1),

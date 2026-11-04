@@ -32,8 +32,10 @@ What it verifies
 4. No file under ``<output root>/assets/baseline/`` is missing from the pin,
    and no file named ``check_palette.py`` exists anywhere under ``site/``: the
    build tool is pinned but never served.
-5. The pin holds the README's whole runtime and licence set (``REQUIRED``):
-   the 3 stylesheets, the 5 scripts, ``LICENSE``, ``NOTICE.md`` and
+5. The pin holds these files of the README's runtime and licence set
+   (``REQUIRED``): the 3 stylesheets, 5 of the README's 6 scripts (this site
+   leaves out ``matrix.js``, by the owner's decision), ``LICENSE``,
+   ``NOTICE.md`` and
    ``marks/NOTICE.md``, and the build tool key ``.baseline/check_palette.py``,
    so a copy that drops one, such as ``rail.js``, fails even when the files
    present match.

@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from html.parser import HTMLParser
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -92,19 +93,60 @@ def module_switch(path: Path) -> str:
 SWITCH = module_switch(GENERATOR)
 
 
+VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+
+
+class Placement(HTMLParser):
+    """Each start tag's open elements (name, classes), and each end tag's closed element (name, classes, depth),
+    keyed by where the tag starts: (line, column), as getpos() reports."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.open: list[tuple[str, list[str]]] = []
+        self.starts: dict[tuple[int, int], list[tuple[str, list[str]]]] = {}
+        self.ends: dict[tuple[int, int], tuple[str, list[str], int]] = {}
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        self.starts[self.getpos()] = list(self.open)
+        if tag not in VOID:
+            self.open.append((tag, (dict(attrs).get("class") or "").split()))
+
+    def handle_endtag(self, tag: str) -> None:
+        if self.open and self.open[-1][0] == tag:
+            name, classes = self.open.pop()
+            self.ends[self.getpos()] = (name, classes, len(self.open))
+
+
+def position(text: str, index: int) -> tuple[int, int]:
+    return text.count("\n", 0, index) + 1, index - text.rfind("\n", 0, index) - 1
+
+
 def scheme_problems(page: str, text: str, base: str) -> list[str]:
-    """Specification 7.33 on 1 generated page: the scheme.js line once, before the stylesheets, and the switch once."""
+    """Specification 7.33 on 1 generated page, read as parsed elements: the scheme.js line once, before the
+    stylesheets, all of them in html > head, and the switch once, the last child of header.mast after nav.nav."""
     problems = []
+    parsed = Placement()
+    parsed.feed(text)
+    parsed.close()
     line = re.compile(r'^<script data-cfasync="false" src="' + re.escape(base)
                       + r'assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>$', re.M)
     found = list(line.finditer(text))
-    first_sheet = text.find('<link rel="stylesheet"')
+    sheets = [match.start() for match in re.finditer('<link rel="stylesheet"', text)]
     if len(found) != 1 or text.count("scheme.js") != 1:
         problems.append(f"{page} does not load scheme.js exactly once, with data-cfasync and no defer")
-    elif first_sheet == -1 or found[0].start() > first_sheet:
+    elif not sheets or found[0].start() > sheets[0]:
         problems.append(f"{page} loads scheme.js after the first stylesheet")
-    if text.count("</nav>" + SWITCH + "</header>") != 1 or text.count(SWITCH) != 1:
-        problems.append(f"{page} does not end header.mast with the light and dark switch exactly once")
+    elif any([name for name, _ in parsed.starts.get(position(text, at), [])] != ["html", "head"]
+             for at in [found[0].start()] + sheets):
+        problems.append(f"{page} loads scheme.js or a stylesheet outside html > head")
+    at = text.find(SWITCH)
+    around = parsed.starts.get(position(text, at), [("", [])])
+    before = parsed.ends.get(position(text, at - len("</nav>")), ("", [], -1))
+    after = parsed.ends.get(position(text, at + len(SWITCH)), ("", [], -1))
+    if (text.count(SWITCH) != 1 or around[-1][0] != "header" or "mast" not in around[-1][1]
+            or before[0] != "nav" or "nav" not in before[1] or before[2] != len(around)
+            or after[0] != "header" or after[2] != len(around) - 1):
+        problems.append(f"{page} does not end header.mast with the light and dark switch exactly once, after nav.nav")
     return problems
 
 
@@ -250,10 +292,23 @@ def check_scheme_validation(failures: list[str]) -> int:
     text = (REPO_ROOT / "site/license/index.html").read_text(encoding="utf-8")
     tag = re.search(r'<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9.]+"></script>\n', text).group(0)
     sheet = text.index('<link rel="stylesheet"')
+    # The head's lines from the scheme.js line, and from the first stylesheet, to </head>.
+    loads, sheets = text[text.index(tag):text.index("</head>")], text[sheet:text.index("</head>")]
     cases = [
         ("the committed licence page", text, True),
         ("no switch", text.replace(SWITCH, "", 1), False),
         ("the switch after header.mast", text.replace(SWITCH + "</header>", "</header>" + SWITCH, 1), False),
+        ("the switch in a header without the mast class", text.replace('<header class="mast">', '<header class="other">', 1), False),
+        ("the switch after a nav without the nav class", text.replace('<nav class="nav"', '<nav class="links"', 1), False),
+        ("the switch in a div at the end of header.mast", text.replace(
+            SWITCH + "</header>", "<div>" + SWITCH + "</div></header>", 1), False),
+        ("a comment after the switch in header.mast", text.replace(SWITCH + "</header>", SWITCH + "<!-- x --></header>", 1), False),
+        ("the scheme.js line and the stylesheets moved into the body, in order", text.replace(loads, "", 1).replace(
+            "<body>\n", "<body>\n" + loads, 1), False),
+        ("the stylesheets moved into the body, after the scheme.js line", text.replace(sheets, "", 1).replace(
+            "<body>\n", "<body>\n" + sheets, 1), False),
+        ("the scheme.js line and the stylesheets in a second head inside the body", text.replace(loads, "", 1).replace(
+            "<body>\n", "<body>\n<head>\n" + loads + "</head>\n", 1), False),
         ("no scheme.js line", text.replace(tag, "", 1), False),
         ("the scheme.js line with defer", text.replace(tag, tag.replace('"></script>', '" defer></script>'), 1), False),
         ("the scheme.js line after the first stylesheet", text.replace(tag, "", 1).replace("</head>", tag + "</head>", 1), False),

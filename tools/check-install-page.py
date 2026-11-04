@@ -37,12 +37,16 @@ What it verifies
    ``?v=X.Y.Z``, the scripts with ``defer``; an optional ``site.css`` loads with
    ``?v=`` and 12 hexadecimal characters. ``scheme.js`` loads exactly once, as
    exactly ``<script data-cfasync="false" src="/assets/baseline/scheme.js?v=X.Y.Z"></script>``,
-   with no ``defer`` or ``async``, before the first stylesheet (template
-   specification 7.33, baseline 1.6.0). Every other ``<script>`` the page loads
-   is 1 of the baseline's other scripts (``BASELINE_SCRIPTS``: ``copy.js``,
+   with no ``defer`` or ``async``, before the first stylesheet, and it and every
+   stylesheet start inside ``<head>``, read as parsed elements: ``html > head``,
+   the first head or body the page opens (template specification 7.33, baseline
+   1.6.0). Every other ``<script>`` the page loads is 1 of the baseline's
+   other scripts that this site copies (``BASELINE_SCRIPTS``: ``copy.js``,
    ``select.js``, ``search.js``, ``rail.js``) from ``/assets/baseline/``, with
    the same token and ``defer``, as exactly
-   ``<script src="/assets/baseline/NAME?v=X.Y.Z" defer></script>``. Each load is
+   ``<script src="/assets/baseline/NAME?v=X.Y.Z" defer></script>``; the
+   baseline's 6th script, ``matrix.js``, is left out, by the owner's
+   decision. Each load is
    read as the parsed element, so a tag inside a comment loads nothing, and a
    ``<script>`` or stylesheet written in another spelling (letter case, a
    character reference, attribute order or spacing) is still counted. Any tag
@@ -222,7 +226,8 @@ class TemplateParser(HTMLParser):
 
 
 class LoadScan(HTMLParser):
-    """Check 5: where each <script> and stylesheet <link> element starts, and each tag that repeats an attribute."""
+    """Check 5: where each <script> and stylesheet <link> element starts, which of them start outside the
+    page's head, and each tag that repeats an attribute."""
 
     def __init__(self, text: str) -> None:
         super().__init__()
@@ -230,6 +235,11 @@ class LoadScan(HTMLParser):
         self.scripts: list[tuple[int, dict[str, str], str]] = []
         self.sheets: list[tuple[int, dict[str, str], str]] = []
         self.repeats: list[str] = []
+        # The open elements, and the head or body elements opened so far: the page's head is html > head,
+        # the first of them.
+        self.stack: list[str] = []
+        self.heads = 0
+        self.outside_head: set[int] = set()
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
         attrs = {k.lower(): (v if v is not None else "") for k, v in attrs_list}
@@ -238,10 +248,22 @@ class LoadScan(HTMLParser):
         if len(attrs) != len(attrs_list):
             # A browser reads the first of 2 attributes with the same name, and these dicts the last.
             self.repeats.append(element[2])
+        if tag in ("head", "body"):
+            self.heads += 1
+        if tag in ("script", "link") and (self.stack != ["html", "head"] or self.heads != 1):
+            self.outside_head.add(element[0])
+        if tag not in VOID:
+            self.stack.append(tag)
         if tag == "script":
             self.scripts.append(element)
         elif tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split():
             self.sheets.append(element)
+
+    def handle_endtag(self, tag: str) -> None:
+        for i in range(len(self.stack) - 1, -1, -1):
+            if self.stack[i] == tag:
+                del self.stack[i:]
+                break
 
 
 def check_template_page(text: str) -> list[str]:
@@ -306,7 +328,7 @@ def check_template_page(text: str) -> list[str]:
             continue
         name = DEFERRED_TAG.match(text, at)
         if name is None or name.group(1) not in BASELINE_SCRIPTS:
-            problems.append(f"{where}: {tag} is not 1 of the baseline's scripts with a ?v=X.Y.Z token and defer.")
+            problems.append(f"{where}: {tag} is not 1 of the baseline scripts this site copies with a ?v=X.Y.Z token and defer.")
         else:
             deferred.append(name.group(1))
     for name in ("copy.js", "select.js"):
@@ -320,6 +342,8 @@ def check_template_page(text: str) -> list[str]:
         )
     elif first_sheet == -1 or scheme_tags[0] > first_sheet:
         problems.append(f"{where}: scheme.js does not load before the first stylesheet.")
+    elif scheme_tags[0] in loads.outside_head or any(at in loads.outside_head for at, _, _ in loads.sheets):
+        problems.append(f"{where}: scheme.js or a stylesheet does not load inside <head>.")
     site_sheets = [at for at, attrs, _ in loads.sheets if "site.css" in unquote(attrs.get("href", ""))]
     if ("/assets/site.css" in text or site_sheets) and not (site_sheets and all(SITE_SHEET.match(text, at) for at in site_sheets)):
         problems.append(f"{where}: site.css is not loaded with a ?v= content token.")

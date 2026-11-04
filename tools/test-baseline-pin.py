@@ -27,7 +27,8 @@ GATE = REPO_ROOT / "tools" / "check-baseline-pin.py"
 COPY_TOOL = REPO_ROOT / "tools" / "copy-baseline.py"
 
 FILES = {"baseline.css": b"a { color: red; }\n", "fonts/x.woff2": b"\x00\x01font", "marks/NOTICE.md": b"# marks\n"}
-# The rest of the README's runtime and licence set, which the gate requires in the pin.
+# The rest of the files the gate requires in the pin (REQUIRED), from the README's runtime and licence set:
+# among them 5 of its 6 scripts (this site leaves out matrix.js, by the owner's decision).
 for _name in ("palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "scheme.js", "LICENSE",
               "NOTICE.md"):
     FILES[_name] = f"/* {_name} */\n".encode()

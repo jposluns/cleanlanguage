@@ -14,10 +14,12 @@ refuses to copy unless:
 3. ``SHA256SUMS`` lists the build tool ``tools/check_palette.py``, so the served
    files are never replaced by a version that lacks it.
 
-It then copies the runtime and licence files (the baseline README, "Adoption in
-a repository", step 2: the stylesheets, the fonts with their licence files, the
-5 scripts (``rail.js`` from 1.3.0, ``scheme.js`` from 1.6.0), the logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and
-``NOTICE.md``; never ``reference/``, ``tools/`` or the documents) byte for byte
+It then copies these of the runtime and licence files that the baseline README
+lists ("Adoption in a repository", step 2): the stylesheets, the fonts with
+their licence files, 5 of its 6 scripts (``rail.js`` from 1.3.0, ``scheme.js``
+from 1.6.0; this site leaves out ``matrix.js``, by the owner's decision), the
+logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and ``NOTICE.md``
+(never ``reference/``, ``tools/`` or the documents), byte for byte
 into ``<output root>/assets/baseline/``, where the output root follows the base
 path in ``site-src/site.json`` (``site/draft/`` while staged). It copies the
 pinned build tool ``tools/check_palette.py`` (from 1.6.0) to
