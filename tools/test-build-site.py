@@ -330,17 +330,28 @@ LABELS = (LABEL, LABEL.upper())
 
 
 def labels(text: str) -> int:
-    """How many times the parsed text of text (attribute values and comments apart), joined across elements with
-    each run of whitespace (as str.split() reads it, U+00A0 included) read as 1 space, carries LABELS, case-sensitive."""
+    """How many times the parsed text of text (attribute values and comments apart, character references decoded),
+    joined across elements, carries LABELS, case-sensitive, with each character of the install gate's ZERO_WIDTH
+    other than U+00A0, and U+0000, deleted, and then each run of whitespace (as str.split() reads it, U+00A0
+    included) read as 1 space."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
-    joined = " ".join("".join(parsed.text).split())
+    deleted = {ord(character): None for character in GATE.ZERO_WIDTH.replace("\u00a0", "") + "\0"}
+    joined = " ".join("".join(parsed.text).translate(deleted).split())
     return sum(joined.count(label) for label in LABELS)
 
 
-# The install gate's hiding reader, which the generator's value paragraph rule also applies.
-IS_HIDING = load_module(REPO_ROOT / "tools" / "check-install-page.py").is_hiding_element
+# The install gate as the generator reads it, by its own install_gate(), from the same source bytes and never from
+# cached bytecode: the hiding reader its value paragraph rule applies and the ZERO_WIDTH its label rule deletes. A gate
+# the generator cannot read fails this test with exit 1, rather than stopping it with a traceback.
+LOADED = load_module(GENERATOR)
+try:
+    GATE = LOADED.install_gate()
+except LOADED.Unreadable as error:
+    print(f"test-build-site: failures:\n  - the install gate, read by the generator's install_gate(): {error}")
+    raise SystemExit(1)
+IS_HIDING = GATE.is_hiding_element
 
 
 def closed_details(parsed: Placement, path: list[tuple[int, int]]) -> bool:
@@ -367,10 +378,10 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     the block (labels(): with the block's label taken out, none); on any other page, no such element, with an INERT
     ancestor or not, and no LABELS in its text. It does not model a stylesheet beyond the install gate's
     HIDING_CLASSES, or a hidden attribute that HTML5 copies from a stray body or html start tag onto the page's body
-    or html element. The generator refuses such a start tag in a page source wherever its parser reads markup; it
-    does not scan the content of a raw-text or escapable raw-text element (script, style, title, textarea), which a
-    browser can read as markup inside math or svg, and it refuses a math start tag in a page source or page, markup
-    that its parser and a browser can read differently, and any <svg other than the switch in a page."""
+    or html element. The generator refuses such a start tag in a page source, and any page source outside the page
+    source grammar, on which its parser and a browser read the same tokens (no raw-text or escapable raw-text
+    element, whose content a browser can read as markup inside math or svg, among them); and it refuses a math
+    start tag in a page source or page and any <svg other than the switch in a page."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
@@ -547,11 +558,12 @@ REGION_RULE = "the value paragraph has no enclosing div.region"
 DOCUMENT_RULE = "the generator writes the page's html, head and body"
 # Inside math, a browser can read a title or textarea's content as markup, which the generator's parser reads as text.
 MATH_RULE = "a <math> start tag; inside math, a browser can read"
-# A source can end inside a tag that only the generator's markup after it closes; the generator reads the page too.
+# The generator reads each page again for a math start tag, as its parser reads it.
 PAGE_MATH_RULE = "a <math> start tag in the page"
-# Markup that the generator's parser and a browser read differently, where a browser can read a start tag that the
-# parser reads inside a comment, a CDATA section, an attribute value or a raw-text element.
-AMBIGUOUS_RULE = "a page source may carry no markup that the parser and a browser can read differently"
+# Markup outside the page source grammar, on which the generator's parser and a browser read the same tokens: a < in
+# text, a comment whose text holds <, > or --, an attribute value holding < or >, a raw-text or escapable raw-text
+# element, template, a CDATA section, a processing instruction or a DOCTYPE.
+GRAMMAR_RULE = "a page source holds only markup on which Python's parser and a browser read the same tokens"
 # The About block's label in a page source's text: the generator writes it, in the block, on the landing page only.
 LABEL_RULE = "the About block's label in the page source's text"
 VALUE = '<p class="value">'
@@ -569,6 +581,9 @@ HIDING_WRAPPERS = [
     ("a dialog with open and popover", "<dialog open popover>", "</dialog>"),
     ("a details without open", "<details>", "</details>"),
     ("a details without open, after its first summary", "<details><summary>x</summary>", "</details>"),
+    # A browser, and the install gate, read the first of 2 attributes with the same name.
+    ('a div with aria-hidden="true" before aria-hidden="false"', '<div aria-hidden="true" aria-hidden="false">',
+     "</div>"),
 ] + [(f"a div with the {name} class", f'<div class="{name}">', "</div>")
      for name in ("vh", "visually-hidden", "only-dark", "skip")]
 SHOWING_WRAPPERS = [
@@ -661,27 +676,56 @@ SOURCE_REFUSALS = [
     ("a math element in upper case in a page source", inject("<MATH></MATH>"), MATH_RULE),
     ("a math element with an attribute in a page source", inject('<math display="block"></math>'), MATH_RULE),
     ("a self-closing math start tag in a page source", inject("<math/>"), MATH_RULE),
-    ("a math start tag after a comment that --!> ends", inject("<!-- x --!><math><title><body hidden></title></math>"),
-        MATH_RULE),
-    # The generator's parser reads each of these as a comment, a CDATA section, an attribute value or text; a browser
-    # (for noscript, one with scripting on) reads the math and body start tags in them as tags.
+    # Python's parser and a browser can read a math or body start tag in each of these differently (a comment, a
+    # CDATA section, an attribute value or text to one, a tag to the other); the grammar refuses each, read or not.
+    ("a math title after a comment that --!> ends", inject("<!-- x --!><math><title><body hidden></title></math>"),
+        GRAMMAR_RULE),
     ("a math title after a comment that <!--> ends",
-        inject("<!--><math><title><body hidden></title></math>-->"), AMBIGUOUS_RULE),
-    ("a body start tag after a comment that <!---> ends", inject("<!---><body hidden>-->"), AMBIGUOUS_RULE),
+        inject("<!--><math><title><body hidden></title></math>-->"), GRAMMAR_RULE),
+    ("a body start tag after a comment that <!---> ends", inject("<!---><body hidden>-->"), GRAMMAR_RULE),
     ("a math title after a CDATA start in a page source",
-        inject("<![CDATA[><math><title><body hidden></title></math>]]>"), AMBIGUOUS_RULE),
+        inject("<![CDATA[><math><title><body hidden></title></math>]]>"), GRAMMAR_RULE),
     ("a math title after a noscript end tag in a comment",
-        inject("<noscript><!-- </noscript><math><title><body hidden></title></math> --></noscript>"), AMBIGUOUS_RULE),
+        inject("<noscript><!-- </noscript><math><title><body hidden></title></math> --></noscript>"), GRAMMAR_RULE),
     ("a body start tag after a noscript end tag in an attribute value",
-        inject('<noscript><p title="</noscript><body hidden>">x</p></noscript>'), AMBIGUOUS_RULE),
+        inject('<noscript><p title="</noscript><body hidden>">x</p></noscript>'), GRAMMAR_RULE),
     ("a body start tag after a noscript end tag in a title",
-        inject("<noscript><title></noscript><body hidden></title></noscript>"), AMBIGUOUS_RULE),
-    ("a page source that ends inside a math start tag", at_end("<math/"), PAGE_MATH_RULE),
-    # The About block's label in a page source's text, however its elements split it or its characters are written.
+        inject("<noscript><title></noscript><body hidden></title></noscript>"), GRAMMAR_RULE),
+    ("a page source that ends inside a math start tag", at_end("<math/"), GRAMMAR_RULE),
+    # A noscript end tag as text outside noscript, which the noscript count of fix 2 refused, by the grammar's rule.
+    ("a comment that holds a noscript end tag, outside noscript", inject("<!-- </noscript> -->"), GRAMMAR_RULE),
+    ("an attribute value that holds a noscript end tag, outside noscript", inject('<p title="</noscript>">x</p>'),
+        GRAMMAR_RULE),
+    ("a JSON script with a comment opener and a script before the value paragraph", lambda root: edit(
+        root, HOME, VALUE, '<script type="application/json"><!--<script></script>' + VALUE), GRAMMAR_RULE),
+    ("a comment that holds <math>", inject("<!-- a <math> element -->"), GRAMMAR_RULE),
+    ("a comment that holds --", inject("<!-- a -- b -->"), GRAMMAR_RULE),
+    ("a comment that holds >", inject("<!-- a > b -->"), GRAMMAR_RULE),
+    ("a comment that does not end", at_end("<!-- x"), GRAMMAR_RULE),
+    ("an attribute value that holds <math>", inject('<p title="a <math> element">x</p>'), GRAMMAR_RULE),
+    ("an attribute value that holds >", inject('<p title="a>b">x</p>'), GRAMMAR_RULE),
+    ("a single-quoted attribute value that holds <", inject("<p title='a<b'>x</p>"), GRAMMAR_RULE),
+    ("an unquoted attribute value that holds a slash", inject("<p title=a/b>x</p>"), GRAMMAR_RULE),
+    ("a < in text", inject("<p>1 < 2</p>"), GRAMMAR_RULE),
+    ("an end tag with an attribute", inject('<p>x</p class="y">'), GRAMMAR_RULE),
+    ("a DOCTYPE in a page source", inject("<!DOCTYPE html>"), GRAMMAR_RULE),
+    ("a processing instruction in a page source", inject("<?xml version='1.0'?>"), GRAMMAR_RULE),
+] + [(f"a {name} element in a page source", inject(f"<{name}></{name}>"), GRAMMAR_RULE) for name in (
+    "script", "style", "template", "textarea", "title", "xmp", "iframe", "noembed", "noframes", "plaintext", "SCRIPT")
+] + [
+    # The About block's label in a page source's text, split across elements or lines, written with a character
+    # reference or in upper case, or interrupted by a character of the install gate's ZERO_WIDTH other than U+00A0
+    # (whitespace here, as str.split() reads it) or by U+0000; never in other letter cases.
     ("the label in a paragraph on another page", inject(f"<p>{LABEL}</p>"), LABEL_RULE),
     ("the label split across inline elements", inject("<p>About <em>this</em> project</p>"), LABEL_RULE),
+    ("the label split by an element with an attribute", inject('<p>About <span title="a b">this</span> project</p>'),
+        LABEL_RULE),
     ("the label split across lines", inject("<p>About\n  this project</p>"), LABEL_RULE),
     ("the label with a character reference", inject("<p>About th&#105;s project</p>"), LABEL_RULE),
+    ("the label with a soft hyphen reference", inject("<p>About this pro&shy;ject</p>"), LABEL_RULE),
+    ("the label with a soft hyphen", inject("<p>About this pro\u00adject</p>"), LABEL_RULE),
+    ("the label with a zero-width joiner", inject("<p>About\u200d this project</p>"), LABEL_RULE),
+    ("the label with U+0000", inject("<p>About this\u0000 project</p>"), LABEL_RULE),
     ("the label in upper case", inject("<p>ABOUT THIS PROJECT</p>"), LABEL_RULE),
     ("the label in a paragraph in home.html", after_value(f"<p>{LABEL}</p>"), LABEL_RULE),
     ("a label region without the about class in home.html",
@@ -689,11 +733,13 @@ SOURCE_REFUSALS = [
 ] + [(f"the value paragraph inside {name}", wrap_value(start, end), VALUE_RULE) for name, start, end in HIDING_WRAPPERS]
 
 
-# Page sources that build: a comment or an attribute value names math or carries the About block's label, or
-# lower-case prose names the project.
+# Page sources that build: inside the grammar, a comment or an attribute value names math or carries the About
+# block's label, a noscript holds a plain paragraph, or lower-case prose names the project.
 SOURCE_PASSES = [
-    ("a comment that names <math>", inject("<!-- a <math> element -->")),
-    ("an attribute value that names <math>", inject('<p title="a &lt;math&gt; or <math> element">x</p>')),
+    ("a comment that names math", inject("<!-- a math element, with a single - between words -->")),
+    ("an attribute value that names <math> by character references", inject('<p title="a &lt;math&gt; element">x</p>')),
+    ("a single quote in a double-quoted attribute value", inject("<p title=\"the project's aim\">x</p>")),
+    ("a noscript around a plain paragraph", inject("<noscript><p>x</p></noscript>")),
     ("lower-case prose about this project", inject("<p>Send questions about this project to the maintainer.</p>")),
     ("the label in a comment", inject(f"<!-- {LABEL} -->")),
     ("the label in an attribute value", inject(f'<p title="{LABEL}">x</p>')),
@@ -896,9 +942,12 @@ def check_inner_about_rows(failures: list[str]) -> int:
     """About markup on an inner page, read as the parsed class names of every element (split on ASCII whitespace
     only), with an INERT ancestor or not: validate(), called directly on the committed licence page, refuses it by
     its rule, and so does the build test's helper; a class name that only starts with about passes both. Both also
-    refuse the About block's label in the page's text, however its elements split it or its characters are written,
-    the generator by its own rule (row 144, for which the paragraph case here flipped from passing); in an attribute
-    value, a comment or lower-case prose, the label passes both."""
+    refuse the About block's label in the page's text, split across elements (one with an attribute value that holds
+    >, which a reader that strips tags misreads, included), written with a character reference or in upper case, or
+    interrupted by a soft hyphen or a zero-width joiner, the generator by its own rule (row 144, for which the
+    paragraph case here flipped from passing); in an attribute value (one that holds > included), a comment or
+    lower-case prose, the label passes both. A page is not held to the page source grammar, so > in a value can
+    reach this reading."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["id"] == "license")
@@ -916,10 +965,15 @@ def check_inner_about_rows(failures: list[str]) -> int:
         (f'<p class="about&nbsp;x">{link}</p>', None),
         (f"<p>{LABEL}</p>", label_rule),
         ("<p>About <em>this</em> project</p>", label_rule),
+        ('<p>About <span title="a>b">this</span> project</p>', label_rule),
         ("<p>About th&#105;s project</p>", label_rule),
+        ("<p>About this pro&shy;ject</p>", label_rule),
+        ("<p>About this pro\u00adject</p>", label_rule),
+        ("<p>About\u200d this project</p>", label_rule),
         ("<p>ABOUT THIS PROJECT</p>", label_rule),
         (f'<div class="region"><p class="lbl">{LABEL}</p></div>', label_rule),
         (f'<p title="{LABEL}">x</p>', None),
+        (f'<p title="x>{LABEL}">y</p>', None),
         (f"<!-- {LABEL} -->", None),
         ("<p>Send questions about this project to the maintainer.</p>", None),
     ]
@@ -993,9 +1047,14 @@ def check_about_block(failures: list[str]) -> int:
         ("a second label in upper case after the block", [(block, block + f"<p>{LABEL.upper()}</p>")], label_rule),
         ("a second label split across inline elements after the block",
             [(block, block + "<p>About <em>this</em> project</p>")], label_rule),
+        ("a second label split by an element whose attribute value holds >, after the block",
+            [(block, block + '<p>About <span title="a>b">this</span> project</p>')], label_rule),
+        ("a second label with a soft hyphen after the block", [(block, block + "<p>About this pro&shy;ject</p>")],
+            label_rule),
         ("the block's label moved into the hero",
             [(label, '<p class="lbl"></p>'), (hero, hero + f"<p>{LABEL}</p>")], label_rule),
         ("a second label in an attribute", [(hero, hero + f'<p title="{LABEL}">x</p>')], None),
+        ("a second label in an attribute value that holds >", [(hero, hero + f'<p title="x>{LABEL}">y</p>')], None),
         ("a second label in a comment", [(hero, hero + f"<!-- {LABEL} -->")], None),
         ("lower-case prose about this project",
             [(hero, hero + "<p>Send questions about this project to the maintainer.</p>")], None),
@@ -1188,9 +1247,9 @@ def check_unreadable(failures: list[str]) -> int:
 def check_unreadable_reader(failures: list[str]) -> int:
     """A copy of the generator, beside a check-install-page.py that is missing, unreadable (with a cache of its
     bytecode or without), a FIFO (not a regular file, on which a read would wait for a writer), not Python, or
-    without is_hiding_element(), exits 3: the hiding reader is an input. A reader that this test cannot make
-    unreadable, as when it runs as root, or a FIFO it cannot make, as where os.mkfifo() is missing, fails the case
-    rather than skipping it, and so does a generator that has not exited within 60 seconds."""
+    without is_hiding_element() or a ZERO_WIDTH string, exits 3: the hiding reader is an input. A reader that this
+    test cannot make unreadable, as when it runs as root, or a FIFO it cannot make, as where os.mkfifo() is missing,
+    fails the case rather than skipping it, and so does a generator that has not exited within 60 seconds."""
     def unreadable(cache: bool):
         def apply(reader: Path) -> None:
             if cache:
@@ -1214,6 +1273,8 @@ def check_unreadable_reader(failures: list[str]) -> int:
         ("a FIFO in place of the reader", lambda reader: (reader.unlink(), os.mkfifo(reader))),
         ("a reader with a syntax error", lambda reader: reader.write_bytes(b"def is_hiding_element(:\n")),
         ("a reader without is_hiding_element()", lambda reader: reader.write_bytes(b"HIDING_CLASSES = ()\n")),
+        ("a reader without ZERO_WIDTH", lambda reader: reader.write_bytes(
+            b"def is_hiding_element(tag, attrs):\n    return False\n")),
     ]
     for name, fault in cases:
         with tempfile.TemporaryDirectory() as scratch:
@@ -1234,6 +1295,59 @@ def check_unreadable_reader(failures: list[str]) -> int:
             if result.returncode != 3 or "whose hiding reader" not in result.stderr:
                 failures.append(f"unreadable reader '{name}': exit {result.returncode}, expected 3 "
                                 f"({result.stderr.strip()[:200]})")
+    return len(cases)
+
+
+def check_helper_reader(failures: list[str]) -> int:
+    """This test, copied beside the generator, the pinned specification and site.json but no check-install-page.py,
+    fails with exit 1 and a failure naming the reader, rather than stopping with a traceback: its About helper reads
+    the install gate only through the generator's install_gate()."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        for relative in ("tools/build-site.py", "tools/test-build-site.py", ".baseline/SPECIFICATION.md",
+                         ".baseline/SHA256SUMS", "site-src/site.json"):
+            (root / relative).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(REPO_ROOT / relative, root / relative)
+        try:
+            result = subprocess.run([sys.executable, "-I", str(root / "tools" / "test-build-site.py")],
+                                    capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            failures.append("helper reader: no exit within 60 seconds, expected 1")
+            return 1
+        if (result.returncode != 1 or "check-install-page.py, whose hiding reader" not in result.stdout
+                or "could not be read" not in result.stdout or "Traceback" in result.stderr):
+            failures.append(f"helper reader: exit {result.returncode}, expected 1 with a failure naming the missing "
+                            f"reader and no traceback ({(result.stdout + result.stderr).strip()[:200]})")
+    return 1
+
+
+def check_page_rules(failures: list[str]) -> int:
+    """The rules validate() holds for markup that the page source grammar keeps out of every page source, so that
+    only the generator's own markup could carry it: called directly on committed pages with 1 snippet after the h1,
+    validate() refuses each by its rule."""
+    generator = load_module(GENERATOR)
+    config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
+    pages = {entry["id"]: entry for entry in config["pages"]}
+    texts = {page_id: (REPO_ROOT / f"site/{page_id}/index.html").read_text(encoding="utf-8") for page_id in ("license", "draft")}
+    cases = [
+        ("a style element", "license", "/", "<style>p { color: red; }</style>", "a <style> element"),
+        ("an inline script", "license", "/", "<script>alert(1)</script>", "an inline executable <script>"),
+        ("a module script", "license", "/", '<script type="module">alert(1)</script>', "an inline executable <script>"),
+        ("a JSON-LD block on a noindex page", "draft", "/", '<script type="application/ld+json">{}</script>',
+            "a JSON-LD block on a noindex page"),
+        ("a JSON-LD block on a draft page", "license", "/draft/", '<script type="application/ld+json">{}</script>',
+            "a JSON-LD block on a draft page"),
+        ("a math element", "license", "/", "<math></math>", PAGE_MATH_RULE),
+    ]
+    for name, page_id, base, snippet, rule in cases:
+        h1 = re.search(r"<h1>[^<]*</h1>", texts[page_id]).group(0)
+        try:
+            generator.validate(texts[page_id].replace(h1, h1 + snippet, 1), pages[page_id], config, base)
+            refusal = ""
+        except generator.BuildError as error:
+            refusal = str(error)
+        if rule not in refusal:
+            failures.append(f"page rule '{name}': not refused by its rule ({refusal[:200] or 'passed'})")
     return len(cases)
 
 
@@ -1500,7 +1614,7 @@ def main() -> int:
     # Every reader holds the same inert set, and it holds every element the install gate hides for its content.
     ran += 1
     inline = set(load_module(REPO_ROOT / "tools" / "check-inline-code.py").INERT_ELEMENTS)
-    hiding = set(load_module(REPO_ROOT / "tools" / "check-install-page.py").HIDING_ELEMENTS)
+    hiding = set(GATE.HIDING_ELEMENTS)
     if not load_module(GENERATOR).INERT_TAGS == INERT == inline >= hiding:
         failures.append("INERT_TAGS, check-inline-code.py's INERT_ELEMENTS and INERT here differ, or leave out an element "
                         "of check-install-page.py's HIDING_ELEMENTS")
@@ -1509,6 +1623,8 @@ def main() -> int:
     ran += check_source_passes(failures)
     ran += check_unreadable(failures)
     ran += check_unreadable_reader(failures)
+    ran += check_helper_reader(failures)
+    ran += check_page_rules(failures)
     ran += check_scheme_validation(failures)
     ran += check_inert_validation(failures)
     ran += check_inner_about_rows(failures)
