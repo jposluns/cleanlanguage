@@ -29,11 +29,6 @@ These are settled decisions about this repository and this website. Each exists
 to stop a later editor correcting something deliberate. Treat a change to any of
 them as a change to the standard, not as a defect fix.
 
-**Dash specimens on the landing page are mention, not use.** `site/index.html`
-quotes the em dash and the en dash as the characters the standard removes. The
-house ban forbids writing with those marks; it does not forbid naming them. Do
-not strip the specimens.
-
 **The name collision with the coaching technique is accepted.** "Clean Language"
 is also the name of an established questioning technique. Page titles and meta
 descriptions carry no "AI writing" disambiguation, with one exception already in
