@@ -49,8 +49,9 @@ What it verifies
 7. ``NOTICE.md``'s ``## Site template`` section is exactly the entry that the
    README's "Adoption in a repository" step 7 prescribes, with ``<version>``
    set to the pin's version (its lines other than blank ones, compared byte
-   for byte), so an entry edited by hand, or left on an earlier version,
-   fails. It is read only when the README matches its digest.
+   for byte, up to the next heading of level 1 or 2, so a subsection's lines
+   count), so an entry edited by hand, extended, or left on an earlier
+   version, fails. It is read only when the README matches its digest.
 
 Every folder is listed with ``os.scandir``, so a folder or file that cannot be
 read fails closed (exit 3) rather than reading as empty.
@@ -99,11 +100,13 @@ NOTICE = Path("NOTICE.md")
 # The version's documents, copied unserved to .baseline/ by tools/copy-baseline.py: their names in SHA256SUMS.
 DOCUMENTS = ("README.md", "SPECIFICATION.md")
 README_HEADING = re.compile(r"^# Baseline ([0-9]+\.[0-9]+\.[0-9]+): ")
-# The README's "Adoption in a repository" step 7 and the prefix of its quoted NOTICE entry, as
-# tools/copy-baseline.py reads them; the entry's section in NOTICE.md.
+# The README's "Adoption in a repository" step 7 and the prefix of its quoted NOTICE entry, read by notice_entry(),
+# which tools/copy-baseline.py loads from here; the entry's section in NOTICE.md, which only a heading of the same or a
+# higher level (1 or 2 "#" and a space) ends.
 NOTICE_STEP = "7. Add this entry to the repository's NOTICE:"
 ENTRY_PREFIX = "   > "
 NOTICE_SECTION = "## Site template"
+SECTION_END = re.compile(r"^#{1,2} ")
 PREFIX = "assets/baseline/"
 # The pinned build tool: its key in the pin, from the repository root, and its name in SHA256SUMS.
 TOOLS = {".baseline/check_palette.py": "tools/check_palette.py"}
@@ -217,7 +220,10 @@ def document_problems(root: Path, version: str, published: dict[str, str]) -> li
     for name in DOCUMENTS:
         path = PIN.parent / name
         data = read_bytes(root / path)
-        if hashlib.sha256(data).hexdigest() != published.get(name):
+        if name not in published:
+            problems.append(f"{path} cannot be checked: the version's SHA256SUMS does not list {name}.")
+            continue
+        if hashlib.sha256(data).hexdigest() != published[name]:
             problems.append(f"{path} does not hash to the {name} digest the version's SHA256SUMS lists.")
             continue
         try:
@@ -247,7 +253,7 @@ def document_problems(root: Path, version: str, published: dict[str, str]) -> li
         return problems
     section = []
     for line in lines[lines.index(NOTICE_SECTION) + 1:]:
-        if line.startswith("#"):
+        if SECTION_END.match(line):
             break
         if line.strip():
             section.append(line)

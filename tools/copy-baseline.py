@@ -17,7 +17,11 @@ refuses to copy unless:
    the README's first line names the folder's version (``# Baseline X.Y.Z: ``),
    and its "Adoption in a repository" step 7 carries exactly 1 NOTICE entry, 1
    quoted line holding ``<version>`` once, which ``tools/check-baseline-pin.py``
-   compares with ``NOTICE.md``.
+   compares with ``NOTICE.md``. The README is read as that gate reads it, as
+   bytes decoded without newline translation, by the gate's own
+   ``notice_entry()``, which this tool loads from
+   ``tools/check-baseline-pin.py`` next to it, so a README the gate would
+   refuse, such as one with CRLF line ends, is refused here too.
 
 It then copies these of the runtime and licence files that the baseline README
 lists ("Adoption in a repository", step 2): the stylesheets, the fonts with
@@ -35,8 +39,7 @@ pinned build tool ``tools/check_palette.py`` (from 1.6.0) to
 relative to the output root and the build tool's ``.baseline/check_palette.py``
 relative to the repository root. It also copies the documents ``README.md`` and
 ``SPECIFICATION.md`` to ``.baseline/``, like ``SHA256SUMS`` never served and
-not pinned (the README's "Copied by a site: no" is about the site's served
-assets; the maintainer ruled on 2026-11-04 to keep these 2 unserved copies):
+not pinned (the maintainer ruled on 2026-11-04 to keep these 2 unserved copies):
 ``tools/check-baseline-pin.py`` checks each against its ``SHA256SUMS`` digest,
 the README's version against the pin's and its NOTICE entry against
 ``NOTICE.md``, and ``tools/test-build-site.py`` reads specification 7.24 from
@@ -58,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -74,10 +78,8 @@ TOOL_NAME = "check_palette.py"
 # The documents copied to .baseline/, never served and not pinned; tools/check-baseline-pin.py checks each.
 DOCUMENTS = ("README.md", "SPECIFICATION.md")
 README_HEADING = re.compile(r"^# Baseline ([0-9]+\.[0-9]+\.[0-9]+): ")
-# The README's "Adoption in a repository" step 7 and the prefix of its quoted NOTICE entry, as
-# tools/check-baseline-pin.py reads them.
-NOTICE_STEP = "7. Add this entry to the repository's NOTICE:"
-ENTRY_PREFIX = "   > "
+# The gate whose notice_entry() reads the README's "Adoption in a repository" step 7 for both tools.
+GATE = Path(__file__).resolve().parent / "check-baseline-pin.py"
 
 TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "scheme.js", "LICENSE", "NOTICE.md"}
 FOLDERS = ("fonts/", "logos/", "marks/")
@@ -99,21 +101,15 @@ def sha256(path: Path) -> str:
     return ""
 
 
-def notice_entry(readme: str) -> str | None:
-    """The NOTICE entry of the README's step 7, or None unless it is exactly 1 quoted line holding <version> once."""
-    lines = readme.split("\n")
-    steps = [number for number, line in enumerate(lines) if NOTICE_STEP[len("7. "):] in line]
-    if len(steps) != 1 or lines[steps[0]] != NOTICE_STEP:
-        return None
-    rest = lines[steps[0] + 1:]
-    while rest and not rest[0].strip():
-        rest = rest[1:]
-    quoted = []
-    while rest and rest[0].lstrip().startswith(">"):
-        quoted.append(rest.pop(0))
-    if len(quoted) != 1 or not quoted[0].startswith(ENTRY_PREFIX) or quoted[0].count("<version>") != 1:
-        return None
-    return quoted[0][len(ENTRY_PREFIX):]
+def load_gate():
+    """tools/check-baseline-pin.py as a module, for its notice_entry() and NOTICE_STEP."""
+    try:
+        spec = importlib.util.spec_from_file_location("check_baseline_pin", GATE)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except (OSError, SyntaxError) as error:
+        die(3, f"{GATE} could not be loaded: {error}")
+    return module
 
 
 def wanted(name: str) -> bool:
@@ -203,14 +199,15 @@ def main() -> int:
         if name not in listed:
             die(1, f"SHA256SUMS does not list the document {name}")
     try:
-        readme = (source / "README.md").read_text(encoding="utf-8")
+        readme = (source / "README.md").read_bytes().decode("utf-8")
     except (OSError, UnicodeError) as error:
         die(3, f"README.md could not be read: {error}")
     heading = README_HEADING.match(readme)
     if heading is None or heading.group(1) != version:
         die(1, f"README.md does not start with the heading '# Baseline {version}: ', the folder's version")
-    if notice_entry(readme) is None:
-        die(1, f"README.md has no step 7 {NOTICE_STEP[len('7. '):]!r} with 1 quoted entry holding <version> once")
+    gate = load_gate()
+    if gate.notice_entry(readme) is None:
+        die(1, f"README.md has no step 7 {gate.NOTICE_STEP[len('7. '):]!r} with 1 quoted entry holding <version> once")
 
     chosen = sorted(name for name in listed if wanted(name))
     dest = output_root() / PREFIX

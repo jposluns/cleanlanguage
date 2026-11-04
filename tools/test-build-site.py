@@ -266,13 +266,13 @@ ABOUT_MARKUP = "Markup, directly after the value paragraph's region: `"
 ABOUT_START = '<p class="about">'
 
 
-def specification_about() -> tuple[str, list[str]]:
+def specification_about(specification: Path = SPECIFICATION, sums: Path = SUMS) -> tuple[str, list[str]]:
     """The About block of section 7.24 at base /, the backtick span that opens the first line under its heading
     starting with ABOUT_MARKUP, read from .baseline/SPECIFICATION.md only when it hashes to its line in
     .baseline/SHA256SUMS; and site.json's about_paths, each of whose hrefs the block carries once. A ValueError
     names what is missing otherwise."""
-    data = SPECIFICATION.read_bytes()
-    listed = [line.split("  ", 1)[0] for line in SUMS.read_text(encoding="utf-8").split("\n")
+    data = specification.read_bytes()
+    listed = [line.split("  ", 1)[0] for line in sums.read_text(encoding="utf-8").split("\n")
               if line.endswith("  SPECIFICATION.md")]
     if listed != [hashlib.sha256(data).hexdigest()]:
         raise ValueError(".baseline/SPECIFICATION.md does not hash to its 1 line in .baseline/SHA256SUMS")
@@ -919,6 +919,33 @@ def check_generator_about(failures: list[str]) -> int:
     return 1
 
 
+def check_about_source(failures: list[str]) -> int:
+    """The build test's helper gives the About block that the pinned .baseline/SPECIFICATION.md carries, read here
+    as text: at base /, it is the backtick span of the 1 line starting with ABOUT_MARKUP. A helper that keeps a copy
+    of the block, changed along with the generator's, passes every other case but not this one."""
+    block = about_block("/")
+    lines = SPECIFICATION.read_bytes().decode("utf-8").split("\n")
+    if sum(line.startswith(f"{ABOUT_MARKUP}{block}`") for line in lines) != 1:
+        failures.append("About source: the helper's About block is not the one .baseline/SPECIFICATION.md gives")
+    return 1
+
+
+def check_specification_digest(failures: list[str]) -> int:
+    """The helper reads section 7.24 only from a specification that hashes to its line in .baseline/SHA256SUMS: a
+    copy of the pinned one with 1 byte added after its end, its block unchanged, is refused."""
+    with tempfile.TemporaryDirectory() as scratch:
+        changed = Path(scratch) / SPECIFICATION.name
+        changed.write_bytes(SPECIFICATION.read_bytes() + b"\n")
+        try:
+            specification_about(changed, SUMS)
+        except ValueError as error:
+            if "does not hash to its 1 line" not in str(error):
+                failures.append(f"specification digest: refused by another rule ({error})")
+        else:
+            failures.append("specification digest: the helper reads a specification that does not match its digest")
+    return 1
+
+
 def check_unreadable(failures: list[str]) -> int:
     ran = 0
     for name, fault in (
@@ -1213,6 +1240,8 @@ def main() -> int:
     ran += check_about_spacing(failures)
     ran += check_generator_header(failures)
     ran += check_generator_about(failures)
+    ran += check_about_source(failures)
+    ran += check_specification_digest(failures)
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
     ran += check_family_pages(failures)

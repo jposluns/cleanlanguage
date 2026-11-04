@@ -5,14 +5,14 @@ Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
 with the version's README and specification under ``.baseline/`` and a root
 ``NOTICE.md``, applies 1 fault, runs the gate on that tree as a separate
 process and asserts its exit code, and for some cases a line of its output.
-The last case runs the gate on this repository. The first 9 cases run
+The last case runs the gate on this repository. The first 10 cases run
 ``tools/copy-baseline.py`` on a small version folder and assert that the pin
 header it writes, and the committed one, give each key's base; that it copies
 and pins the build tool and counts it among the copied files; that it copies
 the README and the specification to ``.baseline/`` without pinning them; and
 that a version without the build tool, the README or the specification, or
-whose README names another version or lacks its step 7 NOTICE entry, exits 1
-before any served file is replaced.
+whose README names another version, lacks its step 7 NOTICE entry or has CRLF
+line ends, exits 1 before any served file is replaced.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
@@ -241,6 +241,10 @@ def fault_readme_no_entry(root: Path) -> None:
     edit_readme(root, b"Add this entry to", b"Add an entry to")
 
 
+def fault_readme_crlf(root: Path) -> None:
+    edit_readme(root, README, README.replace(b"\n", b"\r\n"))
+
+
 def fault_spec_edited(root: Path) -> None:
     (root / ".baseline" / "SPECIFICATION.md").write_bytes(DOCS["SPECIFICATION.md"] + b"x\n")
 
@@ -265,6 +269,11 @@ def fault_notice_second_paragraph(root: Path) -> None:
     edit_file(root / "NOTICE.md", "with 2 exceptions.\n", "with 2 exceptions.\n\nAnd more.\n")
 
 
+def fault_notice_nested_subsection(root: Path) -> None:
+    edit_file(root / "NOTICE.md", "with 2 exceptions.\n",
+              "with 2 exceptions.\n\n### Exceptions\n\nA 3rd exception: x.\n")
+
+
 def fault_notice_missing(root: Path) -> None:
     (root / "NOTICE.md").unlink()
 
@@ -285,13 +294,15 @@ CASES = [
     ("the build tool pinned with a digest the published sums do not list", fault_tool_digest_not_published, 1),
     ("a check_palette.py under the served site/ tree", fault_tool_served, 1),
     ("the pin moved to another version, NOTICE.md with it", fault_other_version, 1, "different versions"),
-    ("the README not listed in SHA256SUMS", fault_readme_unlisted, 1),
+    ("the README not listed in SHA256SUMS", fault_readme_unlisted, 1, "SHA256SUMS does not list README.md"),
     ("the copied README edited", fault_readme_edited, 1),
     ("the copied specification edited", fault_spec_edited, 1),
     ("a NOTICE entry with 3 exceptions", fault_notice_three_exceptions, 1, "NOTICE.md's '## Site template'"),
     ("a NOTICE entry naming another version", fault_notice_other_version, 1),
     ("no Site template section in NOTICE.md", fault_notice_no_section, 1),
     ("a second paragraph in the Site template section", fault_notice_second_paragraph, 1),
+    ("a ### subsection under the Site template section", fault_notice_nested_subsection, 1,
+        "NOTICE.md's '## Site template'"),
     ("malformed TOML", fault_bad_toml, 3),
     ("no version", fault_missing_version, 3),
     ("a key outside the README format", fault_extra_key, 3),
@@ -305,15 +316,18 @@ CASES = [
     ("the copied README is missing", fault_readme_missing, 3),
     ("a README without its version heading", fault_readme_no_heading, 3),
     ("a README without its step 7 NOTICE entry", fault_readme_no_entry, 3),
+    ("a README with CRLF line ends", fault_readme_crlf, 3),
     ("the copied specification is missing", fault_spec_missing, 3),
     ("NOTICE.md is missing", fault_notice_missing, 3),
 ]
 
 
 def run_copy(root: Path, package: dict[str, bytes]) -> subprocess.CompletedProcess:
-    """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS."""
+    """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS, with the
+    gate beside it, from which it loads notice_entry()."""
     (root / "tools").mkdir()
     shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
+    shutil.copyfile(GATE, root / "tools" / GATE.name)
     (root / "site-src").mkdir()
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
     for name, data in package.items():
@@ -336,6 +350,10 @@ COPY_REFUSALS = [
         lambda package: package.update({"README.md": README.replace(b"Baseline 1.2.1", b"Baseline 1.2.0")})),
     ("a README without its step 7 NOTICE entry",
         lambda package: package.update({"README.md": README.replace(b"   > ", b"")})),
+    # The gate reads the README's bytes without newline translation and refuses this one (exit 3), so copying it
+    # would only fail at deploy.
+    ("a README with CRLF line ends",
+        lambda package: package.update({"README.md": README.replace(b"\n", b"\r\n")})),
 ]
 
 
