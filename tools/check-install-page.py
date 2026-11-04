@@ -156,15 +156,24 @@ element a browser has already closed by an implied end tag (after
 (``a``, ``b``, ``big``, ``code``, ``em``, ``font``, ``i``, ``nobr``, ``s``,
 ``small``, ``strike``, ``strong``, ``tt`` or ``u``) that a browser reopens with
 its attributes after an end tag closed it out of order, so after
-``<p><b hidden>x</p>`` a link is hidden in a browser and visible here. Before
-Python 3.14, ``html.parser`` reads a comment that a browser ends at ``--!>`` on
-to the next ``-->``, so a hiding element between them passes. The inline-code
-checks share the residual that ``tools/check-inline-code.py`` states.
+``<p><b hidden>x</p>`` a link is hidden in a browser and visible here. The
+inline-code checks share the residual that ``tools/check-inline-code.py``
+states.
+
+Python versions
+---------------
+
+Checks 1 to 6 read the markup with ``html.parser`` and rest on how it reads raw
+text and comments, which changed in Python 3.14: which end tags close a raw-text
+element (on 3.14, as in a browser, ``</ script>`` does not close a ``script``),
+whether ``title`` holds markup, and whether ``--!>`` ends a comment. So the
+gate's guarantees hold on Python 3.14 only (``SUPPORTED_PYTHONS`` below), and on
+any other version it exits 3 before it reads a file.
 
 Exit codes:
   0  every check above passes
   1  a family link, family page, id, retired attribute, inline code, asset token, or header discipline regressed
-  3  a file could not be read, or a gate it reuses is missing
+  3  a file could not be read, a gate it reuses is missing, or the Python version is not 3.14
 """
 
 from __future__ import annotations
@@ -188,6 +197,9 @@ TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance", "t
 RETIRED_ATTRS = ("data-picker", "data-family-link", "data-family-section", "data-picker-reset", "data-picker-status")
 ALLOWED_SCRIPTS = ("copy.js", "search.js", "rail.js")
 DRAFT_PATTERN = "/draft/*"
+# The (major, minor) Python versions the gate runs on: those the docstring's guarantees hold on (see Python
+# versions). main() refuses every other version with exit 3 before it reads a file.
+SUPPORTED_PYTHONS = ((3, 14),)
 # The shared policy (template specification, baseline 1.4.1, section 9), on every page since promotion.
 SHARED_CSP = (
     "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
@@ -252,7 +264,7 @@ def inline_code(where: str, text: str) -> list[str]:
 HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
 # The HTML standard's rendering rules hide these with no stylesheet: display: none on datalist, rp, script and
 # title, and on noscript when scripting is on. The parser here reads each as an element that can hold the checked
-# markup (title only before Python 3.14) or, for script, its text (check 5 allows a structured-data block), so
+# markup or, for script and title, its text (check 5 allows a structured-data block in a script), so
 # each hides itself and everything inside it. A browser renders the content of audio, canvas (with scripting on),
 # meter, object (when it loads), progress and video only as fallback, and that of select only in its control, so
 # they hide here too, which refuses more than a browser hides. Its other hidden elements cannot hold that markup
@@ -533,6 +545,10 @@ def check_headers(headers: str) -> list[str]:
 
 
 def main() -> int:
+    if sys.version_info[:2] not in SUPPORTED_PYTHONS:
+        supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
+        die(f"runs only on Python {supported}, the version its guarantees hold on; "
+            f"this is Python {sys.version_info[0]}.{sys.version_info[1]}")
     for path in (PAGE, *FAMILY_PAGES.values(), HEADERS):
         if not path.is_file():
             die(f"{path.relative_to(REPO_ROOT)} does not exist")

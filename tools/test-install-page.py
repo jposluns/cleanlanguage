@@ -19,6 +19,10 @@ position) and the class is in neither the gate's HIDING_CLASSES nor
 EXEMPT_CLASSES below. The parser is deliberately small: it reads no compound,
 descendant or attribute selector, and it fails when a stylesheet cannot be
 read, has an unclosed comment or unbalanced braces, or holds no rule.
+
+It also fails unless the gate's SUPPORTED_PYTHONS is exactly 3.14, and runs the
+gate under a faked Python version outside that set, expecting exit 3, no result
+line, and a one-line message that names 3.14.
 """
 
 from __future__ import annotations
@@ -63,6 +67,12 @@ STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.
 # comment saying why no install page can carry it on a checked element or an ancestor. None qualifies today.
 EXEMPT_CLASSES: tuple[str, ...] = ()
 BARE_CLASS = re.compile(r"\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)")
+# Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS (3.13.3, the Cloudflare Pages image default).
+VERSION_PROBE = (
+    "import sys, runpy; "
+    "sys.version_info = (3, 13, 3, 'final', 0); "
+    "runpy.run_path(sys.argv[1], run_name='__main__')"
+)
 
 
 def make_root(scratch: Path) -> Path:
@@ -399,8 +409,31 @@ def stylesheet_problems() -> list[str]:
     return problems
 
 
+def version_problems() -> list[str]:
+    """The gate runs only on 3.14, and under another version exits 3 before it prints a result line."""
+    problems: list[str] = []
+    try:
+        spec = importlib.util.spec_from_file_location("check_install_page", GATE)
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        if gate.SUPPORTED_PYTHONS != ((3, 14),):
+            problems.append(f"SUPPORTED_PYTHONS of tools/{GATE.name} is {gate.SUPPORTED_PYTHONS!r}, not ((3, 14),).")
+    except Exception as error:
+        problems.append(f"SUPPORTED_PYTHONS could not be read from tools/{GATE.name}: {error!r}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
+                                capture_output=True, text=True)
+        lines = result.stderr.splitlines()
+        if result.returncode != 3 or result.stdout or len(lines) != 1 or "Python 3.14" not in lines[0]:
+            problems.append(f"under Python 3.13: exit {result.returncode}, expected 3 with no result line and 1 line "
+                            f"naming Python 3.14: {(result.stdout + result.stderr).strip()[:300]}")
+    return problems
+
+
 def main() -> int:
     failures: list[str] = [f"the stylesheets: {problem}" for problem in stylesheet_problems()]
+    failures += [f"the Python version: {problem}" for problem in version_problems()]
     doc = " ".join((ast.get_docstring(ast.parse(GATE.read_text(encoding="utf-8"))) or "").split())
     for name, _, words in RESIDUALS:
         if words not in doc:
@@ -418,7 +451,8 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals and the stylesheet check passed.")
+    print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the Python version checks "
+          "and the stylesheet check passed.")
     return 0
 
 
