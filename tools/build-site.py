@@ -696,7 +696,7 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     where = page["source"]
     problems = []
     if 'aria-current="true"' in page_html:
-        problems.append('a static aria-current="true"; the rail is marked by rail.js, and the picker by select.js')
+        problems.append('a static aria-current="true"; the rail is marked by rail.js')
     if "\u2013" in page_html or "\u2014" in page_html:
         problems.append("an en or em dash")
     if re.search(r"what this is", TAGS.sub(" ", page_html), re.I):
@@ -862,8 +862,10 @@ def build(
     _, channel_sections = parse_sections(read_text(root, REFS / "context-modes.md"), str(REFS / "context-modes.md"))
     _, checklist_sections = parse_sections(read_text(root, REFS / "qa-checklist.md"), str(REFS / "qa-checklist.md"))
     instructions = read_text(root, DOWNLOADS / "cleanlanguage.md").rstrip("\n")
-    install_source = read_text(root, SRC / "pages" / "install.html")
-    families = len(re.findall(r"<section id=\"[a-z-]+\" data-family-section=", install_source))
+    # Each AI family has its own setup page under install/; the home page counts them.
+    families = sum(1 for page in pages if str(page.get("path", "")).startswith("install/") and page.get("path") != "install/")
+    if families == 0:
+        raise BuildError("site-src/site.json lists no family install pages under install/; the home page would read 0 assistants")
     values = {
         "base": base,
         **release,
