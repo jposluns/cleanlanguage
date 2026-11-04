@@ -7,8 +7,12 @@ there as a separate process and asserts its exit code (and, for the switch
 rules in ``SWITCH_RULES``, that the refusal names the switch's place). The cases named I1 to I7,
 I2 and I2B are the inline-code mutants of the PR 206 review, and the cases named
 N1, N2 and N4 are the probes of its first verification round. Exit 0 when every case passes;
-1 otherwise, naming each failing case. One further case runs the gate under a
-faked Python version tuple outside its supported set and asserts exit 3.
+1 otherwise, naming each failing case. Two further cases run the gate under a
+faked Python version tuple, 1 below and 1 above its supported set, with every
+way the gate lists or reads a file replaced by an exit 97, and assert exit 3,
+no stdout and 1 stderr line naming the supported version and the faked one, so
+a guard that runs after a file is listed or read, or after a result is printed,
+fails them. SUPPORTED_PYTHONS in the gate must equal the one here exactly.
 """
 
 from __future__ import annotations
@@ -32,22 +36,35 @@ HOLDING = "site/draft/index.html"
 FAVICON = "site/assets/baseline/logos/cleanlanguage-favicon.svg"
 DEMO = "site/demo/index.html"
 IMG = '<img src="x" onerror="alert(1)">'
-# Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS and expects exit 3.
+# The versions the gate must run on, kept here apart from the gate, and a faked version tuple below and above them.
+SUPPORTED_PYTHONS = ((3, 14),)
+VERSION_PROBES = [(3, 13, 9, "final", 0), (3, 15, 0, "final", 0)]
+# Runs the gate (argv[2]) under the faked version tuple in argv[1]. It imports what the gate imports first, then
+# makes every way the gate lists or reads a file exit 97, so a version guard after a read fails the case.
 VERSION_PROBE = (
-    "import sys, runpy; "
-    "sys.version_info = (3, 13, 9, 'final', 0); "
-    "runpy.run_path(sys.argv[1], run_name='__main__')"
+    "import builtins, io, os, pathlib, platform, re, runpy, pkgutil, sys, html.parser, xml.parsers.expat\n"
+    "def trap(*args, **kwargs):\n"
+    "    os.write(2, b'the gate listed or read a file before its version check\\n')\n"
+    "    os._exit(97)\n"
+    "os.walk = os.scandir = os.listdir = builtins.open = io.open = trap\n"
+    "pathlib.Path.read_text = pathlib.Path.read_bytes = pathlib.Path.open = trap\n"
+    "sys.version_info = tuple(int(part) if part.isdigit() else part for part in sys.argv[1].split())\n"
+    "runpy.run_path(sys.argv[2], run_name='__main__')\n"
 )
 # The sha256 of the light and dark switch of template specification 7.33, computed from the 1.6.0
 # reference page reference/install.html line 18 (761 bytes, from <button class="scheme" to </button>).
 SWITCH_SHA256 = "9cbd502757bf584b5b83c5319729a9f33310682f305597b64347bc263f586f00"
 
 
-def gate_switch() -> str:
+def load_gate():
     spec = importlib.util.spec_from_file_location("check_inline_code", GATE)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.SCHEME_SWITCH
+    return module
+
+
+def gate_switch() -> str:
+    return load_gate().SCHEME_SWITCH
 
 
 SWITCH_HEAD = '<button class="scheme" type="button" data-scheme-toggle aria-pressed="false" hidden><svg class="moon" '
@@ -332,19 +349,26 @@ def main() -> int:
             if result.returncode != expected or says not in result.stdout:
                 failures.append(f"{name}: exit {result.returncode}, expected {expected}{' with ' + repr(says) if says else ''}: "
                                 f"{(result.stdout + result.stderr).strip()[:300]}")
-    with tempfile.TemporaryDirectory() as scratch:
-        root = make_root(Path(scratch))
-        result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
-                                capture_output=True, text=True)
-        if result.returncode != 3:
-            failures.append(f"another Python version: exit {result.returncode}, expected 3: "
-                            f"{(result.stdout + result.stderr).strip()[:300]}")
+    if load_gate().SUPPORTED_PYTHONS != SUPPORTED_PYTHONS:
+        failures.append(f"SUPPORTED_PYTHONS in tools/check-inline-code.py is not exactly {SUPPORTED_PYTHONS}")
+    supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
+    for probe in VERSION_PROBES:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, " ".join(map(str, probe)),
+                                     str(root / "tools" / GATE.name)], capture_output=True, text=True)
+            lines = result.stderr.splitlines()
+            needles = (f"runs only on Python {supported}", f"this is Python {probe[0]}.{probe[1]}")
+            if result.returncode != 3 or result.stdout or len(lines) != 1 or not all(n in lines[0] for n in needles):
+                failures.append(f"Python {probe[0]}.{probe[1]}: exit {result.returncode}, expected 3 with no stdout and "
+                                f"1 stderr line naming {' and '.join(needles)}: "
+                                f"{(result.stdout + result.stderr).strip()[:300]}")
     if failures:
         print("test-inline-code: failures:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-inline-code: all {len(CASES) + len(SWITCH_RULES) + 1} cases passed.")
+    print(f"test-inline-code: all {len(CASES) + len(SWITCH_RULES) + len(VERSION_PROBES)} cases passed.")
     return 0
 
 

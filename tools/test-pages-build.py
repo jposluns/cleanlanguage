@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for tools/pages-build.sh: it runs every listed gate and fails when one exits 1 or 3.
+"""Tests for tools/pages-build.sh: it runs every listed gate and fails when one exits 1, 2 or 3.
 
 Each case copies the build script into a temporary tree whose tools/ folder
 holds a stub in place of each gate. A stub records its name and arguments and
@@ -10,16 +10,23 @@ EXPECTED is the gate list for the Pages build command, the 5 gates the owner
 decided and the palette gate that baseline 1.6.0 makes mandatory, kept
 here apart from the script, so a gate dropped from the script, a changed
 argument (build-site.py without --check), a reordered list, or a skipped
-missing gate fails a case. A failing gate stub exits 1 or 3 only, so a case
-fails if the script masks either code, but a failure the script masks only
-for another exit code passes every case. The cases do not test the script's
+missing gate fails a case. A failing gate stub exits 1, 2 or 3 only, so a
+case fails if the script masks any of those codes, but a failure the script
+masks only for a code other than 1, 2 or 3 passes every case (2 is the usage
+error that tools/check-palette.py reports). The cases do not test the script's
 Python version check. Adding a gate to the script means adding it here too,
 which a reviewer sees.
 
 It also reads .python-version at the repository root, which names the Python
-release for the Pages build (site/README.md), and fails if the file is missing
-or names a version outside SUPPORTED_PYTHONS in tools/check-inline-code.py,
-which exits 3 on any other version, 3.7 or later. It reads each workflow
+release for the Pages build (site/README.md), and fails if the file is missing,
+is not one X.Y.Z line as tools/check-python-version.py requires (read as UTF-8
+bytes and matched with that tool's own VERSION_LINE, so a pin the CI step
+refuses fails here too), or names a version outside SUPPORTED_PYTHONS in
+tools/check-inline-code.py, which exits 3 on any other version, 3.7 or later.
+It checks that rule on each pin in ROOT_PIN_CASES: a pin without a patch
+number, a carriage return, 2 lines, non-ASCII digits and a version outside
+SUPPORTED_PYTHONS are refused, and an X.Y.Z pin with or without a line feed
+passes. It reads each workflow
 under .github/workflows whose name ends in .yml (any other .yml or .yaml file
 under .github fails tools/test-workflow-launch-isolation.py instead) with
 PyYAML's safe loader, finds every job with a step whose
@@ -43,7 +50,6 @@ from __future__ import annotations
 import importlib.util
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -108,6 +114,30 @@ VERSION_CASES = [
     ("a .python-version of two lines", f"{RUNNING}\n{RUNNING}\n", 3, [".python-version"]),
 ]
 
+
+def load_tool(name: str, path: Path):
+    """The module at path, loaded without running its main()."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# The one-line rule of tools/check-python-version.py, and the versions tools/check-inline-code.py supports.
+VERSION_LINE = load_tool("check_python_version", VERSION_TOOL).VERSION_LINE
+SUPPORTED_PYTHONS = load_tool("check_inline_code", INLINE_GATE).SUPPORTED_PYTHONS
+MAJOR, MINOR = SUPPORTED_PYTHONS[0]
+# (case, .python-version text, whether root_pin_problem accepts it)
+ROOT_PIN_CASES = [
+    ("an X.Y.Z pin", f"{MAJOR}.{MINOR}.0\n", True),
+    ("an X.Y.Z pin without a line feed", f"{MAJOR}.{MINOR}.0", True),
+    ("a two-part pin without a patch number", f"{MAJOR}.{MINOR}\n", False),
+    ("a pin ending in a carriage return and line feed", f"{MAJOR}.{MINOR}.0\r\n", False),
+    ("a pin outside SUPPORTED_PYTHONS", "2.7.18\n", False),
+    ("a pin of two lines", f"{MAJOR}.{MINOR}.0\n{MAJOR}.{MINOR}.0\n", False),
+    ("a pin with an Arabic-Indic digit", f"{MAJOR}.{MINOR}.\u0660\n", False),
+]
+
 EXPECTED = [
     ["tools/check-baseline-pin.py"],
     ["tools/check-security-txt.py"],
@@ -143,21 +173,30 @@ def run(root: Path) -> tuple[int, list[str], str]:
     return result.returncode, calls, result.stdout + result.stderr
 
 
-def python_version_problem() -> str | None:
-    """The problem with .python-version, or None when it names a version check-inline-code.py supports."""
-    spec = importlib.util.spec_from_file_location("check_inline_code", INLINE_GATE)
-    gate = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(gate)
-    try:
-        text = PYTHON_VERSION_FILE.read_text(encoding="utf-8")
-    except OSError as error:
-        return f".python-version could not be read: {error}"
-    match = re.fullmatch(r"(\d+)\.(\d+)(\.\d+)?\n?", text)
-    if not match:
-        return f".python-version holds {text!r}, not one Python version such as 3.14.4"
-    if (int(match[1]), int(match[2])) not in gate.SUPPORTED_PYTHONS:
-        return f".python-version names {text.strip()}, outside SUPPORTED_PYTHONS {gate.SUPPORTED_PYTHONS}"
+def root_pin_problem(text: str) -> str | None:
+    """The problem with a .python-version text, or None when it is one X.Y.Z line, as
+    tools/check-python-version.py requires, that names a version check-inline-code.py supports."""
+    if not VERSION_LINE.fullmatch(text):
+        return f".python-version holds {text!r}, not one X.Y.Z line such as 3.14.4"
+    major, minor = (int(part) for part in text.split(".")[:2])
+    if (major, minor) not in SUPPORTED_PYTHONS:
+        return f".python-version names {text.strip()}, outside SUPPORTED_PYTHONS {SUPPORTED_PYTHONS}"
     return None
+
+
+def python_version_problem() -> str | None:
+    """The problem with .python-version, read as tools/check-python-version.py reads it, or None."""
+    try:
+        text = PYTHON_VERSION_FILE.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        return f".python-version could not be read: {error}"
+    return root_pin_problem(text)
+
+
+def root_pin_case_problems() -> list[str]:
+    """Each case in ROOT_PIN_CASES that root_pin_problem does not accept or refuse as wanted."""
+    return [f"root-pin case {case}: {text!r} was {'refused' if accepted else 'accepted'}"
+            for case, text, accepted in ROOT_PIN_CASES if (root_pin_problem(text) is None) != accepted]
 
 
 def version_step_problems(workflows: Path) -> tuple[list[str], int]:
@@ -255,7 +294,7 @@ def main() -> int:
 
     case("every gate passes", lambda root: None, 0, expected_calls)
     for index, gate in enumerate(EXPECTED):
-        for code in (1, 3):
+        for code in (1, 2, 3):
             case(
                 f"{gate[0]} exits {code}",
                 lambda root, gate=gate, code=code: (root / gate[0]).with_suffix(".exit").write_text(str(code)),
@@ -271,6 +310,7 @@ def main() -> int:
     problem = python_version_problem()
     if problem:
         failures.append(problem)
+    failures += root_pin_case_problems()
     step_problems, gated = version_step_problems(WORKFLOWS)
     failures += step_problems
     failures += workflow_case_problems()
@@ -281,9 +321,10 @@ def main() -> int:
     if failures:
         return 1
     print(
-        f"pages-build.sh runs all {len(EXPECTED)} gates in order, fails when one exits 1 or 3, "
-        f"and fails with exit 3 when one is missing ({1 + 3 * len(EXPECTED)} cases); "
-        ".python-version names a version that tools/check-inline-code.py supports, "
+        f"pages-build.sh runs all {len(EXPECTED)} gates in order, fails when one exits 1, 2 or 3, "
+        f"and fails with exit 3 when one is missing ({1 + 4 * len(EXPECTED)} cases); "
+        ".python-version is one X.Y.Z line naming a version that tools/check-inline-code.py supports, "
+        f"the root-pin rule passes {len(ROOT_PIN_CASES)} cases, "
         f"the {gated} .yml workflows that run the gate check it in their first step after checkout, "
         f"the workflow check refuses {len(WORKFLOW_CASES)} cases, and "
         f"tools/check-python-version.py passes {len(VERSION_CASES)} cases."
