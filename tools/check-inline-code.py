@@ -94,9 +94,8 @@ Python versions
 ---------------
 
 The gate runs only on Python 3.14 (``SUPPORTED_PYTHONS`` below), the version its
-guarantees are stated for and the version ``tools/test-inline-code.py`` passes
-on; on any other version it exits 3 before it reads a file. The gate prints the
-Python version it ran under. The raw-text element list is
+guarantees are stated for; on any other version it exits 3 before it reads a
+file. The gate prints the Python version it ran under. The raw-text element list is
 set on the HTML parser, so the reading of those elements does not depend on the
 version. Other ``html.parser`` behaviour does change between versions: how a
 comment ends (``--!>``), how a ``<!`` declaration or a ``<![CDATA[`` section is
@@ -108,10 +107,16 @@ where those changes matter for script, style and ``on`` attributes. A
 version-dependent. The XML parser follows the XML specification on every
 version.
 
-The version check runs only when the gate runs as a program:
-``tools/check-install-page.py`` and ``tools/check-instructions-page.py`` load
-``inline_code_problems`` as a module and run on whatever Python their own
-workflows and ``tools/release-dry-run.sh`` use.
+``inline_code_problems`` makes the same version check, so the tools that load it
+as a module, ``tools/check-install-page.py`` and
+``tools/check-instructions-page.py``, refuse another version too: it raises
+``UnsupportedPython``, and each of them exits 3 with its own message.
+
+The check reads the minor version only, so it admits every 3.14 release, and
+``html.parser`` has changed within a minor version before. A pass of
+``tools/test-inline-code.py`` is evidence only for the interpreter it ran on.
+The Site hardening workflow runs the suite on the same interpreter just before
+the gate; the Pages build and the tools that load the module do not.
 
 What it does not verify
 -----------------------
@@ -153,9 +158,10 @@ PAGE_SUFFIXES = (".html", ".htm")
 SVG_SUFFIX = ".svg"
 SVG_NAMESPACE = "http://www.w3.org/2000/svg"
 # The (major, minor) versions the gate runs on: the versions the docstring's guarantees
-# are stated for and tools/test-inline-code.py is green on. main() refuses every other
-# version, so the module loaders in check-install-page.py and check-instructions-page.py
-# are not affected.
+# are stated for. main() and inline_code_problems() refuse every other version, so the
+# module loaders in check-install-page.py and check-instructions-page.py refuse it too.
+# Every patch release of these versions passes the check; tools/test-inline-code.py is
+# evidence only for the interpreter it ran on (docstring, Python versions).
 SUPPORTED_PYTHONS = ((3, 14),)
 
 DATA_BLOCK_TYPE = "application/ld+json"
@@ -185,9 +191,22 @@ RULE = (
 )
 
 
+class UnsupportedPython(Exception):
+    """Raised by inline_code_problems on a Python version outside SUPPORTED_PYTHONS."""
+
+
 def die(message: str) -> None:
     print(f"check-inline-code: {message}", file=sys.stderr)
     raise SystemExit(3)
+
+
+def python_problem() -> str | None:
+    """Why this Python version is not a supported one, or None when it is."""
+    if sys.version_info[:2] in SUPPORTED_PYTHONS:
+        return None
+    supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
+    return (f"runs only on Python {supported}, the versions its guarantees are stated for; "
+            f"this is Python {sys.version_info[0]}.{sys.version_info[1]}")
 
 
 def clean_url(value: str) -> str:
@@ -391,7 +410,10 @@ def svg_problems(text: str) -> list[str]:
 
 
 def inline_code_problems(text: str, svg: bool = False) -> list[str]:
-    """Each piece of inline code or refused markup in a file, as 'line N: ...'."""
+    """Each piece of inline code or refused markup in a file, as 'line N: ...'; raises UnsupportedPython."""
+    unsupported = python_problem()
+    if unsupported:
+        raise UnsupportedPython(unsupported)
     if svg:
         return svg_problems(text)
     parser = scan(text)
@@ -416,10 +438,9 @@ def files() -> tuple[list[Path], list[Path]]:
 
 
 def main() -> int:
-    if sys.version_info[:2] not in SUPPORTED_PYTHONS:
-        supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
-        die(f"runs only on Python {supported}, the versions it and its tests are verified on; "
-            f"this is Python {sys.version_info[0]}.{sys.version_info[1]}")
+    unsupported = python_problem()
+    if unsupported:
+        die(unsupported)
     problems: list[str] = []
     pages, svgs = files()
     for path in pages + svgs:

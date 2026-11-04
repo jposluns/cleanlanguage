@@ -6,6 +6,11 @@ name: Release dry run
 # tools/release-dry-run.sh. This workflow holds read-only permissions, keeps
 # no credentials after checkout, uses no secrets, and pushes, tags, releases,
 # and merges nothing.
+#
+# It runs on the runner's python3, not on the release that .python-version
+# names: the dry run imports PyYAML and no step installs it. The two page
+# checks it runs load tools/check-inline-code.py and exit 3 on a Python version
+# that the gate does not support.
 
 on:
   pull_request:
@@ -42,6 +47,7 @@ on:
       - "tools/check-links.py"
       - "tools/check-install-page.py"
       - "tools/check-instructions-page.py"
+      - "tools/check-inline-code.py"
       - "tools/build-site.py"
       - "tools/check-baseline-pin.py"
       - ".github/workflows/release-skill.yml"
@@ -82,6 +88,7 @@ on:
       - "tools/check-links.py"
       - "tools/check-install-page.py"
       - "tools/check-instructions-page.py"
+      - "tools/check-inline-code.py"
       - "tools/build-site.py"
       - "tools/check-baseline-pin.py"
       - ".github/workflows/release-skill.yml"

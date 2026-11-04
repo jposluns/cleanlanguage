@@ -4,7 +4,9 @@
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault to the install page or to site/_headers, runs
 the gate there as a separate process and asserts its exit code. Exit 0 when
-every case passes; 1 otherwise, naming each failing case.
+every case passes; 1 otherwise, naming each failing case. One further case runs
+the gate under a faked Python version tuple outside the supported set of
+tools/check-inline-code.py and asserts exit 3 with the gate's own message.
 """
 
 from __future__ import annotations
@@ -30,6 +32,12 @@ NEXT_RULE = "\n\n/downloads/cleanlanguage.md"
 SITE_LINE = "/*\n  X-Frame-Options: DENY"
 SITE_CSP = f"  Content-Security-Policy: {SHARED_CSP}" + NEXT_RULE
 DRAFT_RULE = f"\n/draft/*\n  ! Content-Security-Policy\n  Content-Security-Policy: {SHARED_CSP}\n  X-Robots-Tag: noindex\n"
+# Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS of tools/check-inline-code.py.
+VERSION_PROBE = (
+    "import sys, runpy; "
+    "sys.version_info = (3, 13, 9, 'final', 0); "
+    "runpy.run_path(sys.argv[1], run_name='__main__')"
+)
 
 
 def make_root(scratch: Path) -> Path:
@@ -139,12 +147,19 @@ def main() -> int:
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
             if result.returncode != expected:
                 failures.append(f"{name}: exit {result.returncode}, expected {expected}: {(result.stdout + result.stderr).strip()[:300]}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        result = subprocess.run([sys.executable, "-I", "-c", VERSION_PROBE, str(root / "tools" / GATE.name)],
+                                capture_output=True, text=True)
+        if result.returncode != 3 or not result.stderr.startswith("check-install-page: "):
+            failures.append(f"another Python version: exit {result.returncode}, expected 3 from check-install-page: "
+                            f"{(result.stdout + result.stderr).strip()[:300]}")
     if failures:
         print("test-install-page: failures:")
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print(f"test-install-page: all {len(CASES)} cases passed.")
+    print(f"test-install-page: all {len(CASES) + 1} cases passed.")
     return 0
 
 

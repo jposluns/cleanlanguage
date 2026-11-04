@@ -36,8 +36,9 @@ cd "${repo_root}"
 # so the build log names the problem in one line. A version that passes this
 # check can still fail the build: tools/check-inline-code.py exits 3 on any
 # version outside its SUPPORTED_PYTHONS. The Pages image defaults to Python
-# 3.13.3, so .python-version at the repository root names a 3.14 release;
-# only the version line below shows the version a build ran (site/README.md).
+# 3.13.3, so .python-version at the repository root names a 3.14 release. The
+# version line below, and the pass or fail line of tools/check-inline-code.py,
+# show the version a build ran (site/README.md).
 python3 -I -c 'import sys; sys.exit(sys.version_info < (3, 11))' || {
   echo "pages-build: Python 3.11 or later is required (tomllib); found $(python3 --version 2>&1)." >&2
   exit 1

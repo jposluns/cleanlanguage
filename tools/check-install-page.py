@@ -68,7 +68,8 @@ states.
 Exit codes:
   0  the markup is static and complete, and the header discipline holds
   1  a family section, picker link, id, reset, asset token, or header discipline regressed
-  3  a file could not be read, or a gate it reuses is missing
+  3  a file could not be read, a gate it reuses is missing, or the Python version is not one
+     that tools/check-inline-code.py supports
 """
 
 from __future__ import annotations
@@ -130,7 +131,12 @@ def load_tool(name: str):
 
 def inline_code(where: str, text: str) -> list[str]:
     """Check 4: each piece of inline code, read with tools/check-inline-code.py."""
-    return [f"{where} {problem}; {INLINE_RULE}." for problem in load_tool("check-inline-code.py").inline_code_problems(text)]
+    gate = load_tool("check-inline-code.py")
+    try:
+        problems = gate.inline_code_problems(text)
+    except gate.UnsupportedPython as error:
+        die(f"tools/check-inline-code.py {error}")
+    return [f"{where} {problem}; {INLINE_RULE}." for problem in problems]
 
 
 def is_hiding_element(attrs: dict[str, str]) -> bool:

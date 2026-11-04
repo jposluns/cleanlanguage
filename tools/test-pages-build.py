@@ -18,7 +18,9 @@ which a reviewer sees.
 It also reads .python-version at the repository root, which names the Python
 release for the Pages build (site/README.md), and fails if the file is missing
 or names a version outside SUPPORTED_PYTHONS in tools/check-inline-code.py,
-which exits 3 on any other version.
+which exits 3 on any other version. It fails too if a workflow in
+SETUP_PYTHON_WORKFLOWS does not set up that release, with actions/setup-python
+pinned to a commit and reading .python-version, before its first run step.
 
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
@@ -38,6 +40,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "pages-build.sh"
 PYTHON_VERSION_FILE = REPO_ROOT / ".python-version"
 INLINE_GATE = REPO_ROOT / "tools" / "check-inline-code.py"
+WORKFLOWS = REPO_ROOT / ".github" / "workflows"
+# The workflows that run tools/check-inline-code.py, directly or through a page check, on the
+# release that .python-version names. release-dry-run.yml keeps the runner's python3, as its
+# header says; the page checks it runs exit 3 on a version the gate does not support.
+SETUP_PYTHON_WORKFLOWS = ("site-hardening.yml", "install-page.yml", "portable-text-sync.yml", "pages-build.yml")
+SETUP_PYTHON = re.compile(
+    r"\n      - name: [^\n]+\n        uses: actions/setup-python@[0-9a-f]{40} # v[0-9.]+\n"
+    r"        with:\n          python-version-file: \.python-version\n"
+)
 
 EXPECTED = [
     ["tools/check-baseline-pin.py"],
@@ -90,6 +101,23 @@ def python_version_problem() -> str | None:
     return None
 
 
+def setup_python_problems() -> list[str]:
+    """Each workflow in SETUP_PYTHON_WORKFLOWS that does not set up .python-version before its first run step."""
+    problems = []
+    for name in SETUP_PYTHON_WORKFLOWS:
+        try:
+            text = (WORKFLOWS / name).read_text(encoding="utf-8")
+        except OSError as error:
+            problems.append(f".github/workflows/{name} could not be read: {error}")
+            continue
+        step = SETUP_PYTHON.search(text)
+        run = text.find("\n        run: ")
+        if step is None or (run != -1 and run < step.start()):
+            problems.append(f".github/workflows/{name} does not set up the release that .python-version names "
+                            "with a pinned actions/setup-python step before its first run step")
+    return problems
+
+
 def main() -> int:
     failures: list[str] = []
     expected_calls = [" ".join(gate) for gate in EXPECTED]
@@ -124,6 +152,7 @@ def main() -> int:
     problem = python_version_problem()
     if problem:
         failures.append(problem)
+    failures += setup_python_problems()
 
     for failure in failures:
         print(f"FAIL {failure}")
@@ -132,7 +161,8 @@ def main() -> int:
     print(
         f"pages-build.sh runs all {len(EXPECTED)} gates in order, fails when one exits 1 or 3, "
         f"and fails with exit 3 when one is missing ({1 + 3 * len(EXPECTED)} cases); "
-        ".python-version names a version that tools/check-inline-code.py supports."
+        ".python-version names a version that tools/check-inline-code.py supports, and "
+        f"{len(SETUP_PYTHON_WORKFLOWS)} workflows set it up before their first run step."
     )
     return 0
 
