@@ -45,10 +45,19 @@ SUM = "2b57d83fcbe567d5d617a8d2416770e5a832002aa5f01e196ef6d1bcd12f1336"
 URL = "https://github.com/jposluns/cleanlanguage/releases/download/v{v}/cleanlanguage-{v}.zip"
 INSTALL = '<a href="' + URL + '">cleanlanguage-{v}.zip</a><p class="lbl size">zip, version {v}</p><p>for example <code>cleanlanguage-{v}.zip</code></p>'
 VERIFY = (
+    '<p>Download the skill. The published checksum is shown under the link.</p>'
     '<a href="' + URL + '">cleanlanguage-{v}.zip</a><p class="lbl size">zip, version {v}, SHA-256</p>'
     '<p>The published checksum for version {v} is:</p><code class="sum" id="published-checksum">{sum}</code>'
-    '<pre>sha256sum cleanlanguage-{v}.zip</pre>'
+    '<p>The same value is in the <a href="' + URL + '.sha256">published checksum file</a>.</p>'
+    '<pre>sha256sum cleanlanguage-{v}.zip</pre><p class="lbl blk">Step 3</p>\n'
+    '<p>Compare the value your computer prints with the published checksum shown in step 1.</p>\n'
+    '<p>If the values still differ after a fresh download, do not install the file.</p>'
 )
+# The rest of the published state, each part as VERIFY writes it (published_page_problems).
+LEAD = '<p>Download the skill. The published checksum is shown under the link.</p>'
+SUM_LINK = '<a href="' + URL + '.sha256">published checksum file</a>'
+STEP_3 = '<p class="lbl blk">Step 3</p>\n'
+REJECT = '<p>If the values still differ after a fresh download, do not install the file.</p>'
 # The verify page while release.json holds the zero placeholder, as tools/build-site.py writes it.
 ZEROS = "0" * 64
 NOTE = "<p>The checksum for version {v} appears here once that version is published.</p>"
@@ -76,7 +85,8 @@ class ReleaseSourceTest(unittest.TestCase):
         gate.VERIFY_PAGE = site / "verify" / "index.html"
         gate.RELEASE_JSON = root / "site-src" / "release.json"
         self.write(gate.SKILL, "Version: 1.0.14\n")
-        self.write(gate.REDIRECTS, "/download " + URL.format(v="1.0.14") + " 302\n")
+        self.write(gate.REDIRECTS, "/download " + URL.format(v="1.0.14") + " 302\n"
+                   + "/download/checksum " + URL.format(v="1.0.14") + ".sha256 302\n")
         self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % SUM)
         self.write(gate.INSTALL_PAGE, INSTALL.format(v="1.0.14"))
         self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM))
@@ -211,6 +221,74 @@ class ReleaseSourceTest(unittest.TestCase):
                 self.assertEqual(code, 1, output)
                 self.assertIn(f"site/verify/index.html {report}{self.HOLDS}", output)
                 self.assertEqual(output.count(self.HOLDS), 1, output)
+
+    def test_placeholder_note_beside_equivalent_markup_fails(self):
+        # Finding 1 (DISCOVERY round 2): the page is read as parsed markup, so markup that a browser shows
+        # the same way is held to the same rule, and a link through site/_redirects to the checksum file is
+        # a link to that file.
+        for label, extra, report in (
+            ("the checksum element with its attributes in the other order",
+             '<code id="published-checksum" class="sum">' + ZEROS + "</code>", "shows a checksum element"),
+            ("the checksum element with another attribute", "<code class='sum' hidden id=published-checksum></code>",
+             "shows a checksum element"),
+            ("a link through the checksum redirect", '<a href="/download/checksum">file</a>',
+             "links a .sha256 checksum file"),
+            ("a relative link through the checksum redirect", '<a href="../download/Checksum/">file</a>',
+             "links a .sha256 checksum file"),
+            ("an absolute link through the checksum redirect",
+             '<a href="https://cleanlanguage.ai/download/checksum?from=verify">file</a>', "links a .sha256 checksum file"),
+            ("a link to the checksum file with an encoded dot", '<a href="' + URL.format(v="1.0.14") + '%2Esha256">file</a>',
+             "links a .sha256 checksum file"),
+            ("published checksum wording split by markup", "<p>The published <b>checksum</b> is below.</p>",
+             'says "published checksum"'),
+            ("a step that rejects the download split by markup", "<p>If they differ, do <em>not</em> install the file.</p>",
+             "has a step that tells the reader not to install the file"),
+        ):
+            with self.subTest(label):
+                code, output = self.pending(PENDING.format(v="1.0.14") + extra)
+                self.assertEqual(code, 1, output)
+                self.assertIn(f"site/verify/index.html {report}{self.HOLDS}", output)
+                self.assertEqual(output.count(self.HOLDS), 1, output)
+
+    def test_placeholder_note_beside_other_links_passes(self):
+        # A link to the zip, directly or through its redirect, and a value that is not a URL are not links to
+        # the checksum file.
+        code, output = self.pending(PENDING.format(v="1.0.14") + '<a href="/download">zip</a><a href="http://[x">x</a>')
+        self.assertEqual(code, 0, output)
+
+    # The end of each report of a rule of the rest of the published state (published_page_problems).
+    SHOWS = ", but site-src/release.json holds a published checksum"
+
+    def test_published_checksum_without_the_rest_of_its_state_fails(self):
+        # Finding 2 (DISCOVERY round 2): 1 case for each rule, and the page the finding reported, which keeps
+        # the checksum and its sentence but lacks step 3, the link to the checksum file and the step 1 lead.
+        page = VERIFY.format(v="1.0.14", sum=SUM)
+        link = SUM_LINK.format(v="1.0.14")
+        lead = "does not say in step 1 that the published checksum is shown under the link"
+        linked = "does not link the checksum file of version 1.0.14"
+        step = "has no step 3 that compares the 2 values"
+        reject = "has no step that tells the reader not to install the file"
+        for label, changed, reports in (
+            ("no step 1 lead", page.replace(LEAD, ""), [lead]),
+            ("the step 1 lead in a comment only", page.replace(LEAD, "<!-- " + LEAD + " -->"), [lead]),
+            ("the step 1 lead in a script only", page.replace(LEAD, "<script>" + LEAD + "</script>"), [lead]),
+            ("no link to the checksum file", page.replace(link, "published checksum file"), [linked]),
+            ("a link to the checksum file of another version",
+             page.replace(link, SUM_LINK.format(v="1.0.14").replace("v1.0.14/", "v1.0.13/")), [linked]),
+            ("no step 3", page.replace(STEP_3, ""), [step]),
+            ("no step that rejects the download", page.replace(REJECT, ""), [reject]),
+            ("step 3, the link and the step 1 lead removed",
+             page.replace(LEAD, "").replace(link, "published checksum file").replace(STEP_3, "").replace(REJECT, ""),
+             [lead, linked, step, reject]),
+        ):
+            with self.subTest(label):
+                self.assertNotEqual(changed, page)
+                self.write(gate.VERIFY_PAGE, changed)
+                code, output = self.run_gate()
+                self.assertEqual(code, 1, output)
+                for report in reports:
+                    self.assertIn(f"site/verify/index.html {report}{self.SHOWS}", output)
+                self.assertEqual(output.count(self.SHOWS), len(reports), output)
 
     def test_placeholder_note_missing_or_repeated_fails(self):
         for label, page in (
@@ -471,11 +549,7 @@ class VersionParseTest(unittest.TestCase):
         gate.SITE_ROOT.mkdir(parents=True, exist_ok=True)
         (gate.SITE_ROOT / "install.html").write_text(page_text, encoding="utf-8")
         gate.REDIRECTS.write_text(self._valid_url("1.0.14") + "\n", encoding="utf-8")
-        gate.VERIFY_PAGE.write_text(
-            '<p>The published checksum for version 1.0.14 is:</p>\n'
-            '<code class="sum" id="published-checksum">' + "a" * 64 + "</code>\n",
-            encoding="utf-8",
-        )
+        gate.VERIFY_PAGE.write_text(VERIFY.format(v="1.0.14", sum="a" * 64), encoding="utf-8")
 
     def _run_gate(self):
         out = io.StringIO()

@@ -20,8 +20,9 @@ What it verifies
 3. The tag in each URL is that version prefixed with ``v``.
 4. The published checksum displayed on the verify page is a well-formed SHA-256,
    and the version named in the sentence above it agrees with the links; or,
-   while the release is not yet published, the page names that version in its
-   note that the checksum appears once that version is published.
+   while ``release.json`` holds the zero placeholder, the page names that
+   version in its note that the checksum appears once that version is
+   published.
 5. ``site/_redirects`` names the same version, so the shareable short paths and
    the direct links cannot point at different releases.
 6. Every version-named zip file name written out on a page outside a release
@@ -35,12 +36,18 @@ What it verifies
    version, and each page names the release at least once. The verify page is
    in 1 of 2 states, chosen by ``release.json``. With a published checksum, it
    displays exactly 1 checksum element, the same checksum as ``release.json``,
-   and carries no not-yet-published note. With the zero placeholder a version
-   bump writes, it carries that note exactly once, for that version, and no
-   checksum element, no "published checksum" wording, no link to a ``.sha256``
-   file and no step that tells the reader not to install the file, so it never
-   shows the placeholder as the published value (placeholder_page_problems,
-   which tools/check-release-checksum-live.py carries verbatim).
+   carries no not-yet-published note, and keeps the rest of that state: the
+   step 1 lead that the published checksum is shown under the link, a link to
+   the checksum file of that version, and step 3, which compares the 2 values
+   and tells a reader whose value still differs not to install the file
+   (published_page_problems). With the zero placeholder a version bump writes,
+   it carries that note exactly once, for that version, and no element with
+   the checksum element's id, no "published checksum" wording, no link to a
+   ``.sha256`` file or to a path that ``site/_redirects`` sends there, and no
+   step that tells the reader not to install the file, so it never shows the
+   placeholder as the published value (placeholder_page_problems). Both rules
+   read the page as parsed markup (PageReader), and
+   tools/check-release-checksum-live.py carries them verbatim.
 
 What it does not verify
 -----------------------
@@ -69,6 +76,8 @@ import os
 import re
 import stat
 import sys
+import urllib.parse
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import NoReturn
 
@@ -98,6 +107,16 @@ PUBLISHED_WORDING = re.compile(r"published checksum", re.I)
 # The verify page's step 3 tells a reader whose value still differs not to install the file (tools/build-site.py).
 REJECTING_STEP = re.compile(r"\bdo not install\b", re.I)
 PLACEHOLDER = "0" * 64
+# The rest of the published state, read by published_page_problems, as tools/build-site.py writes it (sum_tokens).
+PUBLISHED_LEAD = "Download the skill. The published checksum is shown under the link."
+SUM_URL = "https://github.com/jposluns/cleanlanguage/releases/download/v{version}/cleanlanguage-{version}.zip.sha256"
+COMPARE_STEP = re.compile(
+    r"Step 3\s+Compare the value your computer prints with the published checksum shown in step 1\."
+)
+# The id of the checksum element, which placeholder_page_problems finds whatever the element's other attributes, and
+# the address of the verify page, against which it resolves a relative link.
+SUM_ID = "published-checksum"
+VERIFY_URL = "https://cleanlanguage.ai/verify/"
 NAMED_ZIP = re.compile(r"cleanlanguage-([0-9][0-9.]*[0-9])\.zip")
 VERSION_LABEL = re.compile(r"\bversion ([0-9]+\.[0-9]+\.[0-9]+)\b")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -243,7 +262,7 @@ def main() -> int:
                 f"but SKILL.md says {expected}"
             )
 
-    problems += check_release_source(expected)
+    problems += check_release_source(expected, redirects)
 
     if problems:
         print("Release link problems found:")
@@ -269,11 +288,13 @@ def main() -> int:
     return 0
 
 
-def check_release_source(expected: str) -> list[str]:
+def check_release_source(expected: str, redirects: str) -> list[str]:
     """Checks 7 and 8: release.json, and the install and verify pages generated from it.
 
     A stale bare file name on either page is check 6's (ZIP_NAME, site-wide), so it is
-    not reported twice here; these pages must still name the release at least once."""
+    not reported twice here; these pages must still name the release at least once.
+    ``redirects`` is site/_redirects, whose paths to the checksum file the verify page
+    may not link while release.json holds the zero placeholder."""
     import json
 
     problems: list[str] = []
@@ -302,7 +323,7 @@ def check_release_source(expected: str) -> list[str]:
         for version in sorted(labels - {expected}):
             problems.append(f"{relative} names version {version}, but SKILL.md says {expected}")
         if page == VERIFY_PAGE and checksum == PLACEHOLDER:
-            for problem in placeholder_page_problems(text, expected):
+            for problem in placeholder_page_problems(text, expected, redirects):
                 problems.append(f"{relative} {problem}, but site-src/release.json holds the zero placeholder")
         elif page == VERIFY_PAGE:
             if PENDING_VERSION.search(text):
@@ -318,30 +339,117 @@ def check_release_source(expected: str) -> list[str]:
             stated = DISPLAYED_VERSION.search(text)
             if stated is None or stated.group(1) != expected:
                 problems.append(f"{relative} does not state that its checksum is for version {expected}")
+            for problem in published_page_problems(text, expected):
+                problems.append(f"{relative} {problem}, but site-src/release.json holds a published checksum")
     return problems
 
 
-def placeholder_page_problems(text: str, version: str) -> list[str]:
+class PageReader(HTMLParser):
+    """The verify page as parsed markup, as the state rules read it: the id of each element, the value of each
+    attribute, the href of each link and the text outside comments, scripts and styles, with character references
+    decoded, so that the order of attributes, their quoting and the markup between words do not change what a rule
+    sees. tools/check-release-links.py and tools/check-release-checksum-live.py carry this class verbatim."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.ids: list[str] = []
+        self.values: list[str] = []
+        self.links: list[str] = []
+        self.chunks: list[str] = []
+        self.skipping = 0
+        self.feed(text)
+        self.close()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        for name, value in attrs:
+            if value is None:
+                continue
+            self.values.append(value)
+            if name == "id":
+                self.ids.append(value.strip())
+            elif tag == "a" and name == "href":
+                self.links.append(value.strip())
+        if tag in ("script", "style"):
+            self.skipping += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("script", "style") and self.skipping:
+            self.skipping -= 1
+
+    def handle_data(self, data: str) -> None:
+        if not self.skipping:
+            self.chunks.append(data)
+
+    def text(self) -> str:
+        return "".join(self.chunks)
+
+
+def checksum_paths(redirects: str) -> set[str]:
+    """The site paths that serve the checksum file: each source in ``redirects`` (site/_redirects) whose target is
+    a .sha256 file or another such path, in lower case and without a final slash."""
+    rules = [line.split()[:2] for line in redirects.splitlines()
+             if len(line.split()) >= 2 and not line.split()[0].startswith("#")]
+    paths: set[str] = set()
+    while True:
+        found = {source.rstrip("/").lower() for source, target in rules if targets_checksum(target, paths)}
+        if found <= paths:
+            return paths
+        paths |= found
+
+
+def targets_checksum(value: str, paths: set[str]) -> bool:
+    """Whether ``value``, read as a link on the verify page, reaches the checksum file: a .sha256 file at any
+    address, or a path in ``paths`` (checksum_paths) at any host. A value that is not a URL reaches nothing."""
+    try:
+        path = urllib.parse.unquote(urllib.parse.urlsplit(urllib.parse.urljoin(VERIFY_URL, value.strip())).path)
+    except ValueError:
+        return False
+    return path.lower().endswith(".sha256") or path.rstrip("/").lower() in paths
+
+
+def placeholder_page_problems(text: str, version: str, redirects: str) -> list[str]:
     """The rules of the verify page while release.json holds the zero placeholder, one problem for each rule
     ``text`` breaks: the page says once, for ``version``, that the checksum appears once that version is
-    published, and shows no checksum element, no "published checksum" wording, no link to a .sha256 file
-    and no step that tells the reader not to install the file. tools/check-release-links.py and
-    tools/check-release-checksum-live.py carry this function and the patterns it reads verbatim, and
-    tools/test-release-checksum-live.py requires that the 2 copies match."""
+    published, and shows no element with the checksum element's id, no "published checksum" wording, no link
+    to a .sha256 file or to a path that ``redirects`` (site/_redirects) sends there, and no step that tells
+    the reader not to install the file. tools/check-release-links.py and tools/check-release-checksum-live.py
+    carry this function, published_page_problems, PageReader, checksum_paths, targets_checksum and the
+    patterns they read verbatim, and tools/test-release-checksum-live.py requires that the 2 copies match."""
+    page = PageReader(text)
+    paths = checksum_paths(redirects)
     problems: list[str] = []
     if PENDING_VERSION.findall(text) != [version]:
         problems.append(
             f"does not say exactly once that the checksum for version {version} appears here once that "
             f"version is published"
         )
-    if DISPLAYED_SUM.search(text):
+    if SUM_ID in page.ids:
         problems.append("shows a checksum element")
-    if PUBLISHED_WORDING.search(text):
+    if any(PUBLISHED_WORDING.search(source) for source in (text, page.text())):
         problems.append('says "published checksum"')
-    if ".zip.sha256" in text:
+    if ".zip.sha256" in text or any(targets_checksum(value, paths) for value in page.values):
         problems.append("links a .sha256 checksum file")
-    if REJECTING_STEP.search(text):
+    if any(REJECTING_STEP.search(source) for source in (text, page.text())):
         problems.append("has a step that tells the reader not to install the file")
+    return problems
+
+
+def published_page_problems(text: str, version: str) -> list[str]:
+    """The rules of the verify page while release.json holds a published checksum, beyond the checksum element
+    and the sentence that names its version, which each gate reads itself: one problem for each rule ``text``
+    breaks. Step 1 says that the published checksum is shown under the link, the page links the checksum file
+    of ``version``, and step 3 compares the 2 values and tells a reader whose value still differs not to
+    install the file. Both gates carry this function verbatim, as placeholder_page_problems says."""
+    page = PageReader(text)
+    problems: list[str] = []
+    if PUBLISHED_LEAD not in page.text():
+        problems.append("does not say in step 1 that the published checksum is shown under the link")
+    if SUM_URL.format(version=version) not in page.links:
+        problems.append(f"does not link the checksum file of version {version}")
+    if not COMPARE_STEP.search(page.text()):
+        problems.append("has no step 3 that compares the 2 values")
+    if not REJECTING_STEP.search(page.text()):
+        problems.append("has no step that tells the reader not to install the file")
     return problems
 
 
