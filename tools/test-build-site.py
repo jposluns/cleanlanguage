@@ -1395,8 +1395,9 @@ def check_unreadable(failures: list[str]) -> int:
 def check_unreadable_reader(failures: list[str]) -> int:
     """A copy of the generator, beside a check-install-page.py that is missing, unreadable (with a cache of its
     bytecode or without), a FIFO (not a regular file, on which a read would wait for a writer), not Python, without
-    is_hiding_element() or a ZERO_WIDTH string, or whose is_hiding_element() fails when called (as when it takes 1
-    argument, whose TypeError gave exit 1 before), exits 3: the hiding reader is an input. A reader that this
+    is_hiding_element() or a ZERO_WIDTH string, whose is_hiding_element() fails when called (as when it takes 1
+    argument, whose TypeError gave exit 1 before), or whose is_hiding_element() returns anything but True or False,
+    exits 3: the hiding reader is an input. A reader that this
     test cannot make unreadable, as when it runs as root, or a FIFO it cannot make, as where os.mkfifo() is missing,
     fails the case rather than skipping it, and so does a generator that has not exited within 60 seconds."""
     def unreadable(cache: bool):

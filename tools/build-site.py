@@ -1561,8 +1561,9 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     # the whole About block, once and byte for byte, starts where the end tag of its region ends; and the region and
     # the block each have exactly the ancestors ABOUT_ANCESTORS as the parser reads the page, so no element wraps
     # either. The block's ancestors are then the region's, the value paragraph's outermost 4: none is an element of
-    # INERT_TAGS, and none hides the block, since none hides the value paragraph. ABOUT_BLOCK holds no element of
-    # INERT_TAGS and hides only its dot spans (aria-hidden="true"). The block's row is then the only parsed element
+    # INERT_TAGS, and none hides the block, since none hides the value paragraph. The block holds no element of
+    # INERT_TAGS, and the only elements in it that hide are its dot spans (aria-hidden="true") and the two notices
+    # NEW_TAB writes in its row (span.vh, "(opens in a new tab)"). The block's row is then the only parsed element
     # whose classes include about. On any other page, no such element appears, inside an element of INERT_TAGS or
     # not. The page's text carries the block's label once on the landing page, inside the block (with the block's
     # label taken out, it carries none), and nowhere else.
