@@ -16,11 +16,17 @@ It also reads the stylesheets every install page loads (fonts.css, palettes.css
 and baseline.css under site/assets/baseline/) and fails when a rule whose
 selector list holds a bare single class, such as ``.only-dark``, hides it
 (``display: none``, ``visibility: hidden`` or ``collapse``, a ``clip: rect(...)``
-as ``.vh`` uses, or a negative ``top`` or ``left`` on an absolute or fixed
-position) and the class is in neither the gate's HIDING_CLASSES nor
-EXEMPT_CLASSES below. The parser is deliberately small: it reads no compound,
-descendant or attribute selector, and it fails when a stylesheet cannot be
-read, has an unclosed comment or unbalanced braces, or holds no rule.
+as ``.vh`` uses, a ``clip-path`` other than ``none``, an ``opacity`` of 0, a
+``height`` or ``max-height`` of 0 with an ``overflow`` that holds ``hidden`` or
+``clip``, or a negative ``top`` or ``left`` on an absolute or fixed position)
+and the class is in neither the gate's HIDING_CLASSES nor EXEMPT_CLASSES
+below. It reads no other property, so a class hidden by ``transform``, by a
+zero ``width`` or ``font-size``, or by a colour matching the background passes.
+The parser is deliberately small: it reads no compound, descendant or attribute
+selector, and it fails when a stylesheet cannot be read, has an unclosed
+comment or unbalanced braces, or holds no rule. Before it reads them, it fails
+unless the reading counts each of HIDING_DECLARATIONS as hiding and none of
+SHOWING_DECLARATIONS.
 
 It also fails unless the gate's SUPPORTED_PYTHONS is exactly 3.14 and each of
 its versions is in SUPPORTED_PYTHONS of tools/check-inline-code.py, and runs the
@@ -70,6 +76,10 @@ CLAUDE_LINK = '<a class="btn inline" id="claude" href="/install/claude/">Claude<
 SELECT = "/assets/baseline/select.js?v=1.3.0"
 ROW = '<p><a class="btn inline" id="claude"'
 ROW_END = OTHER_LINK + "</p>"
+# The "pick" label and the whole button row that follows it, each a line of the committed install page.
+PICK = '<p class="lbl blk" id="pick">Pick your AI</p>'
+ROW_LINE = "<p>" + " ".join(f'<a class="btn inline" id="{fam.lower()}" href="/install/{fam.lower()}/">{fam}</a>'
+                            for fam in ("Claude", "ChatGPT", "Gemini", "Copilot")) + " " + ROW_END
 STEPS = '<ol class="steps">'
 # The scheme.js tag of template specification 7.33 (baseline 1.8.0), as the committed pages carry it.
 SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.8.0"></script>'
@@ -81,6 +91,20 @@ STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.
 # comment saying why no install page can carry it on a checked element or an ancestor. None qualifies today.
 EXEMPT_CLASSES: tuple[str, ...] = ()
 BARE_CLASS = re.compile(r"\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)")
+# A zero length or number, with or without a unit: 0, 0.0, .0, 0px, 0rem or 0%.
+ZERO = re.compile(r"[+-]?(0+\.?0*|\.0+)([a-z]+|%)?")
+# Declarations hides() must read as hiding, at least 1 for each of its readings, and declarations it must not.
+HIDING_DECLARATIONS = (
+    "display: none", "visibility: hidden", "visibility: collapse", "clip: rect(0 0 0 0)",
+    "position: absolute; left: -9999px", "position: fixed; top: -4rem", "clip-path: inset(50%)",
+    "clip-path: circle(0)", "opacity: 0", "opacity: 0.0 !important", "height: 0; overflow: hidden",
+    "max-height: 0px; overflow: clip", "height: 0; overflow: hidden auto",
+)
+SHOWING_DECLARATIONS = (
+    "display: block", "visibility: visible", "clip: auto", "position: absolute; left: 1rem; top: 0",
+    "position: relative; top: -1px", "clip-path: none", "opacity: 0.5", "opacity: 1", "height: 0",
+    "height: 1px; overflow: hidden", "max-height: 10rem; overflow: hidden", "height: 0; overflow: visible",
+)
 # Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS, 1 on each side of 3.14: 3.13.3, the
 # Cloudflare Pages image default, and 3.15.0. Only the gate's own guard prints OWN_REFUSAL; the catch of
 # UnsupportedPython prints its line after the pages are read.
@@ -159,6 +183,22 @@ def decoy(relative: str):
     return apply
 
 
+def steps_of(root: Path, relative: str) -> str:
+    """The first step list of a page, from its <ol class="steps"> to the first </ol> after it."""
+    text = (root / relative).read_text(encoding="utf-8")
+    start = text.index(STEPS)
+    return text[start:text.index("</ol>", start) + len("</ol>")]
+
+
+def swap(first: str, second: str):
+    """Exchange the contents of 2 pages, so each sits at the other's path."""
+    def apply(root: Path) -> None:
+        texts = [(root / relative).read_text(encoding="utf-8") for relative in (first, second)]
+        (root / first).write_text(texts[1], encoding="utf-8")
+        (root / second).write_text(texts[0], encoding="utf-8")
+    return apply
+
+
 CASES = [
     ("the committed tree", None, 0),
     ("a family link pointing elsewhere", edit(PAGE, 'id="chatgpt" href="/install/chatgpt/"', 'id="chatgpt" href="/install/gemini/"'), 1),
@@ -185,6 +225,11 @@ CASES = [
         edit(PAGE, " " + OTHER_LINK, ""), edit(PAGE, '<p class="lbl blk">Scope</p>', f"<p>{OTHER_LINK}</p>\n" + '<p class="lbl blk">Scope</p>')), 1),
     ("a family link after Get Clean Language", both(
         edit(PAGE, " " + OTHER_LINK, ""), edit(PAGE, '<h2 id="get">Get Clean Language</h2>', f'<h2 id="get">Get Clean Language</h2>\n<p>{OTHER_LINK}</p>')), 1),
+    # Moved together, the label and the row keep 1 parent and nothing between them, so only the order check refuses.
+    ("the pick label and the button row after the get id", both(edit(PAGE, PICK + "\n" + ROW_LINE + "\n", ""),
+        edit(PAGE, '<h2 id="get">Get Clean Language</h2>', '<h2 id="get">Get Clean Language</h2>\n' + PICK + "\n" + ROW_LINE)), 1),
+    ("the button row moved down, still before the get id", both(edit(PAGE, ROW_LINE + "\n", ""),
+        edit(PAGE, '<p class="lbl sec">Get Clean Language</p>', ROW_LINE + '\n<p class="lbl sec">Get Clean Language</p>')), 1),
     ("a family link with no label", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><")), 1),
     ("a family link whose only label is in a hidden span",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><span hidden>Claude</span><")), 1),
@@ -227,6 +272,12 @@ CASES = [
     ("a duplicate id on a family page", edit(CHATGPT, '<p class="verified">', '<p class="verified" id="main-content">'), 1),
     ("a family page missing", remove(GEMINI), 3),
     ("a family page with no setup steps", edit(CLAUDE, '<ol class="steps">', "<ol>"), 1),
+    ("a family page with an empty step list", edit(OTHER, STEPS, STEPS + "</ol><ol>"), 1),
+    # Copilot's second step list keeps its steps, so each list must have a step, not only the page.
+    ("a family page step list whose 1 setup step is empty",
+        lambda root: edit(COPILOT, steps_of(root, COPILOT), STEPS + "<li><span></span></li></ol>")(root), 1),
+    ("a family page whose steps are only in a hidden li",
+        lambda root: edit(OTHER, steps_of(root, OTHER), STEPS + "<li hidden><span>Save the file.</span></li></ol>")(root), 1),
     ("a family page step list hidden", edit(OTHER, '<ol class="steps">', '<ol class="steps" hidden>'), 1),
     ("a family page step list with the class vh", edit(CHATGPT, '<ol class="steps">', '<ol class="steps vh">'), 1),
     ("a family page step list with the class only-dark", edit(COPILOT, '<ol class="steps">', '<ol class="steps only-dark">'), 1),
@@ -242,6 +293,11 @@ CASES = [
     ("a family page heading with the class skip", edit(GEMINI, "<h1>", '<h1 class="skip">'), 1),
     ("a family page heading whose classes only contain only-dark or skip", edit(CHATGPT, "<h1>", '<h1 class="only-darker skip-link">'), 0),
     ("a family page heading emptied", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>​</h1>"), 1),
+    ("a family page heading naming another family", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>Gemini</h1>"), 1),
+    ("a family page heading naming its family only in a vh span",
+        edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>Setup<span class="vh"> ChatGPT</span></h1>'), 1),
+    ("the Claude and ChatGPT family pages swapped", swap(CLAUDE, CHATGPT), 1),
+    ("a family page heading naming its family in a span", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1><span>ChatGPT</span></h1>"), 0),
     ("a family page inside a hidden wrapper", edit(GEMINI, '<div class="doc">', '<div class="doc" inert>'), 1),
     ("the button row with popover", edit(PAGE, ROW, '<p popover><a class="btn inline" id="claude"'), 1),
     ("the button row inside a dialog without open", wrap(PAGE, ROW, ROW_END, "<dialog>", "</dialog>"), 1),
@@ -310,6 +366,10 @@ CASES = [
     ("a family page whose only link to #test is inside a noscript", both(
         edit(CLAUDE, 'href="/install/#test"', 'href="/install/"', every=True),
         edit(CLAUDE, "</main>", '<noscript><a href="/install/#test">Test it</a></noscript></main>')), 1),
+    ("a family page whose links back to #get are hidden", edit(GEMINI, 'href="/install/#get"', 'href="/install/#get" hidden', every=True), 1),
+    ("a family page whose links back to #get are empty",
+        edit(GEMINI, '<a href="/install/#get">Get Clean Language</a>', '<a href="/install/#get"></a>', every=True), 1),
+    ("a family page whose links to #test are hidden", edit(CLAUDE, 'href="/install/#test"', 'href="/install/#test" hidden', every=True), 1),
     ("an inline script", edit(PAGE, "</main>", "<script>alert(1)</script></main>"), 1),
     ("an inline script on a family page", edit(COPILOT, "</main>", "<script>alert(1)</script></main>"), 1),
     ("an inline style", edit(PAGE, '<p class="lbl first">', '<p style="x" class="lbl first">'), 1),
@@ -443,14 +503,8 @@ RESIDUALS = [
         "a wrong family link label (another family's, say)"),
     ("a family link labelled only with U+034F", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">" + chr(0x034F) + "<")),
         "or family link label made only of an invisible character"),
-    ("a family page whose links back to #get are hidden", edit(GEMINI, 'href="/install/#get"', 'href="/install/#get" hidden', every=True),
-        "links, hidden or not, to ``/install/#get``"),
-    ("a family page whose links back to #get are empty",
-        edit(GEMINI, '<a href="/install/#get">Get Clean Language</a>', '<a href="/install/#get"></a>', every=True),
-        "an empty link back to the downloads or the test"),
     ("a family page with an empty verified line", edit(GEMINI, '<p class="verified">', '<p class="verified"></p><p>'),
         "an empty ``p.verified``"),
-    ("a family page with an empty step list", edit(OTHER, STEPS, STEPS + "</ol><ol>"), "an empty ``ol.steps``"),
     ("a family page with 1 setup step hidden", edit(OTHER, STEPS + "<li>", STEPS + "<li hidden>"), "not its steps or their wording"),
     ("a family page with 1 setup step dropped",
         edit(OTHER, STEPS + '<li><span>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</span></li>', STEPS),
@@ -466,12 +520,23 @@ def hides(declarations: str) -> bool:
         if colon:
             props[name.strip().lower()] = re.sub(r"!\s*important", "", value.lower()).strip()
     offscreen = any(props.get(side, "").startswith("-") for side in ("top", "left"))
+    flat = any(ZERO.fullmatch(props.get(side, "")) for side in ("height", "max-height"))
+    cut = any(word in ("hidden", "clip") for word in props.get("overflow", "").split())
     return (
         props.get("display") == "none"
         or props.get("visibility") in ("hidden", "collapse")
         or props.get("clip", "").startswith("rect(")
         or (props.get("position") in ("absolute", "fixed") and offscreen)
+        or props.get("clip-path", "none") != "none"
+        or ZERO.fullmatch(props.get("opacity", "")) is not None
+        or (flat and cut)
     )
+
+
+def hides_problems() -> list[str]:
+    """hides() reads each of HIDING_DECLARATIONS as hiding and none of SHOWING_DECLARATIONS."""
+    problems = [f"hides() does not read {text!r} as hiding." for text in HIDING_DECLARATIONS if not hides(text)]
+    return problems + [f"hides() reads {text!r} as hiding." for text in SHOWING_DECLARATIONS if hides(text)]
 
 
 def stylesheet_problems() -> list[str]:
@@ -580,7 +645,7 @@ def statement_problems() -> list[str]:
 
 def main() -> int:
     failures: list[str] = statement_problems()
-    failures += [f"the stylesheets: {problem}" for problem in stylesheet_problems()]
+    failures += [f"the stylesheets: {problem}" for problem in hides_problems() + stylesheet_problems()]
     failures += [f"the Python version: {problem}" for problem in version_problems()]
     doc = " ".join((ast.get_docstring(ast.parse(GATE.read_text(encoding="utf-8"))) or "").split())
     for name, _, words in RESIDUALS:

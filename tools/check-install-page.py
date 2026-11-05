@@ -36,7 +36,8 @@ What it verifies
    stylesheet); the 5 links
    have 1 ``p`` as their parent, as the parser reads it (see below), and sit in
    the order Claude, ChatGPT, Gemini, Copilot, other AI systems, before the
-   ``get`` id.
+   ``get`` id. That ``p`` starts after the element with the ``pick`` id, and no
+   element with the class ``lbl`` and no ``h1`` to ``h6`` starts between them.
 2. No element on any of the 6 pages carries the retired selector attributes
    ``data-picker``, ``data-family-link``, ``data-family-section``,
    ``data-picker-reset`` or ``data-picker-status``.
@@ -47,10 +48,14 @@ What it verifies
    below), and on every page no id is duplicated.
 4. Each family page exists (exit 3 if not) and has exactly 1 ``<h1>`` with
    visible text (a character other than whitespace, U+0000 and those in
-   ``ZERO_WIDTH``, in text that no element hides by the rules of check 1), at
-   least 1 ``p.verified`` and at least 1 ``ol.steps``, none of them hidden by
-   itself or an ancestor, and links, hidden or not, to ``/install/#get`` and
-   ``/install/#test`` outside every element of ``INERT_ELEMENTS``.
+   ``ZERO_WIDTH``, in text that no element hides by the rules of check 1)
+   that holds the family's name in ``FAMILY_NAMES`` (in that text, with runs of
+   whitespace read as 1 space), at least 1 ``p.verified`` and at least 1
+   ``ol.steps``, none of them hidden by itself or an ancestor, each ``ol.steps``
+   with at least 1 ``li`` with visible text (text in a list inside an ``li``
+   counts for it), and, to each of ``/install/#get`` and ``/install/#test``, at
+   least 1 link with visible text, not hidden by itself or an ancestor, and
+   more links, hidden or not, all outside every element of ``INERT_ELEMENTS``.
 5. No inline code and no refused markup on any of the 6 pages, as checks 1 to
    10 of ``tools/check-inline-code.py`` define them for an HTML page, with that
    gate's own code: among them, no ``<script>`` without ``src`` other than a
@@ -169,14 +174,19 @@ when fonts.css, palettes.css or baseline.css hides a bare single class (a
 selector such as ``.only-dark``) that is not in ``HIDING_CLASSES`` or its
 exempt list. It counts a rule as hiding only when the rule sets
 ``display: none``, ``visibility: hidden`` or ``collapse``, ``clip: rect(``,
-or ``absolute`` or ``fixed`` positioning with a negative ``top`` or ``left``.
-It reads no other property, so a class hidden by ``clip-path``, by
-``height: 0`` with ``overflow: hidden``, or by ``opacity`` passes it, and it
-reads no compound, descendant or attribute selector. Of text it reads only
-whether the heading and each family link have visible text, so a wrong family
-link label (another family's, say), an empty ``p.verified``, an empty
-``ol.steps`` and an empty link back to the downloads or the test pass; it checks
-that a step list is present, not its steps or their wording. Those are visible
+a ``clip-path`` other than ``none``, an ``opacity`` of 0, a ``height`` or
+``max-height`` of 0 with an ``overflow`` that holds ``hidden`` or ``clip``, or
+``absolute`` or ``fixed`` positioning with a negative ``top`` or ``left``.
+It reads no other property, so a class hidden by ``transform``, by a zero
+``width`` or ``font-size``, or by a colour matching the background passes it,
+and it reads no compound, descendant or attribute selector. Of text it reads
+only whether the heading, each family link, each step list's steps and the
+links back to the downloads and the test have visible text, and whether the
+heading's visible text holds its family's name, so a wrong family link label
+(another family's, say) and an empty ``p.verified`` pass, as does a heading
+that names another family beside its own; it checks that a step list has at
+least 1 step with visible text, not its steps or their wording, which
+``tools/build-site.py --check`` ties to ``site-src/pages``. Those are visible
 regressions a browser check, a reviewer, or the tri-family QA catches. A heading
 or family link label made only
 of an invisible character that is not whitespace, U+0000 or in ``ZERO_WIDTH``
@@ -261,6 +271,8 @@ WHERE = "site/install/index.html"
 
 FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
 FAMILY_PAGES = {fam: REPO_ROOT / "site" / "install" / fam / "index.html" for fam in FAMILIES}
+# The name each family page's h1 must hold in its visible text, compared with runs of whitespace read as 1 space.
+FAMILY_NAMES = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini", "copilot": "Copilot", "other-ai": "Other AI systems"}
 TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance", "technical"]
 RETIRED_ATTRS = ("data-picker", "data-family-link", "data-family-section", "data-picker-reset", "data-picker-status")
 ALLOWED_SCRIPTS = ("copy.js", "search.js", "rail.js")
@@ -403,7 +415,9 @@ class PageParser(HTMLParser):
         self.hrefs: list[str] = []
         self.h1: list[dict] = []
         self.verified: list[bool] = []
-        self.steps: list[bool] = []
+        self.steps: list[dict] = []
+        # Where each start tag with the class lbl or a heading tag starts, in the order of self.order.
+        self.marks: list[int] = []
         self.page_hidden = False
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
@@ -457,21 +471,31 @@ class PageParser(HTMLParser):
                 "order": self.order,
                 "parent": (parent["tag"], parent["order"]) if parent else None,
                 "text": False,
+                "inert": inert,
             }
             self.anchors.append(anchor)
         heading = None
         if tag == "h1":
-            heading = {"hidden": hiding, "text": False}
+            heading = {"hidden": hiding, "text": False, "chars": ""}
             self.h1.append(heading)
+        if "lbl" in classes or tag in HEADINGS:
+            self.marks.append(self.order)
         if tag == "p" and "verified" in classes:
             self.verified.append(hiding)
+        steps = None
         if tag == "ol" and "steps" in classes:
-            self.steps.append(hiding)
+            steps = {"hidden": hiding, "text": False}
+            self.steps.append(steps)
+        # An li counts as a step of the step list that is its nearest open list, so text in a list inside a step
+        # counts for that step, and an li of any other list counts for none.
+        item = None
+        if tag == "li":
+            item = next((frame["steps"] for frame in reversed(self.stack) if frame["tag"] in ("ol", "ul")), None)
         if tag not in VOID:
             closed = tag == "details" and "open" not in attrs
             self.stack.append(
                 {"tag": tag, "hiding": hiding, "order": self.order, "closed": closed, "summary": False, "h1": heading,
-                 "a": anchor}
+                 "a": anchor, "steps": steps, "li": item}
             )
 
     def handle_startendtag(self, tag: str, attrs_list) -> None:
@@ -488,13 +512,17 @@ class PageParser(HTMLParser):
                 break
 
     def handle_data(self, data: str) -> None:
-        # Text counts for the h1 or the innermost open link only when no element around it hides it: a hiding
-        # element (by itself or an ancestor) or a details without open, whose text outside its first summary is hidden.
+        # Text counts for the h1, the innermost open link or the innermost open step only when no element around it
+        # hides it: a hiding element (by itself or an ancestor) or a details without open, whose text outside its
+        # first summary is hidden. The h1 also keeps that text, to be searched for its family's name.
         heading = next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
         anchor = next((frame["a"] for frame in reversed(self.stack) if frame["a"] is not None), None)
+        item = next((frame["li"] for frame in reversed(self.stack) if frame["li"] is not None), None)
         hidden = bool(self.stack) and (self.stack[-1]["hiding"] or self.stack[-1]["closed"])
+        if not hidden and heading is not None:
+            heading["chars"] += data
         if not hidden and has_visible_text(data):
-            for record in (heading, anchor):
+            for record in (heading, anchor, item):
                 if record is not None:
                     record["text"] = True
 
@@ -569,10 +597,9 @@ def parse(text: str) -> PageParser:
     parser.feed(text)
     parser.close()
     if parser.page_hidden:
-        for record in parser.anchors + parser.h1:
+        for record in parser.anchors + parser.h1 + parser.steps:
             record["hidden"] = True
         parser.verified = [True for _ in parser.verified]
-        parser.steps = [True for _ in parser.steps]
     return parser
 
 
@@ -645,6 +672,7 @@ def check_install_page(text: str) -> list[str]:
     where = WHERE
     problems = common_checks(where, text, parser)
     get_at = parser.id_first.get("get")
+    pick_at = parser.id_first.get("pick")
     found: list[dict] = []
     for fam in FAMILIES:
         mine = [anchor for anchor in parser.anchors if anchor["id"] == fam]
@@ -669,6 +697,14 @@ def check_install_page(text: str) -> list[str]:
         parents = {link["parent"] for link in found}
         if len(parents) != 1 or next(iter(parents)) is None or next(iter(parents))[0] != "p":
             problems.append(f"{where}: the family links do not have 1 paragraph as their parent.")
+        elif pick_at is not None:
+            row_at = next(iter(parents))[1]
+            # The paragraph of buttons follows the "pick" label, with no other label or heading between them.
+            if row_at <= pick_at or any(pick_at < mark < row_at for mark in parser.marks):
+                problems.append(
+                    f'{where}: the family links do not sit right after the "pick" id, with no label (the class lbl) '
+                    "or heading between them; the family links sit at the top."
+                )
         if [link["order"] for link in found] != sorted(link["order"] for link in found):
             problems.append(f"{where}: the family links are not in the order {', '.join(FAMILIES)}.")
     for gid in TEMPLATE_IDS + FAMILIES:
@@ -691,17 +727,24 @@ def check_family_page(fam: str, text: str) -> list[str]:
             problems.append(f"{where}: the <h1> has no text that reads as visible.")
         if parser.h1[0]["hidden"]:
             problems.append(f"{where}: the <h1> reads as hidden in the static markup.")
+        if FAMILY_NAMES[fam] not in " ".join(parser.h1[0]["chars"].split()):
+            problems.append(f'{where}: the <h1> does not name "{FAMILY_NAMES[fam]}" in text that reads as visible.')
     if not parser.verified:
         problems.append(f'{where}: no <p class="verified"> line says when the steps were last verified.')
     elif any(parser.verified):
         problems.append(f"{where}: a verified line reads as hidden in the static markup.")
     if not parser.steps:
         problems.append(f'{where}: no <ol class="steps"> setup steps.')
-    elif any(parser.steps):
+    elif any(steps["hidden"] for steps in parser.steps):
         problems.append(f"{where}: a step list reads as hidden in the static markup.")
+    if any(not steps["hidden"] and not steps["text"] for steps in parser.steps):
+        problems.append(f"{where}: a step list has no step (li) with text that reads as visible.")
     for target in ("/install/#get", "/install/#test"):
         if target not in parser.hrefs:
             problems.append(f"{where}: no link to {target} outside every element of INERT_ELEMENTS.")
+        elif not any(anchor["href"] == target and not anchor["inert"] and not anchor["hidden"] and anchor["text"]
+                     for anchor in parser.anchors):
+            problems.append(f"{where}: every link to {target} reads as hidden or has no text that reads as visible.")
     return problems
 
 
@@ -770,10 +813,11 @@ def main() -> int:
         return 1
 
     print(
-        "The install page links all five family pages in order with buttons before the get id, each with text "
-        "read as visible and none of them read as hidden, and keeps its ids; each family page has 1 h1 with text "
-        "read as visible, a verified line and a step list, none of them read as hidden, and links, hidden or not, "
-        "back to the downloads and the test; ids "
+        "The install page links all five family pages in order with buttons right after the pick label and before "
+        "the get id, each with text read as visible and none of them read as hidden, and keeps its ids; each family "
+        "page has 1 h1 that names its family in text read as visible, a verified line and a step list, each step "
+        "list with a step read as visible, none of them read as hidden, and a link with text read as visible back "
+        "to the downloads and to the test; ids "
         "are unique, no retired selector attribute remains, the six pages pass the inline-code checks, the "
         "light and dark switch included, load the baseline's versioned stylesheets and copy.js, load scheme.js "
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
