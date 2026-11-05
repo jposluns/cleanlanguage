@@ -11,8 +11,10 @@ are plain static pages, so they read the same with JavaScript blocked, failed,
 or switched off. This site no longer uses the template's install selector
 (``select.js``, template specification, section 7.12); the old link forms
 ``/install/?ai=<family>`` and ``/install/#<family>`` land on ``/install/``,
-where the family buttons sit near the top: after the page's ``h1`` and the
-"Pick your AI" label, with no other label or heading between (check 1).
+where the family buttons sit near the top: the page's first ``h1`` starts
+inside ``main`` with no heading and no label but the opening one before it,
+and the buttons follow it and the "Pick your AI" label with no other label or
+heading between (check 1).
 
 This is a TRIPWIRE for the common regressions in the STATIC MARKUP. It is
 deliberately NOT a CSS engine or a browser.
@@ -42,7 +44,10 @@ What it verifies
    The element with the ``pick`` id starts after the page's first ``h1``, the
    hero's heading, and no such element starts between those 2 either (the gate
    reads where that ``h1`` starts, not where the hero ends, which no element
-   of its own marks).
+   of its own marks). That ``h1`` starts inside a ``main`` element, no
+   heading starts before it, and no element with the class ``lbl`` starts
+   before it inside ``main`` unless it also has the class ``first``, as the
+   page's opening label, "Install", does.
 2. No element on any of the 6 pages carries the retired selector attributes
    ``data-picker``, ``data-family-link``, ``data-family-section``,
    ``data-picker-reset`` or ``data-picker-status``.
@@ -186,16 +191,21 @@ exempt list. It counts a rule as hiding only when the rule sets
 a ``clip-path`` other than ``none``, an ``opacity`` of 0, a ``height`` or
 ``max-height`` of 0 with an ``overflow`` that holds ``hidden`` or ``clip``, or
 ``absolute`` or ``fixed`` positioning with a negative ``top`` or ``left``,
-each property resolved as CSS resolves it within 1 declaration block (an
-``!important`` declaration beats every normal one; otherwise the later one
-wins). Its ``clip-path`` reading is a deliberate over-refusal: a clip that
-removes nothing, such as ``inset(0)``, counts as hiding too, because the test
-does not compute what a clip leaves (it cannot read a ``path()`` or an SVG
-``url()``), and a class with such a clip belongs in its exempt list, with a
-comment saying why. It reads no other property, so a class hidden by
-``transform``, by a zero ``width`` or ``font-size``, or by a colour matching
-the background passes it, and it reads no compound, descendant or attribute
-selector. Of text it reads
+each property resolved within 1 declaration block: a declaration whose value
+the test does not read as valid for its property (a CSS-wide keyword, a CSS
+Display 3 value of ``display``, or a form of the test's ``VALID_VALUES``) is
+dropped, as CSS drops 1 it cannot parse; of the rest, an ``!important``
+declaration beats every normal one, and otherwise the later one wins. Those
+forms hold every value it counts as hiding, so dropping a valid value outside
+them, such as 1 with ``var()`` or ``calc()``, can only add to the rules it
+counts as hiding. Its ``clip-path`` reading is a deliberate over-refusal: a
+clip that removes nothing, such as ``inset(0)``, counts as hiding too,
+because the test does not compute what a clip leaves (it cannot read a
+``path()`` or an SVG ``url()``), and a class with such a clip belongs in
+its exempt list, with a comment saying why. It reads no other property, so a
+class hidden by ``transform``, by a zero ``width`` or ``font-size``, or by a
+colour matching the background passes it, and it reads no compound,
+descendant or attribute selector. Of text it reads
 only whether the heading, each family link, each step list's steps and the
 links back to the downloads and the test have visible text, and whether the
 heading's visible text holds its family's name, so a wrong family link label
@@ -289,7 +299,8 @@ WHERE = "site/install/index.html"
 FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
 FAMILY_PAGES = {fam: REPO_ROOT / "site" / "install" / fam / "index.html" for fam in FAMILIES}
 # The name each family page's h1 must hold in its visible text, both read by name_text: without regard to case, with
-# the invisible characters deleted, and with runs of whitespace and each br read as 1 space.
+# U+0000 and the characters of ZERO_WIDTH other than U+00A0 deleted, and with each run of whitespace, U+00A0 included,
+# read as 1 space; in the h1, each br that no element hides also reads as 1 space (PageParser).
 FAMILY_NAMES = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini", "copilot": "Copilot", "other-ai": "Other AI systems"}
 TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance", "technical"]
 RETIRED_ATTRS = ("data-picker", "data-family-link", "data-family-section", "data-picker-reset", "data-picker-status")
@@ -443,6 +454,9 @@ class PageParser(HTMLParser):
         self.steps: list[dict] = []
         # Where each start tag with the class lbl or a heading tag starts, in the order of self.order.
         self.marks: list[int] = []
+        # Where each heading tag starts, and each start tag inside main with the class lbl but not the class first,
+        # which the page's opening label carries: none may start before the hero's heading on /install/.
+        self.above: list[int] = []
         self.page_hidden = False
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
@@ -499,9 +513,10 @@ class PageParser(HTMLParser):
                 "inert": inert,
             }
             self.anchors.append(anchor)
+        in_main = any(frame["tag"] == "main" for frame in self.stack)
         heading = None
         if tag == "h1":
-            heading = {"hidden": hiding, "text": False, "chars": "", "order": self.order}
+            heading = {"hidden": hiding, "text": False, "chars": "", "order": self.order, "main": in_main}
             self.h1.append(heading)
         # A br that no element hides breaks the line, so in the h1 it reads as a space between the words around it.
         if tag == "br" and not hiding:
@@ -510,6 +525,8 @@ class PageParser(HTMLParser):
                 open_h1["chars"] += " "
         if "lbl" in classes or tag in HEADINGS:
             self.marks.append(self.order)
+        if tag in HEADINGS or (in_main and "lbl" in classes and "first" not in classes):
+            self.above.append(self.order)
         if tag == "p" and "verified" in classes:
             self.verified.append(hiding)
         steps = None
@@ -733,13 +750,21 @@ def check_install_page(text: str) -> list[str]:
             # The paragraph of buttons follows the "pick" label, with no other label or heading between them.
             if row_at <= pick_at or any(pick_at < mark < row_at for mark in parser.marks):
                 problems.append(
-                    f'{where}: the family links do not sit right after the "pick" id, with no label (the class lbl) '
-                    "or heading between them; the family links sit at the top."
+                    f'{where}: the paragraph of family links does not start after the "pick" id with no label (the '
+                    "class lbl) or heading starting between them; the family links sit at the top."
                 )
         if [link["order"] for link in found] != sorted(link["order"] for link in found):
             problems.append(f"{where}: the family links are not in the order {', '.join(FAMILIES)}.")
-    # The "pick" label follows the hero's heading, the page's first h1, with no other label or heading between them.
+    # The hero's heading, the page's first h1, starts inside main, after no heading and no label in main but the opening
+    # one; the "pick" label follows it, with no other label or heading between them.
     hero_at = parser.h1[0]["order"] if parser.h1 else None
+    if hero_at is None:
+        problems.append(f"{where}: the page has no h1, so nothing marks the hero; the family links sit at the top.")
+    elif not parser.h1[0]["main"] or any(mark < hero_at for mark in parser.above):
+        problems.append(
+            f"{where}: the page's first h1 is not inside main, or a heading, or a label (the class lbl) inside main "
+            "without the class first, starts before it; the family links sit at the top."
+        )
     if pick_at is not None and (hero_at is None or pick_at <= hero_at
                                 or any(hero_at < mark < pick_at for mark in parser.marks)):
         problems.append(
@@ -853,7 +878,8 @@ def main() -> int:
 
     print(
         "The install page links all five family pages in order before the get id, with buttons after the pick label "
-        "and the pick label after the first h1, with no label or heading between either pair, each link with text "
+        "and the pick label after the first h1, with no label or heading between either pair, that h1 inside main "
+        "with no heading and no label in main but the opening one before it, each link with text "
         "read as visible and none of them read as hidden, and keeps its ids; each family "
         "page has 1 h1 that names its family in text read as visible, a verified line and a step list, each step "
         "list with a step read as visible, none of them read as hidden, and a link with text read as visible back "

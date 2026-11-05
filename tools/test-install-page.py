@@ -4,7 +4,9 @@
 Each case copies the gate and the files it reads into a temporary repository
 (under $TMPDIR), applies 1 fault to the install page, a family page, or
 site/_headers, runs the gate there as a separate process and asserts its exit
-code. 1 more case asserts that the gate's docstring names exactly the scripts
+code and, where a case gives them as (code, words), that its output holds those
+words, so that a crash, which also exits 1, does not pass for a refusal. 1 more
+case asserts that the gate's docstring names exactly the scripts
 in ``ALLOWED_SCRIPTS``. Exit 0 when every case passes; 1 otherwise, naming
 each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
@@ -20,9 +22,14 @@ as ``.vh`` uses, a ``clip-path`` other than ``none``, an ``opacity`` of 0, a
 ``height`` or ``max-height`` of 0 with an ``overflow`` that holds ``hidden`` or
 ``clip``, or a negative ``top`` or ``left`` on an absolute or fixed position)
 and the class is in neither the gate's HIDING_CLASSES nor EXEMPT_CLASSES
-below. It resolves each property as CSS does within 1 declaration block: an
-``!important`` declaration beats every normal one, and otherwise the later
-declaration wins. Its ``clip-path`` reading refuses more than a browser hides,
+below. It resolves each property within 1 declaration block: it drops a
+declaration whose value it does not read as valid for its property (a CSS-wide
+keyword, a CSS Display 3 value of ``display``, or a form of VALID_VALUES), as
+CSS drops 1 it cannot parse; of the rest, an ``!important`` declaration beats
+every normal one, and otherwise the later declaration wins. Those forms hold
+every value it counts as hiding, so dropping a valid value outside them, such
+as 1 with ``var()`` or ``calc()``, can only add to the rules it counts as
+hiding. Its ``clip-path`` reading refuses more than a browser hides,
 deliberately: a clip that removes nothing, such as ``inset(0)``, counts too,
 because it does not compute what a clip leaves. It reads no other property,
 so a class hidden by ``transform``, by a zero ``width`` or ``font-size``, or by
@@ -87,6 +94,10 @@ HERO = "<h1>Pick the AI you use and follow the steps</h1>"
 PICK = '<p class="lbl blk" id="pick">Pick your AI</p>'
 ROW_LINE = "<p>" + " ".join(f'<a class="btn inline" id="{fam.lower()}" href="/install/{fam.lower()}/">{fam}</a>'
                             for fam in ("Claude", "ChatGPT", "Gemini", "Copilot")) + " " + ROW_END
+# The labels that start the "Scope" section, below the button row, and the "Get Clean Language" section after it.
+SCOPE = '<p class="lbl blk">Scope</p>'
+GET_LABEL = '<p class="lbl sec">Get Clean Language</p>'
+MAIN = '<main id="main-content">\n'
 STEPS = '<ol class="steps">'
 # The scheme.js tag of template specification 7.33 (baseline 1.8.0), as the committed pages carry it.
 SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.8.0"></script>'
@@ -100,9 +111,38 @@ EXEMPT_CLASSES: tuple[str, ...] = ()
 BARE_CLASS = re.compile(r"\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)")
 # A zero length or number, with or without a unit: 0, 0.0, .0, 0px, 0rem or 0%.
 ZERO = re.compile(r"[+-]?(0+\.?0*|\.0+)([a-z]+|%)?")
+# Besides a CSS-wide keyword, valid() reads as valid only these forms, for each property hides() reads but display,
+# and for display the grammar of CSS Display 3. They hold every value hides() counts as hiding.
+CSS_WIDE = ("inherit", "initial", "unset", "revert", "revert-layer")
+NUMBER = r"(\d+\.?\d*|\.\d+)(e[+-]?\d+)?"
+UNITS = r"(px|cm|mm|q|in|pt|pc|r?em|r?ex|r?cap|r?ch|r?ic|r?lh|[sld]?v(w|h|i|b|min|max)|cq(w|h|i|b|min|max))"
+# A length or percentage, with a sign (top, left) or without a negative one (height, max-height); 0 needs no unit.
+OFFSET = rf"[+-]?({NUMBER}({UNITS}|%)|0+\.?0*|\.0+)"
+SIZE = rf"\+?({NUMBER}({UNITS}|%)|0+\.?0*|\.0+)"
+SHAPE = r"(inset|circle|ellipse|polygon|path|rect|xywh|shape)\(.*\)"
+BOX = r"(margin|border|padding|content|fill|stroke|view)-box"
+OVERFLOW = "(visible|hidden|clip|scroll|auto)"
+VALID_VALUES = {
+    "visibility": re.compile("visible|hidden|collapse"),
+    "clip": re.compile(r"auto|rect\([^()]*\)"),
+    "position": re.compile("static|relative|absolute|fixed|sticky"),
+    "top": re.compile(f"auto|{OFFSET}"),
+    "left": re.compile(f"auto|{OFFSET}"),
+    "clip-path": re.compile(rf"none|url\(.*\)|{SHAPE}( {BOX})?|{BOX}( {SHAPE})?"),
+    "opacity": re.compile(rf"[+-]?{NUMBER}%?"),
+    "height": re.compile(f"auto|min-content|max-content|fit-content|{SIZE}"),
+    "max-height": re.compile(f"none|min-content|max-content|fit-content|{SIZE}"),
+    "overflow": re.compile(f"{OVERFLOW}( {OVERFLOW})?"),
+}
+DISPLAY_KEYWORDS = (
+    "none", "contents", "inline-block", "inline-table", "inline-flex", "inline-grid", "table-row-group",
+    "table-header-group", "table-footer-group", "table-row", "table-cell", "table-column-group", "table-column",
+    "table-caption", "ruby-base", "ruby-text", "ruby-base-container", "ruby-text-container",
+)
 # Declarations hides() must read as hiding, at least 1 for each of its readings, and declarations it must not. A
 # clip-path that removes nothing, inset(0), is among the hiding ones: that reading over-refuses by design. The
-# declarations that set a property twice check that an important one wins, and otherwise the later one.
+# declarations that set a property twice check that an important one wins, and otherwise the later one; those with
+# "bogus !important", 1 for each property hides() reads, check that a declaration it does not read as valid is dropped.
 HIDING_DECLARATIONS = (
     "display: none", "visibility: hidden", "visibility: collapse", "clip: rect(0 0 0 0)",
     "position: absolute; left: -9999px", "position: fixed; top: -4rem", "clip-path: inset(50%)",
@@ -112,6 +152,17 @@ HIDING_DECLARATIONS = (
     "opacity: 1 !important; opacity: 0 !important", "clip-path: inset(50%) !important; clip-path: none",
     "height: 0 !important; height: 1px; overflow: hidden", "max-height: 0 !important; max-height: 10rem; overflow: hidden",
     "height: 0; overflow: hidden !important; overflow: visible",
+    "display: block; display: bogus !important; display: none", "display: none; display: flex grid",
+    "display: none; display: block inline", "display: none; display: list-item flex",
+    "display: none; display: list-item list-item",
+    "visibility: visible; visibility: bogus !important; visibility: hidden",
+    "clip: auto; clip: bogus !important; clip: rect(0 0 0 0)",
+    "left: -9999px; position: static; position: bogus !important; position: absolute",
+    "position: absolute; top: 0; top: bogus !important; top: -4rem",
+    "position: absolute; left: 0; left: bogus !important; left: -9999px", "opacity:1;opacity:bogus !important;opacity:0",
+    "height: 1px; height: bogus !important; height: 0; overflow: hidden",
+    "max-height: 10rem; max-height: bogus !important; max-height: 0; overflow: hidden",
+    "height: 0; overflow: visible; overflow: bogus !important; overflow: hidden",
 )
 SHOWING_DECLARATIONS = (
     "display: block", "visibility: visible", "clip: auto", "position: absolute; left: 1rem; top: 0",
@@ -121,6 +172,9 @@ SHOWING_DECLARATIONS = (
     "clip-path: inset(50%); clip-path: none", "clip-path: none !important; clip-path: inset(50%)",
     "height: 0 !important; height: 1px !important; overflow: hidden",
     "max-height: 0; max-height: 10rem; overflow: hidden", "height: 0; overflow: visible !important; overflow: hidden",
+    "clip-path: inset(50%); clip-path: bogus !important; clip-path: none", "opacity: 0; opacity: inherit",
+    "display: none; display: block flow list-item", "display: none; display: inline flow-root",
+    "height: 0; overflow: hidden; overflow: visible\n  auto",
 )
 # Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS, 1 on each side of 3.14: 3.13.3, the
 # Cloudflare Pages image default, and 3.15.0. Only the gate's own guard prints OWN_REFUSAL; the catch of
@@ -177,6 +231,17 @@ def both(*faults):
 def wrap(relative: str, start: str, end: str, before: str, after: str):
     """Put before ahead of the first start and after behind the first end, so the markup between sits inside."""
     return both(edit(relative, start, before + start), edit(relative, end, end + after))
+
+
+def move(relative: str, start: str, end: str, before: str):
+    """Move the markup from the first start up to the first end after it, so it sits just before the first before."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        text = path.read_text(encoding="utf-8")
+        block = text[text.index(start):text.index(end, text.index(start))]
+        text = text.replace(block, "", 1)
+        path.write_text(text.replace(before, block + before, 1), encoding="utf-8")
+    return apply
 
 
 def into_body(first: str, before: str = "", after: str = ""):
@@ -242,11 +307,26 @@ CASES = [
         edit(PAGE, " " + OTHER_LINK, ""), edit(PAGE, '<p class="lbl blk">Scope</p>', f"<p>{OTHER_LINK}</p>\n" + '<p class="lbl blk">Scope</p>')), 1),
     ("a family link after Get Clean Language", both(
         edit(PAGE, " " + OTHER_LINK, ""), edit(PAGE, '<h2 id="get">Get Clean Language</h2>', f'<h2 id="get">Get Clean Language</h2>\n<p>{OTHER_LINK}</p>')), 1),
-    # Moved together, the hero's h1, the label and the row keep 1 parent and nothing between them, so only the order
+    # With the get id moved above the pick label, the h1, the label and the row stay in place, so only the order
     # check refuses.
+    ("the get id moved above the pick label", both(edit(PAGE, '<h2 id="get">', "<h2>"),
+        edit(PAGE, '<p class="meta">', '<p class="meta" id="get">')), 1),
     ("the h1, the pick label and the button row after the get id", both(edit(PAGE, HERO + "\n", ""),
         edit(PAGE, PICK + "\n" + ROW_LINE + "\n", ""), edit(PAGE, '<h2 id="get">Get Clean Language</h2>',
         '<h2 id="get">Get Clean Language</h2>\n' + HERO + "\n" + PICK + "\n" + ROW_LINE)), 1),
+    # The h1 starts the page's content: no heading and no label but the opening one (the class first) before it.
+    ("the h1, the pick label and the button row moved down together, still before the get id",
+        both(edit(PAGE, HERO + "\n", ""), edit(PAGE, PICK + "\n" + ROW_LINE + "\n", ""),
+             edit(PAGE, GET_LABEL, HERO + "\n" + PICK + "\n" + ROW_LINE + "\n" + GET_LABEL)), 1),
+    ("Scope and On a phone moved above the h1", move(PAGE, SCOPE, GET_LABEL, HERO), 1),
+    ("a heading above the h1, outside main", edit(PAGE, "<main", "<h2>Install</h2>\n<main"), 1),
+    ("main opened after the h1", both(edit(PAGE, MAIN, ""), edit(PAGE, HERO + "\n", HERO + "\n" + MAIN)), 1),
+    # Only a label inside main counts.
+    ("a label above the h1, outside main", edit(PAGE, MAIN, '<p class="lbl">Install</p>\n' + MAIN), 0),
+    # The pick id on a paragraph that is not a label, so only its place before the h1 is refused.
+    ("the pick paragraph without its label class and the button row moved above the h1", both(
+        edit(PAGE, PICK + "\n" + ROW_LINE + "\n", ""),
+        edit(PAGE, HERO, PICK.replace('class="lbl blk" ', "") + "\n" + ROW_LINE + "\n" + HERO)), 1),
     ("the button row moved down, still before the get id", both(edit(PAGE, ROW_LINE + "\n", ""),
         edit(PAGE, '<p class="lbl sec">Get Clean Language</p>', ROW_LINE + '\n<p class="lbl sec">Get Clean Language</p>')), 1),
     # Moved together below Scope and On a phone, the label and the row pass every other check.
@@ -255,8 +335,9 @@ CASES = [
              PICK + "\n" + ROW_LINE + '\n<p class="lbl sec">Get Clean Language</p>')), 1),
     ("the pick label and the button row moved above the h1",
         both(edit(PAGE, PICK + "\n" + ROW_LINE + "\n", ""), edit(PAGE, HERO, PICK + "\n" + ROW_LINE + "\n" + HERO)), 1),
+    # The gate must say that the h1 is missing: a crash on the missing h1 also exits 1.
     ("the install page with no h1 and no label above the pick label", both(edit(PAGE, '<p class="lbl first">Install</p>',
-        "<p>Install</p>"), edit(PAGE, HERO, "<p>Pick the AI you use and follow the steps</p>")), 1),
+        "<p>Install</p>"), edit(PAGE, HERO, "<p>Pick the AI you use and follow the steps</p>")), (1, "the page has no h1")),
     # Only a label or a heading between the pick label and the row is refused, not a paragraph without one.
     ("a paragraph without a label between the pick label and the button row", edit(PAGE, PICK, PICK + "\n<p>Choose one.</p>"), 0),
     ("a family link with no label", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><")), 1),
@@ -332,12 +413,17 @@ CASES = [
         edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>Setup<span class="vh"> ChatGPT</span></h1>'), 1),
     ("the Claude and ChatGPT family pages swapped", swap(CLAUDE, CHATGPT), 1),
     ("a family page heading naming its family in a span", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1><span>ChatGPT</span></h1>"), 0),
-    # The name is compared without regard to case, with invisible characters deleted and a br read as a space.
+    # The name is compared without regard to case, with U+0000 and ZERO_WIDTH but U+00A0 deleted, and each run of
+    # whitespace, U+00A0 included, and each br that no element hides read as a space.
     ("a family page heading naming its family in another case",
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI Systems</h1>"), 0),
     ("a family page heading naming its family with a soft hyphen", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>Chat&shy;GPT</h1>"), 0),
     ("a family page heading naming its family across a br",
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI<br>systems</h1>"), 0),
+    ("a family page heading naming its family across a no-break space",
+        edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI\u00a0systems</h1>"), 0),
+    ("a family page heading naming its family with U+034F inside it",
+        edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>Chat\u034fGPT</h1>"), 1),
     ("a family page heading joining its family's name across a hidden br",
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI<br hidden>systems</h1>"), 1),
     ("a family page inside a hidden wrapper", edit(GEMINI, '<div class="doc">', '<div class="doc" inert>'), 1),
@@ -560,21 +646,47 @@ RESIDUALS = [
 ]
 
 
+def valid(name: str, value: str) -> bool:
+    """Whether hides() reads value (in lower case, its runs of whitespace read as 1 space) as valid for the property
+    name: a CSS-wide keyword, for display a value of CSS Display 3, or else a form of VALID_VALUES. No other value
+    reads as valid, whatever CSS allows, so a value with var() or calc() does not, nor does any value of another
+    property."""
+    if value in CSS_WIDE:
+        return True
+    if name != "display":
+        return name in VALID_VALUES and VALID_VALUES[name].fullmatch(value) is not None
+    words = value.split()
+    outside = [word for word in words if word in ("block", "inline", "run-in")]
+    inside = [word for word in words if word in ("flow", "flow-root", "table", "flex", "grid", "ruby", "math")]
+    items = words.count("list-item")
+    # 1 keyword alone; or, in any order, at most 1 outside and 1 inside keyword, or list-item with at most 1 outside
+    # keyword and flow or flow-root.
+    if len(words) == 1 and words[0] in DISPLAY_KEYWORDS:
+        return True
+    return (0 < len(words) == len(outside) + len(inside) + items and len(outside) <= 1 and len(inside) <= 1
+            and items <= 1 and (not items or set(inside) <= {"flow", "flow-root"}))
+
+
 def hides(declarations: str) -> bool:
-    """True when the declarations hide, clip, or move the element off-screen as the template's own rules do. Each
-    property resolves as in 1 CSS declaration block: an important declaration beats every normal one, and otherwise
-    the later declaration wins. A clip-path other than none counts, even one that removes nothing (see above)."""
+    """True when the declarations hide, clip, or move the element off-screen as the template's own rules do. It splits
+    them at each ";" and reads only the properties of VALID_VALUES and display. It drops a declaration without a colon,
+    and 1 whose value, without "!important", is not valid() for its property, as CSS drops 1 it cannot parse, before
+    it records either the value or the importance; of the rest, as in 1 CSS declaration block, an important
+    declaration beats every normal one, and otherwise the later declaration wins. A clip-path other than none counts,
+    even one that removes nothing (see above)."""
     props: dict[str, str] = {}
     important: set[str] = set()
     for declaration in declarations.split(";"):
         name, colon, value = declaration.partition(":")
-        if colon:
-            name = name.strip().lower()
-            value, bang = re.subn(r"!\s*important$", "", value.lower().strip())
-            if bang or name not in important:
-                props[name] = value.strip()
-            if bang:
-                important.add(name)
+        name = name.strip().lower()
+        value, bang = re.subn(r"!\s*important$", "", value.lower().strip())
+        value = " ".join(value.split())
+        if not colon or not valid(name, value):
+            continue
+        if bang or name not in important:
+            props[name] = value
+        if bang:
+            important.add(name)
     offscreen = any(props.get(side, "").startswith("-") for side in ("top", "left"))
     flat = any(ZERO.fullmatch(props.get(side, "")) for side in ("height", "max-height"))
     cut = any(word in ("hidden", "clip") for word in props.get("overflow", "").split())
@@ -713,8 +825,10 @@ def main() -> int:
             if fault:
                 fault(root)
             result = subprocess.run([sys.executable, "-I", str(root / "tools" / GATE.name)], capture_output=True, text=True)
-            if result.returncode != expected:
-                failures.append(f"{name}: exit {result.returncode}, expected {expected}: {(result.stdout + result.stderr).strip()[:300]}")
+            code, words = expected if isinstance(expected, tuple) else (expected, "")
+            if result.returncode != code or words not in result.stdout + result.stderr:
+                failures.append(f"{name}: exit {result.returncode}, expected {code}" + (f" and {words!r}" if words else "")
+                                + f": {(result.stdout + result.stderr).strip()[:300]}")
     if failures:
         print("test-install-page: failures:")
         for failure in failures:
