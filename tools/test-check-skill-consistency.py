@@ -13,7 +13,7 @@ the cases that expect exit 1 or 3 apply a fault. An exit 1 case also asserts
 that the output says the bullet differs and names no item
 beyond the case's list; an exit 3 case lists the structure the message must
 name, or, for a line the gate refuses, the file and the line, counted in the
-committed file, that the message must name. The case named
+file as the case edits it, that the message must name. The case named
 "main's checklist line" restores the exact line the checklist carried before
 row 98 and expects the gate to name the 5 items it lacks and the 2 it adds.
 One further case passes the gate an argument and asserts exit 2.
