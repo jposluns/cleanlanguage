@@ -1009,14 +1009,18 @@ def install_gate():
 
 def is_hiding(tag: str, attrs: dict[str, str]) -> bool:
     """Whether tools/check-install-page.py's is_hiding_element(), as install_gate() loads it, reads an element as hiding
-    itself and its content. A call into it that fails, as when its signature has changed, is an input that cannot be
-    read or is malformed (exit 3), as the gate's loading is."""
+    itself and its content. A call into it that fails, as when its signature has changed, or that returns anything
+    but a bool, is an input that cannot be read or is malformed (exit 3), as the gate's loading is."""
     gate = install_gate()
     try:
-        return gate.is_hiding_element(tag, attrs)
+        hides = gate.is_hiding_element(tag, attrs)
     except (Exception, SystemExit) as error:
         raise Unreadable(f"tools/check-install-page.py, whose hiding reader the value paragraph rule applies, failed "
                          f"when called on a <{tag}> start tag: {error!r}") from error
+    if not isinstance(hides, bool):
+        raise Unreadable(f"tools/check-install-page.py, whose hiding reader the value paragraph rule applies, returned "
+                         f"{hides!r} for a <{tag}> start tag, not True or False")
+    return hides
 
 
 def source_problem(content: str) -> str | None:

@@ -1426,6 +1426,8 @@ def check_unreadable_reader(failures: list[str]) -> int:
             b"def is_hiding_element(tag, attrs):\n    return False\n")),
         ("a reader whose is_hiding_element() takes 1 argument", lambda reader: reader.write_bytes(
             b'ZERO_WIDTH = "\\u200b"\ndef is_hiding_element(tag):\n    return False\n')),
+        ("a reader whose is_hiding_element() returns None", lambda reader: reader.write_bytes(
+            b'ZERO_WIDTH = "\\u200b"\ndef is_hiding_element(tag, attrs):\n    return None\n')),
     ]
     for name, fault in cases:
         with tempfile.TemporaryDirectory() as scratch:
