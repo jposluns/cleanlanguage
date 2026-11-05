@@ -8,7 +8,10 @@ fail-closed reads of scanned site files, ``site/_redirects``, and the verify
 page (which build a small site fixture). They also pin the bare file-name
 rule on both sides: the gate fails on a stale version-named file name outside a
 URL, and the writer, which regenerates the pages with tools/build-site.py,
-writes the new names on the install page as well as the verify page. They run
+writes the new names on the install page as well as the verify page. They pin
+the verify page's 2 states (a published checksum, or the zero placeholder with
+the not-yet-published note), the refusal of a page that mixes them, and the
+writer's round trip from the placeholder to a published checksum. They run
 offline with the standard library: the fixtures patch each module's file paths,
 and the writer tests run it on a copy of the generator's inputs under $TMPDIR.
 """
@@ -45,6 +48,13 @@ VERIFY = (
     '<a href="' + URL + '">cleanlanguage-{v}.zip</a><p class="lbl size">zip, version {v}, SHA-256</p>'
     '<p>The published checksum for version {v} is:</p><code class="sum" id="published-checksum">{sum}</code>'
     '<pre>sha256sum cleanlanguage-{v}.zip</pre>'
+)
+# The verify page while release.json holds the zero placeholder, as tools/build-site.py writes it.
+ZEROS = "0" * 64
+NOTE = "<p>The checksum for version {v} appears here once that version is published.</p>"
+PENDING = (
+    '<a href="' + URL + '">cleanlanguage-{v}.zip</a><p class="lbl size">zip, version {v}</p>' + NOTE
+    + '<pre>sha256sum cleanlanguage-{v}.zip</pre>'
 )
 
 
@@ -160,6 +170,64 @@ class ReleaseSourceTest(unittest.TestCase):
         code, output = self.run_gate()
         self.assertEqual(code, 1)
         self.assertIn("exactly 1", output)
+
+    def pending(self, page: str) -> tuple[int, str]:
+        """Run the gate with the zero placeholder in release.json and ``page`` as the verify page."""
+        self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % ZEROS)
+        self.write(gate.VERIFY_PAGE, page)
+        return self.run_gate()
+
+    def test_placeholder_with_the_note_passes(self):
+        code, output = self.pending(PENDING.format(v="1.0.14"))
+        self.assertEqual(code, 0, output)
+        self.assertIn("the verify page says the checksum appears once that version is published", output)
+
+    def test_placeholder_shown_as_the_published_checksum_fails(self):
+        # The page 35ac33a committed: the zero placeholder under the published wording.
+        code, output = self.pending(VERIFY.format(v="1.0.14", sum=ZEROS))
+        self.assertEqual(code, 1)
+        self.assertIn("shows published checksum wording or links the checksum file, but site-src/release.json "
+                      "holds the zero placeholder", output)
+        self.assertIn("must say once that the checksum for version 1.0.14 appears here", output)
+
+    def test_placeholder_note_beside_published_wording_fails(self):
+        for label, extra in (
+            ("the checksum element", '<code class="sum" id="published-checksum">' + ZEROS + "</code>"),
+            ("the published checksum in step 3", "<p>Compare it with the published checksum shown in step 1.</p>"),
+            ("a link to the checksum file", '<a href="' + URL.format(v="1.0.14") + '.sha256">file</a>'),
+        ):
+            with self.subTest(label):
+                code, output = self.pending(PENDING.format(v="1.0.14") + extra)
+                self.assertEqual(code, 1, output)
+                self.assertIn("shows published checksum wording or links the checksum file", output)
+
+    def test_placeholder_note_missing_or_repeated_fails(self):
+        for label, page in (
+            ("no note", PENDING.format(v="1.0.14").replace(NOTE.format(v="1.0.14"), "")),
+            ("2 notes", PENDING.format(v="1.0.14") + NOTE.format(v="1.0.14")),
+        ):
+            with self.subTest(label):
+                code, output = self.pending(page)
+                self.assertEqual(code, 1, output)
+                self.assertIn("must say once that the checksum for version 1.0.14 appears here", output)
+
+    def test_placeholder_note_for_another_version_fails(self):
+        code, output = self.pending(PENDING.format(v="1.0.14").replace(NOTE.format(v="1.0.14"), NOTE.format(v="1.0.13")))
+        self.assertEqual(code, 1)
+        self.assertIn("the verify page says the checksum for version 1.0.13 appears once that version is published, "
+                      "but SKILL.md says 1.0.14", output)
+
+    def test_published_checksum_with_the_note_fails(self):
+        for label, page in (
+            ("the note alone", PENDING.format(v="1.0.14")),
+            ("the note beside the published checksum", VERIFY.format(v="1.0.14", sum=SUM) + NOTE.format(v="1.0.14")),
+        ):
+            with self.subTest(label):
+                self.write(gate.VERIFY_PAGE, page)
+                code, output = self.run_gate()
+                self.assertEqual(code, 1, output)
+                self.assertIn("site/verify/index.html says the checksum is not yet published, but "
+                              "site-src/release.json holds a published checksum", output)
 
     def test_missing_install_page_fails_closed(self):
         gate.INSTALL_PAGE.unlink()
@@ -497,6 +565,44 @@ class WriterTest(unittest.TestCase):
         self.assertIn(f"published checksum for version {self.next} is", verify)
         self.assertEqual(json.loads(planned["site-src/release.json"]),
                          {"version": self.next, "tag": "v" + self.next, "checksum": "a" * 64})
+
+    def apply(self, checksum: str) -> str:
+        """Write what the writer plans for ``checksum`` into the copy, returning the verify page."""
+        for path, data in writer.rewrite(self.next, "v" + self.next, checksum, "2026-11-04").items():
+            path.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
+        return (self.root / "site/verify/index.html").read_text(encoding="utf-8")
+
+    def gate_code(self) -> int:
+        """Run check-release-links.py against the copy."""
+        saved = {name: getattr(gate, name) for name in ReleaseSourceTest.NAMES}
+        gate.REPO_ROOT, gate.SITE_ROOT = self.root, self.root / "site"
+        gate.SKILL = self.root / "cleanlanguage/skills/cleanlanguage/SKILL.md"
+        gate.REDIRECTS = self.root / "site/_redirects"
+        gate.INSTALL_PAGE = self.root / "site/install/index.html"
+        gate.VERIFY_PAGE = self.root / "site/verify/index.html"
+        gate.RELEASE_JSON = self.root / "site-src/release.json"
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return gate.main()
+        finally:
+            for name, value in saved.items():
+                setattr(gate, name, value)
+
+    def test_the_placeholder_and_the_flip_round_trip(self):
+        # A bump writes the zero placeholder and the not-yet-published page; the flip restores the published one.
+        note = f"The checksum for version {self.next} appears here once that version is published."
+        pending = self.apply(ZEROS)
+        self.assertIn(note, pending)
+        for gone in ("published checksum", 'id="published-checksum"', ".zip.sha256", "Step 3", "do not install"):
+            self.assertNotIn(gone, pending)
+        self.assertEqual(self.gate_code(), 0)
+        published = self.apply("a" * 64)
+        for needed in (f"The published checksum for version {self.next} is:", f"cleanlanguage-{self.next}.zip.sha256",
+                       '<code class="sum" id="published-checksum">' + "a" * 64 + "</code>", "Step 3"):
+            self.assertIn(needed, published)
+        self.assertNotIn(note, published)
+        self.assertEqual(self.gate_code(), 0)
+        self.assertEqual(self.apply(ZEROS), pending)
 
     def test_only_the_changed_pages_are_restamped(self):
         planned = self.plan()

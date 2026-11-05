@@ -17,6 +17,12 @@ daily schedule, and the orchestrator runs it as the final step of the runbook.
 
 Behaviour:
   - Reads the version and displayed checksum from ``site/verify/index.html``.
+    While ``site-src/release.json`` holds the zero placeholder of a version
+    bump, the page shows no checksum and says that it appears once the
+    version is published; the version is read from that note and the site
+    checksum is taken as the placeholder, so a published release fails as
+    drift. A page that mixes the 2 states, or shows the placeholder as the
+    published checksum, exits 3 before any release is read.
   - If the release ``vX`` for that version is not published yet, the pass is
     conditional. The site is legitimately ahead of the release only when it
     names the current skill version (``Version:`` in ``cleanlanguage/skills/cleanlanguage/SKILL.md``)
@@ -75,7 +81,8 @@ Exit codes:
      its ``published_at`` is unreadable or malformed, its ``immutable`` field is
      not exactly true, the release SKILL.md names returns a status other than
      200 or 404, or the tag exists with no published release)
-  3  a required file could not be read, the SKILL.md Released line is
+  3  a required file could not be read, the verify page is in neither state
+     the generator writes, the SKILL.md Released line is
      malformed, a call of tools/skill-release-date.py, which runs in a
      child process, did not give a result the gate could accept (see
      run_release_date_child), or SIGCHLD could not be reset to its default
@@ -193,6 +200,9 @@ REPO = "jposluns/cleanlanguage"
 # The verify page's checksum element exactly as tools/build-site.py writes it; no other attribute passes.
 DISPLAYED_SUM = re.compile(r'<code class="sum" id="published-checksum">([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
+# The verify page's note while site-src/release.json holds the zero placeholder (tools/build-site.py, sum_tokens).
+PENDING_VERSION = re.compile(r"The checksum for version ([0-9][0-9.]*) appears here once that version is published\.")
+PLACEHOLDER = "0" * 64
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
 VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
@@ -934,16 +944,28 @@ def check_site_checksum(load_code: int = 0) -> int:
         die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} could not be read: {type(error).__name__}: {error}")
 
     shown = DISPLAYED_SUM.search(verify)
-    if shown is None:
-        die('the verify page has no <code class="sum" id="published-checksum"> block')
-    site_sum = shown.group(1).strip()
-    if not SHA256.match(site_sum):
-        die(f"the displayed checksum {site_sum!r} is not a 64 character lower-case SHA-256")
-
     stated = DISPLAYED_VERSION.search(verify)
-    if stated is None:
-        die("the verify page does not state which version its checksum belongs to")
-    version = stated.group(1)
+    pending = PENDING_VERSION.search(verify)
+    if pending is not None:
+        # The not-yet-published state: the site holds the zero placeholder, so a
+        # published release makes it drift below. A page that also shows the
+        # published wording is in neither state the generator writes.
+        if shown is not None or stated is not None:
+            die("the verify page shows both the published checksum and the note that it is not yet published")
+        site_sum = PLACEHOLDER
+        version = pending.group(1)
+    else:
+        if shown is None:
+            die('the verify page has no <code class="sum" id="published-checksum"> block')
+        site_sum = shown.group(1).strip()
+        if not SHA256.match(site_sum):
+            die(f"the displayed checksum {site_sum!r} is not a 64 character lower-case SHA-256")
+        if site_sum == PLACEHOLDER:
+            die("the verify page shows the zero placeholder as the published checksum")
+
+        if stated is None:
+            die("the verify page does not state which version its checksum belongs to")
+        version = stated.group(1)
     tag = f"v{version}"
     zip_name = f"cleanlanguage-{version}.zip"
     manifest_name = f"{zip_name}.sha256"
@@ -1067,7 +1089,10 @@ def check_site_checksum(load_code: int = 0) -> int:
         checksum_code = 2
     elif site_sum != claimed:
         print("Release checksum drift found:")
-        print(f"  - the verify page shows {site_sum} for version {version}")
+        if pending is not None:
+            print(f"  - the verify page says the checksum for version {version} is not yet published")
+        else:
+            print(f"  - the verify page shows {site_sum} for version {version}")
         print(f"  - the published {zip_name} is {claimed}")
         print(
             f"\nThe release {tag} is published but the site was not flipped to its "

@@ -25,7 +25,9 @@ Sources
 - ``site-src/release.json``: the release version, tag and checksum, written by
   ``tools/set-release-links.py``. Every version string the pages show comes
   from here, and the build refuses to run if it disagrees with the ``Version:``
-  line of ``cleanlanguage/skills/cleanlanguage/SKILL.md``.
+  line of ``cleanlanguage/skills/cleanlanguage/SKILL.md``. While its checksum
+  is the zero placeholder of a version bump, the verify page shows no checksum
+  and says that it appears once that version is published (``sum_tokens()``).
 - ``site-src/pages/<page>.html``: the hand-written content of each page, with
   ``{{token}}`` placeholders.
 - ``site-src/assets/site.css``, optional: only the measured per-site constants
@@ -245,6 +247,8 @@ ABOUT_DOT = '<span class="dot" aria-hidden="true">&middot;</span>'
 # landing page only, directly after the end tag of the value paragraph's region, and validate() requires it there once.
 ABOUT_BLOCK = '<div class="region"><p class="lbl">About this project</p><div>{row}</div></div>'
 SLICE_COUNT = 6
+# The checksum a version bump writes into site-src/release.json until the post-release flip sets the published one.
+PLACEHOLDER_CHECKSUM = "0" * 64
 
 
 class BuildError(Exception):
@@ -316,6 +320,38 @@ def load_release(root: Path, override: dict | None = None) -> dict:
         "release.zip_name": zip_name,
         "release.zip_url": zip_url,
         "release.sum_url": f"{zip_url}.sha256",
+        **sum_tokens(version, checksum, f"{zip_url}.sha256"),
+    }
+
+
+def sum_tokens(version: str, checksum: str, sum_url: str) -> dict:
+    """The verify page's checksum wording in each state of release.json, which tools/check-release-links.py and
+    tools/check-release-checksum-live.py read: the published checksum, its file and the step that compares them;
+    or, while the checksum is the zero placeholder, a note that it appears once the version is published, with no
+    value called the published checksum, no link to the checksum file and no step that rejects the download."""
+    if checksum == PLACEHOLDER_CHECKSUM:
+        return {
+            "release.sum_lead": "",
+            "release.sum_block": f'<p class="lbl size">zip, version {version}</p>'
+                                 f"<p>The checksum for version {version} appears here once that version is published.</p>",
+            "release.sum_compare": "",
+        }
+    return {
+        "release.sum_lead": " The published checksum is shown under the link.",
+        "release.sum_block": (
+            f'<p class="lbl size">zip, version {version}, SHA-256</p><p>The published checksum for version {version} is:</p>'
+            f'<code class="sum" id="published-checksum">{checksum}</code><p>The same value is in the '
+            f"{external(sum_url, 'published checksum file')}, if you would rather compare files than read.</p>"
+        ),
+        "release.sum_compare": (
+            '<p class="lbl blk">Step 3</p>\n'
+            "<p>Compare the value your computer prints with the published checksum shown in step 1. Letter case does "
+            "not matter: PowerShell prints the hash in upper case, while the published value is lower case, so compare "
+            "the letters and digits and ignore the case. A match means your copy matches the published release.</p>\n"
+            "<p>If the two differ, delete the file, download it again, and check once more. If the values still differ "
+            "after a fresh download, do not install the file and "
+            f"{external('https://github.com/jposluns/cleanlanguage/issues', 'report it on GitHub')}.</p>\n"
+        ),
     }
 
 

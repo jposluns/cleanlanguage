@@ -8,7 +8,10 @@ and even then the Released line is checked with no further network call, so
 a malformed line exits 3 and a line missing above the baseline fails. A
 mismatched unreleased version fails, a tag with no published release is
 unverifiable, and the published-release comparison and the transient-error
-handling are preserved. Once the release SKILL.md names is published, its
+handling are preserved. The page a version bump builds from the zero
+placeholder, which says that the checksum appears once the version is
+published, passes in the pre-tag window and fails as drift once the release is
+published; a page in neither state exits 3. Once the release SKILL.md names is published, its
 Released line (item 26) must name the UTC day of the release published_at
 record (G4), checked for the release SKILL.md names whatever version the site
 names, and that release must be immutable; an unpublished release SKILL.md
@@ -68,6 +71,12 @@ VERIFY = """<!doctype html>
 <html><body>
 <p>The published checksum for version {version} is:</p>
 <code class="sum" id="published-checksum">{checksum}</code>
+</body></html>
+"""
+# The verify page while site-src/release.json holds the zero placeholder, as tools/build-site.py writes it.
+PENDING = """<!doctype html>
+<html><body>
+<p>The checksum for version {version} appears here once that version is published.</p>
 </body></html>
 """
 
@@ -1144,6 +1153,46 @@ class ConditionalPassTest(unittest.TestCase):
         gate.release_status = lambda tag: 404
         gate.tag_status = lambda tag: 404
         self.assertEqual(gate.main(), 0)
+
+    def test_not_yet_published_page_passes_in_the_pre_tag_window(self):
+        # The page a version bump builds from the zero placeholder names its version in the note.
+        self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15")
+        gate.VERIFY_PAGE.write_text(PENDING.format(version=AHEAD), encoding="utf-8")
+        self.published(None, statuses={f"v{AHEAD}": 404})
+        gate.gh = unexpected_call
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual((self.probed, self.tag_probed), ([f"v{AHEAD}"], [f"v{AHEAD}"]))
+
+    def test_not_yet_published_page_beside_a_published_release_fails(self):
+        # The site still holds the placeholder once the release is live: drift, exit 1.
+        self.fixtures(CURRENT, ZIP_SUM, CURRENT)
+        gate.VERIFY_PAGE.write_text(PENDING.format(version=CURRENT), encoding="utf-8")
+        gate.release_status = lambda tag: 200
+        gate.gh = self.fake_download
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 1, (out, err))
+        self.assertIn(f"  - the verify page says the checksum for version {CURRENT} is not yet published\n", out)
+        self.assertIn(f"  - the published cleanlanguage-{CURRENT}.zip is {ZIP_SUM}\n", out)
+
+    def test_a_page_in_neither_state_exits_3(self):
+        # The zero placeholder shown as the published checksum, and a page that carries both the
+        # published wording and the note, are refused before any release is read.
+        note = f"<p>The checksum for version {CURRENT} appears here once that version is published.</p>\n"
+        for label, page, report in (
+            ("the placeholder as the published checksum", VERIFY.format(version=CURRENT, checksum="0" * 64),
+             "the verify page shows the zero placeholder as the published checksum"),
+            ("the note beside a published checksum", VERIFY.format(version=CURRENT, checksum=ZIP_SUM) + note,
+             "the verify page shows both the published checksum and the note that it is not yet published"),
+            ("the note beside the checksum sentence alone",
+             note + f"<p>The published checksum for version {CURRENT} is:</p>\n",
+             "the verify page shows both the published checksum and the note that it is not yet published"),
+        ):
+            with self.subTest(label):
+                gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
+                gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+                gate.release_status = unexpected_call
+                self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {report}\n"))
 
     def pre_tag_reports(self, version, released=None):
         """Run the gate in the pre-tag window for ``version``, asserting the

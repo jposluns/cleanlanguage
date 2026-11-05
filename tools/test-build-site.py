@@ -1142,6 +1142,33 @@ def check_release_flip(failures: list[str]) -> int:
         for needed in ("zip, version 9.8.7", "for example <code>cleanlanguage-9.8.7.zip</code>"):
             if needed not in install:
                 failures.append(f"release flip: install page lacks {needed!r}")
+        if "appears here once" in verify:
+            failures.append("release flip: the verify page with a published checksum says it is not yet published")
+    return 1
+
+
+def check_release_placeholder(failures: list[str]) -> int:
+    """While release.json holds the zero placeholder, the verify page calls no value the published checksum."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        skill = root / "cleanlanguage/skills/cleanlanguage/SKILL.md"
+        text = skill.read_text(encoding="utf-8")
+        skill.write_text(re.sub(r"^Version: [0-9.]+", "Version: 9.8.7", text, count=1, flags=re.M), encoding="utf-8")
+        set_release(root, version="9.8.7", tag="v9.8.7", checksum="0" * 64)
+        out = Path(scratch) / "out"
+        result = run(root, "--out", str(out))
+        if result.returncode != 0:
+            failures.append(f"release placeholder: exit {result.returncode}: {result.stderr.strip()}")
+            return 1
+        verify = (out / "verify/index.html").read_text(encoding="utf-8")
+        for needed in ("<p>The checksum for version 9.8.7 appears here once that version is published.</p>",
+                       '<p class="lbl size">zip, version 9.8.7</p>', "sha256sum cleanlanguage-9.8.7.zip"):
+            if needed not in verify:
+                failures.append(f"release placeholder: verify page lacks {needed!r}")
+        for gone in ("published checksum", 'id="published-checksum"', "0" * 64, ".zip.sha256", "Step 3",
+                     "do not install the file"):
+            if gone.lower() in verify.lower():
+                failures.append(f"release placeholder: verify page still carries {gone!r}")
     return 1
 
 
@@ -1280,6 +1307,7 @@ def main() -> int:
     ran += check_staged_build(failures)
     ran += check_family_pages(failures)
     ran += check_release_flip(failures)
+    ran += check_release_placeholder(failures)
     ran += check_check_mode(failures)
     ran += check_promotion_build(failures)
     if failures:

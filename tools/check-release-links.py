@@ -19,7 +19,9 @@ What it verifies
    source of truth the release workflow validates the tag against.
 3. The tag in each URL is that version prefixed with ``v``.
 4. The published checksum displayed on the verify page is a well-formed SHA-256,
-   and the version named in the sentence above it agrees with the links.
+   and the version named in the sentence above it agrees with the links; or,
+   while the release is not yet published, the page names that version in its
+   note that the checksum appears once that version is published.
 5. ``site/_redirects`` names the same version, so the shareable short paths and
    the direct links cannot point at different releases.
 6. Every version-named zip file name written out on a page outside a release
@@ -30,8 +32,13 @@ What it verifies
    generated pages show, names the same version, the tag ``v<version>``, and a
    well-formed checksum.
 8. On the install and verify pages, every ``version X.Y.Z`` label names that
-   version, each page names the release at least once, and the verify page
-   displays exactly 1 checksum element, the same checksum as ``release.json``.
+   version, and each page names the release at least once. The verify page is
+   in 1 of 2 states, chosen by ``release.json``. With a published checksum, it
+   displays exactly 1 checksum element, the same checksum as ``release.json``,
+   and carries no not-yet-published note. With the zero placeholder a version
+   bump writes, it carries that note exactly once, for that version, and no
+   checksum element, no "published checksum" wording and no link to a
+   ``.sha256`` file, so it never shows the placeholder as the published value.
 
 What it does not verify
 -----------------------
@@ -76,6 +83,10 @@ VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
 DISPLAYED_SUM = re.compile(r'<code class="sum" id="published-checksum">([^<]*)</code>')
 SUM_ELEMENT = '<code class="sum" id="published-checksum">'
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
+# The verify page's note while release.json holds the zero placeholder, as tools/build-site.py writes it (sum_tokens).
+PENDING_VERSION = re.compile(r"The checksum for version ([0-9][0-9.]*) appears here once that version is published\.")
+PUBLISHED_WORDING = re.compile(r"published checksum", re.I)
+PLACEHOLDER = "0" * 64
 NAMED_ZIP = re.compile(r"cleanlanguage-([0-9][0-9.]*[0-9])\.zip")
 VERSION_LABEL = re.compile(r"\bversion ([0-9]+\.[0-9]+\.[0-9]+)\b")
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -193,23 +204,33 @@ def main() -> int:
         verify = VERIFY_PAGE.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         die(f"site/verify/index.html could not be read: {error}")
-    shown = DISPLAYED_SUM.search(verify)
-    if shown is None:
-        problems.append(f"the verify page has no {SUM_ELEMENT} block")
-    elif not SHA256.match(shown.group(1).strip()):
-        problems.append(
-            f"the displayed checksum {shown.group(1).strip()!r} is not a 64 character "
-            f"lower-case SHA-256"
-        )
+    # The not-yet-published note names the version in place of the checksum and its sentence; check 8
+    # holds each state to release.json and refuses a page that mixes them.
+    pending = PENDING_VERSION.search(verify)
+    if pending is not None:
+        if pending.group(1) != expected:
+            problems.append(
+                f"the verify page says the checksum for version {pending.group(1)} appears once "
+                f"that version is published, but SKILL.md says {expected}"
+            )
+    else:
+        shown = DISPLAYED_SUM.search(verify)
+        if shown is None:
+            problems.append(f"the verify page has no {SUM_ELEMENT} block")
+        elif not SHA256.match(shown.group(1).strip()):
+            problems.append(
+                f"the displayed checksum {shown.group(1).strip()!r} is not a 64 character "
+                f"lower-case SHA-256"
+            )
 
-    stated = DISPLAYED_VERSION.search(verify)
-    if stated is None:
-        problems.append("the verify page does not state which version its checksum belongs to")
-    elif stated.group(1) != expected:
-        problems.append(
-            f"the verify page says its checksum is for version {stated.group(1)}, "
-            f"but SKILL.md says {expected}"
-        )
+        stated = DISPLAYED_VERSION.search(verify)
+        if stated is None:
+            problems.append("the verify page does not state which version its checksum belongs to")
+        elif stated.group(1) != expected:
+            problems.append(
+                f"the verify page says its checksum is for version {stated.group(1)}, "
+                f"but SKILL.md says {expected}"
+            )
 
     problems += check_release_source(expected)
 
@@ -225,10 +246,14 @@ def main() -> int:
         return 1
 
     places = sum(len(v) for v in found.values())
+    state = (
+        "the verify page says the checksum appears once that version is published"
+        if pending is not None else "the displayed checksum is well formed"
+    )
     print(
         f"Every release link on the site names version {expected} "
         f"({places} across {len(set(sum(found.values(), [])))} files), "
-        f"and the displayed checksum is well formed."
+        f"and {state}."
     )
     return 0
 
@@ -265,7 +290,25 @@ def check_release_source(expected: str) -> list[str]:
             problems.append(f"{relative} names no release version")
         for version in sorted(labels - {expected}):
             problems.append(f"{relative} names version {version}, but SKILL.md says {expected}")
-        if page == VERIFY_PAGE:
+        if page == VERIFY_PAGE and checksum == PLACEHOLDER:
+            # The release is not yet published: no value is called the published checksum, no link
+            # names the checksum file, and the note names this version once.
+            if DISPLAYED_SUM.search(text) or PUBLISHED_WORDING.search(text) or ".zip.sha256" in text:
+                problems.append(
+                    f"{relative} shows published checksum wording or links the checksum file, but "
+                    f"site-src/release.json holds the zero placeholder"
+                )
+            if PENDING_VERSION.findall(text) != [expected]:
+                problems.append(
+                    f"{relative} must say once that the checksum for version {expected} appears here "
+                    f"once that version is published"
+                )
+        elif page == VERIFY_PAGE:
+            if PENDING_VERSION.search(text):
+                problems.append(
+                    f"{relative} says the checksum is not yet published, but site-src/release.json "
+                    f"holds a published checksum"
+                )
             shown = DISPLAYED_SUM.findall(text)
             if len(shown) != 1:
                 problems.append(f"{relative} must show exactly 1 {SUM_ELEMENT}, found {len(shown)}")
