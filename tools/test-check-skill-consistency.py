@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Tests for tools/check-skill-consistency.py: the checklist dash bullet against the skill's carve-outs.
 
-The first case runs the gate on this repository and applies no change. Each
-other case copies the gate and the 2 files it reads into a temporary
-repository (under $TMPDIR), applies 1 fault, runs the gate there as a separate
-process and asserts its exit code and the fragments the case lists. An exit 1
-case also asserts that the output says the bullet differs and names no item
+The first case runs the gate on this repository and changes nothing. Each case
+in CASES copies the gate and the 2 files it reads into a temporary repository
+(under $TMPDIR), applies the case's change, runs the gate there as a separate
+process and asserts its exit code and the fragments the case lists. The case
+named "the committed tree" changes nothing, and the case named "the skill list
+sorted, and the checklist with it" makes 2 edits; each other case makes 1
+change, which edits, rewrites or removes a file. The cases that expect exit 0,
+apart from the committed tree, make edits that keep the 2 files consistent;
+the cases that expect exit 1 or 3 apply a fault. An exit 1 case also asserts
+that the output says the bullet differs and names no item
 beyond the case's list; an exit 3 case lists the structure the message must
 name, or, for a comment or fence the gate refuses, the file and the line,
 counted in the committed file, that the message must name. The case named
@@ -14,10 +19,10 @@ row 98 and expects the gate to name the 5 items it lacks and the 2 it adds.
 One further case passes the gate an argument and asserts exit 2.
 
 ITEMS is the carve-out list as SKILL.md states it today, in its order. The
-faults that rewrite a list check that ITEMS is still there first, so a change
+edits that rewrite a list check that ITEMS is still there first, so a change
 to that list fails this test until ITEMS follows it.
 Exit 0 when every case passes; 1 otherwise, naming each failing case,
-including a case whose fault cannot find the text it edits.
+including a case whose change cannot find the text it edits.
 """
 
 from __future__ import annotations
@@ -154,6 +159,8 @@ CASES = [
     ("the skill bullet continued on an unindented line", edit(SKILL, "text, or ", "text,\nor "), 0, []),
     ("the skill list sorted, and the checklist with it",
         together(skill_lists(sorted(ITEMS)), checklist_lists(sorted(ITEMS))), 0, []),
+    ("the carve-out heading with closing hashes and trailing spaces",
+        edit(SKILL, HEADING, HEADING.rstrip("\n") + " ##  \n"), 0, []),
     ("the checklist list reordered", checklist_lists(list(reversed(ITEMS))), 1, []),
     ("the skill list reordered after its first item", skill_lists(ITEMS[:1] + list(reversed(ITEMS[1:]))), 1, []),
     ("the skill list with quoted language last", skill_lists(ITEMS[1:] + ITEMS[:1]), 1, []),
@@ -211,6 +218,9 @@ CASES = [
         3, [f"{CHECKLIST}, line 1: " + FENCED]),
     ("the carve-out section renamed", edit(SKILL, HEADING, "## Keep legitimate language\n"), 3, [NO_HEADING]),
     ("the carve-out section repeated", edit(SKILL, HEADING, HEADING + "\n" + HEADING), 3, [NO_HEADING]),
+    ("the carve-out heading at level 3", edit(SKILL, HEADING, "#" + HEADING), 3, [NO_HEADING]),
+    ("the carve-out heading at level 3 with closing hashes", edit(SKILL, HEADING, "#" + HEADING.rstrip("\n") + " ###\n"),
+        3, [NO_HEADING]),
     ("the carve-out heading only in fenced code", edit(SKILL, HEADING, "```\n" + HEADING + "```\n"), 3,
         [at(SKILL, HEADING) + FENCED]),
     ("no quoted language bullet", edit(SKILL, "- " + ITEMS[0] + ",", "- quoted text,"), 3, [NO_ANCHOR]),

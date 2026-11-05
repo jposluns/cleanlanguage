@@ -20,7 +20,9 @@ either file left out, split into blocks (headings, bullets and paragraphs):
    which this check does not model. The check exits 3 at the first such line
    and names its file and line number.
 2. SKILL.md holds exactly one sentence "the carve-outs in <section>.", and
-   exactly one heading "## <section>".
+   exactly one heading "## <section>". As in Markdown, the heading may end
+   with a closing run of "#" after a space, which is not part of its text, so
+   "## <section> ##" is the same heading; "### <section>" is not.
 3. That section, which runs to the next heading of level 1 or 2, holds exactly
    one bullet that lists "quoted language" as one of its items, in any place.
    That phrase is a hand-kept anchor: if SKILL.md loses it, this check exits 3
@@ -128,6 +130,7 @@ LEADING_JOINER = re.compile(r"^(?:or|and)\s+")
 COMMENT = "<!--"
 FENCE = re.compile(r"`{3}|~{3}")
 HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
+CLOSING = re.compile(r"(?:^| )#+$")
 BULLET = re.compile(r"[-*+](?:[ \t]+|$)")
 RULE = re.compile(r"(?:[-*_][ \t]*){3,}$")
 BLOCK = re.compile(r"#{1,6}(?:[ \t]|$)|[-*+][ \t]|1[.)][ \t]|>|(?:[-*_][ \t]*){3,}$")
@@ -192,6 +195,12 @@ def blocks(text: str) -> list[tuple[str, str]]:
     return [(kind, " ".join(words.split())) for kind, words in found]
 
 
+def heading(words: str) -> tuple[int, str]:
+    """A heading block's level and its text, without its marker and any closing run of "#" after a space."""
+    level = len(words) - len(words.lstrip("#"))
+    return level, CLOSING.sub("", words[level:].strip()).strip()
+
+
 def items(text: str) -> list[str]:
     """The items of a list such as "a, b, or c", split at commas and at "or" and "and"."""
     found: list[str] = []
@@ -208,12 +217,12 @@ def carve_out_list(text: str) -> tuple[str, str]:
     if len(pointers) != 1:
         raise Unreadable(f'{SKILL}: expected exactly one sentence "the carve-outs in <section>.", found {len(pointers)}')
     section = pointers[0].strip()
-    starts = [n for n, (kind, words) in enumerate(found) if kind == "heading" and words == f"## {section}"]
+    starts = [n for n, (kind, words) in enumerate(found) if kind == "heading" and heading(words) == (2, section)]
     if len(starts) != 1:
         raise Unreadable(f'{SKILL}: expected exactly one heading "## {section}", found {len(starts)}')
     body = []
     for kind, words in found[starts[0] + 1:]:
-        if kind == "heading" and re.match(r"#{1,2}(?: |$)", words):
+        if kind == "heading" and heading(words)[0] <= 2:
             break
         body.append((kind, words))
     anchored = [words.rstrip(" ;.") for kind, words in body
