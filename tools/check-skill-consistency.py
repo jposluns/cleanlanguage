@@ -21,8 +21,10 @@ either file left out, split into blocks (headings, bullets and paragraphs):
    and names its file and line number.
 2. SKILL.md holds exactly one sentence "the carve-outs in <section>.", and
    exactly one heading "## <section>". As in Markdown, the heading may end
-   with a closing run of "#" after a space, which is not part of its text, so
-   "## <section> ##" is the same heading; "### <section>" is not.
+   with a closing run of "#" after a space or tab, followed by nothing but
+   spaces or tabs, which is not part of its text, so "## <section> ##" is the
+   same heading; "### <section>" is not, and neither is "## <section>##" or a
+   closing run that another character, such as U+00A0, precedes or follows.
 3. That section, which runs to the next heading of level 1 or 2, holds exactly
    one bullet that lists "quoted language" as one of its items, in any place.
    That phrase is a hand-kept anchor: if SKILL.md loses it, this check exits 3
@@ -130,7 +132,7 @@ LEADING_JOINER = re.compile(r"^(?:or|and)\s+")
 COMMENT = "<!--"
 FENCE = re.compile(r"`{3}|~{3}")
 HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
-CLOSING = re.compile(r"(?:^| )#+$")
+CLOSING = re.compile(r"[ \t]#+[ \t]*$")
 BULLET = re.compile(r"[-*+](?:[ \t]+|$)")
 RULE = re.compile(r"(?:[-*_][ \t]*){3,}$")
 BLOCK = re.compile(r"#{1,6}(?:[ \t]|$)|[-*+][ \t]|1[.)][ \t]|>|(?:[-*_][ \t]*){3,}$")
@@ -169,7 +171,9 @@ def plain_text(path: Path) -> str:
 def blocks(text: str) -> list[tuple[str, str]]:
     """Each heading, bullet and paragraph of the text, as (kind, text) with spaces collapsed.
 
-    A bullet's text holds every line that continues it and drops its marker.
+    A bullet's text holds every line that continues it and drops its marker. A
+    heading's text drops any closing run of "#", found on the line as written,
+    before spaces are collapsed, so only a space or tab separates it.
     """
     found: list[list[str]] = []
     open_kind = ""
@@ -183,7 +187,7 @@ def blocks(text: str) -> list[tuple[str, str]]:
                           or not after_blank and not BLOCK.match(line)):
             found[-1][1] += " " + line
         elif HEADING.match(line):
-            found.append(["heading", line])
+            found.append(["heading", CLOSING.sub("", line)])
             open_kind = ""
         elif BULLET.match(line) and not RULE.match(line):
             found.append(["bullet", BULLET.sub("", line, count=1)])
@@ -196,9 +200,9 @@ def blocks(text: str) -> list[tuple[str, str]]:
 
 
 def heading(words: str) -> tuple[int, str]:
-    """A heading block's level and its text, without its marker and any closing run of "#" after a space."""
+    """A heading block's level and its text, without its marker; blocks() has dropped any closing run of "#"."""
     level = len(words) - len(words.lstrip("#"))
-    return level, CLOSING.sub("", words[level:].strip()).strip()
+    return level, words[level:].strip()
 
 
 def items(text: str) -> list[str]:
