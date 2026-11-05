@@ -328,6 +328,10 @@ ABOUT_BLOCK = about_block("{{base}}")
 LABEL = "About this project"
 # The label as written and in upper case: no page source's text carries either, and the landing page's 1, in its block.
 LABELS = (LABEL, LABEL.upper())
+# The ancestors, outermost first, of the landing page's value region and of its About block, as (name, classes): html
+# (with site.json's site_class), body, main#main-content and div.wrap, as the generator writes them around the source.
+SITE_CLASS = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))["site_class"]
+ANCESTORS = [("html", class_names(SITE_CLASS)), ("body", []), ("main", []), ("div", ["wrap"])]
 
 
 def labels(text: str) -> int:
@@ -379,14 +383,15 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     is_hiding_element(), and a details without open outside its first summary child), no dot span followed directly
     by a link (the 1.6.1 markup, refused apart from about_line()), and the whole About block once, byte for byte,
     starting where the end tag of that paragraph's region (the div.region nearest it among its open elements) ends,
-    its row the only parsed element whose classes include about, and the page's text carrying LABELS once, inside
-    the block (labels(): with the block's label taken out, none); on any other page, no such element, with an INERT
-    ancestor or not, and no LABELS in its text. It does not model a stylesheet beyond the install gate's
-    HIDING_CLASSES, or a hidden attribute that HTML5 copies from a stray body or html start tag onto the page's body
-    or html element. The generator refuses such a start tag in a page source, and any page source outside the page
-    source grammar, on which its parser and a browser read the same tokens (no raw-text or escapable raw-text
-    element, whose content a browser can read as markup inside math or svg, among them); and it refuses a math
-    start tag in a page source or page and any <svg other than the switch in a page."""
+    the region and the block each with exactly the ancestors ANCESTORS, its row the only parsed element whose classes
+    include about, and the page's text carrying LABELS once, inside the block (labels(): with the block's label
+    taken out, none); on any other page, no such element, with an INERT ancestor or not, and no LABELS in its text.
+    It does not model a stylesheet beyond the install gate's HIDING_CLASSES, or a hidden attribute that HTML5 copies
+    from a stray body or html start tag onto the page's body or html element. The generator refuses such a start tag
+    in a page source, and any page source outside the page source grammar, on which its parser and a browser read
+    the same tokens (no raw-text or escapable raw-text element, whose content a browser can read as markup inside
+    math or svg, among them); and it refuses a math start tag in a page source or page and any <svg other than the
+    switch in a page."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
@@ -417,6 +422,9 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
                and "region" in class_names(parsed.starts[ancestor][1].get("class", ""))][-1:]
     if region is None or [region[3]] != nearest:
         return [f"{page} carries its About block other than directly after the value paragraph's region (specification 7.24)"]
+    if parsed.starts[nearest[0]][2] != ANCESTORS or parsed.starts[position(text, at)][2] != ANCESTORS:
+        return [f"{page} carries its value region or its About block with ancestors other than html, body, main and "
+                "div.wrap (specification 7.24)"]
     if len(abouts) != 1:
         return [f"{page} carries About markup outside its About block (specification 7.24)"]
     if labels(text) != 1 or labels(text.replace(block, block.replace(f">{LABEL}<", "><", 1), 1)):
@@ -575,6 +583,11 @@ GRAMMAR_RULE = "a page source holds only markup on which Python's parser and a b
 # it, while the parser read it inside.
 ELEMENT_RULE = "a page source carries only the elements of SOURCE_ELEMENTS"
 NOSCRIPT_RULE = "a <noscript> start tag inside a noscript"
+# An attribute name outside the generator's SOURCE_ATTRIBUTES, such as name, at which a browser closes all but 1 open
+# details of a name group, or open, inert or popover; and an end tag of an element outside SOURCE_ELEMENTS, such as
+# </br>, which a browser reads as a br start tag and moves to before a table it is directly inside.
+ATTRIBUTE_RULE = "a page source carries only the attributes of SOURCE_ATTRIBUTES"
+END_TAG_RULE = "an end tag in a page source names an element of SOURCE_ELEMENTS"
 # The generator's page source tree rules: a summary only as the first element child of a details, since a browser
 # moves an earlier summary inside a p or a table in a closed details out to be the details' first summary, hiding the
 # value paragraph in the next one; and no start tag or text at which a browser ends an open p, heading, li, a or button,
@@ -619,6 +632,16 @@ SHOWING_WRAPPERS = [
     # A details without open stops hiding at its end tag: a div after one, and the value paragraph in it, show.
     ("a div after a closed details without open", "<details><summary></summary></details><div>", "</div>"),
 ]
+
+
+def wrapper_rule(start: str) -> str:
+    """The rule by which the generator refuses a landing page source with start around the value paragraph: no dialog
+    (SOURCE_ELEMENTS), no inert, popover or open attribute (SOURCE_ATTRIBUTES), and otherwise the value paragraph's."""
+    if start.startswith("<dialog"):
+        return ELEMENT_RULE
+    if re.search(r"[ \t](?:inert|popover|open)\b", start):
+        return ATTRIBUTE_RULE
+    return VALUE_RULE
 
 
 def after_value(snippet: str):
@@ -746,8 +769,12 @@ SOURCE_REFUSALS = [
         "<details><p><summary>x</summary></p><summary>", "</summary></details>"), SUMMARY_RULE),
     ("the value paragraph after a summary inside a table in a closed details", wrap_value(
         "<details><table><summary>x</summary></table><summary>", "</summary></details>"), SUMMARY_RULE),
+    # The reported form carries an open attribute, which SOURCE_ATTRIBUTES now refuses first; without it, the li rule.
     ("the value paragraph after an li inside an li in a summary", wrap_value(
         "<details><summary><div><details open><summary><li><div><li></li></div></li></summary>",
+        "</details></div></summary></details>"), ATTRIBUTE_RULE),
+    ("the value paragraph after an li inside an li in a summary, with no open attribute", wrap_value(
+        "<details><summary><div><details><summary><li><div><li></li></div></li></summary>",
         "</details></div></summary></details>"), LI_RULE),
     ("a summary after a div in a details", inject("<details><div>x</div><summary>y</summary></details>"),
         SUMMARY_RULE),
@@ -765,6 +792,28 @@ SOURCE_REFUSALS = [
     ("a td outside a table", inject("<div><td>x</td></div>"), TABLE_RULE),
     ("text directly inside a tr", inject("<table><tbody><tr>x<td>y</td></tr></tbody></table>"), TABLE_TEXT_RULE),
     ("the value paragraph inside a dialog with open", wrap_value("<dialog open>", "</dialog>"), ELEMENT_RULE),
+    ("the value paragraph inside a details with open", wrap_value("<details open>", "</details>"), ATTRIBUTE_RULE),
+    # Built with exit 0 at e8ca241: a browser closes all but 1 open details of a name group, here the later one, so
+    # the value paragraph inside it is hidden, where the parser reads both as open.
+    ("the value paragraph in the second of 2 open details of 1 name group", wrap_value(
+        '<details name="g" open><summary>x</summary></details><details name="g" open><summary>y</summary>',
+        "</details>"), ATTRIBUTE_RULE),
+    ("a name attribute in upper case on a details", inject('<details NAME="g"><summary>x</summary></details>'),
+        "a NAME attribute on a <details> start tag"),
+    ("a title attribute", inject('<p title="x">y</p>'), ATTRIBUTE_RULE),
+    # Built with exit 0 at e8ca241: a browser's adoption agency moves the About block out of the a around the value
+    # region, and its label into a new a, where the parser reads the block inside the a. The value paragraph's own
+    # link is written as text, so no a starts inside the a.
+    ("an a around the value region", lambda root: (
+        edit(root, HOME, '<a href="{{base}}license/">free to use under CC BY-SA 4.0</a>',
+             "free to use under CC BY-SA 4.0"),
+        edit(root, HOME, VALUE_REGION, '<a href="{{base}}install/">' + VALUE_REGION),
+        edit(root, HOME, VALUE_END, VALUE_END + "</a>")), "the region and the block each with exactly the ancestors"),
+    ("a div around the value region", lambda root: (
+        edit(root, HOME, VALUE_REGION, "<div>" + VALUE_REGION), edit(root, HOME, VALUE_END, VALUE_END + "</div>")),
+        "the region and the block each with exactly the ancestors"),
+    ("</br> directly inside a tr", inject("<table><tbody><tr></br><td>x</td></tr></tbody></table>"), END_TAG_RULE),
+    ("</BR> in a paragraph", inject("<p>x</BR></p>"), END_TAG_RULE),
     ("a comment that holds <math>", inject("<!-- a <math> element -->"), GRAMMAR_RULE),
     ("a comment that holds --", inject("<!-- a -- b -->"), GRAMMAR_RULE),
     ("a comment that holds >", inject("<!-- a > b -->"), GRAMMAR_RULE),
@@ -786,7 +835,7 @@ SOURCE_REFUSALS = [
     # Default_Ignorable_Code_Point of another category (U+034F and U+FE0F are Mn); never in other letter cases.
     ("the label in a paragraph on another page", inject(f"<p>{LABEL}</p>"), LABEL_RULE),
     ("the label split across inline elements", inject("<p>About <em>this</em> project</p>"), LABEL_RULE),
-    ("the label split by an element with an attribute", inject('<p>About <span title="a b">this</span> project</p>'),
+    ("the label split by an element with an attribute", inject('<p>About <span class="a b">this</span> project</p>'),
         LABEL_RULE),
     ("the label split across lines", inject("<p>About\n  this project</p>"), LABEL_RULE),
     ("the label with a character reference", inject("<p>About th&#105;s project</p>"), LABEL_RULE),
@@ -800,9 +849,10 @@ SOURCE_REFUSALS = [
         after_value(f'<div class="region"><p class="lbl">{LABEL}</p></div>'), LABEL_RULE),
 ] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
      for character in LABEL_IGNORED] + [
-    # A page source carries no dialog (SOURCE_ELEMENTS); check_about_block() holds validate() to each dialog wrapper.
-    (f"the value paragraph inside {name}", wrap_value(start, end),
-     ELEMENT_RULE if start.startswith("<dialog") else VALUE_RULE) for name, start, end in HIDING_WRAPPERS
+    # A page source carries no dialog (SOURCE_ELEMENTS) and no inert or popover (SOURCE_ATTRIBUTES);
+    # check_about_block() holds validate() to each such wrapper.
+    (f"the value paragraph inside {name}", wrap_value(start, end), wrapper_rule(start))
+    for name, start, end in HIDING_WRAPPERS
 ]
 
 
@@ -810,8 +860,9 @@ SOURCE_REFUSALS = [
 # block's label, a noscript holds a plain paragraph, or lower-case prose names the project.
 SOURCE_PASSES = [
     ("a comment that names math", inject("<!-- a math element, with a single - between words -->")),
-    ("an attribute value that names <math> by character references", inject('<p title="a &lt;math&gt; element">x</p>')),
-    ("a single quote in a double-quoted attribute value", inject("<p title=\"the project's aim\">x</p>")),
+    ("an attribute value that names <math> by character references",
+        inject('<p aria-label="a &lt;math&gt; element">x</p>')),
+    ("a single quote in a double-quoted attribute value", inject("<p aria-label=\"the project's aim\">x</p>")),
     ("a noscript around a plain paragraph", inject("<noscript><p>x</p></noscript>")),
     ("a noscript after a noscript", inject("<noscript><p>x</p></noscript><noscript><p>y</p></noscript>")),
     # Inside the page source tree rules: text before a details' first summary, a div in a button in a p, a list in an
@@ -824,7 +875,8 @@ SOURCE_PASSES = [
         "</table>")),
     ("lower-case prose about this project", inject("<p>Send questions about this project to the maintainer.</p>")),
     ("the label in a comment", inject(f"<!-- {LABEL} -->")),
-    ("the label in an attribute value", inject(f'<p title="{LABEL}">x</p>')),
+    ("the label in an attribute value", inject(f'<p aria-label="{LABEL}">x</p>')),
+    ("an attribute of SOURCE_ATTRIBUTES in upper case", inject('<p CLASS="lead" ARIA-LABEL="x">y</p>')),
     ("the label in a comment in home.html", after_value(f"<!-- {LABEL} -->")),
 ]
 
@@ -843,10 +895,11 @@ def check_source_refusals(failures: list[str]) -> int:
 
 
 def check_source_passes(failures: list[str]) -> int:
-    """Each wrapper of SHOWING_WRAPPERS but the open dialog, which no page source may carry (SOURCE_ELEMENTS), around
-    the landing page source's value paragraph builds, and so does each case of SOURCE_PASSES."""
+    """Each wrapper of SHOWING_WRAPPERS but the open dialog and the open details, which no page source may carry
+    (SOURCE_ELEMENTS, SOURCE_ATTRIBUTES), around the landing page source's value paragraph builds, and so does each
+    case of SOURCE_PASSES."""
     cases = [(f"the value paragraph inside {name}", wrap_value(start, end)) for name, start, end in SHOWING_WRAPPERS
-             if not start.startswith("<dialog")]
+             if wrapper_rule(start) == VALUE_RULE]
     for name, fault in cases + SOURCE_PASSES:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
@@ -1083,7 +1136,8 @@ def check_about_block(failures: list[str]) -> int:
     """The whole About block of specification 7.24 on the landing page: validate(), called directly on the committed
     landing page with 1 fault each, refuses by the block's rule (exactly 1 p.value, with no INERT ancestor, not
     hidden by itself or by an ancestor as tools/check-install-page.py reads hiding; the block once, byte for byte,
-    directly after the end tag of that paragraph's region; no other element whose classes include about) or by the
+    directly after the end tag of that paragraph's region; the region and the block each with exactly the ancestors
+    html, body, main and div.wrap; no other element whose classes include about) or by the
     label's rule (the page's text carries the block's label once, inside the block), and the build test's helper
     judges each case as the generator should. The label in an attribute value, a comment or lower-case prose passes
     both, and so does each wrapper of SHOWING_WRAPPERS around the value paragraph."""
@@ -1124,6 +1178,15 @@ def check_about_block(failures: list[str]) -> int:
         ("a second p.value after the block", [(block, block + '<p class="value">x</p>')], block_rule),
         ("no p.value", [('<p class="value">', "<p>")], block_rule),
         ("the value paragraph's region without its class", [(value, '<div id="what-it-fixes">')], block_rule),
+        # A browser's adoption agency moves the block out of an a around the value region and the block, and its
+        # label into a new a; no element may wrap either, the a, a details or any other.
+        ("an a around the value region and the block", [
+            ('<a href="/license/">free to use under CC BY-SA 4.0</a>', "free to use under CC BY-SA 4.0"),
+            (value, '<a href="/install/">' + value), (block, block + "</a>")], block_rule),
+        ("an open details around the value region and the block",
+            [(value, "<details open><summary>x</summary>" + value), (block, block + "</details>")], block_rule),
+        ("a div around the value region and the block", [(value, "<div>" + value), (block, block + "</div>")],
+            block_rule),
         # The page's text carries the block's label once, inside the block (since row 144; the first case here
         # passed before it): a copy elsewhere is refused, and so is the label moved out of the block, which only the
         # condition that it come from inside the block refuses by the label's rule.
@@ -1331,8 +1394,9 @@ def check_unreadable(failures: list[str]) -> int:
 
 def check_unreadable_reader(failures: list[str]) -> int:
     """A copy of the generator, beside a check-install-page.py that is missing, unreadable (with a cache of its
-    bytecode or without), a FIFO (not a regular file, on which a read would wait for a writer), not Python, or
-    without is_hiding_element() or a ZERO_WIDTH string, exits 3: the hiding reader is an input. A reader that this
+    bytecode or without), a FIFO (not a regular file, on which a read would wait for a writer), not Python, without
+    is_hiding_element() or a ZERO_WIDTH string, or whose is_hiding_element() fails when called (as when it takes 1
+    argument, whose TypeError gave exit 1 before), exits 3: the hiding reader is an input. A reader that this
     test cannot make unreadable, as when it runs as root, or a FIFO it cannot make, as where os.mkfifo() is missing,
     fails the case rather than skipping it, and so does a generator that has not exited within 60 seconds."""
     def unreadable(cache: bool):
@@ -1360,6 +1424,8 @@ def check_unreadable_reader(failures: list[str]) -> int:
         ("a reader without is_hiding_element()", lambda reader: reader.write_bytes(b"HIDING_CLASSES = ()\n")),
         ("a reader without ZERO_WIDTH", lambda reader: reader.write_bytes(
             b"def is_hiding_element(tag, attrs):\n    return False\n")),
+        ("a reader whose is_hiding_element() takes 1 argument", lambda reader: reader.write_bytes(
+            b'ZERO_WIDTH = "\\u200b"\ndef is_hiding_element(tag):\n    return False\n')),
     ]
     for name, fault in cases:
         with tempfile.TemporaryDirectory() as scratch:
@@ -1449,6 +1515,8 @@ def check_source_positions(failures: list[str]) -> int:
         ("a script start tag", "<p>x</p>\n<p>1 <script></script></p>"),
         ("a select start tag", "<p>x</p>\n<p>1 <select></select></p>"),
         ("a noscript inside a noscript", "<noscript>\n<p>1 <noscript></noscript></p></noscript>"),
+        ("an attribute outside SOURCE_ATTRIBUTES", '<p>x</p>\n<p>1 <span title="x"></span></p>'),
+        ("a </br> end tag", "<p>x</p>\n<p>1 </br></p>"),
     ]
     where = "at line 2, column 5 of the source with its tokens and rail written in"
     for name, content in cases:
