@@ -34,7 +34,8 @@ is also the name of an established questioning technique. Page titles and meta
 descriptions carry no "AI writing" disambiguation, with one exception already in
 place: the checklist page title,
 "AI writing quality assurance | CleanLanguage.ai". Do not add disambiguation
-elsewhere.
+elsewhere. A meta description that names AI writing as its subject, as the
+home and patterns descriptions do, is not disambiguation.
 
 **Condensed site renderings of the skill are intentional.** The website presents
 the standard more briefly than `cleanlanguage/skills/cleanlanguage/SKILL.md` does. Brevity against the
