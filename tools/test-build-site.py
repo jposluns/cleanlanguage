@@ -165,9 +165,9 @@ class Placement(HTMLParser):
         self.ends: dict[tuple[int, int], tuple[str, list[str], int, tuple[int, int]]] = {}
         self.open_at: list[tuple[int, int]] = []
         self.lineage: dict[tuple[int, int], list[tuple[int, int]]] = {}
-        # The text the parser reads, in order, in upper case inside an element a selector of UPPERCASE matches, as a
+        # The text the parser reads, in order, in upper case where the stylesheets show it so (shown_upper()), as a
         # browser shows it, and each piece as read with where its open elements start; attribute values and comments
-        # are not text. Whether each open element is inside such an element, or is one.
+        # are not text. Whether each open element's text shows in upper case.
         self.text: list[str] = []
         self.text_at: list[tuple[str, list[tuple[int, int]]]] = []
         self.upper: list[bool] = []
@@ -188,7 +188,7 @@ class Placement(HTMLParser):
         if tag not in VOID:
             self.open.append((tag, class_names(first.get("class", ""))))
             self.open_at.append(self.getpos())
-            self.upper.append(any(self.upper) or any(matches(selector, self.open) for selector in UPPERCASE))
+            self.upper.append(shown_upper(self.open, bool(self.upper) and self.upper[-1]))
 
     def handle_startendtag(self, tag: str, attrs) -> None:
         foreign = tag == "svg" or any(name == "svg" for name, _ in self.open)
@@ -205,7 +205,7 @@ class Placement(HTMLParser):
             self.ends[self.getpos()] = (*self.previous, len(self.open), self.open_at.pop())
 
     def handle_data(self, data: str) -> None:
-        self.text.append(data.upper() if any(self.upper) else data)
+        self.text.append(data.upper() if self.upper and self.upper[-1] else data)
         self.text_at.append((data, list(self.open_at)))
         if data.strip(" \t\n\f\r") and [name for name, _ in self.open] in ([], ["html"], ["html", "head"]):
             self.head_ended = True
@@ -351,17 +351,56 @@ COMPOUND = r"(?:(?:[a-z][a-z0-9]*|\*)(?:\.[A-Za-z0-9_-]+)*|(?:\.[A-Za-z0-9_-]+)+
 SIMPLE_SELECTOR = re.compile(rf"{COMPOUND}(?: > {COMPOUND}| {COMPOUND})*")
 
 
-def uppercase_selectors(sheets: list[str]) -> list[str]:
-    """Each selector, whitespace collapsed, of each rule in sheets (stylesheet texts) whose declarations set
-    text-transform: uppercase, in order: comments removed, a rule is the innermost {} block, so a rule inside @media
-    counts, and its selector list splits at commas. No rule that sets it back to none is read."""
-    found = []
+def transform_rules(sheets: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
+    """Each selector, whitespace collapsed, of each rule in sheets (stylesheet texts) that sets text-transform, with
+    the value it sets, uppercase or none, in order (comments removed, a selector list split at commas); and what this
+    does not read, each a failure: a text-transform of any other value (such as full-width uppercase, var(--tt) or
+    uppercase !important), a rule nested in a style rule, a text-transform in an at-rule other than @media and
+    @supports, and a text-transform: none inside any at-rule. A rule inside @media or @supports that sets uppercase
+    is read as if it always applied, which shows at least what a browser shows in upper case."""
+    found, unread = [], []
     for sheet in sheets:
-        sheet = re.sub(r"/\*.*?\*/", "", sheet, flags=re.S)
-        for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", sheet):
-            if re.search(r"(?:^|;)\s*text-transform\s*:\s*uppercase\b", declarations, re.I):
-                found += [" ".join(selector.split()) for selector in selectors.split(",")]
-    return found
+        # The preludes of the open blocks, outermost first, and the text since the last brace.
+        blocks, text = [], ""
+        for piece in re.split(r"([{}])", re.sub(r"/\*.*?\*/", "", sheet, flags=re.S)):
+            if piece == "{":
+                if blocks and not blocks[-1].startswith("@"):
+                    unread.append(f"a rule nested in the style rule {blocks[-1]!r}")
+                blocks.append(" ".join(text.split()))
+            elif piece == "}":
+                prelude, at_rules = (blocks.pop(), blocks) if blocks else ("", [])
+                for declaration in text.split(";") if prelude and not prelude.startswith("@") else []:
+                    name, _, value = declaration.partition(":")
+                    if name.strip().lower() != "text-transform":
+                        continue
+                    value = " ".join(value.lower().split())
+                    outside = [rule for rule in at_rules if not rule.lower().startswith(("@media", "@supports"))]
+                    if value not in ("uppercase", "none") or outside or (at_rules and value == "none"):
+                        unread.append(f"text-transform: {value} in {prelude!r}" + (f" inside {at_rules[-1]!r}"
+                                                                                     if at_rules else ""))
+                    else:
+                        found += [(" ".join(selector.split()), value) for selector in prelude.split(",")]
+            if piece in "{}":
+                text = ""
+            else:
+                text += piece
+    return found, unread
+
+
+def specificity(selector: str) -> tuple[int, int]:
+    """The specificity of selector, a SIMPLE_SELECTOR, as (.class parts, names other than *)."""
+    return len(re.findall(r"\.[A-Za-z0-9_-]+", selector)), len(re.findall(r"(?:^|[ >])[a-z]", selector))
+
+
+def shown_upper(open_elements: list[tuple[str, list[str]]], inherited: bool) -> bool:
+    """Whether a browser shows the text of the last of open_elements in upper case, by the stylesheets' rules, as
+    UPPERCASE and RESET give them: the matching selector of highest specificity decides, an uppercase one on a tie
+    (which shows at least what a browser shows in upper case); with none matching, inherited, as its parent's."""
+    upper, reset = ([specificity(selector) for selector in selectors if matches(selector, open_elements)]
+                    for selectors in (UPPERCASE, RESET))
+    if reset and (not upper or max(reset) > max(upper)):
+        return False
+    return bool(upper) or inherited
 
 
 def matches(selector: str, open_elements: list[tuple[str, list[str]]]) -> bool:
@@ -380,37 +419,56 @@ def matches(selector: str, open_elements: list[tuple[str, list[str]]]) -> bool:
     return any(matches(" ".join(rest), open_elements[:depth]) for depth in range(len(open_elements) - 1, 0, -1))
 
 
-def uppercase_coverage(listed: list[str], sheets: list[str]) -> list[str]:
-    """What keeps listed, a list such as the generator's UPPERCASE_SELECTORS, from naming exactly the selectors of
-    the text-transform: uppercase rules of sheets (stylesheet texts), each a SIMPLE_SELECTOR."""
-    found = uppercase_selectors(sheets)
-    problems = [f"a text-transform: uppercase rule names {selector!r}, which UPPERCASE_SELECTORS lacks"
-                for selector in found if selector not in listed]
-    problems += [f"UPPERCASE_SELECTORS names {selector!r}, which no text-transform: uppercase rule names"
-                 for selector in listed if selector not in found]
-    return problems + [f"{selector!r} is not a selector that selector_matches() reads" for selector in found + listed
+def uppercase_coverage(listed: list[str], resets: list[str], sheets: list[str]) -> list[str]:
+    """What keeps listed and resets, lists such as the generator's UPPERCASE_SELECTORS and RESET_SELECTORS, from
+    naming exactly the selectors of the text-transform: uppercase and text-transform: none rules of sheets
+    (stylesheet texts), each a SIMPLE_SELECTOR, and each text-transform that transform_rules() does not read."""
+    rules, problems = transform_rules(sheets)
+    problems = [f"the stylesheets set {problem}, which the generator does not read" for problem in problems]
+    for value, given, name in (("uppercase", listed, "UPPERCASE_SELECTORS"), ("none", resets, "RESET_SELECTORS")):
+        found = [selector for selector, set_to in rules if set_to == value]
+        problems += [f"a text-transform: {value} rule names {selector!r}, which {name} lacks"
+                     for selector in found if selector not in given]
+        problems += [f"{name} names {selector!r}, which no text-transform: {value} rule names"
+                     for selector in given if selector not in found]
+    return problems + [f"{selector!r} is not a selector that selector_matches() reads"
+                       for selector in [selector for selector, _ in rules] + listed + resets
                        if not SIMPLE_SELECTOR.fullmatch(selector)]
 
 
 def label_text(joined: str) -> str:
     """joined with each character of general category Cf, each Default_Ignorable_Code_Point (the generator's
     DEFAULT_IGNORABLE ranges), each character of the install gate's ZERO_WIDTH other than U+00A0, and U+0000 deleted,
-    and then each run of whitespace (as str.split() reads it, U+00A0 included) read as 1 space."""
+    and then each character other than a letter or a digit (general category L or N) deleted."""
     deleted = {ord(character): None for character in set(joined)
                if unicodedata.category(character) == "Cf" or character in GATE.ZERO_WIDTH.replace("\u00a0", "") + "\0"
-               or any(first <= ord(character) <= last for first, last in LOADED.DEFAULT_IGNORABLE)}
-    return " ".join(joined.translate(deleted).split())
+               or any(first <= ord(character) <= last for first, last in LOADED.DEFAULT_IGNORABLE)
+               or unicodedata.category(character)[0] not in "LN"}
+    return joined.translate(deleted)
 
 
-def labels(text: str) -> int:
+def labels(text: str) -> tuple[int, int]:
     """How many times the parsed text of text (attribute values and comments apart, character references decoded),
-    joined across elements and read by label_text(), carries LABELS, case-sensitive, but with the text inside an
-    element a selector of UPPERCASE matches in upper case, as a browser shows it, so there in any letter case."""
+    joined across elements and read by label_text(), carries LABELS, case-sensitive, but with the text that a
+    browser shows in upper case (shown_upper()) in upper case, so there in any letter case: in all of it, and in the
+    text that shows, outside every INERT element, every element the install gate reads as hiding and a details
+    without open (directly inside one, or inside a child other than its first summary)."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
-    joined = label_text("".join(parsed.text))
-    return sum(joined.count(label) for label in LABELS)
+    shown = "".join(read for read, (_, around) in zip(parsed.text, parsed.text_at) if shows(parsed, around))
+    return tuple(sum(label_text(joined).count(label_text(label)) for label in LABELS)
+                 for joined in ("".join(parsed.text), shown))
+
+
+def shows(parsed: Placement, around: list[tuple[int, int]]) -> bool:
+    """Whether text whose open elements start at around, outermost first, shows: no INERT element, no element the
+    install gate reads as hiding and no details without open (directly, or by a child other than its first summary)
+    holds it."""
+    return not (any(parsed.starts[at][0] in INERT or IS_HIDING(*parsed.starts[at][:2]) for at in around)
+                or closed_details(parsed, around)
+                or (around and parsed.starts[around[-1]][0] == "details"
+                    and "open" not in parsed.starts[around[-1]][1]))
 
 
 # The install gate as the generator reads it, by its own install_gate(), from the same source bytes and never from
@@ -423,14 +481,16 @@ except LOADED.Unreadable as error:
     print(f"test-build-site: failures:\n  - the install gate, read by the generator's install_gate(): {error}")
     raise SystemExit(1)
 IS_HIDING = GATE.is_hiding_element
-# The selectors whose text a browser shows in upper case, read from the stylesheets themselves, apart from the
-# generator's UPPERCASE_SELECTORS (check_uppercase_selectors() compares the 2). A stylesheet that cannot be read fails
-# this test with exit 1, rather than stopping it with a traceback.
+# The selectors of the rules that set text-transform to uppercase and to none, read from the stylesheets themselves,
+# apart from the generator's UPPERCASE_SELECTORS and RESET_SELECTORS (check_uppercase_selectors() compares them). A
+# stylesheet that cannot be read fails this test with exit 1, rather than stopping it with a traceback.
 try:
-    UPPERCASE = uppercase_selectors([path.read_text(encoding="utf-8") for path in STYLESHEETS])
+    RULES = transform_rules([path.read_text(encoding="utf-8") for path in STYLESHEETS])[0]
 except (OSError, UnicodeError) as error:
     print(f"test-build-site: failures:\n  - the stylesheets every page loads: {error}")
     raise SystemExit(1)
+UPPERCASE = [selector for selector, value in RULES if value == "uppercase"]
+RESET = [selector for selector, value in RULES if value == "none"]
 
 
 def closed_details(parsed: Placement, path: list[tuple[int, int]]) -> bool:
@@ -450,15 +510,15 @@ def closed_details(parsed: Placement, path: list[tuple[int, int]]) -> bool:
 def about_problems(page: str, text: str, base: str) -> list[str]:
     """The About block of specification 7.24, which the generator writes: on the landing page, exactly 1 p.value,
     with no INERT ancestor, not hidden by itself or by an ancestor as tools/check-install-page.py reads hiding (its
-    is_hiding_element(), and a details without open outside its first summary child), holding text that shows (its
-    text outside every INERT element, every element that gate reads as hiding and a details without open, read by
-    label_text(), is not empty), no dot span followed directly
+    is_hiding_element(), and a details without open outside its first summary child), holding no element but an a
+    with no attribute but href and no character but the ordinary space and those of VALUE_CATEGORIES, with at least
+    1 letter, no dot span followed directly
     by a link (the 1.6.1 markup, refused apart from about_line()), and the whole About block once, byte for byte,
     starting where the end tag of that paragraph's region (the div.region nearest it among its open elements) ends,
     the region and the block each with exactly the ancestors ANCESTORS, its row the only parsed element whose classes
-    include about, and the page's text carrying LABELS once, inside the block (labels(): with the block's label
-    taken out, none; in any letter case inside an element UPPERCASE matches); on any other page, no such element,
-    with an INERT ancestor or not, and no LABELS in its text.
+    include about, and the page's text, and its text that shows, each carrying LABELS once, inside the block
+    (labels(): with the block's label taken out, none; in any letter case where shown_upper() reads upper case); on
+    any other page, no such element, with an INERT ancestor or not, and no LABELS in its text.
     It does not model a stylesheet beyond the install gate's HIDING_CLASSES, or a hidden attribute that HTML5 copies
     from a stray body or html start tag onto the page's body or html element. The generator refuses such a start tag
     in a page source, and any page source outside the page source grammar, on which its parser and a browser read
@@ -472,7 +532,7 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     if page != "index.html":
         if abouts:
             return [f"{page} carries About markup, which only the landing page's About block may"]
-        if labels(text):
+        if any(labels(text)):
             return [f"{page} carries the About block's label in its text; only the landing page's About block may"]
         return []
     values = [at for at, (tag, attrs, *_) in parsed.starts.items()
@@ -484,14 +544,15 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     path = [*parsed.lineage[values[0]], values[0]]
     if any(IS_HIDING(*parsed.starts[at][:2]) for at in path) or closed_details(parsed, path):
         return [f"{page} carries its value paragraph hidden, by itself or by an ancestor (specification 7.24)"]
-    # Its text shows outside every INERT element, every element the install gate reads as hiding, and a details
-    # without open: directly inside one, or inside a child other than its first summary.
-    shown = "".join(data for data, around in parsed.text_at if values[0] in around and not any(
-        parsed.starts[at][0] in INERT or IS_HIDING(*parsed.starts[at][:2]) for at in around)
-        and not closed_details(parsed, around)
-        and not (parsed.starts[around[-1]][0] == "details" and "open" not in parsed.starts[around[-1]][1]))
-    if not label_text(shown):
-        return [f"{page} carries its value paragraph with no text shown (specification 7.24)"]
+    # Its content is pinned: no element but an a with no attribute but href, and text of VALUE_CATEGORIES and the
+    # ordinary space only, with at least 1 letter.
+    inside = [start for at, start in parsed.starts.items() if values[0] in parsed.lineage[at]]
+    text_in = "".join(data for data, around in parsed.text_at if values[0] in around)
+    if (any(tag != "a" or set(attrs) - {"href"} for tag, attrs, *_ in inside)
+            or any(character != " " and unicodedata.category(character) not in VALUE_CATEGORIES
+                   for character in text_in)
+            or not any(unicodedata.category(character) in ("Lu", "Ll", "Lt") for character in text_in)):
+        return [f"{page} carries its value paragraph with markup or text outside its pin (specification 7.24)"]
     if "&middot;</span><a" in text:
         return [f"{page} carries an About row dot with no space after it, the 1.6.1 markup (specification 7.24)"]
     block = about_block(base)
@@ -508,7 +569,7 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
                 "div.wrap (specification 7.24)"]
     if len(abouts) != 1:
         return [f"{page} carries About markup outside its About block (specification 7.24)"]
-    if labels(text) != 1 or labels(text.replace(block, block.replace(f">{LABEL}<", "><", 1), 1)):
+    if labels(text) != (1, 1) or any(labels(text.replace(block, block.replace(f">{LABEL}<", "><", 1), 1))):
         return [f"{page} carries the About block's label in its text other than once, inside its About block "
                 "(specification 7.24)"]
     return []
@@ -687,8 +748,11 @@ LABEL_IGNORED = ("\u2061", "\u2063", "\u180e", "\U000e0020", "\u034f", "\ufe0f")
 VALUE = '<p class="value">'
 VALUE_REGION = '<div class="region" id="what-it-fixes">'
 VALUE_END = "outside its aim.</p></div></div>"
-# The value paragraph holds no text that shows, outside every hidden element (since row 145, round 4).
-VALUE_TEXT_RULE = "the value paragraph holds no text a browser shows"
+# The value paragraph holds markup or text outside its pin (since row 145, round 5): it may hold no element but an a
+# with no attribute but href, and no character but the ordinary space and those of VALUE_CATEGORIES (letters, decimal
+# digits and punctuation, apart from the generator's own list), with at least 1 letter.
+VALUE_PIN_RULE = "the value paragraph holds markup or text outside its pin"
+VALUE_CATEGORIES = {"Lu", "Ll", "Lt", "Nd", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po"}
 # Text that a browser shows as nothing: U+200B, a soft hyphen, U+2060, U+034F, a space, U+00A0 and U+200D.
 INVISIBLE = "&#8203;&shy;\u2060\u034f &nbsp;\u200d"
 # The label in mixed case, which a stylesheet that sets text-transform: uppercase shows as the label in upper case.
@@ -951,27 +1015,54 @@ SOURCE_REFUSALS = [
     ("the label in a paragraph in home.html", after_value(f"<p>{LABEL}</p>"), LABEL_RULE),
     ("a label region without the about class in home.html",
         after_value(f'<div class="region"><p class="lbl">{LABEL}</p></div>'), LABEL_RULE),
-    # Built with exit 0 at 1f8e98b: the stylesheets show the text of a p.lbl and a th in upper case, so in an
-    # element that UPPERCASE_SELECTORS matches, or inside one, the label counts in any letter case. The .lbl.file
-    # rule sets text-transform back to none; the generator does not read it, which refuses more than a browser shows.
+    # Built with exit 0 at 1f8e98b: the stylesheets show the text of a p.lbl and a th in upper case, so where an
+    # uppercase rule applies (uppercase_here()), the label counts in any letter case; that includes an uppercase rule
+    # inside an element a reset rule (such as .lbl.file) sets back to none.
     ("the label in mixed case in a p.lbl after the value region in home.html",
         after_value(f'<p class="lbl">{MIXED_LABEL}</p>'), LABEL_RULE),
     ("the label in mixed case in a p.lbl", inject(f'<p class="lbl">{MIXED_LABEL}</p>'), LABEL_RULE),
     ("the label in mixed case in a th", inject(LABEL_TH), LABEL_RULE),
-    ("the label in mixed case in a p.lbl.file", inject(f'<p class="lbl file">{MIXED_LABEL}</p>'), LABEL_RULE),
     ("the label in mixed case split by a span inside a p.lbl",
         inject('<p class="lbl">About <span>This</span> Project</p>'), LABEL_RULE),
     ("the label in lower case in a link inside .chips",
         inject('<p class="chips"><a href="{{base}}install/">about this project</a></p>'), LABEL_RULE),
-    # Built with exit 0 at 1f8e98b: the value paragraph showed nothing, its whole content hidden or invisible.
+    ("the label in mixed case in a span.tag inside a p.lbl.file",
+        inject(f'<p class="lbl file"><span class="tag">{MIXED_LABEL}</span></p>'), LABEL_RULE),
+    # .note > .label and .lbl.file tie in specificity (2 classes each); a tie reads as upper case.
+    ("the label in mixed case in a p.lbl.file.label inside a div.note",
+        inject(f'<div class="note"><p class="lbl file label">{MIXED_LABEL}</p></div>'), LABEL_RULE),
+    ("the label in mixed case in a span.lbl inside a table.matrix tbody th", inject(
+        f'<table class="matrix"><caption>c</caption><tbody><tr><th><span class="lbl">{MIXED_LABEL}</span></th></tr>'
+        "</tbody></table>"), LABEL_RULE),
+    # Built with exit 0 at 875b35f: a hidden element inside the label, which a browser does not show, split it; and
+    # U+2800 between its words, which a browser shows as a blank, kept it from counting.
+    ("the label in mixed case split by a hidden span inside a p.lbl after the value region in home.html",
+        after_value('<p class="lbl">About <span hidden>x</span>This Project</p>'), LABEL_RULE),
+    ("the label split by a hidden span in prose", inject("<p>About <span hidden>x</span>this project</p>"), LABEL_RULE),
+    ("the label split by an aria-hidden span in prose",
+        inject('<p>About <span aria-hidden="true">x</span>this project</p>'), LABEL_RULE),
+    ("the label split by a noscript in prose", inject("<p>About <noscript>x</noscript>this project</p>"), LABEL_RULE),
+    ("the label with U+2800 between its words", inject("<p>About&#x2800;this project</p>"), LABEL_RULE),
+    # Built with exit 0 at 1f8e98b (the hidden and invisible forms) or 875b35f (U+2800): the value paragraph showed
+    # nothing. The pin refuses any element in it but an a with only href, and any character outside its list.
     ("the value paragraph's whole content in a hidden span", wrap_value_content("<span hidden>", "</span>"),
-        VALUE_TEXT_RULE),
+        VALUE_PIN_RULE),
     ("the value paragraph's whole content in an aria-hidden span",
-        wrap_value_content('<span aria-hidden="true">', "</span>"), VALUE_TEXT_RULE),
+        wrap_value_content('<span aria-hidden="true">', "</span>"), VALUE_PIN_RULE),
     ("the value paragraph's whole content in a span with the vh class",
-        wrap_value_content('<span class="vh">', "</span>"), VALUE_TEXT_RULE),
-    ("the value paragraph holding only invisible characters", value_content(INVISIBLE), VALUE_TEXT_RULE),
-    ("an empty value paragraph", value_content(""), VALUE_TEXT_RULE),
+        wrap_value_content('<span class="vh">', "</span>"), VALUE_PIN_RULE),
+    ("the value paragraph holding only invisible characters", value_content(INVISIBLE), VALUE_PIN_RULE),
+    ("an empty value paragraph", value_content(""), VALUE_PIN_RULE),
+    ("the value paragraph holding only U+2800", value_content("&#x2800;"), VALUE_PIN_RULE),
+    ("the value paragraph with U+2800 before a hidden span around its whole content",
+        wrap_value_content("&#x2800;<span hidden>", "</span>"), VALUE_PIN_RULE),
+    ("one word of the value paragraph outside a hidden span", wrap_value_content("Rules <span hidden>", "</span>"),
+        VALUE_PIN_RULE),
+    ("an em in the value paragraph", value_content("Rules <em>apply</em>"), VALUE_PIN_RULE),
+    ("a class attribute on the value paragraph's link", lambda root: edit(
+        root, HOME, '<a href="{{base}}license/">free', '<a href="{{base}}license/" class="x">free'), VALUE_PIN_RULE),
+    ("a no-break space in the value paragraph", value_content("Rules&nbsp;apply"), VALUE_PIN_RULE),
+    ("a value paragraph of digits only", value_content("2026"), VALUE_PIN_RULE),
 ] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
      for character in LABEL_IGNORED] + [
     # A page source carries no dialog (SOURCE_ELEMENTS) and no inert or popover (SOURCE_ATTRIBUTES);
@@ -982,8 +1073,8 @@ SOURCE_REFUSALS = [
 
 
 # Page sources that build: inside the grammar, a comment or an attribute value names math or carries the About
-# block's label, a noscript holds a plain paragraph, prose in lower or mixed case names the project, or 1 word of the
-# value paragraph shows.
+# block's label, a noscript holds a plain paragraph, prose in lower or mixed case names the project, the label in
+# mixed case sits where a reset rule sets text-transform back to none, or the value paragraph holds 1 word or its link.
 SOURCE_PASSES = [
     ("a comment that names math", inject("<!-- a math element, with a single - between words -->")),
     ("an attribute value that names <math> by character references",
@@ -1003,7 +1094,17 @@ SOURCE_PASSES = [
     ("mixed-case prose about this project", inject(f"<p>Send questions {MIXED_LABEL} to the maintainer.</p>")),
     ("the label in mixed case in a link outside .chips and .picker",
         inject(f'<p><a href="{{{{base}}}}install/">{MIXED_LABEL}</a></p>')),
-    ("one word of the value paragraph outside a hidden span", wrap_value_content("Rules <span hidden>", "</span>")),
+    # A reset rule of higher specificity sets text-transform back to none, so the label in mixed case does not count.
+    ("the label in mixed case in a p.lbl.file", inject(f'<p class="lbl file">{MIXED_LABEL}</p>')),
+    ("the label in mixed case in a table.matrix tbody th", inject(
+        f'<table class="matrix"><caption>c</caption><tbody><tr><th>{MIXED_LABEL}</th></tr></tbody></table>')),
+    ("the label in mixed case in a span.org inside a table.matrix th", inject(
+        f'<table class="matrix"><caption>c</caption><thead><tr><th>x <span class="org">{MIXED_LABEL}</span></th></tr>'
+        "</thead></table>")),
+    ("the label in mixed case in a span.count inside a p.reg-cap",
+        inject(f'<p class="reg-cap">x <span class="count">{MIXED_LABEL}</span></p>')),
+    ("a value paragraph of 1 word", value_content("Rules")),
+    ("a value paragraph of only its link", value_content('<a href="{{base}}license/">Licence</a>')),
     ("the label in a comment", inject(f"<!-- {LABEL} -->")),
     ("the label in an attribute value", inject(f'<p aria-label="{LABEL}">x</p>')),
     ("an attribute of SOURCE_ATTRIBUTES in upper case", inject('<p CLASS="lead" ARIA-LABEL="x">y</p>')),
@@ -1268,12 +1369,12 @@ def check_about_block(failures: list[str]) -> int:
     hidden by itself or by an ancestor as tools/check-install-page.py reads hiding; the block once, byte for byte,
     directly after the end tag of that paragraph's region; the region and the block each with exactly the ancestors
     html, body, main and div.wrap; no other element whose classes include about), by the
-    label's rule (the page's text carries the block's label once, inside the block, in any letter case inside an
-    element the stylesheets show in upper case) or by the value text rule (the value paragraph holds text that shows),
-    and the build test's helper judges each case as the generator should. The label in an attribute value, a comment
-    or prose in lower or mixed case passes both, and so does each wrapper of SHOWING_WRAPPERS around the value
-    paragraph, a value paragraph with 1 word outside a hidden span, and one whose content is in the first summary of
-    a details without open."""
+    label's rule (the page's text, and its text that shows, carry the block's label once, inside the block, in any
+    letter case where the stylesheets show text in upper case) or by the value paragraph's pin (no element but an a
+    with only href, no character outside its list, at least 1 letter), and the build test's helper judges each case
+    as the generator should. The label in an attribute value, a comment, prose in lower or mixed case, or a p.lbl.file
+    in mixed case passes both, and so does each wrapper of SHOWING_WRAPPERS around the value paragraph and a value
+    paragraph of 1 word."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["path"] == "")
@@ -1282,7 +1383,7 @@ def check_about_block(failures: list[str]) -> int:
     hero, value = '<div class="hero-text">', VALUE_REGION
     decoy = '<div class="region"><p class="value">x</p></div>'
     block_rule, label_rule = "the About block must appear exactly once", "the About block's label must appear"
-    value_rule = VALUE_TEXT_RULE
+    value_rule = VALUE_PIN_RULE
     # The end of the value paragraph's text and its end tag, and its whole content up to that end tag.
     end, content = "outside its aim.</p>", text[text.index(VALUE) + len(VALUE):text.index("</p>", text.index(VALUE))]
 
@@ -1351,7 +1452,17 @@ def check_about_block(failures: list[str]) -> int:
         ("a second label in mixed case in a th after the block", [(block, block + LABEL_TH)], label_rule),
         ("mixed-case prose about this project",
             [(hero, hero + f"<p>Send questions {MIXED_LABEL} to the maintainer.</p>")], None),
-        # The value paragraph holds text that shows: not all of it in an element that hides, or invisible.
+        # A hidden element inside the label does not split it (the text that shows carries it), and where a reset
+        # rule of higher specificity sets text-transform back to none, the label in mixed case does not count.
+        ("a second label in mixed case split by a hidden span in a p.lbl after the block",
+            [(block, block + '<p class="lbl">About <span hidden>x</span>This Project</p>')], label_rule),
+        ("a second label in mixed case in a span.tag inside a p.lbl.file after the block",
+            [(block, block + f'<p class="lbl file"><span class="tag">{MIXED_LABEL}</span></p>')], label_rule),
+        ("the label in mixed case in a p.lbl.file after the block",
+            [(block, block + f'<p class="lbl file">{MIXED_LABEL}</p>')], None),
+        # The value paragraph holds no element but an a with only href, and no character outside its list. A details
+        # in it is refused by the pin (and in a page source by the tree rules first), so whether a browser shows the
+        # first summary of a closed one there no longer arises.
         ("the value paragraph's content in a hidden span", [(VALUE, VALUE + "<span hidden>"), (end, end_in("</span>"))],
             value_rule),
         ("the value paragraph's content in an aria-hidden span",
@@ -1362,11 +1473,13 @@ def check_about_block(failures: list[str]) -> int:
             [(VALUE, VALUE + "<details><summary></summary>"), (end, end_in("</details>"))], value_rule),
         ("the value paragraph's content directly in a details without open",
             [(VALUE, VALUE + "<details>"), (end, end_in("</details>"))], value_rule),
-        ("the value paragraph holding only invisible characters", [(VALUE + content, VALUE + INVISIBLE)], value_rule),
-        ("one word of the value paragraph outside a hidden span",
-            [(VALUE, VALUE + "Rules <span hidden>"), (end, end_in("</span>"))], None),
         ("the value paragraph's content in the first summary of a details without open",
-            [(VALUE, VALUE + "<details><summary>"), (end, end_in("</summary></details>"))], None),
+            [(VALUE, VALUE + "<details><summary>"), (end, end_in("</summary></details>"))], value_rule),
+        ("the value paragraph holding only invisible characters", [(VALUE + content, VALUE + INVISIBLE)], value_rule),
+        ("the value paragraph holding only U+2800", [(VALUE + content, VALUE + "&#x2800;")], value_rule),
+        ("one word of the value paragraph outside a hidden span",
+            [(VALUE, VALUE + "Rules <span hidden>"), (end, end_in("</span>"))], value_rule),
+        ("a value paragraph of 1 word", [(VALUE + content, VALUE + "Rules")], None),
     ] + [
         (f"the value paragraph inside {name}",
          [(VALUE, start + VALUE), (VALUE_END, VALUE_END.replace("</p>", "</p>" + end, 1))], rule)
@@ -1393,27 +1506,58 @@ def check_about_block(failures: list[str]) -> int:
 
 
 def check_uppercase_selectors(failures: list[str]) -> int:
-    """The generator's UPPERCASE_SELECTORS names exactly the selectors of the text-transform: uppercase rules of the
-    stylesheets every page loads, read here from those stylesheets, each a selector that selector_matches() reads;
-    uppercase_coverage() refuses the list without any 1 of them, and the stylesheets with 1 more such rule, at the top
-    level or inside @media, so a coverage check that passes an incomplete list fails here."""
-    listed = list(LOADED.UPPERCASE_SELECTORS)
+    """The generator's UPPERCASE_SELECTORS and RESET_SELECTORS name exactly the selectors of the text-transform:
+    uppercase and text-transform: none rules of the stylesheets every page loads, read here from those stylesheets,
+    each a selector that selector_matches() reads; uppercase_coverage() refuses either list without any 1 of its
+    selectors or with 1 that no such rule names, the stylesheets with 1 more such rule, at the top level or inside
+    @media, and each text-transform that transform_rules() does not read, so a coverage check that passes an
+    incomplete or stale list, or a stylesheet it cannot read, fails here. Every Default_Ignorable_Code_Point falls
+    outside the generator's VALUE_CATEGORIES."""
+    listed, resets = list(LOADED.UPPERCASE_SELECTORS), list(LOADED.RESET_SELECTORS)
     sheets = [path.read_text(encoding="utf-8") for path in STYLESHEETS]
-    cases = [("the generator's list and the stylesheets", listed, sheets, None)] + [
-        (f"the list without {selector!r}", [other for other in listed if other != selector], sheets, selector)
-        for selector in listed] + [
-        ("1 more rule", listed, sheets + [".added  >  b, .lbl { color: red; TEXT-TRANSFORM: UPPERCASE; }"],
-            ".added > b"),
-        ("1 more rule inside @media", listed,
-            sheets + ["@media print { /* x */ .added { text-transform: uppercase } }"], ".added"),
+    unread = "which the generator does not read"
+    # (name, the 2 lists, the stylesheet texts, the text of the problem expected, or None for none).
+    cases = [("the generator's lists and the stylesheets", listed, resets, sheets, None)] + [
+        (f"the list without {selector!r}", [other for other in listed if other != selector], resets, sheets,
+            f"names {selector!r}, which UPPERCASE_SELECTORS lacks") for selector in listed] + [
+        (f"the reset list without {selector!r}", listed, [other for other in resets if other != selector], sheets,
+            f"names {selector!r}, which RESET_SELECTORS lacks") for selector in resets] + [
+        ("1 more rule", listed, resets, sheets + [".added  >  b, .lbl { color: red; TEXT-TRANSFORM: UPPERCASE; }"],
+            "names '.added > b', which UPPERCASE_SELECTORS lacks"),
+        ("1 more rule inside @media", listed, resets,
+            sheets + ["@media print { /* x */ .added { text-transform: uppercase } }"],
+            "names '.added', which UPPERCASE_SELECTORS lacks"),
+        ("1 more reset rule", listed, resets, sheets + [".added .x { text-transform: none }"],
+            "names '.added .x', which RESET_SELECTORS lacks"),
+        ("a stale selector in the list", listed + [".stale"], resets, sheets, "UPPERCASE_SELECTORS names '.stale'"),
+        ("a stale selector in the reset list", listed, resets + [".stale"], sheets, "RESET_SELECTORS names '.stale'"),
+        ("a full-width uppercase rule", listed, resets, sheets + [".added { text-transform: full-width uppercase }"],
+            f"full-width uppercase in '.added', {unread}"),
+        ("a text-transform from a custom property", listed, resets, sheets + [".added { text-transform: var(--tt) }"],
+            f"var(--tt) in '.added', {unread}"),
+        ("an important uppercase rule", listed, resets, sheets + [".added { text-transform: uppercase !important }"],
+            f"uppercase !important in '.added', {unread}"),
+        # A declaration before a nested rule is read as part of the nested rule's selector, so only the nesting
+        # problem names it.
+        ("a nested rule", listed, resets, sheets + [".added { text-transform: uppercase; .x { color: red } }"],
+            f"a rule nested in the style rule '.added', {unread}"),
+        ("a reset rule inside @media", listed, resets, sheets + ["@media print { .added { text-transform: none } }"],
+            f"none in '.added' inside '@media print', {unread}"),
+        ("an uppercase rule inside @layer", listed, resets,
+            sheets + ["@layer x { .added { text-transform: uppercase } }"],
+            f"uppercase in '.added' inside '@layer x', {unread}"),
     ]
-    for name, given, texts, missing in cases:
-        problems = uppercase_coverage(given, texts)
-        if missing is None and problems:
+    for name, given, given_resets, texts, expected in cases:
+        problems = uppercase_coverage(given, given_resets, texts)
+        if expected is None and problems:
             failures.append(f"uppercase selectors, {name}: {problems}")
-        elif missing is not None and not any(repr(missing) in problem for problem in problems):
-            failures.append(f"uppercase selectors, {name}: {missing!r} not reported missing ({problems})")
-    return len(cases)
+        elif expected is not None and not any(expected in problem for problem in problems):
+            failures.append(f"uppercase selectors, {name}: {expected!r} not reported ({problems})")
+    ignorable = [code for first, last in LOADED.DEFAULT_IGNORABLE for code in range(first, last + 1)
+                 if unicodedata.category(chr(code)) in LOADED.VALUE_CATEGORIES]
+    if ignorable:
+        failures.append(f"VALUE_CATEGORIES admits Default_Ignorable_Code_Points: {[f'U+{c:04X}' for c in ignorable]}")
+    return len(cases) + 1
 
 
 def check_about_spacing(failures: list[str]) -> int:
