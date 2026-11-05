@@ -575,6 +575,16 @@ GRAMMAR_RULE = "a page source holds only markup on which Python's parser and a b
 # it, while the parser read it inside.
 ELEMENT_RULE = "a page source carries only the elements of SOURCE_ELEMENTS"
 NOSCRIPT_RULE = "a <noscript> start tag inside a noscript"
+# The generator's page source tree rules: a summary only as the first element child of a details, since a browser
+# moves an earlier summary inside a p or a table in a closed details out to be the details' first summary, hiding the
+# value paragraph in the next one; and no start tag or text at which a browser ends an open p, heading, li, a or button,
+# or that it moves out of a table part or ignores outside one, where the parser reads it as written.
+SUMMARY_RULE = "a summary is allowed only as the first element child of a details"
+P_RULE = "start tag inside an open p at"
+HEADING_RULE = "a browser ends the heading there"
+LI_RULE = "a <li> start tag inside an open li"
+TABLE_RULE = "a table holds only caption, thead and tbody"
+TABLE_TEXT_RULE = "text other than whitespace directly inside a"
 # The About block's label in a page source's text: the generator writes it, in the block, on the landing page only.
 LABEL_RULE = "the About block's label in the page source's text"
 # Characters the label rule deletes beyond the install gate's ZERO_WIDTH and U+0000: the format characters (Cf)
@@ -729,6 +739,31 @@ SOURCE_REFUSALS = [
         "<details><summary><select><summary><input></summary></select>", "</summary></details>"), ELEMENT_RULE),
     ("an input in a page source", inject('<p><input type="text"></p>'), ELEMENT_RULE),
     ("a select in upper case in a page source", inject("<SELECT></SELECT>"), ELEMENT_RULE),
+    # Each built with exit 0 at a5ab13a: a browser reads the earlier summary, moved out of the p or the table, as the
+    # closed details' first summary; and, in the third, ends the outer li and the div at the inner li, so that
+    # </div> ends the div around the open details and </summary> ends the outer summary, before the paragraph.
+    ("the value paragraph after a summary inside a p in a closed details", wrap_value(
+        "<details><p><summary>x</summary></p><summary>", "</summary></details>"), SUMMARY_RULE),
+    ("the value paragraph after a summary inside a table in a closed details", wrap_value(
+        "<details><table><summary>x</summary></table><summary>", "</summary></details>"), SUMMARY_RULE),
+    ("the value paragraph after an li inside an li in a summary", wrap_value(
+        "<details><summary><div><details open><summary><li><div><li></li></div></li></summary>",
+        "</details></div></summary></details>"), LI_RULE),
+    ("a summary after a div in a details", inject("<details><div>x</div><summary>y</summary></details>"),
+        SUMMARY_RULE),
+    ("a summary outside a details", inject("<div><summary>x</summary></div>"), SUMMARY_RULE),
+    ("a summary inside a summary", inject("<details><summary>x<summary>y</summary></summary></details>"),
+        SUMMARY_RULE),
+    ("a div inside a p", inject("<p>x<div>y</div></p>"), P_RULE),
+    ("a table inside a span in a p", inject("<p><span><table><tbody></tbody></table></span></p>"), P_RULE),
+    ("an h3 directly inside an h2", inject("<h2>x<h3>y</h3></h2>"), HEADING_RULE),
+    ("an a inside an a", inject("<p><a>x<a>y</a></a></p>"), "a <a> start tag inside an open a"),
+    ("a button inside a button", inject('<p><button type="button">x<button type="button">y</button></button></p>'),
+        "a <button> start tag inside an open button"),
+    ("a div directly inside a table", inject("<table><div>x</div></table>"), TABLE_RULE),
+    ("a tr directly inside a table", inject("<table><tr><td>x</td></tr></table>"), TABLE_RULE),
+    ("a td outside a table", inject("<div><td>x</td></div>"), TABLE_RULE),
+    ("text directly inside a tr", inject("<table><tbody><tr>x<td>y</td></tr></tbody></table>"), TABLE_TEXT_RULE),
     ("the value paragraph inside a dialog with open", wrap_value("<dialog open>", "</dialog>"), ELEMENT_RULE),
     ("a comment that holds <math>", inject("<!-- a <math> element -->"), GRAMMAR_RULE),
     ("a comment that holds --", inject("<!-- a -- b -->"), GRAMMAR_RULE),
@@ -779,6 +814,14 @@ SOURCE_PASSES = [
     ("a single quote in a double-quoted attribute value", inject("<p title=\"the project's aim\">x</p>")),
     ("a noscript around a plain paragraph", inject("<noscript><p>x</p></noscript>")),
     ("a noscript after a noscript", inject("<noscript><p>x</p></noscript><noscript><p>y</p></noscript>")),
+    # Inside the page source tree rules: text before a details' first summary, a div in a button in a p, a list in an
+    # li, and a table whose parts hold only their own children, with whitespace between them.
+    ("a summary after text in a details", inject("<details>x <summary>y</summary><p>z</p></details>")),
+    ("a div inside a button inside a p", inject('<p><button type="button"><div>x</div></button></p>')),
+    ("a list inside an li", inject("<ul><li>x<ul><li>y</li></ul></li></ul>")),
+    ("a table with a caption, a thead and a tbody", inject(
+        "<table>\n<caption>c</caption>\n<thead><tr><th>h</th></tr></thead>\n<tbody><tr><td>d</td></tr></tbody>\n"
+        "</table>")),
     ("lower-case prose about this project", inject("<p>Send questions about this project to the maintainer.</p>")),
     ("the label in a comment", inject(f"<!-- {LABEL} -->")),
     ("the label in an attribute value", inject(f'<p title="{LABEL}">x</p>')),
@@ -1397,8 +1440,8 @@ def check_page_rules(failures: list[str]) -> int:
 def check_source_positions(failures: list[str]) -> int:
     """Each source refusal names where the refused markup starts in the source as the generator reads it, with its
     tokens and rail written in (the line counted from 1, the column from 0, as getpos() counts them): called directly
-    on 2 lines for each kind, and once through a build, where a < in text on line 11 of instructions.html is reported
-    on a later line, after the lines that {{instructions}} writes in."""
+    on 2 lines for each kind (through with_about() for the tree rules), and once through a build, where a < in text on
+    line 11 of instructions.html is reported on a later line, after the lines that {{instructions}} writes in."""
     cases = [
         ("a < in text", "<p>x</p>\n<p>1 < 2</p>"),
         ("a body start tag", "<p>x</p>\n<p>1 <body hidden></p>"),
@@ -1410,6 +1453,18 @@ def check_source_positions(failures: list[str]) -> int:
     where = "at line 2, column 5 of the source with its tokens and rail written in"
     for name, content in cases:
         problem = LOADED.source_problem(content) or ""
+        if where not in problem:
+            failures.append(f"source position '{name}': {where!r} is not in the refusal ({problem[:200] or 'none'})")
+    tree_cases = [
+        ("a summary inside a p in a details", "<details><p>x</p>\n<p>1 <summary></summary></p></details>"),
+        ("a div inside a p", "<p>x</p>\n<p>1 <div></div></p>"),
+    ]
+    for name, content in tree_cases:
+        try:
+            LOADED.with_about(content, {"source": "case.html", "path": "case/"}, "/")
+            problem = ""
+        except LOADED.BuildError as error:
+            problem = str(error)
         if where not in problem:
             failures.append(f"source position '{name}': {where!r} is not in the refusal ({problem[:200] or 'none'})")
     with tempfile.TemporaryDirectory() as scratch:
@@ -1424,7 +1479,7 @@ def check_source_positions(failures: list[str]) -> int:
         if result.returncode != 1 or reported is None or int(reported.group(1)) <= 11:
             failures.append(f"source position 'a < in text on line 11 of instructions.html': exit {result.returncode}, "
                             f"expected 1 with a later line ({result.stderr.strip()[:200]})")
-    return len(cases) + 1
+    return len(cases) + len(tree_cases) + 1
 
 
 def check_clean_build(failures: list[str]) -> int:

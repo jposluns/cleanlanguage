@@ -72,7 +72,7 @@ that is not ``YYYY-MM-DD``; a page without exactly 1 light and dark switch
 each of which ``scheme.js`` wires and shows), without exactly 1 ``scheme.js``
 script tag before the first stylesheet, it and every stylesheet inside
 ``<head>``, or with any other ``<svg``; a page source, the landing page's
-included, outside the page source grammar below; a page source with an
+included, outside the page source grammar or tree rules below; a source with an
 ``html``, ``head``, ``body`` or ``frameset`` start tag (in any letter case or
 self-closing), since the generator writes the page's html, head and body:
 HTML5 copies a stray html or body start tag's attributes onto the page's own,
@@ -223,8 +223,56 @@ keeps out ``select`` and ``input``: under legacy select parsing, a browser
 ends an open ``select`` at a nested ``select`` or an ``input`` and places what
 follows outside it, where the parser reads it as still inside, which moved
 the value paragraph out of the summary of a closed details. The list settles
-which elements a source may carry, not how a browser builds the tree from
-them; an element is added only after a review of its parsing rules.
+which elements a source may carry; the tree rules below settle where. An
+element is added only after a review of its parsing rules and of those rules.
+
+Page source tree
+----------------
+
+The parser reads tags as they nest, and a browser's tree builder (the HTML
+Standard's tree-construction rules) closes or moves some of the admitted
+elements where they are written. So, as the parser reads the open elements
+(``misnested()``), a page source opens a ``summary`` only as the first element
+child of a ``details``, with no element before it there, so the parser and a
+browser agree on which summary a details without open shows; and refuses,
+with a message naming where it starts:
+
+- a start tag of ``P_CLOSERS`` (``details``, ``div``, ``h1``, ``h2``, ``h3``,
+  ``li``, ``nav``, ``ol``, ``p``, ``pre``, ``section``, ``summary``,
+  ``table``, ``ul``) inside an open ``p`` with no ``button``, ``caption``,
+  ``table``, ``td`` or ``th`` between them, where a browser ends the ``p``;
+- a heading start tag directly inside an open heading, which a browser ends;
+- an ``li`` start tag inside an open ``li`` with only ``LI_THROUGH``
+  elements between them, where a browser ends the open ``li`` and what it
+  holds;
+- an ``a`` inside an open ``a``, or a ``button`` inside an open ``button``,
+  where a browser ends the open one;
+- in a ``table`` any child other than ``caption``, ``thead`` and ``tbody``,
+  in a ``thead`` or ``tbody`` any child other than ``tr``, in a ``tr`` any
+  child other than ``td`` and ``th`` (``TABLE_CHILDREN``), and text other
+  than whitespace directly in any of them, which a browser moves to before
+  the table (foster parenting), or inserts a ``tbody`` around; and a table
+  part (``TABLE_PARTS``) anywhere else, whose start tag a browser ignores.
+
+Why that suffices (an argument from the standard's rules, not checked in a
+browser): with these refused, the parser's open elements and a browser's are
+the same at every token of a balanced source, for the admitted elements. A
+start tag of ``P_CLOSERS`` finds no ``p`` to end, a heading or an ``li`` none
+to end, an ``a`` or a ``button`` no open one, and a table part's child is one
+the browser keeps where written; so each start tag inserts its element as a
+child of the same current element, and each end tag, which the parser
+requires to close its current element, closes the same one in a browser. No
+element is then closed early, so no formatting element is left to be
+reopened with its attributes elsewhere. The two read the same tree, and so
+the same ancestors, hiding attributes and first summary for every element.
+The tree rules read the source alone, which the generator writes inside
+``main`` and a ``div`` with no ``p``, ``li``, heading, ``a``, ``button`` or
+table part open around it, on a page with a DOCTYPE, so no quirks-mode rule
+applies. ``noscript`` is the exception the grammar names: a browser with
+scripting on reads its content as text, which the rules read as not
+rendered. Two differences remain that place no element elsewhere and are not
+modelled: a browser drops a line feed directly after a ``pre`` start tag, and
+reads ``</br>`` as a ``br`` start tag, where the parser ignores it.
 
 Decoding is left to the parser. Python 3.14.4, which ``.python-version``
 pins, leaves a legacy named character reference without ``;`` undecoded in
@@ -328,6 +376,15 @@ DOCUMENT_TAGS = ("html", "head", "body", "frameset")
 SOURCE_ELEMENTS = {"a", "button", "caption", "code", "details", "div", "em", "h1", "h2", "h3", "img", "li", "nav",
                    "noscript", "ol", "p", "pre", "section", "small", "span", "strong", "summary", "table", "tbody", "td",
                    "th", "thead", "tr", "ul"}
+# The page source tree rules (module docstring, "Page source tree"): the source elements whose start tag ends an open p
+# in button scope in a browser, the elements that end that scope, the elements an li start tag looks through for an
+# open li, the headings, and the children a browser keeps where they are written in each table part.
+P_CLOSERS = {"details", "div", "h1", "h2", "h3", "li", "nav", "ol", "p", "pre", "section", "summary", "table", "ul"}
+BUTTON_SCOPE = {"button", "caption", "table", "td", "th"}
+LI_THROUGH = {"a", "code", "div", "em", "p", "small", "span", "strong"}
+HEADINGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+TABLE_CHILDREN = {"table": {"caption", "thead", "tbody"}, "thead": {"tr"}, "tbody": {"tr"}, "tr": {"td", "th"}}
+TABLE_PARTS = {"caption", "thead", "tbody", "tr", "td", "th"}
 SKIP_LINK = '<a class="skip" href="#main-content">Skip to content</a>'
 COPY_STATUS = '<p class="vh" id="copy-status" role="status" aria-live="polite"></p>'
 # The light and dark switch of template specification 7.33 (baseline 1.6.0), byte for byte as in the
@@ -955,6 +1012,43 @@ def source_at(position: tuple[int, int]) -> str:
     return f"at line {line}, column {column} of the source with its tokens and rail written in"
 
 
+def misnested(tag: str, open_names: list[str], first_child: bool) -> tuple[str, str] | None:
+    """Why a browser's tree builder would not place a start tag of tag where the parser does, as the next child of the
+    last of open_names (the parser's open elements; first_child: no element has started in that one yet), as (what,
+    why) for a refusal (module docstring, "Page source tree"); None if a browser places it there too."""
+    parent = open_names[-1] if open_names else ""
+    if tag == "summary" and not (parent == "details" and first_child):
+        return ("a <summary> start tag", "a summary is allowed only as the first element child of a details, so the "
+                "parser and a browser agree on which summary a details without open shows")
+    if tag in P_CLOSERS:
+        for name in reversed(open_names):
+            if name == "p":
+                return (f"a <{tag}> start tag inside an open p", "a browser ends the p there, where the parser "
+                        "reads it as still open")
+            if name in BUTTON_SCOPE:
+                break
+    if tag in HEADINGS and parent in HEADINGS:
+        return (f"a <{tag}> start tag directly inside an open {parent}", "a browser ends the heading there, where "
+                "the parser reads it as still open")
+    if tag == "li":
+        for name in reversed(open_names):
+            if name == "li":
+                return ("a <li> start tag inside an open li", "with only a, code, div, em, p, small, span or "
+                        "strong between them, a browser ends the open li and what it holds there, where the parser "
+                        "reads them as still open")
+            if name not in LI_THROUGH:
+                break
+    if tag in ("a", "button") and tag in open_names:
+        return (f"a <{tag}> start tag inside an open {tag}", f"a browser ends the open {tag} there, where the "
+                "parser reads it as still open")
+    if (parent in TABLE_CHILDREN or tag in TABLE_PARTS) and tag not in TABLE_CHILDREN.get(parent, ()):
+        return (f"a <{tag}> start tag as a child of {f'a {parent}' if parent else 'no element'}", "a table holds "
+                "only caption, thead and tbody, a thead or tbody only tr, and a tr only td and th; a browser moves "
+                "anything else out of a table part to before the table, and ignores a table part's start tag "
+                "anywhere else, where the parser reads it as written")
+    return None
+
+
 class PageScan(HTMLParser):
     """The parsed reading validate() checks, which build() also reads on each page source. Not a full HTML5 tree
     builder: it models the open elements as tags nest, void elements, the slash only in <svg>, the head's end, class
@@ -963,7 +1057,8 @@ class PageScan(HTMLParser):
     ancestor as tools/check-install-page.py reads hiding (its is_hiding_element(), and a details without open, which
     shows only its first summary child), where each value paragraph starts and where the region of the first one
     ends, where each element whose classes include about starts, where each html, head, body, frameset and math start
-    tag is, its text (labels()), and where the page's body starts. An element's attributes are the first of each
+    tag is, each start tag or text a browser's tree builder would place elsewhere (misnested()), its text (labels()),
+    and where the page's body starts. An element's attributes are the first of each
     repeated name, as a browser and tools/check-install-page.py's PageParser read them. validate() also pins the markup
     from <body> to the end of header.mast, and the landing page's About block; --check compares the committed pages
     with a build that passed it."""
@@ -1006,6 +1101,9 @@ class PageScan(HTMLParser):
         # Where each math start tag starts, and the text the parser reads (attribute values and comments apart).
         self.maths: list[tuple[int, int]] = []
         self.text: list[str] = []
+        # Each start tag or text that a browser's tree builder would place elsewhere (misnested()), as (what, where it
+        # starts, why): in a page source, a refusal.
+        self.misnested: list[tuple[str, tuple[int, int], str]] = []
         # Where each element hidden by itself or by an open ancestor starts, as tools/check-install-page.py reads
         # hiding; the depth in open of each such ancestor; and, for each open details without open, by its depth,
         # whether its first summary child has started.
@@ -1046,6 +1144,11 @@ class PageScan(HTMLParser):
             self.document_tags.append((tag, self.getpos()))
         if tag == "math":
             self.maths.append(self.getpos())
+        # The first element child of the current element: no element has ended in it, nor a void one started, since
+        # the last start tag, which (no end tag having closed it) is the current element's.
+        misplaced = misnested(tag, [name for name, _ in self.open], self.previous is None)
+        if misplaced is not None:
+            self.misnested.append((misplaced[0], self.getpos(), misplaced[1]))
         if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
                 and self.previous is not None and self.previous[0] == "head"):
             self.body_at = self.getpos()
@@ -1133,6 +1236,10 @@ class PageScan(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         self.text.append(data)
+        if self.open and self.open[-1][0] in TABLE_CHILDREN and data.strip(" \t\n\f\r"):
+            # A browser moves such text out of the table part to before the table (foster parenting).
+            self.misnested.append((f"text other than whitespace directly inside a {self.open[-1][0]}", self.getpos(),
+                                   "a browser moves it out to before the table, where the parser reads it as written"))
         if data.strip(" \t\n\f\r") and [name for name, _ in self.open] in ([], ["html"], ["html", "head"]):
             # Text other than whitespace in or before the head ends it (HTML5).
             self.head_ended = True
@@ -1236,8 +1343,9 @@ def with_about(content: str, page: dict, base: str) -> str:
     onto the page's own, a stray head is refused because the generator writes the head, and
     tools/check-install-page.py reads a frameset start tag as hiding the whole page) or a math start tag (inside math,
     a browser can read a title, textarea, script or style element's content as markup, which the parser reads as text;
-    validate() refuses svg, the other such element), each also as the parser reads it; then a source with an element
-    whose classes include about, a source whose text carries the About block's label (PageScan.labels()), and a
+    validate() refuses svg, the other such element), each also as the parser reads it; then a start tag or text that a
+    browser's tree builder would place elsewhere (misnested(), the page source tree rules); then a source with an
+    element whose classes include about, a source whose text carries the About block's label (PageScan.labels()), and a
     landing page source without exactly 1 p.value, with that p.value inside an element of INERT_TAGS, hidden by
     itself or by an ancestor as tools/check-install-page.py reads hiding, or with no div.region among its ancestors."""
     where = page["source"]
@@ -1254,6 +1362,9 @@ def with_about(content: str, page: dict, base: str) -> str:
     if scan.maths:
         raise BuildError(f"{where}: a <math> start tag {source_at(scan.maths[0])}; inside math, a browser can read a "
                          "title, textarea, script or style element's content as markup, which the parser reads as text")
+    if scan.misnested:
+        what, at, why = scan.misnested[0]
+        raise BuildError(f"{where}: {what} {source_at(at)}; {why}")
     if scan.about_classes:
         raise BuildError(f"{where}: an element whose classes include about; the generator writes the About block of "
                          "specification 7.24 itself, on the landing page only")
