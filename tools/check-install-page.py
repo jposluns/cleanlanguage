@@ -11,10 +11,9 @@ are plain static pages, so they read the same with JavaScript blocked, failed,
 or switched off. This site no longer uses the template's install selector
 (``select.js``, template specification, section 7.12); the old link forms
 ``/install/?ai=<family>`` and ``/install/#<family>`` land on ``/install/``,
-where the family buttons sit near the top: the page's first ``h1`` starts
-inside ``main`` with no heading and no label but the opening one before it,
-and the buttons follow it and the "Pick your AI" label with no other label or
-heading between (check 1).
+where the family buttons sit near the top: the opening of the page's content
+is pinned as the page builds it, so the buttons follow the hero's ``h1`` and
+the "Pick your AI" label with nothing else above them (check 1).
 
 This is a TRIPWIRE for the common regressions in the STATIC MARKUP. It is
 deliberately NOT a CSS engine or a browser.
@@ -39,15 +38,22 @@ What it verifies
    stylesheet); the 5 links
    have 1 ``p`` as their parent, as the parser reads it (see below), and sit in
    the order Claude, ChatGPT, Gemini, Copilot, other AI systems, before the
-   ``get`` id. That ``p`` starts after the element with the ``pick`` id, and no
-   element with the class ``lbl`` and no ``h1`` to ``h6`` starts between them.
-   The element with the ``pick`` id starts after the page's first ``h1``, the
-   hero's heading, and no such element starts between those 2 either (the gate
-   reads where that ``h1`` starts, not where the hero ends, which no element
-   of its own marks). That ``h1`` starts inside a ``main`` element, no
-   heading starts before it, and no element with the class ``lbl`` starts
-   before it inside ``main`` unless it also has the class ``first``, as the
-   page's opening label, "Install", does.
+   ``get`` id. That ``p`` sits in the opening of the page's content, which is
+   pinned as ``site-src/pages/install.html`` builds it (``BODY_OPENING``,
+   ``MAIN_OPENING`` and ``DOC_OPENING``, each element read as a tag and a
+   class it carries, whatever its other classes): the body's first 3 elements
+   are ``a.skip``, ``header.mast`` and ``main``; the first element in that
+   ``main`` is ``div.wrap``, and the first in that is ``div.doc``; and the
+   first 6 elements in that ``div.doc`` are, in order, the opening label
+   (``p.lbl``, "Install"), the hero's ``h1``, ``div.rail``, ``p.meta``, the
+   "Pick your AI" label (``p.lbl`` with the ``pick`` id) and that ``p``, with
+   or without the class ``first`` on any of them. Of those 6, the
+   first 5 hold no element, but ``div.rail``, which holds only 1 ``img``. The
+   ``h1`` and the "Pick your AI" label are not hidden, by the rules above,
+   and the ``h1`` has visible text, as check 4 defines it. The pin reads
+   every element there, shown or hidden, and nothing inside ``header.mast``,
+   whose markup the generator's validator pins (see below), or after the
+   button row.
 2. No element on any of the 6 pages carries the retired selector attributes
    ``data-picker``, ``data-family-link``, ``data-family-section``,
    ``data-picker-reset`` or ``data-picker-status``.
@@ -61,9 +67,13 @@ What it verifies
    ``ZERO_WIDTH``, in text that no element hides by the rules of check 1)
    that holds the family's name in ``FAMILY_NAMES`` (in that text, compared
    without regard to case, with U+0000 and the characters of ``ZERO_WIDTH``
-   other than U+00A0 deleted, and each ``br`` not hidden and each run of
-   whitespace, U+00A0 included, read as 1 space), at least 1 ``p.verified``
-   and at least 1 ``ol.steps``, none of them hidden by itself or an ancestor,
+   other than U+00A0 deleted, and each ``br`` not hidden, ``</br>`` included,
+   which a browser reads as ``<br>``, and each run of whitespace, U+00A0
+   included, read as 1 space) and no bidi control in that text
+   (``BIDI_CONTROLS``: U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to
+   U+2069, which can show the letters in another order), at least 1
+   ``p.verified`` and at least 1 ``ol.steps``, none of them hidden by itself or
+   an ancestor,
    each ``ol.steps`` with at least 1 ``li`` with visible text (text counts for
    every step it sits in, so text in a list inside an ``li`` counts for it),
    and, to each of ``/install/#get`` and ``/install/#test``, at least 1 link
@@ -186,23 +196,22 @@ that context, so they are not in ``HIDING_CLASSES`` and the gate passes an
 element that carries one of them there. ``tools/test-install-page.py`` fails
 when fonts.css, palettes.css or baseline.css hides a bare single class (a
 selector such as ``.only-dark``) that is not in ``HIDING_CLASSES`` or its
-exempt list. It counts a rule as hiding only when the rule sets
-``display: none``, ``visibility: hidden`` or ``collapse``, ``clip: rect(``,
-a ``clip-path`` other than ``none``, an ``opacity`` of 0, a ``height`` or
-``max-height`` of 0 with an ``overflow`` that holds ``hidden`` or ``clip``, or
-``absolute`` or ``fixed`` positioning with a negative ``top`` or ``left``,
-each property resolved within 1 declaration block: a declaration whose value
-the test does not read as valid for its property (a CSS-wide keyword, a CSS
-Display 3 value of ``display``, or a form of the test's ``VALID_VALUES``) is
-dropped, as CSS drops 1 it cannot parse; of the rest, an ``!important``
-declaration beats every normal one, and otherwise the later one wins. Those
-forms hold every value it counts as hiding, so dropping a valid value outside
-them, such as 1 with ``var()`` or ``calc()``, can only add to the rules it
-counts as hiding. Its ``clip-path`` reading is a deliberate over-refusal: a
-clip that removes nothing, such as ``inset(0)``, counts as hiding too,
-because the test does not compute what a clip leaves (it cannot read a
-``path()`` or an SVG ``url()``), and a class with such a clip belongs in
-its exempt list, with a comment saying why. It reads no other property, so a
+exempt list. It reads ``display``, ``visibility``, ``clip``, ``clip-path``,
+``position``, ``top``, ``left``, ``opacity``, ``height``, ``max-height`` and
+``overflow``, and fails closed: it counts a rule as hiding when any
+declaration of 1 of those properties in it has a value outside the test's
+``SHOWING_VALUES`` for that property, an exact list of values the stylesheets
+carry today that do not hide (``opacity: 1``, say, and no ``visibility``,
+``clip`` or ``clip-path`` value at all), or when a property name holds a
+backslash (a CSS escape). It compares the value in lower case, with each run of
+whitespace read as 1 space and a final ``!important`` dropped, and reads
+neither which declaration wins nor its importance, so ``opacity: 0;
+opacity: 1`` hides there as ``opacity: 1 !important; opacity: 0`` does. Every
+other value counts as hiding, valid or not: a computed 1 (``calc()``,
+``var()``), a CSS-wide keyword, an ``opacity`` of 0.5, -1 or ``0e1``. So it
+can only refuse more than a browser hides by those properties, and a class it
+refuses that does not hide belongs in its exempt list, with a comment saying
+why, or its value in ``SHOWING_VALUES``. It reads no other property, so a
 class hidden by ``transform``, by a zero ``width`` or ``font-size``, or by a
 colour matching the background passes it, and it reads no compound,
 descendant or attribute selector. Of text it reads
@@ -336,9 +345,19 @@ ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # non-joiner and joiner (U+200B to U+200D), the zero-width no-break space or byte order mark (U+FEFF), the no-break
 # space (U+00A0), the word joiner (U+2060), the soft hyphen (U+00AD), and the bidi formatting characters: the marks
 # (U+200E, U+200F and U+061C), the embeddings, overrides and their pop (U+202A to U+202E), and the isolates and
-# their pop (U+2066 to U+2069). has_visible_text also drops U+0000, which a browser ignores in body text.
-ZERO_WIDTH = (
-    "\u200b\u200c\u200d\ufeff\u00a0\u2060\u00ad\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+# their pop (U+2066 to U+2069). has_visible_text also drops U+0000, which a browser ignores in body text. A family
+# page's h1 may hold none of the bidi formatting characters (BIDI_CONTROLS) in its visible text: name_text deletes
+# them, and they can show the letters of the name in another order (<h1>Chat&#x202E;GPT&#x202C;</h1> shows ChatTPG).
+BIDI_CONTROLS = "\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+ZERO_WIDTH = "\u200b\u200c\u200d\ufeff\u00a0\u2060\u00ad" + BIDI_CONTROLS
+# The opening of /install/'s content, as site-src/pages/install.html builds it (check 1): the body's first elements
+# and the first elements of main > div.wrap > div.doc, each a tag and a class it carries (None: any), the "pick" label
+# with its id. Each element of DOC_OPENING but the button row holds exactly the elements named in its last item.
+BODY_OPENING = (("a", "skip"), ("header", "mast"), ("main", None))
+MAIN_OPENING = (("div", "wrap"), ("div", "doc"))
+DOC_OPENING = (
+    ("p", "lbl", None, ()), ("h1", None, None, ()), ("div", "rail", None, ("img",)), ("p", "meta", None, ()),
+    ("p", "lbl", "pick", ()), ("p", None, None, None),
 )
 
 INLINE_RULE = (
@@ -452,11 +471,9 @@ class PageParser(HTMLParser):
         self.h1: list[dict] = []
         self.verified: list[bool] = []
         self.steps: list[dict] = []
-        # Where each start tag with the class lbl or a heading tag starts, in the order of self.order.
-        self.marks: list[int] = []
-        # Where each heading tag starts, and each start tag inside main with the class lbl but not the class first,
-        # which the page's opening label carries: none may start before the hero's heading on /install/.
-        self.above: list[int] = []
+        # Each element, in the order of self.order, with the order of the element the parser holds open around it,
+        # for the pin of /install/'s opening (check 1).
+        self.elements: list[dict] = []
         self.page_hidden = False
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
@@ -513,20 +530,19 @@ class PageParser(HTMLParser):
                 "inert": inert,
             }
             self.anchors.append(anchor)
-        in_main = any(frame["tag"] == "main" for frame in self.stack)
+        self.elements.append(
+            {"tag": tag, "classes": classes, "id": attrs.get("id"), "hidden": hiding, "order": self.order,
+             "parent": parent["order"] if parent else None}
+        )
         heading = None
         if tag == "h1":
-            heading = {"hidden": hiding, "text": False, "chars": "", "order": self.order, "main": in_main}
+            heading = {"hidden": hiding, "text": False, "chars": "", "order": self.order}
             self.h1.append(heading)
         # A br that no element hides breaks the line, so in the h1 it reads as a space between the words around it.
         if tag == "br" and not hiding:
             open_h1 = next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
             if open_h1 is not None:
                 open_h1["chars"] += " "
-        if "lbl" in classes or tag in HEADINGS:
-            self.marks.append(self.order)
-        if tag in HEADINGS or (in_main and "lbl" in classes and "first" not in classes):
-            self.above.append(self.order)
         if tag == "p" and "verified" in classes:
             self.verified.append(hiding)
         steps = None
@@ -551,6 +567,10 @@ class PageParser(HTMLParser):
         self.handle_starttag(tag, attrs_list)
 
     def handle_endtag(self, tag: str) -> None:
+        # A browser reads </br> as <br>, so in the h1 it breaks the line too.
+        if tag == "br":
+            self.handle_starttag("br", [])
+            return
         # Any heading end tag closes the innermost open heading, as in a browser: </h2> closes an open h1.
         names = HEADINGS if tag in HEADINGS else (tag,)
         for i in range(len(self.stack) - 1, -1, -1):
@@ -645,7 +665,7 @@ def parse(text: str) -> PageParser:
     parser.feed(text)
     parser.close()
     if parser.page_hidden:
-        for record in parser.anchors + parser.h1 + parser.steps:
+        for record in parser.anchors + parser.h1 + parser.steps + parser.elements:
             record["hidden"] = True
         parser.verified = [True for _ in parser.verified]
     return parser
@@ -714,13 +734,54 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
     return problems
 
 
+def opening_problems(where: str, parser: PageParser, found: list[dict]) -> list[str]:
+    """Check 1's pin of the opening of /install/'s content: BODY_OPENING, then MAIN_OPENING, then DOC_OPENING, whose
+    last element is the paragraph of the family links found, with the hero's h1 and the "pick" label shown and the h1
+    with visible text. Every element counts, shown or hidden, so only the page's own opening passes."""
+    children: dict = {}
+    for element in parser.elements:
+        children.setdefault(element["parent"], []).append(element)
+    body = next((element for element in parser.elements if element["tag"] == "body"), None)
+    # The body's first elements, then the first element in main and the first in div.wrap, then div.doc's first ones.
+    path = children.get(body["order"], [])[:len(BODY_OPENING)] if body else []
+    for _ in MAIN_OPENING:
+        path += children.get(path[-1]["order"], [])[:1] if path else []
+    doc = children.get(path[-1]["order"], [])[:len(DOC_OPENING)] if path else []
+    pinned = BODY_OPENING + MAIN_OPENING + tuple((tag, name) for tag, name, _, _ in DOC_OPENING)
+    if len(path + doc) != len(pinned) or any(
+            element["tag"] != tag or (name is not None and name not in element["classes"])
+            for element, (tag, name) in zip(path + doc, pinned)):
+        return [
+            f"{where}: the opening of the page's content is not a.skip, header.mast and main, then div.wrap and "
+            "div.doc inside it, and, first in that div.doc, the opening label (p.lbl), the h1, div.rail, p.meta, the "
+            "pick label (p.lbl) and the paragraph of family links; the family links sit at the top."
+        ]
+    problems: list[str] = []
+    for element, (_, _, gid, inside) in zip(doc, DOC_OPENING):
+        held = tuple(child["tag"] for child in children.get(element["order"], []))
+        if gid is not None and element["id"] != gid:
+            problems.append(f'{where}: the label before the family links does not carry the "{gid}" id.')
+        if inside is not None and held != inside:
+            problems.append(
+                f"{where}: the {element['tag']} at the opening of div.doc holds the elements {list(held)}, not "
+                f"{list(inside)}; the family links sit at the top."
+            )
+    if any(link["parent"] != ("p", doc[-1]["order"]) for link in found):
+        problems.append(f"{where}: the paragraph after the pick label does not hold the family links.")
+    hero = next((record for record in parser.h1 if record["order"] == doc[1]["order"]), None)
+    if hero is None or hero["hidden"] or not hero["text"]:
+        problems.append(f"{where}: the hero's h1 reads as hidden or has no text that reads as visible.")
+    if doc[4]["hidden"]:
+        problems.append(f'{where}: the "pick" label reads as hidden in the static markup.')
+    return problems
+
+
 def check_install_page(text: str) -> list[str]:
     """Checks 1 to 3, 5 and 6 on /install/."""
     parser = parse(text)
     where = WHERE
     problems = common_checks(where, text, parser)
     get_at = parser.id_first.get("get")
-    pick_at = parser.id_first.get("pick")
     found: list[dict] = []
     for fam in FAMILIES:
         mine = [anchor for anchor in parser.anchors if anchor["id"] == fam]
@@ -745,32 +806,11 @@ def check_install_page(text: str) -> list[str]:
         parents = {link["parent"] for link in found}
         if len(parents) != 1 or next(iter(parents)) is None or next(iter(parents))[0] != "p":
             problems.append(f"{where}: the family links do not have 1 paragraph as their parent.")
-        elif pick_at is not None:
-            row_at = next(iter(parents))[1]
-            # The paragraph of buttons follows the "pick" label, with no other label or heading between them.
-            if row_at <= pick_at or any(pick_at < mark < row_at for mark in parser.marks):
-                problems.append(
-                    f'{where}: the paragraph of family links does not start after the "pick" id with no label (the '
-                    "class lbl) or heading starting between them; the family links sit at the top."
-                )
         if [link["order"] for link in found] != sorted(link["order"] for link in found):
             problems.append(f"{where}: the family links are not in the order {', '.join(FAMILIES)}.")
-    # The hero's heading, the page's first h1, starts inside main, after no heading and no label in main but the opening
-    # one; the "pick" label follows it, with no other label or heading between them.
-    hero_at = parser.h1[0]["order"] if parser.h1 else None
-    if hero_at is None:
+    if not parser.h1:
         problems.append(f"{where}: the page has no h1, so nothing marks the hero; the family links sit at the top.")
-    elif not parser.h1[0]["main"] or any(mark < hero_at for mark in parser.above):
-        problems.append(
-            f"{where}: the page's first h1 is not inside main, or a heading, or a label (the class lbl) inside main "
-            "without the class first, starts before it; the family links sit at the top."
-        )
-    if pick_at is not None and (hero_at is None or pick_at <= hero_at
-                                or any(hero_at < mark < pick_at for mark in parser.marks)):
-        problems.append(
-            f'{where}: the "pick" id does not follow the page\'s first h1 with no label (the class lbl) or heading '
-            "between them; the family links sit at the top."
-        )
+    problems += opening_problems(where, parser, found)
     for gid in TEMPLATE_IDS + FAMILIES:
         if gid not in parser.id_live:
             problems.append(
@@ -793,6 +833,8 @@ def check_family_page(fam: str, text: str) -> list[str]:
             problems.append(f"{where}: the <h1> reads as hidden in the static markup.")
         if name_text(FAMILY_NAMES[fam]) not in name_text(parser.h1[0]["chars"]):
             problems.append(f'{where}: the <h1> does not name "{FAMILY_NAMES[fam]}" in text that reads as visible.')
+        if any(char in BIDI_CONTROLS for char in parser.h1[0]["chars"]):
+            problems.append(f"{where}: the <h1> holds a bidi control, which can show its letters in another order.")
     if not parser.verified:
         problems.append(f'{where}: no <p class="verified"> line says when the steps were last verified.')
     elif any(parser.verified):
@@ -877,11 +919,12 @@ def main() -> int:
         return 1
 
     print(
-        "The install page links all five family pages in order before the get id, with buttons after the pick label "
-        "and the pick label after the first h1, with no label or heading between either pair, that h1 inside main "
-        "with no heading and no label in main but the opening one before it, each link with text "
+        "The install page links all five family pages in order before the get id, with the opening of its content "
+        "as pinned, the buttons right after the pick label and that label after the hero's h1, the h1 with text "
+        "read as visible, neither it nor that label read as hidden, each link with text "
         "read as visible and none of them read as hidden, and keeps its ids; each family "
-        "page has 1 h1 that names its family in text read as visible, a verified line and a step list, each step "
+        "page has 1 h1 that names its family in text read as visible with no bidi control, a verified line and a "
+        "step list, each step "
         "list with a step read as visible, none of them read as hidden, and a link with text read as visible back "
         "to the downloads and to the test; ids "
         "are unique, no retired selector attribute remains, the six pages pass the inline-code checks, the "

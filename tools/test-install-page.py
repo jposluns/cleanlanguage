@@ -16,22 +16,21 @@ unnoticed.
 
 It also reads the stylesheets every install page loads (fonts.css, palettes.css
 and baseline.css under site/assets/baseline/) and fails when a rule whose
-selector list holds a bare single class, such as ``.only-dark``, hides it
-(``display: none``, ``visibility: hidden`` or ``collapse``, a ``clip: rect(...)``
-as ``.vh`` uses, a ``clip-path`` other than ``none``, an ``opacity`` of 0, a
-``height`` or ``max-height`` of 0 with an ``overflow`` that holds ``hidden`` or
-``clip``, or a negative ``top`` or ``left`` on an absolute or fixed position)
-and the class is in neither the gate's HIDING_CLASSES nor EXEMPT_CLASSES
-below. It resolves each property within 1 declaration block: it drops a
-declaration whose value it does not read as valid for its property (a CSS-wide
-keyword, a CSS Display 3 value of ``display``, or a form of VALID_VALUES), as
-CSS drops 1 it cannot parse; of the rest, an ``!important`` declaration beats
-every normal one, and otherwise the later declaration wins. Those forms hold
-every value it counts as hiding, so dropping a valid value outside them, such
-as 1 with ``var()`` or ``calc()``, can only add to the rules it counts as
-hiding. Its ``clip-path`` reading refuses more than a browser hides,
-deliberately: a clip that removes nothing, such as ``inset(0)``, counts too,
-because it does not compute what a clip leaves. It reads no other property,
+selector list holds a bare single class, such as ``.only-dark``, hides it and
+the class is in neither the gate's HIDING_CLASSES nor EXEMPT_CLASSES below. It
+fails closed: a rule hides when any declaration in it of a property of
+SHOWING_VALUES (``display``, ``visibility``, ``clip``, ``clip-path``,
+``position``, ``top``, ``left``, ``opacity``, ``height``, ``max-height`` and
+``overflow``) has a value outside that property's exact list there, or when a
+property name holds a backslash. The value is compared in lower case, with
+each run of whitespace read as 1 space and a final ``!important`` dropped; it
+reads neither which declaration wins nor its importance, so ``opacity: 0;
+opacity: 1`` hides, as does ``opacity: 1 !important; opacity: 0``. Every value
+outside the lists counts as hiding, valid or not: ``display: none``, a
+computed 1 (``calc()``, ``var()``), a CSS-wide keyword, an ``opacity`` of 0.5,
+-1 or ``0e1``, and any ``visibility``, ``clip`` or ``clip-path``. Each listed
+value shows, beside any other, so it can only refuse more than a browser hides
+by those properties. It reads no other property,
 so a class hidden by ``transform``, by a zero ``width`` or ``font-size``, or by
 a colour matching the background passes.
 The parser is deliberately small: it reads no compound, descendant or attribute
@@ -109,72 +108,52 @@ STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.
 # comment saying why no install page can carry it on a checked element or an ancestor. None qualifies today.
 EXEMPT_CLASSES: tuple[str, ...] = ()
 BARE_CLASS = re.compile(r"\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)")
-# A zero length or number, with or without a unit: 0, 0.0, .0, 0px, 0rem or 0%.
-ZERO = re.compile(r"[+-]?(0+\.?0*|\.0+)([a-z]+|%)?")
-# Besides a CSS-wide keyword, valid() reads as valid only these forms, for each property hides() reads but display,
-# and for display the grammar of CSS Display 3. They hold every value hides() counts as hiding.
-CSS_WIDE = ("inherit", "initial", "unset", "revert", "revert-layer")
-NUMBER = r"(\d+\.?\d*|\.\d+)(e[+-]?\d+)?"
-UNITS = r"(px|cm|mm|q|in|pt|pc|r?em|r?ex|r?cap|r?ch|r?ic|r?lh|[sld]?v(w|h|i|b|min|max)|cq(w|h|i|b|min|max))"
-# A length or percentage, with a sign (top, left) or without a negative one (height, max-height); 0 needs no unit.
-OFFSET = rf"[+-]?({NUMBER}({UNITS}|%)|0+\.?0*|\.0+)"
-SIZE = rf"\+?({NUMBER}({UNITS}|%)|0+\.?0*|\.0+)"
-SHAPE = r"(inset|circle|ellipse|polygon|path|rect|xywh|shape)\(.*\)"
-BOX = r"(margin|border|padding|content|fill|stroke|view)-box"
-OVERFLOW = "(visible|hidden|clip|scroll|auto)"
-VALID_VALUES = {
-    "visibility": re.compile("visible|hidden|collapse"),
-    "clip": re.compile(r"auto|rect\([^()]*\)"),
-    "position": re.compile("static|relative|absolute|fixed|sticky"),
-    "top": re.compile(f"auto|{OFFSET}"),
-    "left": re.compile(f"auto|{OFFSET}"),
-    "clip-path": re.compile(rf"none|url\(.*\)|{SHAPE}( {BOX})?|{BOX}( {SHAPE})?"),
-    "opacity": re.compile(rf"[+-]?{NUMBER}%?"),
-    "height": re.compile(f"auto|min-content|max-content|fit-content|{SIZE}"),
-    "max-height": re.compile(f"none|min-content|max-content|fit-content|{SIZE}"),
-    "overflow": re.compile(f"{OVERFLOW}( {OVERFLOW})?"),
+# The only values hides() reads as showing, for each property it reads; every other value of these properties counts
+# as hiding. Each is a value fonts.css, palettes.css or baseline.css gives that property today and that shows beside
+# any other listed value: none is display: none, a visibility, clip or clip-path, an opacity below 1, a height or
+# max-height of 0 or 1px, or a negative top or left. Left out of what they carry: the values only their hiding rules
+# use (display: none; clip: rect(0 0 0 0) and height: 1px in .vh and .family .cards .cname; top: -4rem in .skip;
+# opacity: 0 in @keyframes field-in) and the computed ones (the heights with var() or clamp() of .family's logos,
+# and the max-height with calc() of .lrail > nav). Add a value only with a case for it in SHOWING_DECLARATIONS.
+SHOWING_VALUES = {
+    "display": ("block", "contents", "flex", "grid", "inline", "inline-block", "inline-flex", "inline-grid",
+                "table-header-group"),
+    "visibility": (),
+    "clip": (),
+    "clip-path": (),
+    "position": ("absolute", "relative", "static", "sticky"),
+    "top": ("0", "0.12rem", "0.8rem", "1rem", "1.5rem"),
+    "left": ("0", "1rem"),
+    "opacity": ("1",),
+    "height": ("auto", "3px", "1.5rem", "2.4rem", "2.75rem"),
+    "max-height": ("none", "11rem", "36rem", "75vh", "75svh"),
+    "overflow": ("auto", "hidden", "visible"),
 }
-DISPLAY_KEYWORDS = (
-    "none", "contents", "inline-block", "inline-table", "inline-flex", "inline-grid", "table-row-group",
-    "table-header-group", "table-footer-group", "table-row", "table-cell", "table-column-group", "table-column",
-    "table-caption", "ruby-base", "ruby-text", "ruby-base-container", "ruby-text-container",
-)
-# Declarations hides() must read as hiding, at least 1 for each of its readings, and declarations it must not. A
-# clip-path that removes nothing, inset(0), is among the hiding ones: that reading over-refuses by design. The
-# declarations that set a property twice check that an important one wins, and otherwise the later one; those with
-# "bogus !important", 1 for each property hides() reads, check that a declaration it does not read as valid is dropped.
+# Declarations hides() must read as hiding, at least 1 for each property it reads and for each value form a reading
+# by validity missed (a computed, clamped or exponent opacity, and 0 before 1), and declarations it must not: each
+# value of SHOWING_VALUES, a declaration without a colon, and properties it does not read. Some hiding ones hide
+# nothing in a browser (opacity: 0.5, visibility: visible, clip-path: none, opacity: 0; opacity: 1): that reading
+# over-refuses by design.
 HIDING_DECLARATIONS = (
-    "display: none", "visibility: hidden", "visibility: collapse", "clip: rect(0 0 0 0)",
-    "position: absolute; left: -9999px", "position: fixed; top: -4rem", "clip-path: inset(50%)",
-    "clip-path: circle(0)", "clip-path: inset(0)", "opacity: 0", "opacity: 0.0 !important",
-    "height: 0; overflow: hidden", "max-height: 0px; overflow: clip", "height: 0; overflow: hidden auto",
-    "display: none !important; display: block", "opacity: 0 !important; opacity: 1", "opacity: 1; opacity: 0",
-    "opacity: 1 !important; opacity: 0 !important", "clip-path: inset(50%) !important; clip-path: none",
-    "height: 0 !important; height: 1px; overflow: hidden", "max-height: 0 !important; max-height: 10rem; overflow: hidden",
-    "height: 0; overflow: hidden !important; overflow: visible",
-    "display: block; display: bogus !important; display: none", "display: none; display: flex grid",
-    "display: none; display: block inline", "display: none; display: list-item flex",
-    "display: none; display: list-item list-item",
-    "visibility: visible; visibility: bogus !important; visibility: hidden",
-    "clip: auto; clip: bogus !important; clip: rect(0 0 0 0)",
-    "left: -9999px; position: static; position: bogus !important; position: absolute",
-    "position: absolute; top: 0; top: bogus !important; top: -4rem",
-    "position: absolute; left: 0; left: bogus !important; left: -9999px", "opacity:1;opacity:bogus !important;opacity:0",
-    "height: 1px; height: bogus !important; height: 0; overflow: hidden",
-    "max-height: 10rem; max-height: bogus !important; max-height: 0; overflow: hidden",
-    "height: 0; overflow: visible; overflow: bogus !important; overflow: hidden",
+    "display: none", "display: none !important", "display: block; display: none", "display: var(--d)",
+    "display: bogus", "display: flow-root", "visibility: hidden", "visibility: collapse", "visibility: visible",
+    "clip: rect(0 0 0 0)", "clip: auto", "clip-path: inset(0)", "clip-path: none", "position: fixed",
+    "position: absolute; top: -4rem", "position: absolute; left: -9999px", "top: calc(1rem)", "left: auto",
+    "opacity: 0", "opacity: 0.0", "opacity: 0.5", "opacity: calc(0)", "opacity: 0e1", "opacity: 0e0", "opacity: -1",
+    "opacity: -0.5", "opacity: -50%", "opacity: var(--o)", "opacity: inherit", "opacity: 0; opacity: 1",
+    "opacity: 0 !important; opacity: 1", "opacity: 1 !important; opacity: 0", "opacity: 1 !ie", "Opacity: 0",
+    "op\\61 city: 0", "height: 0; overflow: hidden", "height: 0", "height: 1px", "height: var(--mark)",
+    "max-height: 0", "max-height: calc(100vh - 3rem)", "overflow: clip", "overflow: hidden auto",
 )
 SHOWING_DECLARATIONS = (
-    "display: block", "visibility: visible", "clip: auto", "position: absolute; left: 1rem; top: 0",
-    "position: relative; top: -1px", "clip-path: none", "opacity: 0.5", "opacity: 1", "height: 0",
-    "height: 1px; overflow: hidden", "max-height: 10rem; overflow: hidden", "height: 0; overflow: visible",
-    "opacity: 0; opacity: 1", "opacity: 1 !important; opacity: 0", "opacity: 0 !important; opacity: 1 !important",
-    "clip-path: inset(50%); clip-path: none", "clip-path: none !important; clip-path: inset(50%)",
-    "height: 0 !important; height: 1px !important; overflow: hidden",
-    "max-height: 0; max-height: 10rem; overflow: hidden", "height: 0; overflow: visible !important; overflow: hidden",
-    "clip-path: inset(50%); clip-path: bogus !important; clip-path: none", "opacity: 0; opacity: inherit",
-    "display: none; display: block flow list-item", "display: none; display: inline flow-root",
-    "height: 0; overflow: hidden; overflow: visible\n  auto",
+    "display: block", "display: contents", "display: flex", "display: grid", "display: inline",
+    "display: inline-block", "display: inline-flex", "display: inline-grid", "display: table-header-group",
+    "DISPLAY: BLOCK !IMPORTANT", "position: absolute; top: 0; left: 0", "position: relative; top: 0.12rem; left: 1rem",
+    "position: static; top: 0.8rem", "position: sticky; top: 1rem", "top: 1.5rem", "opacity: 1",
+    "opacity: 1 !important", "opacity:1", "height: auto", "height: 3px; overflow: hidden", "height: 1.5rem",
+    "height: 2.4rem", "height: 2.75rem", "max-height: none; overflow: auto", "max-height: 11rem",
+    "max-height: 36rem; overflow: visible", "max-height: 75vh", "max-height: 75svh", "width: 0; transform: scale(0)",
+    "opacity 0", "", 'content: "\\201c;\\201d"',
 )
 # Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS, 1 on each side of 3.14: 3.13.3, the
 # Cloudflare Pages image default, and 3.15.0. Only the gate's own guard prints OWN_REFUSAL; the catch of
@@ -314,16 +293,46 @@ CASES = [
     ("the h1, the pick label and the button row after the get id", both(edit(PAGE, HERO + "\n", ""),
         edit(PAGE, PICK + "\n" + ROW_LINE + "\n", ""), edit(PAGE, '<h2 id="get">Get Clean Language</h2>',
         '<h2 id="get">Get Clean Language</h2>\n' + HERO + "\n" + PICK + "\n" + ROW_LINE)), 1),
-    # The h1 starts the page's content: no heading and no label but the opening one (the class first) before it.
+    # The opening of the page's content is pinned (the gate's BODY_OPENING, MAIN_OPENING and DOC_OPENING), so any
+    # element moved or added there fails, shown or hidden, whatever its class.
     ("the h1, the pick label and the button row moved down together, still before the get id",
         both(edit(PAGE, HERO + "\n", ""), edit(PAGE, PICK + "\n" + ROW_LINE + "\n", ""),
              edit(PAGE, GET_LABEL, HERO + "\n" + PICK + "\n" + ROW_LINE + "\n" + GET_LABEL)), 1),
     ("Scope and On a phone moved above the h1", move(PAGE, SCOPE, GET_LABEL, HERO), 1),
+    ("Scope and On a phone moved above the h1, their labels given the class first", both(
+        move(PAGE, SCOPE, GET_LABEL, HERO), edit(PAGE, SCOPE, SCOPE.replace("lbl blk", "lbl blk first")),
+        edit(PAGE, '<p class="lbl accent blk">', '<p class="lbl accent blk first">')), 1),
+    ("a second label with the class first above the h1", edit(PAGE, HERO, '<p class="lbl first">Scope</p>\n' + HERO), 1),
+    ("a callout without a label above the h1", edit(PAGE, HERO, '<div class="callout"><p>Note.</p></div>\n' + HERO), 1),
+    ("a paragraph in main before div.wrap", edit(PAGE, MAIN, MAIN + "<p>Note.</p>\n"), 1),
+    ("a paragraph between div.wrap and div.doc", edit(PAGE, '<div class="wrap"><div class="doc">',
+        '<div class="wrap"><p>Note.</p><div class="doc">'), 1),
+    ("a heading inside the meta paragraph", edit(PAGE, '<p class="meta">', '<p class="meta"><h2>Scope</h2>'), 1),
+    ("a label inside div.rail", edit(PAGE, '<div class="rail">', '<div class="rail">' + SCOPE), 1),
     ("a heading above the h1, outside main", edit(PAGE, "<main", "<h2>Install</h2>\n<main"), 1),
     ("main opened after the h1", both(edit(PAGE, MAIN, ""), edit(PAGE, HERO + "\n", HERO + "\n" + MAIN)), 1),
-    # Only a label inside main counts.
-    ("a label above the h1, outside main", edit(PAGE, MAIN, '<p class="lbl">Install</p>\n' + MAIN), 0),
-    # The pick id on a paragraph that is not a label, so only its place before the h1 is refused.
+    ("a label above the h1, outside main", edit(PAGE, MAIN, '<p class="lbl">Install</p>\n' + MAIN), 1),
+    # The pin reads the body's elements before main, not what header.mast holds, so a hidden heading in its nav passes.
+    ("a vh heading in the nav", edit(PAGE, '<nav class="nav" aria-label="Site">',
+        '<nav class="nav" aria-label="Site"><h2 class="vh">Site</h2>'), 0),
+    # The class first only changes the opening label's padding (baseline.css), so a label without it is correct.
+    ("the opening label without the class first", edit(PAGE, '<p class="lbl first">Install</p>', '<p class="lbl">Install</p>'), 0),
+    ("the hero's h1 hidden", edit(PAGE, HERO, HERO.replace("<h1>", '<h1 class="vh">')), (1, "the hero's h1 reads as hidden")),
+    ("the hero's h1 emptied", edit(PAGE, HERO, "<h1></h1>"), (1, "the hero's h1 reads as hidden or has no text")),
+    ("the pick label hidden", edit(PAGE, PICK, PICK.replace("lbl blk", "lbl blk vh")), (1, 'the "pick" label reads as hidden')),
+    # A hiding body start tag hides the h1 and the label whose text the parser has already read as visible.
+    ("the hero's h1 hidden by a later body start tag", edit(PAGE, "</main>", "</main><body hidden>"),
+        (1, "the hero's h1 reads as hidden")),
+    ("the pick label hidden by a later html start tag", edit(PAGE, "</main>", '</main><html class="vh">'),
+        (1, 'the "pick" label reads as hidden')),
+    ("the pick label without the class lbl", edit(PAGE, PICK, PICK.replace("lbl blk", "blk")), 1),
+    # div.doc then holds only the pinned opening's first 2 elements; the gate must say so, not crash.
+    ("div.doc closed after the h1", edit(PAGE, HERO, HERO + '</div><div class="doc">'),
+        (1, "the opening of the page's content is not")),
+    ("main replaced by a div", both(edit(PAGE, MAIN, '<div id="main-content">\n'), edit(PAGE, "</main>", "</div>")), 1),
+    ("the pick label without its id, beside an id elsewhere", both(edit(PAGE, PICK, PICK.replace(' id="pick"', "")),
+        edit(PAGE, SCOPE, SCOPE.replace('">', '" id="pick">'))), (1, 'does not carry the "pick" id')),
+    # The pick id on a paragraph that is not a label, moved with the button row above the h1.
     ("the pick paragraph without its label class and the button row moved above the h1", both(
         edit(PAGE, PICK + "\n" + ROW_LINE + "\n", ""),
         edit(PAGE, HERO, PICK.replace('class="lbl blk" ', "") + "\n" + ROW_LINE + "\n" + HERO)), 1),
@@ -338,8 +347,9 @@ CASES = [
     # The gate must say that the h1 is missing: a crash on the missing h1 also exits 1.
     ("the install page with no h1 and no label above the pick label", both(edit(PAGE, '<p class="lbl first">Install</p>',
         "<p>Install</p>"), edit(PAGE, HERO, "<p>Pick the AI you use and follow the steps</p>")), (1, "the page has no h1")),
-    # Only a label or a heading between the pick label and the row is refused, not a paragraph without one.
-    ("a paragraph without a label between the pick label and the button row", edit(PAGE, PICK, PICK + "\n<p>Choose one.</p>"), 0),
+    # Nothing may sit between the pick label and the row, shown or hidden.
+    ("a paragraph without a label between the pick label and the button row", edit(PAGE, PICK, PICK + "\n<p>Choose one.</p>"), 1),
+    ("a vh heading between the pick label and the button row", edit(PAGE, PICK, PICK + '\n<h2 class="vh">Pick</h2>'), 1),
     ("a family link with no label", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><")), 1),
     ("a family link whose only label is in a hidden span",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><span hidden>Claude</span><")), 1),
@@ -426,6 +436,19 @@ CASES = [
         edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>Chat\u034fGPT</h1>"), 1),
     ("a family page heading joining its family's name across a hidden br",
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI<br hidden>systems</h1>"), 1),
+    # A browser reads </br> as <br>.
+    ("a family page heading naming its family across </br>",
+        edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI</br>systems</h1>"), 0),
+    ("a family page heading joining its family's name across </br> in a hidden span",
+        edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI<span hidden></br></span>systems</h1>"), 1),
+    # A bidi control can show the name's letters in another order: Chat, U+202E, GPT and U+202C show "ChatTPG".
+    ("a family page heading whose name a right-to-left override reorders",
+        edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>Chat&#x202E;GPT&#x202C;</h1>"), (1, "holds a bidi control")),
+    *[(f"a family page heading naming its family beside U+{code:04X}",
+        edit(CHATGPT, "<h1>ChatGPT</h1>", f"<h1>ChatGPT{chr(code)}</h1>"), (1, "holds a bidi control"))
+        for code in (0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A))],
+    ("a family page heading naming its family beside a bidi control in a hidden span",
+        edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>ChatGPT<span hidden>" + chr(0x202E) + "</span></h1>"), 0),
     ("a family page inside a hidden wrapper", edit(GEMINI, '<div class="doc">', '<div class="doc" inert>'), 1),
     ("the button row with popover", edit(PAGE, ROW, '<p popover><a class="btn inline" id="claude"'), 1),
     ("the button row inside a dialog without open", wrap(PAGE, ROW, ROW_END, "<dialog>", "</dialog>"), 1),
@@ -435,7 +458,9 @@ CASES = [
     ("the button row inside an rp", wrap(PAGE, ROW, ROW_END, "<rp>", "</rp>"), 1),
     ("the button row inside a title", wrap(PAGE, ROW, ROW_END, "<title>", "</title>"), 1),
     ("the button row with data-popover", edit(PAGE, ROW, '<p data-popover><a class="btn inline" id="claude"'), 0),
-    ("the button row inside an open dialog", wrap(PAGE, ROW, ROW_END, "<dialog open>", "</dialog>"), 0),
+    # The pin refuses a dialog around the whole row, so the label of 1 link sits in it.
+    ("a family link whose label is in an open dialog",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><dialog open>Claude</dialog><")), 0),
     ("a family page heading with popover", edit(CLAUDE, "<h1>", '<h1 popover="manual">'), 1),
     ("a family page heading inside a dialog without open", wrap(CHATGPT, "<h1>", "</h1>", "<dialog>", "</dialog>"), 1),
     ("a family page heading inside a closed details", wrap(GEMINI, "<h1>", "</h1>", "<details>", "</details>"), 1),
@@ -465,7 +490,8 @@ CASES = [
     ("the button row after <div hidden/>", edit(PAGE, ROW, "<div hidden/>" + ROW), 1),
     ('the button row after <div class="vh"/>', edit(PAGE, ROW, '<div class="vh"/>' + ROW), 1),
     ("the button row after <details/>", edit(PAGE, ROW, "<details/>" + ROW), 1),
-    ("the button row after <br/>", edit(PAGE, ROW, "<br/>" + ROW), 0),
+    # Inside the row, so the pin of the opening is not what reads it: a br held open would hold the later links.
+    ("the button row with <br/> after its first link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK + "<br/>"), 0),
     ("a family page step list after <div hidden/>", edit(OTHER, STEPS, "<div hidden/>" + STEPS), 1),
     ('a family page step list after <div class="vh"/>', edit(GEMINI, STEPS, '<div class="vh"/>' + STEPS), 1),
     ("a family page step list after <details/>", edit(COPILOT, STEPS, "<details/>" + STEPS), 1),
@@ -621,9 +647,10 @@ CASES = [
 # Faults the gate passes, and the words of the gate's docstring that name each (compared with runs of whitespace
 # read as 1 space).
 RESIDUALS = [
-    ("the button row after <span hidden><div></span>", edit(PAGE, ROW, "<span hidden><div></span>" + ROW),
+    # On a family page: the pin of /install/'s opening refuses any element between the pick label and the row.
+    ("a family page step list after <span hidden><div></span>", edit(OTHER, STEPS, "<span hidden><div></span>" + STEPS),
         "after ``<span hidden><div></span>`` the ``span`` stays open"),
-    ("the button row after <p><div hidden></p>", edit(PAGE, ROW, "<p><div hidden></p>" + ROW),
+    ("a family page step list after <p><div hidden></p>", edit(OTHER, STEPS, "<p><div hidden></p>" + STEPS),
         "after ``<p><div hidden></p>`` the ``div`` stays open"),
     ("a div between 2 family links", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK + "<div></div>"),
         "``<div></div>`` between 2 family links leaves the later links outside it"),
@@ -646,59 +673,19 @@ RESIDUALS = [
 ]
 
 
-def valid(name: str, value: str) -> bool:
-    """Whether hides() reads value (in lower case, its runs of whitespace read as 1 space) as valid for the property
-    name: a CSS-wide keyword, for display a value of CSS Display 3, or else a form of VALID_VALUES. No other value
-    reads as valid, whatever CSS allows, so a value with var() or calc() does not, nor does any value of another
-    property."""
-    if value in CSS_WIDE:
-        return True
-    if name != "display":
-        return name in VALID_VALUES and VALID_VALUES[name].fullmatch(value) is not None
-    words = value.split()
-    outside = [word for word in words if word in ("block", "inline", "run-in")]
-    inside = [word for word in words if word in ("flow", "flow-root", "table", "flex", "grid", "ruby", "math")]
-    items = words.count("list-item")
-    # 1 keyword alone; or, in any order, at most 1 outside and 1 inside keyword, or list-item with at most 1 outside
-    # keyword and flow or flow-root.
-    if len(words) == 1 and words[0] in DISPLAY_KEYWORDS:
-        return True
-    return (0 < len(words) == len(outside) + len(inside) + items and len(outside) <= 1 and len(inside) <= 1
-            and items <= 1 and (not items or set(inside) <= {"flow", "flow-root"}))
-
-
 def hides(declarations: str) -> bool:
-    """True when the declarations hide, clip, or move the element off-screen as the template's own rules do. It splits
-    them at each ";" and reads only the properties of VALID_VALUES and display. It drops a declaration without a colon,
-    and 1 whose value, without "!important", is not valid() for its property, as CSS drops 1 it cannot parse, before
-    it records either the value or the importance; of the rest, as in 1 CSS declaration block, an important
-    declaration beats every normal one, and otherwise the later declaration wins. A clip-path other than none counts,
-    even one that removes nothing (see above)."""
-    props: dict[str, str] = {}
-    important: set[str] = set()
+    """True when the declarations may hide, clip, or move the element off-screen, read fail closed (see above): it
+    splits them at each ";", and any declaration with a colon whose property name holds a backslash, or whose property
+    is 1 of SHOWING_VALUES and whose value, in lower case, its runs of whitespace read as 1 space and a final
+    "!important" dropped, is not listed there for it, hides, wherever it sits in the block and whatever its importance.
+    A declaration without a colon is not read, as CSS drops it."""
     for declaration in declarations.split(";"):
         name, colon, value = declaration.partition(":")
         name = name.strip().lower()
-        value, bang = re.subn(r"!\s*important$", "", value.lower().strip())
-        value = " ".join(value.split())
-        if not colon or not valid(name, value):
-            continue
-        if bang or name not in important:
-            props[name] = value
-        if bang:
-            important.add(name)
-    offscreen = any(props.get(side, "").startswith("-") for side in ("top", "left"))
-    flat = any(ZERO.fullmatch(props.get(side, "")) for side in ("height", "max-height"))
-    cut = any(word in ("hidden", "clip") for word in props.get("overflow", "").split())
-    return (
-        props.get("display") == "none"
-        or props.get("visibility") in ("hidden", "collapse")
-        or props.get("clip", "").startswith("rect(")
-        or (props.get("position") in ("absolute", "fixed") and offscreen)
-        or props.get("clip-path", "none") != "none"
-        or ZERO.fullmatch(props.get("opacity", "")) is not None
-        or (flat and cut)
-    )
+        value = " ".join(re.sub(r"!\s*important$", "", value.lower().strip()).split())
+        if colon and ("\\" in name or (name in SHOWING_VALUES and value not in SHOWING_VALUES[name])):
+            return True
+    return False
 
 
 def hides_problems() -> list[str]:
