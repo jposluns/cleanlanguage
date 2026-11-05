@@ -15,7 +15,7 @@
 <meta property="og:image" content="https://cleanlanguage.ai/images/cleanlanguage-card.png">
 <meta property="og:image:alt" content="CleanLanguage.ai: Precise, direct, natural AI writing. A skill you install once, anywhere.">
 <meta property="article:published_time" content="2026-07-27">
-<meta property="article:modified_time" content="2026-11-03">
+<meta property="article:modified_time" content="2026-11-05">
 <meta property="article:author" content="https://linkedin.com/in/jposluns">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Verify | CleanLanguage.ai">
@@ -31,7 +31,7 @@
   "description": "Optional steps to confirm that the Clean Language download matches its published SHA-256 checksum. If you trust the source, you can skip this.",
   "license": "https://creativecommons.org/licenses/by-sa/4.0/",
   "datePublished": "2026-07-27",
-  "dateModified": "2026-11-03",
+  "dateModified": "2026-11-05",
   "author": {
     "@type": "Person",
     "@id": "https://cleanlanguage.ai/#jeffposluns",
@@ -77,17 +77,17 @@
 <h2 id="how">How to verify</h2>
 <p class="lbl blk">Step 1</p>
 <p>Download the skill. The published checksum is shown under the link.</p>
-<div class="download"><p class="file"><a href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.14/cleanlanguage-1.0.14.zip" target="_blank" rel="noopener noreferrer">cleanlanguage-1.0.14.zip<span class="vh"> (opens in a new tab)</span></a></p><p class="lbl size">zip, version 1.0.14, SHA-256</p><p>The published checksum for version 1.0.14 is:</p><code class="sum" id="published-checksum">2b57d83fcbe567d5d617a8d2416770e5a832002aa5f01e196ef6d1bcd12f1336</code><p>The same value is in the <a href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.14/cleanlanguage-1.0.14.zip.sha256" target="_blank" rel="noopener noreferrer">published checksum file<span class="vh"> (opens in a new tab)</span></a>, if you would rather compare files than read.</p></div>
+<div class="download"><p class="file"><a href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.15/cleanlanguage-1.0.15.zip" target="_blank" rel="noopener noreferrer">cleanlanguage-1.0.15.zip<span class="vh"> (opens in a new tab)</span></a></p><p class="lbl size">zip, version 1.0.15, SHA-256</p><p>The published checksum for version 1.0.15 is:</p><code class="sum" id="published-checksum">0000000000000000000000000000000000000000000000000000000000000000</code><p>The same value is in the <a href="https://github.com/jposluns/cleanlanguage/releases/download/v1.0.15/cleanlanguage-1.0.15.zip.sha256" target="_blank" rel="noopener noreferrer">published checksum file<span class="vh"> (opens in a new tab)</span></a>, if you would rather compare files than read.</p></div>
 <p class="lbl blk">Step 2</p>
 <p>Calculate the checksum of the file you downloaded. First open a terminal in your Downloads folder:</p>
 <ul><li>On Windows: open your Downloads folder in File Explorer, click the address bar, type <code>powershell</code>, and press Enter.</li><li>On macOS: press Command+Space, type <code>Terminal</code>, press Return, then type <code>cd Downloads</code> and press Return.</li></ul>
 <p>Copy the command for your system, paste it into the window, and press Enter.</p>
 <p class="lbl blk">Windows (PowerShell)</p>
-<pre id="v-win" class="hascopy"><button class="copy" type="button" data-copy="v-win" hidden>Copy</button>Get-FileHash cleanlanguage-1.0.14.zip -Algorithm SHA256</pre>
+<pre id="v-win" class="hascopy"><button class="copy" type="button" data-copy="v-win" hidden>Copy</button>Get-FileHash cleanlanguage-1.0.15.zip -Algorithm SHA256</pre>
 <p class="lbl blk">macOS</p>
-<pre id="v-mac" class="hascopy"><button class="copy" type="button" data-copy="v-mac" hidden>Copy</button>shasum -a 256 cleanlanguage-1.0.14.zip</pre>
+<pre id="v-mac" class="hascopy"><button class="copy" type="button" data-copy="v-mac" hidden>Copy</button>shasum -a 256 cleanlanguage-1.0.15.zip</pre>
 <p class="lbl blk">Linux</p>
-<pre id="v-linux" class="hascopy"><button class="copy" type="button" data-copy="v-linux" hidden>Copy</button>sha256sum cleanlanguage-1.0.14.zip</pre>
+<pre id="v-linux" class="hascopy"><button class="copy" type="button" data-copy="v-linux" hidden>Copy</button>sha256sum cleanlanguage-1.0.15.zip</pre>
 <p class="lbl blk">Step 3</p>
 <p>Compare the value your computer prints with the published checksum shown in step 1. Letter case does not matter: PowerShell prints the hash in upper case, while the published value is lower case, so compare the letters and digits and ignore the case. A match means your copy matches the published release.</p>
 <p>If the two differ, delete the file, download it again, and check once more. If the values still differ after a fresh download, do not install the file and <a href="https://github.com/jposluns/cleanlanguage/issues" target="_blank" rel="noopener noreferrer">report it on GitHub<span class="vh"> (opens in a new tab)</span></a>.</p>
