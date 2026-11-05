@@ -95,11 +95,23 @@ an element of its ``HIDING_ELEMENTS``, or a ``dialog`` without ``open``), or
 inside a ``details`` without ``open`` other than in its first ``summary``
 child, as that gate's ``PageParser`` reads it, or with no ``div.region``
 among its ancestors, or whose ``p.value`` holds anything outside its pin: an
-element other than an ``a`` with no attribute but ``href``, a character other
-than the ordinary space (U+0020) and those of ``VALUE_CATEGORIES`` (letters,
-decimal digits and punctuation), or no letter (the pin leaves no element in
-the paragraph that could hide its text, so no visible-text model applies
-there); a landing page whose output
+element other than an ``a`` with no attribute but ``href`` or an ``em`` with
+no attribute, a character other than those of ``VALUE_SPACES`` (the ordinary
+space, U+0009, U+000A and U+000D, which a browser collapses to a space, and
+U+00A0) and ``VALUE_CATEGORIES`` (letters Lu, Ll and Lt, decimal digits,
+punctuation, and currency and math symbols), or no letter (the pin leaves no
+element in the paragraph that could hide its text, so no visible-text model
+applies there; it refuses Lo, which holds the Hangul fillers, So, which holds
+U+2800 and the copyright sign, and every other category, so the paragraph
+cannot be written in an uncased script such as CJK, Arabic, Hebrew or Thai),
+or whose value region (that ``div.region``) or an element inside it carries a
+class name outside ``VALUE_REGION_CLASSES`` (``region``, ``lbl`` and
+``value``, those the committed landing page uses there); a page source with a
+class name outside ``SOURCE_CLASSES`` (below); a page source with a bidi
+formatting character (``BIDI_CONTROLS``: U+061C, U+200E, U+200F, U+202A to
+U+202E and U+2066 to U+2069), as written or as a character reference, and a
+page with one, since a browser reorders the text it shows around one, where
+the label rule reads text in its stored order; a landing page whose output
 lacks exactly 1 such ``p.value`` and, once and byte for byte, the whole About
 block (``about_block()``: ``ABOUT_BLOCK``, the ``div.region`` with its label
 and its ``div`` around the row ``about_line()`` gives, 1 ordinary space after
@@ -120,14 +132,20 @@ a selector of ``UPPERCASE_SELECTORS`` matches (the rules that set
 back to ``none``, such as ``.lbl.file``) of higher specificity does, and in
 the elements inside it that neither matches; there the label counts in any
 letter case. The text is joined across elements, with
-character references decoded, each character of general category Cf (format
-characters, such as the zero-width, soft hyphen and bidi formatting
-characters), each Default_Ignorable_Code_Point (``DEFAULT_IGNORABLE``, such
-as U+034F, the variation selectors and the Hangul fillers), each character of
-``tools/check-install-page.py``'s ``ZERO_WIDTH`` other than U+00A0, and
-U+0000 deleted, and then every character other than a letter or a digit,
-such as whitespace, punctuation or U+2800, deleted from it and from the label,
-attribute values and comments apart. It is read twice, whole and with the
+character references decoded and each ``img``'s ``alt`` text read as text in
+its place (a browser shows it there when the image does not load), each
+character of general category Cf (format characters, such as the zero-width
+and soft hyphen characters), each Default_Ignorable_Code_Point
+(``DEFAULT_IGNORABLE``, such as U+034F, the variation selectors and the
+Hangul fillers), each character of ``tools/check-install-page.py``'s
+``ZERO_WIDTH`` other than U+00A0, and U+0000 deleted, then decomposed by NFKD
+(a fullwidth or other compatibility letter reads as its Latin letter, an
+accented letter as its letter and a mark), with each Latin small capital (a
+character named ``LATIN LETTER SMALL CAPITAL`` and 1 letter, such as U+1D00)
+read as that capital letter, and then every character other than a letter
+or a digit, such as whitespace, punctuation, a mark or U+2800, deleted from
+it and from the label, other attribute values and comments apart. It is read
+twice, whole and with the
 text of every element hidden as the value paragraph rule reads hiding
 deleted, so a hidden element inside the label does not split it, and the
 label counts in either reading), a landing page whose text carries it other
@@ -141,14 +159,34 @@ load ``scheme.js`` and the page's other scripts by ``src``. The About rules
 read hiding from the
 markup alone, as ``tools/check-install-page.py`` does: no stylesheet rule
 other than a bare single class its ``HIDING_CLASSES`` lists (that gate's
-tests fail when a stylesheet the pages load hides another bare single class),
-so a value paragraph hidden only by another rule, such as a descendant
-selector, passes them and the block follows it. The label rule reads a tie
+tests fail when a stylesheet the pages load hides another bare single class).
+Rather than model the others, the class pins hold the classes a source may
+use: in the value region, ``VALUE_REGION_CLASSES``, and no rule of
+``baseline.css`` 1.7.0 whose class parts are those, ``wrap`` and the site
+class hides an element or positions one absolutely, other than those that
+need the ``hidden`` attribute or one that ``SOURCE_ATTRIBUTES`` leaves out
+(read from the stylesheet, not checked in a browser); elsewhere,
+``SOURCE_CLASSES``, which
+leaves out a class of each rule that sets ``display: none`` or clips an
+element (such as ``.scheme .sun``, ``.figure .stack`` and ``.figure .wide``),
+other than the rules that the hiding reader reads (``[hidden]`` and ``.vh``)
+or that need an attribute ``SOURCE_ATTRIBUTES`` leaves out (such as
+``[data-preset]``). The About block is pinned byte
+for byte, so its classes are pinned too. Residuals of the threat model
+(editing mistakes, not deliberate tricks), not modelled: ``SOURCE_CLASSES``
+admits ``copy`` and ``btn``, which ``baseline.css`` positions absolutely, so
+outside the value region the label split by an element with either class,
+whose text a browser shows elsewhere, does not count; and the label rule
+reads no selector with a sibling combinator or of an element name alone,
+none of which sets ``display: none`` in ``baseline.css`` 1.7.0. The label
+rule reads a tie
 in specificity between an uppercase and a reset selector as upper case, and
 an uppercase rule inside ``@media`` or ``@supports`` as always applying, so
 it counts the label in any letter case in some text that a browser can show
-as written, never the reverse. It compares code points, so a letter of
-another script that looks like a Latin one keeps the label from counting.
+as written, never the reverse. It compares code points after NFKD and the
+small-capital reading, so a letter that looks like a Latin one but is
+neither, such as a Cyrillic or Greek letter or U+0131 (a dotless i), keeps
+the label from counting (a residual, not modelled).
 The switch, its place and the
 head are read as parsed elements: each element with ``data-scheme-toggle`` (an
 attribute name in any letter case), the switch's parent, the element before it
@@ -267,6 +305,18 @@ passed. The rules model ``hidden``, ``aria-hidden`` and ``class`` (as
 above); by the HTML Standard's rules, the others admitted neither hide nor
 move an element. An attribute is added only after a review of what it makes
 a browser do.
+
+``SOURCE_CLASSES`` admits only the class names the committed sources use, as
+``with_about()`` reads them, and in the landing page's value region only
+``VALUE_REGION_CLASSES`` (``region``, ``lbl`` and ``value``). A stylesheet
+rule can hide or move an element by a class that a descendant or compound
+selector names, which the rules do not read: a ``div.figure`` and a
+``div.stack`` around the value paragraph (``.figure .stack`` sets ``display:
+none``), or ``copy`` on it (``.copy`` sets ``position: absolute``), built
+with exit 0, and so did a ``span.sun`` that hid a character splitting the
+label in a ``p.lbl.scheme`` (``.scheme .sun``). Both pins are checked after
+the other source rules, and name where the start tag starts. A class name is
+added only after a review of what each stylesheet rule that names it does.
 
 Page source tree
 ----------------
@@ -440,6 +490,26 @@ SOURCE_ELEMENTS = {"a", "button", "caption", "code", "details", "div", "em", "h1
 # against the rules that read the parsed page.
 SOURCE_ATTRIBUTES = {"alt", "aria-hidden", "aria-label", "class", "data-copy", "hidden", "href", "id", "rel", "src",
                      "tabindex", "target", "type"}
+# The only class names a page source may carry (module docstring, "Page source grammar"): those the committed sources
+# use, as with_about() reads them. A stylesheet rule can hide or move an element by a class that a descendant or
+# compound selector names (.scheme .sun and .figure .stack set display: none), which the rules do not read. Adding one
+# is a deliberate change: review first what each stylesheet rule that names it does, against the rules that read the
+# parsed page.
+SOURCE_CLASSES = {"accent", "after", "arrow", "before", "blk", "btn", "callout", "clause", "clauses", "code-note",
+                  "copy", "d", "described", "doc", "download", "entries", "file", "first", "gold", "hascopy", "hero",
+                  "hero-art", "hero-text", "inline", "intro", "lbl", "lead", "meta", "n", "next", "num", "pair", "plan",
+                  "prompt-flow", "rail", "rail-logo", "region", "sec", "size", "start", "statement", "steps", "sum",
+                  "t", "tablewrap", "value", "verified", "vh", "wide"}
+# The only class names that the landing page source's value region (the div.region nearest its p.value) and the
+# elements inside it may carry: those the committed landing page uses there. No rule of baseline.css 1.7.0 whose class
+# parts are these, wrap and site.json's site_class hides an element or positions one absolutely, other than those that
+# need the hidden attribute, which the hiding reader reads, or an attribute that SOURCE_ATTRIBUTES leaves out; .copy,
+# which SOURCE_CLASSES admits, sets position: absolute.
+VALUE_REGION_CLASSES = {"region", "lbl", "value"}
+# The bidi formatting characters, which reorder the text a browser shows around them (U+202E shows the text after it
+# reversed): U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069. No page source or page may carry one,
+# as written or as a character reference, since the label rule reads text in its stored order.
+BIDI_CONTROLS = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 # 1 attribute of a start tag that SOURCE_TOKEN matched, with the whitespace before it; group 1 is its name.
 SOURCE_ATTRIBUTE = re.compile(r"""[ \t\n\f\r]+([a-zA-Z][a-zA-Z0-9_.:-]*)(?:="[^"]*"|='[^']*'|=[a-zA-Z0-9_.:-]+)?""")
 # The page source tree rules (module docstring, "Page source tree"): the source elements whose start tag ends an open p
@@ -502,20 +572,26 @@ ABOUT_LABELS = ("About this project", "ABOUT THIS PROJECT")
 # tools/test-build-site.py fails when the stylesheets' uppercase or reset rules name a selector these lack, when these
 # name one that no such rule names, or when a stylesheet sets text-transform in a way it does not read: to a value
 # other than uppercase or none, in a rule nested in a style rule, in an at-rule other than @media and @supports, or to
-# none inside an at-rule.
+# none inside an at-rule; and when a style rule holds a property name with a backslash (an escape, which can spell
+# text-transform).
 UPPERCASE_SELECTORS = (
     ".skip", ".lbl", ".label", ".nav", ".start", ".copy", ".btn", "th", ".tag", "table.matrix th .grp", "dl.record dt",
     ".picker a", ".chips a", ".chips button", ".figure svg .t", ".srcview .view h4", ".region .about", ".control dt",
     ".note > .label", ".reg-cap", ".fig .cap",
 )
 RESET_SELECTORS = (".lbl.file", "table.matrix tbody th", "table.matrix th .org", ".reg-cap .count")
-# The general categories of the characters, besides the ordinary space (U+0020), that the text of the landing page's
-# value paragraph may hold: letters (Lu, Ll and Lt), decimal digits (Nd) and punctuation (P). Its text uses Lu, Ll,
-# Nd, Pd and Po today. No Default_Ignorable_Code_Point falls in them; Lo, which holds the Hangul fillers, is left out.
-VALUE_CATEGORIES = {"Lu", "Ll", "Lt", "Nd", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po"}
+# The general categories of the characters, besides VALUE_SPACES, that the text of the landing page's value paragraph
+# may hold: letters (Lu, Ll and Lt), decimal digits (Nd), punctuation (P), and currency and math symbols (Sc and Sm).
+# Its text uses Lu, Ll, Nd, Pd and Po today. No Default_Ignorable_Code_Point falls in them. Lo, which holds the Hangul
+# fillers, and So, which holds U+2800 (a Braille pattern blank), are left out, as is every other category.
+VALUE_CATEGORIES = {"Lu", "Ll", "Lt", "Nd", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Sc", "Sm"}
+# The whitespace the value paragraph's text may hold: the ordinary space and U+0009, U+000A and U+000D, which a
+# browser collapses with it, and U+00A0 (&nbsp;), which it shows as a space.
+VALUE_SPACES = " \t\n\r\u00a0"
 # The refusal of a value paragraph outside its pin (PageScan.value_problem() names what it holds).
 VALUE_PIN = ("the value paragraph holds markup or text outside its pin (only a elements with no attribute but href, "
-             "and text of letters, digits, punctuation and the ordinary space, with at least 1 letter)")
+             "em elements with no attribute, and text of letters, digits, punctuation, currency and math symbols and "
+             "whitespace, with at least 1 letter)")
 # Every Default_Ignorable_Code_Point, as (first, last) ranges, from DerivedCoreProperties.txt of the Unicode Character
 # Database, version 16.0.0 (unicodedata.unidata_version on Python 3.14): 4174 code points that Unicode says to render
 # invisibly where they are not supported. Python's unicodedata does not expose this property; the label rule deletes
@@ -1183,9 +1259,10 @@ class PageScan(HTMLParser):
     shows only its first summary child), where each value paragraph starts and where the region of the first one
     ends, that region's ancestors and those of the element at about_at, where each element whose classes include
     about starts, where each html, head, body, frameset and math start tag is, each start tag or text a browser's
-    tree builder would place elsewhere (misnested()), its text, all of it and that which shows, in upper case where
-    the stylesheets show it so (labels(), uppercase_here()), the first p.value's text and the first start tag in it
-    outside its pin (value_problem()), and where the page's body starts. An
+    tree builder would place elsewhere (misnested()), its text, each img's alt text among it, all of it and that
+    which shows, in upper case where the stylesheets show it so (labels(), uppercase_here()), the first p.value's
+    text and the first start tag in it outside its pin (value_problem()), each start tag's class names with where it
+    and its open elements start (stray_class()), and where the page's body starts. An
     element's attributes are the first of each repeated name, as a browser and tools/check-install-page.py's
     PageParser read them. validate() also pins the markup from <body> to the end of header.mast, and the landing
     page's About block; --check compares the committed pages with a build that passed it."""
@@ -1262,6 +1339,11 @@ class PageScan(HTMLParser):
         # start tag: the previous sibling of the next element.
         self.open: list[tuple[str, list[str]]] = []
         self.previous: tuple[str, list[str]] | None = None
+        # Where each open element starts, as open holds them; where the first p.value's region starts; and, for each
+        # start tag with a class name, where it starts, where its open elements start and its class names.
+        self.open_at: list[tuple[int, int]] = []
+        self.value_region_at: tuple[int, int] | None = None
+        self.class_starts: list[tuple[tuple[int, int], tuple[tuple[int, int], ...], list[str]]] = []
         # The switch, the button that starts at switch_at: its parent, its previous sibling, its depth, and where
         # the end tag of its parent starts.
         self.switch_at = switch_at
@@ -1281,6 +1363,8 @@ class PageScan(HTMLParser):
         if len(attrs) != len(attrs_list):
             self.problems.append(f"<{tag}> carries an attribute twice")
         classes = [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
+        if classes:
+            self.class_starts.append((self.getpos(), tuple(self.open_at), classes))
         if "about" in classes:
             self.about_classes.append(self.getpos())
         if tag in ("html", "head", "body", "frameset"):
@@ -1315,7 +1399,8 @@ class PageScan(HTMLParser):
                 hides = True
         if self.hiding or hides:
             self.hidden_starts.add(self.getpos())
-        if self.value_depth is not None and self.value_stray is None and (tag != "a" or set(attrs) - {"href"}):
+        if self.value_depth is not None and self.value_stray is None and (
+                tag not in ("a", "em") or set(attrs) - ({"href"} if tag == "a" else set())):
             self.value_stray = f"a <{tag}> start tag" + (f" with {', '.join(sorted(attrs))}" if attrs else "")
         if tag == "p" and "value" in classes:
             self.values.append(self.getpos())
@@ -1323,6 +1408,7 @@ class PageScan(HTMLParser):
             if len(self.values) == 1 and regions:
                 self.value_region = regions[-1]
                 self.value_region_ancestors = self.open[:regions[-1]]
+                self.value_region_at = self.open_at[regions[-1]]
             if len(self.values) == 1:
                 self.value_depth = len(self.open)
         if self.getpos() == self.about_at:
@@ -1334,9 +1420,19 @@ class PageScan(HTMLParser):
             self.switch_parent = self.open[-1] if self.open else None
             self.switch_previous = self.previous
             self.switch_depth = len(self.open)
+        if tag == "img" and attrs.get("alt"):
+            # A browser shows an img's alt text in its place when the image does not load, in upper case where the
+            # stylesheets show its text so, so the label rule reads it as text there.
+            upper = uppercase_here([*self.open, (tag, classes)])
+            alt = attrs["alt"].upper() if (bool(self.uppercase and self.uppercase[-1]) if upper is None
+                                           else upper) else attrs["alt"]
+            self.text.append(alt)
+            if not (self.hiding or hides or inert):
+                self.shown.append(alt)
         self.previous = (tag, classes) if tag in VOID_TAGS else None
         if tag not in VOID_TAGS:
             self.open.append((tag, classes))
+            self.open_at.append(self.getpos())
             if hides:
                 self.hiding.append(len(self.open) - 1)
             upper = uppercase_here(self.open)
@@ -1416,6 +1512,7 @@ class PageScan(HTMLParser):
             self.problems.append(f"</{tag}> does not close the open element {self.open[-1][0] if self.open else 'none'}")
         else:
             self.previous = self.open.pop()
+            self.open_at.pop()
             if tag == "div" and "doc" in self.previous[1]:
                 self.doc_closed = True
             if len(self.open) == self.value_region:
@@ -1440,8 +1537,9 @@ class PageScan(HTMLParser):
             self.anchor = None
 
     def labels(self) -> tuple[int, int]:
-        """How many times the text the parser reads (attribute values and comments apart, character references
-        decoded), joined across elements, carries the About block's label (ABOUT_LABELS, case-sensitive), read by
+        """How many times the text the parser reads (each img's alt text in its place, other attribute values and
+        comments apart, character references decoded), joined across elements, carries the About block's label
+        (ABOUT_LABELS, case-sensitive), read by
         label_count(): in all of it, and in the text that shows, with the text of every element of INERT_TAGS, every
         element hidden as tools/check-install-page.py reads hiding, and a details without open (other than in its
         first summary child) deleted, so a hidden element inside the label does not split it. Text that the
@@ -1449,16 +1547,27 @@ class PageScan(HTMLParser):
         letter case."""
         return label_count("".join(self.text)), label_count("".join(self.shown))
 
+    def stray_class(self, allowed: set[str],
+                    within: tuple[int, int] | None = None) -> tuple[str, tuple[int, int]] | None:
+        """The first class name outside allowed, with where its start tag starts, of the page's elements or, given
+        within, of the element that starts there and the elements inside it; None if there is none."""
+        for at, lineage, classes in self.class_starts:
+            if within is None or at == within or within in lineage:
+                for name in classes:
+                    if name not in allowed:
+                        return name, at
+        return None
+
     def value_problem(self) -> str | None:
         """What the first p.value holds outside its pin, which leaves no visible-text model to apply there: a start
-        tag other than an a with no attribute but href, a character other than the ordinary space and those of
-        VALUE_CATEGORIES (named with its code point and category), or, when it holds neither, no letter (Lu, Ll or
-        Lt); None if it holds none of these."""
+        tag other than an a with no attribute but href or an em with no attribute, a character other than those of
+        VALUE_SPACES and VALUE_CATEGORIES (named with its code point and category), or, when it holds neither, no
+        letter (Lu, Ll or Lt); None if it holds none of these."""
         if self.value_stray is not None:
             return self.value_stray
         text = "".join(self.value_text)
-        stray = next((character for character in text
-                      if character != " " and unicodedata.category(character) not in VALUE_CATEGORIES), None)
+        stray = next((character for character in text if character not in VALUE_SPACES
+                      and unicodedata.category(character) not in VALUE_CATEGORIES), None)
         if stray is not None:
             return f"U+{ord(stray):04X} (category {unicodedata.category(stray)})"
         if not any(unicodedata.category(character) in ("Lu", "Ll", "Lt") for character in text):
@@ -1507,12 +1616,22 @@ def selector_matches(selector: str, open_elements: list[tuple[str, list[str]]]) 
 
 
 def label_text(text: str) -> str:
-    """text as the label rule reads it: each character that label_ignored() names deleted, and then each character
-    other than a letter or a digit (general category L or N), such as whitespace, punctuation, a symbol such as
-    U+2800 or a mark, deleted, so no character between the label's words keeps it from counting."""
-    deleted = {ord(character): None for character in set(text)
-               if label_ignored(character) or unicodedata.category(character)[0] not in "LN"}
-    return text.translate(deleted)
+    """text as the label rule reads it: each character that label_ignored() names deleted; then decomposed by NFKD,
+    which reads a fullwidth or other compatibility letter as its Latin letter (U+FF41 as a) and an accented letter as
+    its letter and a mark; each Latin small capital (a character named LATIN LETTER SMALL CAPITAL and 1 letter, such
+    as U+1D00) read as that capital letter; and then each character other than a letter or a digit (general category
+    L or N), such as whitespace, punctuation, a symbol such as U+2800 or a mark, deleted, so no character between the
+    label's words keeps it from counting."""
+    text = unicodedata.normalize("NFKD", text.translate({ord(character): None for character in set(text)
+                                                         if label_ignored(character)}))
+    read = {}
+    for character in set(text):
+        name = unicodedata.name(character, "")
+        if name.startswith("LATIN LETTER SMALL CAPITAL ") and len(name) == len("LATIN LETTER SMALL CAPITAL X"):
+            read[ord(character)] = name[-1]
+        elif unicodedata.category(character)[0] not in "LN":
+            read[ord(character)] = None
+    return text.translate(read)
 
 
 def label_count(text: str) -> int:
@@ -1571,15 +1690,20 @@ def with_about(content: str, page: dict, base: str) -> str:
     tools/check-install-page.py reads a frameset start tag as hiding the whole page) or a math start tag (inside math,
     a browser can read a title, textarea, script or style element's content as markup, which the parser reads as text;
     validate() refuses svg, the other such element), each also as the parser reads it; then a start tag or text that a
-    browser's tree builder would place elsewhere (misnested(), the page source tree rules); then a source with an
+    browser's tree builder would place elsewhere (misnested(), the page source tree rules), and, right after
+    source_problem(), a source with a bidi formatting character (bidi_control()); then a source with an
     element whose classes include about, a source whose text carries the About block's label (PageScan.labels()), and a
     landing page source without exactly 1 p.value, with that p.value inside an element of INERT_TAGS, hidden by
     itself or by an ancestor as tools/check-install-page.py reads hiding, holding markup or text outside its pin
-    (PageScan.value_problem()), or with no div.region among its ancestors."""
+    (PageScan.value_problem()), or with no div.region among its ancestors, or with a class name outside
+    VALUE_REGION_CLASSES in that region; and last, any source with a class name outside SOURCE_CLASSES (class_pin())."""
     where = page["source"]
     problem = source_problem(content)
     if problem is not None:
         raise BuildError(f"{where}: {problem}")
+    bidi = bidi_control(content)
+    if bidi is not None:
+        raise BuildError(f"{where}: the page source holds {bidi}")
     scan = PageScan()
     scan.feed(content)
     scan.close()
@@ -1600,6 +1724,7 @@ def with_about(content: str, page: dict, base: str) -> str:
         raise BuildError(f"{where}: the About block's label in the page source's text; the generator writes it, in "
                          "the About block of specification 7.24, on the landing page only")
     if page["path"] != "":
+        class_pin(scan, where)
         return content
     if len(scan.values) != 1 or scan.values[0] not in scan.live_starts or scan.values[0] in scan.hidden_starts:
         raise BuildError(f"{where}: the landing page source must carry exactly 1 p.value, outside every element of "
@@ -1609,6 +1734,13 @@ def with_about(content: str, page: dict, base: str) -> str:
         raise BuildError(f"{where}: {VALUE_PIN} ({scan.value_problem()})")
     if scan.value_region_end is None:
         raise BuildError(f"{where}: the value paragraph has no enclosing div.region, after which the About block goes")
+    stray = scan.stray_class(VALUE_REGION_CLASSES, scan.value_region_at)
+    if stray is not None:
+        raise BuildError(f"{where}: a class name {stray[0]!r} {source_at(stray[1])}, in the value paragraph's region; "
+                         "there a page source carries only the class names of VALUE_REGION_CLASSES (region, lbl and "
+                         "value), since a stylesheet rule can hide or move an element by a class, such as .copy or "
+                         ".figure .stack")
+    class_pin(scan, where)
     line, column = scan.value_region_end
     # The index of that end tag in content: the lines before it, each with its "\n", then the column.
     end = sum(len(part) + 1 for part in content.split("\n")[:line - 1]) + column
@@ -1616,9 +1748,31 @@ def with_about(content: str, page: dict, base: str) -> str:
     return content[:at] + about_block(base) + content[at:]
 
 
+def class_pin(scan: PageScan, where: str) -> None:
+    """Refuse a page source, as scan reads it, with a class name outside SOURCE_CLASSES, naming where it starts."""
+    stray = scan.stray_class(SOURCE_CLASSES)
+    if stray is not None:
+        raise BuildError(f"{where}: a class name {stray[0]!r} {source_at(stray[1])}; a page source carries only the "
+                         "class names of SOURCE_CLASSES; adding one needs a review of the stylesheet rules that name "
+                         "it, such as .scheme .sun, which hides an element")
+
+
+def bidi_control(text: str) -> str | None:
+    """The first character of BIDI_CONTROLS in text, as written or as a character reference that html.unescape()
+    decodes, named with its code point, as a refusal; None if there is none."""
+    found = next((character for character in html.unescape(text) if character in BIDI_CONTROLS), None)
+    if found is None:
+        return None
+    return (f"a bidi formatting character, U+{ord(found):04X}, which reorders the text a browser shows and which the "
+            "label rule reads in its stored order")
+
+
 def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     where = page["source"]
     problems = []
+    bidi = bidi_control(page_html)
+    if bidi is not None:
+        problems.append(f"the page holds {bidi}")
     if 'aria-current="true"' in page_html:
         problems.append('a static aria-current="true"; the rail is marked by rail.js')
     if "\u2013" in page_html or "\u2014" in page_html:

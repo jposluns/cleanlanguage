@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Tests for tools/build-site.py: each refusal fires on a deliberate fault.
 
-Every case copies the generator's inputs into a temporary folder (under
-$TMPDIR), applies 1 fault, runs the generator there as a separate process and
-asserts its exit code, and for the passing cases, what the output contains.
-The first case runs ``--check`` on this repository. The configured base is
-``/``; the staged cases first set the base back to ``/draft/`` and drop the
-``/draft/`` holding page, as a staging round would. Exit 0 when every case
-passes; 1 otherwise, naming each failing case.
+Most cases copy the generator's inputs into a temporary folder (under
+$TMPDIR), apply 1 fault, run the generator there as a separate process and
+assert its exit code, and for the passing cases, what the output contains.
+The others run in this process: they call the generator's functions, loaded
+as a module (such as ``validate()``, ``with_about()`` and ``install_gate()``),
+on committed pages or snippets, or check this file's own readers (such as the
+stylesheet coverage check and the About helper) against stylesheet texts and
+committed pages. The first case runs ``--check`` on this repository. The
+configured base is ``/``; the staged cases first set the base back to
+``/draft/`` and drop the ``/draft/`` holding page, as a staging round would.
+Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
 from __future__ import annotations
@@ -167,7 +171,8 @@ class Placement(HTMLParser):
         self.lineage: dict[tuple[int, int], list[tuple[int, int]]] = {}
         # The text the parser reads, in order, in upper case where the stylesheets show it so (shown_upper()), as a
         # browser shows it, and each piece as read with where its open elements start; attribute values and comments
-        # are not text. Whether each open element's text shows in upper case.
+        # are not text, but an img's alt text is, held by the img. Whether each open element's text shows in upper
+        # case.
         self.text: list[str] = []
         self.text_at: list[tuple[str, list[tuple[int, int]]]] = []
         self.upper: list[bool] = []
@@ -184,6 +189,12 @@ class Placement(HTMLParser):
         in_head = [name for name, _ in self.open] == ["html", "head"] and self.heads == 1 and not self.head_ended
         self.starts[self.getpos()] = (tag, first, list(self.open), self.previous, in_head)
         self.lineage[self.getpos()] = list(self.open_at)
+        if tag == "img" and first.get("alt"):
+            # A browser shows an img's alt text in its place when the image does not load: text, held by the img.
+            upper = shown_upper([*self.open, (tag, class_names(first.get("class", "")))],
+                                bool(self.upper) and self.upper[-1])
+            self.text.append(first["alt"].upper() if upper else first["alt"])
+            self.text_at.append((first["alt"], [*self.open_at, self.getpos()]))
         self.previous = (tag, class_names(first.get("class", ""))) if tag in VOID else None
         if tag not in VOID:
             self.open.append((tag, class_names(first.get("class", ""))))
@@ -356,7 +367,8 @@ def transform_rules(sheets: list[str]) -> tuple[list[tuple[str, str]], list[str]
     the value it sets, uppercase or none, in order (comments removed, a selector list split at commas); and what this
     does not read, each a failure: a text-transform of any other value (such as full-width uppercase, var(--tt) or
     uppercase !important), a rule nested in a style rule, a text-transform in an at-rule other than @media and
-    @supports, and a text-transform: none inside any at-rule. A rule inside @media or @supports that sets uppercase
+    @supports, a text-transform: none inside any at-rule, and a property name in a style rule that holds a backslash
+    (a CSS escape, which can spell text-transform). A rule inside @media or @supports that sets uppercase
     is read as if it always applied, which shows at least what a browser shows in upper case."""
     found, unread = [], []
     for sheet in sheets:
@@ -371,6 +383,10 @@ def transform_rules(sheets: list[str]) -> tuple[list[tuple[str, str]], list[str]
                 prelude, at_rules = (blocks.pop(), blocks) if blocks else ("", [])
                 for declaration in text.split(";") if prelude and not prelude.startswith("@") else []:
                     name, _, value = declaration.partition(":")
+                    if "\\" in name:
+                        # An escape can spell text-transform (text\2d transform), which the name test below misses.
+                        unread.append(f"a property name with an escape, {name.strip()!r}, in {prelude!r}")
+                        continue
                     if name.strip().lower() != "text-transform":
                         continue
                     value = " ".join(value.lower().split())
@@ -439,12 +455,21 @@ def uppercase_coverage(listed: list[str], resets: list[str], sheets: list[str]) 
 def label_text(joined: str) -> str:
     """joined with each character of general category Cf, each Default_Ignorable_Code_Point (the generator's
     DEFAULT_IGNORABLE ranges), each character of the install gate's ZERO_WIDTH other than U+00A0, and U+0000 deleted,
-    and then each character other than a letter or a digit (general category L or N) deleted."""
+    then decomposed by NFKD (a fullwidth letter reads as its Latin letter), with each Latin small capital (named
+    LATIN LETTER SMALL CAPITAL and 1 letter) read as that capital, and each character other than a letter or a
+    digit (general category L or N) deleted."""
     deleted = {ord(character): None for character in set(joined)
                if unicodedata.category(character) == "Cf" or character in GATE.ZERO_WIDTH.replace("\u00a0", "") + "\0"
-               or any(first <= ord(character) <= last for first, last in LOADED.DEFAULT_IGNORABLE)
-               or unicodedata.category(character)[0] not in "LN"}
-    return joined.translate(deleted)
+               or any(first <= ord(character) <= last for first, last in LOADED.DEFAULT_IGNORABLE)}
+    joined = unicodedata.normalize("NFKD", joined.translate(deleted))
+    read = {}
+    for character in set(joined):
+        name = unicodedata.name(character, "")
+        if re.fullmatch(r"LATIN LETTER SMALL CAPITAL [A-Z]", name):
+            read[ord(character)] = name[-1]
+        elif unicodedata.category(character)[0] not in "LN":
+            read[ord(character)] = None
+    return joined.translate(read)
 
 
 def labels(text: str) -> tuple[int, int]:
@@ -511,8 +536,8 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     """The About block of specification 7.24, which the generator writes: on the landing page, exactly 1 p.value,
     with no INERT ancestor, not hidden by itself or by an ancestor as tools/check-install-page.py reads hiding (its
     is_hiding_element(), and a details without open outside its first summary child), holding no element but an a
-    with no attribute but href and no character but the ordinary space and those of VALUE_CATEGORIES, with at least
-    1 letter, no dot span followed directly
+    with no attribute but href or an em with no attribute and no character but those of VALUE_SPACES and
+    VALUE_CATEGORIES, with at least 1 letter, no dot span followed directly
     by a link (the 1.6.1 markup, refused apart from about_line()), and the whole About block once, byte for byte,
     starting where the end tag of that paragraph's region (the div.region nearest it among its open elements) ends,
     the region and the block each with exactly the ancestors ANCESTORS, its row the only parsed element whose classes
@@ -544,12 +569,12 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     path = [*parsed.lineage[values[0]], values[0]]
     if any(IS_HIDING(*parsed.starts[at][:2]) for at in path) or closed_details(parsed, path):
         return [f"{page} carries its value paragraph hidden, by itself or by an ancestor (specification 7.24)"]
-    # Its content is pinned: no element but an a with no attribute but href, and text of VALUE_CATEGORIES and the
-    # ordinary space only, with at least 1 letter.
+    # Its content is pinned: no element but an a with no attribute but href or an em with no attribute, and text of
+    # VALUE_CATEGORIES and VALUE_SPACES only, with at least 1 letter.
     inside = [start for at, start in parsed.starts.items() if values[0] in parsed.lineage[at]]
     text_in = "".join(data for data, around in parsed.text_at if values[0] in around)
-    if (any(tag != "a" or set(attrs) - {"href"} for tag, attrs, *_ in inside)
-            or any(character != " " and unicodedata.category(character) not in VALUE_CATEGORIES
+    if (any(tag not in ("a", "em") or set(attrs) - ({"href"} if tag == "a" else set()) for tag, attrs, *_ in inside)
+            or any(character not in VALUE_SPACES and unicodedata.category(character) not in VALUE_CATEGORIES
                    for character in text_in)
             or not any(unicodedata.category(character) in ("Lu", "Ll", "Lt") for character in text_in)):
         return [f"{page} carries its value paragraph with markup or text outside its pin (specification 7.24)"]
@@ -749,10 +774,20 @@ VALUE = '<p class="value">'
 VALUE_REGION = '<div class="region" id="what-it-fixes">'
 VALUE_END = "outside its aim.</p></div></div>"
 # The value paragraph holds markup or text outside its pin (since row 145, round 5): it may hold no element but an a
-# with no attribute but href, and no character but the ordinary space and those of VALUE_CATEGORIES (letters, decimal
-# digits and punctuation, apart from the generator's own list), with at least 1 letter.
+# with no attribute but href or an em with no attribute, and no character but those of VALUE_SPACES (the ordinary
+# space, U+0009, U+000A, U+000D and U+00A0) and VALUE_CATEGORIES (letters, decimal digits, punctuation, and currency
+# and math symbols, apart from the generator's own lists), with at least 1 letter.
 VALUE_PIN_RULE = "the value paragraph holds markup or text outside its pin"
-VALUE_CATEGORIES = {"Lu", "Ll", "Lt", "Nd", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po"}
+VALUE_CATEGORIES = {"Lu", "Ll", "Lt", "Nd", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Sc", "Sm"}
+VALUE_SPACES = " \t\n\r\u00a0"
+# A page source carries no class name outside the generator's SOURCE_CLASSES, and the value paragraph's region none
+# outside VALUE_REGION_CLASSES; nor may a page source (with_about()) or a page (validate()) carry a bidi formatting
+# character, each refused by its own message.
+CLASS_PIN_RULE = "a page source carries only the class names of SOURCE_CLASSES"
+REGION_CLASS_RULE = "there a page source carries only the class names of VALUE_REGION_CLASSES"
+BIDI_RULE = "the page source holds a bidi formatting character, U+"
+PAGE_BIDI_RULE = "the page holds a bidi formatting character, U+"
+BIDI = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 # Text that a browser shows as nothing: U+200B, a soft hyphen, U+2060, U+034F, a space, U+00A0 and U+200D.
 INVISIBLE = "&#8203;&shy;\u2060\u034f &nbsp;\u200d"
 # The label in mixed case, which a stylesheet that sets text-transform: uppercase shows as the label in upper case.
@@ -1058,11 +1093,67 @@ SOURCE_REFUSALS = [
         wrap_value_content("&#x2800;<span hidden>", "</span>"), VALUE_PIN_RULE),
     ("one word of the value paragraph outside a hidden span", wrap_value_content("Rules <span hidden>", "</span>"),
         VALUE_PIN_RULE),
-    ("an em in the value paragraph", value_content("Rules <em>apply</em>"), VALUE_PIN_RULE),
     ("a class attribute on the value paragraph's link", lambda root: edit(
         root, HOME, '<a href="{{base}}license/">free', '<a href="{{base}}license/" class="x">free'), VALUE_PIN_RULE),
-    ("a no-break space in the value paragraph", value_content("Rules&nbsp;apply"), VALUE_PIN_RULE),
     ("a value paragraph of digits only", value_content("2026"), VALUE_PIN_RULE),
+    # The pin admits an em with no attribute, whitespace a browser shows as a space, and currency and math symbols
+    # (since round 6), but no other element, no So (which holds U+2800), no Lo (which holds the Hangul fillers) and no
+    # other whitespace.
+    ("an em with a class in the value paragraph", value_content('Rules <em class="lbl">apply</em>'), VALUE_PIN_RULE),
+    ("a strong in the value paragraph", value_content("Rules <strong>apply</strong>"), VALUE_PIN_RULE),
+    ("a copyright sign (So) in the value paragraph", value_content("Rules &copy; 2026"), VALUE_PIN_RULE),
+    ("2 CJK ideographs (Lo) in the value paragraph", value_content("Rules \u89c4\u5219"), VALUE_PIN_RULE),
+    ("a value paragraph of only whitespace", value_content(" \n\t&nbsp; "), VALUE_PIN_RULE),
+    ("U+000C in the value paragraph", value_content("Rules\x0capply"), VALUE_PIN_RULE),
+    # Built with exit 0 at 06de967: U+202E shows the text after it reversed, so a browser shows this p.lbl as the label
+    # in upper case, where the label rule read the text in its stored order. A page source carries no bidi formatting
+    # character, as written or as a character reference, wherever it sits.
+    ("the label reversed by U+202E in a p.lbl after the value region in home.html",
+        after_value('<p class="lbl">&#x202E;tcejorp siht tuobA</p>'), BIDI_RULE),
+    ("U+200F as &rlm; in prose", inject("<p>x&rlm;y</p>"), BIDI_RULE),
+    ("U+2067 in an alt attribute value",
+        inject('<p><img src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="x\u2067y"></p>'), BIDI_RULE),
+] + [(f"U+{ord(character):04X} in prose", inject(f"<p>x{character}y</p>"), BIDI_RULE) for character in BIDI] + [
+    # Built with exit 0 at 06de967: a stylesheet rule hides or moves an element by a class that a descendant or
+    # compound selector names (.figure .stack and .scheme .sun set display: none, .copy and .btn position: absolute),
+    # which the rules do not read. The value region carries only region, lbl and value; a page source only the class
+    # names of SOURCE_CLASSES.
+    ("the value paragraph inside a div.figure and a div.stack",
+        wrap_value('<div class="figure"><div class="stack">', "</div></div>"), REGION_CLASS_RULE),
+    ("the value paragraph with the copy class", lambda root: edit(root, HOME, VALUE, '<p class="value copy">'),
+        REGION_CLASS_RULE),
+    ("the value paragraph with the sun class inside a div.scheme", lambda root: (
+        edit(root, HOME, VALUE, '<div class="scheme"><p class="value sun">'),
+        edit(root, HOME, VALUE_END, VALUE_END.replace("</p>", "</p></div>", 1))), REGION_CLASS_RULE),
+    ("the value paragraph inside a div with the vh-x class", wrap_value('<div class="vh-x">', "</div>"),
+        REGION_CLASS_RULE),
+    ("the btn class on the value region's label", lambda root: edit(
+        root, HOME, '<p class="lbl">What it gives you', '<p class="lbl btn">What it gives you'), REGION_CLASS_RULE),
+    ("the label in mixed case split by a span.sun in a p.lbl.scheme after the value region in home.html",
+        after_value('<p class="lbl scheme">About <span class="sun">x</span>This Project</p>'), CLASS_PIN_RULE),
+    ("the label split by a span.sun inside a div.scheme in prose",
+        inject('<div class="scheme"><p>About <span class="sun">x</span>this project</p></div>'), CLASS_PIN_RULE),
+    ("a class name of SOURCE_CLASSES in upper case", inject('<p class="LBL">x</p>'), CLASS_PIN_RULE),
+    # Built with exit 0 at 06de967: a browser shows an img's alt text in its place when the image does not load, in
+    # upper case under .lbl; the label rule reads it as text.
+    ("the label as an img's alt text in a p.lbl after the value region in home.html",
+        after_value('<p class="lbl"><img src="{{base}}instructions/" alt="About this project"></p>'), LABEL_RULE),
+    ("the label in mixed case as an img's alt text in a p.lbl", inject(
+        '<p class="lbl"><img src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="About This Project"></p>'),
+        LABEL_RULE),
+    ("the label split by an img's alt text in prose",
+        inject('<p>About <img src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="this"> project</p>'),
+        LABEL_RULE),
+    # Built with exit 0 at 06de967: Latin small capitals and fullwidth Latin letters, which show as the label's
+    # letters; the label rule reads text after NFKD, with each Latin small capital as its capital letter.
+    ("the label in Latin small capitals", inject(
+        "<p>\u1d00\u0299\u1d0f\u1d1c\u1d1b \u1d1b\u029c\u026a\ua731 \u1d18\u0280\u1d0f\u1d0a\u1d07\u1d04\u1d1b</p>"),
+        LABEL_RULE),
+    ("the label in fullwidth Latin letters", inject(
+        "<p>\uff21\uff42\uff4f\uff55\uff54 \uff54\uff48\uff49\uff53 \uff50\uff52\uff4f\uff4a\uff45\uff43\uff54</p>"),
+        LABEL_RULE),
+    ("the label in mixed case in fullwidth Latin letters in a p.lbl after the value region in home.html",
+        after_value('<p class="lbl">\uff21bout \uff34his \uff30roject</p>'), LABEL_RULE),
 ] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
      for character in LABEL_IGNORED] + [
     # A page source carries no dialog (SOURCE_ELEMENTS) and no inert or popover (SOURCE_ATTRIBUTES);
@@ -1095,20 +1186,37 @@ SOURCE_PASSES = [
     ("the label in mixed case in a link outside .chips and .picker",
         inject(f'<p><a href="{{{{base}}}}install/">{MIXED_LABEL}</a></p>')),
     # A reset rule of higher specificity sets text-transform back to none, so the label in mixed case does not count.
+    # A page source carries no matrix, org, reg-cap or count class (SOURCE_CLASSES, since round 6), so the other 3
+    # reset rules are checked through validate() and the helper (check_about_block(), RESET_PASSES).
     ("the label in mixed case in a p.lbl.file", inject(f'<p class="lbl file">{MIXED_LABEL}</p>')),
-    ("the label in mixed case in a table.matrix tbody th", inject(
-        f'<table class="matrix"><caption>c</caption><tbody><tr><th>{MIXED_LABEL}</th></tr></tbody></table>')),
-    ("the label in mixed case in a span.org inside a table.matrix th", inject(
-        f'<table class="matrix"><caption>c</caption><thead><tr><th>x <span class="org">{MIXED_LABEL}</span></th></tr>'
-        "</thead></table>")),
-    ("the label in mixed case in a span.count inside a p.reg-cap",
-        inject(f'<p class="reg-cap">x <span class="count">{MIXED_LABEL}</span></p>')),
     ("a value paragraph of 1 word", value_content("Rules")),
     ("a value paragraph of only its link", value_content('<a href="{{base}}license/">Licence</a>')),
+    # Since round 6: a line break and a tab, which a browser collapses to a space, a no-break space, currency and math
+    # symbols, and an em with no attribute.
+    ("a value paragraph with a line break and a tab", value_content("Rules\n\tapply")),
+    ("a value paragraph with a no-break space", value_content("Rules&nbsp;apply")),
+    ("a value paragraph with $ and +", value_content("Rules cost $0 + 0")),
+    ("a value paragraph with an em", value_content("Rules <em>apply</em>")),
+    ("the label in mixed case as an img's alt text in prose",
+        inject('<p><img src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="About This Project"></p>')),
     ("the label in a comment", inject(f"<!-- {LABEL} -->")),
     ("the label in an attribute value", inject(f'<p aria-label="{LABEL}">x</p>')),
     ("an attribute of SOURCE_ATTRIBUTES in upper case", inject('<p CLASS="lead" ARIA-LABEL="x">y</p>')),
     ("the label in a comment in home.html", after_value(f"<!-- {LABEL} -->")),
+]
+
+
+# The label in mixed case where a reset rule of higher specificity than every uppercase rule that matches sets
+# text-transform back to none, with classes that SOURCE_CLASSES leaves out of page sources: validate() and the helper
+# pass each after the landing page's About block (check_about_block()).
+RESET_PASSES = [
+    ("the label in mixed case in a table.matrix tbody th after the block",
+        f'<table class="matrix"><caption>c</caption><tbody><tr><th>{MIXED_LABEL}</th></tr></tbody></table>'),
+    ("the label in mixed case in a span.org inside a table.matrix th after the block",
+        f'<table class="matrix"><caption>c</caption><thead><tr><th>x <span class="org">{MIXED_LABEL}</span></th></tr>'
+        "</thead></table>"),
+    ("the label in mixed case in a span.count inside a p.reg-cap after the block",
+        f'<p class="reg-cap">x <span class="count">{MIXED_LABEL}</span></p>'),
 ]
 
 
@@ -1127,10 +1235,11 @@ def check_source_refusals(failures: list[str]) -> int:
 
 def check_source_passes(failures: list[str]) -> int:
     """Each wrapper of SHOWING_WRAPPERS but the open dialog and the open details, which no page source may carry
-    (SOURCE_ELEMENTS, SOURCE_ATTRIBUTES), around the landing page source's value paragraph builds, and so does each
-    case of SOURCE_PASSES."""
+    (SOURCE_ELEMENTS, SOURCE_ATTRIBUTES), and the div with the vh-x class, which the value region may not carry
+    (VALUE_REGION_CLASSES), around the landing page source's value paragraph builds, and so does each case of
+    SOURCE_PASSES."""
     cases = [(f"the value paragraph inside {name}", wrap_value(start, end)) for name, start, end in SHOWING_WRAPPERS
-             if wrapper_rule(start) == VALUE_RULE]
+             if wrapper_rule(start) == VALUE_RULE and "class=" not in start]
     for name, fault in cases + SOURCE_PASSES:
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
@@ -1369,12 +1478,13 @@ def check_about_block(failures: list[str]) -> int:
     hidden by itself or by an ancestor as tools/check-install-page.py reads hiding; the block once, byte for byte,
     directly after the end tag of that paragraph's region; the region and the block each with exactly the ancestors
     html, body, main and div.wrap; no other element whose classes include about), by the
-    label's rule (the page's text, and its text that shows, carry the block's label once, inside the block, in any
-    letter case where the stylesheets show text in upper case) or by the value paragraph's pin (no element but an a
-    with only href, no character outside its list, at least 1 letter), and the build test's helper judges each case
-    as the generator should. The label in an attribute value, a comment, prose in lower or mixed case, or a p.lbl.file
-    in mixed case passes both, and so does each wrapper of SHOWING_WRAPPERS around the value paragraph and a value
-    paragraph of 1 word."""
+    label's rule (the page's text, an img's alt text among it, and its text that shows, carry the block's label once,
+    inside the block, in any letter case where the stylesheets show text in upper case, read after NFKD and with
+    Latin small capitals as capitals) or by the value paragraph's pin (no element but an a with only href or an em
+    with no attribute, no character outside its lists, at least 1 letter), and the build test's helper judges each
+    case as the generator should. The label in an attribute value, a comment, prose in lower or mixed case, or a
+    p.lbl.file in mixed case passes both, and so do the cases of RESET_PASSES, each wrapper of SHOWING_WRAPPERS around
+    the value paragraph, a value paragraph of 1 word, and one with whitespace, symbols and an em that its pin admits."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["path"] == "")
@@ -1480,7 +1590,22 @@ def check_about_block(failures: list[str]) -> int:
         ("one word of the value paragraph outside a hidden span",
             [(VALUE, VALUE + "Rules <span hidden>"), (end, end_in("</span>"))], value_rule),
         ("a value paragraph of 1 word", [(VALUE + content, VALUE + "Rules")], None),
-    ] + [
+        # Since round 6: whitespace a browser shows as a space, currency and math symbols and an em with no attribute
+        # pass; an em with an attribute and So do not. An img's alt text, Latin small capitals and fullwidth Latin
+        # letters carry the label.
+        ("a value paragraph with whitespace, symbols and an em",
+            [(VALUE + content, VALUE + "Rules\r\n\tcost&nbsp;$1 + <em>tax</em>")], None),
+        ("an em with a class in the value paragraph", [(VALUE + content, VALUE + 'Rules <em class="x">tax</em>')],
+            value_rule),
+        ("a copyright sign in the value paragraph", [(VALUE + content, VALUE + "Rules &copy; 2026")], value_rule),
+        ("a second label as an img's alt text in a p.lbl after the block",
+            [(block, block + '<p class="lbl"><img src="/instructions/" alt="About This Project"></p>')], label_rule),
+        ("a second label in Latin small capitals after the block",
+            [(block, block + "<p>\u1d00\u0299\u1d0f\u1d1c\u1d1b \u1d1b\u029c\u026a\ua731 \u1d18\u0280\u1d0f\u1d0a\u1d07"
+                              "\u1d04\u1d1b</p>")], label_rule),
+        ("a second label in fullwidth Latin letters after the block",
+            [(block, block + "<p>\uff21bout this \uff50roject</p>")], label_rule),
+    ] + [(name, [(block, block + snippet)], None) for name, snippet in RESET_PASSES] + [
         (f"the value paragraph inside {name}",
          [(VALUE, start + VALUE), (VALUE_END, VALUE_END.replace("</p>", "</p>" + end, 1))], rule)
         for wrappers, rule in ((HIDING_WRAPPERS, block_rule), (SHOWING_WRAPPERS, None)) for name, start, end in wrappers
@@ -1510,9 +1635,9 @@ def check_uppercase_selectors(failures: list[str]) -> int:
     uppercase and text-transform: none rules of the stylesheets every page loads, read here from those stylesheets,
     each a selector that selector_matches() reads; uppercase_coverage() refuses either list without any 1 of its
     selectors or with 1 that no such rule names, the stylesheets with 1 more such rule, at the top level or inside
-    @media, and each text-transform that transform_rules() does not read, so a coverage check that passes an
-    incomplete or stale list, or a stylesheet it cannot read, fails here. Every Default_Ignorable_Code_Point falls
-    outside the generator's VALUE_CATEGORIES."""
+    @media, and each text-transform that transform_rules() does not read, a property name with an escape (such as
+    text\\2d transform) among them, so a coverage check that passes an incomplete or stale list, or a stylesheet it
+    cannot read, fails here. Every Default_Ignorable_Code_Point falls outside the generator's VALUE_CATEGORIES."""
     listed, resets = list(LOADED.UPPERCASE_SELECTORS), list(LOADED.RESET_SELECTORS)
     sheets = [path.read_text(encoding="utf-8") for path in STYLESHEETS]
     unread = "which the generator does not read"
@@ -1546,6 +1671,9 @@ def check_uppercase_selectors(failures: list[str]) -> int:
         ("an uppercase rule inside @layer", listed, resets,
             sheets + ["@layer x { .added { text-transform: uppercase } }"],
             f"uppercase in '.added' inside '@layer x', {unread}"),
+        # A CSS escape spells text-transform here; a browser reads it as that property.
+        ("an escaped property name", listed, resets, sheets + [".added { text\\2d transform: uppercase }"],
+            "a property name with an escape, 'text\\\\2d transform', in '.added', " + unread),
     ]
     for name, given, given_resets, texts, expected in cases:
         problems = uppercase_coverage(given, given_resets, texts)
@@ -1806,8 +1934,9 @@ def check_helper_reader(failures: list[str]) -> int:
 
 def check_page_rules(failures: list[str]) -> int:
     """The rules validate() holds for markup that the page source grammar keeps out of every page source, so that
-    only the generator's own markup could carry it: called directly on committed pages with 1 snippet after the h1,
-    validate() refuses each by its rule."""
+    only the generator's own markup could carry it, and for a bidi formatting character, which with_about() refuses
+    in a page source and validate() in any text the generator writes: called directly on committed pages with 1
+    snippet after the h1, validate() refuses each by its rule."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     pages = {entry["id"]: entry for entry in config["pages"]}
@@ -1822,6 +1951,8 @@ def check_page_rules(failures: list[str]) -> int:
             "a JSON-LD block on a draft page"),
         ("a math element", "license", "/", "<math></math>", PAGE_MATH_RULE),
         ("a bare svg outside the switch", "license", "/", "<svg></svg>", "an inline <svg> other than the light and dark"),
+        ("U+202E as a character reference", "license", "/", "<p>&#x202E;x</p>", PAGE_BIDI_RULE),
+        ("U+2067 as written", "license", "/", "<p>x\u2067y</p>", PAGE_BIDI_RULE),
     ]
     for name, page_id, base, snippet, rule in cases:
         h1 = re.search(r"<h1>[^<]*</h1>", texts[page_id]).group(0)
