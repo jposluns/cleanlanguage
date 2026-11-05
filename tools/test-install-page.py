@@ -19,25 +19,50 @@ and baseline.css under site/assets/baseline/) and fails when a rule whose
 selector list holds a bare single class, such as ``.only-dark``, hides it and
 the class is in neither the gate's HIDING_CLASSES nor EXEMPT_CLASSES below. It
 fails closed: a rule hides when any declaration in it of a property of
-SHOWING_VALUES (``display``, ``visibility``, ``clip``, ``clip-path``,
+SHOWING_VALUES has a value outside that property's exact list there, when a
+property not listed there starts with 1 of MOVING_PREFIXES, or when a property
+name holds a backslash; a vendor prefix such as ``-webkit-`` is dropped first.
+SHOWING_VALUES holds ``display``, ``visibility``, ``clip``, ``clip-path``,
 ``position``, ``top``, ``left``, ``opacity``, ``height``, ``max-height`` and
-``overflow``) has a value outside that property's exact list there, or when a
-property name holds a backslash. The value is compared in lower case, with
-each run of whitespace read as 1 space and a final ``!important`` dropped; it
-reads neither which declaration wins nor its importance, so ``opacity: 0;
-opacity: 1`` hides, as does ``opacity: 1 !important; opacity: 0``. Every value
-outside the lists counts as hiding, valid or not: ``display: none``, a
-computed 1 (``calc()``, ``var()``), a CSS-wide keyword, an ``opacity`` of 0.5,
--1 or ``0e1``, and any ``visibility``, ``clip`` or ``clip-path``. Each listed
-value shows, beside any other, so it can only refuse more than a browser hides
-by those properties. It reads no other property,
-so a class hidden by ``transform``, by a zero ``width`` or ``font-size``, or by
-a colour matching the background passes.
+``overflow``, and each property that can move a box off-screen: ``right``,
+``bottom``, ``inset`` and its 6 logical forms, ``transform``, ``translate``,
+``rotate``, ``scale``, the ``offset`` properties of a motion path, the
+``position-`` properties of anchor positioning, ``text-indent``,
+``animation`` (whose keyframes can set any of them), and ``margin`` and its 10
+physical and logical forms. MOVING_PREFIXES (``inset``, ``margin``,
+``offset``, ``position``, ``transform``, ``translate``, ``rotate``, ``scale``
+and ``animation``) catches the rest, such as ``inset-area``,
+``transform-origin`` or ``animation-name``. The value is compared in lower
+case, with each run of whitespace read as 1 space and a final ``!important``
+dropped; it reads neither which declaration wins nor its importance, so
+``opacity: 0; opacity: 1`` hides, as does ``opacity: 1 !important;
+opacity: 0``. Every value outside the lists counts as hiding, valid or not:
+``display: none``, a computed 1 (``calc()``, ``var()``), a CSS-wide keyword,
+an ``opacity`` of 0.5, -1 or ``0e1``, ``inset: -9999px``, any ``visibility``,
+``clip``, ``clip-path``, ``bottom`` or ``inset``, and any ``right``,
+``transform`` or ``margin`` the stylesheets do not carry today. Each listed
+value shows beside any other but the 3 negative ones, margins of at most
+0.8rem (on ``.scheme``, ``.verified`` and ``.code-note``): beside ``top: 0``
+and ``height: 3px``, say, 1 can take a box off the top edge, and that passes.
+Past those, it can only refuse more than a browser hides by those properties,
+except through an animation: it does not read the keyframes, so a stylesheet
+that redefines the listed ``field-in`` to hide passes. It reads no other
+property, so a class hidden by a zero ``width``, ``block-size`` or
+``font-size``, by ``padding``, a mask or a filter, or by a colour matching the
+background passes.
 The parser is deliberately small: it reads no compound, descendant or attribute
-selector, and it fails when a stylesheet cannot be read, has an unclosed
-comment or unbalanced braces, or holds no rule. Before it reads them, it fails
-unless the reading counts each of HIDING_DECLARATIONS as hiding and none of
-SHOWING_DECLARATIONS.
+selector. It reads comments and strings as CSS does, so a brace, a ``;`` or a
+comment opener in a string, or a brace or a quote in a comment, delimits
+nothing, and it fails when a stylesheet cannot be read, holds no rule, or holds
+what it does not model: an unclosed comment, a string that a line break or its
+end leaves open, a backslash outside a string, ``<!--`` or ``-->``, an unquoted
+``url()`` holding a quote, a bracket, a brace or a backslash, a brace inside
+brackets or parentheses, unbalanced braces, brackets or parentheses, a rule
+inside a rule, or an at-rule other than those of AT_RULES (``@container``,
+``@font-face``, ``@keyframes``, ``@media`` and ``@supports``). Before it reads
+them, it fails unless the reading counts each of HIDING_DECLARATIONS as hiding
+and none of SHOWING_DECLARATIONS, and unless it reads each of SHEET_CASES as
+that case expects.
 
 It also fails unless the gate's SUPPORTED_PYTHONS is exactly 3.14 and each of
 its versions is in SUPPORTED_PYTHONS of tools/check-inline-code.py, and runs the
@@ -110,11 +135,16 @@ EXEMPT_CLASSES: tuple[str, ...] = ()
 BARE_CLASS = re.compile(r"\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)")
 # The only values hides() reads as showing, for each property it reads; every other value of these properties counts
 # as hiding. Each is a value fonts.css, palettes.css or baseline.css gives that property today and that shows beside
-# any other listed value: none is display: none, a visibility, clip or clip-path, an opacity below 1, a height or
-# max-height of 0 or 1px, or a negative top or left. Left out of what they carry: the values only their hiding rules
-# use (display: none; clip: rect(0 0 0 0) and height: 1px in .vh and .family .cards .cname; top: -4rem in .skip;
-# opacity: 0 in @keyframes field-in) and the computed ones (the heights with var() or clamp() of .family's logos,
-# and the max-height with calc() of .lrail > nav). Add a value only with a case for it in SHOWING_DECLARATIONS.
+# any other listed value, but for the 3 negative margins, of at most 0.8rem, of .scheme, .verified and .code-note,
+# which can take a box that small off an edge it sits at (see above). None is display: none, a visibility, clip or
+# clip-path, an opacity below 1, a height or max-height of 0 or 1px, or a negative top or left; of the properties
+# from right down, which move a box, they list only right: 0.8rem, a transform by 0.25rem or none, the animation
+# field-in (from opacity 0 to 1 in baseline.css) or none, and margins of auto or at most 2.5rem. Left out of what
+# they carry: the values only their hiding rules use (display: none; clip: rect(0 0 0 0), height: 1px and
+# margin: -1px in .vh and .family .cards .cname; top: -4rem in .skip; opacity: 0 in @keyframes field-in) and the
+# computed ones (the heights with var() or clamp() of .family's logos, the max-height with calc() of .lrail > nav,
+# and the 2 margin-left values with calc() of .rail > .lbl), but .brand's margin-right, a clamp() between 2 positive
+# lengths. hides_problems() reads each listed value on its own as well.
 SHOWING_VALUES = {
     "display": ("block", "contents", "flex", "grid", "inline", "inline-block", "inline-flex", "inline-grid",
                 "table-header-group"),
@@ -128,12 +158,65 @@ SHOWING_VALUES = {
     "height": ("auto", "3px", "1.5rem", "2.4rem", "2.75rem"),
     "max-height": ("none", "11rem", "36rem", "75vh", "75svh"),
     "overflow": ("auto", "hidden", "visible"),
+    "right": ("0.8rem",),
+    "bottom": (),
+    "inset": (),
+    "inset-block": (),
+    "inset-inline": (),
+    "inset-block-start": (),
+    "inset-block-end": (),
+    "inset-inline-start": (),
+    "inset-inline-end": (),
+    "transform": ("none", "translatex(0.25rem)"),
+    "translate": (),
+    "rotate": (),
+    "scale": (),
+    "offset": (),
+    "offset-path": (),
+    "offset-distance": (),
+    "offset-position": (),
+    "offset-anchor": (),
+    "offset-rotate": (),
+    "position-anchor": (),
+    "position-area": (),
+    "position-try": (),
+    "position-try-fallbacks": (),
+    "position-try-order": (),
+    "position-visibility": (),
+    "text-indent": (),
+    "animation": ("field-in 400ms ease-out both", "none"),
+    "margin": ("0", "0 auto", "0 0 0 0.15rem", "0 0 0 0.4em", "0 0 0.15rem", "0 0 0.4rem", "0 0 0.5rem", "0 0 0.6rem",
+               "0 0 0.8rem", "0 0 0.9rem", "0 0 1rem", "0 0 1.1rem", "0 0 1.4rem", "0 0 1.6rem", "0 0 2rem",
+               "0 0.6rem 0.6rem 0", "0.2rem 0 0.4rem", "0.2rem 0 1.4rem", "0.3rem 0 0.9rem", "0.3rem 0 1.2rem",
+               "0.4rem 0 0", "0.4rem 0 0.8rem", "0.4rem 0 1.4rem", "0.4rem 0 1.6rem", "0.6rem 0 0", "0.6rem 0 0.8rem",
+               "1.6rem 0 0.5rem", "2rem 0 0.7rem", "2.4rem 0 0.6rem", "-0.25rem -0.625rem -0.25rem 0.6rem",
+               "-0.4rem 0 1rem", "-0.8rem 0 1.6rem"),
+    "margin-top": ("0", "0.15rem", "0.2rem", "0.4rem", "0.5rem", "0.8rem", "1.1rem", "1.2rem", "1.35rem", "1.4rem"),
+    "margin-right": ("0", "clamp(1.2rem, 2.5vw, 2.5rem)"),
+    "margin-bottom": ("0", "0.4rem", "0.45rem", "0.5rem", "0.7rem", "0.8rem", "0.9rem", "1.1rem", "1.4rem"),
+    "margin-left": ("0.4rem", "auto"),
+    "margin-block": (),
+    "margin-block-start": (),
+    "margin-block-end": (),
+    "margin-inline": (),
+    "margin-inline-start": (),
+    "margin-inline-end": (),
 }
-# Declarations hides() must read as hiding, at least 1 for each property it reads and for each value form a reading
-# by validity missed (a computed, clamped or exponent opacity, and 0 before 1), and declarations it must not: each
-# value of SHOWING_VALUES, a declaration without a colon, and properties it does not read. Some hiding ones hide
-# nothing in a browser (opacity: 0.5, visibility: visible, clip-path: none, opacity: 0; opacity: 1): that reading
-# over-refuses by design.
+# Properties hides() reads as moving a box whatever their value when SHOWING_VALUES does not list them: any name that
+# starts with 1 of these, once a vendor prefix such as -webkit- is dropped (margin-trim, inset-area, animation-name or
+# transform-origin, say), so a property that moves a box and is not listed above cannot pass unread.
+MOVING_PREFIXES = ("inset", "margin", "offset", "position", "transform", "translate", "rotate", "scale", "animation")
+# The at-rules css_rules() reads through: those the stylesheets use, which only say when the rules inside them apply
+# or hold no rule for an element. Any other (@import, which loads rules it never sees, or @scope, whose :scope and
+# bare declarations apply to an element its prelude names, say) makes the stylesheet unreadable.
+AT_RULES = ("container", "font-face", "keyframes", "media", "supports")
+URL_START = re.compile(r"url\(\s*", re.I)
+# Declarations hides() must read as hiding, for each value form a reading by validity missed (a computed, clamped or
+# exponent opacity, and 0 before 1) and for each way to move a box off-screen, and declarations it must not: values
+# of SHOWING_VALUES, a declaration without a colon, and properties it does not read. Some hiding ones hide nothing in
+# a browser (opacity: 0.5, visibility: visible, clip-path: none, right: 0, opacity: 0; opacity: 1): that reading
+# over-refuses by design. hides_problems() also reads, for each property of SHOWING_VALUES, each listed value as
+# showing and -9999px as hiding, and, for each of MOVING_PREFIXES, a property it starts as hiding.
 HIDING_DECLARATIONS = (
     "display: none", "display: none !important", "display: block; display: none", "display: var(--d)",
     "display: bogus", "display: flow-root", "visibility: hidden", "visibility: collapse", "visibility: visible",
@@ -144,6 +227,17 @@ HIDING_DECLARATIONS = (
     "opacity: 0 !important; opacity: 1", "opacity: 1 !important; opacity: 0", "opacity: 1 !ie", "Opacity: 0",
     "op\\61 city: 0", "height: 0; overflow: hidden", "height: 0", "height: 1px", "height: var(--mark)",
     "max-height: 0", "max-height: calc(100vh - 3rem)", "overflow: clip", "overflow: hidden auto",
+    "position: absolute; inset: -9999px", "inset: auto", "inset-block: -100vh", "inset-inline: -9999px",
+    "inset-block-start: -9999px", "inset-block-end: 100%", "inset-inline-start: -9999px", "inset-inline-end: 100%",
+    "position: absolute; right: 9999px", "right: 0", "bottom: 100vh", "transform: translatex(-9999px)",
+    "transform: scale(0)", "-webkit-transform: translatex(-9999px)", "translate: -9999px", "rotate: 180deg",
+    "scale: 0", "offset-path: path('m 0 0 h -9999')", "offset-distance: 100%", "position-area: top",
+    "position-try-fallbacks: flip-block", "text-indent: -9999px", "margin: -9999px", "margin: 0 0 0 -9999px",
+    "margin-top: -100vh", "margin-right: 9999px", "margin-bottom: -9999px", "margin-left: -9999px",
+    "margin-block: -100vh", "margin-inline-start: -9999px", "animation: out 1s forwards", "animation: none 1s",
+    "inset-area: top", "margin-trim: block", "-webkit-margin-start: -9999px", "transform-origin: -9999px 0",
+    "animation-name: out", "offset-anchor: 9999px 0", "offset-inline-start: -9999px", "position-fallback: --off",
+    "translate-x: -9999px", "rotate-x: 180deg", "scale-x: 0",
 )
 SHOWING_DECLARATIONS = (
     "display: block", "display: contents", "display: flex", "display: grid", "display: inline",
@@ -152,8 +246,50 @@ SHOWING_DECLARATIONS = (
     "position: static; top: 0.8rem", "position: sticky; top: 1rem", "top: 1.5rem", "opacity: 1",
     "opacity: 1 !important", "opacity:1", "height: auto", "height: 3px; overflow: hidden", "height: 1.5rem",
     "height: 2.4rem", "height: 2.75rem", "max-height: none; overflow: auto", "max-height: 11rem",
-    "max-height: 36rem; overflow: visible", "max-height: 75vh", "max-height: 75svh", "width: 0; transform: scale(0)",
-    "opacity 0", "", 'content: "\\201c;\\201d"',
+    "max-height: 36rem; overflow: visible", "max-height: 75vh", "max-height: 75svh", "width: 0; font-size: 0",
+    "opacity 0", "", 'content: "\\201c;\\201d"', "position: absolute; top: 0.8rem; right: 0.8rem", "transform: none",
+    "transform: translateX(0.25rem)", "animation: field-in 400ms ease-out both", "margin: 0 auto",
+    "margin: -0.8rem 0 1.6rem", "margin-right: clamp(1.2rem, 2.5vw, 2.5rem)", "-webkit-text-size-adjust: 100%",
+    "transition: transform 150ms ease-out", "--inset: -9999px", "grid-template-areas: \"text art\"",
+)
+# Stylesheets the reader must refuse, or read and report as hiding the bare class .x, with the words its 1 problem
+# holds, and stylesheets it must read with no problem (""); only .vh counts as listed. A brace in a string, a
+# comment, an unquoted url() or brackets opens or closes no block in a browser.
+SHEET_CASES = (
+    ("inset moving .x off-screen", ".x { position: absolute; inset: -9999px; }", "hides the bare class .x"),
+    ("a } in a string before display: none",
+        '.x { content: "}"; display: none; content: "{"; }', "hides the bare class .x"),
+    ("a { in a string before display: none", ".x { content: '{'; display: none; }", "hides the bare class .x"),
+    ("an escaped quote and a } in a string", '.x { content: "\\"}"; display: none; }', "hides the bare class .x"),
+    ("a comment opener in a string", '.x { content: "/*"; display: none; } .y { content: "*/"; }',
+        "hides the bare class .x"),
+    ("a quote and a } in a comment", "/* it's } */ .x { display: none; }", "hides the bare class .x"),
+    ("a rule after a string ended by a line break", '.y { content: "a\n} .x { display: none; } .z { content: "b"; }',
+        "a line break ends"),
+    ("an unclosed string", '.x { content: "a; }', "its end leaves open"),
+    ("an escaped brace in a selector", ".y\\{ { color: red; } .x { display: none; }", "a backslash outside"),
+    ("an escaped class name", ".\\78 { display: none; }", "a backslash outside"),
+    ("a brace in brackets", ".x { a: ( } { ); display: none; }", "a brace inside brackets"),
+    ("a brace in an attribute selector", '.x[title="a"], [a=b}] { display: none; }', "a brace inside brackets"),
+    ("a } in an unquoted url()", ".x { background: url(a}b); display: none; }", "an unquoted url()"),
+    ("a quote in an unquoted url()", '.x { background: URL(a"b); display: none; } .y { content: ""; }',
+        "an unquoted url()"),
+    ("a rule nested in a rule", ".x { display: none; & .y { color: red; } }", "a rule inside a rule"),
+    ("@scope", "@scope (.x) { :scope { display: none; } }", "@scope"),
+    ("@import", '@import "more.css"; .y { color: red; }', "@import"),
+    ("an HTML comment marker", "<!-- .x { display: none; } -->", "<!-- or -->"),
+    ("an unclosed comment", ".x { display: none; } /* .y { }", "an unclosed comment"),
+    ("an unclosed rule", ".x { display: none;", "unbalanced braces"),
+    ("a stray }", ".y { color: red; } } .x { display: none; }", "unbalanced braces"),
+    ("a stray )", ".x { a: ); display: none; }", "unbalanced braces"),
+    ("an unclosed parenthesis", ".x { display: none; } (", "unbalanced braces"),
+    ("an @import at the end without a ;", '.y { color: red; } @import "more.css"', "@import"),
+    ("no rule", "/* nothing */", "holds no rule"),
+    ("a } in a string in a showing rule", '.x { content: "}"; grid-template-areas: "a b"; }', ""),
+    ("a ; and display: none in a string", ".x { content: 'a; display: none'; }", ""),
+    ("a listed class hidden, braces in a comment", "/* { } */ .vh { display: none; } @media print { .x { } }", ""),
+    ("a quoted url() and a keyframes rule",
+        '@font-face { src: url("a{b}.woff2"); } @keyframes k { from { opacity: 0; } } .x { margin: 0; }', ""),
 )
 # Runs the gate under a faked version tuple outside SUPPORTED_PYTHONS, 1 on each side of 3.14: 3.13.3, the
 # Cloudflare Pages image default, and 3.15.0. Only the gate's own guard prints OWN_REFUSAL; the catch of
@@ -675,23 +811,152 @@ RESIDUALS = [
 
 def hides(declarations: str) -> bool:
     """True when the declarations may hide, clip, or move the element off-screen, read fail closed (see above): it
-    splits them at each ";", and any declaration with a colon whose property name holds a backslash, or whose property
-    is 1 of SHOWING_VALUES and whose value, in lower case, its runs of whitespace read as 1 space and a final
-    "!important" dropped, is not listed there for it, hides, wherever it sits in the block and whatever its importance.
-    A declaration without a colon is not read, as CSS drops it."""
+    splits them at each ";", and any declaration with a colon whose property name holds a backslash, or whose property,
+    in lower case and without a vendor prefix such as -webkit-, starts with 1 of MOVING_PREFIXES and is not in
+    SHOWING_VALUES, or is 1 of SHOWING_VALUES and whose value, in lower case, its runs of whitespace read as 1 space and
+    a final "!important" dropped, is not listed there for it, hides, wherever it sits in the block and whatever its
+    importance. A declaration without a colon is not read, as CSS drops it."""
     for declaration in declarations.split(";"):
         name, colon, value = declaration.partition(":")
-        name = name.strip().lower()
+        name = re.sub(r"^-[a-z0-9]+-", "", name.strip().lower())
         value = " ".join(re.sub(r"!\s*important$", "", value.lower().strip()).split())
-        if colon and ("\\" in name or (name in SHOWING_VALUES and value not in SHOWING_VALUES[name])):
+        if colon and ("\\" in name or (name in SHOWING_VALUES and value not in SHOWING_VALUES[name])
+                      or (name not in SHOWING_VALUES and name.startswith(MOVING_PREFIXES))):
             return True
     return False
 
 
 def hides_problems() -> list[str]:
-    """hides() reads each of HIDING_DECLARATIONS as hiding and none of SHOWING_DECLARATIONS."""
-    problems = [f"hides() does not read {text!r} as hiding." for text in HIDING_DECLARATIONS if not hides(text)]
-    return problems + [f"hides() reads {text!r} as hiding." for text in SHOWING_DECLARATIONS if hides(text)]
+    """hides() reads each of HIDING_DECLARATIONS as hiding and none of SHOWING_DECLARATIONS, each value of
+    SHOWING_VALUES as showing and -9999px for each of its properties as hiding, and a property each of
+    MOVING_PREFIXES starts as hiding."""
+    hiding = [*HIDING_DECLARATIONS, *(f"{name}: -9999px" for name in SHOWING_VALUES),
+              *(f"{prefix}-x: 0" for prefix in MOVING_PREFIXES)]
+    showing = [*SHOWING_DECLARATIONS, *(f"{name}: {value}" for name, values in SHOWING_VALUES.items() for value in values)]
+    problems = [f"hides() does not read {text!r} as hiding." for text in hiding if not hides(text)]
+    return problems + [f"hides() reads {text!r} as hiding." for text in showing if hides(text)]
+
+
+def unread_at_rule(text: str) -> str:
+    """The problem of a prelude or statement that starts an at-rule outside AT_RULES, or ""."""
+    rule = re.match(r"\s*@([-\w]*)", text)
+    if rule and rule.group(1).lower() not in AT_RULES:
+        return f"holds the at-rule @{rule.group(1)}, which it does not read"
+    return ""
+
+
+def css_rules(css: str) -> tuple[list[tuple[str, str]], str]:
+    """The rules of a stylesheet as (prelude, declarations) pairs, and "" or the 1 problem that makes it unreadable.
+
+    It reads comments and strings as CSS does: a comment ends at the first "*/" and opens nowhere inside a string; a
+    string ends at its next unescaped quote, opens nowhere inside a comment, and is read as an empty string, so no brace,
+    ";" or comment opener in either delimits anything. It fails closed on what it does not model: an unclosed comment,
+    a string a line break or its end leaves open, a backslash outside a string, "<!--" or "-->", an unquoted url()
+    holding a quote, a bracket, a brace or a backslash, a brace inside brackets or parentheses, unbalanced braces,
+    brackets or parentheses, a rule inside a rule (CSS nesting), and an at-rule outside AT_RULES."""
+    rules: list[tuple[str, str]] = []
+    blocks: list[list[str]] = []
+    brackets: list[str] = []
+    text: list[str] = []
+    index = 0
+    while index < len(css):
+        char = css[index]
+        if css.startswith("/*", index):
+            end = css.find("*/", index + 2)
+            if end < 0:
+                return [], "has an unclosed comment"
+            index = end + 2
+            continue
+        if char in "\"'":
+            end = index + 1
+            while end < len(css) and css[end] != char and css[end] not in "\r\n\f":
+                end += 2 if css[end] == "\\" else 1
+            if end >= len(css):
+                return [], "has a string that its end leaves open"
+            if css[end] != char:
+                return [], "has a string that a line break ends"
+            text.append(char * 2)
+            index = end + 1
+            continue
+        if char == "\\":
+            return [], "holds a backslash outside a string"
+        if css.startswith(("<!--", "-->"), index):
+            return [], "holds <!-- or -->"
+        url = URL_START.match(css, index) if char in "uU" else None
+        if url and not re.match(r"[\w-]", css[index - 1:index]) and css[url.end():url.end() + 1] not in ("'", '"'):
+            end = css.find(")", index)
+            if end < 0 or re.search(r"[\"'(\\{}]", css[index + 4:end]):
+                return [], "has an unquoted url() holding a quote, a bracket, a brace or a backslash"
+            text.append(css[index:end + 1])
+            index = end + 1
+            continue
+        if char in "([":
+            brackets.append(char)
+        elif char in ")]":
+            if not brackets or brackets.pop() != "(["[")]".index(char)]:
+                return [], "has unbalanced braces, brackets or parentheses"
+        elif char in "{}" and brackets:
+            return [], "has a brace inside brackets or parentheses"
+        elif char == "{":
+            prelude = " ".join("".join(text).split())
+            if blocks and not blocks[-1][0].startswith("@"):
+                return [], "has a rule inside a rule"
+            if problem := unread_at_rule(prelude):
+                return [], problem
+            blocks.append([prelude])
+            text = []
+            index += 1
+            continue
+        elif char == "}":
+            if not blocks:
+                return [], "has unbalanced braces, brackets or parentheses"
+            block = blocks.pop()
+            rules.append((block[0], "".join(block[1:] + text)))
+            text = []
+            index += 1
+            continue
+        elif char == ";" and not brackets:
+            if problem := unread_at_rule("".join(text)):
+                return [], problem
+            if blocks:
+                blocks[-1].append("".join(text) + ";")
+            text = []
+            index += 1
+            continue
+        text.append(char)
+        index += 1
+    if blocks or brackets:
+        return [], "has unbalanced braces, brackets or parentheses"
+    return ([], problem) if (problem := unread_at_rule("".join(text))) else (rules, "")
+
+
+def sheet_problems(relative: str, css: str, listed: set[str]) -> list[str]:
+    """Each bare single class the stylesheet css hides is in listed, and css_rules() can read it."""
+    rules, problem = css_rules(css)
+    if problem or not rules:
+        return [f"{relative} {problem or 'holds no rule'}; it cannot be read."]
+    problems: list[str] = []
+    for prelude, declarations in rules:
+        if prelude.startswith("@") or not hides(declarations):
+            continue
+        for selector in prelude.split(","):
+            bare = BARE_CLASS.fullmatch(selector.strip())
+            if bare and bare.group(1) not in listed:
+                problems.append(
+                    f"{relative}: the rule {prelude!r} hides the bare class .{bare.group(1)}, which is in neither "
+                    f"HIDING_CLASSES of tools/{GATE.name} nor EXEMPT_CLASSES of this test."
+                )
+    return problems
+
+
+def sheet_case_problems() -> list[str]:
+    """sheet_problems() gives each of SHEET_CASES exactly 1 problem holding its words, or none where they are ""."""
+    problems: list[str] = []
+    for name, css, words in SHEET_CASES:
+        found = sheet_problems("the case", css, {"vh"})
+        if (len(found) != 1 or words not in found[0]) if words else found:
+            problems.append(f"{name}: expected " + (f"1 problem with {words!r}" if words else "none") + f", got {found}")
+    return problems
 
 
 def stylesheet_problems() -> list[str]:
@@ -710,29 +975,7 @@ def stylesheet_problems() -> list[str]:
         except (OSError, UnicodeError) as error:
             problems.append(f"{relative} could not be read: {error}")
             continue
-        css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-        depth = 0
-        for char in css:
-            depth += {"{": 1, "}": -1}.get(char, 0)
-            if depth < 0:
-                break
-        if "/*" in css or depth != 0:
-            problems.append(f"{relative} has an unclosed comment or unbalanced braces; it cannot be read.")
-            continue
-        rules = re.findall(r"([^{};]*)\{([^{}]*)\}", css)
-        if not rules:
-            problems.append(f"{relative} holds no rule; it cannot be read.")
-        for prelude, declarations in rules:
-            selectors = " ".join(prelude.split())
-            if selectors.startswith("@") or not hides(declarations):
-                continue
-            for selector in selectors.split(","):
-                bare = BARE_CLASS.fullmatch(selector.strip())
-                if bare and bare.group(1) not in listed:
-                    problems.append(
-                        f"{relative}: the rule {selectors!r} hides the bare class .{bare.group(1)}, which is in neither "
-                        f"HIDING_CLASSES of tools/{GATE.name} nor EXEMPT_CLASSES of this test."
-                    )
+        problems += sheet_problems(relative, css, listed)
     return problems
 
 
@@ -800,7 +1043,8 @@ def statement_problems() -> list[str]:
 
 def main() -> int:
     failures: list[str] = statement_problems()
-    failures += [f"the stylesheets: {problem}" for problem in hides_problems() + stylesheet_problems()]
+    failures += [f"the stylesheets: {problem}"
+                 for problem in hides_problems() + sheet_case_problems() + stylesheet_problems()]
     failures += [f"the Python version: {problem}" for problem in version_problems()]
     doc = " ".join((ast.get_docstring(ast.parse(GATE.read_text(encoding="utf-8"))) or "").split())
     for name, _, words in RESIDUALS:

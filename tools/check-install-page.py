@@ -197,24 +197,36 @@ element that carries one of them there. ``tools/test-install-page.py`` fails
 when fonts.css, palettes.css or baseline.css hides a bare single class (a
 selector such as ``.only-dark``) that is not in ``HIDING_CLASSES`` or its
 exempt list. It reads ``display``, ``visibility``, ``clip``, ``clip-path``,
-``position``, ``top``, ``left``, ``opacity``, ``height``, ``max-height`` and
-``overflow``, and fails closed: it counts a rule as hiding when any
-declaration of 1 of those properties in it has a value outside the test's
-``SHOWING_VALUES`` for that property, an exact list of values the stylesheets
-carry today that do not hide (``opacity: 1``, say, and no ``visibility``,
-``clip`` or ``clip-path`` value at all), or when a property name holds a
-backslash (a CSS escape). It compares the value in lower case, with each run of
-whitespace read as 1 space and a final ``!important`` dropped, and reads
-neither which declaration wins nor its importance, so ``opacity: 0;
-opacity: 1`` hides there as ``opacity: 1 !important; opacity: 0`` does. Every
-other value counts as hiding, valid or not: a computed 1 (``calc()``,
-``var()``), a CSS-wide keyword, an ``opacity`` of 0.5, -1 or ``0e1``. So it
-can only refuse more than a browser hides by those properties, and a class it
-refuses that does not hide belongs in its exempt list, with a comment saying
-why, or its value in ``SHOWING_VALUES``. It reads no other property, so a
-class hidden by ``transform``, by a zero ``width`` or ``font-size``, or by a
-colour matching the background passes it, and it reads no compound,
-descendant or attribute selector. Of text it reads
+``position``, ``top``, ``left``, ``opacity``, ``height``, ``max-height``,
+``overflow``, and each property that can move a box off-screen (``right``,
+``bottom``, ``inset`` and its logical forms, ``transform``, ``translate``,
+``rotate``, ``scale``, the ``offset`` and ``position-`` properties,
+``text-indent``, ``animation``, and ``margin`` and its forms), and fails
+closed: it counts a rule as hiding when any declaration of 1 of those
+properties in it has a value outside the test's ``SHOWING_VALUES`` for that
+property, an exact list of values the stylesheets carry today that do not hide
+(``opacity: 1``, say, and no ``visibility``, ``clip``, ``clip-path``,
+``bottom`` or ``inset`` value at all), when a property it does not list starts
+with 1 of its ``MOVING_PREFIXES`` (``inset-area`` or ``transform-origin``,
+say), or when a property name holds a backslash (a CSS escape); a vendor
+prefix such as ``-webkit-`` is dropped first. It compares the value in lower
+case, with each run of whitespace read as 1 space and a final ``!important``
+dropped, and reads neither which declaration wins nor its importance, so
+``opacity: 0; opacity: 1`` hides there as ``opacity: 1 !important;
+opacity: 0`` does. Every other value counts as hiding, valid or not: a
+computed 1 (``calc()``, ``var()``), a CSS-wide keyword, an ``opacity`` of 0.5,
+-1 or ``0e1``, or ``inset: -9999px``. So it can only refuse more than a browser
+hides by those properties, but for the 3 negative margins it lists, of at most
+0.8rem, which can take a box that small off an edge it sits at, and for an
+animation, whose keyframes it does not read; a class it refuses that does not
+hide belongs in its exempt list, with a comment saying why, or its value in
+``SHOWING_VALUES``. It reads no other property, so a class hidden by a zero
+``width``, ``block-size`` or ``font-size``, by ``padding``, a mask or a
+filter, or by a colour matching the background passes it, and it reads no
+compound, descendant or attribute selector. It reads comments and strings as
+CSS does, so a brace in either delimits no rule, and refuses a stylesheet with
+what it does not model, such as a backslash outside a string, a brace inside
+brackets, a rule inside a rule, or an unlisted at-rule. Of text it reads
 only whether the heading, each family link, each step list's steps and the
 links back to the downloads and the test have visible text, and whether the
 heading's visible text holds its family's name, so a wrong family link label
