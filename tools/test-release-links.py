@@ -465,8 +465,13 @@ class WriterTest(unittest.TestCase):
                 shutil.copyfile(source, target)
         # The committed site/ is copied whole, so the writer can tell which pages a release changes.
         skill =root / "cleanlanguage/skills/cleanlanguage/SKILL.md"
-        skill.write_text(re.sub(r"^Version: [0-9.]+", "Version: 1.0.15", skill.read_text(encoding="utf-8"), count=1, flags=re.M),
-                         encoding="utf-8")
+        text = skill.read_text(encoding="utf-8")
+        # The release under test is the next patch version after the copied SKILL.md's, the target
+        # tools/release-dry-run.sh chooses, so the test holds at every version, the bump included.
+        self.current = gate.SKILL_VERSION.match(gate.VERSION_LINE.search(text).group(0)).group(1)
+        major_minor, patch = self.current.rsplit(".", 1)
+        self.next = f"{major_minor}.{int(patch) + 1}"
+        skill.write_text(re.sub(r"^Version: [0-9.]+", "Version: " + self.next, text, count=1, flags=re.M), encoding="utf-8")
         writer.REPO_ROOT = root
         writer.SITE = root / "site"
         self.root = root
@@ -476,7 +481,7 @@ class WriterTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def plan(self) -> dict:
-        planned = writer.rewrite("1.0.15", "v1.0.15", "a" * 64, "2026-11-04")
+        planned = writer.rewrite(self.next, "v" + self.next, "a" * 64, "2026-11-04")
         return {path.relative_to(self.root).as_posix(): (text.decode("utf-8") if isinstance(text, bytes) else text)
                 for path, text in planned.items()}
 
@@ -484,14 +489,14 @@ class WriterTest(unittest.TestCase):
         planned = self.plan()
         install, verify = planned["site/install/index.html"], planned["site/verify/index.html"]
         for text in (install, verify):
-            self.assertNotIn("cleanlanguage-1.0.14.zip", text)
-            self.assertNotIn("version 1.0.14", text)
-        self.assertIn("<code>cleanlanguage-1.0.15.zip</code>", install)
-        self.assertIn("sha256sum cleanlanguage-1.0.15.zip", verify)
+            self.assertNotIn(f"cleanlanguage-{self.current}.zip", text)
+            self.assertNotIn(f"version {self.current}", text)
+        self.assertIn(f"<code>cleanlanguage-{self.next}.zip</code>", install)
+        self.assertIn(f"sha256sum cleanlanguage-{self.next}.zip", verify)
         self.assertIn('<code class="sum" id="published-checksum">' + "a" * 64 + "</code>", verify)
-        self.assertIn("published checksum for version 1.0.15 is", verify)
+        self.assertIn(f"published checksum for version {self.next} is", verify)
         self.assertEqual(json.loads(planned["site-src/release.json"]),
-                         {"version": "1.0.15", "tag": "v1.0.15", "checksum": "a" * 64})
+                         {"version": self.next, "tag": "v" + self.next, "checksum": "a" * 64})
 
     def test_only_the_changed_pages_are_restamped(self):
         planned = self.plan()
@@ -514,7 +519,7 @@ class WriterTest(unittest.TestCase):
                      "/favicon.svg /assets/baseline/logos/cleanlanguage-favicon.svg 301",
                      "/apple-touch-icon.png /assets/baseline/logos/cleanlanguage-touch.png 301",
                      "/downloads/cleanlanguage-short.md /downloads/cleanlanguage-11k.md 301",
-                     "/download https://github.com/jposluns/cleanlanguage/releases/download/v1.0.15/cleanlanguage-1.0.15.zip 302"):
+                     f"/download https://github.com/jposluns/cleanlanguage/releases/download/v{self.next}/cleanlanguage-{self.next}.zip 302"):
             self.assertIn(line + "\n", redirects)
         self.assertEqual(len(redirects.splitlines()), 10)
 

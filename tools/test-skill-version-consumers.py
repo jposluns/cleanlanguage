@@ -283,6 +283,17 @@ HEAD_SKILL = subprocess.run(
     capture_output=True, text=True, check=True,
 ).stdout
 
+# The version at HEAD, read from the first Version: line of the committed
+# SKILL.md, for the tests that pass HEAD's version: the gate parse assertion
+# and 6 packager calls (7 runs; 1 call runs under 2 errexit modes). 4 calls
+# build HEAD's SKILL.md, 2 of them with a comment appended, and reach the
+# version comparison; 2 are refused before it, 1 on an empty SKILL.md and 1
+# on HEAD's with an invalid UTF-8 byte appended. So they hold at every
+# version, a release bump included. Fixture versions and the undated
+# baseline stay literal.
+HEAD_VERSION = next(line for line in HEAD_SKILL.splitlines()
+                    if line.startswith("Version:")).split(":", 1)[1].strip()
+
 
 def skill_with(version_block: str | None, released_block: str | None = None) -> str:
     """The real SKILL.md text with its first ``Version:`` line replaced by
@@ -402,7 +413,7 @@ class GateParseTest(unittest.TestCase):
         for gate in (LINKS, CHECKSUM):
             matched, version = gate_verdict(gate, skill_with(None))
             self.assertTrue(matched)
-            self.assertEqual(version, "1.0.14")
+            self.assertEqual(version, HEAD_VERSION)
             matched, version = gate_verdict(gate, skill_with("Version: 9.9.9  "))
             self.assertTrue(matched)
             self.assertEqual(version, "9.9.9")
@@ -415,7 +426,7 @@ class GateParseTest(unittest.TestCase):
 
 class PackagerContractTest(unittest.TestCase):
     def test_real_head_version_builds(self):
-        code, stderr = run_packager(None, "1.0.14")
+        code, stderr = run_packager(None, HEAD_VERSION)
         self.assertEqual(code, 0, stderr)
 
     def test_malformed_first_line_is_rejected(self):
@@ -865,8 +876,11 @@ class InheritedErrexitTest(unittest.TestCase):
 
     def test_the_packager_builds_and_reports_as_without_the_option(self):
         for label, options in INHERITED_ERREXIT:
+            with self.subTest(label, case="the version at HEAD builds"):
+                code, stderr = run_packager(None, HEAD_VERSION, bash_options=options)
+                self.assertEqual(code, 0, stderr)
             with self.subTest(label, case="an undated baseline builds"):
-                code, stderr = run_packager(None, "1.0.14", bash_options=options)
+                code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", bash_options=options)
                 self.assertEqual(code, 0, stderr)
             with self.subTest(label, case="a dated release builds"):
                 code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
@@ -968,7 +982,7 @@ class UnicodeAndStressTest(unittest.TestCase):
         # A large but valid SKILL.md must build, not die with SIGPIPE (exit 141)
         # from an awk pipe that closes early.
         tail = "\n<!-- " + ("x" * 200000) + " -->\n"
-        code, stderr = run_packager(None, "1.0.14", extra_tail=tail)
+        code, stderr = run_packager(None, HEAD_VERSION, extra_tail=tail)
         self.assertEqual(code, 0, stderr)
 
     def test_nul_in_version_line_is_rejected_by_all_three(self):
@@ -982,8 +996,9 @@ class UnicodeAndStressTest(unittest.TestCase):
         self._gates_reject(block)
 
     def test_nul_outside_version_line_agrees(self):
-        # A NUL elsewhere leaves the version line clean, so both accept 1.0.14.
-        code, stderr = run_packager(None, "1.0.14", extra_tail="\n<!-- \x00 -->\n")
+        # A NUL elsewhere leaves the version line clean, so both accept the
+        # version at HEAD.
+        code, stderr = run_packager(None, HEAD_VERSION, extra_tail="\n<!-- \x00 -->\n")
         self.assertEqual(code, 0, stderr)
 
     def test_lone_cr_mid_line_selects_the_same_version(self):
@@ -1002,7 +1017,7 @@ class UnicodeAndStressTest(unittest.TestCase):
         # An empty SKILL.md: both the packager and the gates report no Version
         # line (exact message parity). A genuine git-read failure is reported
         # separately by the explicit check on the skill read.
-        code, stderr = run_packager(None, "1.0.14", raw_skill=b"")
+        code, stderr = run_packager(None, HEAD_VERSION, raw_skill=b"")
         self.assertEqual(code, 1, stderr)
         self.assertIn("no Version: line found", stderr)
         for gate in (LINKS, CHECKSUM):
@@ -1018,7 +1033,7 @@ class UnicodeAndStressTest(unittest.TestCase):
             capture_output=True, check=True,
         ).stdout
         raw = head + b"\n<!-- \xff -->\n"
-        code, stderr = run_packager(None, "1.0.14", raw_skill=raw)
+        code, stderr = run_packager(None, HEAD_VERSION, raw_skill=raw)
         self.assertEqual(code, 1, stderr)
         self.assertIn("not valid UTF-8", stderr)
 
