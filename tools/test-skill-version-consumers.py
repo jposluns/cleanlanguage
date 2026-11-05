@@ -284,10 +284,13 @@ HEAD_SKILL = subprocess.run(
 ).stdout
 
 # The version at HEAD, read from the first Version: line of the committed
-# SKILL.md, for the tests that pass HEAD's version: 5 build or read HEAD's
-# SKILL.md, and 1 runs on an empty SKILL.md, which the packager refuses
-# before it compares versions. So they hold at every version, a release bump
-# included. Fixture versions and the undated baseline stay literal.
+# SKILL.md, for the tests that pass HEAD's version: the gate parse assertion
+# and 6 packager calls (7 runs; 1 call runs under 2 errexit modes). 4 calls
+# build HEAD's SKILL.md, 2 of them with a comment appended, and reach the
+# version comparison; 2 are refused before it, 1 on an empty SKILL.md and 1
+# on HEAD's with an invalid UTF-8 byte appended. So they hold at every
+# version, a release bump included. Fixture versions and the undated
+# baseline stay literal.
 HEAD_VERSION = next(line for line in HEAD_SKILL.splitlines()
                     if line.startswith("Version:")).split(":", 1)[1].strip()
 
