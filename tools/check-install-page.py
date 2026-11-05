@@ -57,11 +57,22 @@ What it verifies
    "Pick your AI" label are not hidden, by the rules above, and each has
    visible text, as check 4 defines it. The visible text of the ``h1``, of
    that label and of each family link holds no bidi control
-   (``BIDI_CONTROLS``, check 4), and none of them, nor any element in one
-   that no element hides, is a ``bdo`` or carries ``dir``; each can show
-   the letters in another order. The pin reads every element and text there,
-   shown or hidden, and nothing inside ``header.mast``, whose markup the
-   generator's validator pins (see below), or after the button row.
+   (``BIDI_CONTROLS``, check 4), which can show the letters in another
+   order. No element that starts before that ``p`` ends, shown or hidden, is
+   a ``bdo`` or carries ``dir``, in any value: the ``h1``, that label, the
+   family links and what they hold, the rest of the pinned opening, its
+   ancestors (``html``, the body, that ``main``, ``div.wrap`` and
+   ``div.doc``), that ``p`` itself, the ``head``, and ``header.mast`` and
+   what it holds. A ``dir`` on that ``p`` or on an ancestor can show the
+   family links, or the text above them, in another order, and a browser can
+   reopen a formatting element that an end tag closed out of order, with its
+   attributes, around later text (``<span hidden><b dir="rtl"></span>`` in a
+   family link reopens the ``b`` around the later links). No ``html`` or
+   ``body`` start tag anywhere on the page carries ``dir``, because a browser
+   adds its attributes to the page's own element. The pin of elements and
+   text reads every element and text there, shown or hidden, and nothing
+   inside ``header.mast``, whose markup the generator's validator pins (see
+   below), or after the button row.
 2. No element on any of the 6 pages carries the retired selector attributes
    ``data-picker``, ``data-family-link``, ``data-family-section``,
    ``data-picker-reset`` or ``data-picker-status``.
@@ -79,9 +90,12 @@ What it verifies
    which a browser reads as ``<br>``, and each run of whitespace, U+00A0
    included, read as 1 space) and no bidi control in that text
    (``BIDI_CONTROLS``: U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to
-   U+2069, which can show the letters in another order), and neither it nor
-   any element in it that no element hides is a ``bdo`` or carries ``dir``,
-   which can do the same (``<bdo dir="rtl">GPT</bdo>`` shows "TPG"), at least 1
+   U+2069, which can show the letters in another order), and no element that
+   starts before it ends, shown or hidden, is a ``bdo`` or carries ``dir``,
+   which can do the same (``<bdo dir="rtl">GPT</bdo>`` shows "TPG"): it and
+   what it holds, its ancestors and every element before it on the page,
+   ``header.mast`` and the ``head`` included, for the reasons check 1 gives,
+   and no ``html`` or ``body`` start tag on the page carries ``dir``; at least 1
    ``p.verified`` and at least 1 ``ol.steps``, none of them hidden by itself or
    an ancestor,
    each ``ol.steps`` with at least 1 ``li`` with visible text (text counts for
@@ -281,7 +295,15 @@ heading, the "Pick your AI" label, a family link label, a step, or a link back
 to the downloads or the test made only of an invisible character that is not
 whitespace, U+0000 or in ``ZERO_WIDTH`` (such as U+034F, U+115F, U+180E,
 U+2061 to U+2064, U+3164, a variation selector or a tag character) passes the
-visible-text check, which all 5 share. An end tag closes here the open
+visible-text check, which all 5 share. A ``bdo`` or a ``dir`` on an element
+that starts after the paragraph of family links ends on ``/install/``, or
+after the ``h1`` ends on a family page (``Scope``'s label, ``p.verified``, a
+step list or a link back, say), passes, and so does a ``bdi``, which carries
+no ``dir`` but sets its text's direction from its first strong letter (a
+family link label in a ``bdi``, say). The gate applies no stylesheet, so a
+rule that sets ``direction`` or ``unicode-bidi`` through a selector that
+``tools/test-install-page.py`` does not read (``main { direction: rtl; }``)
+passes too. An end tag closes here the open
 element it names and every element opened inside it; the gate
 does not model the browser repairs that can hide markup it reads as visible,
 among them: an end tag a browser ignores because its element is not in scope
@@ -531,6 +553,8 @@ class PageParser(HTMLParser):
         self.elements: list[dict] = []
         self.texts: list[tuple[int, int]] = []
         self.page_hidden = False
+        # Whether any html or body start tag carries dir: a browser adds it to the page's own element (reorderers).
+        self.page_dir = False
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
         # A browser keeps the first of 2 attributes with the same name, so <p class="vh" class="x"> hides.
@@ -549,6 +573,8 @@ class PageParser(HTMLParser):
         # start tag drops the whole body, so a frameset start tag anywhere hides the whole page too.
         if (tag in ("html", "body") and is_hiding_element(tag, attrs)) or tag == "frameset":
             self.page_hidden = True
+        if tag in ("html", "body") and "dir" in attrs:
+            self.page_dir = True
         # A details without open renders only its first summary child; the rest of its content is hidden.
         if parent and parent["closed"]:
             if tag == "summary" and not parent["summary"]:
@@ -588,9 +614,11 @@ class PageParser(HTMLParser):
                 "inert": inert,
             }
             self.anchors.append(anchor)
+        # "dir" records a bdo element or a dir attribute on the element itself, shown or hidden (reorderers).
         self.elements.append(
             {"tag": tag, "classes": classes, "id": attrs.get("id"), "hidden": hiding, "order": self.order,
-             "parent": parent["order"] if parent else None, "text": False, "chars": "", "bidi": False}
+             "parent": parent["order"] if parent else None, "text": False, "chars": "", "bidi": False,
+             "dir": tag == "bdo" or "dir" in attrs}
         )
         heading = None
         if tag == "h1":
@@ -808,6 +836,28 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
     return problems
 
 
+def reorderers(where: str, parser: PageParser, last: dict, what: str) -> list[str]:
+    """Checks 1 and 4: each element that starts before the element last ends (last, its ancestors, everything in it
+    and every element before it, shown or hidden) that is a bdo or carries dir, and any html or body start tag with
+    dir, anywhere. Each can show the text of last, or the text before it, in another order: a dir on an ancestor
+    reorders what it holds, and a browser can reopen a formatting element that an end tag closed out of order, with
+    its attributes, inside a later element (after <p><b dir="rtl"></p> the b is open again in the h1)."""
+    inside = {last["order"]}
+    for element in parser.elements:
+        if element["parent"] in inside:
+            inside.add(element["order"])
+    names = ", ".join(".".join([element["tag"], *element["classes"]]) for element in parser.elements
+                      if element["dir"] and element["order"] <= max(inside))
+    problems: list[str] = []
+    if names:
+        problems.append(f"{where}: an element that starts before {what} ends is a bdo or carries dir ({names}); either "
+                        f"can show {what}, or the text above it, in another order.")
+    if parser.page_dir:
+        problems.append(f"{where}: an html or body start tag carries dir, which a browser adds to the page's own "
+                        "element; it can show the page's text in another order.")
+    return problems
+
+
 def opening_problems(where: str, parser: PageParser, found: list[dict]) -> list[str]:
     """Check 1's pin of the opening of /install/'s content: BODY_OPENING, then MAIN_OPENING, then DOC_OPENING, whose
     last element is the paragraph of the family links found, with the hero's h1 and the "pick" label shown and the h1
@@ -870,7 +920,7 @@ def opening_problems(where: str, parser: PageParser, found: list[dict]) -> list[
     elif any(char in BIDI_CONTROLS for char in doc[4]["chars"]) or doc[4]["bidi"]:
         problems.append(f'{where}: the "pick" label holds a bidi control, a bdo element or a dir attribute, which can '
                         "show its letters in another order.")
-    return problems
+    return problems + reorderers(where, parser, doc[-1], "the paragraph of family links")
 
 
 def check_install_page(text: str) -> list[str]:
@@ -938,6 +988,8 @@ def check_family_page(fam: str, text: str) -> list[str]:
         if parser.h1[0]["bidi"]:
             problems.append(f"{where}: the <h1> holds a bdo element or a dir attribute, which can show its letters in "
                             "another order.")
+        heading = next(element for element in parser.elements if element["order"] == parser.h1[0]["order"])
+        problems += reorderers(where, parser, heading, "the <h1>")
     if not parser.verified:
         problems.append(f'{where}: no <p class="verified"> line says when the steps were last verified.')
     elif any(parser.verified):
@@ -1024,14 +1076,17 @@ def main() -> int:
     print(
         "The install page links all five family pages in order before the get id, with the opening of its content "
         "as pinned, the buttons right after the pick label and that label after the hero's h1, the button row "
-        "holding only the family links, the h1 and that label with text read as visible, neither read as hidden "
+        "holding only the family links, no element that starts before that row ends a bdo or with dir, the h1 and "
+        "that label with text read as visible, neither read as hidden "
         "and neither with a bidi control, bdo or dir, each link with text read as visible and no bidi control, bdo "
         "or dir, none of them read as hidden, and keeps its ids; each family "
-        "page has 1 h1 that names its family in text read as visible with no bidi control, bdo or dir, a verified "
+        "page has 1 h1 that names its family in text read as visible with no bidi control, bdo or dir, and no "
+        "element that starts before it ends a bdo or with dir, a verified "
         "line and a step list, each step "
         "list with a step read as visible, none of them read as hidden, and a link with text read as visible back "
         "to the downloads and to the test; ids "
-        "are unique, no retired selector attribute remains, the six pages pass the inline-code checks, the "
+        "are unique, no html or body start tag on the six pages carries dir, no retired selector attribute "
+        "remains, the six pages pass the inline-code checks, the "
         "light and dark switch included, load the baseline's versioned stylesheets and copy.js, load scheme.js "
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
         "the /* rule of site/_headers carries exactly the shared policy."

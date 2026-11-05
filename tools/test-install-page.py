@@ -139,6 +139,11 @@ SCOPE = '<p class="lbl blk">Scope</p>'
 GET_LABEL = '<p class="lbl sec">Get Clean Language</p>'
 MAIN = '<main id="main-content">\n'
 STEPS = '<ol class="steps">'
+# The gate's messages for a bdo or a dir that starts before the button row or a family page's h1 ends, and for an
+# html or body start tag with dir.
+ROW_DIR = "an element that starts before the paragraph of family links ends is a bdo or carries dir"
+H1_DIR = "an element that starts before the <h1> ends is a bdo or carries dir"
+PAGE_DIR = "an html or body start tag carries dir"
 # The scheme.js tag of template specification 7.33 (baseline 1.8.0), as the committed pages carry it.
 SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.8.0"></script>'
 COPY = '<script src="/assets/baseline/copy.js?v=1.8.0" defer></script>'
@@ -742,9 +747,34 @@ CASES = [
     ("a family link whose label holds a right-to-left override",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">Cla&#x202E;ude<")),
         (1, "the claude family link's label holds a bidi")),
+    # No element that starts before the button row ends, shown or hidden, may be a bdo or carry dir, in any value:
+    # a dir on the row or an ancestor can show the buttons in another order, and a browser reopens a formatting
+    # element that an end tag closed out of order, with its dir, around the later links.
     ("a family link beside a bdo in a hidden span",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><span>Claude</span><span hidden><bdo>x</bdo></span><")),
-        0),
+        (1, ROW_DIR)),
+    ("the button row with a dir attribute", edit(PAGE, ROW, ROW.replace("<p>", '<p dir="rtl">')), (1, ROW_DIR)),
+    ("div.doc with a dir attribute", edit(PAGE, '<div class="doc">', '<div class="doc" dir="rtl">'), (1, ROW_DIR)),
+    ("div.wrap with dir=auto", edit(PAGE, '<div class="wrap">', '<div class="wrap" dir="auto">'), (1, ROW_DIR)),
+    ("main with a dir attribute", edit(PAGE, MAIN, '<main id="main-content" dir="rtl">\n'), (1, ROW_DIR)),
+    ("the body with a dir attribute", edit(PAGE, "<body>", '<body dir="rtl">'), (1, ROW_DIR)),
+    ("the html element with dir=ltr", edit(PAGE, '<html lang="en"', '<html dir="ltr" lang="en"'), (1, ROW_DIR)),
+    ("a bdo around the body", edit(PAGE, "<body>", "<bdo><body>"), (1, ROW_DIR)),
+    ("the title with a dir attribute", edit(PAGE, "<title>", '<title dir="rtl">'), (1, ROW_DIR)),
+    ("the skip link, hidden, with a dir attribute", edit(PAGE, '<a class="skip"', '<a class="skip" dir="rtl"'), (1, ROW_DIR)),
+    ("header.mast with a dir attribute", edit(PAGE, '<header class="mast">', '<header class="mast" dir="rtl">'),
+        (1, ROW_DIR)),
+    ("the site navigation with a dir attribute",
+        edit(PAGE, '<nav class="nav" aria-label="Site">', '<nav class="nav" aria-label="Site" dir="rtl">'), (1, ROW_DIR)),
+    ("the opening label with a dir attribute",
+        edit(PAGE, '<p class="lbl first">Install</p>', '<p class="lbl first" dir="rtl">Install</p>'), (1, ROW_DIR)),
+    ("p.meta with a dir attribute", edit(PAGE, '<p class="meta">', '<p class="meta" dir="rtl">'), (1, ROW_DIR)),
+    ("the rail image with a dir attribute", edit(PAGE, '<img class="rail-logo"', '<img dir="rtl" class="rail-logo"'),
+        (1, ROW_DIR)),
+    ("a b with dir closed out of order in a hidden span in a family link",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", '>Claude<span hidden><b dir="rtl"></span><')), (1, ROW_DIR)),
+    # A browser adds the attributes of a later html or body start tag to the page's own element.
+    ("a later body start tag with a dir attribute", edit(PAGE, "</main>", '</main><body dir="rtl">'), (1, PAGE_DIR)),
     ("the pick label emptied", edit(PAGE, PICK, PICK.replace(">Pick your AI<", "><")),
         (1, 'the "pick" label has no text that reads as visible')),
     ("the pick label of only U+200B", edit(PAGE, PICK, PICK.replace(">Pick your AI<", ">" + chr(0x200B) + "<")),
@@ -897,10 +927,20 @@ CASES = [
         edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>Chat<span dir="rtl">GPT</span></h1>'), (1, "holds a bdo element or a dir")),
     ("a family page heading with a dir attribute", edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1 dir="ltr">ChatGPT</h1>'),
         (1, "holds a bdo element or a dir")),
+    # As on /install/, no element that starts before the h1 ends, shown or hidden, may be a bdo or carry dir.
     ("a family page heading naming its family beside a bdo in a hidden span",
-        edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>ChatGPT<span hidden><bdo dir="rtl">x</bdo></span></h1>'), 0),
-    ("a family page with a dir attribute outside its heading",
-        edit(CHATGPT, '<p class="verified">', '<p class="verified" dir="ltr">'), 0),
+        edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>ChatGPT<span hidden><bdo dir="rtl">x</bdo></span></h1>'), (1, H1_DIR)),
+    ("a family page heading inside a bdo", wrap(OTHER, "<h1>", "</h1>", "<bdo>", "</bdo>"), (1, H1_DIR)),
+    ("a family page's div.doc with a dir attribute", edit(CHATGPT, '<div class="doc">', '<div class="doc" dir="rtl">'),
+        (1, H1_DIR)),
+    ("a family page's main with a dir attribute", edit(GEMINI, MAIN, '<main id="main-content" dir="rtl">\n'), (1, H1_DIR)),
+    ("a family page's body with a dir attribute", edit(CLAUDE, "<body>", '<body dir="rtl">'), (1, H1_DIR)),
+    ("a family page's opening label with a dir attribute",
+        edit(COPILOT, '<p class="lbl first">', '<p class="lbl first" dir="rtl">'), (1, H1_DIR)),
+    ("a b with dir closed out of order before a family page heading",
+        edit(CHATGPT, "<h1>ChatGPT</h1>", '<p><b dir="rtl"></p><h1>ChatGPT</h1>'), (1, H1_DIR)),
+    ("a later html start tag with a dir attribute on a family page", edit(OTHER, "</main>", '</main><html dir="rtl">'),
+        (1, PAGE_DIR)),
     ("a family page inside a hidden wrapper", edit(GEMINI, '<div class="doc">', '<div class="doc" inert>'), 1),
     ("the button row with popover", edit(PAGE, ROW, '<p popover><a class="btn inline" id="claude"'), 1),
     ("the button row inside a dialog without open", wrap(PAGE, ROW, ROW_END, "<dialog>", "</dialog>"), 1),
@@ -1131,6 +1171,14 @@ RESIDUALS = [
     ("a family page with 1 setup step dropped",
         edit(OTHER, STEPS + '<li><span>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</span></li>', STEPS),
         "not its steps or their wording"),
+    # A bdo or a dir after the button row, or after a family page's h1, passes, as does a bdi.
+    ("a dir attribute on the label after the button row", edit(PAGE, SCOPE, SCOPE.replace('">', '" dir="rtl">')),
+        "``Scope``'s label, ``p.verified``, a step list or a link back"),
+    ("a family page with a dir attribute outside its heading",
+        edit(CHATGPT, '<p class="verified">', '<p class="verified" dir="ltr">'),
+        "``Scope``'s label, ``p.verified``, a step list or a link back"),
+    ("a family link label in a bdi", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><bdi>Claude</bdi><")),
+        "a family link label in a ``bdi``"),
 ]
 
 
