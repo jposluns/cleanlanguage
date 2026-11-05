@@ -94,7 +94,11 @@ by an ancestor as that gate's ``is_hiding_element()`` reads an element (a
 an element of its ``HIDING_ELEMENTS``, or a ``dialog`` without ``open``), or
 inside a ``details`` without ``open`` other than in its first ``summary``
 child, as that gate's ``PageParser`` reads it, or with no ``div.region``
-among its ancestors; a landing page whose output
+among its ancestors, or whose ``p.value`` holds no text that shows (its text
+outside every element of ``INERT_TAGS``, every element that gate's
+``is_hiding_element()`` reads as hiding and every ``details`` without
+``open``, other than in its first ``summary`` child, holds only whitespace and
+characters the label rule below deletes); a landing page whose output
 lacks exactly 1 such ``p.value`` and, once and byte for byte, the whole About
 block (``about_block()``: ``ABOUT_BLOCK``, the ``div.region`` with its label
 and its ``div`` around the row ``about_line()`` gives, 1 ordinary space after
@@ -107,7 +111,11 @@ page, than exactly ``ABOUT_ANCESTORS`` (``html``, ``body``, ``main`` and
 ``about``; any
 other page with one; a page source whose text carries the About block's
 label (``ABOUT_LABELS``: ``About this project`` or ``ABOUT THIS PROJECT``,
-case-sensitive, in the text the parser reads, joined across elements, with
+case-sensitive, in the text the parser reads, which it reads in upper case,
+as a browser shows it, inside an element that ``UPPERCASE_SELECTORS`` matches
+(the selectors of the rules that set ``text-transform: uppercase`` in the
+stylesheets the pages load, such as ``.lbl`` and ``th``), so there the label
+counts in any letter case, joined across elements, with
 character references decoded, each character of general category Cf (format
 characters, such as the zero-width, soft hyphen and bidi formatting
 characters), each Default_Ignorable_Code_Point (``DEFAULT_IGNORABLE``, such
@@ -126,7 +134,11 @@ markup alone, as ``tools/check-install-page.py`` does: no stylesheet rule
 other than a bare single class its ``HIDING_CLASSES`` lists (that gate's
 tests fail when a stylesheet the pages load hides another bare single class),
 so a value paragraph hidden only by another rule, such as a descendant
-selector, passes them and the block follows it. The switch, its place and the
+selector, passes them and the block follows it. The label rule reads letter
+case from ``UPPERCASE_SELECTORS`` alone and not from the rules that set
+``text-transform`` back to ``none`` (such as ``.lbl.file``), so it counts the
+label in any letter case in some text that a browser shows as written.
+The switch, its place and the
 head are read as parsed elements: each element with ``data-scheme-toggle`` (an
 attribute name in any letter case), the switch's parent, the element before it
 and the end of its parent, and ``html > head``, the first head or body the page
@@ -468,6 +480,18 @@ ABOUT_ANCESTORS = (("html", "{site_class}"), ("body", ""), ("main", ""), ("div",
 # The About block's label, as written and in upper case: the text of a page source carries neither, and the text of
 # the landing page carries 1, inside the block (PageScan.labels() counts them).
 ABOUT_LABELS = ("About this project", "ABOUT THIS PROJECT")
+# Each selector of a rule that sets text-transform: uppercase in the stylesheets every page loads (baseline 1.7.0's
+# fonts.css, palettes.css and baseline.css, and site-src/assets/site.css when it exists), as written there: a browser
+# shows the text inside an element that one matches in upper case, so PageScan reads that text in upper case and the
+# label rule counts the label there in any letter case. The rules that set it back to none (.lbl.file, table.matrix
+# tbody th, table.matrix th .org and .reg-cap .count) are not read, which counts more than a browser shows. Each is a
+# name or *, then .class parts, joined by descendant or child (>) combinators (selector_matches() reads no other
+# syntax); tools/test-build-site.py fails when an uppercase rule of those stylesheets names a selector this lacks.
+UPPERCASE_SELECTORS = (
+    ".skip", ".lbl", ".label", ".nav", ".start", ".copy", ".btn", "th", ".tag", "table.matrix th .grp", "dl.record dt",
+    ".picker a", ".chips a", ".chips button", ".figure svg .t", ".srcview .view h4", ".region .about", ".control dt",
+    ".note > .label", ".reg-cap", ".fig .cap",
+)
 # Every Default_Ignorable_Code_Point, as (first, last) ranges, from DerivedCoreProperties.txt of the Unicode Character
 # Database, version 16.0.0 (unicodedata.unidata_version on Python 3.14): 4174 code points that Unicode says to render
 # invisibly where they are not supported. Python's unicodedata does not expose this property; the label rule deletes
@@ -978,7 +1002,7 @@ def substitute(text: str, values: dict, where: str) -> str:
 def install_gate():
     """tools/check-install-page.py, beside this tool, read, compiled and run as a fresh module, so that the value
     paragraph rule reads an element as hidden by that gate's is_hiding_element(), given the first of each repeated
-    attribute as that gate's PageParser gives it, and the label rule deletes that gate's ZERO_WIDTH characters. The
+    attribute as that gate's PageParser gives it, and the label and value text rules delete its ZERO_WIDTH. The
     source is always read, so no cached bytecode stands in for it; a source that is not a regular file, as
     read_text() requires, or that cannot be read, compiled or run, or that defines no is_hiding_element() or no
     ZERO_WIDTH string, is an input that cannot be read or is malformed (exit 3)."""
@@ -1134,7 +1158,8 @@ class PageScan(HTMLParser):
     shows only its first summary child), where each value paragraph starts and where the region of the first one
     ends, that region's ancestors and those of the element at about_at, where each element whose classes include
     about starts, where each html, head, body, frameset and math start tag is, each start tag or text a browser's
-    tree builder would place elsewhere (misnested()), its text (labels()), and where the page's body starts. An
+    tree builder would place elsewhere (misnested()), its text, in upper case inside an element UPPERCASE_SELECTORS
+    matches (labels()), the text of the first p.value that shows (value_shown()), and where the page's body starts. An
     element's attributes are the first of each repeated name, as a browser and tools/check-install-page.py's
     PageParser read them. validate() also pins the markup from <body> to the end of header.mast, and the landing
     page's About block; --check compares the committed pages with a build that passed it."""
@@ -1174,9 +1199,12 @@ class PageScan(HTMLParser):
         # Each html, head, body and frameset start tag and where it starts: in a page source, which the generator
         # wraps in its own html, head and body, a stray one.
         self.document_tags: list[tuple[str, tuple[int, int]]] = []
-        # Where each math start tag starts, and the text the parser reads (attribute values and comments apart).
+        # Where each math start tag starts; the text the parser reads (attribute values and comments apart), in upper
+        # case inside an element that UPPERCASE_SELECTORS matches, as a browser shows it; and the depth in open of
+        # each such element.
         self.maths: list[tuple[int, int]] = []
         self.text: list[str] = []
+        self.uppercase: list[int] = []
         # Each start tag or text that a browser's tree builder would place elsewhere (misnested()), as (what, where it
         # starts, why): in a page source, a refusal.
         self.misnested: list[tuple[str, tuple[int, int], str]] = []
@@ -1191,6 +1219,10 @@ class PageScan(HTMLParser):
         self.values: list[tuple[int, int]] = []
         self.value_region: int | None = None
         self.value_region_end: tuple[int, int] | None = None
+        # The depth in open of the first p.value while it is open, and its text outside every element of INERT_TAGS,
+        # every element hidden as tools/check-install-page.py reads hiding, and a details without open (value_shown()).
+        self.value_depth: int | None = None
+        self.value_text: list[str] = []
         # The open elements (name, classes) where that region starts, its ancestors; and those where the element
         # that starts at about_at (on the landing page, the About block) starts.
         self.value_region_ancestors: list[tuple[str, list[str]]] | None = None
@@ -1259,6 +1291,8 @@ class PageScan(HTMLParser):
             if len(self.values) == 1 and regions:
                 self.value_region = regions[-1]
                 self.value_region_ancestors = self.open[:regions[-1]]
+            if len(self.values) == 1:
+                self.value_depth = len(self.open)
         if self.getpos() == self.about_at:
             self.about_ancestors = list(self.open)
         if "data-scheme-toggle" in attrs:
@@ -1273,6 +1307,8 @@ class PageScan(HTMLParser):
             self.open.append((tag, classes))
             if hides:
                 self.hiding.append(len(self.open) - 1)
+            if any(selector_matches(selector, self.open) for selector in UPPERCASE_SELECTORS):
+                self.uppercase.append(len(self.open) - 1)
             if tag == "details" and "open" not in attrs:
                 self.closed[len(self.open) - 1] = False
         if self.doc_closed and self.in_main:
@@ -1319,7 +1355,11 @@ class PageScan(HTMLParser):
             self.handle_endtag(tag)
 
     def handle_data(self, data: str) -> None:
-        self.text.append(data)
+        self.text.append(data.upper() if self.uppercase else data)
+        # Text directly inside a details without open is hidden, as is text inside a child other than its first summary.
+        if (self.value_depth is not None and not self.hiding and len(self.open) - 1 not in self.closed
+                and not any(name in INERT_TAGS for name, _ in self.open)):
+            self.value_text.append(data)
         if self.open and self.open[-1][0] in TABLE_CHILDREN and data.strip(" \t\n\f\r"):
             # A browser moves such text out of the table part to before the table (foster parenting).
             self.misnested.append((f"text other than whitespace directly inside a {self.open[-1][0]}", self.getpos(),
@@ -1346,8 +1386,12 @@ class PageScan(HTMLParser):
                 self.doc_closed = True
             if len(self.open) == self.value_region:
                 self.value_region, self.value_region_end = None, self.getpos()
+            if len(self.open) == self.value_depth:
+                self.value_depth = None
             while self.hiding and self.hiding[-1] >= len(self.open):
                 self.hiding.pop()
+            while self.uppercase and self.uppercase[-1] >= len(self.open):
+                self.uppercase.pop()
             self.closed.pop(len(self.open), None)
             if self.switch_parent is not None and self.switch_parent_end is None and len(self.open) < self.switch_depth:
                 self.switch_parent_end = self.getpos()
@@ -1365,16 +1409,49 @@ class PageScan(HTMLParser):
     def labels(self) -> int:
         """How many times the text the parser reads (attribute values and comments apart, character references
         decoded), joined across elements, carries the About block's label (ABOUT_LABELS, case-sensitive), read by
-        label_count()."""
+        label_count(). Text inside an element that UPPERCASE_SELECTORS matches is read in upper case, as a browser
+        shows it, so there the label counts in any letter case."""
         return label_count("".join(self.text))
+
+    def value_shown(self) -> bool:
+        """Whether the first p.value holds text a browser shows: its text outside every element of INERT_TAGS, every
+        element hidden as tools/check-install-page.py reads hiding, and a details without open (other than in its
+        first summary child), read by label_text(), is not empty."""
+        return bool(label_text("".join(self.value_text)))
+
+
+def selector_matches(selector: str, open_elements: list[tuple[str, list[str]]]) -> bool:
+    """Whether selector (compound selectors, each a name or *, then .class parts, joined by descendant or child (>)
+    combinators) matches the last of open_elements, (name, classes) outermost first, given the others as its
+    ancestors."""
+    parts = selector.replace(">", " > ").split()
+
+    def compound(part: str, element: tuple[str, list[str]]) -> bool:
+        name, *classes = part.split(".")
+        return name in ("", "*", element[0]) and all(class_name in element[1] for class_name in classes)
+
+    def match(index: int, depth: int) -> bool:
+        if not compound(parts[index], open_elements[depth]):
+            return False
+        if index == 0:
+            return True
+        if parts[index - 1] == ">":
+            return depth > 0 and match(index - 2, depth - 1)
+        return any(match(index - 1, ancestor) for ancestor in range(depth - 1, -1, -1))
+
+    return bool(open_elements) and match(len(parts) - 1, len(open_elements) - 1)
+
+
+def label_text(text: str) -> str:
+    """text as the label rule and the value paragraph rule read it: each character that label_ignored() names
+    deleted, and then each run of whitespace (as str.split() reads it, U+00A0 included) read as 1 space."""
+    deleted = {ord(character): None for character in set(text) if label_ignored(character)}
+    return " ".join(text.translate(deleted).split())
 
 
 def label_count(text: str) -> int:
-    """How many times text carries the About block's label (ABOUT_LABELS, case-sensitive), with each character that
-    label_ignored() names deleted, and then each run of whitespace (as str.split() reads it, U+00A0 included) read as
-    1 space."""
-    deleted = {ord(character): None for character in set(text) if label_ignored(character)}
-    text = " ".join(text.translate(deleted).split())
+    """How many times text carries the About block's label (ABOUT_LABELS, case-sensitive), read by label_text()."""
+    text = label_text(text)
     return sum(text.count(label) for label in ABOUT_LABELS)
 
 
@@ -1431,7 +1508,8 @@ def with_about(content: str, page: dict, base: str) -> str:
     browser's tree builder would place elsewhere (misnested(), the page source tree rules); then a source with an
     element whose classes include about, a source whose text carries the About block's label (PageScan.labels()), and a
     landing page source without exactly 1 p.value, with that p.value inside an element of INERT_TAGS, hidden by
-    itself or by an ancestor as tools/check-install-page.py reads hiding, or with no div.region among its ancestors."""
+    itself or by an ancestor as tools/check-install-page.py reads hiding, holding no text that shows
+    (PageScan.value_shown()), or with no div.region among its ancestors."""
     where = page["source"]
     problem = source_problem(content)
     if problem is not None:
@@ -1461,6 +1539,10 @@ def with_about(content: str, page: dict, base: str) -> str:
         raise BuildError(f"{where}: the landing page source must carry exactly 1 p.value, outside every element of "
                          "INERT_TAGS and not hidden by itself or by an ancestor as tools/check-install-page.py reads "
                          "hiding; the About block goes after its region")
+    if not scan.value_shown():
+        raise BuildError(f"{where}: the value paragraph holds no text a browser shows: outside every element of "
+                         "INERT_TAGS, every element hidden as tools/check-install-page.py reads hiding and a details "
+                         "without open, it holds only whitespace and characters the label rule deletes")
     if scan.value_region_end is None:
         raise BuildError(f"{where}: the value paragraph has no enclosing div.region, after which the About block goes")
     line, column = scan.value_region_end
@@ -1557,7 +1639,8 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
             if tag == "a" and any(value.split("#", 1)[0] == base + config_path for config_path in config["about_paths"]):
                 problems.append(f"{value} links a page only the landing page links (specification 7.24)")
     # On the landing page, exactly 1 p.value starts as a parsed element outside every element of INERT_TAGS, as the
-    # required blocks do, and is not hidden by itself or by an ancestor as tools/check-install-page.py reads hiding;
+    # required blocks do, is not hidden by itself or by an ancestor as tools/check-install-page.py reads hiding, and
+    # holds text that shows (PageScan.value_shown());
     # the whole About block, once and byte for byte, starts where the end tag of its region ends; and the region and
     # the block each have exactly the ancestors ABOUT_ANCESTORS as the parser reads the page, so no element wraps
     # either. The block's ancestors are then the region's, the value paragraph's outermost 4: none is an element of
@@ -1566,7 +1649,8 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     # NEW_TAB writes in its row (span.vh, "(opens in a new tab)"). The block's row is then the only parsed element
     # whose classes include about. On any other page, no such element appears, inside an element of INERT_TAGS or
     # not. The page's text carries the block's label once on the landing page, inside the block (with the block's
-    # label taken out, it carries none), and nowhere else.
+    # label taken out, it carries none), and nowhere else, in any letter case inside an element UPPERCASE_SELECTORS
+    # matches.
     if page["path"] == "":
         block, value = about_block(base), scan.values[0] if len(scan.values) == 1 else None
         at = page_html.find(block)
@@ -1583,6 +1667,10 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
                             "as tools/check-install-page.py reads hiding, the region and the block each with exactly "
                             "the ancestors ABOUT_ANCESTORS (html, body, main and div.wrap), and no other About markup "
                             "may appear")
+        if value is not None and not scan.value_shown():
+            problems.append("the value paragraph holds no text a browser shows: outside every element of INERT_TAGS, "
+                            "every element hidden as tools/check-install-page.py reads hiding and a details without "
+                            "open, it holds only whitespace and characters the label rule deletes")
         unlabelled = PageScan()
         unlabelled.feed(page_html.replace(block, block.replace(f">{ABOUT_LABELS[0]}<", "><", 1), 1))
         unlabelled.close()
