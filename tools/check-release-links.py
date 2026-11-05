@@ -37,8 +37,10 @@ What it verifies
    displays exactly 1 checksum element, the same checksum as ``release.json``,
    and carries no not-yet-published note. With the zero placeholder a version
    bump writes, it carries that note exactly once, for that version, and no
-   checksum element, no "published checksum" wording and no link to a
-   ``.sha256`` file, so it never shows the placeholder as the published value.
+   checksum element, no "published checksum" wording, no link to a ``.sha256``
+   file and no step that tells the reader not to install the file, so it never
+   shows the placeholder as the published value (placeholder_page_problems,
+   which tools/check-release-checksum-live.py carries verbatim).
 
 What it does not verify
 -----------------------
@@ -49,9 +51,16 @@ the site. Confirming the value against the release requires the network and is
 done by the orchestrator's post-release site flip, which reads the published checksum.
 
 Exit codes:
-  0  every release link and the displayed checksum agree with SKILL.md
+  0  every check above passes, so every release link names the SKILL.md
+     version and the verify page is in the state ``release.json`` selects: it
+     shows the checksum ``release.json`` holds, or, while that is the zero
+     placeholder, it shows no checksum and says once that the checksum
+     appears when that version is published
   1  something disagrees
-  3  a required file could not be read
+  3  a required file is missing or not a regular file, a required file or a
+     file under ``site/`` could not be read, the first ``Version:`` line of
+     SKILL.md is missing or not a bare X.Y.Z version, ``release.json`` is not
+     a JSON object, or no release-asset URL was found under ``site/``
 """
 
 from __future__ import annotations
@@ -86,6 +95,8 @@ DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) i
 # The verify page's note while release.json holds the zero placeholder, as tools/build-site.py writes it (sum_tokens).
 PENDING_VERSION = re.compile(r"The checksum for version ([0-9][0-9.]*) appears here once that version is published\.")
 PUBLISHED_WORDING = re.compile(r"published checksum", re.I)
+# The verify page's step 3 tells a reader whose value still differs not to install the file (tools/build-site.py).
+REJECTING_STEP = re.compile(r"\bdo not install\b", re.I)
 PLACEHOLDER = "0" * 64
 NAMED_ZIP = re.compile(r"cleanlanguage-([0-9][0-9.]*[0-9])\.zip")
 VERSION_LABEL = re.compile(r"\bversion ([0-9]+\.[0-9]+\.[0-9]+)\b")
@@ -291,18 +302,8 @@ def check_release_source(expected: str) -> list[str]:
         for version in sorted(labels - {expected}):
             problems.append(f"{relative} names version {version}, but SKILL.md says {expected}")
         if page == VERIFY_PAGE and checksum == PLACEHOLDER:
-            # The release is not yet published: no value is called the published checksum, no link
-            # names the checksum file, and the note names this version once.
-            if DISPLAYED_SUM.search(text) or PUBLISHED_WORDING.search(text) or ".zip.sha256" in text:
-                problems.append(
-                    f"{relative} shows published checksum wording or links the checksum file, but "
-                    f"site-src/release.json holds the zero placeholder"
-                )
-            if PENDING_VERSION.findall(text) != [expected]:
-                problems.append(
-                    f"{relative} must say once that the checksum for version {expected} appears here "
-                    f"once that version is published"
-                )
+            for problem in placeholder_page_problems(text, expected):
+                problems.append(f"{relative} {problem}, but site-src/release.json holds the zero placeholder")
         elif page == VERIFY_PAGE:
             if PENDING_VERSION.search(text):
                 problems.append(
@@ -317,6 +318,30 @@ def check_release_source(expected: str) -> list[str]:
             stated = DISPLAYED_VERSION.search(text)
             if stated is None or stated.group(1) != expected:
                 problems.append(f"{relative} does not state that its checksum is for version {expected}")
+    return problems
+
+
+def placeholder_page_problems(text: str, version: str) -> list[str]:
+    """The rules of the verify page while release.json holds the zero placeholder, one problem for each rule
+    ``text`` breaks: the page says once, for ``version``, that the checksum appears once that version is
+    published, and shows no checksum element, no "published checksum" wording, no link to a .sha256 file
+    and no step that tells the reader not to install the file. tools/check-release-links.py and
+    tools/check-release-checksum-live.py carry this function and the patterns it reads verbatim, and
+    tools/test-release-checksum-live.py requires that the 2 copies match."""
+    problems: list[str] = []
+    if PENDING_VERSION.findall(text) != [version]:
+        problems.append(
+            f"does not say exactly once that the checksum for version {version} appears here once that "
+            f"version is published"
+        )
+    if DISPLAYED_SUM.search(text):
+        problems.append("shows a checksum element")
+    if PUBLISHED_WORDING.search(text):
+        problems.append('says "published checksum"')
+    if ".zip.sha256" in text:
+        problems.append("links a .sha256 checksum file")
+    if REJECTING_STEP.search(text):
+        problems.append("has a step that tells the reader not to install the file")
     return problems
 
 

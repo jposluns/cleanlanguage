@@ -182,40 +182,53 @@ class ReleaseSourceTest(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertIn("the verify page says the checksum appears once that version is published", output)
 
+    # The end of each report of a rule of the not-yet-published state (placeholder_page_problems).
+    HOLDS = ", but site-src/release.json holds the zero placeholder"
+    ONCE = "site/verify/index.html does not say exactly once that the checksum for version 1.0.14 appears here"
+
     def test_placeholder_shown_as_the_published_checksum_fails(self):
         # The page 35ac33a committed: the zero placeholder under the published wording.
         code, output = self.pending(VERIFY.format(v="1.0.14", sum=ZEROS))
         self.assertEqual(code, 1)
-        self.assertIn("shows published checksum wording or links the checksum file, but site-src/release.json "
-                      "holds the zero placeholder", output)
-        self.assertIn("must say once that the checksum for version 1.0.14 appears here", output)
+        self.assertIn("site/verify/index.html shows a checksum element" + self.HOLDS, output)
+        self.assertIn('site/verify/index.html says "published checksum"' + self.HOLDS, output)
+        self.assertIn(self.ONCE, output)
 
     def test_placeholder_note_beside_published_wording_fails(self):
-        for label, extra in (
-            ("the checksum element", '<code class="sum" id="published-checksum">' + ZEROS + "</code>"),
-            ("the published checksum in step 3", "<p>Compare it with the published checksum shown in step 1.</p>"),
-            ("a link to the checksum file", '<a href="' + URL.format(v="1.0.14") + '.sha256">file</a>'),
+        # 1 case for each rule of the state beyond the note; each is reported on its own.
+        for label, extra, report in (
+            ("the checksum element", '<code class="sum" id="published-checksum">' + ZEROS + "</code>",
+             "shows a checksum element"),
+            ("the published checksum in step 3", "<p>Compare it with the published checksum shown in step 1.</p>",
+             'says "published checksum"'),
+            ("a link to the checksum file", '<a href="' + URL.format(v="1.0.14") + '.sha256">file</a>',
+             "links a .sha256 checksum file"),
+            ("a step that rejects the download", "<p>If the 2 values still differ, do not install the file.</p>",
+             "has a step that tells the reader not to install the file"),
         ):
             with self.subTest(label):
                 code, output = self.pending(PENDING.format(v="1.0.14") + extra)
                 self.assertEqual(code, 1, output)
-                self.assertIn("shows published checksum wording or links the checksum file", output)
+                self.assertIn(f"site/verify/index.html {report}{self.HOLDS}", output)
+                self.assertEqual(output.count(self.HOLDS), 1, output)
 
     def test_placeholder_note_missing_or_repeated_fails(self):
         for label, page in (
             ("no note", PENDING.format(v="1.0.14").replace(NOTE.format(v="1.0.14"), "")),
             ("2 notes", PENDING.format(v="1.0.14") + NOTE.format(v="1.0.14")),
+            ("a second note for another version", PENDING.format(v="1.0.14") + NOTE.format(v="1.0.13")),
         ):
             with self.subTest(label):
                 code, output = self.pending(page)
                 self.assertEqual(code, 1, output)
-                self.assertIn("must say once that the checksum for version 1.0.14 appears here", output)
+                self.assertIn(self.ONCE, output)
 
     def test_placeholder_note_for_another_version_fails(self):
         code, output = self.pending(PENDING.format(v="1.0.14").replace(NOTE.format(v="1.0.14"), NOTE.format(v="1.0.13")))
         self.assertEqual(code, 1)
         self.assertIn("the verify page says the checksum for version 1.0.13 appears once that version is published, "
                       "but SKILL.md says 1.0.14", output)
+        self.assertIn(self.ONCE, output)
 
     def test_published_checksum_with_the_note_fails(self):
         for label, page in (

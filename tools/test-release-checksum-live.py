@@ -11,7 +11,9 @@ unverifiable, and the published-release comparison and the transient-error
 handling are preserved. The page a version bump builds from the zero
 placeholder, which says that the checksum appears once the version is
 published, passes in the pre-tag window and fails as drift once the release is
-published; a page in neither state exits 3. Once the release SKILL.md names is published, its
+published; a page in neither state exits 3, with 1 case for each rule of the
+not-yet-published state, and those rules are pinned to the copy that
+check-release-links.py carries. Once the release SKILL.md names is published, its
 Released line (item 26) must name the UTC day of the release published_at
 record (G4), checked for the release SKILL.md names whatever version the site
 names, and that release must be immutable; an unpublished release SKILL.md
@@ -1176,17 +1178,34 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertIn(f"  - the published cleanlanguage-{CURRENT}.zip is {ZIP_SUM}\n", out)
 
     def test_a_page_in_neither_state_exits_3(self):
-        # The zero placeholder shown as the published checksum, and a page that carries both the
-        # published wording and the note, are refused before any release is read.
+        # The zero placeholder shown as the published checksum, and a page with the note that breaks a
+        # rule of the not-yet-published state (placeholder_page_problems), are refused before any
+        # release is read: 1 case for each rule.
         note = f"<p>The checksum for version {CURRENT} appears here once that version is published.</p>\n"
+        mixed = "the verify page carries the not-yet-published note, but "
+        once = (f"does not say exactly once that the checksum for version {CURRENT} appears here once that "
+                f"version is published")
+        url = f"https://github.com/jposluns/cleanlanguage/releases/download/v{CURRENT}/cleanlanguage-{CURRENT}.zip"
         for label, page, report in (
             ("the placeholder as the published checksum", VERIFY.format(version=CURRENT, checksum="0" * 64),
              "the verify page shows the zero placeholder as the published checksum"),
             ("the note beside a published checksum", VERIFY.format(version=CURRENT, checksum=ZIP_SUM) + note,
-             "the verify page shows both the published checksum and the note that it is not yet published"),
+             mixed + 'shows a checksum element; says "published checksum"'),
             ("the note beside the checksum sentence alone",
              note + f"<p>The published checksum for version {CURRENT} is:</p>\n",
-             "the verify page shows both the published checksum and the note that it is not yet published"),
+             mixed + 'says "published checksum"'),
+            ("the note beside a checksum element alone", note + f'<code class="sum" id="published-checksum">{ZIP_SUM}</code>\n',
+             mixed + "shows a checksum element"),
+            ("the note beside other published checksum wording",
+             note + "<p>Compare it with the published checksum shown in step 1.</p>\n", mixed + 'says "published checksum"'),
+            ("the note beside a link to the checksum file", note + f'<a href="{url}.sha256">checksum file</a>\n',
+             mixed + "links a .sha256 checksum file"),
+            ("the note beside a step that rejects the download",
+             note + "<p>Compare the 2 values. If they still differ, do not install the file.</p>\n",
+             mixed + "has a step that tells the reader not to install the file"),
+            ("2 notes", PENDING.format(version=CURRENT) + note, mixed + once),
+            ("a second note for another version", PENDING.format(version=CURRENT) + note.replace(CURRENT, BOGUS),
+             mixed + once),
         ):
             with self.subTest(label):
                 gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
@@ -4610,6 +4629,31 @@ class ContractRoutingTest(unittest.TestCase):
                                  or node.func.attr.startswith(("exec", "spawn", "posix_spawn")))):
                         starts.append((func.name, node.func.value.id, node.func.attr))
         self.assertEqual(sorted(starts), [("gh", "subprocess", "run"), ("run_release_date_child", "subprocess", "Popen")])
+
+
+class SharedPlaceholderRuleTest(unittest.TestCase):
+    """The rules of the not-yet-published verify page are one rule in 2 copies: this gate and
+    check-release-links.py carry placeholder_page_problems and the patterns it reads verbatim, so the
+    2 gates cannot accept different pages in that state."""
+
+    def test_the_two_gates_carry_the_same_rule(self):
+        links_path = MODULE_PATH.parent / "check-release-links.py"
+        links_spec = importlib.util.spec_from_file_location("check_release_links_shared", links_path)
+        links = importlib.util.module_from_spec(links_spec)
+        links_spec.loader.exec_module(links)
+
+        def definition(path: Path) -> str:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            found = [ast.dump(node) for node in tree.body
+                     if isinstance(node, ast.FunctionDef) and node.name == "placeholder_page_problems"]
+            self.assertEqual(len(found), 1, path.name)
+            return found[0]
+
+        self.assertEqual(definition(MODULE_PATH), definition(links_path))
+        for name in ("PENDING_VERSION", "DISPLAYED_SUM", "PUBLISHED_WORDING", "REJECTING_STEP"):
+            with self.subTest(name):
+                ours, theirs = getattr(gate, name), getattr(links, name)
+                self.assertEqual((ours.pattern, ours.flags), (theirs.pattern, theirs.flags))
 
 
 class DisplayedSumMarkupTest(unittest.TestCase):

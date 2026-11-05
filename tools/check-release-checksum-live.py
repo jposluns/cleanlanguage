@@ -21,8 +21,13 @@ Behaviour:
     bump, the page shows no checksum and says that it appears once the
     version is published; the version is read from that note and the site
     checksum is taken as the placeholder, so a published release fails as
-    drift. A page that mixes the 2 states, or shows the placeholder as the
-    published checksum, exits 3 before any release is read.
+    drift. A page with that note must keep the rules of that state that
+    ``tools/check-release-links.py`` applies (placeholder_page_problems): the
+    note exactly once, for 1 version, and no checksum element, no "published
+    checksum" wording, no link to a ``.sha256`` file and no step that tells
+    the reader not to install the file. A page that breaks any of them, or
+    shows the placeholder as the published checksum, exits 3 before any
+    release is read.
   - If the release ``vX`` for that version is not published yet, the pass is
     conditional. The site is legitimately ahead of the release only when it
     names the current skill version (``Version:`` in ``cleanlanguage/skills/cleanlanguage/SKILL.md``)
@@ -73,8 +78,9 @@ Exit codes:
      version, the tag does not exist yet, and the SKILL.md Released line is
      well formed, and present above the undated baseline)
   1  drift or inconsistency: the release is published but the site shows a
-     different checksum, or the site names an unreleased version that is not
-     the current skill version, or the SKILL.md Released date disagrees with
+     different checksum or says that the checksum is not yet published, or
+     the site names an unreleased version that is not the current skill
+     version, or the SKILL.md Released date disagrees with
      the published release, or the Released line is missing above the undated
      baseline (also in the pre-tag window)
   2  could not verify (gh or network error, the published release is malformed,
@@ -82,7 +88,7 @@ Exit codes:
      not exactly true, the release SKILL.md names returns a status other than
      200 or 404, or the tag exists with no published release)
   3  a required file could not be read, the verify page is in neither state
-     the generator writes, the SKILL.md Released line is
+     the generator writes (see Behaviour), the SKILL.md Released line is
      malformed, a call of tools/skill-release-date.py, which runs in a
      child process, did not give a result the gate could accept (see
      run_release_date_child), or SIGCHLD could not be reset to its default
@@ -202,6 +208,9 @@ DISPLAYED_SUM = re.compile(r'<code class="sum" id="published-checksum">([^<]*)</
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 # The verify page's note while site-src/release.json holds the zero placeholder (tools/build-site.py, sum_tokens).
 PENDING_VERSION = re.compile(r"The checksum for version ([0-9][0-9.]*) appears here once that version is published\.")
+# The rest of the not-yet-published state, read by placeholder_page_problems, as tools/check-release-links.py reads it.
+PUBLISHED_WORDING = re.compile(r"published checksum", re.I)
+REJECTING_STEP = re.compile(r"\bdo not install\b", re.I)
 PLACEHOLDER = "0" * 64
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
@@ -928,6 +937,30 @@ def published_digest(tag: str, zip_name: str, manifest_name: str) -> str:
     return claimed
 
 
+def placeholder_page_problems(text: str, version: str) -> list[str]:
+    """The rules of the verify page while release.json holds the zero placeholder, one problem for each rule
+    ``text`` breaks: the page says once, for ``version``, that the checksum appears once that version is
+    published, and shows no checksum element, no "published checksum" wording, no link to a .sha256 file
+    and no step that tells the reader not to install the file. tools/check-release-links.py and
+    tools/check-release-checksum-live.py carry this function and the patterns it reads verbatim, and
+    tools/test-release-checksum-live.py requires that the 2 copies match."""
+    problems: list[str] = []
+    if PENDING_VERSION.findall(text) != [version]:
+        problems.append(
+            f"does not say exactly once that the checksum for version {version} appears here once that "
+            f"version is published"
+        )
+    if DISPLAYED_SUM.search(text):
+        problems.append("shows a checksum element")
+    if PUBLISHED_WORDING.search(text):
+        problems.append('says "published checksum"')
+    if ".zip.sha256" in text:
+        problems.append("links a .sha256 checksum file")
+    if REJECTING_STEP.search(text):
+        problems.append("has a step that tells the reader not to install the file")
+    return problems
+
+
 def check_site_checksum(load_code: int = 0) -> int:
     """Check the site checksum and the release date, returning the most
     severe code of the checks that ran (0 to 3), or stopping with 2 or 3 when
@@ -943,18 +976,20 @@ def check_site_checksum(load_code: int = 0) -> int:
     except (OSError, UnicodeError) as error:
         die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} could not be read: {type(error).__name__}: {error}")
 
-    shown = DISPLAYED_SUM.search(verify)
-    stated = DISPLAYED_VERSION.search(verify)
     pending = PENDING_VERSION.search(verify)
     if pending is not None:
         # The not-yet-published state: the site holds the zero placeholder, so a
-        # published release makes it drift below. A page that also shows the
-        # published wording is in neither state the generator writes.
-        if shown is not None or stated is not None:
-            die("the verify page shows both the published checksum and the note that it is not yet published")
-        site_sum = PLACEHOLDER
+        # published release makes it drift below. A page that breaks a rule of
+        # that state, the rules tools/check-release-links.py applies, is in
+        # neither state the generator writes.
         version = pending.group(1)
+        problems = placeholder_page_problems(verify, version)
+        if problems:
+            die("the verify page carries the not-yet-published note, but " + "; ".join(problems))
+        site_sum = PLACEHOLDER
     else:
+        shown = DISPLAYED_SUM.search(verify)
+        stated = DISPLAYED_VERSION.search(verify)
         if shown is None:
             die('the verify page has no <code class="sum" id="published-checksum"> block')
         site_sum = shown.group(1).strip()
