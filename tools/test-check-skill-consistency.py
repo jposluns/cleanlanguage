@@ -12,8 +12,8 @@ apart from the committed tree, make edits that keep the 2 files consistent;
 the cases that expect exit 1 or 3 apply a fault. An exit 1 case also asserts
 that the output says the bullet differs and names no item
 beyond the case's list; an exit 3 case lists the structure the message must
-name, or, for a comment or fence the gate refuses, the file and the line,
-counted in the committed file, that the message must name. The case named
+name, or, for a line the gate refuses, the file and the line, counted in the
+committed file, that the message must name. The case named
 "main's checklist line" restores the exact line the checklist carried before
 row 98 and expects the gate to name the 5 items it lacks and the 2 it adds.
 One further case passes the gate an argument and asserts exit 2.
@@ -59,6 +59,10 @@ NO_DASH = "one block that mentions a dash"
 EMPTY = "holds an empty item"
 COMMENT = 'holds "<!--"'
 FENCED = "holds 3 backticks or 3 tildes in a row"
+CR = "holds a carriage return"
+TAB = "holds U+0009, whitespace other than a space"
+NBSP = "holds U+00A0, whitespace other than a space"
+RULED = "is a thematic break or a setext heading underline"
 SPLIT = "Code samples may keep one too."
 
 
@@ -161,8 +165,8 @@ CASES = [
         together(skill_lists(sorted(ITEMS)), checklist_lists(sorted(ITEMS))), 0, []),
     ("the carve-out heading with closing hashes and trailing spaces",
         edit(SKILL, HEADING, HEADING.rstrip("\n") + " ##  \n"), 0, []),
-    ("the carve-out heading with closing hashes between tabs",
-        edit(SKILL, HEADING, HEADING.rstrip("\n") + "\t##\t\n"), 0, []),
+    ("a mixed-mark line in the checklist", prepend(CHECKLIST, "_*_\n\n"), 0, []),
+    ("a mixed-mark line in SKILL.md", edit(SKILL, HEADING, HEADING + "\n- * _\n"), 0, []),
     ("the checklist list reordered", checklist_lists(list(reversed(ITEMS))), 1, []),
     ("the skill list reordered after its first item", skill_lists(ITEMS[:1] + list(reversed(ITEMS[1:]))), 1, []),
     ("the skill list with quoted language last", skill_lists(ITEMS[1:] + ITEMS[:1]), 1, []),
@@ -177,6 +181,11 @@ CASES = [
     ("an indented sub-bullet under the dash bullet", change_dash_line(lambda line: line + "  - " + EXTRA + "\n"), 1, []),
     ("an indented paragraph in the dash bullet", change_dash_line(lambda line: line + "\n  " + EXTRA + "\n"), 1, []),
     ("an unindented line continuing the dash bullet", change_dash_line(lambda line: line + EXTRA + "\n"), 1, []),
+    ("a carve-out after a mixed-mark line in the dash bullet",
+        change_dash_line(lambda line: line + "_*_\n" + SPLIT + "\n"), 1, []),
+    ("a carve-out after a mixed-mark line in the skill bullet",
+        edit(SKILL, SKILL_LINE, SKILL_LINE + "\n_*_\nor code samples;"), 1,
+        [lacks(ITEMS[-1] + "; _*_"), lacks("code samples"), adds(ITEMS[-1])]),
     ("a fenced block in the dash bullet", change_dash_line(lambda line: line + "  ```\n  code samples\n  ```\n"), 3,
         [at(CHECKLIST, KEEP, 1) + FENCED]),
     ("a comment appended to the dash bullet",
@@ -225,10 +234,38 @@ CASES = [
         3, [NO_HEADING]),
     ("the carve-out heading with hashes and no space before them",
         edit(SKILL, HEADING, HEADING.rstrip("\n") + "##\n"), 3, [NO_HEADING]),
+    ("the carve-out heading with closing hashes between tabs",
+        edit(SKILL, HEADING, HEADING.rstrip("\n") + "\t##\t\n"), 3, [at(SKILL, HEADING) + TAB]),
     ("the carve-out heading with U+00A0 before closing hashes",
-        edit(SKILL, HEADING, HEADING.rstrip("\n") + "\u00a0##\n"), 3, [NO_HEADING]),
+        edit(SKILL, HEADING, HEADING.rstrip("\n") + "\u00a0##\n"), 3, [at(SKILL, HEADING) + NBSP]),
     ("the carve-out heading with U+00A0 after closing hashes",
-        edit(SKILL, HEADING, HEADING.rstrip("\n") + " ##\u00a0\n"), 3, [NO_HEADING]),
+        edit(SKILL, HEADING, HEADING.rstrip("\n") + " ##\u00a0\n"), 3, [at(SKILL, HEADING) + NBSP]),
+    ("the carve-out heading with closing hashes and a CRLF ending",
+        edit(SKILL, HEADING, HEADING.rstrip("\n") + " ##\r\n"), 3, [at(SKILL, HEADING) + CR]),
+    ("the checklist with CRLF line endings", lambda root: (root / CHECKLIST).write_bytes(
+        (root / CHECKLIST).read_bytes().replace(b"\n", b"\r\n")), 3, [f"{CHECKLIST}, line 1: " + CR]),
+    ("a tab and U+00A0 in the dash bullet", checklist_lists(ITEMS, "Keep\ta dash only\u00a0in "), 3,
+        [at(CHECKLIST, KEEP) + TAB]),
+    ("U+00A0 in the dash bullet", checklist_lists(ITEMS, "Keep a dash only\u00a0in "), 3, [at(CHECKLIST, KEEP) + NBSP]),
+    ("U+2028 in the skill bullet", edit(SKILL, "text, or ", "text,\u2028or "), 3,
+        [at(SKILL, SKILL_LINE) + "holds U+2028"]),
+    ("a thematic break after the dash bullet", change_dash_line(lambda line: line + "***\n" + SPLIT + "\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + RULED]),
+    ("a spaced thematic break in SKILL.md", edit(SKILL, HEADING, HEADING + "\n _ _ _ \n"), 3,
+        [at(SKILL, HEADING, 2) + RULED]),
+    ("a thematic break under a blank line in SKILL.md", edit(SKILL, HEADING, HEADING + "\n---\n"), 3,
+        [at(SKILL, HEADING, 2) + RULED]),
+    ("a setext heading of = in the carve-out section", edit(SKILL, HEADING, HEADING + "\nMoved\n==\n"), 3,
+        [at(SKILL, HEADING, 3) + RULED]),
+    ("a lone - under the dash bullet", change_dash_line(lambda line: line + "-\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + RULED]),
+    ("a setext heading of - in the checklist", prepend(CHECKLIST, "Notes\n --\n\n"), 3,
+        [f"{CHECKLIST}, line 2: " + RULED]),
+    ("front matter in the checklist", prepend(CHECKLIST, "---\ntitle: checklist\n---\n\n"), 3,
+        [f"{CHECKLIST}, line 1: " + RULED]),
+    ("the SKILL.md front matter after a blank line", prepend(SKILL, "\n"), 3, [f"{SKILL}, line 2: " + RULED]),
+    ("the SKILL.md front matter not closed", edit(SKILL, "meaning.\n---\n", "meaning.\n"), 3,
+        [f"{SKILL}, line 1: " + RULED]),
     ("the carve-out heading only in fenced code", edit(SKILL, HEADING, "```\n" + HEADING + "```\n"), 3,
         [at(SKILL, HEADING) + FENCED]),
     ("no quoted language bullet", edit(SKILL, "- " + ITEMS[0] + ",", "- quoted text,"), 3, [NO_ANCHOR]),

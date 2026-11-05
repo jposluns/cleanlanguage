@@ -15,16 +15,31 @@ It reads only ``cleanlanguage/skills/cleanlanguage/SKILL.md`` and
 copy of the carve-out list. It reads each file as raw text, with no region of
 either file left out, split into blocks (headings, bullets and paragraphs):
 
-1. Neither file holds "<!--" anywhere, or three backticks or three tildes in
-   a row anywhere, so neither holds an HTML comment or a fenced code block,
-   which this check does not model. The check exits 3 at the first such line
-   and names its file and line number.
+1. Neither file holds any of the following, which this check does not model.
+   The check exits 3 at the first line that holds one and names its file and
+   line number; only LF ends a line.
+   - a carriage return (U+000D), so a CRLF line ending is refused;
+   - any other character for which Python's str.isspace() is true, apart from
+     the space (U+0020) and LF (U+000A), such as a tab (U+0009) or U+00A0;
+   - "<!--" anywhere, or three backticks or three tildes in a row anywhere,
+     so neither file holds an HTML comment or a fenced code block;
+   - a thematic break: a line of 3 or more of one mark, "-", "*" or "_", with
+     any number of spaces before, between and after them, such as "---" or
+     "* * *". The marks must be identical, as in CommonMark, so a line that
+     mixes them, such as "_*_", is ordinary text;
+   - a setext heading underline: a line that holds one run of "=" or one run
+     of "-", with any number of spaces before and after it, under a line
+     that is not blank.
+   The one exception is the front matter at the top of SKILL.md: when line 1
+   and a later line are exactly "---", line 1 and the first such later line
+   are not refused as a thematic break or an underline. So a space and LF are
+   the only whitespace either file holds, and the only separators the check
+   reads.
 2. SKILL.md holds exactly one sentence "the carve-outs in <section>.", and
    exactly one heading "## <section>". As in Markdown, the heading may end
-   with a closing run of "#" after a space or tab, followed by nothing but
-   spaces or tabs, which is not part of its text, so "## <section> ##" is the
-   same heading; "### <section>" is not, and neither is "## <section>##" or a
-   closing run that another character, such as U+00A0, precedes or follows.
+   with a closing run of "#" after a space, followed by nothing but spaces,
+   which is not part of its text, so "## <section> ##" is the same heading;
+   "### <section>" is not, and neither is "## <section>##".
 3. That section, which runs to the next heading of level 1 or 2, holds exactly
    one bullet that lists "quoted language" as one of its items, in any place.
    That phrase is a hand-kept anchor: if SKILL.md loses it, this check exits 3
@@ -35,23 +50,22 @@ either file left out, split into blocks (headings, bullets and paragraphs):
    is a bullet.
 5. That whole bullet, with every line and sub-bullet that continues it, reads
    exactly OPENING, then " Keep a dash only in ", then the SKILL.md bullet as
-   SKILL.md writes it, without its closing ";" or ".", then ".". A line break
-   or a run of spaces counts as 1 space. Any other wording, order or sentence
-   in the bullet is drift; the check then prints the bullet it expected and
-   the one it found, and, when the found bullet holds exactly one clause "Keep
-   a dash only in <list>." or "Keep a dash only inside <list>.", each SKILL.md
-   item that clause lacks and each item it adds.
+   SKILL.md writes it, without its closing ";" or ".", then ".". Any run of
+   spaces and line breaks counts as 1 space. Any other wording, order or
+   sentence in the bullet is drift; the check then prints the bullet it
+   expected and the one it found, and, when the found bullet holds exactly one
+   clause "Keep a dash only in <list>." or "Keep a dash only inside <list>.",
+   each SKILL.md item that clause lacks and each item it adds.
 
 A bullet starts with "-", "*" or "+" at the start of a line, followed by a
-space, a tab or the end of the line, unless the line is a rule. It runs on over
-each later line that starts with a space or tab, across blank lines too, and
-over each other line until a blank line or a line that starts with one of: "#"
-to "######" followed by a space, a tab or the end of the line; "-", "*" or "+"
-followed by a space or tab; "1." or "1)" followed by a space or tab; ">"; or a
-rule, 3 or more of "-", "*" and "_" with only spaces or tabs between and after
-them. So a line that is a lone "-", "*" or "+", or that starts "2.", continues
-the bullet when no blank line comes before it. The generated copies of the
-checklist need no check here:
+space or the end of the line. It runs on over each later line that starts with
+a space, across blank lines too, and over each other line until a blank line
+or a line that starts with one of: "#" to "######" followed by a space or the
+end of the line; "-", "*" or "+" followed by a space; "1." or "1)" followed by
+a space; or ">". So a line that is a lone "*" or "+", or that starts "2.",
+continues the bullet when no blank line comes before it; a lone "-" there is
+refused as a setext underline. The generated copies of the checklist need no
+check here:
 tools/build-portable-text.py --check and tools/build-site.py --check compare
 them with this source.
 
@@ -64,11 +78,16 @@ Residuals, named here because the check reads text by fixed rules:
   another bullet, another section or another sentence is not read, and the
   section's other bullets, including the range separator rule, are not
   compared;
-- the check does not read HTML comments or fenced code blocks; it refuses
-  them. A future edit that adds a comment or a fence to either file makes the
-  check exit 3 until the check is extended. The refusal is wider than a fence:
-  a run of three backticks or three tildes anywhere, such as in inline code,
-  also makes it exit 3;
+- the check does not read HTML comments, fenced code blocks, thematic breaks,
+  setext headings, carriage returns or whitespace other than a space and LF;
+  it refuses them. A future edit that adds one to either file, such as a
+  comment, a fence, a "---" rule between sections, a CRLF line ending or a
+  tab, makes the check exit 3 until the check is extended. Some refusals are
+  wider than the Markdown they stand for: a run of three backticks or three
+  tildes anywhere, such as in inline code; a refused whitespace character
+  anywhere, such as a U+00A0 that Markdown shows as text; and a run of "=" or
+  "-" under any line that is not blank, whether or not Markdown reads it as
+  an underline, also make it exit 3;
 - other Markdown that a rendered page does not show, such as the title of a
   link reference definition or raw HTML other than a comment, is read as text
   like the rest of the file, so a pointer sentence there is found although a
@@ -103,9 +122,9 @@ Exit codes:
   0  the checklist dash bullet matches the bullet built from the SKILL.md one
   1  the checklist dash bullet differs from it
   2  the command line was wrong
-  3  a file could not be read, a file holds "<!--" or three backticks or three
-     tildes in a row, a sentence, heading, bullet or block above is missing or
-     not unique, or the SKILL.md bullet holds an empty item
+  3  a file could not be read, a file holds a line item 1 refuses, a sentence,
+     heading, bullet or block above is missing or not unique, or the SKILL.md
+     bullet holds an empty item
 """
 
 from __future__ import annotations
@@ -129,13 +148,16 @@ DASH = re.compile(r"\bdash(?:es)?\b", re.IGNORECASE)
 KEEP = re.compile(r"\bKeep a dash only in(?:side)? (.+?)\.(?=\s|$)")
 JOINER = re.compile(r"\s+(?:or|and)\s+")
 LEADING_JOINER = re.compile(r"^(?:or|and)\s+")
+CR = "\r"
 COMMENT = "<!--"
 FENCE = re.compile(r"`{3}|~{3}")
-HEADING = re.compile(r"#{1,6}(?:[ \t]|$)")
-CLOSING = re.compile(r"[ \t]#+[ \t]*$")
-BULLET = re.compile(r"[-*+](?:[ \t]+|$)")
-RULE = re.compile(r"(?:[-*_][ \t]*){3,}$")
-BLOCK = re.compile(r"#{1,6}(?:[ \t]|$)|[-*+][ \t]|1[.)][ \t]|>|(?:[-*_][ \t]*){3,}$")
+BREAK = re.compile(r" *([-*_])(?: *\1){2,} *$")
+UNDERLINE = re.compile(r" *(?:=+|-+) *$")
+FRONT_MATTER = "---"
+HEADING = re.compile(r"#{1,6}(?: |$)")
+CLOSING = re.compile(r" #+ *$")
+BULLET = re.compile(r"[-*+](?: +|$)")
+BLOCK = re.compile(r"#{1,6}(?: |$)|[-*+] |1[.)] |>")
 
 
 class Unreadable(Exception):
@@ -155,10 +177,31 @@ def read_text(path: Path) -> str:
         raise Unreadable(f"{path} could not be read: {error}") from error
 
 
+def front_matter(path: Path, lines: list[str]) -> set[int]:
+    """The line numbers of SKILL.md's front matter delimiters: line 1 and the first later line, when both are "---"."""
+    if path == SKILL and lines[0] == FRONT_MATTER and FRONT_MATTER in lines[1:]:
+        return {1, lines.index(FRONT_MATTER, 1) + 1}
+    return set()
+
+
 def plain_text(path: Path) -> str:
-    """The text of path, which must hold no HTML comment opener and no run of 3 backticks or 3 tildes."""
+    """The text of path, which must hold none of the lines item 1 of the module docstring refuses."""
     text = read_text(path)
-    for number, line in enumerate(text.split("\n"), start=1):
+    lines = text.split("\n")
+    delimiters = front_matter(path, lines)
+    for number, line in enumerate(lines, start=1):
+        if CR in line:
+            raise Unreadable(f"{path}, line {number}: holds a carriage return (U+000D); this check reads only LF "
+                             "as a line ending, so the file must hold none")
+        other = [char for char in line if char.isspace() and char != " "]
+        if other:
+            raise Unreadable(f"{path}, line {number}: holds U+{ord(other[0]):04X}, whitespace other than a space; "
+                             "this check reads no such whitespace, so the file must hold none")
+        ruled = BREAK.match(line) or UNDERLINE.match(line) and number > 1 and lines[number - 2].strip()
+        if ruled and number not in delimiters:
+            raise Unreadable(f"{path}, line {number}: is a thematic break or a setext heading underline; this check "
+                             "reads neither, so the file must hold none apart from the front matter delimiters at "
+                             "the top of SKILL.md")
         if COMMENT in line:
             raise Unreadable(f'{path}, line {number}: holds "{COMMENT}"; this check reads no HTML comments, '
                              "so the file must hold none")
@@ -173,7 +216,9 @@ def blocks(text: str) -> list[tuple[str, str]]:
 
     A bullet's text holds every line that continues it and drops its marker. A
     heading's text drops any closing run of "#", found on the line as written,
-    before spaces are collapsed, so only a space or tab separates it.
+    before spaces are collapsed, so only a space separates it. plain_text() has
+    refused every thematic break the text could hold, apart from the front
+    matter delimiters, which are read as text.
     """
     found: list[list[str]] = []
     open_kind = ""
@@ -182,14 +227,14 @@ def blocks(text: str) -> list[tuple[str, str]]:
         if not line.strip():
             after_blank = True
             continue
-        indented = line[:1] in (" ", "\t")
+        indented = line[:1] == " "
         if open_kind and (indented and (open_kind == "bullet" or not after_blank)
                           or not after_blank and not BLOCK.match(line)):
             found[-1][1] += " " + line
         elif HEADING.match(line):
             found.append(["heading", CLOSING.sub("", line)])
             open_kind = ""
-        elif BULLET.match(line) and not RULE.match(line):
+        elif BULLET.match(line):
             found.append(["bullet", BULLET.sub("", line, count=1)])
             open_kind = "bullet"
         else:
