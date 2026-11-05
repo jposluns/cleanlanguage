@@ -12,9 +12,10 @@ or switched off. This site no longer uses the template's install selector
 (``select.js``, template specification, section 7.12); the old link forms
 ``/install/?ai=<family>`` and ``/install/#<family>`` land on ``/install/``,
 where the family buttons sit near the top: the opening of the page's content
-is pinned as the page builds it, so the buttons follow the hero's ``h1`` and
-the "Pick your AI" label with no other element or text above them, as the
-parser reads the markup (check 1; it does not model implied end tags).
+is pinned as the page builds it, so in that content only the opening label,
+the hero's ``h1``, ``div.rail``, the meta line and the "Pick your AI" label
+sit above the buttons, with no other element or text, as the parser reads the
+markup (check 1; it does not model implied end tags).
 
 This is a TRIPWIRE for the common regressions in the STATIC MARKUP. It is
 deliberately NOT a CSS engine or a browser.
@@ -50,12 +51,15 @@ What it verifies
    "Pick your AI" label (``p.lbl`` with the ``pick`` id) and that ``p``, with
    or without the class ``first`` on any of them. Of those 6, the
    first 5 hold no element, but ``div.rail``, which holds only 1 ``img``, and
-   no text other than whitespace sits directly in the body, that ``main``,
-   ``div.wrap`` or ``div.doc`` before the button row. The ``h1`` and the
+   that ``p`` holds no element but the 5 family links; no text other than
+   whitespace sits directly in that ``p``, or in the body, that ``main``,
+   ``div.wrap`` or ``div.doc`` before it. The ``h1`` and the
    "Pick your AI" label are not hidden, by the rules above, and each has
-   visible text, as check 4 defines it; neither the ``h1`` nor any element
-   in it that no element hides is a ``bdo`` or carries ``dir``, which can show
-   its letters in another order. The pin reads every element and text there,
+   visible text, as check 4 defines it. The visible text of the ``h1``, of
+   that label and of each family link holds no bidi control
+   (``BIDI_CONTROLS``, check 4), and none of them, nor any element in one
+   that no element hides, is a ``bdo`` or carries ``dir``; each can show
+   the letters in another order. The pin reads every element and text there,
    shown or hidden, and nothing inside ``header.mast``, whose markup the
    generator's validator pins (see below), or after the button row.
 2. No element on any of the 6 pages carries the retired selector attributes
@@ -171,12 +175,14 @@ body (it ignores one after the body start tag, so there the gate refuses
 more). Where
 ``html.parser`` keeps open an element that a browser closes by an implied end
 tag (a ``p`` before a ``div``, say), the gate sees more ancestors than a
-browser. A hiding one makes it refuse more, but the paragraph check 1 asks for
-can be one a browser has closed (``<div></div>`` between 2 family links leaves
-the later links outside it, and in ``<p><h2>Pick</h2><a class="btn inline"``
-a browser closes the ``p`` at the ``h2``, so the heading sits between the
-label and the links), and the end tag of such an element closes here what a
-browser keeps open (see below).
+browser. A hiding one makes it refuse more. Check 1 refuses any element
+directly in the paragraph of family links, so neither ``<div></div>`` between
+2 family links nor ``<p><h2>Pick</h2><a class="btn inline"`` passes, but that
+paragraph can still be one a browser has closed (in
+``<a class="btn inline" id="claude" href="/install/claude/"><div>Claude</div></a>``
+a browser closes the ``p`` at the ``div``, so the later links sit outside
+it), and the end tag of such an element closes here what a browser keeps
+open (see below).
 
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
@@ -203,26 +209,36 @@ Among the descendant wipes, baseline.css hides, each at some widths,
 that context, so they are not in ``HIDING_CLASSES`` and the gate passes an
 element that carries one of them there. ``tools/test-install-page.py`` fails
 when fonts.css, palettes.css or baseline.css hides a bare single class (a
-selector such as ``.only-dark``) that is not in ``HIDING_CLASSES`` or its
-exempt list. It fails closed on properties as well as values: a declaration
-shows only when its property is a custom property or 1 of the test's
-``SHOWING_PROPERTIES``, which paint a colour or a line, pick a font face or
-glyph forms, count, point or scroll, and cannot hide or move a box, or when
-its value is in the test's ``SHOWING_VALUES`` for its property, an exact list
-of values the stylesheets carry today that do not hide (``opacity: 1``, say,
-and no ``visibility``, ``clip``, ``content`` or ``bottom`` value at all).
-Every other declaration hides, read or not: any value of a property neither
-lists (``content-visibility``, ``zoom``, ``contain``, ``filter``, ``mask``,
-``direction`` or an unknown one, say), any value outside a list, valid or not
-(a computed 1 such as ``calc()`` or ``var()``, a CSS-wide keyword, an
-``opacity`` of 0.5, -1 or ``0e1``, ``inset: -9999px``, ``font-size: 0`` or
-``max-width: 0``), and any property name that holds a backslash (a CSS
-escape); a vendor prefix such as ``-webkit-`` is dropped first. A listed value
-holds ``var()`` only of a custom property that the test pins to its values in
-the 3 stylesheets today, as the colour of a border or an outline, or in the
-middle of a ``clamp()`` between 2 positive lengths. A rule also hides when it
-declares a size (``width``, ``height``, ``inline-size``, ``block-size``, their
-``max-`` forms, ``aspect-ratio``, ``flex``, ``flex-basis``, ``container``,
+selector such as ``.only-dark``, whose name may be any CSS identifier) that is
+not in ``HIDING_CLASSES`` or its exempt list. It reads together the
+declarations of every rule in the 3 stylesheets whose selector list holds
+that class, inside an at-rule or not and whatever its condition, so
+``.x { height: 3px; } .x { overflow: hidden; }`` hides ``.x``. It fails
+closed on properties as well as values: a declaration shows only when its
+property is a custom property or 1 of the test's ``SHOWING_PROPERTIES``,
+which paint a colour or a line behind or around the text or in an SVG, count,
+point or scroll, and cannot hide or move a box, or when its value is in the
+test's ``SHOWING_VALUES`` for its property, an exact list of values the
+stylesheets carry today that do not hide (``opacity: 1``, say, and no
+``visibility``, ``clip``, ``content`` or ``bottom`` value at all); ``color``
+and the font properties have such lists. Every other declaration hides, read
+or not: any value of a property neither lists (``content-visibility``,
+``zoom``, ``contain``, ``filter``, ``mask``, ``direction`` or an unknown one,
+say), and any value outside a list, valid or not (a computed 1 such as
+``calc()`` or ``var()``, a CSS-wide keyword, an ``opacity`` of 0.5, -1 or
+``0e1``, ``inset: -9999px``, ``font-size: 0``, ``max-width: 0``, ``color:
+transparent`` or ``color: var(--surface-raised)``); a vendor prefix such as
+``-webkit-`` is dropped first, and the test refuses a stylesheet that holds a
+backslash outside a string, so no property name it reads holds a CSS escape.
+A listed value holds ``var()`` only of a custom property that the test pins
+to its values in the 3 stylesheets today (among them each palette colour that
+a listed ``color`` value names), as the colour of a border or an outline, or
+in the middle of a ``clamp()`` between 2 positive lengths in ``rem``. It also
+pins the keyframes of each animation it lists (``field-in``) and each
+``@font-face`` descriptor to what the stylesheets carry today. The joined
+declarations of a class also hide when they declare a size (``width``,
+``height``, ``inline-size``, ``block-size``, their ``max-`` forms,
+``aspect-ratio``, ``flex``, ``flex-basis``, ``container``,
 ``container-type`` or ``border-radius``) beside an ``overflow``,
 ``overflow-x``, ``overflow-y``, ``overflow-block`` or ``overflow-inline``
 that holds ``hidden`` or ``clip``, whatever the values, so
@@ -233,20 +249,29 @@ final ``!important`` dropped, and reads neither which declaration wins nor its
 importance, so ``opacity: 0; opacity: 1`` hides there as ``opacity: 1
 !important; opacity: 0`` does. It does not prove that no other mix of listed
 values hides, and among those it passes are the 3 negative margins it lists,
-of at most 0.8rem, which can take a box that small off an edge it sits at; an
-animation, whose keyframes it does not read; a colour that matches what is
-behind the text or lets it show through; and a box that another, positioned or
-given an outline or a shadow, covers. A class it refuses that does not hide
-belongs in its exempt list, with a comment saying why, or its value in
-``SHOWING_VALUES``. It reads no compound, descendant or attribute selector,
-and so no rule that hides through one. It reads comments and strings as
-CSS does, so a brace in either delimits no rule, and refuses a stylesheet with
-what it does not model, such as a backslash outside a string, a brace inside
-brackets, a rule inside a rule, or an unlisted at-rule. Of text it reads
-only whether the headings, the "Pick your AI" label, each family link, each
-step list's steps and the links back to the downloads and the test have
-visible text, whether text sits above the family links, and whether the
-heading's visible text holds its family's name, so a wrong family link label
+of at most 0.8rem, which can take a box that small off an edge it sits at; a
+colour that matches what is behind the text in context or lets it show
+through: a listed ``color`` value whose palette colour matches the
+background there (each pinned custom property may take any of its listed
+values in any rule, so a dark scheme's ``--text`` set in a light one passes),
+or a value of a paint property of ``SHOWING_PROPERTIES``, which may take any
+value, that matches the text's colour (``background: var(--text)``, say); a
+font that a family name or an ``src`` URL picks, because it reads every
+string as empty, so a font whose glyphs show nothing passes; and a box that
+another, positioned or given an outline or a shadow, covers. A class it
+refuses that does not hide belongs in its exempt list, with a comment saying
+why, or its value in ``SHOWING_VALUES``. It reads no compound, descendant or
+attribute selector, and so no rule that hides through one. It reads comments
+and strings as CSS does, so a brace in either delimits no rule, and refuses a
+stylesheet with what it does not model, such as a backslash outside a string,
+a brace inside brackets, a rule inside a rule, an unlisted at-rule, or
+keyframes named by a string. Of text it reads only whether the headings, the
+"Pick your AI" label, each family link, each step list's steps and the links
+back to the downloads and the test have visible text, whether text sits above
+the family links or directly in their paragraph, whether the visible text of
+the hero's ``h1``, a family page's ``h1``, the "Pick your AI" label or a
+family link holds a bidi control, and whether a family page heading's visible
+text holds its family's name, so a wrong family link label
 (another family's, say) and an empty ``p.verified`` pass, as does a heading
 that names another family beside its own; it checks that a step list has at
 least 1 step with visible text, not its steps or their wording, which
@@ -381,12 +406,13 @@ BIDI_CONTROLS = "\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2
 ZERO_WIDTH = "\u200b\u200c\u200d\ufeff\u00a0\u2060\u00ad" + BIDI_CONTROLS
 # The opening of /install/'s content, as site-src/pages/install.html builds it (check 1): the body's first elements
 # and the first elements of main > div.wrap > div.doc, each a tag and a class it carries (None: any), the "pick" label
-# with its id. Each element of DOC_OPENING but the button row holds exactly the elements named in its last item.
+# with its id. Each element of DOC_OPENING holds exactly the elements named in its last item: the button row, only
+# the 5 family links (opening_problems also refuses text other than whitespace directly in the row).
 BODY_OPENING = (("a", "skip"), ("header", "mast"), ("main", None))
 MAIN_OPENING = (("div", "wrap"), ("div", "doc"))
 DOC_OPENING = (
     ("p", "lbl", None, ()), ("h1", None, None, ()), ("div", "rail", None, ("img",)), ("p", "meta", None, ()),
-    ("p", "lbl", "pick", ()), ("p", None, None, None),
+    ("p", "lbl", "pick", ()), ("p", None, None, ("a",) * len(FAMILIES)),
 )
 
 INLINE_RULE = (
@@ -557,23 +583,28 @@ class PageParser(HTMLParser):
                 "order": self.order,
                 "parent": (parent["tag"], parent["order"]) if parent else None,
                 "text": False,
+                "chars": "",
+                "bidi": False,
                 "inert": inert,
             }
             self.anchors.append(anchor)
         self.elements.append(
             {"tag": tag, "classes": classes, "id": attrs.get("id"), "hidden": hiding, "order": self.order,
-             "parent": parent["order"] if parent else None, "text": False}
+             "parent": parent["order"] if parent else None, "text": False, "chars": "", "bidi": False}
         )
         heading = None
         if tag == "h1":
             heading = {"hidden": hiding, "text": False, "chars": "", "order": self.order, "bidi": False}
             self.h1.append(heading)
-        # A bdo element or a dir attribute that no element hides, on the h1 or inside it, can show its letters in
-        # another order (<bdo dir="rtl">GPT</bdo> shows TPG), so the h1 records it.
+        # A bdo element or a dir attribute that no element hides can show the letters of the element that carries
+        # it, or holds it, in another order (<bdo dir="rtl">GPT</bdo> shows TPG), so the open h1, the innermost open
+        # link, the element itself and each element the parser holds open around it record it.
         if (tag == "bdo" or "dir" in attrs) and not hiding:
             open_h1 = heading or next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
-            if open_h1 is not None:
-                open_h1["bidi"] = True
+            open_a = anchor or next((frame["a"] for frame in reversed(self.stack) if frame["a"] is not None), None)
+            for record in (open_h1, open_a, self.elements[-1], *(frame["element"] for frame in self.stack)):
+                if record is not None:
+                    record["bidi"] = True
         # A br that no element hides breaks the line, so in the h1 it reads as a space between the words around it.
         if tag == "br" and not hiding:
             open_h1 = next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
@@ -618,13 +649,16 @@ class PageParser(HTMLParser):
         # Text counts for the h1, the innermost open link and every open step (so a step whose text is in a nested step
         # list has text too) only when no element around it hides it: a hiding element (by itself or an ancestor) or
         # a details without open, whose text outside its first summary is hidden. The h1 also keeps that text, to be
-        # searched for its family's name.
+        # searched for its family's name, and the innermost open link and every open element keep it, to be searched
+        # for a bidi control.
         heading = next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
         anchor = next((frame["a"] for frame in reversed(self.stack) if frame["a"] is not None), None)
         items = [frame["li"] for frame in self.stack if frame["li"] is not None]
         hidden = bool(self.stack) and (self.stack[-1]["hiding"] or self.stack[-1]["closed"])
-        if not hidden and heading is not None:
-            heading["chars"] += data
+        if not hidden:
+            for record in (heading, anchor, *(frame["element"] for frame in self.stack)):
+                if record is not None:
+                    record["chars"] += data
         # Text other than whitespace that sits directly in an element, shown or hidden, with the order of the last
         # start tag before it, for the pin of /install/'s opening; and visible text counts for every open element.
         if self.stack and data.strip(" \t\n\f\r"):
@@ -801,7 +835,7 @@ def opening_problems(where: str, parser: PageParser, found: list[dict]) -> list[
         held = tuple(child["tag"] for child in children.get(element["order"], []))
         if gid is not None and element["id"] != gid:
             problems.append(f'{where}: the label before the family links does not carry the "{gid}" id.')
-        if inside is not None and held != inside:
+        if held != inside:
             problems.append(
                 f"{where}: the {element['tag']} at the opening of div.doc holds the elements {list(held)}, not "
                 f"{list(inside)}; the family links sit at the top."
@@ -815,16 +849,27 @@ def opening_problems(where: str, parser: PageParser, found: list[dict]) -> list[
             f"{where}: text sits directly in the body, main, div.wrap or div.doc before the family links; the family "
             "links sit at the top."
         )
+    # The button row holds the family links and the whitespace between them, and nothing else.
+    if any(parent == doc[-1]["order"] for parent, _ in parser.texts):
+        problems.append(f"{where}: text other than whitespace sits directly in the paragraph of family links; it "
+                        "holds only the family links.")
     hero = next((record for record in parser.h1 if record["order"] == doc[1]["order"]), None)
     if hero is None or hero["hidden"] or not hero["text"]:
         problems.append(f"{where}: the hero's h1 reads as hidden or has no text that reads as visible.")
-    elif hero["bidi"]:
-        problems.append(f"{where}: the hero's h1 holds a bdo element or a dir attribute, which can show its letters in "
-                        "another order.")
+    else:
+        if any(char in BIDI_CONTROLS for char in hero["chars"]):
+            problems.append(f"{where}: the hero's h1 holds a bidi control, which can show its letters in another "
+                            "order.")
+        if hero["bidi"]:
+            problems.append(f"{where}: the hero's h1 holds a bdo element or a dir attribute, which can show its "
+                            "letters in another order.")
     if doc[4]["hidden"]:
         problems.append(f'{where}: the "pick" label reads as hidden in the static markup.')
     elif not doc[4]["text"]:
         problems.append(f'{where}: the "pick" label has no text that reads as visible.')
+    elif any(char in BIDI_CONTROLS for char in doc[4]["chars"]) or doc[4]["bidi"]:
+        problems.append(f'{where}: the "pick" label holds a bidi control, a bdo element or a dir attribute, which can '
+                        "show its letters in another order.")
     return problems
 
 
@@ -852,6 +897,9 @@ def check_install_page(text: str) -> list[str]:
             problems.append(f"{where}: the {fam} family link reads as hidden in the static markup.")
         if not link["text"]:
             problems.append(f"{where}: the {fam} family link has no text that reads as visible.")
+        if any(char in BIDI_CONTROLS for char in link["chars"]) or link["bidi"]:
+            problems.append(f"{where}: the {fam} family link's label holds a bidi control, a bdo element or a dir "
+                            "attribute, which can show its letters in another order.")
         if get_at is not None and link["order"] > get_at:
             problems.append(f'{where}: the {fam} family link comes after the "get" id; the family links sit at the top.')
     if len(found) == len(FAMILIES):
@@ -975,9 +1023,10 @@ def main() -> int:
 
     print(
         "The install page links all five family pages in order before the get id, with the opening of its content "
-        "as pinned, the buttons right after the pick label and that label after the hero's h1, the h1 and that "
-        "label with text read as visible, neither read as hidden, the h1 with no bdo or dir, each link with text "
-        "read as visible and none of them read as hidden, and keeps its ids; each family "
+        "as pinned, the buttons right after the pick label and that label after the hero's h1, the button row "
+        "holding only the family links, the h1 and that label with text read as visible, neither read as hidden "
+        "and neither with a bidi control, bdo or dir, each link with text read as visible and no bidi control, bdo "
+        "or dir, none of them read as hidden, and keeps its ids; each family "
         "page has 1 h1 that names its family in text read as visible with no bidi control, bdo or dir, a verified "
         "line and a step list, each step "
         "list with a step read as visible, none of them read as hidden, and a link with text read as visible back "

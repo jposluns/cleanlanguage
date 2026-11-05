@@ -15,25 +15,33 @@ must name it, so that what the gate says it checks cannot outgrow its code
 unnoticed.
 
 It also reads the stylesheets every install page loads (fonts.css, palettes.css
-and baseline.css under site/assets/baseline/) and fails when a rule whose
-selector list holds a bare single class, such as ``.only-dark``, hides it and
-the class is in neither the gate's HIDING_CLASSES nor EXEMPT_CLASSES below. It
+and baseline.css under site/assets/baseline/) and fails when a bare single
+class, such as ``.only-dark``, whose name may be any CSS identifier, is hidden
+by the declarations of every rule in the 3 stylesheets whose selector list
+holds it, read together, inside an at-rule or not and whatever its condition
+(so ``.x { height: 3px; } .x { overflow: hidden; }`` hides ``.x``), and the
+class is in neither the gate's HIDING_CLASSES nor EXEMPT_CLASSES below. It
 fails closed on properties as well as values: a declaration shows only when its
 property is a custom property or 1 of SHOWING_PROPERTIES, which cannot hide or
 move a box, or when its value is in that property's exact list in
-SHOWING_VALUES; every other declaration hides, read or not, and so does any
-whose property name holds a backslash. A vendor prefix such as ``-webkit-`` is
-dropped first. So any ``content-visibility``, ``zoom``, ``contain``,
-``filter``, ``mask``, ``content``, ``visibility``, ``clip``, ``bottom`` or
-unknown property hides, as does any value the stylesheets do not carry today:
-``display: none``, a computed 1 (``calc()``, ``var()``), a CSS-wide keyword,
-an ``opacity`` of 0.5, -1 or ``0e1``, ``inset: -9999px``, ``font-size: 0``,
-``max-width: 0`` or ``z-index: -1``. A listed value holds ``var()`` only of a
-custom property in VARIABLE_VALUES, whose every value the stylesheet check
-also pins; as the colour after a width and ``solid`` in a border or an
-outline, where any other token would leave the declaration invalid; or in the
-middle of a ``clamp()`` between 2 positive lengths (BOUNDED). A rule also
-hides when it declares 1 of SIZES beside 1 of OVERFLOWS that holds ``hidden``
+SHOWING_VALUES; every other declaration hides, read or not. A vendor prefix
+such as ``-webkit-`` is dropped first. So any ``content-visibility``,
+``zoom``, ``contain``, ``filter``, ``mask``, ``content``, ``visibility``,
+``clip``, ``bottom`` or unknown property hides, as does any value the
+stylesheets do not carry today: ``display: none``, a computed 1 (``calc()``,
+``var()``), a CSS-wide keyword other than ``color: inherit``, an ``opacity``
+of 0.5, -1 or ``0e1``, ``inset: -9999px``, ``font-size: 0``,
+``max-width: 0``, ``z-index: -1``, ``color: transparent`` or
+``color: var(--surface-raised)``; ``color`` and the font properties
+(``font-family``, ``font-variant-numeric``, ``font-weight``,
+``text-rendering`` and ``text-transform``) have such lists. A listed value
+holds ``var()`` only of a custom property in VARIABLE_VALUES, whose every
+value the stylesheet check also pins (each palette colour that a listed
+``color`` value names among them); as the colour after a width and ``solid``
+in a border or an outline, where any other token would leave the declaration
+invalid; or in the middle of a ``clamp()`` between 2 positive lengths in
+``rem`` (BOUNDED). The joined declarations of a class also hide when they
+declare 1 of SIZES beside 1 of OVERFLOWS that holds ``hidden``
 or ``clip``, whatever the values (``height: 3px; overflow: hidden``), or
 beside 1 that holds ``auto`` or ``scroll`` while a value of SIZES there is not
 1 of SCROLL_SIZES (``height: 3px; overflow: auto``). The
@@ -43,10 +51,15 @@ nor its importance, so ``opacity: 0; opacity: 1`` hides, as does ``opacity: 1
 !important; opacity: 0``. It does not prove that no other mix of listed values
 hides. Among those it passes are the 3 negative margins, of at most 0.8rem (on
 ``.scheme``, ``.verified`` and ``.code-note``): beside ``top: 0``, say, 1 can
-take a box off the top edge. It does not read the keyframes, so a stylesheet
-that redefines the listed ``field-in`` to hide passes; it passes a colour that
-matches what is behind the text or lets it show through; and it passes a box
-that another covers, positioned or with an outline or a shadow.
+take a box off the top edge. These residuals are accepted: it passes a colour
+that matches what is behind the text in context or lets it show through, such
+as a listed ``color`` value whose palette colour is set, in some rule, to a
+value it takes in another scheme (a dark ``--text`` in a light scheme), or a
+paint property of SHOWING_PROPERTIES, which may take any value, that matches
+the text's colour (``background: var(--text)``); a font that a family name or
+an ``src`` URL picks, since every string reads as empty, so a font whose
+glyphs show nothing passes; and a box that another covers, positioned or with
+an outline or a shadow.
 The parser is deliberately small: it reads no compound, descendant or attribute
 selector. It reads comments and strings as CSS does, so a brace, a ``;`` or a
 comment opener in a string, or a brace or a quote in a comment, delimits
@@ -55,12 +68,17 @@ what it does not model: an unclosed comment, a string that a line break or its
 end leaves open, a backslash outside a string, ``<!--`` or ``-->``, an unquoted
 ``url()`` holding a quote, a ``(``, a brace or a backslash, a brace inside
 brackets or parentheses, unbalanced braces, brackets or parentheses, a rule
-inside a rule, or an at-rule other than those of AT_RULES (``@container``,
-``@font-face``, ``@keyframes``, ``@media`` and ``@supports``). It also fails
-when any rule sets a custom property of VARIABLE_VALUES to a value outside its
-list there. Before it reads them, it fails unless the reading counts each of
-HIDING_DECLARATIONS as hiding and none of SHOWING_DECLARATIONS, and unless it
-reads each of SHEET_CASES as that case expects.
+inside a rule, an at-rule other than those of AT_RULES (``@container``,
+``@font-face``, ``@keyframes``, ``@media`` and ``@supports``), or keyframes
+named by a string. It also fails when any rule sets a custom property of
+VARIABLE_VALUES to a value outside its list there, when a ``@keyframes`` rule
+whose name is that of an animation in KEYFRAMES (``field-in``), compared
+without regard to case, holds other keyframes, and when an ``@font-face``
+rule gives a descriptor a value outside FONT_FACE_VALUES, or any other
+descriptor (``size-adjust: 1%`` fails). Before it reads them, it fails unless
+the reading counts each of HIDING_DECLARATIONS as hiding and none of
+SHOWING_DECLARATIONS, unless BOUNDED matches none of NOT_BOUNDED, and unless
+it reads each of SHEET_CASES as that case expects.
 
 It also fails unless the gate's SUPPORTED_PYTHONS is exactly 3.14 and each of
 its versions is in SUPPORTED_PYTHONS of tools/check-inline-code.py, and runs the
@@ -130,17 +148,18 @@ STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.
 # Classes a stylesheet may hide as a bare single class although the gate does not refuse them. Add 1 only with a
 # comment saying why no install page can carry it on a checked element or an ancestor. None qualifies today.
 EXEMPT_CLASSES: tuple[str, ...] = ()
-BARE_CLASS = re.compile(r"\.(-?[_a-zA-Z][_a-zA-Z0-9-]*)")
+# A class selector whose name is any CSS identifier: "--" or an optional "-", then a letter, "_" or a character from
+# U+0080 on, and then any of those, digits and "-". css_rules() refuses an escape, so no name holds 1.
+BARE_CLASS = re.compile(r"\.((?:--|-?[_a-zA-Z\u0080-\U0010ffff])[_a-zA-Z0-9\u0080-\U0010ffff-]*)")
 # The properties hides() reads as showing whatever their value: those fonts.css, palettes.css and baseline.css use that
 # cannot hide or move a box. Each is listed with its reason; a property gets in only with 1.
 SHOWING_PROPERTIES = (
-    # Paint a colour, an image or a shadow behind or around the text: each can hide the text only by a colour that
-    # matches what is behind it or lets it show through, which this test does not read, and a shadow or a background
-    # covers another box only when its box is positioned over it (see above).
-    "background", "border-bottom-color", "border-color", "box-shadow", "color", "color-scheme", "fill",
-    "outline-color", "stroke", "text-decoration-color",
-    # Pick a font face, a weight, a letter case or the form of digits, and set no size, spacing or position.
-    "font-family", "font-variant-numeric", "font-weight", "text-rendering", "text-transform",
+    # Paint a colour, an image or a shadow behind or around the text, or in an SVG: each can hide the text only by a
+    # colour that matches the text's colour or lets what is behind show through, which this test does not read (an
+    # accepted residual: background: var(--text), say), and a shadow or a background covers another box only when
+    # its box is positioned over it (see above). color itself has a list in SHOWING_VALUES.
+    "background", "border-bottom-color", "border-color", "box-shadow", "color-scheme", "fill", "outline-color",
+    "stroke", "text-decoration-color",
     # Count, point or scroll, and change no box: counters, the pointer, scrollbars, scroll chaining, touch scrolling,
     # and transitions, which only animate between values that the rules themselves give.
     "counter-increment", "counter-reset", "cursor", "overflow-scrolling", "overscroll-behavior", "scrollbar-width",
@@ -151,9 +170,12 @@ SHOWING_PROPERTIES = (
 # baseline.css gives that property today and that shows beside any other listed value but for SIZES beside a clip
 # (see OVERFLOWS) and the 3 negative margins, of at most 0.8rem, of .scheme, .verified and .code-note, which can take
 # a box that small off an edge it sits at (see above). None is display: none, an opacity below 1, a width, height,
-# font size or line height of 0 or 1px, a negative top, left or z-index, a negative padding, a content or a CSS-wide
-# keyword; of those that move a box, they list only right: 0.8rem, a transform by 0.25rem or none, the animation
-# field-in (from opacity 0 to 1 in baseline.css) or none, and margins of auto or at most 2.5rem. Left out of what
+# font size or line height of 0 or 1px, a negative top, left or z-index, a negative padding, a content, a colour
+# other than var() of a pinned palette colour, or a CSS-wide keyword but color: inherit; of those that move a box
+# from where the flow or the grid puts it, they list only position: absolute, relative and sticky, top: 0, 0.12rem,
+# 0.8rem, 1rem and 1.5rem, left: 0 and 1rem, right: 0.8rem, a transform by 0.25rem or none, and margins of auto, of
+# at most 2.5rem, or, for the 3 negative ones, of at most 0.8rem; the animation field-in, from opacity 0 to 1 in
+# its keyframes (pinned by KEYFRAMES), moves no box. Left out of what
 # they carry: the values only their hiding rules use (display: none; clip: rect(0 0 0 0), width: 1px, height: 1px
 # and margin: -1px in .vh and .family .cards .cname; top: -4rem in .skip; opacity: 0 in @keyframes field-in); every
 # content (the counters of the ::before rules, which on an element itself could replace its text); inherit (in font
@@ -161,8 +183,8 @@ SHOWING_PROPERTIES = (
 # margin-left values with calc() of .rail > .lbl); and each value that holds var() of a custom property outside
 # VARIABLE_VALUES (the sizes of .family's logos and tiles, the padding-left values of .lrail > nav, the min-height of
 # .family's cards, the padding of .family .slice and the widths of table columns). Kept: calc(), clamp() and max()
-# of lengths alone; a clamp() between 2 positive lengths whatever its middle argument (BOUNDED: .statement's font
-# sizes); and var() of VARIABLE_VALUES, or as a border's or an outline's colour (BORDER_COLOUR). hides_problems()
+# of lengths alone; a clamp() between 2 positive lengths in rem whatever its middle argument (BOUNDED: .statement's
+# font sizes); and var() of VARIABLE_VALUES, or as a border's or an outline's colour (BORDER_COLOUR). hides_problems()
 # reads each listed value on its own as well.
 SHOWING_VALUES = {
     "display": ("block", "contents", "flex", "grid", "inline", "inline-block", "inline-flex", "inline-grid",
@@ -204,6 +226,11 @@ SHOWING_VALUES = {
     "border-top": ("1px solid var(--rule-strong)", "3px solid var(--brand)"),
     "box-sizing": ("border-box",),
     "break-inside": ("avoid",),
+    "color": ("inherit", "var(--accent)", "var(--gold)", "var(--grp-1)", "var(--grp-2)", "var(--grp-3)", "var(--grp-4)",
+              "var(--grp-5)", "var(--grp-6)", "var(--link)", "var(--link-hover)", "var(--ord-cost)",
+              "var(--ord-progress)", "var(--ord-speed)", "var(--print-ink)", "var(--rainbow-ink-1)",
+              "var(--rainbow-ink-2)", "var(--rainbow-ink-3)", "var(--rainbow-ink-4)", "var(--rainbow-ink-5)",
+              "var(--rainbow-ink-6)", "var(--silver)", "var(--text)", "var(--text-muted)"),
     "column-gap": ("0", "0.4rem", "0.6rem", "1rem", "2.5rem", "2rem", "3rem", "clamp(2.5rem, 5vw, 6rem)"),
     "columns": ("1", "2", "3"),
     "container": ("footer / inline-size",),
@@ -231,6 +258,7 @@ SHOWING_VALUES = {
              '600 0.62rem/1.4 "", system-ui, sans-serif', '600 0.68rem/1.45 "", system-ui, sans-serif',
              '600 0.95rem/1.2 "", system-ui, sans-serif', '600 1.4rem/1.2 "", serif',
              '600 1rem/1.45 "", system-ui, sans-serif', '700 clamp(1.6rem, 1.9vw, 2.2rem)/1 "", system-ui, sans-serif'),
+    "font-family": ('"", serif', '"", system-ui, sans-serif', '"", ui-monospace, monospace'),
     "font-feature-settings": ('"", ""',),
     "font-size": ("0.74rem", "0.78em", "0.85rem", "0.8rem", "0.95rem", "0.9rem", "1.05rem", "1.125rem", "1.15rem",
                   "1.1rem", "1.2rem", "1.333rem", "1.45rem", "1.5rem", "1.7rem", "11px", "12.5px", "14px", "2.2rem",
@@ -240,6 +268,8 @@ SHOWING_VALUES = {
                   "clamp(1.35rem, 1.35vw, 1.8rem)", "clamp(2.4rem, 98cqw / var(--sw), 3.2rem)",
                   "clamp(2.6rem, 98cqw / var(--sw), 5rem)"),
     "font-style": ("italic",),
+    "font-variant-numeric": ("lining-nums", "lining-nums tabular-nums", "oldstyle-nums proportional-nums"),
+    "font-weight": ("300", "400", "500", "600"),
     "gap": ("0", "0 clamp(1rem, 1.6vw, 2rem)", "0 clamp(2rem, 3vw, 4rem)", "0.2rem", "0.3rem", "0.3rem 1rem",
             "0.3rem 2rem", "0.4rem 1.8rem", "0.4rem 2.5rem", "0.5rem", "0.6rem", "0.6rem 0", "0.6rem 1.6rem",
             "0.6rem 2rem", "0.75rem", "0.8rem 1.6rem", "1rem", "1rem 1.2rem", "1rem 2.2rem", "1rem 3rem", "2rem",
@@ -294,7 +324,9 @@ SHOWING_VALUES = {
     "text-align": ("center", "left", "right"),
     "text-decoration": ("none", "underline"),
     "text-decoration-thickness": ("1px", "2px"),
+    "text-rendering": ("optimizelegibility",),
     "text-size-adjust": ("100%",),
+    "text-transform": ("none", "uppercase"),
     "text-underline-offset": ("0.18em",),
     "text-wrap": ("balance",),
     "vertical-align": ("bottom", "top"),
@@ -308,17 +340,64 @@ SHOWING_VALUES = {
 # The custom properties a listed value of SHOWING_VALUES may name in var(), each with the only values it may take in
 # any rule of the 3 stylesheets (the values they hold today); sheet_problems() fails on any other, so a listed
 # value with var() stays as bounded as these. A var() as the colour after a width and solid in a border or an outline
-# needs no entry: any other token there makes the declaration invalid.
+# needs no entry: any other token there makes the declaration invalid. The palette colours that the values of color
+# name are pinned too, each to every value it takes in any palette or scheme, so no rule can set 1 to transparent;
+# a value from another scheme (a dark --text in a light scheme, say) still passes, an accepted residual.
 VARIABLE_VALUES = {
     "--pad": ("clamp(1rem, 3vw, 3.2rem)",),
     "--art": ("clamp(11rem, 22vw, 30rem)",),
     "--label-col": ("9rem",),
     "--railw": ("clamp(13rem, 13vw, 17rem)",),
+    "--accent": ("#2c6aaa", "#3b752e", "#5e9ce0", "#6faa62", "#7d6500", "#8a509c", "#a25100", "#b79400", "#b97dcc",
+                 "#bc3732", "#e1791b", "#ef675c"),
+    "--gold": ("#8a6a0a", "#e6c15a"),
+    "--grp-1": ("#ba3630", "#bc3732", "#fd7468"),
+    "--grp-2": ("#a25100", "#ef852e"),
+    "--grp-3": ("#7c6300", "#7d6500", "#c6a000"),
+    "--grp-4": ("#3a732c", "#3b752e", "#7bb76e"),
+    "--grp-5": ("#2a68a8", "#2c6aaa", "#6aa9ed"),
+    "--grp-6": ("#8a509c", "#c689d9"),
+    "--link": ("#2b619a", "#386a2c", "#71a5e0", "#735c00", "#7e4b8e", "#7fb174", "#954b00", "#ab3731", "#be8bce",
+               "#be9e32", "#e18846", "#ee7a6f"),
+    "--link-hover": ("#154d84", "#245618", "#5c4900", "#6a3779", "#793b00", "#8dbbf0", "#931e1c", "#99c68f", "#d1b55d",
+                     "#d2a4e0", "#f2a26a", "#ff968b"),
+    "--ord-cost": ("#bc3732", "#ef675c"),
+    "--ord-progress": ("#3b752e", "#6faa62"),
+    "--ord-speed": ("#a25100", "#e1791b"),
+    "--print-ink": ("#000000",),
+    "--rainbow-ink-1": ("#1d1a16", "#fffaf2"),
+    "--rainbow-ink-2": ("#1d1a16",),
+    "--rainbow-ink-3": ("#1d1a16",),
+    "--rainbow-ink-4": ("#1d1a16",),
+    "--rainbow-ink-5": ("#1d1a16", "#fffaf2"),
+    "--rainbow-ink-6": ("#1d1a16", "#fffaf2"),
+    "--silver": ("#6a6a6a", "#cfcfcf"),
+    "--text": ("#1d1f21", "#1f2017", "#231f15", "#241d20", "#261d16", "#2d181b", "#e9e9e9"),
+    "--text-muted": ("#65686a", "#67695e", "#6c675b", "#6d6568", "#70655d", "#7a6062", "#989898"),
 }
 BORDER_COLOUR = re.compile(r"[0-9.]+px solid var\(--[\w-]+\)")
-# A clamp() between 2 positive lengths, whatever its middle argument, such as .statement's font sizes: a var() there
-# that is invalid makes the declaration invalid, so the size inherits, and any other stays within the bounds.
-BOUNDED = re.compile(r"clamp\([0-9.]+[a-z]+, [^,]*, [0-9.]+[a-z]+\)")
+# A clamp() between 2 positive lengths in rem, whatever its middle argument, such as .statement's font sizes: a var()
+# there that is invalid makes the declaration invalid, so the size inherits, and any other stays within the bounds.
+# A bound of 0, or in a unit that grows with the viewport or the container, does not match (NOT_BOUNDED).
+POSITIVE_REM = r"(?:[0-9]*[1-9][0-9]*(?:\.[0-9]+)?|[0-9]*\.[0-9]*[1-9][0-9]*)rem"
+BOUNDED = re.compile(rf"clamp\({POSITIVE_REM}, [^,]*, {POSITIVE_REM}\)")
+NOT_BOUNDED = ("clamp(0rem, var(--x), 2rem)", "clamp(1rem, var(--x), 0.0rem)", "clamp(1rem, var(--x), 500vw)",
+               "clamp(.0rem, var(--x), 2rem)")
+# The keyframes each animation of SHOWING_VALUES names, as baseline.css gives them today: each keyframe's selector and
+# its declarations, compared in lower case with each run of whitespace read as 1 space. sheet_problems() fails on any
+# @keyframes of that name (compared without regard to case) whose keyframes differ, so field-in cannot be redefined to
+# end at opacity 0, and on keyframes named by a string, which it reads as empty.
+KEYFRAMES = {"field-in": (("from", "opacity: 0;"), ("to", "opacity: 1;"))}
+# The only values sheet_problems() accepts for each descriptor of an @font-face rule, those fonts.css gives today; any
+# other descriptor (size-adjust, say, which can shrink the glyphs to nothing) or value fails. css_rules() reads every
+# string as "", so a family name and the font file src names are not read (a residual the docstring states).
+FONT_FACE_VALUES = {
+    "font-family": ('""',),
+    "font-style": ("italic", "normal"),
+    "font-weight": ("100 800", "100 900", "200 800", "400 700"),
+    "font-display": ("swap",),
+    "src": ('url("") format("")',),
+}
 # The properties that set the box a clip cuts the text to (a size, a flex basis, an aspect ratio, a size containment
 # by container-type, or a rounded corner), and the overflow properties: a rule that declares 1 of SIZES beside 1 of
 # OVERFLOWS holding hidden or clip hides, whatever the values (height: 3px; overflow: hidden), and so does 1 holding
@@ -338,10 +417,12 @@ AT_RULES = ("container", "font-face", "keyframes", "media", "supports")
 URL_START = re.compile(r"url\(\s*", re.I)
 # Declarations hides() must read as hiding, for each value form a reading by validity missed (a computed, clamped or
 # exponent opacity, and 0 before 1), for each way to move a box off-screen, for each property that can hide and that
-# a reading of only some properties missed, and for each size beside a clip or a small scroll box; and declarations
-# it must not: values of SHOWING_VALUES, properties of SHOWING_PROPERTIES, a declaration without a colon, and a custom
-# property. Some hiding ones hide nothing in a browser (opacity: 0.5, visibility: visible, clip-path: none, right: 0,
-# width: 100%; overflow: hidden, opacity: 0; opacity: 1): that reading over-refuses by design. hides_problems() also
+# a reading of only some properties missed, for each size beside a clip or a small scroll box, and for a colour, a
+# font family, a weight and a letter case outside their lists; and declarations it must not: values of
+# SHOWING_VALUES, 1 among them written with a line break and a tab that read as 1 space, properties of
+# SHOWING_PROPERTIES, a declaration without a colon, and a custom property. Some hiding ones hide nothing in a
+# browser (opacity: 0.5, visibility: visible, clip-path: none, right: 0, width: 100%; overflow: hidden, opacity: 0;
+# opacity: 1): that reading over-refuses by design. hides_problems() also
 # reads, for each property of SHOWING_VALUES, each listed value as showing and -9999px as hiding, -9999px for each of
 # SHOWING_PROPERTIES as showing, and each listed value of SIZES beside overflow: hidden and overflow: auto.
 HIDING_DECLARATIONS = (
@@ -376,7 +457,8 @@ HIDING_DECLARATIONS = (
     "width: 1px", "padding: 0 0 0 9999px", "padding-left: 9999px", "padding: 0 var(--other)",
     "padding: 0 var(--pad, 9999px)", "mask: none", "filter: opacity(0)", "letter-spacing: -1em", "direction: rtl",
     "unicode-bidi: bidi-override", "text-decoration: line-through 2em", "font-size: inherit", "col\\6fr: red",
-    "-webkit-line-clamp: 1", "unknown-property: 0",
+    "-webkit-line-clamp: 1", "unknown-property: 0", "color: transparent", "color: var(--surface-raised)",
+    "color: var(--text, transparent)", "font-family: blank", "font-weight: 1", "text-transform: full-width",
 )
 SHOWING_DECLARATIONS = (
     "display: block", "display: contents", "display: flex", "display: grid", "display: inline",
@@ -387,7 +469,7 @@ SHOWING_DECLARATIONS = (
     "height: 1.5rem", "height: 2.4rem", "height: 2.75rem", "max-height: none; overflow: auto", "max-height: 11rem",
     "max-height: 36rem; overflow: auto", "max-height: 36rem; overflow: visible", "max-height: 75vh",
     "max-height: 75svh", "overflow: hidden", "white-space: nowrap; overflow: hidden", "opacity 0", "",
-    'font-family: "\\201c;\\201d"', "position: absolute; top: 0.8rem; right: 0.8rem", "transform: none",
+    'font-family: "", serif', "margin: 0\n\t auto", "position: absolute; top: 0.8rem; right: 0.8rem", "transform: none",
     "transform: translateX(0.25rem)", "animation: field-in 400ms ease-out both", "margin: 0 auto",
     "margin: -0.8rem 0 1.6rem", "margin-right: clamp(1.2rem, 2.5vw, 2.5rem)", "-webkit-text-size-adjust: 100%",
     "transition: transform 150ms ease-out", "--inset: -9999px", "--pad: 9999px", 'grid-template-areas: "" ""',
@@ -398,19 +480,46 @@ SHOWING_DECLARATIONS = (
 )
 # Stylesheets the reader must refuse, or read and report as hiding the bare class .x, with the words its 1 problem
 # holds, and stylesheets it must read with no problem (""); only .vh counts as listed. A brace in a string, a
-# comment, an unquoted url() or brackets opens or closes no block in a browser. The strings sit in font-family, which
-# shows whatever its value, so only a misreading makes .x hide or show.
+# comment, an unquoted url() or brackets opens or closes no block in a browser. The strings sit in font-family before
+# serif, a listed value whatever the string, so only a misreading makes .x hide or show.
 SHEET_CASES = (
-    ("inset moving .x off-screen", ".x { position: absolute; inset: -9999px; }", "hides the bare class .x"),
-    ("a size beside a clip", ".x { height: 3px; overflow: hidden; }", "hides the bare class .x"),
-    ("a property it does not list", ".x { content-visibility: hidden; }", "hides the bare class .x"),
+    ("inset moving .x off-screen", ".x { position: absolute; inset: -9999px; }", "hide the bare class .x"),
+    ("a size beside a clip", ".x { height: 3px; overflow: hidden; }", "hide the bare class .x"),
+    ("a property it does not list", ".x { content-visibility: hidden; }", "hide the bare class .x"),
     ("a } in a string before display: none",
-        '.x { font-family: "}"; display: none; font-family: "{"; }', "hides the bare class .x"),
-    ("a { in a string before display: none", ".x { font-family: '{'; display: none; }", "hides the bare class .x"),
-    ("an escaped quote and a } in a string", '.x { font-family: "\\"}"; display: none; }', "hides the bare class .x"),
-    ("a comment opener in a string", '.x { font-family: "/*"; display: none; } .y { font-family: "*/"; }',
-        "hides the bare class .x"),
-    ("a quote and a } in a comment", "/* it's } */ .x { display: none; }", "hides the bare class .x"),
+        '.x { font-family: "}", serif; display: none; font-family: "{", serif; }', "hide the bare class .x"),
+    ("a { in a string before display: none", ".x { font-family: '{', serif; display: none; }", "hide the bare class .x"),
+    ("an escaped quote and a } in a string", '.x { font-family: "\\"}", serif; display: none; }',
+        "hide the bare class .x"),
+    ("a comment opener in a string",
+        '.x { font-family: "/*", serif; display: none; } .y { font-family: "*/", serif; }', "hide the bare class .x"),
+    ("a quote and a } in a comment", "/* it's } */ .x { display: none; }", "hide the bare class .x"),
+    # The declarations of every rule whose selector list holds the class are read together, inside an at-rule too.
+    ("a size and a clip in 2 rules", ".x { height: 3px; } .x { overflow: hidden; }", "hide the bare class .x"),
+    ("a size and a small scroll box in 2 rules", ".x { height: 3px; } .x { overflow: auto; }", "hide the bare class .x"),
+    ("a size in @media and a clip in the base rule",
+        "@media (min-width: 1px) { .x { height: 3px; } } .x { overflow: hidden; }", "hide the bare class .x"),
+    ("a size in a selector list and a clip in another rule", ".y, .x { height: 3px; } .x { overflow: hidden; }",
+        "hide the bare class .x"),
+    # A class name is any CSS identifier.
+    ("a class named --x", ".--x { display: none; }", "hide the bare class .--x"),
+    ("a class named with U+00E9", ".é { display: none; }", "hide the bare class .é"),
+    ("a class named x and U+00E9", ".xé { display: none; }", "hide the bare class .xé"),
+    # The keyframes of a listed animation, the palette colours that color names, and @font-face are pinned.
+    ("field-in redefined to end hidden", "@keyframes field-in { to { opacity: 0; } } .x { margin: 0; }",
+        "other than those of KEYFRAMES"),
+    ("field-in redefined in upper case",
+        "@keyframes FIELD-IN { from { opacity: 0; } to { opacity: 0; } } .x { margin: 0; }",
+        "other than those of KEYFRAMES"),
+    ("keyframes named by a string", '@keyframes "field-in" { to { opacity: 0; } } .x { margin: 0; }',
+        "names its keyframes"),
+    ("a transparent colour", ".x { color: transparent; }", "hide the bare class .x"),
+    ("the colour of a surface", ".x { color: var(--surface-raised); }", "hide the bare class .x"),
+    ("a pinned palette colour set to transparent", ".x { color: var(--text); } :root { --text: transparent; }",
+        "sets --text to 'transparent'"),
+    ("an @font-face that shrinks its glyphs",
+        '@font-face { font-family: "a"; src: url("a.woff2") format("woff2"); size-adjust: 1%; } .x { margin: 0; }',
+        "sets the descriptor size-adjust to '1%'"),
     ("a rule after a string ended by a line break", '.y { content: "a\n} .x { display: none; } .z { content: "b"; }',
         "a line break ends"),
     ("an unclosed string", '.x { content: "a; }', "its end leaves open"),
@@ -435,11 +544,16 @@ SHEET_CASES = (
     ("no rule", "/* nothing */", "holds no rule"),
     ("a pinned custom property set outside its list",
         ".x { padding: 0 var(--pad); } :root { --pad: 9999px; }", "sets --pad to '9999px'"),
-    ("a } in a string in a showing rule", '.x { font-family: "}"; grid-template-areas: "a b"; }', ""),
-    ("a ; and display: none in a string", ".x { font-family: 'a; display: none'; }", ""),
+    ("a } in a string in a showing rule", '.x { font-family: "}", serif; grid-template-areas: "a b"; }', ""),
+    ("a ; and display: none in a string", ".x { font-family: 'a; display: none', serif; }", ""),
+    ("a listed value written over 2 lines", ".x { margin: 0\n  auto; }", ""),
     ("a listed class hidden, braces in a comment", "/* { } */ .vh { display: none; } @media print { .x { } }", ""),
-    ("a quoted url() and a keyframes rule",
-        '@font-face { src: url("a{b}.woff2"); } @keyframes k { from { opacity: 0; } } .x { margin: 0; }', ""),
+    ("a quoted url() and a keyframes rule", '@font-face { src: url("a{b}.woff2") format("woff2"); } '
+        "@keyframes k { from { opacity: 0; } } .x { margin: 0; }", ""),
+    ("field-in as baseline.css gives it",
+        "@keyframes field-in { from { opacity: 0; } to { opacity: 1; } } .x { margin: 0; }", ""),
+    ("an @font-face as fonts.css gives it", '@font-face { font-family: "a"; font-style: normal; font-weight: 100 900; '
+        'font-display: swap; src: url("a.woff2") format("woff2"); } .x { color: var(--text); }', ""),
     ("brackets in an unquoted url(), as CSS allows", ".x { background: url(a[b]); }", ""),
     ("a pinned custom property set to its listed value",
         ":root { --pad: clamp(1rem, 3vw, 3.2rem); } .x { padding: 0 var(--pad); }", ""),
@@ -613,6 +727,24 @@ CASES = [
         (1, "the hero's h1 holds a bdo element or a dir")),
     ("the hero's h1 with a dir attribute", edit(PAGE, HERO, HERO.replace("<h1>", '<h1 dir="rtl">')),
         (1, "the hero's h1 holds a bdo element or a dir")),
+    # A bidi control, a bdo or a dir can reorder the letters of the hero's h1, the pick label or a family link's label.
+    ("the hero's h1 with a right-to-left override", edit(PAGE, HERO, HERO.replace("Pick the", "Pick &#x202E;the")),
+        (1, "the hero's h1 holds a bidi control")),
+    ("the pick label with a right-to-left override",
+        edit(PAGE, PICK, PICK.replace(">Pick your AI<", ">Pick &#x202E;your AI<")), (1, 'the "pick" label holds a bidi')),
+    ("the pick label with a dir attribute", edit(PAGE, PICK, PICK.replace(' id="pick"', ' id="pick" dir="rtl"')),
+        (1, 'the "pick" label holds a bidi')),
+    ("a family link whose label a bdo reverses",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", '><bdo dir="rtl">Claude</bdo><')),
+        (1, "the claude family link's label holds a bidi")),
+    ("a family link with a dir attribute", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace("<a ", '<a dir="rtl" ')),
+        (1, "the claude family link's label holds a bidi")),
+    ("a family link whose label holds a right-to-left override",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">Cla&#x202E;ude<")),
+        (1, "the claude family link's label holds a bidi")),
+    ("a family link beside a bdo in a hidden span",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><span>Claude</span><span hidden><bdo>x</bdo></span><")),
+        0),
     ("the pick label emptied", edit(PAGE, PICK, PICK.replace(">Pick your AI<", "><")),
         (1, 'the "pick" label has no text that reads as visible')),
     ("the pick label of only U+200B", edit(PAGE, PICK, PICK.replace(">Pick your AI<", ">" + chr(0x200B) + "<")),
@@ -810,8 +942,16 @@ CASES = [
     ("the button row after <div hidden/>", edit(PAGE, ROW, "<div hidden/>" + ROW), 1),
     ('the button row after <div class="vh"/>', edit(PAGE, ROW, '<div class="vh"/>' + ROW), 1),
     ("the button row after <details/>", edit(PAGE, ROW, "<details/>" + ROW), 1),
-    # Inside the row, so the pin of the opening is not what reads it: a br held open would hold the later links.
-    ("the button row with <br/> after its first link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK + "<br/>"), 0),
+    # The button row holds only the family links and the whitespace between them, so any other element or text in
+    # it fails, a br included; the family page case below keeps a void <br/> from holding what follows.
+    ("the button row with <br/> after its first link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK + "<br/>"),
+        (1, "holds the elements")),
+    ("a div between 2 family links", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK + "<div></div>"), (1, "holds the elements")),
+    ("a heading opening the button row's paragraph", edit(PAGE, ROW, '<p><h2>Pick</h2><a class="btn inline" id="claude"'),
+        (1, "holds the elements")),
+    ("an h2 between 2 family links", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK + "<h2>Pick</h2>"), (1, "holds the elements")),
+    ("text between 2 family links", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK + " or "),
+        (1, "text other than whitespace sits directly in the paragraph of family links")),
     ("a family page step list after <div hidden/>", edit(OTHER, STEPS, "<div hidden/>" + STEPS), 1),
     ('a family page step list after <div class="vh"/>', edit(GEMINI, STEPS, '<div class="vh"/>' + STEPS), 1),
     ("a family page step list after <details/>", edit(COPILOT, STEPS, "<details/>" + STEPS), 1),
@@ -973,10 +1113,8 @@ RESIDUALS = [
         "after ``<span hidden><div></span>`` the ``span`` stays open"),
     ("a family page step list after <p><div hidden></p>", edit(OTHER, STEPS, "<p><div hidden></p>" + STEPS),
         "after ``<p><div hidden></p>`` the ``div`` stays open"),
-    ("a div between 2 family links", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK + "<div></div>"),
-        "``<div></div>`` between 2 family links leaves the later links outside it"),
-    ("a heading opening the button row's paragraph", edit(PAGE, ROW, '<p><h2>Pick</h2><a class="btn inline" id="claude"'),
-        'in ``<p><h2>Pick</h2><a class="btn inline"`` a browser closes the ``p`` at the ``h2``'),
+    ("a div inside a family link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><div>Claude</div><")),
+        "a browser closes the ``p`` at the ``div``, so the later links sit outside it"),
     ("a family link with another family's label", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">ChatGPT<")),
         "a wrong family link label (another family's, say)"),
     ("a family link labelled only with U+034F", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">" + chr(0x034F) + "<")),
@@ -1000,9 +1138,10 @@ def hides(declarations: str) -> bool:
     """True when the declarations may hide, clip, or move the element off-screen, read fail closed (see above): it
     splits them at each ";", and reads each declaration with a colon, its property in lower case and without a vendor
     prefix such as -webkit-, its value in lower case, its runs of whitespace read as 1 space and a final "!important"
-    dropped. One hides, wherever it sits in the block and whatever its importance, when its property name holds a
-    backslash, or when its property is neither a custom property nor 1 of SHOWING_PROPERTIES and its value is not
-    listed for that property in SHOWING_VALUES. The block also hides when it declares 1 of SIZES beside 1 of OVERFLOWS
+    dropped. One hides, wherever it sits in the block and whatever its importance, when its property is neither a
+    custom property nor 1 of SHOWING_PROPERTIES and its value is not listed for that property in SHOWING_VALUES (so an
+    escaped name, which no list holds, hides unless it starts with "--"; css_rules() refuses every backslash outside a
+    string, so no name it gives holds 1). The block also hides when it declares 1 of SIZES beside 1 of OVERFLOWS
     whose value holds hidden or clip, or holds auto or scroll while a value of SIZES there is not 1 of SCROLL_SIZES. A
     declaration without a colon is not read, as CSS drops it."""
     read: list[tuple[str, str]] = []
@@ -1012,8 +1151,7 @@ def hides(declarations: str) -> bool:
         value = " ".join(re.sub(r"!\s*important$", "", value.lower().strip()).split())
         if not colon:
             continue
-        if "\\" in name or not (name.startswith("--") or name in SHOWING_PROPERTIES
-                                or value in SHOWING_VALUES.get(name, ())):
+        if not (name.startswith("--") or name in SHOWING_PROPERTIES or value in SHOWING_VALUES.get(name, ())):
             return True
         read.append((name, value))
     overflow = {word for name, value in read if name in OVERFLOWS for word in value.split()}
@@ -1028,7 +1166,7 @@ def hides_problems() -> list[str]:
     SHOWING_VALUES and a property neither lists as hiding; each listed value of 1 of SIZES as hiding beside overflow:
     hidden, and beside overflow: auto unless it is 1 of SCROLL_SIZES; and each var() in a listed value names a custom
     property of VARIABLE_VALUES, but as a border's or an outline's colour (BORDER_COLOUR) or inside a clamp() between
-    2 positive lengths (BOUNDED)."""
+    2 positive lengths in rem (BOUNDED), which none of NOT_BOUNDED is."""
     hiding = [*HIDING_DECLARATIONS, *(f"{name}: -9999px" for name in SHOWING_VALUES), "unlisted-property: 0"]
     showing = [*SHOWING_DECLARATIONS, *(f"{name}: -9999px" for name in SHOWING_PROPERTIES),
                *(f"{name}: {value}" for name, values in SHOWING_VALUES.items() for value in values)]
@@ -1038,6 +1176,8 @@ def hides_problems() -> list[str]:
             (showing if value in SCROLL_SIZES else hiding).append(f"{name}: {value}; overflow: auto")
     problems = [f"hides() does not read {text!r} as hiding." for text in hiding if not hides(text)]
     problems += [f"hides() reads {text!r} as hiding." for text in showing if hides(text)]
+    problems += [f"BOUNDED reads {text!r} as a clamp() between 2 positive lengths in rem." for text in NOT_BOUNDED
+                 if BOUNDED.fullmatch(text)]
     return problems + [
         f"SHOWING_VALUES lists {name}: {value}, whose var({variable}) is not in VARIABLE_VALUES."
         for name, values in SHOWING_VALUES.items() for value in values
@@ -1054,16 +1194,18 @@ def unread_at_rule(text: str) -> str:
     return ""
 
 
-def css_rules(css: str) -> tuple[list[tuple[str, str]], str]:
-    """The rules of a stylesheet as (prelude, declarations) pairs, and "" or the 1 problem that makes it unreadable.
+def css_rules(css: str) -> tuple[list[tuple[str, str, str]], str]:
+    """The rules of a stylesheet as (prelude, declarations, at-rule) triples, each in the order its block closes, the
+    at-rule being the prelude of the at-rule whose block holds it or "", and "" or the 1 problem that makes it
+    unreadable.
 
     It reads comments and strings as CSS does: a comment ends at the first "*/" and opens nowhere inside a string; a
-    string ends at its next unescaped quote, opens nowhere inside a comment, and is read as an empty string, so no brace,
-    ";" or comment opener in either delimits anything. It fails closed on what it does not model: an unclosed comment,
-    a string a line break or its end leaves open, a backslash outside a string, "<!--" or "-->", an unquoted url()
-    holding a quote, a "(", a brace or a backslash, a brace inside brackets or parentheses, unbalanced braces,
-    brackets or parentheses, a rule inside a rule (CSS nesting), and an at-rule outside AT_RULES."""
-    rules: list[tuple[str, str]] = []
+    string ends at its next unescaped quote, opens nowhere inside a comment, and is read as an empty string ('""'),
+    so no brace, ";" or comment opener in either delimits anything. It fails closed on what it does not model: an
+    unclosed comment, a string a line break or its end leaves open, a backslash outside a string, "<!--" or "-->", an
+    unquoted url() holding a quote, a "(", a brace or a backslash, a brace inside brackets or parentheses, unbalanced
+    braces, brackets or parentheses, a rule inside a rule (CSS nesting), and an at-rule outside AT_RULES."""
+    rules: list[tuple[str, str, str]] = []
     blocks: list[list[str]] = []
     brackets: list[str] = []
     text: list[str] = []
@@ -1084,7 +1226,7 @@ def css_rules(css: str) -> tuple[list[tuple[str, str]], str]:
                 return [], "has a string that its end leaves open"
             if css[end] != char:
                 return [], "has a string that a line break ends"
-            text.append(char * 2)
+            text.append('""')
             index = end + 1
             continue
         if char == "\\":
@@ -1120,7 +1262,7 @@ def css_rules(css: str) -> tuple[list[tuple[str, str]], str]:
             if not blocks:
                 return [], "has unbalanced braces, brackets or parentheses"
             block = blocks.pop()
-            rules.append((block[0], "".join(block[1:] + text)))
+            rules.append((block[0], "".join(block[1:] + text), blocks[-1][0] if blocks else ""))
             text = []
             index += 1
             continue
@@ -1139,30 +1281,60 @@ def css_rules(css: str) -> tuple[list[tuple[str, str]], str]:
     return ([], problem) if (problem := unread_at_rule("".join(text))) else (rules, "")
 
 
-def sheet_problems(relative: str, css: str, listed: set[str]) -> list[str]:
-    """Each bare single class the stylesheet css hides is in listed, no rule sets a custom property of VARIABLE_VALUES
-    to a value outside its list there, and css_rules() can read it."""
-    rules, problem = css_rules(css)
-    if problem or not rules:
-        return [f"{relative} {problem or 'holds no rule'}; it cannot be read."]
+def sheet_problems(sheets: list[tuple[str, str]], listed: set[str]) -> list[str]:
+    """For the stylesheets sheets, as (path, css) pairs read together: css_rules() can read each; no rule sets a custom
+    property of VARIABLE_VALUES to a value outside its list there; each @keyframes is named by an identifier, and
+    holds the keyframes of KEYFRAMES where it names 1 of them; each @font-face descriptor has a value of
+    FONT_FACE_VALUES; and each bare single class that the declarations of every rule whose selector list holds it,
+    read together, hide is in listed."""
     problems: list[str] = []
-    for prelude, declarations in rules:
-        for declaration in declarations.split(";"):
-            name, colon, value = (part.strip() for part in declaration.partition(":"))
-            value = " ".join(re.sub(r"!\s*important$", "", value.lower()).split())
-            if colon and name in VARIABLE_VALUES and value not in VARIABLE_VALUES[name]:
-                problems.append(f"{relative}: the rule {prelude!r} sets {name} to {value!r}, outside its list in "
-                                "VARIABLE_VALUES of this test, on which listed values of SHOWING_VALUES rely.")
-    for prelude, declarations in rules:
-        if prelude.startswith("@") or not hides(declarations):
+    joined: dict[str, list[tuple[str, str, str]]] = {}
+    for relative, css in sheets:
+        rules, problem = css_rules(css)
+        if problem or not rules:
+            problems.append(f"{relative} {problem or 'holds no rule'}; it cannot be read.")
             continue
-        for selector in prelude.split(","):
-            bare = BARE_CLASS.fullmatch(selector.strip())
-            if bare and bare.group(1) not in listed:
-                problems.append(
-                    f"{relative}: the rule {prelude!r} hides the bare class .{bare.group(1)}, which is in neither "
-                    f"HIDING_CLASSES of tools/{GATE.name} nor EXEMPT_CLASSES of this test."
-                )
+        keyframes: list[tuple[str, str]] = []
+        for prelude, declarations, at_rule in rules:
+            read = []
+            for declaration in declarations.split(";"):
+                name, colon, value = (part.strip() for part in declaration.partition(":"))
+                value = " ".join(re.sub(r"!\s*important$", "", value.lower()).split())
+                if colon:
+                    read.append((name, value))
+            for name, value in read:
+                if name in VARIABLE_VALUES and value not in VARIABLE_VALUES[name]:
+                    problems.append(f"{relative}: the rule {prelude!r} sets {name} to {value!r}, outside its list in "
+                                    "VARIABLE_VALUES of this test, on which listed values of SHOWING_VALUES rely.")
+            if re.fullmatch(r"@font-face", prelude, re.I):
+                problems += [f"{relative}: the rule {prelude!r} sets the descriptor {name} to {value!r}, outside "
+                             "FONT_FACE_VALUES of this test." for name, value in read
+                             if value not in FONT_FACE_VALUES.get(name.lower(), ())]
+            # A @keyframes block closes after the keyframes inside it, so those read since the last 1 closed are its.
+            if re.match(r"@keyframes\b", at_rule, re.I):
+                keyframes.append((prelude.lower(), " ".join(declarations.lower().split())))
+            elif re.match(r"@keyframes\b", prelude, re.I):
+                named = re.fullmatch(r"@keyframes ([-\w]+)", prelude, re.I)
+                if not named:
+                    problems.append(f"{relative}: the rule {prelude!r} names its keyframes other than by an "
+                                    "identifier, which this test does not read.")
+                elif named.group(1).lower() in KEYFRAMES and tuple(keyframes) != KEYFRAMES[named.group(1).lower()]:
+                    problems.append(f"{relative}: the rule {prelude!r} gives keyframes other than those of KEYFRAMES "
+                                    "in this test, on which the listed animation relies.")
+                keyframes = []
+            if not prelude.startswith("@"):
+                for selector in prelude.split(","):
+                    bare = BARE_CLASS.fullmatch(selector.strip())
+                    if bare:
+                        joined.setdefault(bare.group(1), []).append((relative, prelude, declarations))
+    for name, held in joined.items():
+        if name not in listed and hides(";".join(declarations for _, _, declarations in held)):
+            where = ", ".join(dict.fromkeys(relative for relative, _, _ in held))
+            preludes = [prelude for _, prelude, _ in held]
+            problems.append(
+                f"{where}: read together, the rules {preludes!r} hide the bare class .{name}, which is in neither "
+                f"HIDING_CLASSES of tools/{GATE.name} nor EXEMPT_CLASSES of this test."
+            )
     return problems
 
 
@@ -1170,7 +1342,7 @@ def sheet_case_problems() -> list[str]:
     """sheet_problems() gives each of SHEET_CASES exactly 1 problem holding its words, or none where they are ""."""
     problems: list[str] = []
     for name, css, words in SHEET_CASES:
-        found = sheet_problems("the case", css, {"vh"})
+        found = sheet_problems([("the case", css)], {"vh"})
         if (len(found) != 1 or words not in found[0]) if words else found:
             problems.append(f"{name}: expected " + (f"1 problem with {words!r}" if words else "none") + f", got {found}")
     return problems
@@ -1186,14 +1358,13 @@ def stylesheet_problems() -> list[str]:
     except Exception as error:
         return [f"HIDING_CLASSES could not be read from tools/{GATE.name}: {error!r}"]
     problems: list[str] = []
+    sheets: list[tuple[str, str]] = []
     for relative in STYLESHEETS:
         try:
-            css = (REPO_ROOT / relative).read_text(encoding="utf-8")
+            sheets.append((relative, (REPO_ROOT / relative).read_text(encoding="utf-8")))
         except (OSError, UnicodeError) as error:
             problems.append(f"{relative} could not be read: {error}")
-            continue
-        problems += sheet_problems(relative, css, listed)
-    return problems
+    return problems + sheet_problems(sheets, listed)
 
 
 def version_problems() -> list[str]:
