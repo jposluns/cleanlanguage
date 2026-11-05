@@ -350,6 +350,9 @@ LABELS = (LABEL, LABEL.upper())
 # (with site.json's site_class), body, main#main-content and div.wrap, as the generator writes them around the source.
 SITE_CLASS = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))["site_class"]
 ANCESTORS = [("html", class_names(SITE_CLASS)), ("body", []), ("main", []), ("div", ["wrap"])]
+# The children of the landing page's value region, as (name, sorted classes), as the committed page orders them:
+# .region shows its first child in its label column, so a value paragraph there would sit in that column.
+REGION_CHILDREN = [("p", ["lbl"]), ("div", [])]
 
 
 # The stylesheets every page loads, in the order the generator links them: the pinned baseline's 3, and the optional
@@ -491,25 +494,31 @@ def label_text(joined: str) -> str:
     return joined.translate(read)
 
 
-def labels(text: str) -> tuple[int, int]:
+def labels(text: str) -> tuple[int, int, int]:
     """How many times the parsed text of text (attribute values and comments apart, character references decoded),
     joined across elements and read by label_text(), carries LABELS, case-sensitive, but with the text that a
-    browser shows in upper case (shown_upper()) in upper case, so there in any letter case: in all of it, and in the
-    text that shows, outside every INERT element, every element the install gate reads as hiding and a details
-    without open (directly inside one, or inside a child other than its first summary)."""
+    browser shows in upper case (shown_upper()) in upper case, so there in any letter case: in all of it, and twice
+    in the text that shows, outside every INERT element, every element the install gate reads as hiding and a
+    details without open (directly inside one, or inside a child other than its first summary), first with an
+    element that only aria-hidden="true" hides read as shown (a browser shows it), then with it read as hidden."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
-    shown = "".join(read for read, (_, around) in zip(parsed.text, parsed.text_at) if shows(parsed, around))
+    shown = ["".join(read for read, (_, around) in zip(parsed.text, parsed.text_at) if shows(parsed, around, visual))
+             for visual in (True, False)]
     return tuple(sum(label_text(joined).count(label_text(label)) for label in LABELS)
-                 for joined in ("".join(parsed.text), shown))
+                 for joined in ("".join(parsed.text), *shown))
 
 
-def shows(parsed: Placement, around: list[tuple[int, int]]) -> bool:
+def shows(parsed: Placement, around: list[tuple[int, int]], visual: bool = False) -> bool:
     """Whether text whose open elements start at around, outermost first, shows: no INERT element, no element the
-    install gate reads as hiding and no details without open (directly, or by a child other than its first summary)
-    holds it."""
-    return not (any(parsed.starts[at][0] in INERT or IS_HIDING(*parsed.starts[at][:2]) for at in around)
+    install gate reads as hiding (given visual, with its aria-hidden attribute left out, since aria-hidden="true"
+    hides an element from assistive technology only) and no details without open (directly, or by a child other
+    than its first summary) holds it."""
+    return not (any(parsed.starts[at][0] in INERT
+                    or IS_HIDING(parsed.starts[at][0], {name: value for name, value in parsed.starts[at][1].items()
+                                                        if not (visual and name == "aria-hidden")})
+                    for at in around)
                 or closed_details(parsed, around)
                 or (around and parsed.starts[around[-1]][0] == "details"
                     and "open" not in parsed.starts[around[-1]][1]))
@@ -559,8 +568,10 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     VALUE_CATEGORIES after NFC, with at least 1 letter, no dot span followed directly
     by a link (the 1.6.1 markup, refused apart from about_line()), and the whole About block once, byte for byte,
     starting where the end tag of that paragraph's region (the div.region nearest it among its open elements) ends,
-    the region and the block each with exactly the ancestors ANCESTORS, its row the only parsed element whose classes
-    include about, and the page's text, and its text that shows, each carrying LABELS once, inside the block
+    the region and the block each with exactly the ancestors ANCESTORS, the region holding exactly REGION_CHILDREN
+    (a p.lbl whose text that shows, aria-hidden apart, holds a letter or a digit, then the div that holds the
+    p.value) and no text directly, its row the only parsed element whose classes include about, and the page's
+    text, and its text that shows in both readings, each carrying LABELS once, inside the block
     (labels(): with the block's label taken out, none; in any letter case where shown_upper() reads upper case); on
     any other page, no such element, with an INERT ancestor or not, and no LABELS in its text.
     It does not model a stylesheet beyond the install gate's HIDING_CLASSES, or a hidden attribute that HTML5 copies
@@ -611,9 +622,21 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     if parsed.starts[nearest[0]][2] != ANCESTORS or parsed.starts[position(text, at)][2] != ANCESTORS:
         return [f"{page} carries its value region or its About block with ancestors other than html, body, main and "
                 "div.wrap (specification 7.24)"]
+    # The value region holds exactly REGION_CHILDREN, as the committed landing page does: a p.lbl whose text that
+    # shows (aria-hidden apart) holds a letter or a digit, then the div that holds the p.value, and no text directly.
+    inner = [*parsed.lineage[nearest[0]], nearest[0]]
+    children = [at for at in parsed.starts if parsed.lineage[at] == inner]
+    label_shown = "".join(data for data, around in parsed.text_at
+                          if children and children[0] in around and shows(parsed, around, True))
+    if (any(data.strip(" \t\n\f\r") for data, around in parsed.text_at if around == inner)
+            or [(parsed.starts[at][0], sorted(set(class_names(parsed.starts[at][1].get("class", "")))))
+                for at in children] != REGION_CHILDREN
+            or children[1] not in parsed.lineage[values[0]] or not label_text(label_shown)):
+        return [f"{page} carries its value region with text or children other than a p.lbl with text that shows, "
+                "then the div that holds its value paragraph"]
     if len(abouts) != 1:
         return [f"{page} carries About markup outside its About block (specification 7.24)"]
-    if labels(text) != (1, 1) or any(labels(text.replace(block, block.replace(f">{LABEL}<", "><", 1), 1))):
+    if labels(text) != (1, 1, 1) or any(labels(text.replace(block, block.replace(f">{LABEL}<", "><", 1), 1))):
         return [f"{page} carries the About block's label in its text other than once, inside its About block "
                 "(specification 7.24)"]
     return []
@@ -804,6 +827,13 @@ VALUE_SPACES = " \t\n\r\u00a0"
 # character, each refused by its own message.
 CLASS_PIN_RULE = "a page source carries only the class names of SOURCE_CLASSES"
 REGION_CLASS_RULE = "there a page source carries only the class names of VALUE_REGION_CLASSES"
+# The value paragraph's region holds other than its committed children (since DISCOVERY round 6): a p.lbl with text
+# that shows, then the div that holds the p.value, and no text; .region shows its first child in its label column.
+# The source cases match the part of the message that only with_about() writes (it names where the region starts),
+# since validate() refuses the same built page; validate()'s cases match the reason both give.
+REGION_CHILDREN_RULE = "the value paragraph's region at line"
+REGION_PIN_RULE = "so it holds only a p.lbl with text that shows, then the div that holds the p.value"
+REGION_LABEL = '<p class="lbl">What it gives you</p>'
 # A class of the generator's PLACED_CLASSES, which a stylesheet rule uses to place an element out of its source order,
 # outside the place the committed sources use it; an element of PLACED_CHILDREN whose children are outside their
 # order; a hero image whose alt text is not site.json's logo_alt; and a class that only the generator's rail carries.
@@ -1245,6 +1275,58 @@ SOURCE_REFUSALS = [
         LABEL_RULE),
     ("the label in mixed case in fullwidth Latin letters in a p.lbl after the value region in home.html",
         after_value('<p class="lbl">\uff21bout \uff34his \uff30roject</p>'), LABEL_RULE),
+    # Built with exit 0 at b7da6c7 (DISCOVERY round 6): above 1000 px .region shows its first child in its label
+    # column, so with the value region's label removed, moved, repeated or hidden, or its div closed before the
+    # p.value, a browser shows the value paragraph there. The region holds exactly its committed children.
+    ("the value region without its label", lambda root: edit(root, HOME, REGION_LABEL, ""), REGION_CHILDREN_RULE),
+    ("the value region's label after its div", lambda root: (
+        edit(root, HOME, REGION_LABEL, ""),
+        edit(root, HOME, VALUE_END, VALUE_END.replace("</div></div>", "</div>" + REGION_LABEL + "</div>"))),
+        REGION_CHILDREN_RULE),
+    ("the value region's label twice", lambda root: edit(root, HOME, REGION_LABEL, REGION_LABEL * 2),
+        REGION_CHILDREN_RULE),
+    ("the value region's label hidden", lambda root: edit(
+        root, HOME, REGION_LABEL, '<p class="lbl" hidden>What it gives you</p>'), REGION_CHILDREN_RULE),
+    ("the value region's div closed before the value paragraph", lambda root: (
+        edit(root, HOME, "<div>" + VALUE, "<div></div>" + VALUE),
+        edit(root, HOME, VALUE_END, VALUE_END.replace("</div></div>", "</div>"))), REGION_CHILDREN_RULE),
+    ("an empty label in the value region", lambda root: edit(root, HOME, REGION_LABEL, '<p class="lbl"></p>'),
+        REGION_CHILDREN_RULE),
+    ("the value region's label text in a hidden span", lambda root: edit(
+        root, HOME, REGION_LABEL, '<p class="lbl"><span hidden>What it gives you</span></p>'), REGION_CHILDREN_RULE),
+    ("text directly in the value region", lambda root: edit(root, HOME, VALUE_REGION, VALUE_REGION + "x"),
+        REGION_CHILDREN_RULE),
+    ("the value region's label as a p without the lbl class", lambda root: edit(
+        root, HOME, REGION_LABEL, "<p>What it gives you</p>"), REGION_CHILDREN_RULE),
+    ("a paragraph after the value region's div", lambda root: edit(
+        root, HOME, VALUE_END, VALUE_END.replace("</div></div>", "</div><p>x</p></div>")), REGION_CHILDREN_RULE),
+    # The vh class on the value region's label, which only the region's class pin refused, with no case before.
+    ("the vh class on the value region's label", lambda root: edit(
+        root, HOME, REGION_LABEL, '<p class="lbl vh">What it gives you</p>'), REGION_CLASS_RULE),
+    # Built with exit 0 at b7da6c7: aria-hidden="true" hides an element from assistive technology only, so a browser
+    # shows this p.lbl as the label in upper case; the text that shows now keeps such an element.
+    ("the label split by an aria-hidden span and a vh span in a p.lbl after the value region in home.html",
+        after_value('<p class="lbl"><span aria-hidden="true">About this</span><span class="vh">Read more</span> '
+                    "project</p>"), LABEL_RULE),
+    # The label split by an img's alt text that only the text that shows leaves out: hidden, so a browser shows no alt
+    # text; and with only aria-hidden="true", which assistive technology skips, as the second reading of it does.
+    ("the label split by a hidden img's alt text and an aria-hidden span in prose", inject(
+        '<p>About <img src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="x" hidden>'
+        '<span aria-hidden="true">this</span> project</p>'), LABEL_RULE),
+    ("the label split by an aria-hidden img's alt text in prose", inject(
+        '<p>About <img src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="x" aria-hidden="true">this project'
+        "</p>"), LABEL_RULE),
+    # Since DISCOVERY round 6 the grammar admits ASCII whitespace around an attribute's = and before an end tag's >;
+    # the attribute list still reads each name.
+    ("a title attribute with spaces around its =", inject('<p title = "x">y</p >'), ATTRIBUTE_RULE),
+    # A browser drops only the line feed that is the next token after a pre start tag: a second one, or one after a
+    # comment, is text before the button.copy.
+    ("a button.copy with hidden after 2 line feeds in a pre.hascopy",
+        inject('<pre class="hascopy">\n\n<button class="copy" type="button" hidden>Copy</button>text</pre>'),
+        PLACED_RULE),
+    ("a button.copy with hidden after a comment and a line feed in a pre.hascopy",
+        inject('<pre class="hascopy"><!--x-->\n<button class="copy" type="button" hidden>Copy</button>text</pre>'),
+        PLACED_RULE),
 ] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
      for character in LABEL_IGNORED] + [
     # A page source carries no dialog (SOURCE_ELEMENTS) and no inert or popover (SOURCE_ATTRIBUTES);
@@ -1308,6 +1390,19 @@ SOURCE_PASSES = [
     ("a span.n in an li", inject('<ol class="clauses"><li><span class="n">1</span><p>x</p></li></ol>')),
     ("a value paragraph with e and U+0301", value_content("Cafe\u0301 rules")),
     ("a value paragraph with U+00E9", value_content("Caf\u00e9 rules")),
+    # Since DISCOVERY round 6: ASCII whitespace around an attribute's = and before an end tag's >, which a browser and
+    # the parser read alike (refused at b7da6c7), with the attribute list reading each name and not the value's words;
+    # a line feed directly after a pre start tag, which a browser drops; and an aria-hidden label in the value region,
+    # which a browser shows.
+    ("the value paragraph's start tag with spaces around its = and its end tag with a space", lambda root: (
+        edit(root, HOME, VALUE, '<p class = "value">'),
+        edit(root, HOME, VALUE_END, VALUE_END.replace("</p>", "</p >", 1)))),
+    ("spaces and line breaks around attributes' = and before an end tag's >",
+        inject('<p aria-label = "a title" class=\n"lead">x</p\n>')),
+    ("a button.copy with hidden after a line feed, first in a pre.hascopy",
+        inject('<pre class="hascopy">\n<button class="copy" type="button" hidden>Copy</button>text</pre>')),
+    ("an aria-hidden label in the value region", lambda root: edit(
+        root, HOME, REGION_LABEL, '<p class="lbl" aria-hidden="true">What it gives you</p>')),
 ]
 
 
@@ -1585,12 +1680,14 @@ def check_about_block(failures: list[str]) -> int:
     html, body, main and div.wrap; no other element whose classes include about), by the
     label's rule (the page's text, an img's alt text among it, and its text that shows, carry the block's label once,
     inside the block, in any letter case where the stylesheets show text in upper case, read after NFKD and with
-    Latin small capitals as capitals) or by the value paragraph's pin (no element but an a with only href or an em
-    with no attribute, no character outside its lists after NFC, at least 1 letter), and the build test's helper
+    Latin small capitals as capitals, with an element that only aria-hidden="true" hides read as shown in 1 of the
+    readings of the text that shows), by the value paragraph's pin (no element but an a with only href or an em
+    with no attribute, no character outside its lists after NFC, at least 1 letter) or by its region's (a p.lbl
+    with text that shows, then the div that holds the p.value, and no text), and the build test's helper
     judges each case as the generator should. The label in an attribute value, a comment, prose in lower or mixed
     case, or a p.lbl.file in mixed case passes both, and so do the cases of RESET_PASSES, each wrapper of
     SHOWING_WRAPPERS around the value paragraph, a value paragraph of 1 word, one with whitespace, symbols and an em
-    that its pin admits, and one with e and U+0301."""
+    that its pin admits, one with e and U+0301, and an aria-hidden label in the value region."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["path"] == "")
@@ -1599,7 +1696,7 @@ def check_about_block(failures: list[str]) -> int:
     hero, value = '<div class="hero-text">', VALUE_REGION
     decoy = '<div class="region"><p class="value">x</p></div>'
     block_rule, label_rule = "the About block must appear exactly once", "the About block's label must appear"
-    value_rule = VALUE_PIN_RULE
+    value_rule, region_rule = VALUE_PIN_RULE, REGION_PIN_RULE
     # The end of the value paragraph's text and its end tag, and its whole content up to that end tag.
     end, content = "outside its aim.</p>", text[text.index(VALUE) + len(VALUE):text.index("</p>", text.index(VALUE))]
 
@@ -1714,6 +1811,38 @@ def check_about_block(failures: list[str]) -> int:
                               "\u1d04\u1d1b</p>")], label_rule),
         ("a second label in fullwidth Latin letters after the block",
             [(block, block + "<p>\uff21bout this \uff50roject</p>")], label_rule),
+        # Since DISCOVERY round 6: the value region holds exactly a p.lbl with text that shows, then the div that
+        # holds the p.value, and no text; aria-hidden="true" alone hides nothing that a browser shows.
+        ("the value region without its label", [(REGION_LABEL, "")], region_rule),
+        ("the value region's label after its div", [(REGION_LABEL, ""), (VALUE_END, VALUE_END.replace(
+            "</div></div>", "</div>" + REGION_LABEL + "</div>"))], region_rule),
+        ("the value region's label twice", [(REGION_LABEL, REGION_LABEL * 2)], region_rule),
+        ("the value region's label hidden", [(REGION_LABEL, '<p class="lbl" hidden>What it gives you</p>')],
+            region_rule),
+        ("the value region's label text in a span with the vh class",
+            [(REGION_LABEL, '<p class="lbl"><span class="vh">What it gives you</span></p>')], region_rule),
+        ("an empty label in the value region", [(REGION_LABEL, '<p class="lbl"></p>')], region_rule),
+        ("the value region's div closed before the value paragraph",
+            [("<div>" + VALUE, "<div></div>" + VALUE), (VALUE_END, VALUE_END.replace("</div></div>", "</div>"))],
+            region_rule),
+        ("text directly in the value region", [(value, value + "x")], region_rule),
+        ("the value region's label as a p without the lbl class", [(REGION_LABEL, "<p>What it gives you</p>")],
+            region_rule),
+        ("a paragraph after the value region's div",
+            [(VALUE_END, VALUE_END.replace("</div></div>", "</div><p>x</p></div>"))], region_rule),
+        # A page source cannot carry this (a browser ends the p.lbl at the p.value's start tag), but validate() reads
+        # a built page as the parser nests it.
+        ("the value paragraph inside the value region's label", [
+            ("What it gives you</p><div>" + VALUE, "What it gives you" + VALUE),
+            (VALUE_END, VALUE_END.replace("</p></div></div>", "</p></p><div></div></div>"))], region_rule),
+        ("an aria-hidden label in the value region",
+            [(REGION_LABEL, '<p class="lbl" aria-hidden="true">What it gives you</p>')], None),
+        ("a second label split by an aria-hidden span and a vh span in a p.lbl after the block",
+            [(block, block + '<p class="lbl"><span aria-hidden="true">About this</span><span class="vh">Read more'
+                              "</span> project</p>")], label_rule),
+        ("a second label split by an aria-hidden img's alt text after the block",
+            [(block, block + '<p>About <img src="/instructions/" alt="x" aria-hidden="true">this project</p>')],
+            label_rule),
     ] + [(name, [(block, block + snippet)], None) for name, snippet in RESET_PASSES] + [
         (f"the value paragraph inside {name}",
          [(VALUE, start + VALUE), (VALUE_END, VALUE_END.replace("</p>", "</p>" + end, 1))], rule)
