@@ -360,6 +360,13 @@ STYLESHEETS = [REPO_ROOT / "site/assets/baseline" / name for name in ("fonts.css
 # selectors, each a name or *, then .class parts, or .class parts alone, joined by descendant or child (>) combinators.
 COMPOUND = r"(?:(?:[a-z][a-z0-9]*|\*)(?:\.[A-Za-z0-9_-]+)*|(?:\.[A-Za-z0-9_-]+)+)"
 SIMPLE_SELECTOR = re.compile(rf"{COMPOUND}(?: > {COMPOUND}| {COMPOUND})*")
+# The properties that can show text in small capitals, which the label rule does not read, and what in their value
+# (lower case, whitespace collapsed) fails closed: a caps keyword (small-caps, all-small-caps, petite-caps,
+# all-petite-caps, titling-caps) or unicase, a small-capital OpenType feature (smcp, c2sc, pcap, c2pc, unic, titl), a
+# value this cannot read (var(), env(), attr() or an escape), or a system font, which sets every font property.
+CAPS_PROPERTIES = ("font", "font-variant", "font-variant-caps", "font-feature-settings")
+CAPS_VALUE = re.compile(r"caps|unicase|smcp|c2sc|pcap|c2pc|unic|titl|\b(?:var|env|attr)\(|\\"
+                        r"|^(?:caption|icon|menu|message-box|small-caption|status-bar)$")
 
 
 def transform_rules(sheets: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
@@ -369,7 +376,10 @@ def transform_rules(sheets: list[str]) -> tuple[list[tuple[str, str]], list[str]
     uppercase !important), a rule nested in a style rule, a text-transform in an at-rule other than @media and
     @supports, a text-transform: none inside any at-rule, and a property name in a style rule that holds a backslash
     (a CSS escape, which can spell text-transform). A rule inside @media or @supports that sets uppercase
-    is read as if it always applied, which shows at least what a browser shows in upper case."""
+    is read as if it always applied, which shows at least what a browser shows in upper case. Small capitals, which
+    show the label in capital letters and which the label rule does not read, fail too: in any rule or at-rule (such
+    as @font-face), a declaration of CAPS_PROPERTIES whose value CAPS_VALUE matches, a font-variant-caps other than
+    normal, and a property name in an at-rule that holds a backslash."""
     found, unread = [], []
     for sheet in sheets:
         # The preludes of the open blocks, outermost first, and the text since the last brace.
@@ -381,6 +391,15 @@ def transform_rules(sheets: list[str]) -> tuple[list[tuple[str, str]], list[str]
                 blocks.append(" ".join(text.split()))
             elif piece == "}":
                 prelude, at_rules = (blocks.pop(), blocks) if blocks else ("", [])
+                for declaration in text.split(";") if prelude else []:
+                    name, _, value = declaration.partition(":")
+                    name, value = name.strip().lower(), " ".join(value.lower().split())
+                    if prelude.startswith("@") and "\\" in name:
+                        unread.append(f"a property name with an escape, {name!r}, in {prelude!r}")
+                    elif name in CAPS_PROPERTIES and (CAPS_VALUE.search(value)
+                                                      or (name == "font-variant-caps" and value != "normal")):
+                        unread.append(f"{name}: {value} in {prelude!r}" + (f" inside {at_rules[-1]!r}"
+                                                                            if at_rules else ""))
                 for declaration in text.split(";") if prelude and not prelude.startswith("@") else []:
                     name, _, value = declaration.partition(":")
                     if "\\" in name:
@@ -537,7 +556,7 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     with no INERT ancestor, not hidden by itself or by an ancestor as tools/check-install-page.py reads hiding (its
     is_hiding_element(), and a details without open outside its first summary child), holding no element but an a
     with no attribute but href or an em with no attribute and no character but those of VALUE_SPACES and
-    VALUE_CATEGORIES, with at least 1 letter, no dot span followed directly
+    VALUE_CATEGORIES after NFC, with at least 1 letter, no dot span followed directly
     by a link (the 1.6.1 markup, refused apart from about_line()), and the whole About block once, byte for byte,
     starting where the end tag of that paragraph's region (the div.region nearest it among its open elements) ends,
     the region and the block each with exactly the ancestors ANCESTORS, its row the only parsed element whose classes
@@ -570,9 +589,9 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     if any(IS_HIDING(*parsed.starts[at][:2]) for at in path) or closed_details(parsed, path):
         return [f"{page} carries its value paragraph hidden, by itself or by an ancestor (specification 7.24)"]
     # Its content is pinned: no element but an a with no attribute but href or an em with no attribute, and text of
-    # VALUE_CATEGORIES and VALUE_SPACES only, with at least 1 letter.
+    # VALUE_CATEGORIES and VALUE_SPACES only after NFC, with at least 1 letter.
     inside = [start for at, start in parsed.starts.items() if values[0] in parsed.lineage[at]]
-    text_in = "".join(data for data, around in parsed.text_at if values[0] in around)
+    text_in = unicodedata.normalize("NFC", "".join(data for data, around in parsed.text_at if values[0] in around))
     if (any(tag not in ("a", "em") or set(attrs) - ({"href"} if tag == "a" else set()) for tag, attrs, *_ in inside)
             or any(character not in VALUE_SPACES and unicodedata.category(character) not in VALUE_CATEGORIES
                    for character in text_in)
@@ -785,6 +804,16 @@ VALUE_SPACES = " \t\n\r\u00a0"
 # character, each refused by its own message.
 CLASS_PIN_RULE = "a page source carries only the class names of SOURCE_CLASSES"
 REGION_CLASS_RULE = "there a page source carries only the class names of VALUE_REGION_CLASSES"
+# A class of the generator's PLACED_CLASSES, which a stylesheet rule uses to place an element out of its source order,
+# outside the place the committed sources use it; an element of PLACED_CHILDREN whose children are outside their
+# order; a hero image whose alt text is not site.json's logo_alt; and a class that only the generator's rail carries.
+PLACED_RULE = "is outside its pinned place"
+ORDER_RULE = "holds text or children outside its pinned order"
+HERO_ALT_RULE = "has an alt text other than site.json's logo_alt"
+RAIL_RULE = "which only the rail the generator writes at <!--rail--> carries"
+RAILS_RULE = "more than 1 <!--rail-->"
+HERO_KICKER = '<p class="lbl gold">A skill you install once, anywhere.</p>'
+HERO_ALT = 'alt="A document with a green check mark and a pen, the Clean Language mark"'
 BIDI_RULE = "the page source holds a bidi formatting character, U+"
 PAGE_BIDI_RULE = "the page holds a bidi formatting character, U+"
 BIDI = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
@@ -1105,6 +1134,12 @@ SOURCE_REFUSALS = [
     ("2 CJK ideographs (Lo) in the value paragraph", value_content("Rules \u89c4\u5219"), VALUE_PIN_RULE),
     ("a value paragraph of only whitespace", value_content(" \n\t&nbsp; "), VALUE_PIN_RULE),
     ("U+000C in the value paragraph", value_content("Rules\x0capply"), VALUE_PIN_RULE),
+    # Since round 5.1 the pin reads the text after NFC, which composes a letter and a combining mark that has a
+    # precomposed form; a mark with none, and an invisible mark such as U+034F or a variation selector, stay refused.
+    ("q and U+0301 in the value paragraph", value_content("Rules q\u0301"), VALUE_PIN_RULE),
+    ("e and U+034F in the value paragraph", value_content("Cafe\u034f rules"), VALUE_PIN_RULE),
+    ("e and U+FE0F in the value paragraph", value_content("Cafe\ufe0f rules"), VALUE_PIN_RULE),
+    ("U+0301 alone in the value paragraph", value_content("Rules \u0301"), VALUE_PIN_RULE),
     # Built with exit 0 at 06de967: U+202E shows the text after it reversed, so a browser shows this p.lbl as the label
     # in upper case, where the label rule read the text in its stored order. A page source carries no bidi formatting
     # character, as written or as a character reference, wherever it sits.
@@ -1134,6 +1169,62 @@ SOURCE_REFUSALS = [
     ("the label split by a span.sun inside a div.scheme in prose",
         inject('<div class="scheme"><p>About <span class="sun">x</span>this project</p></div>'), CLASS_PIN_RULE),
     ("a class name of SOURCE_CLASSES in upper case", inject('<p class="LBL">x</p>'), CLASS_PIN_RULE),
+    # Built with exit 0 at c22c9dd (round 5.1): .copy and .btn set position: absolute, so a browser shows the label
+    # that an element with either splits; and at 1000 px and below the grid areas of .entries a show a span.t before
+    # a span.d written ahead of it. Each class that places an element out of its source order is pinned to the
+    # element, companion classes, attributes and parent the committed sources use it with (PLACED_CLASSES), and the
+    # children of each grid placed by area to their committed order (PLACED_CHILDREN).
+    ("the label in mixed case split by a span.btn in a p.lbl after the value region in home.html",
+        after_value('<p class="lbl">About <span class="btn">x</span>This Project</p>'), PLACED_RULE),
+    ("the label split by a span.copy in prose", inject('<p>About <span class="copy">x</span>this project</p>'),
+        PLACED_RULE),
+    ("an a.btn without inline", inject('<p><a class="btn" href="{{base}}install/">x</a></p>'), PLACED_RULE),
+    ("a span.copy with hidden, first in a pre.hascopy",
+        inject('<pre class="hascopy"><span class="copy" hidden>x</span>y</pre>'), PLACED_RULE),
+    ("a button.copy without hidden, first in a pre.hascopy",
+        inject('<pre class="hascopy"><button class="copy" type="button">x</button>y</pre>'), PLACED_RULE),
+    ("a button.copy with hidden, after text in a pre.hascopy",
+        inject('<pre class="hascopy">x<button class="copy" type="button" hidden>y</button></pre>'), PLACED_RULE),
+    # The hiding reader reads a button.copy with hidden as hidden, so the label rule joins the text around it.
+    ("the label split by a button.copy with hidden, first in a pre.hascopy", inject(
+        '<p>About</p><pre class="hascopy"><button class="copy" type="button" hidden>x</button>this project</pre>'),
+        LABEL_RULE),
+    ("a button.copy with hidden, first in a pre without hascopy",
+        inject('<pre><button class="copy" type="button" hidden>x</button>y</pre>'), PLACED_RULE),
+    ("the entries class on a ul", inject(
+        '<ul class="entries"><li><a href="{{base}}install/"><span class="t">x</span></a></li></ul>'), PLACED_RULE),
+    ("a span.t in an li", inject('<ol class="entries"><li><span class="t">x</span></li></ol>'), PLACED_RULE),
+    ("a span.n in a p", inject('<p><span class="n">x</span></p>'), PLACED_RULE),
+    ("a span.d in a p", inject('<p><span class="d">x</span></p>'), PLACED_RULE),
+    ("a section.hero inside the page's div.doc", inject('<section class="hero"></section>'), PLACED_RULE),
+    ("a div.hero-text outside a section.hero", inject('<div class="hero-text"></div>'), PLACED_RULE),
+    ("a div.hero-art outside a section.hero", inject('<div class="hero-art"></div>'), PLACED_RULE),
+    ("a p.statement", inject('<p class="statement">x</p>'), PLACED_RULE),
+    ("a p.intro outside the hero", inject('<p class="intro">x</p>'), PLACED_RULE),
+    ("an a.start in a p", inject('<p><a class="start" href="{{base}}install/">x</a></p>'), PLACED_RULE),
+    ("the label in an ol.entries link with its span.d before its span.t", inject(
+        '<ol class="entries"><li><a href="{{base}}install/"><span class="d">project</span>'
+        '<span class="t">About this</span></a></li></ol>'), ORDER_RULE),
+    ("text directly in an ol.entries link", inject(
+        '<ol class="entries"><li><a href="{{base}}install/">x<span class="t">y</span></a></li></ol>'), ORDER_RULE),
+    ("an ol.entries link with 2 span.t", inject(
+        '<ol class="entries"><li><a href="{{base}}install/"><span class="t">x</span><span class="t">y</span></a></li>'
+        "</ol>"), ORDER_RULE),
+    ("the hero's start link before its kicker in home.html", lambda root: edit(
+        root, HOME, HERO_KICKER, '<a class="start" href="{{base}}install/">x</a>' + HERO_KICKER), ORDER_RULE),
+    ("a p without a class in the hero text in home.html", lambda root: edit(
+        root, HOME, HERO_KICKER, "<p>x</p>" + HERO_KICKER), ORDER_RULE),
+    ("the hero's art before its text in home.html", lambda root: (
+        edit(root, HOME, '<section class="hero" aria-label="Introduction">',
+             '<section class="hero" aria-label="Introduction"><div class="hero-art"></div>'),
+        edit(root, HOME, '<div class="hero-art"><img', '<div><img')), ORDER_RULE),
+    ("the hero image's alt text changed in home.html", lambda root: edit(root, HOME, HERO_ALT, 'alt="this project"'),
+        HERO_ALT_RULE),
+    ("a rail written in a page source", inject('<div class="rail"><p>x</p></div>'), RAIL_RULE),
+    ("a rail-logo written in a page source",
+        inject('<p><img class="rail-logo" src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="x"></p>'),
+        RAIL_RULE),
+    ("a second <!--rail--> in a page source", inject("<!--rail-->"), RAILS_RULE),
     # Built with exit 0 at 06de967: a browser shows an img's alt text in its place when the image does not load, in
     # upper case under .lbl; the label rule reads it as text.
     ("the label as an img's alt text in a p.lbl after the value region in home.html",
@@ -1203,6 +1294,20 @@ SOURCE_PASSES = [
     ("the label in an attribute value", inject(f'<p aria-label="{LABEL}">x</p>')),
     ("an attribute of SOURCE_ATTRIBUTES in upper case", inject('<p CLASS="lead" ARIA-LABEL="x">y</p>')),
     ("the label in a comment in home.html", after_value(f"<!-- {LABEL} -->")),
+    # Since round 5.1: each class of PLACED_CLASSES where the committed sources use it, and a value paragraph with a
+    # combining accent after a letter that NFC composes (e and U+0301 read as U+00E9), as a precomposed letter does.
+    ("an a.btn.inline in a p", inject('<p><a class="btn inline" href="{{base}}install/">Install</a></p>')),
+    ("a button.copy with hidden, first in a pre.hascopy",
+        inject('<pre class="hascopy"><button class="copy" type="button" hidden>Copy</button>text</pre>')),
+    ("an ol.entries link with its spans in order", inject(
+        '<ol class="entries"><li><a href="{{base}}install/"><span class="t">Install</span><span class="n">5</span>'
+        '<span class="d">Steps.</span></a></li></ol>')),
+    ("an ol.entries link with a span.t and a span.d only", inject(
+        '<ol class="entries"><li><a href="{{base}}install/"> <span class="t">Install</span> <span class="d">Steps.'
+        "</span></a></li></ol>")),
+    ("a span.n in an li", inject('<ol class="clauses"><li><span class="n">1</span><p>x</p></li></ol>')),
+    ("a value paragraph with e and U+0301", value_content("Cafe\u0301 rules")),
+    ("a value paragraph with U+00E9", value_content("Caf\u00e9 rules")),
 ]
 
 
@@ -1481,10 +1586,11 @@ def check_about_block(failures: list[str]) -> int:
     label's rule (the page's text, an img's alt text among it, and its text that shows, carry the block's label once,
     inside the block, in any letter case where the stylesheets show text in upper case, read after NFKD and with
     Latin small capitals as capitals) or by the value paragraph's pin (no element but an a with only href or an em
-    with no attribute, no character outside its lists, at least 1 letter), and the build test's helper judges each
-    case as the generator should. The label in an attribute value, a comment, prose in lower or mixed case, or a
-    p.lbl.file in mixed case passes both, and so do the cases of RESET_PASSES, each wrapper of SHOWING_WRAPPERS around
-    the value paragraph, a value paragraph of 1 word, and one with whitespace, symbols and an em that its pin admits."""
+    with no attribute, no character outside its lists after NFC, at least 1 letter), and the build test's helper
+    judges each case as the generator should. The label in an attribute value, a comment, prose in lower or mixed
+    case, or a p.lbl.file in mixed case passes both, and so do the cases of RESET_PASSES, each wrapper of
+    SHOWING_WRAPPERS around the value paragraph, a value paragraph of 1 word, one with whitespace, symbols and an em
+    that its pin admits, and one with e and U+0301."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["path"] == "")
@@ -1598,6 +1704,9 @@ def check_about_block(failures: list[str]) -> int:
         ("an em with a class in the value paragraph", [(VALUE + content, VALUE + 'Rules <em class="x">tax</em>')],
             value_rule),
         ("a copyright sign in the value paragraph", [(VALUE + content, VALUE + "Rules &copy; 2026")], value_rule),
+        # Since round 5.1 the pin reads the text after NFC: e and U+0301 pass; e and U+034F do not.
+        ("a value paragraph with e and U+0301", [(VALUE + content, VALUE + "Cafe\u0301 rules")], None),
+        ("a value paragraph with e and U+034F", [(VALUE + content, VALUE + "Cafe\u034f rules")], value_rule),
         ("a second label as an img's alt text in a p.lbl after the block",
             [(block, block + '<p class="lbl"><img src="/instructions/" alt="About This Project"></p>')], label_rule),
         ("a second label in Latin small capitals after the block",
@@ -1636,8 +1745,9 @@ def check_uppercase_selectors(failures: list[str]) -> int:
     each a selector that selector_matches() reads; uppercase_coverage() refuses either list without any 1 of its
     selectors or with 1 that no such rule names, the stylesheets with 1 more such rule, at the top level or inside
     @media, and each text-transform that transform_rules() does not read, a property name with an escape (such as
-    text\\2d transform) among them, so a coverage check that passes an incomplete or stale list, or a stylesheet it
-    cannot read, fails here. Every Default_Ignorable_Code_Point falls outside the generator's VALUE_CATEGORIES."""
+    text\\2d transform) among them, and each small-capitals value of CAPS_PROPERTIES, or one it cannot read, so a
+    coverage check that passes an incomplete or stale list, or a stylesheet it cannot read, fails here. Every
+    Default_Ignorable_Code_Point falls outside the generator's VALUE_CATEGORIES."""
     listed, resets = list(LOADED.UPPERCASE_SELECTORS), list(LOADED.RESET_SELECTORS)
     sheets = [path.read_text(encoding="utf-8") for path in STYLESHEETS]
     unread = "which the generator does not read"
@@ -1674,6 +1784,33 @@ def check_uppercase_selectors(failures: list[str]) -> int:
         # A CSS escape spells text-transform here; a browser reads it as that property.
         ("an escaped property name", listed, resets, sheets + [".added { text\\2d transform: uppercase }"],
             "a property name with an escape, 'text\\\\2d transform', in '.added', " + unread),
+        # Since round 5.1: small capitals show the label in capital letters, which the label rule does not read, so a
+        # caps value, or a value that cannot be read, of a property that can set them fails, in any rule or at-rule.
+        ("a small-caps rule", listed, resets, sheets + [".added { font-variant: Small-Caps }"],
+            f"font-variant: small-caps in '.added', {unread}"),
+        ("an all-small-caps rule inside @media", listed, resets,
+            sheets + ["@media print { .added { font-variant-caps: all-small-caps } }"],
+            f"font-variant-caps: all-small-caps in '.added' inside '@media print', {unread}"),
+        ("a font-variant-caps other than normal", listed, resets, sheets + [".added { font-variant-caps: unset }"],
+            f"font-variant-caps: unset in '.added', {unread}"),
+        ("a font shorthand with small-caps", listed, resets,
+            sheets + ['.added { font: small-caps 500 1rem/1 "Public Sans", serif }'],
+            f"font: small-caps 500 1rem/1 \"public sans\", serif in '.added', {unread}"),
+        ("a system font", listed, resets, sheets + [".added { font: small-caption }"],
+            f"font: small-caption in '.added', {unread}"),
+        ("a small-capital font feature", listed, resets, sheets + ['.added { font-feature-settings: "smcp" 1 }'],
+            f"font-feature-settings: \"smcp\" 1 in '.added', {unread}"),
+        ("a font-variant from a custom property", listed, resets, sheets + [".added { font-variant: var(--fv) }"],
+            f"font-variant: var(--fv) in '.added', {unread}"),
+        ("a small-caps descriptor in @font-face", listed, resets,
+            sheets + ["@font-face { font-family: x; font-variant: small-caps }"],
+            f"font-variant: small-caps in '@font-face', {unread}"),
+        ("an escaped property name in @font-face", listed, resets,
+            sheets + ["@font-face { font-family: x; font\\2d variant: small-caps }"],
+            "a property name with an escape, 'font\\\\2d variant', in '@font-face', " + unread),
+        ("a font shorthand and a font-variant-caps that show no small capitals", listed, resets,
+            sheets + ['.added { font: 500 clamp(1rem, 2vw, 2rem)/1 "Public Sans", serif; font-variant-caps: normal }'],
+            None),
     ]
     for name, given, given_resets, texts, expected in cases:
         problems = uppercase_coverage(given, given_resets, texts)

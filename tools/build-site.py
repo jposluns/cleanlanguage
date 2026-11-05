@@ -96,14 +96,17 @@ inside a ``details`` without ``open`` other than in its first ``summary``
 child, as that gate's ``PageParser`` reads it, or with no ``div.region``
 among its ancestors, or whose ``p.value`` holds anything outside its pin: an
 element other than an ``a`` with no attribute but ``href`` or an ``em`` with
-no attribute, a character other than those of ``VALUE_SPACES`` (the ordinary
-space, U+0009, U+000A and U+000D, which a browser collapses to a space, and
-U+00A0) and ``VALUE_CATEGORIES`` (letters Lu, Ll and Lt, decimal digits,
-punctuation, and currency and math symbols), or no letter (the pin leaves no
-element in the paragraph that could hide its text, so no visible-text model
-applies there; it refuses Lo, which holds the Hangul fillers, So, which holds
-U+2800 and the copyright sign, and every other category, so the paragraph
-cannot be written in an uncased script such as CJK, Arabic, Hebrew or Thai),
+no attribute, a character of its text after NFC other than those of
+``VALUE_SPACES`` (the ordinary space, U+0009, U+000A and U+000D, which a
+browser collapses to a space, and U+00A0) and ``VALUE_CATEGORIES`` (letters
+Lu, Ll and Lt, decimal digits, punctuation, and currency and math symbols), or
+no letter (the pin leaves no element in the paragraph that could hide its
+text, so no visible-text model applies there; it refuses Lo, which holds the
+Hangul fillers, So, which holds U+2800 and the copyright sign, and every other
+category, so the paragraph cannot be written in an uncased script such as
+CJK, Arabic, Hebrew or Thai; NFC composes ``e`` and U+0301 into U+00E9, and
+leaves a combining mark with no precomposed form, such as U+0301 after ``q``,
+and an invisible one, such as U+034F or a variation selector, refused),
 or whose value region (that ``div.region``) or an element inside it carries a
 class name outside ``VALUE_REGION_CLASSES`` (``region``, ``lbl`` and
 ``value``, those the committed landing page uses there); a page source with a
@@ -171,14 +174,24 @@ leaves out a class of each rule that sets ``display: none`` or clips an
 element (such as ``.scheme .sun``, ``.figure .stack`` and ``.figure .wide``),
 other than the rules that the hiding reader reads (``[hidden]`` and ``.vh``)
 or that need an attribute ``SOURCE_ATTRIBUTES`` leaves out (such as
-``[data-preset]``). The About block is pinned byte
+``[data-preset]``). Where ``SOURCE_CLASSES`` admits a class that a rule of
+``baseline.css`` 1.7.0 uses to place an element out of its source order
+(``copy``, ``btn``, ``entries``, ``t``, ``n``, ``d``, the hero's classes and
+``start``), the placement pins (below) hold it to where the committed
+sources use it, and ``rail_pin()`` keeps ``rail`` and ``rail-logo`` to the
+rail the generator writes. The About block is pinned byte
 for byte, so its classes are pinned too. Residuals of the threat model
-(editing mistakes, not deliberate tricks), not modelled: ``SOURCE_CLASSES``
-admits ``copy`` and ``btn``, which ``baseline.css`` positions absolutely, so
-outside the value region the label split by an element with either class,
-whose text a browser shows elsewhere, does not count; and the label rule
+(editing mistakes, not deliberate tricks), not modelled: the label rule
 reads no selector with a sibling combinator or of an element name alone,
-none of which sets ``display: none`` in ``baseline.css`` 1.7.0. The label
+none of which sets ``display: none`` in ``baseline.css`` 1.7.0; it joins
+text in source order, so text that a browser shows beside other text in
+another grid column (the rail beside the text column above 1000 px, a label
+column beside its content) counts only in that order; a label split between
+``site.json``'s ``logo_alt``, which the hero image carries, and the hero's
+kicker or statement (at 600 px and below the image sits beside the kicker)
+does not count; and no rule reads a ``transform`` or a negative margin that
+moves an element without reordering it (``.start:hover .arrow``,
+``.code-note``, ``.verified``). The label
 rule reads a tie
 in specificity between an uppercase and a reset selector as upper case, and
 an uppercase rule inside ``@media`` or ``@supports`` as always applying, so
@@ -309,14 +322,62 @@ a browser do.
 ``SOURCE_CLASSES`` admits only the class names the committed sources use, as
 ``with_about()`` reads them, and in the landing page's value region only
 ``VALUE_REGION_CLASSES`` (``region``, ``lbl`` and ``value``). A stylesheet
-rule can hide or move an element by a class that a descendant or compound
-selector names, which the rules do not read: a ``div.figure`` and a
-``div.stack`` around the value paragraph (``.figure .stack`` sets ``display:
-none``), or ``copy`` on it (``.copy`` sets ``position: absolute``), built
-with exit 0, and so did a ``span.sun`` that hid a character splitting the
-label in a ``p.lbl.scheme`` (``.scheme .sun``). Both pins are checked after
-the other source rules, and name where the start tag starts. A class name is
-added only after a review of what each stylesheet rule that names it does.
+rule can hide or move an element by a class it names, which the rules do not
+read apart from the hiding reader's bare single classes: a ``div.figure`` and
+a ``div.stack`` around the value paragraph (the descendant selector
+``.figure .stack`` sets ``display: none``), or ``copy`` on it (the
+single-class selector ``.copy`` sets ``position: absolute``), built with exit
+0, and so did a ``span.sun`` that hid a character splitting the label in a
+``p.lbl.scheme`` (the descendant selector ``.scheme .sun``). Both pins are
+checked after the other source rules, and name where the start tag starts. A
+class name is added only after a review of what each stylesheet rule that
+names it does.
+
+Page source placement
+---------------------
+
+Some admitted classes are safe only where the committed sources use them: a
+rule of ``baseline.css`` 1.7.0 places an element that carries one out of its
+source order, so a browser can show text that the label rule reads apart as
+joined. ``.copy`` and ``.btn`` set ``position: absolute`` (``.btn.inline``
+sets it back to ``static``); ``.hero``, ``.hero-text``, ``.hero-art``,
+``.statement``, ``.hero .intro``, ``.hero .lbl`` and ``.start`` place the
+hero's parts by grid area (at 600 px and below ``.hero-text`` sets
+``display: contents``, so its children are placed by area); and at 1000 px
+and below ``.entries a`` places its ``.t``, ``.n`` and ``.d`` children by
+grid area. Built with exit 0 at c22c9dd: the label split by a ``span.btn``
+in a ``p.lbl`` on the landing page, or by a ``span.copy`` on the demo page,
+and an ``ol.entries`` link whose ``span.d`` came before its ``span.t``. After
+the class pins, ``placement_pin()`` refuses, naming where the start tag
+starts:
+
+- a class of ``PLACED_CLASSES`` on another element, without its companion
+  classes or attributes, under another parent, or (``copy``) after text or
+  an element in its parent: ``copy`` only on a ``button`` with ``hidden``
+  first in a ``pre.hascopy``, which the hiding reader reads as hidden, so the
+  label rule joins the text around it; ``btn`` only on an ``a`` that also
+  carries ``inline``; ``entries`` only on an ``ol``; ``t`` and ``d`` only on
+  a ``span`` in an ``a``, and ``n`` in an ``a`` or an ``li``; ``hero`` only
+  on a ``section`` at the top of the source, ``hero-text`` and ``hero-art``
+  only on a ``div`` in it; ``statement``, ``intro`` and ``start`` only on an
+  ``h1``, a ``p`` and an ``a`` in the ``div.hero-text`` (``start`` also in a
+  ``div.next``, which is not a grid);
+- a ``section.hero``, ``div.hero-text`` or ``div.hero-art``, or an ``a``
+  inside an ``ol.entries``, with text other than whitespace directly in it,
+  or with children outside their committed order (``PLACED_CHILDREN``: the
+  text, then the art; the kicker, statement, intro and start link; the
+  image; the ``span.t``, ``span.n`` and ``span.d``), each at most once, so a
+  browser shows them in source order;
+- an image in the ``div.hero-art`` whose alt text is not ``site.json``'s
+  ``logo_alt``, which ``build()`` passes to ``with_about()`` (without it, any
+  such image is refused): at 600 px and below a browser shows the image
+  beside the kicker, before the statement.
+
+``build()`` also refuses, through ``rail_pin()``, a page source that carries
+``rail`` or ``rail-logo`` itself, or more than 1 ``<!--rail-->``: above
+1000 px ``.doc > .rail`` shows the rail at the top of the third column,
+wherever it sits in the source, and the rail ``rail()`` writes starts with
+the logo, whose alt text is ``logo_alt``.
 
 Page source tree
 ----------------
@@ -491,8 +552,9 @@ SOURCE_ELEMENTS = {"a", "button", "caption", "code", "details", "div", "em", "h1
 SOURCE_ATTRIBUTES = {"alt", "aria-hidden", "aria-label", "class", "data-copy", "hidden", "href", "id", "rel", "src",
                      "tabindex", "target", "type"}
 # The only class names a page source may carry (module docstring, "Page source grammar"): those the committed sources
-# use, as with_about() reads them. A stylesheet rule can hide or move an element by a class that a descendant or
-# compound selector names (.scheme .sun and .figure .stack set display: none), which the rules do not read. Adding one
+# use, as with_about() reads them. A stylesheet rule can hide or move an element by a class it names, in a descendant
+# selector (.scheme .sun and .figure .stack set display: none) or alone (.copy sets position: absolute; PLACED_CLASSES
+# pins it), which the rules do not read apart from the hiding reader's bare single classes. Adding one
 # is a deliberate change: review first what each stylesheet rule that names it does, against the rules that read the
 # parsed page.
 SOURCE_CLASSES = {"accent", "after", "arrow", "before", "blk", "btn", "callout", "clause", "clauses", "code-note",
@@ -506,6 +568,39 @@ SOURCE_CLASSES = {"accent", "after", "arrow", "before", "blk", "btn", "callout",
 # need the hidden attribute, which the hiding reader reads, or an attribute that SOURCE_ATTRIBUTES leaves out; .copy,
 # which SOURCE_CLASSES admits, sets position: absolute.
 VALUE_REGION_CLASSES = {"region", "lbl", "value"}
+# The page source placement pins (module docstring, "Page source placement"): each class name of SOURCE_CLASSES that a
+# rule of baseline.css 1.7.0 uses to place an element out of its source order (.copy and .btn set position: absolute;
+# the grid areas of .hero, .hero-text, .hero-art, .statement, .hero .intro, .start and, at 1000 px and below,
+# .entries .t, .n and .d), pinned to where the committed sources use it, as (element, companion classes it needs,
+# parents, attributes it needs, whether it comes first in its parent). A parent is "*" for any, "" for none (the top
+# level of the source), or an element name with at most 1 class name it carries. .btn.inline sets position: static.
+PLACED_CLASSES = {
+    "copy": ("button", (), ("pre.hascopy",), ("hidden",), True),
+    "btn": ("a", ("inline",), ("*",), (), False),
+    "entries": ("ol", (), ("*",), (), False),
+    "t": ("span", (), ("a",), (), False),
+    "n": ("span", (), ("a", "li"), (), False),
+    "d": ("span", (), ("a",), (), False),
+    "hero": ("section", (), ("",), (), False),
+    "hero-text": ("div", (), ("section.hero",), (), False),
+    "hero-art": ("div", (), ("section.hero",), (), False),
+    "statement": ("h1", (), ("div.hero-text",), (), False),
+    "intro": ("p", (), ("div.hero-text",), (), False),
+    "start": ("a", (), ("div.hero-text", "div.next"), (), False),
+}
+# The children of the elements whose grid template places them by area, as the committed sources order them: for the
+# element with each class name (for entries, each a inside it), the slots in order, each the element and class names
+# (sorted) that may fill it. Each slot is filled at most once, and the element holds no text other than whitespace,
+# which a browser would place as an anonymous grid item after the named areas.
+PLACED_CHILDREN = {
+    "hero": (("div.hero-text",), ("div.hero-art",)),
+    "hero-text": (("p.gold.lbl", "p.lbl"), ("h1.statement",), ("p.intro",), ("a.start",)),
+    "hero-art": (("img",),),
+    "entries": (("span.t",), ("span.n",), ("span.d",)),
+}
+# The class names only rail() writes, at the page source's <!--rail-->: .doc > .rail sets grid-row: 1 / span 200 in
+# the third column, above 1000 px, which shows the rail at the top whatever its place in the source.
+RAIL_CLASSES = {"rail", "rail-logo"}
 # The bidi formatting characters, which reorder the text a browser shows around them (U+202E shows the text after it
 # reversed): U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069. No page source or page may carry one,
 # as written or as a character reference, since the label rule reads text in its stored order.
@@ -572,8 +667,10 @@ ABOUT_LABELS = ("About this project", "ABOUT THIS PROJECT")
 # tools/test-build-site.py fails when the stylesheets' uppercase or reset rules name a selector these lack, when these
 # name one that no such rule names, or when a stylesheet sets text-transform in a way it does not read: to a value
 # other than uppercase or none, in a rule nested in a style rule, in an at-rule other than @media and @supports, or to
-# none inside an at-rule; and when a style rule holds a property name with a backslash (an escape, which can spell
-# text-transform).
+# none inside an at-rule; when a style rule holds a property name with a backslash (an escape, which can spell
+# text-transform); and when any rule or at-rule sets small capitals, which show the label in capital letters and which
+# the label rule does not read, or a value it cannot read, by font-variant, font-variant-caps, font-feature-settings or
+# the font shorthand (its CAPS_PROPERTIES and CAPS_VALUE).
 UPPERCASE_SELECTORS = (
     ".skip", ".lbl", ".label", ".nav", ".start", ".copy", ".btn", "th", ".tag", "table.matrix th .grp", "dl.record dt",
     ".picker a", ".chips a", ".chips button", ".figure svg .t", ".srcview .view h4", ".region .about", ".control dt",
@@ -581,9 +678,11 @@ UPPERCASE_SELECTORS = (
 )
 RESET_SELECTORS = (".lbl.file", "table.matrix tbody th", "table.matrix th .org", ".reg-cap .count")
 # The general categories of the characters, besides VALUE_SPACES, that the text of the landing page's value paragraph
-# may hold: letters (Lu, Ll and Lt), decimal digits (Nd), punctuation (P), and currency and math symbols (Sc and Sm).
-# Its text uses Lu, Ll, Nd, Pd and Po today. No Default_Ignorable_Code_Point falls in them. Lo, which holds the Hangul
-# fillers, and So, which holds U+2800 (a Braille pattern blank), are left out, as is every other category.
+# may hold, read after NFC: letters (Lu, Ll and Lt), decimal digits (Nd), punctuation (P), and currency and math
+# symbols (Sc and Sm). Its text uses Lu, Ll, Nd, Pd and Po today. No Default_Ignorable_Code_Point falls in them. Lo,
+# which holds the Hangul fillers, and So, which holds U+2800 (a Braille pattern blank), are left out, as is every other
+# category, Mn among them: NFC composes a letter and a combining mark that has a precomposed form (e plus U+0301 reads
+# as U+00E9), and leaves any other mark, such as U+034F, a variation selector or U+0301 after q, refused.
 VALUE_CATEGORIES = {"Lu", "Ll", "Lt", "Nd", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Sc", "Sm"}
 # The whitespace the value paragraph's text may hold: the ordinary space and U+0009, U+000A and U+000D, which a
 # browser collapses with it, and U+00A0 (&nbsp;), which it shows as a space.
@@ -1560,12 +1659,12 @@ class PageScan(HTMLParser):
 
     def value_problem(self) -> str | None:
         """What the first p.value holds outside its pin, which leaves no visible-text model to apply there: a start
-        tag other than an a with no attribute but href or an em with no attribute, a character other than those of
-        VALUE_SPACES and VALUE_CATEGORIES (named with its code point and category), or, when it holds neither, no
-        letter (Lu, Ll or Lt); None if it holds none of these."""
+        tag other than an a with no attribute but href or an em with no attribute, a character of its text after NFC
+        other than those of VALUE_SPACES and VALUE_CATEGORIES (named with its code point and category), or, when it
+        holds neither, no letter (Lu, Ll or Lt); None if it holds none of these."""
         if self.value_stray is not None:
             return self.value_stray
-        text = "".join(self.value_text)
+        text = unicodedata.normalize("NFC", "".join(self.value_text))
         stray = next((character for character in text if character not in VALUE_SPACES
                       and unicodedata.category(character) not in VALUE_CATEGORIES), None)
         if stray is not None:
@@ -1680,7 +1779,7 @@ def about_block(base: str) -> str:
     return ABOUT_BLOCK.format(row=about_line(base))
 
 
-def with_about(content: str, page: dict, base: str) -> str:
+def with_about(content: str, page: dict, base: str, logo_alt: str | None = None) -> str:
     """A page's content with, on the landing page only, the About block of specification 7.24 written in directly
     after the end tag of the value paragraph's region. It refuses, first, a source outside the page source grammar
     (source_problem(): tokens the parser and a browser read alike, elements of SOURCE_ELEMENTS only, no noscript
@@ -1696,7 +1795,10 @@ def with_about(content: str, page: dict, base: str) -> str:
     landing page source without exactly 1 p.value, with that p.value inside an element of INERT_TAGS, hidden by
     itself or by an ancestor as tools/check-install-page.py reads hiding, holding markup or text outside its pin
     (PageScan.value_problem()), or with no div.region among its ancestors, or with a class name outside
-    VALUE_REGION_CLASSES in that region; and last, any source with a class name outside SOURCE_CLASSES (class_pin())."""
+    VALUE_REGION_CLASSES in that region; and last, any source with a class name outside SOURCE_CLASSES (class_pin()),
+    then any source with a class of PLACED_CLASSES outside its pinned place, an element of PLACED_CHILDREN with
+    text or children outside their pinned order, or a hero image whose alt text is not logo_alt, site.json's, which
+    build() passes; without it, any hero image is refused (placement_pin())."""
     where = page["source"]
     problem = source_problem(content)
     if problem is not None:
@@ -1725,6 +1827,7 @@ def with_about(content: str, page: dict, base: str) -> str:
                          "the About block of specification 7.24, on the landing page only")
     if page["path"] != "":
         class_pin(scan, where)
+        placement_pin(content, where, logo_alt)
         return content
     if len(scan.values) != 1 or scan.values[0] not in scan.live_starts or scan.values[0] in scan.hidden_starts:
         raise BuildError(f"{where}: the landing page source must carry exactly 1 p.value, outside every element of "
@@ -1741,6 +1844,7 @@ def with_about(content: str, page: dict, base: str) -> str:
                          "value), since a stylesheet rule can hide or move an element by a class, such as .copy or "
                          ".figure .stack")
     class_pin(scan, where)
+    placement_pin(content, where, logo_alt)
     line, column = scan.value_region_end
     # The index of that end tag in content: the lines before it, each with its "\n", then the column.
     end = sum(len(part) + 1 for part in content.split("\n")[:line - 1]) + column
@@ -1755,6 +1859,121 @@ def class_pin(scan: PageScan, where: str) -> None:
         raise BuildError(f"{where}: a class name {stray[0]!r} {source_at(stray[1])}; a page source carries only the "
                          "class names of SOURCE_CLASSES; adding one needs a review of the stylesheet rules that name "
                          "it, such as .scheme .sun, which hides an element")
+
+
+class SourceShape(HTMLParser):
+    """The elements of a page source as the parser reads them, for the placement pins: for each start tag, its name,
+    class names, attributes (the first of 2 with 1 name, as a browser reads them), where it starts, the index of its
+    parent (None at the top level) and whether text or an element came before it in its parent; and the indexes of
+    the elements (None for the top level) that hold text other than ASCII whitespace directly."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.elements: list[tuple[str, list[str], dict, tuple[int, int], int | None, bool]] = []
+        self.open: list[int] = []
+        self.filled: set[int | None] = set()
+        self.texts: set[int | None] = set()
+
+    def handle_starttag(self, tag, attrs_list):
+        attrs = {}
+        for name, value in attrs_list:
+            attrs.setdefault(name, value)
+        parent = self.open[-1] if self.open else None
+        classes = [name for name in ASCII_WHITESPACE.split(attrs.get("class") or "") if name]
+        self.elements.append((tag, classes, attrs, self.getpos(), parent, parent in self.filled))
+        self.filled.add(parent)
+        if tag not in VOID_TAGS:
+            self.open.append(len(self.elements) - 1)
+
+    def handle_endtag(self, tag):
+        if tag not in VOID_TAGS and self.open and self.elements[self.open[-1]][0] == tag:
+            self.open.pop()
+
+    def handle_data(self, data):
+        parent = self.open[-1] if self.open else None
+        self.filled.add(parent)
+        if data.strip(" \t\n\f\r"):
+            self.texts.add(parent)
+
+
+def source_shape(content: str) -> SourceShape:
+    """content read by SourceShape."""
+    shape = SourceShape()
+    shape.feed(content)
+    shape.close()
+    return shape
+
+
+def shape_name(tag: str, classes: list[str]) -> str:
+    """An element as PLACED_CHILDREN names it: its name, then each of its class names, sorted, after a dot."""
+    return tag + "".join(f".{name}" for name in sorted(set(classes)))
+
+
+def placement_pin(content: str, where: str, logo_alt: str | None) -> None:
+    """Refuse a page source, as the parser reads it, with a class name of PLACED_CLASSES on an element other than its
+    pinned element, without its companion classes or attributes, under another parent, or (for copy) after text or
+    an element in its parent; with an element of PLACED_CHILDREN (for entries, an a inside it) that holds text other
+    than whitespace directly, or children outside its slots, in their order, each filled at most once; or with an
+    img in a div.hero-art whose alt text is not logo_alt. Each refusal names where the start tag starts."""
+    shape = source_shape(content)
+    for tag, classes, attrs, at, parent, after in shape.elements:
+        above = shape.elements[parent] if parent is not None else None
+        for name in classes:
+            if name not in PLACED_CLASSES:
+                continue
+            element, companions, parents, needs, first = PLACED_CLASSES[name]
+            fits = any(wanted == "*" or (above is None if wanted == "" else above is not None and (
+                above[0] == wanted.split(".")[0] and all(part in above[1] for part in wanted.split(".")[1:])))
+                for wanted in parents)
+            if (tag != element or not set(companions) <= set(classes) or not fits
+                    or any(need not in attrs for need in needs) or (first and after)):
+                place = shape_name(element, [name, *companions]) + "".join(f" with {need}" for need in needs)
+                inside = " or ".join("any element" if wanted == "*" else "no element" if wanted == "" else wanted
+                                     for wanted in parents)
+                raise BuildError(f"{where}: the class name {name!r} {source_at(at)} is outside its pinned place; a "
+                                 "stylesheet rule places an element with it out of its source order, so a page source "
+                                 f"carries it only on {place}, {'first ' if first else ''}inside {inside} "
+                                 "(PLACED_CLASSES)")
+    for index, (tag, classes, attrs, at, parent, after) in enumerate(shape.elements):
+        lineage, up = [], parent
+        while up is not None:
+            lineage.append(shape.elements[up])
+            up = shape.elements[up][4]
+        key = next((name for name in classes if name in PLACED_CHILDREN and name != "entries"), None)
+        if key is None and tag == "a" and any("entries" in ancestor[1] for ancestor in lineage):
+            key = "entries"
+        if key is None:
+            continue
+        slots, slot = PLACED_CHILDREN[key], 0
+        children = [child for child in shape.elements if child[4] == index]
+        for child in children:
+            while slot < len(slots) and shape_name(child[0], child[1]) not in slots[slot]:
+                slot += 1
+            slot += 1
+        if index in shape.texts or slot > len(slots):
+            order = ", ".join(" or ".join(names) for names in slots)
+            raise BuildError(f"{where}: the {shape_name(tag, classes)} {source_at(at)} holds text or children outside "
+                             "its pinned order; a stylesheet places its children by grid area, so it holds only "
+                             f"{order}, each at most once and in that order, and no text (PLACED_CHILDREN)")
+        if key == "hero-art" and any(child[2].get("alt") != logo_alt for child in children):
+            raise BuildError(f"{where}: the img in the div.hero-art {source_at(at)} has an alt text other than "
+                             "site.json's logo_alt; at 600 px and below a browser shows it beside the kicker, before "
+                             "the statement")
+
+
+def rail_pin(content: str, where: str) -> None:
+    """Refuse a page source, with its tokens written in and before rail() writes the rail at <!--rail-->, that carries
+    a class name of RAIL_CLASSES or more than 1 <!--rail-->, naming where the start tag starts in that source (the
+    rail, written in on the same line, would move a later column only)."""
+    if content.count("<!--rail-->") > 1:
+        raise BuildError(f"{where}: more than 1 <!--rail-->; the generator writes 1 rail there")
+    for _, classes, _, (line, column), _, _ in source_shape(content).elements:
+        for name in classes:
+            if name in RAIL_CLASSES:
+                raise BuildError(f"{where}: the class name {name!r} at line {line}, column {column} of the source with "
+                                 "its tokens written in, which only the rail the generator writes at <!--rail--> "
+                                 "carries; above 1000 px .doc > .rail shows it at the top of the third column, "
+                                 "whatever its place in the source")
 
 
 def bidi_control(text: str) -> str | None:
@@ -2055,8 +2274,9 @@ def build(
     for page in pages:
         fragment = read_text(root, SRC / "pages" / page["source"])
         content = substitute(fragment, values, page["source"])
+        rail_pin(content, page["source"])
         content = content.replace("<!--rail-->", rail(config, page, base, content))
-        content = with_about(content, page, base)
+        content = with_about(content, page, base, config.get("logo_alt"))
         document = "\n".join(
             [
                 head(config, page, base, asset_tokens, date),
