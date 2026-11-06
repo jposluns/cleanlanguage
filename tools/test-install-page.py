@@ -44,11 +44,17 @@ the 3 stylesheets, read from the stylesheet's address), and its load_path()
 reads each of those as 1 of the files that tools/check-baseline-pin.py pins
 (check 6); and unless its parse() and name_text(), run in this process on
 fragments apart from the pins, read a br, a </br> and a hidden br in a heading,
-and its has_visible_text() text of only U+034F, as check 4 says. And it fails unless
+and its has_visible_text() text of only U+034F, as check 4 says. On a family
+page the checks of CLASS_PIN, ATTRIBUTE_PIN and TAG_PIN read the checked
+elements through the gate's family_checked(), as the gate holds them, so of
+the links to #get and #test they read only the required link back to each,
+and they must also pass with a further link back to #get in a Gemini step,
+which the gate passes. And it fails unless
 each of the 2 path lists of .github/workflows/install-page.yml covers every
 file the gate, this test and that workflow read and each path of the gate's SERVER_ENTRIES
-(check 10), as a file or under a directory, and unless that check refuses the
-workflow with site/_redirects removed from 1 list or from both.
+(check 10), as a file and at any depth under a directory, and unless that
+check refuses the workflow with site/_redirects removed from 1 list or from
+both, or with functions/** narrowed to functions/* in 1 list or in both.
 
 It also pins the stylesheets every install page loads (fonts.css,
 palettes.css and baseline.css under site/assets/baseline/): it fails unless
@@ -226,13 +232,17 @@ TAG_GIVEN = "a tag that the committed pages do not give an element there (TAG_PI
 NONE_GIVEN = "which the committed pages give no"
 OUTSIDE_LOADS = "(LOADED_SEGMENTS)"
 SERVER_ENTRY = "exists; Cloudflare Pages runs it, or reads it"
+PIN_UNREAD = "check-install-page: tools/check-baseline-pin.py could not read the baseline pin"
 # The gate's words for a load outside the baseline pin, an element of a tag that the committed pages do not use, a
 # family link whose label is not its family's name, and a switch that is not exactly the template's.
 OUTSIDE_PIN = "which is not 1 of the files tools/check-baseline-pin.py pins"
 PAGE_TAG = "a tag that the committed pages do not use (PAGE_TAGS)"
 WRONG_LABEL = "the claude family link's visible label is not \"Claude\""
 SWITCH = "the page carries the light and dark switch 0 times"
-GEMINI_STEP = "<li><span>Click <strong>New Gem</strong>.</span></li>"
+# The words of a Gemini step, which a case extends with a link; the step stays found when it holds 1 already.
+GEMINI_STEP = "<strong>New Gem</strong>"
+VERIFIED = '<p class="verified">'
+MODIFIED = '<meta property="article:modified_time" content="'
 REFRESH = '<meta http-equiv="refresh" content="0; url=/">'
 DOCTYPE = "<!doctype html>\n"
 HTML = '<html lang="en" class="site-cleanlanguage">\n'
@@ -494,6 +504,14 @@ def decoy(relative: str):
     return apply
 
 
+def span_of(root: Path, relative: str, start: str, end: str) -> str:
+    """The text of a page from the first start to the first end after it, end included, so that a case finds an
+    element without the date or the words it holds now (a release restamps the modified date)."""
+    text = (root / relative).read_text(encoding="utf-8")
+    at = text.index(start)
+    return text[at:text.index(end, at + len(start)) + len(end)]
+
+
 def steps_of(root: Path, relative: str) -> str:
     """The first step list of a page, from its <ol class="steps"> to the first </ol> after it."""
     text = (root / relative).read_text(encoding="utf-8")
@@ -522,8 +540,13 @@ def repin(name: str):
     return apply
 
 
-# The ChatGPT page's link to #test in its prose dropped, so its a.start is its only link to #test.
-ONLY_START = edit(CHATGPT, '<a href="/install/#test">Test it</a>', "Test it")
+# The ChatGPT page's link to #test in its prose, its required link back to #test; dropped, its a.start is its only
+# link to #test.
+PROSE_TEST = '<a href="/install/#test">Test it</a>'
+ONLY_START = edit(CHATGPT, PROSE_TEST, "Test it")
+# A further link back to #get in a Gemini step, which the gate passes, held by the pins of a step; the inventories of
+# the pins pass with it too (inventory_case_problems).
+STEP_LINK = edit(GEMINI, GEMINI_STEP, GEMINI_STEP + ', from <a href="/install/#get">Get Clean Language</a>')
 CASES = [
     ("the committed tree", None, 0),
     ("a family link pointing elsewhere", edit(PAGE, 'id="chatgpt" href="/install/chatgpt/"', 'id="chatgpt" href="/install/gemini/"'), 1),
@@ -805,16 +828,17 @@ CASES = [
         (1, "a step list carries the class 'fresh'")),
     ("a family page step with a class", edit(OTHER, STEPS + "<li>", STEPS + '<li class="fresh">'),
         (1, "a step carries the class 'fresh'")),
-    # The pins hold, for each target, the required link back, so each of these first drops the ChatGPT page's other
-    # link to #test, in its prose; with it kept, the link it changes is a further link and passes.
-    ("a family page link back with a further class", both(ONLY_START,
-        edit(CHATGPT, '<a class="start" href="/install/#test">', '<a class="start fresh" href="/install/#test">')),
+    # The pins hold, for each target, the required link back, which on each committed page is a link with no class in
+    # a paragraph, so each of these changes the ChatGPT page's link to #test in its prose; a change to its a.start, a
+    # further link, passes, and its a.start alone, with the class start, fails the pins of a link back.
+    ("a family page link back with a class", edit(CHATGPT, PROSE_TEST, PROSE_TEST.replace("<a ", '<a class="fresh" ')),
         (1, "a link back carries the class 'fresh'")),
     ("a family page further link back with a further class",
         edit(CHATGPT, '<a class="start" href="/install/#test">', '<a class="start fresh" href="/install/#test">'), 0),
-    ("a family page link back whose arrow carries a further class", both(ONLY_START,
-        edit(CHATGPT, '<span class="arrow"', '<span class="arrow fresh"')),
-        (1, "a span inside a link back carries the class 'fresh'")),
+    ("a family page whose only link back to #test is its a.start", ONLY_START,
+        (1, "a link back carries the class 'start'")),
+    ("a family page link back holding a span", edit(CHATGPT, PROSE_TEST, PROSE_TEST.replace(">Test it<", "><span>Test it</span><")),
+        (1, "a span inside a link back is a span, " + TAG_GIVEN)),
     # Nor may any of them carry an attribute that a pinned rule names (the gate's RULE_ATTRIBUTES): baseline.css hides
     # [data-preset] and [data-col-toggles] in print.
     ("a family page heading with data-preset", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1 data-preset>ChatGPT</h1>"),
@@ -871,8 +895,7 @@ CASES = [
     ("a family page step list in a table with a width",
         wrap(COPILOT, STEPS, "</ol>", '<table width="1"><tr><td>', "</td></tr></table>"),
         (1, "a table around a step list carries the attribute 'width', " + GIVEN)),
-    ("a family page link back with a target", both(ONLY_START,
-        edit(CHATGPT, '<a class="start" href="/install/#test">', '<a class="start" href="/install/#test" target="_x">')),
+    ("a family page link back with a target", edit(CHATGPT, PROSE_TEST, PROSE_TEST.replace("<a ", '<a target="_x" ')),
         (1, "a link back carries the attribute 'target', " + GIVEN)),
     ("a family page step with a link to the downloads with an id",
         edit(OTHER, '<a href="/instructions/">instructions page', '<a href="/instructions/" id="fresh">instructions page'),
@@ -1053,14 +1076,13 @@ CASES = [
     ("a family page whose links to #test are hidden", edit(CLAUDE, 'href="/install/#test"', 'href="/install/#test" hidden', every=True), 1),
     # The pins hold only the required link back for each target, so a further link to #get in a step passes, held by
     # the step's pins; a page whose only links to #get sit in steps has no link that passes the pins of a link back.
-    ("a family page step that links back to #get", edit(GEMINI, GEMINI_STEP, GEMINI_STEP.replace(
-        ".</span>", ', from <a href="/install/#get">Get Clean Language</a>.</span>')), 0),
+    ("a family page step that links back to #get", STEP_LINK, 0),
     ("a family page whose only link to #get sits in a step", both(
         edit(GEMINI, '<a href="/install/#get">Get Clean Language</a>', "Get Clean Language"),
-        edit(GEMINI, GEMINI_STEP, GEMINI_STEP.replace(".</span>", ', from <a href="/install/#get">Get it</a>.</span>'))),
+        edit(GEMINI, GEMINI_STEP, GEMINI_STEP + ', from <a href="/install/#get">Get it</a>')),
         (1, "no link to /install/#get that reads as shown, with visible text, passes the pins of a link back")),
-    ("a family page step that links back to #get with a class", edit(GEMINI, GEMINI_STEP, GEMINI_STEP.replace(
-        ".</span>", ', from <a class="start" href="/install/#get">Get Clean Language</a>.</span>')),
+    ("a family page step that links back to #get with a class", edit(GEMINI, GEMINI_STEP,
+        GEMINI_STEP + ', from <a class="start" href="/install/#get">Get Clean Language</a>'),
         (1, "an a inside a step carries the class 'start', " + PINNED)),
     ("a family page whose links back to #get are labelled only U+034F", edit(GEMINI,
         '<a href="/install/#get">Get Clean Language</a>', '<a href="/install/#get">' + chr(0x034F) + "</a>", every=True),
@@ -1077,11 +1099,12 @@ CASES = [
     *[(f"a family page step of only U+{code:04X}",
         lambda root, code=code: edit(OTHER, steps_of(root, OTHER), STEPS + f"<li>{chr(code)}</li></ol>")(root),
         (1, "a step list has no step (li) with text that reads as visible"))
-        for code in (0x034F, 0x115F, 0x180E, 0x2061, 0x2064, 0x3164, 0xFE0F, 0xE0041, 0xE01EF)],
+        for code in (0x034F, 0x115F, 0x1160, 0x3164, 0xFFA0, 0x17B4, 0x180B, 0x180E, 0x2061, 0x2064, 0x206A, 0xFE0F,
+                     0xE01EF, 0x1BCA0, 0x1D173, 0xE0041, 0x2065, 0xFFF0, 0xE0FFF, 0x2800)],
     ("a family page with an empty verified line", edit(GEMINI, '<p class="verified">', '<p class="verified"></p><p>'),
         (1, "a verified line has no text that reads as visible")),
-    ("a family page with a verified line of only U+034F", edit(GEMINI, '<p class="verified">Last verified 27 August 2026.',
-        '<p class="verified">' + chr(0x034F)), (1, "a verified line has no text that reads as visible")),
+    ("a family page with a verified line of only U+034F", lambda root: edit(GEMINI, span_of(root, GEMINI, VERIFIED, "</p>"),
+        VERIFIED + chr(0x034F) + "</p>")(root), (1, "a verified line has no text that reads as visible")),
     ("an inline script", edit(PAGE, "</main>", "<script>alert(1)</script></main>"), 1),
     ("an inline script on a family page", edit(COPILOT, "</main>", "<script>alert(1)</script></main>"), 1),
     ("an inline style", edit(PAGE, '<p class="lbl first">', '<p style="x" class="lbl first">'), 1),
@@ -1248,6 +1271,8 @@ CASES = [
     ("a redirect between 2 downloads", append(REDIRECTS, "/downloads/old.md /downloads/cleanlanguage.md 301\n"), 0),
     ("a redirect from the install pages only in a comment", append(REDIRECTS, "# /install/* / 302\n"), 0),
     ("the redirects file missing", remove(REDIRECTS), 3),
+    ("the baseline pin missing", remove(".baseline/pin.toml"), (3, PIN_UNREAD)),
+    ("the baseline pin malformed", edit(".baseline/pin.toml", 'version = "', 'version = "x'), (3, PIN_UNREAD)),
     # Nor may a source, or a pattern of site/_headers, match a file the install pages load: each sits under a first
     # segment of LOADED_SEGMENTS (assets), in any letter case.
     ("a rewrite of baseline.css to fonts.css",
@@ -1283,6 +1308,8 @@ CASES = [
         (1, "wrangler.json " + SERVER_ENTRY)),
     ("a Wrangler configuration in JSONC", create("wrangler.jsonc", '// x\n{"pages_build_output_dir": "./other"}\n'),
         (1, "wrangler.jsonc " + SERVER_ENTRY)),
+    ("a root package.json with an install script", create("package.json", '{"scripts": {"install": "touch site/x"}}\n'),
+        (1, "package.json " + SERVER_ENTRY)),
     # Every src, and every href of a link other than the canonical link, on the 6 pages is 1 of the files
     # tools/check-baseline-pin.py pins, read as a path from the site's root with no . or .. segment.
     ("a family page illustration outside the baseline pin", edit(CHATGPT, '<p class="verified">',
@@ -1349,8 +1376,7 @@ CASES = [
         (1, HEAD_PINNED)),
     ("a family page with another description and modified date", both(
         edit(GEMINI, '<meta name="description" content="', '<meta name="description" content="New. '),
-        edit(GEMINI, '<meta property="article:modified_time" content="2026-11-03">',
-             '<meta property="article:modified_time" content="2026-12-01">')), 0),
+        lambda root: edit(GEMINI, span_of(root, GEMINI, MODIFIED, '">'), MODIFIED + '2000-01-01">')(root)), 0),
 ]
 # Faults the gate passes, and the words of the gate's docstring that name each (compared with runs of whitespace
 # read as 1 space).
@@ -1362,10 +1388,6 @@ RESIDUALS = [
         "after ``<span class=\"vh\"><div></span>`` the ``span`` stays open"),
     ("a family page step list after <p><div class=\"vh\"></p>", edit(OTHER, STEPS, '<p><div class="vh"></p>' + STEPS),
         "after ``<p><div class=\"vh\"></p>`` the ``div`` stays open"),
-    # An invisible character outside ZERO_WIDTH and INVISIBLE reads as visible text: the Hangul jungseong filler.
-    ("a family page step of only U+1160",
-        lambda root: edit(OTHER, steps_of(root, OTHER), STEPS + "<li>" + chr(0x1160) + "</li></ol>")(root),
-        "a step, or a link back to the downloads or the test made only of an invisible character"),
     ("a family page with 1 setup step dropped",
         edit(OTHER, STEPS + '<li><span>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</span></li>', STEPS),
         "not its steps or their wording"),
@@ -1731,16 +1753,23 @@ def diff_problems(pin: list[str], held: list[tuple[str, str]]) -> list[str]:
     return problems
 
 
-def class_pin_problems(pin: str = "CLASS_PIN", field: str = "classes") -> list[str]:
+def checked_kinds(gate, relative: str, parser) -> list:
+    """The checked elements of a page, each with its kind, as the gate's pins hold them: install_kinds() on the
+    install page, and on a family page those of family_checked(), which holds only the required link back to each
+    target."""
+    return gate.install_kinds(parser) if relative == PAGE else gate.family_checked(relative, parser)[0]
+
+
+def class_pin_problems(pin: str = "CLASS_PIN", field: str = "classes", root: Path = REPO_ROOT) -> list[str]:
     """The gate's CLASS_PIN (or ATTRIBUTE_PIN, with field "attrs") holds, for each kind, exactly the classes (or the
-    attributes) the committed pages give that checked element, each of its ancestors and each element it holds, by
+    attributes) the pages under root give that checked element, each of its ancestors and each element it holds, by
     tag, so that the pin cannot be widened unnoticed."""
     try:
         gate = load_gate()
         found = {kind: ({}, {}, {}) for kind in getattr(gate, pin)}
         for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
-            parser = gate.parse((REPO_ROOT / relative).read_text(encoding="utf-8"))
-            for kind, element in (gate.install_kinds if relative == PAGE else gate.family_kinds)(parser):
+            parser = gate.parse((root / relative).read_text(encoding="utf-8"))
+            for kind, element in checked_kinds(gate, relative, parser):
                 for position, other in gate.pin_positions(parser, element):
                     if other[field]:
                         found[kind][position].setdefault(other["tag"], set()).update(other[field])
@@ -1753,6 +1782,17 @@ def class_pin_problems(pin: str = "CLASS_PIN", field: str = "classes") -> list[s
             problems.append(f"{pin} of tools/{GATE.name} gives {kind} {recorded}; the committed pages give "
                             f"{found[kind]}.")
     return problems
+
+
+def inventory_case_problems() -> list[str]:
+    """The inventories of the gate's CLASS_PIN, ATTRIBUTE_PIN and TAG_PIN pass on a copy of the pages with STEP_LINK,
+    a further link back to #get in a Gemini step, which the gate passes too (CASES): each reads, as the gate does, only
+    the required link back to each target."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        STEP_LINK(root)
+        found = class_pin_problems(root=root) + class_pin_problems("ATTRIBUTE_PIN", "attrs", root) + tag_pin_problems(root)
+    return [f"with a further link back to #get in a Gemini step: {problem}" for problem in found]
 
 
 def head_pin_problems() -> list[str]:
@@ -1824,15 +1864,15 @@ def header_pin_problems() -> list[str]:
     return []
 
 
-def tag_pin_problems() -> list[str]:
-    """The gate's TAG_PIN holds, for each kind, exactly the tags the committed pages give that checked element, each
+def tag_pin_problems(root: Path = REPO_ROOT) -> list[str]:
+    """The gate's TAG_PIN holds, for each kind, exactly the tags the pages under root give that checked element, each
     of its ancestors and each element it holds, so that the pin cannot be widened unnoticed."""
     try:
         gate = load_gate()
         found = {kind: (set(), set(), set()) for kind in gate.TAG_PIN}
         for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
-            parser = gate.parse((REPO_ROOT / relative).read_text(encoding="utf-8"))
-            for kind, element in (gate.install_kinds if relative == PAGE else gate.family_kinds)(parser):
+            parser = gate.parse((root / relative).read_text(encoding="utf-8"))
+            for kind, element in checked_kinds(gate, relative, parser):
                 for position, other in gate.pin_positions(parser, element):
                     found[kind][position].add(other["tag"])
         recorded = {kind: tuple(set(tags) for tags in held) for kind, held in gate.TAG_PIN.items()}
@@ -1950,13 +1990,13 @@ def glob_pattern(pattern: str) -> re.Pattern:
 
 def workflow_path_problems(text: str | None = None) -> list[str]:
     """Each of the 2 path lists of WORKFLOW (pull_request and push) covers every file the gate, this test and the
-    workflow read, and every path of the gate's SERVER_ENTRIES, as a file or under a directory, so that a change to any
-    of them runs the workflow."""
+    workflow read, and every path of the gate's SERVER_ENTRIES, as a file and at any depth under a directory, so that a
+    change to any of them runs the workflow."""
     try:
         if text is None:
             text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
         gate = load_gate()
-        entries = [path for name in gate.SERVER_ENTRIES for path in (name, f"{name}/index.js")]
+        entries = [path for name in gate.SERVER_ENTRIES for path in (name, f"{name}/index.js", f"{name}/a/b/index.js")]
     except Exception as error:
         return [f"{WORKFLOW} could not be checked: {error!r}"]
     lists: list[list[str]] = []
@@ -1980,7 +2020,7 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
 
 def workflow_case_problems() -> list[str]:
     """workflow_path_problems() refuses the committed workflow with site/_redirects removed from 1 path list, or from
-    both."""
+    both, and with functions/** narrowed to functions/*, which covers no nested path, in 1 path list or in both."""
     text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
     line = '      - "site/_redirects"\n'
     if text.count(line) != 2:
@@ -1989,6 +2029,13 @@ def workflow_case_problems() -> list[str]:
     for name, edited in (("from the first path list", text.replace(line, "", 1)), ("from both", text.replace(line, ""))):
         if not workflow_path_problems(edited):
             problems.append(f"site/_redirects removed {name}: workflow_path_problems() found no problem.")
+    tree = '      - "functions/**"\n'
+    if text.count(tree) != 2:
+        return problems + [f"{WORKFLOW} lists functions/** {text.count(tree)} times, not once in each path list."]
+    narrow = '      - "functions/*"\n'
+    for name, edited in (("in the first path list", text.replace(tree, narrow, 1)), ("in both", text.replace(tree, narrow))):
+        if not workflow_path_problems(edited):
+            problems.append(f"functions/** narrowed to functions/* {name}: workflow_path_problems() found no problem.")
     return problems
 
 
@@ -2066,6 +2113,7 @@ def main() -> int:
     failures += [f"the pinned attributes: {problem}" for problem in attribute_pin_problems()]
     failures += [f"the pinned headers: {problem}" for problem in header_pin_problems()]
     failures += [f"the tag pin: {problem}" for problem in tag_pin_problems()]
+    failures += [f"the inventories: {problem}" for problem in inventory_case_problems()]
     failures += [f"the page attribute pin: {problem}" for problem in page_attribute_pin_problems()]
     failures += [f"the page tag pin: {problem}" for problem in page_tag_pin_problems()]
     failures += [f"the name reading: {problem}" for problem in name_reading_problems()]
@@ -2095,7 +2143,8 @@ def main() -> int:
         return 1
     print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
           f"ALLOWED_SCRIPTS, the checks of CLASS_PIN, ATTRIBUTE_PIN, HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
-          f"PAGE_ATTRIBUTES, PAGE_TAGS, the name reading, LOADED_SEGMENTS and the pinned loads, the workflow's path "
+          f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
+          f"LOADED_SEGMENTS and the pinned loads, the workflow's path "
           f"lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "

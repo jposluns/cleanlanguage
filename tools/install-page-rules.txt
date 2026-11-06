@@ -62,10 +62,6 @@ eba674b6dd34ffd8 baseline.css: .scheme svg
 fa39198d3973543f baseline.css: @keyframes field-in { from
 59384710144a3d20 baseline.css: @keyframes field-in { to
 0e67c8a8f50bcd1a baseline.css: .statement em
-7f7ae3582e46a1f9 baseline.css: .start
-569cbfcd61ffe349 baseline.css: .start:hover
-76de1760bcabb845 baseline.css: .start .arrow
-414a8da12d23644e baseline.css: .start:hover .arrow
 c5811c251c0be084 baseline.css: .region > .lbl
 a15f8d01e1126c08 baseline.css: .region.narrow > div
 84fc348fbf7f3d66 baseline.css: .region p
@@ -135,7 +131,6 @@ a5147acae22d70b3 baseline.css: .lrail > nav
 81c17a525d1f4bef baseline.css: .lrail li a, .lrail li button
 d8a6ab467860f420 baseline.css: .lrail li a:hover, .lrail li button:hover
 d30e912d985b717d baseline.css: .lrail li [aria-current="true"], .lrail li [aria-pressed="true"]
-79ce8b368e7f10ac baseline.css: .callout
 944eb8ef0054c8e8 baseline.css: .callout p
 0054c2e562da89b7 baseline.css: .callout p:last-child, .callout ul:last-child, .callout ol:last-child
 7974208121cd2b64 baseline.css: pre, .code
@@ -224,7 +219,6 @@ dad2b9e7c06a4993 baseline.css: .chips button:hover
 4d0a9ed48873b5ce baseline.css: .chips a[aria-disabled="true"], .chips button[aria-disabled="true"]
 82c5e4d762505d98 baseline.css: .chips a[aria-disabled="true"]:hover, .chips button[aria-disabled="true"]:hover
 1c3a2270efb84bea baseline.css: .figure svg
-afc2b1ce4cdd6b34 baseline.css: .figure svg .arrow
 4b26bd0de7aecb28 baseline.css: .figure figcaption
 fc1d5fed1ca9b348 baseline.css: .srcview pre
 b232165005370c43 baseline.css: .srcview .view h4
@@ -257,9 +251,7 @@ d793fc5fa4823202 baseline.css: .fig-aside > p
 50e8c12b4618e9a5 baseline.css: .steps li
 faeb47a376f2c4a5 baseline.css: .steps li::before
 c8719359ca0f9112 baseline.css: .steps li > span
-b5d908d2ef7b5dd0 baseline.css: .next
 78ad1213e126b1ce baseline.css: .next p
-ed2ae59dea59518a baseline.css: :is(.doc, .doc > section, .doc > article) > .next
 9c0cbd50ce92c568 baseline.css: @media (max-width: 1000px) { .doc
 5fe4652db9235485 baseline.css: @media (max-width: 1000px) { :is(.doc, .doc > section, .doc > article) > *, :is(.doc, .doc > section, .doc > article) > .lbl, :is(.doc, .doc > section, .doc > article) > .wide, :is(.doc, .doc > section, .doc > article) > .full
 19ada92dceade56b baseline.css: @media (max-width: 1000px) { :is(.doc, .doc > section, .doc > article) > .lbl, :is(.doc, .doc > section, .doc > article) > .lbl.sec, :is(.doc, .doc > section, .doc > article) > .lbl.blk
@@ -272,7 +264,6 @@ b9977b4185ec1ec1 baseline.css: @media (max-width: 1000px) { .rail li
 458577940bce1be4 baseline.css: @media (max-width: 1000px) { .rail > .lbl, .rail > ol, .rail > ul
 031cebfd9ebdb4f5 baseline.css: @media (max-width: 1000px) { .entries a
 35f519f99351b250 baseline.css: @media (max-width: 1000px) { .entries a::before
-a3140a018a464c2e baseline.css: @media (max-width: 1000px) { :is(.doc, .doc > section, .doc > article) > .next
 0d05b5705d42e99b baseline.css: @media (max-width: 600px) { .rail ol
 738ce8ab8b16b0b3 baseline.css: @media (max-width: 600px) { .hero-art img
 835033579c3e194f baseline.css: @media (max-width: 600px) { .hero .lbl
@@ -281,8 +272,6 @@ a3140a018a464c2e baseline.css: @media (max-width: 1000px) { :is(.doc, .doc > sec
 9dc8d7435ca6d848 baseline.css: @media (max-width: 600px) { .doc h1
 7edaae30b4b487c3 baseline.css: @media (max-width: 600px) { .doc h2
 aea6a6655320e684 baseline.css: @media (max-width: 600px) { pre, .code
-46b5f5d83f93bf87 baseline.css: @media (prefers-reduced-motion: reduce) { .start .arrow
-fbcfb5efd05f0c1d baseline.css: @media (prefers-reduced-motion: reduce) { .start:hover .arrow
 a3d6ba133053d00b baseline.css: @media (prefers-color-scheme: dark) { :root:not([data-scheme="light"]) .statement, :root:not([data-scheme="light"]) .doc h1
 a330f126ab5936a2 baseline.css: [data-scheme="dark"] .statement, [data-scheme="dark"] .doc h1
 1df5bdebf590920a baseline.css: @media (max-width: 1000px) { :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > *, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .wide, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .next, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .full

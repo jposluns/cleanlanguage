@@ -268,8 +268,11 @@ What it verifies
    hero's ``h1``, the "Pick your AI" label, the paragraph of family links and
    each family link on ``/install/``, and, on each family page, each ``h1``,
    ``p.verified`` and ``ol.steps``, each step (an ``li`` whose nearest list is
-   an ``ol.steps``) and each link to ``/install/#get`` or ``/install/#test``
-   outside every element of ``INERT_ELEMENTS``. An element of a tag that the
+   an ``ol.steps``) and, for each of ``/install/#get`` and ``/install/#test``,
+   the required link back (check 4), not a further link to it, which the pins
+   of a checked element that holds it hold. The required links back of the
+   committed pages are links with no class in a paragraph, so an ``a.start``
+   that is the only link to 1 of them fails. An element of a tag that the
    committed pages do not give a class there may carry none, so
    ``<h1 class="fresh">`` on a family page, a ``<section class="fresh">``
    around it, a ``<span class="fresh">`` in it and an ``ol.steps`` in a step
@@ -371,25 +374,35 @@ What it verifies
    exactly the values that its ``FREE_HEAD_VALUES`` leaves free. A correct new
    or changed ``meta`` or ``link`` on these pages (a ``theme-color`` meta, say,
    or another ``og:image``) fails until ``HEAD_PIN`` changes with the pages.
-10. No server entry point that Cloudflare Pages runs, and no Wrangler
-    configuration file that it reads, exists (``SERVER_ENTRIES``), as a file,
-    a directory or a link: ``functions`` at
+10. No server entry point that Cloudflare Pages runs, no Wrangler
+    configuration file that it reads, and no root ``package.json`` exists
+    (``SERVER_ENTRIES``), as a file, a directory or a link: ``functions`` at
     the repository root, where Pages reads Pages Functions (a
     ``functions/_middleware.js`` can answer any request to the site),
     ``site/_worker.js``, a Worker that Pages runs in place of serving the
     files, and ``wrangler.toml``, ``wrangler.json`` and ``wrangler.jsonc`` at
     the repository root, which Pages can read as the project's configuration
-    (its build output directory among them). Each can redirect, rewrite or
+    (its build output directory among them), and ``package.json`` at the
+    repository root, whose dependencies the build image can install before
+    the build command, running its install scripts, which can write under
+    ``site/`` (an inference about the build image, not verified here; the
+    refusal is cheap). Each can redirect, rewrite or
     replace an install page or a file the pages load, or change what Pages
     serves, and no check here reads what it does; ``tools/build-site.py
-    --check`` refuses neither ``functions`` nor a Wrangler configuration,
-    which sit outside ``site/``, nor a ``site/_worker.js`` listed in
-    ``static_files``. None exists at this commit. A correct future Function,
-    Worker or Wrangler configuration fails until this check changes with it.
+    --check`` refuses neither ``functions``, a Wrangler configuration nor a
+    ``package.json``, which sit outside ``site/``, nor a ``site/_worker.js``
+    listed in ``static_files``. None exists at this commit. A correct future
+    Function, Worker, Wrangler configuration or root ``package.json`` fails
+    until this check changes with it.
     These residuals are accepted: a Pages project whose root
     directory, a dashboard setting, is not the repository root reads
     ``functions`` and a Wrangler configuration from that directory, which the
-    gate does not read; nor does
+    gate does not read; the build image reads other files at the repository
+    root before the build command, which this check does not refuse:
+    ``.python-version`` and ``runtime.txt``, which choose its Python
+    (``site/README.md``), and any other file by which it chooses a tool's
+    version or installs dependencies (which files those are is not verified
+    here); nor does
     it read a zone feature that can change the HTML in transit (Email Address
     Obfuscation, Rocket Loader or the automatic Web Analytics script, say), or
     whether Pages serves a file other than the 6 pages at an install page URL
@@ -538,15 +551,16 @@ heading that names another family beside its own; it checks that a step list has
 least 1 step with visible text, not its steps or their wording, which
 ``tools/build-site.py --check`` ties to ``site-src/pages``. Those are visible
 regressions a browser check, a reviewer, or the tri-family QA catches. Text
-made only of characters of ``ZERO_WIDTH`` and ``INVISIBLE`` (U+034F, U+115F,
-U+180E, U+2061 to U+2064, U+3164, the variation selectors and the tag
-characters), whitespace and U+0000 has no visible text. A
-heading, the "Pick your AI" label, a family link label, a ``p.verified``, a
-step, or a link back
-to the downloads or the test made only of an invisible character outside
-them (such as U+1160 or U+FFA0, the other Hangul fillers) passes the
-visible-text check, which all 6 share; a family link label made only of one
-fails the check of its name. A ``dir`` on any element fails check
+made only of characters of ``ZERO_WIDTH`` and ``INVISIBLE`` (the rest of
+Unicode's Default_Ignorable_Code_Point set, U+034F, the Hangul fillers U+115F,
+U+1160, U+3164 and U+FFA0, the Mongolian free variation selectors, the
+variation selectors and the tag characters among them, and U+2800, the
+Braille pattern blank), whitespace and U+0000 has no visible text. The gate
+reads every other character as visible, so a heading, the "Pick your AI"
+label, a family link label, a ``p.verified``, a step, or a link back to the
+downloads or the test made only of a character outside them that a browser
+or a font shows as nothing passes the visible-text check, which all 6 share;
+a family link label made only of one fails the check of its name. A ``dir`` on any element fails check
 8 (``PAGE_ATTRIBUTES``), and a ``bdo`` or a ``bdi`` anywhere on the 6 pages
 fails its page tag pin (``PAGE_TAGS``), as it does its tag pin (``TAG_PIN``)
 in a checked element. The gate applies no stylesheet; a
@@ -702,11 +716,21 @@ ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 BIDI_CONTROLS = "\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 ZERO_WIDTH = "\u200b\u200c\u200d\ufeff\u00a0\u2060\u00ad" + BIDI_CONTROLS
 # Characters that show nothing, which has_visible_text also reads as invisible, and name_text keeps, so a heading of
-# Chat, U+034F and GPT names no family: the combining grapheme joiner (U+034F), the Hangul fillers U+115F and U+3164,
-# the Mongolian vowel separator (U+180E), the invisible operators (U+2061 to U+2064), the variation selectors (U+FE00
-# to U+FE0F and U+E0100 to U+E01EF) and the tag characters (U+E0000 to U+E007F).
-INVISIBLE = "\u034f\u115f\u180e\u2061\u2062\u2063\u2064\u3164" + "".join(
-    map(chr, (*range(0xFE00, 0xFE10), *range(0xE0000, 0xE0080), *range(0xE0100, 0xE01F0))))
+# Chat, U+034F and GPT names no family: Unicode's Default_Ignorable_Code_Point set, other than the characters of
+# ZERO_WIDTH, and the Braille pattern blank (U+2800), which is not in that set but shows nothing. Its 12 kinds: the
+# combining grapheme joiner (U+034F); the Hangul fillers (U+115F, U+1160, U+3164 and U+FFA0); the Khmer inherent vowels
+# (U+17B4 and U+17B5); the Mongolian free variation selectors and vowel separator (U+180B to U+180F); the invisible
+# operators (U+2061 to U+2064); the deprecated format characters (U+206A to U+206F); the variation selectors (U+FE00
+# to U+FE0F and U+E0100 to U+E01EF); the shorthand format controls (U+1BCA0 to U+1BCA3); the musical symbol format
+# controls (U+1D173 to U+1D17A); the tag characters (U+E0000 to U+E007F); the code points that Unicode reserves as
+# default ignorable (U+2065, U+FFF0 to U+FFF8, U+E0080 to U+E00FF and U+E01F0 to U+E0FFF); and the Braille pattern blank.
+INVISIBLE = "".join(chr(code) for first, last in (
+    (0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F),
+    (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x2800, 0x2800), (0x3164, 0x3164), (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF),
+) for code in range(first, last + 1) if chr(code) not in ZERO_WIDTH)
+# The characters has_visible_text deletes before it looks for a visible one, as a table for str.translate.
+UNSEEN = dict.fromkeys(map(ord, ZERO_WIDTH + INVISIBLE + "\0"))
 # The opening of /install/'s content, as site-src/pages/install.html builds it (check 1): the body's first elements
 # and the first elements of main > div.wrap > div.doc, each a tag and a class it carries (None: any), the "pick" label
 # with its id. Each element of DOC_OPENING holds exactly the elements named in its last item: the button row, only
@@ -794,9 +818,7 @@ CLASS_PIN = {
     "a verified line": ({"p": ("verified",)}, PIN_ANCESTORS, {}),
     "a step list": ({"ol": ("steps",)}, PIN_ANCESTORS, {}),
     "a step": ({}, {**PIN_ANCESTORS, "ol": ("steps",)}, {}),
-    "a link back": (
-        {"a": ("start",)}, {**PIN_ANCESTORS, "div": ("callout", "doc", "next", "wrap")}, {"span": ("arrow",)}
-    ),
+    "a link back": ({}, PIN_ANCESTORS, {}),
 }
 # Check 8: the attributes that an attribute selector of a rule the rule pin holds names, hidden aside, which the gate
 # reads as hiding; no checked element, ancestor or element it holds may carry one. tools/test-install-page.py fails
@@ -821,7 +843,7 @@ ATTRIBUTE_PIN = {
     "a verified line": ({"p": ("class",)}, PIN_ANCESTOR_ATTRS, {}),
     "a step list": ({"ol": ("class",)}, PIN_ANCESTOR_ATTRS, {"a": ("href",)}),
     "a step": ({}, {**PIN_ANCESTOR_ATTRS, "ol": ("class",)}, {"a": ("href",)}),
-    "a link back": ({"a": ("class", "href")}, PIN_ANCESTOR_ATTRS, {"span": ("aria-hidden", "class")}),
+    "a link back": ({"a": ("href",)}, PIN_ANCESTOR_ATTRS, {}),
 }
 # Check 8: for each kind of checked element, the tags the 6 committed pages give that element (the first tuple), each of
 # its ancestors (the second) and each element it holds (the third). Any other tag there fails, with or without a class
@@ -837,7 +859,7 @@ TAG_PIN = {
     "a verified line": (("p",), PIN_ANCESTOR_TAGS, ()),
     "a step list": (("ol",), PIN_ANCESTOR_TAGS, ("a", "code", "li", "span", "strong")),
     "a step": (("li",), (*PIN_ANCESTOR_TAGS, "ol"), ("a", "code", "span", "strong")),
-    "a link back": (("a",), (*PIN_ANCESTOR_TAGS, "details", "p"), ("span",)),
+    "a link back": (("a",), (*PIN_ANCESTOR_TAGS, "p"), ()),
 }
 # Check 8: the attributes that the 6 committed pages give an element of each tag, anywhere on them, checked or not; a
 # tag not listed carries none there, so it may carry none. Any other attribute on any element of the 6 pages fails, so a
@@ -889,8 +911,9 @@ LOADED_SEGMENTS = ("assets",)
 # Check 10: the server entry points that Cloudflare Pages runs when they are present, and that can redirect, rewrite or
 # replace any response: a Pages Function directory at the repository root, and a Worker in the output directory, as a
 # file or a directory; and the Wrangler configuration files that Pages reads at the repository root as the project's
-# configuration, which can change what it serves. None exists at this commit; the gate refuses each.
-SERVER_ENTRIES = ("functions", "site/_worker.js", "wrangler.toml", "wrangler.json", "wrangler.jsonc")
+# configuration, which can change what it serves; and a root package.json, whose install scripts the build image can
+# run before the build command (an inference, not verified). None exists at this commit; the gate refuses each.
+SERVER_ENTRIES = ("functions", "site/_worker.js", "wrangler.toml", "wrangler.json", "wrangler.jsonc", "package.json")
 # Check 9: the attributes that name what a meta, link or base element is, in this order; the first of them that an
 # element carries, with its value, is the element's key in HEAD_PIN (head_key).
 KEY_ATTRIBUTES = ("charset", "http-equiv", "name", "property", "rel")
@@ -957,7 +980,7 @@ def is_hiding_element(tag: str, attrs: dict[str, str]) -> bool:
 
 
 def has_visible_text(data: str) -> bool:
-    return bool(data.translate({ord(c): None for c in ZERO_WIDTH + INVISIBLE + "\0"}).strip())
+    return bool(data.translate(UNSEEN).strip())
 
 
 def name_text(data: str) -> str:
@@ -1719,11 +1742,18 @@ def check_family_page(fam: str, text: str) -> list[str]:
         problems.append(f"{where}: a step list reads as hidden in the static markup.")
     if any(not steps["hidden"] and not steps["text"] for steps in parser.steps):
         problems.append(f"{where}: a step list has no step (li) with text that reads as visible.")
-    # Check 8 holds every checked element but the links back; of those it holds, for each target, the required link
-    # back, the first that is not hidden, has visible text and passes the pins, and leaves the rest to the pins of any
-    # checked element that holds them (a step, say).
+    kinds, held = family_checked(where, parser)
+    return problems + held + page_tag_problems(where, parser, kinds)
+
+
+def family_checked(where: str, parser: PageParser) -> tuple[list[tuple[str, dict]], list[str]]:
+    """Checks 4 and 8: the checked elements of a family page that the pins hold, each with its kind in CLASS_PIN, and
+    the problems of the pins and of the links back. Check 8 holds every checked element but the links back; of those
+    it holds, for each target, the required link back, the first that is not hidden, has visible text and passes the
+    pins, and leaves the rest to the pins of any checked element that holds them (a step, say).
+    tools/test-install-page.py reads the family pages through this, so its inventories of the pins have this scope."""
     kinds = [(kind, element) for kind, element in family_kinds(parser) if kind != "a link back"]
-    problems += class_pin_problems(where, parser, kinds)
+    problems = class_pin_problems(where, parser, kinds)
     anchors = {anchor["order"]: anchor for anchor in parser.anchors}
     for target in ("/install/#get", "/install/#test"):
         shown = [("a link back", element) for kind, element in family_kinds(parser) if kind == "a link back"
@@ -1740,7 +1770,7 @@ def check_family_page(fam: str, text: str) -> list[str]:
             problems.append(f"{where}: no link to {target} that reads as shown, with visible text, passes the pins of "
                             "a link back; each such link fails them:")
             problems += dict.fromkeys(problem for held in found for problem in held)
-    return problems + page_tag_problems(where, parser, kinds)
+    return kinds, problems
 
 
 def path_segment(pattern: str) -> str:
@@ -1872,7 +1902,8 @@ def main() -> int:
         "the /* rule of site/_headers carries exactly the shared policy, no rule there sets a Link header, and no "
         "rule that can match an install page or a file the pages load sets or detaches any header but those of "
         "INSTALL_HEADERS, with their values, no rule of site/_redirects has a source that can match an install page "
-        "or a file the pages load, and no Pages Function, site/_worker.js or Wrangler configuration exists."
+        "or a file the pages load, and no Pages Function, site/_worker.js, Wrangler configuration or root "
+        "package.json exists."
     )
     return 0
 
