@@ -197,12 +197,25 @@ What it verifies
    ``/:page/*``, ``/install*``, ``/INSTALL/*``, ``/./install/*``,
    ``https://host`` and ``https://host/install/*`` can, and
    ``/downloads/cleanlanguage.md``, ``/images/cleanlanguage-card.png``,
-   ``/sitemap.xml`` and ``/draft/*`` cannot. These residuals are accepted:
-   it does not read a rule that reaches an install page through a rewrite in
-   ``site/_redirects`` or through any matching behaviour of Pages beyond that
-   reading, a redirect in ``site/_redirects``, which can also send the reader
-   away from a page, or a header that Cloudflare adds outside
-   ``site/_headers`` (zone settings, Transform Rules and the Pages defaults).
+   ``/sitemap.xml`` and ``/draft/*`` cannot. ``site/_redirects`` is read the
+   same way: no rule there may have a source, its first field, that
+   ``reaches_install`` reads as able to match an install page, whatever its
+   destination and status, because a redirect sends the reader away from the
+   page and a rewrite (status 200) serves other content at its address; a
+   blank line, and a line whose first field starts with ``#``, is skipped. So
+   ``/install/* / 302``, ``/install/claude/ / 200``, ``/:page/* / 301`` and
+   ``/* / 302`` fail. No committed source can match an install page, nor can
+   any that ``redirects_body`` of ``tools/set-release-links.py``, the release
+   writer, writes. These residuals are accepted: a rule of either file that
+   reaches an install page through any matching behaviour of Pages beyond that
+   reading passes. ``tools/test-release-links.py`` pins ``site/_redirects`` to
+   the release writer's output, so a hand edit that adds such a rule fails that
+   test, but a change to the writer, with the file written again, does not. Nor
+   does the gate read a header that Cloudflare adds outside ``site/_headers``
+   (zone settings, Transform Rules and the Pages defaults), or a redirect, a
+   rewrite or a response that Cloudflare makes outside ``site/_redirects``
+   (Bulk Redirects, Page Rules, a Worker, or a Pages Function or
+   ``site/_worker.js``, neither of which exists at this commit).
    A correct new header for every page, such as ``Cache-Control`` under
    ``/*``, fails until ``INSTALL_HEADERS`` changes with the file.
 8. On the 6 pages, each checked element, each of its ancestors, as the parser
@@ -235,7 +248,18 @@ What it verifies
    element, as for any change to the rule pin, then exempt that attribute in
    ``tools/test-install-page.py``, beside ``hidden`` (``HIDING_ATTRIBUTE``),
    name the exemption here, and review both with the new pin in the same pull
-   request. No ``html`` or ``body`` start tag other than the
+   request. Each of them also carries only the attributes that the committed
+   pages give an element of that tag there (``ATTRIBUTE_PIN``), so any other
+   attribute fails, whatever element carries it: a presentation attribute,
+   which can colour, size or move a checked element with no stylesheet change
+   (``<font color="#f6f4e7">``, the light background colour, around a family
+   page's ``h1``, ``bgcolor`` on the body or ``align`` on the "Pick your AI"
+   label), and ``hidden``, ``open``, ``dir`` and ``title`` among them, while a
+   ``font`` with no attribute around that ``h1`` passes.
+   ``tools/test-install-page.py`` fails unless ``ATTRIBUTE_PIN`` holds exactly
+   the attributes the committed pages give. A correct new attribute there (a
+   ``title`` on a family link, say) fails until ``ATTRIBUTE_PIN`` changes with
+   the pages. No ``html`` or ``body`` start tag other than the
    first of each on the page carries any attribute, because a browser adds its
    attributes to the page's own element, an ancestor of every checked element,
    so a later ``<body class="fresh">`` fails. Nor does any ``html`` or ``body``
@@ -250,6 +274,31 @@ What it verifies
    quirks mode, where a class selector matches a class name without regard to
    case, while this check and the rule pin compare class names with regard to
    case (``.DOC { display: none; }`` would hide ``div.doc``).
+9. On the 6 pages, every ``meta``, ``link`` and ``base`` element, at any
+   depth, shown or hidden, and every ``meta``, ``link`` and ``base`` start tag
+   that a text match finds, a tag in a comment included, is 1 that the
+   committed pages carry, with its attributes and values (``HEAD_PIN``). Its
+   key is its tag and the first of ``KEY_ATTRIBUTES`` (``charset``,
+   ``http-equiv``, ``name``, ``property`` and ``rel``) that it carries, with
+   that attribute's value, and it carries exactly the attributes of that key's
+   entry, each with the value the entry gives. The entries leave free only the
+   page's own text, address and dates (the ``content`` of the description,
+   ``og:title``, ``og:description``, ``og:url``,
+   ``article:published_time``, ``article:modified_time``, ``twitter:title``
+   and ``twitter:description``, and the ``href`` of the canonical link), which
+   a browser reads as metadata only and which change with each page and
+   release, and the ``href`` of a stylesheet, which check 6 holds to its exact
+   form. So a ``meta`` with ``http-equiv`` in any value fails: ``refresh``,
+   which can send the reader away from the page, before a family page's
+   ``h1`` or in a ``noscript``, ``default-style``, which can select another
+   stylesheet set, and ``content-security-policy``, which can block the
+   stylesheets; so do a ``base``, which changes where every relative link
+   goes, a ``viewport`` or ``charset`` with another value, a ``color-scheme``
+   meta and a ``link`` of another kind. ``tools/test-install-page.py`` fails
+   unless ``HEAD_PIN`` holds exactly what the committed pages carry, with
+   exactly the values that its ``FREE_HEAD_VALUES`` leaves free. A correct new
+   or changed ``meta`` or ``link`` on these pages (a ``theme-color`` meta, say,
+   or another ``og:image``) fails until ``HEAD_PIN`` changes with the pages.
 
 It reads the markup with ``html.parser``. Its readers are not a full HTML5 tree
 builder: they model the open elements as tags nest, void elements, the head's
@@ -361,7 +410,12 @@ its own size or place in the flow (``.fresh { margin-bottom: 300vh; }`` on
 ``p.meta`` moves the "Pick your AI" label and the family links 3 screen
 heights down): neither pin reaches it, so a rule for its class need not be
 pinned, and only the whole-file pin of ``tools/check-baseline-pin.py``
-refuses that change to a stylesheet. The test reads
+refuses that change to a stylesheet. Check 8 does not read the attributes of
+such a box either, so a presentation attribute that sizes it with no
+stylesheet, such as ``height`` on the rail's ``img``, passes. Check 8 reads
+classes and attributes, not tags, so an element with neither around a checked
+element passes: a ``marquee`` around a checked element, which a browser
+scrolls in and out of view, passes. The test reads
 comments and strings as CSS does, a backslash in a string escaping the
 character after it, so a brace in either delimits no rule, and a bracket, a
 comma or a class name in a string counts for no selector. It refuses a
@@ -387,8 +441,9 @@ whitespace, U+0000 or in ``ZERO_WIDTH`` (such as U+034F, U+115F, U+180E,
 U+2061 to U+2064, U+3164, a variation selector or a tag character) passes the
 visible-text check, which all 5 share. A ``bdo`` or a ``dir`` on an element
 that starts after the paragraph of family links ends on ``/install/``, or
-after the ``h1`` ends on a family page (``Scope``'s label, ``p.verified``, a
-step list or a link back, say), passes, and so does a ``bdi``, which carries
+after the ``h1`` ends on a family page, and that is neither a checked
+element, an ancestor of 1 nor an element 1 holds, whose attributes check 8
+pins (``Scope``'s label, say), passes, and so does a ``bdi``, which carries
 no ``dir`` but sets its text's direction from its first strong letter (a
 family link label in a ``bdi``, say). The gate applies no stylesheet; a
 rule that sets ``direction`` or ``unicode-bidi`` on a checked element or an
@@ -451,7 +506,8 @@ which runs the gate without the suite.
 Exit codes:
   0  every check above passes
   1  a family link, family page, id, retired attribute, inline code, asset token, stylesheet, class pin, pinned
-     attribute, html or body attribute, doctype, or header discipline regressed
+     attribute, attribute pin, html or body attribute, doctype, header, redirect, or meta, link or base discipline
+     regressed
   3  a file could not be read, a gate it reuses is missing, or the Python version is 3.9 or later and
      either not 3.14 or not one that tools/check-inline-code.py supports
 """
@@ -469,6 +525,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PAGE = REPO_ROOT / "site" / "install" / "index.html"
 HEADERS = REPO_ROOT / "site" / "_headers"
+REDIRECTS = REPO_ROOT / "site" / "_redirects"
 WHERE = "site/install/index.html"
 
 FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
@@ -635,6 +692,68 @@ RULE_ATTRIBUTES = (
     "aria-current", "aria-disabled", "aria-pressed", "data-col-toggles", "data-grp", "data-heat", "data-preset",
     "data-scheme",
 )
+# Check 8: for each kind of checked element, the attributes the 6 committed pages give, by tag, that element (the first
+# map), each of its ancestors (the second) and each element it holds (the third); any other tag there carries no
+# attribute on those pages, so it may carry none. A presentation attribute (color, bgcolor, align, width) or any other
+# attribute there fails, whatever the element. tools/test-install-page.py fails unless these are exactly the sets the
+# committed pages give.
+PIN_ANCESTOR_ATTRS = {"html": ("class", "lang"), "main": ("id",), "div": ("class",)}
+ATTRIBUTE_PIN = {
+    "the hero's h1": ({}, PIN_ANCESTOR_ATTRS, {}),
+    'the "pick" label': ({"p": ("class", "id")}, PIN_ANCESTOR_ATTRS, {}),
+    "the paragraph of family links": ({}, PIN_ANCESTOR_ATTRS, {"a": ("class", "href", "id")}),
+    "a family link": ({"a": ("class", "href", "id")}, PIN_ANCESTOR_ATTRS, {}),
+    "the <h1>": ({}, PIN_ANCESTOR_ATTRS, {}),
+    "a verified line": ({"p": ("class",)}, PIN_ANCESTOR_ATTRS, {}),
+    "a step list": ({"ol": ("class",)}, PIN_ANCESTOR_ATTRS, {"a": ("href",)}),
+    "a step": ({}, {**PIN_ANCESTOR_ATTRS, "ol": ("class",)}, {"a": ("href",)}),
+    "a link back": ({"a": ("class", "href")}, PIN_ANCESTOR_ATTRS, {"span": ("aria-hidden", "class")}),
+}
+# Check 9: the attributes that name what a meta, link or base element is, in this order; the first of them that an
+# element carries, with its value, is the element's key in HEAD_PIN (head_key).
+KEY_ATTRIBUTES = ("charset", "http-equiv", "name", "property", "rel")
+# Check 9: each meta, link and base element that the 6 committed pages carry, by its key, with every attribute it
+# carries and that attribute's value; None where the value is free: the page's own text, address and dates, which a
+# browser reads as metadata only, and the address of a stylesheet, which check 6 holds to its exact form. Every meta,
+# link and base element on the 6 pages must carry exactly the attributes of its key's entry, with those values, so
+# http-equiv in any value, a base, and any other meta or link fail. tools/test-install-page.py fails unless this holds
+# exactly what the committed pages carry, with exactly the values that its FREE_HEAD_VALUES leaves free.
+HEAD_PIN = {
+    ("meta", "charset", "utf-8"): {"charset": "utf-8"},
+    ("meta", "name", "viewport"): {"name": "viewport", "content": "width=device-width, initial-scale=1"},
+    ("meta", "name", "description"): {"name": "description", "content": None},
+    ("meta", "name", "author"): {"name": "author", "content": "Jeff Posluns"},
+    ("link", "rel", "canonical"): {"rel": "canonical", "href": None},
+    ("meta", "property", "og:type"): {"property": "og:type", "content": "website"},
+    ("meta", "property", "og:title"): {"property": "og:title", "content": None},
+    ("meta", "property", "og:description"): {"property": "og:description", "content": None},
+    ("meta", "property", "og:url"): {"property": "og:url", "content": None},
+    ("meta", "property", "og:site_name"): {"property": "og:site_name", "content": "CleanLanguage.ai"},
+    ("meta", "property", "og:image"): {
+        "property": "og:image", "content": "https://cleanlanguage.ai/images/cleanlanguage-card.png"},
+    ("meta", "property", "og:image:alt"): {
+        "property": "og:image:alt",
+        "content": "CleanLanguage.ai: Precise, direct, natural AI writing. A skill you install once, anywhere."},
+    ("meta", "property", "article:published_time"): {"property": "article:published_time", "content": None},
+    ("meta", "property", "article:modified_time"): {"property": "article:modified_time", "content": None},
+    ("meta", "property", "article:author"): {
+        "property": "article:author", "content": "https://linkedin.com/in/jposluns"},
+    ("meta", "name", "twitter:card"): {"name": "twitter:card", "content": "summary_large_image"},
+    ("meta", "name", "twitter:title"): {"name": "twitter:title", "content": None},
+    ("meta", "name", "twitter:description"): {"name": "twitter:description", "content": None},
+    ("meta", "name", "twitter:image"): {
+        "name": "twitter:image", "content": "https://cleanlanguage.ai/images/cleanlanguage-card.png"},
+    ("meta", "name", "twitter:image:alt"): {
+        "name": "twitter:image:alt",
+        "content": "CleanLanguage.ai: Precise, direct, natural AI writing. A skill you install once, anywhere."},
+    ("link", "rel", "icon"): {
+        "rel": "icon", "href": "/assets/baseline/logos/cleanlanguage-favicon.svg", "type": "image/svg+xml"},
+    ("link", "rel", "apple-touch-icon"): {
+        "rel": "apple-touch-icon", "href": "/assets/baseline/logos/cleanlanguage-touch.png"},
+    ("link", "rel", "stylesheet"): {"rel": "stylesheet", "href": None},
+}
+# Check 9: a meta, link or base start tag, as a text match finds it, a tag in a comment or in text included.
+HEAD_TAG_TEXT = re.compile(r"<(?:meta|link|base)\b[^>]*>", re.I)
 
 
 def class_names(attrs: dict[str, str]) -> list[str]:
@@ -758,12 +877,12 @@ class PageParser(HTMLParser):
                 "inert": inert,
             }
             self.anchors.append(anchor)
-        # "dir" records a bdo element or a dir attribute on the element itself, shown or hidden (reorderers), and
-        # "attrs" the names of its attributes (check 8).
+        # "dir" records a bdo element or a dir attribute on the element itself, shown or hidden (reorderers), "attrs"
+        # the names of its attributes (check 8), and "values" its attributes with their values (check 9).
         self.elements.append(
             {"tag": tag, "classes": classes, "id": attrs.get("id"), "hidden": hiding, "order": self.order,
              "parent": parent["order"] if parent else None, "text": False, "chars": "", "bidi": False,
-             "dir": tag == "bdo" or "dir" in attrs, "attrs": tuple(attrs)}
+             "dir": tag == "bdo" or "dir" in attrs, "attrs": tuple(attrs), "values": attrs}
         )
         heading = None
         if tag == "h1":
@@ -994,7 +1113,7 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
     for tag in parser.later_attrs:
         problems.append(f"{where}: a later html or body start tag carries attributes ({tag}), which a browser adds to "
                         "the page's own element, around every checked element.")
-    return problems
+    return problems + head_problems(where, text, parser)
 
 
 def reorderers(where: str, parser: PageParser, last: dict, what: str) -> list[str]:
@@ -1071,12 +1190,14 @@ def pin_positions(parser: PageParser, element: dict) -> list[tuple[int, dict]]:
 
 
 def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, dict]]) -> list[str]:
-    """Check 8: each class that a checked element, an ancestor or an element it holds carries outside CLASS_PIN, and
-    each attribute of RULE_ATTRIBUTES that one of them carries."""
+    """Check 8: each class that a checked element, an ancestor or an element it holds carries outside CLASS_PIN, each
+    attribute of RULE_ATTRIBUTES that one of them carries, and each other attribute that one of them carries outside
+    ATTRIBUTE_PIN."""
     problems: dict[str, None] = {}
     for kind, element in kinds:
         for position, other in pin_positions(parser, element):
             allowed = CLASS_PIN[kind][position].get(other["tag"], ())
+            given = ATTRIBUTE_PIN[kind][position].get(other["tag"], ())
             tag = ("an " if other["tag"][:1] in "aeiou" else "a ") + other["tag"]
             what = (kind, f"{tag} around {kind}", f"{tag} inside {kind}")[position]
             for name in other["classes"]:
@@ -1087,7 +1208,68 @@ def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, di
                 if name in RULE_ATTRIBUTES:
                     problems[f"{where}: {what} carries the attribute {name!r}, which a pinned stylesheet rule names "
                              f"(RULE_ATTRIBUTES); that rule can hide or move {kind}."] = None
+                elif name not in given:
+                    problems[f"{where}: {what} carries the attribute {name!r}, which the committed pages do not give "
+                             f"{tag} there (ATTRIBUTE_PIN); a browser can hide, colour or move {kind} by it."] = None
     return list(problems)
+
+
+def head_key(tag: str, values: dict[str, str]) -> tuple[str, str | None, str | None]:
+    """Check 9: the key of a meta, link or base element in HEAD_PIN: its tag, and the first of KEY_ATTRIBUTES that it
+    carries, with that attribute's value (None and None if it carries none)."""
+    name = next((name for name in KEY_ATTRIBUTES if name in values), None)
+    return (tag, name, values[name] if name else None)
+
+
+class TagReader(HTMLParser):
+    """Check 9: the start tags of a fragment, each with its attributes, the first of 2 with the same name counting."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tags: list[tuple[str, dict[str, str]]] = []
+
+    def handle_starttag(self, tag: str, attrs_list) -> None:
+        attrs: dict[str, str] = {}
+        for k, v in attrs_list:
+            attrs.setdefault(k.lower(), v if v is not None else "")
+        self.tags.append((tag, attrs))
+
+    def handle_startendtag(self, tag: str, attrs_list) -> None:
+        self.handle_starttag(tag, attrs_list)
+
+
+def head_problems(where: str, text: str, parser: PageParser) -> list[str]:
+    """Check 9: each meta, link and base element on the page, at any depth, shown or hidden, and each meta, link and
+    base start tag that a text match finds, a tag in a comment or in text included, that does not carry exactly the
+    attributes of its key's entry in HEAD_PIN, with the values that entry gives."""
+    tags = [(element["tag"], element["values"]) for element in parser.elements
+            if element["tag"] in ("meta", "link", "base")]
+    for match in HEAD_TAG_TEXT.finditer(text):
+        reader = TagReader()
+        reader.feed(match.group(0))
+        reader.close()
+        tags += reader.tags
+    problems: dict[str, None] = {}
+    for tag, values in tags:
+        pinned = HEAD_PIN.get(head_key(tag, values))
+        if pinned is None or set(values) != set(pinned) or any(
+                value is not None and values[name] != value for name, value in pinned.items()):
+            shown = "".join(f' {name}="{value}"' for name, value in values.items())
+            problems[f"{where}: <{tag}{shown}> is not 1 of the meta, link and base elements that the committed pages "
+                     "carry, with their attributes and values (HEAD_PIN); another can send the reader away from the "
+                     "page, replace its content or hide it."] = None
+    return list(problems)
+
+
+def redirect_problems(redirects: str) -> list[str]:
+    """Check 7: each rule of site/_redirects whose source can match an install page, read with reaches_install."""
+    problems: list[str] = []
+    for number, line in enumerate(redirects.splitlines(), 1):
+        fields = line.split()
+        if fields and not fields[0].startswith("#") and reaches_install(fields[0]):
+            problems.append(f"site/_redirects line {number} has the source {fields[0]}, which can match an install "
+                            "page; a rule there can send the reader away from the page or serve other content.")
+    return problems
 
 
 def page_tag_problems(where: str, parser: PageParser, kinds: list[tuple[str, dict]]) -> list[str]:
@@ -1358,20 +1540,21 @@ def main() -> int:
         supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
         die(f"runs only on Python {supported}, the version it is tested on; "
             f"this is Python {sys.version_info[0]}.{sys.version_info[1]}")
-    for path in (PAGE, *FAMILY_PAGES.values(), HEADERS):
+    for path in (PAGE, *FAMILY_PAGES.values(), HEADERS, REDIRECTS):
         if not path.is_file():
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
     try:
         page_text = PAGE.read_text(encoding="utf-8")
         family_texts = {fam: path.read_text(encoding="utf-8") for fam, path in FAMILY_PAGES.items()}
         headers = HEADERS.read_text(encoding="utf-8")
+        redirects = REDIRECTS.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         die(f"a file could not be read: {error}")
 
     problems = check_install_page(page_text)
     for fam in FAMILIES:
         problems += check_family_page(fam, family_texts[fam])
-    problems += check_headers(headers)
+    problems += check_headers(headers) + redirect_problems(redirects)
 
     if problems:
         print("Install page problems found:")
@@ -1392,8 +1575,10 @@ def main() -> int:
         "line and a step list, each step "
         "list with a step read as visible, none of them read as hidden, and a link with text read as visible back "
         "to the downloads and to the test; ids "
-        "are unique, every checked element, its ancestors and what it holds carry only the classes the committed "
-        "pages give them there and no attribute that a pinned stylesheet rule names, no html or body start tag on "
+        "are unique, every checked element, its ancestors and what it holds carry only the classes and attributes the "
+        "committed pages give them there and no attribute that a pinned stylesheet rule names, every meta, link and "
+        "base element on the six pages is one the committed pages carry, with its attributes and values, no html or "
+        "body start tag on "
         "the six pages carries dir, and none carries an attribute unless it is the first of each and an ancestor of "
         "every checked element, each page begins with the doctype, no retired selector attribute "
         "remains, the six pages pass the inline-code checks, the "
@@ -1401,7 +1586,7 @@ def main() -> int:
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
         "the /* rule of site/_headers carries exactly the shared policy, no rule there sets a Link header, and no "
         "rule that can match an install page sets or detaches any header but those of INSTALL_HEADERS, with their "
-        "values."
+        "values, and no rule of site/_redirects has a source that can match an install page."
     )
     return 0
 

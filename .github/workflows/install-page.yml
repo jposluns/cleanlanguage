@@ -10,6 +10,7 @@ on:
     paths:
       - "site/install/**"
       - "site/_headers"
+      - "site/_redirects"
       - "site/assets/baseline/*.css"
       - "tools/check-install-page.py"
       - "tools/check-headers.py"
@@ -25,6 +26,7 @@ on:
     paths:
       - "site/install/**"
       - "site/_headers"
+      - "site/_redirects"
       - "site/assets/baseline/*.css"
       - "tools/check-install-page.py"
       - "tools/check-headers.py"

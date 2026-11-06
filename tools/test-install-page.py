@@ -2,13 +2,13 @@
 """Tests for tools/check-install-page.py: the install pages' contract and the site-wide policy.
 
 Each case copies the gate and the files it reads into a temporary repository
-(under $TMPDIR), applies 1 fault to the install page, a family page, or
-site/_headers, runs the gate there as a separate process and asserts its exit
-code and, where a case gives them as (code, words), that its output holds those
-words, so that a crash, which also exits 1, does not pass for a refusal. 1 more
-check asserts that the gate's docstring names exactly the scripts
-in ``ALLOWED_SCRIPTS``. Exit 0 when every case passes; 1 otherwise, naming
-each failing case.
+(under $TMPDIR), applies 1 fault to the install page, a family page,
+site/_headers or site/_redirects, runs the gate there as a separate process
+and asserts its exit code and, where a case gives them as (code, words), that
+its output holds those words, so that a crash, which also exits 1, does not
+pass for a refusal. 1 more check asserts that the gate's docstring names
+exactly the scripts in ``ALLOWED_SCRIPTS``. Exit 0 when every case passes; 1
+otherwise, naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 hides or empties what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code
@@ -24,7 +24,14 @@ name with its strings blanked, so that the gate cannot drop one unnoticed,
 and unless the gate's INSTALL_HEADERS (check 7) holds exactly the headers
 and values that the committed site/_headers sets under each URL pattern that
 the gate's reaches_install() reads as able to match an install page, so that
-the header pin cannot be widened unnoticed.
+the header pin cannot be widened unnoticed. It also fails unless the gate's
+ATTRIBUTE_PIN (check 8) holds exactly the attributes that the 6 committed
+pages give each kind of checked element, each of its ancestors and each
+element it holds, by tag, and unless the gate's HEAD_PIN (check 9) holds
+exactly the meta, link and base elements that the 6 committed pages carry, by
+the gate's head_key(), each with its attributes and their values, None only
+where FREE_HEAD_VALUES below leaves a value free, so that neither pin can be
+widened unnoticed.
 
 It also pins the stylesheets every install page loads (fonts.css,
 palettes.css and baseline.css under site/assets/baseline/): it fails unless
@@ -128,7 +135,24 @@ GEMINI = "site/install/gemini/index.html"
 COPILOT = "site/install/copilot/index.html"
 OTHER = "site/install/other-ai/index.html"
 HEADERS = "site/_headers"
-FILES = [PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER, HEADERS, "tools/check-headers.py", "tools/check-inline-code.py"]
+REDIRECTS = "site/_redirects"
+FILES = [PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER, HEADERS, REDIRECTS, "tools/check-headers.py",
+         "tools/check-inline-code.py"]
+# The meta and link elements, by the gate's head_key(), whose attribute here the gate's HEAD_PIN leaves free (None):
+# the page's own text, address and dates, which a browser reads as metadata only and which change with each page and
+# release, and the address of a stylesheet, which check 6 holds to its exact form. Any other value is pinned.
+FREE_HEAD_VALUES = {
+    ("meta", "name", "description"): "content",
+    ("link", "rel", "canonical"): "href",
+    ("meta", "property", "og:title"): "content",
+    ("meta", "property", "og:description"): "content",
+    ("meta", "property", "og:url"): "content",
+    ("meta", "property", "article:published_time"): "content",
+    ("meta", "property", "article:modified_time"): "content",
+    ("meta", "name", "twitter:title"): "content",
+    ("meta", "name", "twitter:description"): "content",
+    ("link", "rel", "stylesheet"): "href",
+}
 SHARED_CSP = (
     "default-src 'none'; script-src 'self' 'unsafe-inline' https://ajax.cloudflare.com "
     "https://static.cloudflareinsights.com; connect-src 'self' https://cloudflareinsights.com; "
@@ -173,6 +197,12 @@ NOT_ANCESTOR = "an html or body start tag that is not an ancestor of every check
 NO_DOCTYPE = "the page does not begin with <!doctype html>"
 LINK_SET = "sets a Link header"
 INSTALL_HEADER = "which can match an install page"
+# The gate's messages for an attribute outside its ATTRIBUTE_PIN, a meta, link or base element outside its HEAD_PIN,
+# and a rule of site/_redirects whose source can match an install page.
+GIVEN = "which the committed pages do not give"
+HEAD_PINNED = "(HEAD_PIN)"
+REDIRECT = "which can match an install page; a rule there can send the reader away"
+REFRESH = '<meta http-equiv="refresh" content="0; url=/">'
 DOCTYPE = "<!doctype html>\n"
 HTML = '<html lang="en" class="site-cleanlanguage">\n'
 # The scheme.js tag of template specification 7.33 (baseline 1.8.0), as the committed pages carry it.
@@ -734,8 +764,39 @@ CASES = [
     ("a family link whose label is in a span with data-preset",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", '><span data-preset="x">Claude</span><')),
         (1, "a span inside a family link carries the attribute 'data-preset', " + RULE_NAMED)),
+    # Nor any other attribute that the committed pages do not give that element there (the gate's ATTRIBUTE_PIN): a
+    # presentation attribute can colour, size or move it with no stylesheet change, whatever element carries it.
     ("a family page heading with an attribute no pinned rule names",
-        edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1 data-note="x">ChatGPT</h1>'), 0),
+        edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1 data-note="x">ChatGPT</h1>'),
+        (1, "the <h1> carries the attribute 'data-note', " + GIVEN)),
+    ("a family page heading in a font with the light background colour",
+        wrap(CHATGPT, "<h1>", "</h1>", '<font color="#f6f4e7">', "</font>"),
+        (1, "a font around the <h1> carries the attribute 'color', " + GIVEN)),
+    ("a family page heading in a font with no attribute", wrap(CHATGPT, "<h1>", "</h1>", "<font>", "</font>"), 0),
+    ("the body with bgcolor around a family page heading", edit(GEMINI, "<body>", '<body bgcolor="#f6f4e7">'),
+        (1, "a body around the <h1> carries the attribute 'bgcolor', " + GIVEN)),
+    ("div.doc with bgcolor around the hero's h1", edit(PAGE, '<div class="doc">', '<div class="doc" bgcolor="#000">'),
+        (1, "a div around the hero's h1 carries the attribute 'bgcolor', " + GIVEN)),
+    ("the pick label with align", edit(PAGE, PICK, PICK.replace('id="pick"', 'id="pick" align="right"')),
+        (1, "the \"pick\" label carries the attribute 'align', " + GIVEN)),
+    ("a family link with a title", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace('id="claude"', 'id="claude" title="x"')),
+        (1, "a family link carries the attribute 'title', " + GIVEN)),
+    ("a family page step list in a table with a width",
+        wrap(COPILOT, STEPS, "</ol>", '<table width="1"><tr><td>', "</td></tr></table>"),
+        (1, "a table around a step list carries the attribute 'width', " + GIVEN)),
+    ("a family page link back with a target",
+        edit(CHATGPT, '<a class="start" href="/install/#test">', '<a class="start" href="/install/#test" target="_x">'),
+        (1, "a link back carries the attribute 'target', " + GIVEN)),
+    ("a family page step with a link to the downloads with an id",
+        edit(OTHER, '<a href="/instructions/">instructions page', '<a href="/instructions/" id="fresh">instructions page'),
+        (1, "an a inside a step carries the attribute 'id', " + GIVEN)),
+    # Until this change these were named residuals: a hidden step, and a dir on a verified line, which a browser can
+    # show in another order, passed; each is now an attribute that the committed pages do not give that element.
+    ("a family page with 1 setup step hidden", edit(OTHER, STEPS + "<li>", STEPS + "<li hidden>"),
+        (1, "a step carries the attribute 'hidden', " + GIVEN)),
+    ("a family page with a dir attribute on its verified line",
+        edit(CHATGPT, '<p class="verified">', '<p class="verified" dir="ltr">'),
+        (1, "a verified line carries the attribute 'dir', " + GIVEN)),
     ("a family page step list hidden", edit(OTHER, '<ol class="steps">', '<ol class="steps" hidden>'), 1),
     ("a family page step list with the class vh", edit(CHATGPT, '<ol class="steps">', '<ol class="steps vh">'), 1),
     ("a family page step list with the class only-dark", edit(COPILOT, '<ol class="steps">', '<ol class="steps only-dark">'), 1),
@@ -782,7 +843,8 @@ CASES = [
         edit(CHATGPT, "<h1>ChatGPT</h1>", f"<h1>ChatGPT{chr(code)}</h1>"), (1, "holds a bidi control"))
         for code in (0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A))],
     ("a family page heading naming its family beside a bidi control in a hidden span",
-        edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>ChatGPT<span hidden>" + chr(0x202E) + "</span></h1>"), 0),
+        edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>ChatGPT<span hidden>" + chr(0x202E) + "</span></h1>"),
+        (1, "a span inside the <h1> carries the attribute 'hidden', " + GIVEN)),
     # A bdo or a dir attribute can reorder the letters too: <bdo dir="rtl">GPT</bdo> shows "TPG".
     ("a family page heading whose name a bdo reverses in part",
         edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>Chat<bdo dir="rtl">GPT</bdo></h1>'), (1, "holds a bdo element or a dir")),
@@ -816,10 +878,12 @@ CASES = [
     ("the button row inside a noscript", wrap(PAGE, ROW, ROW_END, "<noscript>", "</noscript>"), 1),
     ("the button row inside an rp", wrap(PAGE, ROW, ROW_END, "<rp>", "</rp>"), 1),
     ("the button row inside a title", wrap(PAGE, ROW, ROW_END, "<title>", "</title>"), 1),
-    ("the button row with data-popover", edit(PAGE, ROW, '<p data-popover><a class="btn inline" id="claude"'), 0),
+    ("the button row with data-popover", edit(PAGE, ROW, '<p data-popover><a class="btn inline" id="claude"'),
+        (1, "the paragraph of family links carries the attribute 'data-popover', " + GIVEN)),
     # The pin refuses a dialog around the whole row, so the label of 1 link sits in it.
     ("a family link whose label is in an open dialog",
-        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><dialog open>Claude</dialog><")), 0),
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><dialog open>Claude</dialog><")),
+        (1, "a dialog inside a family link carries the attribute 'open', " + GIVEN)),
     ("a family page heading with popover", edit(CLAUDE, "<h1>", '<h1 popover="manual">'), 1),
     ("a family page heading inside a dialog without open", wrap(CHATGPT, "<h1>", "</h1>", "<dialog>", "</dialog>"), 1),
     ("a family page heading inside a closed details", wrap(GEMINI, "<h1>", "</h1>", "<details>", "</details>"), 1),
@@ -831,7 +895,8 @@ CASES = [
         wrap(GEMINI, "<h1>", "</h1>", "<details><summary>", "</summary><p>More</p></details>"), 0),
     ("a family page heading after the summary of a closed details",
         wrap(COPILOT, "<h1>", "</h1>", "<details><summary>More</summary>", "</details>"), 1),
-    ("a family page heading inside an open dialog", wrap(OTHER, "<h1>", "</h1>", '<dialog open="">', "</dialog>"), 0),
+    ("a family page heading inside an open dialog", wrap(OTHER, "<h1>", "</h1>", '<dialog open="">', "</dialog>"),
+        (1, "a dialog around the <h1> carries the attribute 'open', " + GIVEN)),
     ("a family page step list with popover", edit(OTHER, STEPS, '<ol class="steps" popover>'), 1),
     ("a family page step list inside a dialog without open", wrap(OTHER, STEPS, "</ol>", "<dialog>", "</dialog>"), 1),
     ("a family page step list inside a closed details",
@@ -843,8 +908,10 @@ CASES = [
     ("a family page step list inside a template", wrap(OTHER, STEPS, "</ol>", "<template>", "</template>"), 1),
     ("a family page step list hidden until found", edit(OTHER, STEPS, '<ol class="steps" hidden="until-found">'), 1),
     ("a family page step list inside an open details",
-        wrap(OTHER, STEPS, "</ol>", "<details open><summary>Steps</summary>", "</details>"), 0),
-    ("a family page step list with data-popover", edit(OTHER, STEPS, '<ol class="steps" data-popover="auto">'), 0),
+        wrap(OTHER, STEPS, "</ol>", "<details open><summary>Steps</summary>", "</details>"),
+        (1, "a details around a step list carries the attribute 'open', " + GIVEN)),
+    ("a family page step list with data-popover", edit(OTHER, STEPS, '<ol class="steps" data-popover="auto">'),
+        (1, "a step list carries the attribute 'data-popover', " + GIVEN)),
     # A browser ignores "/>" on an element that is not void, so each of these stays open and hides what follows.
     ("the button row after <div hidden/>", edit(PAGE, ROW, "<div hidden/>" + ROW), 1),
     ('the button row after <div class="vh"/>', edit(PAGE, ROW, '<div class="vh"/>' + ROW), 1),
@@ -1046,6 +1113,52 @@ CASES = [
     ("a Refresh header on the sitemap only", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Refresh: 0; url=/\n"), 0),
     ("a Refresh header on a download only, under a full URL",
         append(HEADERS, "\nhttps://cleanlanguage.ai/downloads/cleanlanguage.md\n  Refresh: 0; url=/\n"), 0),
+    # No rule of site/_redirects may have a source that can match an install page, read as reaches_install reads a
+    # pattern of site/_headers: a redirect sends the reader away, and a rewrite (200) serves other content there.
+    ("a redirect from every install page to the home page", append(REDIRECTS, "/install/* / 302\n"),
+        (1, "site/_redirects line 11 has the source /install/*, " + REDIRECT)),
+    ("a rewrite of a family page to the home page", append(REDIRECTS, "/install/claude/ / 200\n"), (1, REDIRECT)),
+    ("a redirect under a placeholder", append(REDIRECTS, "/:page/* / 301\n"), (1, REDIRECT)),
+    ("a redirect from /INSTALL to the home page, indented", append(REDIRECTS, "  /INSTALL / 302\n"), (1, REDIRECT)),
+    ("a redirect from every page", edit(REDIRECTS, "/claude/download ", "/* / 302\n/claude/download "), (1, REDIRECT)),
+    ("a redirect between 2 downloads", append(REDIRECTS, "/downloads/old.md /downloads/cleanlanguage.md 301\n"), 0),
+    ("a redirect from the install pages only in a comment", append(REDIRECTS, "# /install/* / 302\n"), 0),
+    ("the redirects file missing", remove(REDIRECTS), 3),
+    # Every meta, link and base element on the 6 pages, at any depth, shown or hidden, and every such start tag that a
+    # text match finds, is 1 that the committed pages carry, with its attributes and values (the gate's HEAD_PIN).
+    ("a meta refresh before a family page heading", edit(CHATGPT, "<h1>ChatGPT</h1>", REFRESH + "<h1>ChatGPT</h1>"),
+        (1, "site/install/chatgpt/index.html: " + REFRESH + " is not 1 of the meta, link and base elements")),
+    ("a meta refresh in the head of the install page", edit(PAGE, "</head>", REFRESH + "\n</head>"), (1, HEAD_PINNED)),
+    ("a meta refresh in a noscript", edit(CLAUDE, "</head>", "<noscript>" + REFRESH + "</noscript>\n</head>"),
+        (1, HEAD_PINNED)),
+    ("a meta refresh only in a comment", edit(COPILOT, "</head>", "<!--" + REFRESH + "-->\n</head>"), (1, HEAD_PINNED)),
+    ("a meta refresh in capitals", edit(OTHER, "</head>", '<META HTTP-EQUIV="Refresh" CONTENT="0; URL=/">\n</head>'),
+        (1, HEAD_PINNED)),
+    ("a meta charset that also carries http-equiv refresh", edit(GEMINI, '<meta charset="utf-8">',
+        '<meta charset="utf-8" http-equiv="refresh" content="0; url=/">'), (1, HEAD_PINNED)),
+    # The text match stops at the quoted ">", so only the parsed element shows this meta's http-equiv.
+    ("a meta refresh behind a quoted greater-than sign", edit(CLAUDE, '<meta charset="utf-8">',
+        '<meta charset="utf-8" title=">" http-equiv="refresh" content="0; url=/">'), (1, HEAD_PINNED)),
+    ("a meta http-equiv default-style on a family page", edit(GEMINI, "</head>",
+        '<meta http-equiv="default-style" content="print">\n</head>'), (1, HEAD_PINNED)),
+    ("a meta http-equiv content-security-policy on the install page", edit(PAGE, "</head>",
+        '<meta http-equiv="content-security-policy" content="style-src \'none\'">\n</head>'), (1, HEAD_PINNED)),
+    ("a base on a family page", edit(CLAUDE, "</head>", '<base href="/">\n</head>'),
+        (1, '<base href="/"> is not 1 of the meta, link and base elements')),
+    ("a viewport with another value", edit(COPILOT, "width=device-width, initial-scale=1", "width=4000"),
+        (1, HEAD_PINNED)),
+    ("a meta charset with another value", edit(OTHER, '<meta charset="utf-8">', '<meta charset="windows-1252">'),
+        (1, HEAD_PINNED)),
+    ("a meta color-scheme on the install page", edit(PAGE, "</head>", '<meta name="color-scheme" content="dark">\n</head>'),
+        (1, HEAD_PINNED)),
+    ("a link that preloads the home page", edit(CHATGPT, "</head>", '<link rel="prerender" href="/">\n</head>'),
+        (1, HEAD_PINNED)),
+    ("an icon with a further attribute", edit(PAGE, 'type="image/svg+xml">', 'type="image/svg+xml" sizes="any">'),
+        (1, HEAD_PINNED)),
+    ("a family page with another description and modified date", both(
+        edit(GEMINI, '<meta name="description" content="', '<meta name="description" content="New. '),
+        edit(GEMINI, '<meta property="article:modified_time" content="2026-11-03">',
+             '<meta property="article:modified_time" content="2026-12-01">')), 0),
 ]
 # Faults the gate passes, and the words of the gate's docstring that name each (compared with runs of whitespace
 # read as 1 space).
@@ -1070,22 +1183,26 @@ RESIDUALS = [
         "a link back to the downloads or the test made only of an invisible character"),
     ("a family page with an empty verified line", edit(GEMINI, '<p class="verified">', '<p class="verified"></p><p>'),
         "an empty ``p.verified``"),
-    ("a family page with 1 setup step hidden", edit(OTHER, STEPS + "<li>", STEPS + "<li hidden>"), "not its steps or their wording"),
     ("a family page with 1 setup step dropped",
         edit(OTHER, STEPS + '<li><span>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</span></li>', STEPS),
         "not its steps or their wording"),
-    # A bdo or a dir after the button row, or after a family page's h1, passes, as does a bdi.
+    # A bdo or a dir after the button row, or after a family page's h1, on an element that is not checked, an ancestor
+    # or an element 1 holds, passes, as does a bdi.
     ("a dir attribute on the label after the button row", edit(PAGE, SCOPE, SCOPE.replace('">', '" dir="rtl">')),
-        "``Scope``'s label, ``p.verified``, a step list or a link back"),
-    ("a family page with a dir attribute outside its heading",
-        edit(CHATGPT, '<p class="verified">', '<p class="verified" dir="ltr">'),
-        "``Scope``'s label, ``p.verified``, a step list or a link back"),
+        "(``Scope``'s label, say)"),
+    ("a family page with a dir attribute on a label after its heading", edit(CHATGPT,
+        '<p class="lbl accent blk">Team', '<p class="lbl accent blk" dir="rtl">Team'), "(``Scope``'s label, say)"),
     ("a family link label in a bdi", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><bdi>Claude</bdi><")),
         "a family link label in a ``bdi``"),
     # A box that is neither a checked element, an ancestor nor an element it holds can cover or move 1, so neither pin
-    # reaches a class on it.
+    # reaches a class or an attribute on it.
     ("p.meta with a further class", edit(PAGE, '<p class="meta">', '<p class="meta fresh">'),
         "``.fresh { margin-bottom: 300vh; }`` on ``p.meta``"),
+    ("the rail's img with a height", edit(PAGE, '<div class="rail"><img ', '<div class="rail"><img height="3000" '),
+        "``height`` on the rail's ``img``"),
+    # The pins read classes and attributes, not tags: an element with neither around a checked element passes.
+    ("a family page heading in a marquee", wrap(CHATGPT, "<h1>", "</h1>", "<marquee>", "</marquee>"),
+        "a ``marquee`` around a checked element"),
 ]
 # Faults to a copy of STYLESHEETS and PIN_FILE for stylesheet_problems(), the comparison of the committed stylesheets
 # with RULE_PIN, and the words that its problems must hold, each in 1 of them; none for none. Each rule is named as
@@ -1444,27 +1561,54 @@ def diff_problems(pin: list[str], held: list[tuple[str, str]]) -> list[str]:
     return problems
 
 
-def class_pin_problems() -> list[str]:
-    """The gate's CLASS_PIN holds, for each kind, exactly the classes the committed pages give that checked element,
-    each of its ancestors and each element it holds, by tag, so that the pin cannot be widened unnoticed."""
+def class_pin_problems(pin: str = "CLASS_PIN", field: str = "classes") -> list[str]:
+    """The gate's CLASS_PIN (or ATTRIBUTE_PIN, with field "attrs") holds, for each kind, exactly the classes (or the
+    attributes) the committed pages give that checked element, each of its ancestors and each element it holds, by
+    tag, so that the pin cannot be widened unnoticed."""
     try:
         gate = load_gate()
-        found = {kind: ({}, {}, {}) for kind in gate.CLASS_PIN}
+        found = {kind: ({}, {}, {}) for kind in getattr(gate, pin)}
         for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
             parser = gate.parse((REPO_ROOT / relative).read_text(encoding="utf-8"))
             for kind, element in (gate.install_kinds if relative == PAGE else gate.family_kinds)(parser):
                 for position, other in gate.pin_positions(parser, element):
-                    if other["classes"]:
-                        found[kind][position].setdefault(other["tag"], set()).update(other["classes"])
+                    if other[field]:
+                        found[kind][position].setdefault(other["tag"], set()).update(other[field])
     except Exception as error:
-        return [f"CLASS_PIN of tools/{GATE.name} could not be checked: {error!r}"]
+        return [f"{pin} of tools/{GATE.name} could not be checked: {error!r}"]
     problems: list[str] = []
-    for kind, maps in gate.CLASS_PIN.items():
+    for kind, maps in getattr(gate, pin).items():
         recorded = tuple({tag: set(names) for tag, names in held.items()} for held in maps)
         if recorded != found[kind]:
-            problems.append(f"CLASS_PIN of tools/{GATE.name} gives {kind} {recorded}; the committed pages give "
+            problems.append(f"{pin} of tools/{GATE.name} gives {kind} {recorded}; the committed pages give "
                             f"{found[kind]}.")
     return problems
+
+
+def head_pin_problems() -> list[str]:
+    """The gate's HEAD_PIN holds exactly the meta, link and base elements that the committed pages carry, by the
+    gate's head_key(), each with every attribute it carries and that attribute's value, None only where
+    FREE_HEAD_VALUES leaves it free, so that the pin cannot be widened unnoticed; the elements of 1 key carry the same
+    attributes, with the same values where they are not free."""
+    try:
+        gate = load_gate()
+        found: dict = {}
+        problems: list[str] = []
+        for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
+            for element in gate.parse((REPO_ROOT / relative).read_text(encoding="utf-8")).elements:
+                if element["tag"] not in ("meta", "link", "base"):
+                    continue
+                key = gate.head_key(element["tag"], element["values"])
+                free = FREE_HEAD_VALUES.get(key)
+                values = {name: None if name == free else value for name, value in element["values"].items()}
+                if found.setdefault(key, values) != values:
+                    problems.append(f"{relative} carries {key} as {values}, another page as {found[key]}.")
+    except Exception as error:
+        return [f"HEAD_PIN of tools/{GATE.name} could not be checked: {error!r}"]
+    if gate.HEAD_PIN != found:
+        problems.append(f"HEAD_PIN of tools/{GATE.name} holds {gate.HEAD_PIN}; the committed pages carry {found}.")
+    return problems + [f"FREE_HEAD_VALUES names {key}, which no committed page carries."
+                       for key in FREE_HEAD_VALUES if key not in found]
 
 
 def rule_attributes(held: list[tuple[str, str]]) -> set[str]:
@@ -1579,6 +1723,8 @@ def main() -> int:
         return 1 if problems else 0
     failures: list[str] = statement_problems()
     failures += [f"the class pin: {problem}" for problem in class_pin_problems()]
+    failures += [f"the attribute pin: {problem}" for problem in class_pin_problems("ATTRIBUTE_PIN", "attrs")]
+    failures += [f"the head pin: {problem}" for problem in head_pin_problems()]
     failures += [f"the pinned attributes: {problem}" for problem in attribute_pin_problems()]
     failures += [f"the pinned headers: {problem}" for problem in header_pin_problems()]
     failures += [f"the stylesheets: {problem}"
@@ -1604,7 +1750,8 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
     print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
-          f"ALLOWED_SCRIPTS, the checks of CLASS_PIN, RULE_ATTRIBUTES and INSTALL_HEADERS, the Python version checks, the "
+          f"ALLOWED_SCRIPTS, the checks of CLASS_PIN, ATTRIBUTE_PIN, HEAD_PIN, RULE_ATTRIBUTES and INSTALL_HEADERS, the "
+          f"Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "
           "stylesheets passed.")
