@@ -53,18 +53,20 @@ What it verifies
    ``site-src/pages/verify.html``, to the generator code that renders the
    page, or to what its head loads, that is regenerated passes it, and
    ``tools/test-build-site.py`` pins the whole rendered page in each state
-   (VERIFY_PAGE_PIN) to catch that. The pin holds the page as rendered for a
-   stand-in release (PIN_VERSION, PIN_CHECKSUM) and the stand-in date
-   PIN_DATE, and the same test requires the page this gate renders, for
-   ``release.json`` at the ``modified`` dates in ``site-src/site.json``, to
-   be the pinned rendering of the same state with the stand-in values
-   replaced (check_committed_render). A generator change that renders
-   differently only for release values and dates that neither the stand-in
-   nor the committed state uses passes the pin, that test and, once
-   regenerated, this gate, until a commit sets ``release.json`` or the
-   verify page's ``modified`` date to such a value; the test runs on every
-   pull request and push to ``main`` (``site-draft.yml``), so it fails
-   then. For a
+   (VERIFY_PAGE_PIN), so a change to the page as rendered for the stand-in
+   release fails there. The pin holds the page as rendered for a stand-in
+   release (PIN_VERSION, PIN_CHECKSUM) and the stand-in date PIN_DATE, and
+   the same test requires the page this gate renders, for ``release.json``
+   at the ``modified`` dates in ``site-src/site.json``, and the render for
+   that version with the checksum "a" * 64 and the verify page's
+   ``modified`` date 2099-12-31, to be the pinned rendering of the same
+   state with the stand-in values replaced (check_committed_render). A
+   generator change that renders differently only for sets of release
+   values and date that none of these renders uses passes the pin, that
+   comparison and, once regenerated, this gate, until the committed
+   ``release.json`` and verify page ``modified`` date become a set it
+   renders differently for; the test runs on every pull request and push to
+   ``main`` (``site-draft.yml``), so it fails then. For a
    clear report of what is wrong, the gate also applies the rule that both
    gates carry (download_block_problems): ``tools/build-site.py`` renders the
    page's download block, steps 1 to 3, for the SKILL.md version and the

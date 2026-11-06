@@ -1343,11 +1343,15 @@ def check_verify_page_pin(failures: list[str]) -> int:
     return ran
 
 
-# DISCOVERY round 6, finding 1: both gates only ever compare the committed page with the render for the committed
-# release values at the committed dates, so that render must be the pinned stand-in rendering of the same state with
-# the stand-in values replaced. A generator change that renders differently only for the committed values or dates
-# then fails here; one that renders differently only for values and dates that neither the stand-in nor the
-# committed state uses still passes, until a commit sets release.json or the verify page's modified date to one.
+# DISCOVERY round 6, finding 1: the offline gate compares the committed page with the render for the committed
+# release values at the committed dates, and the live gate with the render at those dates for the values the page
+# shows, which are the committed ones on a page the offline gate passes; so that render must be the pinned stand-in
+# rendering of the same state with the stand-in values replaced. The pin and this comparison render the verify page
+# for 4 sets of release values and date: the stand-in release in each state at PIN_DATE, the committed state at the
+# committed dates, and, in check_committed_render(), the committed version with the checksum "a" * 64 and the verify
+# page's modified date 2099-12-31. A generator change that renders differently for one of these sets fails here; one
+# that renders differently only for other sets passes the pin and this comparison, until the committed release.json
+# and the verify page's modified date become a set it renders differently for (VERIFY round 6.1, finding 1).
 def committed_render_problems(module, root: Path) -> list[str]:
     """The verify page as ``module`` renders it from ``root`` for its site-src/release.json at the modified dates in
     its site-src/site.json, the page both gates require, against the stand-in rendering of the same state, which must

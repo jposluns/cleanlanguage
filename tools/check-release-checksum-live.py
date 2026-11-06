@@ -60,27 +60,38 @@ Behaviour:
     render, so it shows the checksum it was read by in its checksum element,
     and the comparison below holds that checksum to the published one.
   - The equality holds the page to the generator, not the generator to what
-    it should write: a change to ``site-src/pages/verify.html``, to the
+    it should write. A change to ``site-src/pages/verify.html``, to the
     generator code that renders the page, or to what its head loads, made in
-    the sources and regenerated, passes this gate only when the rule above
-    (download_block_problems) misses it, as it misses a second checksum in
-    the page source whose groups are joined by dots. A regenerated form that
-    the rule refuses still exits 3, such as a plain 64 digit hexadecimal
-    value added before the next-page link. ``tools/test-build-site.py`` pins
-    the whole rendered page in each state (VERIFY_PAGE_PIN) and the site's
-    own stylesheet (SITE_CSS_PIN), so such a change fails there until the pin
-    is updated on purpose. The pin holds the page as rendered for a stand-in
-    release (PIN_VERSION, PIN_CHECKSUM) and the stand-in date PIN_DATE, and
-    the same test requires the render for ``site-src/release.json`` at the
+    the sources and regenerated, exits 3 above, before any release is read,
+    only when a required file cannot be read, the generator cannot render
+    the page or its download block, or the regenerated page carries neither
+    the not-yet-published note nor a checksum element and the sentence that
+    names its version (as when ``{{release.sum_block}}`` is deleted from
+    ``site-src/pages/verify.html``), shows a malformed or placeholder
+    checksum, breaks the rule above (download_block_problems), as a plain 64
+    digit hexadecimal value added before the next-page link does, or is not
+    the render for the version and checksum read from it. Any other such
+    change passes these checks of the page, as a second checksum in the page
+    source whose groups are joined by dots does, and as a zip file name for
+    another version written in place of the current one does.
+    ``tools/test-build-site.py`` pins the whole rendered page in each state
+    (VERIFY_PAGE_PIN) and the site's own stylesheet (SITE_CSS_PIN), so a
+    change to the page as rendered for the stand-in release, or to that
+    stylesheet, fails there until the pin is updated on purpose. The pin
+    holds the page as rendered for a stand-in release (PIN_VERSION,
+    PIN_CHECKSUM) and the stand-in date PIN_DATE, and the same test requires
+    the render for ``site-src/release.json`` at the
     ``modified`` dates in ``site-src/site.json``, which
-    ``tools/check-release-links.py`` requires this page to be, to be the
-    pinned rendering of the same state with the stand-in values replaced
-    (check_committed_render). A generator change that renders differently
-    only for release values and dates that neither the stand-in nor the
-    committed state uses passes the pin, that test and, once regenerated,
-    this gate, until a commit sets ``release.json`` or the verify page's
-    ``modified`` date to such a value; the test runs on every pull request
-    and push to ``main`` (``site-draft.yml``), so it fails then.
+    ``tools/check-release-links.py`` requires this page to be, and the render
+    for that version with the checksum "a" * 64 and the verify page's
+    ``modified`` date 2099-12-31, to be the pinned rendering of the same
+    state with the stand-in values replaced (check_committed_render). A
+    generator change that renders differently only for sets of release
+    values and date that none of these renders uses passes the pin, that
+    comparison and, once regenerated, these checks of the page, until the
+    committed ``release.json`` and verify page ``modified`` date become a set
+    it renders differently for; the test runs on every pull request and push
+    to ``main`` (``site-draft.yml``), so it fails then.
     ``tools/check-release-links.py`` names the
     stylesheet and script files the page loads and the gate that pins each.
   - If the release ``vX`` for that version is not published yet, the pass is
