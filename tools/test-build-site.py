@@ -1206,10 +1206,26 @@ PIN_PROCEDURE = ("if the change is intended, follow the update procedure at VERI
 
 def verify_render(module, root: Path, checksum: str) -> str:
     """The whole verify page as ``module`` renders it from ``root`` for the stand-in release and PIN_DATE, as rendered:
-    the pin hashes these bytes, and a failure prints them, so no text copied from it can match the pin in place of a
-    release value."""
+    the pin hashes these bytes, and a failure prints them. A stand-in value copied from them in place of the token that
+    renders it, such as cleanlanguage-9.8.7.zip for {{release.zip_name}}, renders the same bytes and matches the pin.
+    stand_in_problems() refuses the stand-in values in site-src/pages/verify.html, the only source of the release tokens
+    on this page; written in the generator, a stand-in value is a change that renders differently only for other
+    release values, which only review stops."""
     release = {"version": PIN_VERSION, "tag": f"v{PIN_VERSION}", "checksum": checksum}
     return module.verify_page(root, release, PIN_DATE).decode("utf-8")
+
+
+# VERIFY round 5.1, finding 1: the stand-in values, which a correct site-src/pages/verify.html never carries; it writes
+# a release token wherever the page shows a release value.
+STAND_IN_VALUES = (PIN_VERSION, f"v{PIN_VERSION}", PIN_DATE, PIN_CHECKSUM)
+
+
+def stand_in_problems(root: Path) -> list[str]:
+    """Each stand-in value that site-src/pages/verify.html under ``root`` carries: written in place of a release token,
+    it renders the bytes the pin hashes, so the digest cannot refuse it."""
+    text = (root / "site-src" / "pages" / "verify.html").read_text(encoding="utf-8")
+    return [f"verify page pin: site-src/pages/verify.html carries the stand-in value {value!r}; write the release token "
+            "that renders the value instead" for value in STAND_IN_VALUES if value in text]
 
 
 def site_css_problems(root: Path) -> list[str]:
@@ -1248,13 +1264,22 @@ PIN_FORMS = [
     ("the download link with {tag} and {version} written literally",
         (("{{release.zip_url}}", "https://github.com/jposluns/cleanlanguage/releases/download/{tag}/cleanlanguage-"
                                  "{version}.zip"),)),
+    # VERIFY round 5.1, finding 1: the stand-in file name and download link written in place of their tokens render
+    # the bytes the pin hashes; stand_in_problems() refuses them.
+    ("the stand-in file name written in place of {{release.zip_name}}",
+        (("{{release.zip_name}}", f"cleanlanguage-{PIN_VERSION}.zip"),)),
+    ("the stand-in download link written in place of {{release.zip_url}}",
+        (("{{release.zip_url}}", f"https://github.com/jposluns/cleanlanguage/releases/download/v{PIN_VERSION}/"
+                                 f"cleanlanguage-{PIN_VERSION}.zip"),)),
 ]
 
 
 def check_verify_page_pin(failures: list[str]) -> int:
     """The verify page pin: the whole page renders to the pinned digest in each state, the site-owned stylesheet is
-    the pinned one, and each change reported in review (PIN_FORMS, a generator whose step 3 says to install the file
-    anyway, and a site-owned stylesheet that hides the document) is refused by the generator or changes the digest."""
+    the pinned one, site-src/pages/verify.html carries no stand-in value, each stand-in value written there is
+    refused, and each change reported in review (PIN_FORMS, a generator whose step 3 says to install the file anyway,
+    and a site-owned stylesheet that hides the document) is refused by the generator or stand_in_problems(), or
+    changes the digest."""
     module = load_module(GENERATOR)
     states = (("placeholder", module.PLACEHOLDER_CHECKSUM), ("published", PIN_CHECKSUM))
     for state, checksum in states:
@@ -1267,8 +1292,17 @@ def check_verify_page_pin(failures: list[str]) -> int:
             failures.append(f"verify page pin, {state}: the whole page renders to sha256 {digest}, not the pinned "
                             f"{VERIFY_PAGE_PIN[state]}; {PIN_PROCEDURE}. The rendering:\n{rendered}")
     failures += site_css_problems(REPO_ROOT)
-    ran = 3
+    failures += stand_in_problems(REPO_ROOT)
+    ran = 4
     with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch) / "stand-in")
+        for value in STAND_IN_VALUES:
+            ran += 1
+            edit(root, "site-src/pages/verify.html", NEXT, f"<p>{value}</p>" + NEXT)
+            if not any(repr(value) in problem for problem in stand_in_problems(root)):
+                failures.append(f"verify page pin: the stand-in value {value!r} written in site-src/pages/verify.html "
+                                "is not refused")
+            edit(root, "site-src/pages/verify.html", f"<p>{value}</p>" + NEXT, NEXT)
         tools = Path(scratch) / "tools"
         tools.mkdir()
         changed = GENERATOR.read_text(encoding="utf-8").replace("do not install the file and ", "install the file anyway and ")
@@ -1295,6 +1329,8 @@ def check_verify_page_pin(failures: list[str]) -> int:
             failures.append("verify page pin: a site-owned stylesheet that hides the document keeps SITE_CSS_PIN")
         for label, generator, source in cases:
             ran += 1
+            if stand_in_problems(source):
+                continue
             try:
                 rendered = verify_render(generator, source, PIN_CHECKSUM)
             except (generator.BuildError, generator.Unreadable):
