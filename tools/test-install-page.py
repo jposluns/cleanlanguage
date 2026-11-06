@@ -68,7 +68,12 @@ holding a quote, a ``(``, a brace, a backslash or a line break, a brace inside
 brackets or parentheses, unbalanced braces, brackets or parentheses, a rule
 inside a rule, or an at-rule other than those of AT_RULES (``@container``, ``@font-face``,
 ``@keyframes``, ``@media`` and ``@supports``). Before it reads them, it fails
-unless sheet_problems() reads each of SHEET_CASES as that case expects.
+unless sheet_problems() reads each of SHEET_CASES as that case expects, and
+unless stylesheet_problems(), which compares the committed stylesheets with
+RULE_PIN, gives each of PIN_CASES, on a copy of the 3 stylesheets and RULE_PIN
+with its fault, the problems that case expects: the copy as committed passes,
+and a pinned rule changed, removed or moved, a rule the pin must hold added,
+and a pin entry with another digest each fail, naming the rule.
 
 It also fails unless the gate's SUPPORTED_PYTHONS is exactly 3.14 and each of
 its versions is in SUPPORTED_PYTHONS of tools/check-inline-code.py, and runs the
@@ -146,7 +151,8 @@ LATER = '<link rel="stylesheet" href="/assets/baseline/baseline.css?v=1.8.0">'
 STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
 # The rule pin: each rule of STYLESHEETS that rule_pins() keeps, as a digest of its text and its name (pin_lines()),
 # 1 per line, in the order the stylesheets give them. Update it only as the docstring says.
-RULE_PIN = REPO_ROOT / "tools" / "install-page-rules.txt"
+PIN_FILE = "tools/install-page-rules.txt"
+RULE_PIN = REPO_ROOT / PIN_FILE
 PRINT_PIN = "--print-rule-pin"
 # CSS whitespace: space, tab, line feed, carriage return and form feed. str.split() and str.strip() also take U+00A0
 # and other spaces, which CSS reads as part of a name or a value (.fresh U+00A0 name is 1 class), so the reader
@@ -366,6 +372,18 @@ def swap(first: str, second: str):
         texts = [(root / relative).read_text(encoding="utf-8") for relative in (first, second)]
         (root / first).write_text(texts[1], encoding="utf-8")
         (root / second).write_text(texts[0], encoding="utf-8")
+    return apply
+
+
+def repin(name: str):
+    """Change the first digit of the digest of the entry of PIN_FILE that names the rule name, so the entry no longer
+    matches that rule."""
+    def apply(root: Path) -> None:
+        path = root / PIN_FILE
+        lines = path.read_text(encoding="utf-8").split("\n")
+        at = [line.partition(" ")[2] for line in lines].index(name)
+        lines[at] = ("1" if lines[at].startswith("0") else "0") + lines[at][1:]
+        path.write_text("\n".join(lines), encoding="utf-8")
     return apply
 
 
@@ -938,6 +956,25 @@ RESIDUALS = [
     ("a family link label in a bdi", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><bdi>Claude</bdi><")),
         "a family link label in a ``bdi``"),
 ]
+# Faults to a copy of STYLESHEETS and PIN_FILE for stylesheet_problems(), the comparison of the committed stylesheets
+# with RULE_PIN, and the words that its problems must hold, each in 1 of them; none for none. Each rule is named as
+# that comparison names it: a pinned rule by its file name and preludes, a rule the pin does not hold by its text.
+BASELINE = STYLESHEETS[2]
+INLINE_RULE = ".btn.inline { position: static; display: inline-block; text-decoration: none; margin: 0 0.6rem 0.6rem 0; }"
+HOVER_RULE = ".btn.inline:hover { color: var(--text); }"
+WIDER_RULE = INLINE_RULE.replace("static", "absolute")
+PIN_CASES = (
+    ("the committed stylesheets and pin", None, ()),
+    ("a pinned rule changed", edit(BASELINE, INLINE_RULE, WIDER_RULE),
+        (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE}: {WIDER_RULE}', {ADDED}")),
+    ("a rule the pin must hold added", append(BASELINE, "\n.btn { writing-mode: vertical-rl; }\n"),
+        (f"the rule '{BASELINE}: .btn {{ writing-mode: vertical-rl; }}', {ADDED}",)),
+    ("a pinned rule removed", edit(BASELINE, HOVER_RULE + "\n", ""), (f"{GONE} 'baseline.css: .btn.inline:hover' there",)),
+    ("a pinned rule moved", edit(BASELINE, INLINE_RULE + "\n" + HOVER_RULE, HOVER_RULE + "\n" + INLINE_RULE),
+        (f"{GONE} 'baseline.css: .btn.inline:hover' there", f"the rule '{BASELINE}: {HOVER_RULE}', {ADDED}")),
+    ("a pin entry with another digest", repin("baseline.css: .btn.inline"),
+        (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE}: {INLINE_RULE}', {ADDED}")),
+)
 
 
 def unread_at_rule(text: str) -> str:
@@ -1179,8 +1216,9 @@ def pinned_classes(gate) -> dict[str, set[str]]:
     return classes
 
 
-def committed_rules() -> tuple[list[str], list[str]]:
-    """The rules of STYLESHEETS that rule_pins() holds for the gate's CLASS_PIN, and the problems of reading them."""
+def committed_rules(root: Path = REPO_ROOT) -> tuple[list[str], list[str]]:
+    """The rules of STYLESHEETS under root that rule_pins() holds for the gate's CLASS_PIN, and the problems of reading
+    them."""
     try:
         classes = pinned_classes(load_gate())
     except Exception as error:
@@ -1189,22 +1227,41 @@ def committed_rules() -> tuple[list[str], list[str]]:
     problems: list[str] = []
     for relative in STYLESHEETS:
         try:
-            sheets.append((relative, (REPO_ROOT / relative).read_text(encoding="utf-8")))
+            sheets.append((relative, (root / relative).read_text(encoding="utf-8")))
         except (OSError, UnicodeError) as error:
             problems.append(f"{relative} could not be read: {error}")
     held, unread = rule_pins(sheets, classes)
     return held, problems + unread
 
 
-def stylesheet_problems() -> list[str]:
-    """The rules of STYLESHEETS that can match an element the gate's CLASS_PIN names are exactly those of RULE_PIN."""
-    held, problems = committed_rules()
+def stylesheet_problems(root: Path = REPO_ROOT) -> list[str]:
+    """The rules of STYLESHEETS under root that can match an element the gate's CLASS_PIN names are exactly those of
+    PIN_FILE under root (RULE_PIN, for the committed tree)."""
+    held, problems = committed_rules(root)
     try:
-        pin = RULE_PIN.read_text(encoding="utf-8").splitlines()
+        pin = (root / PIN_FILE).read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError) as error:
-        return problems + [f"{RULE_PIN.relative_to(REPO_ROOT)} could not be read: {error}"]
+        return problems + [f"{PIN_FILE} could not be read: {error}"]
     return problems or [f"{problem} Update the pin only as the docstring of tools/{Path(__file__).name} says."
                         for problem in diff_problems(pin, held)]
+
+
+def pin_case_problems() -> list[str]:
+    """stylesheet_problems(), on a copy of STYLESHEETS and PIN_FILE with the fault of each of PIN_CASES, gives problems
+    that hold each of its words, or none where it gives none."""
+    problems: list[str] = []
+    for name, fault, words in PIN_CASES:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            for relative in (*STYLESHEETS, PIN_FILE):
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPO_ROOT / relative, root / relative)
+            if fault:
+                fault(root)
+            found = stylesheet_problems(root)
+        if [word for word in words if not any(word in problem for problem in found)] if words else found:
+            problems.append(f"{name}: expected " + (f"problems with {words!r}" if words else "none") + f", got {found}")
+    return problems
 
 
 def diff_problems(pin: list[str], held: list[tuple[str, str]]) -> list[str]:
@@ -1314,7 +1371,8 @@ def main() -> int:
         return 1 if problems else 0
     failures: list[str] = statement_problems()
     failures += [f"the class pin: {problem}" for problem in class_pin_problems()]
-    failures += [f"the stylesheets: {problem}" for problem in sheet_case_problems() + stylesheet_problems()]
+    failures += [f"the stylesheets: {problem}"
+                 for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
     failures += [f"the Python version: {problem}" for problem in version_problems()]
     doc = " ".join((ast.get_docstring(ast.parse(GATE.read_text(encoding="utf-8"))) or "").split())
     for name, _, words in RESIDUALS:
@@ -1336,8 +1394,9 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
     print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
-          "ALLOWED_SCRIPTS, the check of CLASS_PIN, the Python version checks and the rule pin of the stylesheets "
-          "passed.")
+          f"ALLOWED_SCRIPTS, the check of CLASS_PIN, the Python version checks, the {len(SHEET_CASES)} cases of the "
+          f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "
+          "stylesheets passed.")
     return 0
 
 
