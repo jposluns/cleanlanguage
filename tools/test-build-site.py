@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import html
 import importlib.util
+import itertools
 import json
 import os
 import py_compile
@@ -498,29 +499,39 @@ def labels(text: str) -> tuple[int, int, int]:
     """How many times the parsed text of text (attribute values and comments apart, character references decoded),
     joined across elements and read by label_text(), carries LABELS, case-sensitive, but with the text that a
     browser shows in upper case (shown_upper()) in upper case, so there in any letter case: in all of it, and twice
-    in the text that shows, outside every INERT element, every element the install gate reads as hiding and a
-    details without open (directly inside one, or inside a child other than its first summary), first with an
-    element that only aria-hidden="true" hides read as shown (a browser shows it), then with it read as hidden."""
+    in the text that shows, outside every INERT element and every element the install gate reads as hiding, with
+    a details without open read as opened, first with an element that only aria-hidden="true" hides read as shown
+    (a browser shows it), then with it read as hidden. Each img's alt text is read kept and left out, in every
+    choice for the alt texts of the reading (a browser shows one only when its image does not load), and each
+    reading counts the most that a choice gives."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
-    shown = ["".join(read for read, (_, around) in zip(parsed.text, parsed.text_at) if shows(parsed, around, visual))
-             for visual in (True, False)]
-    return tuple(sum(label_text(joined).count(label_text(label)) for label in LABELS)
-                 for joined in ("".join(parsed.text), *shown))
+    whole = list(zip(parsed.text, (around for _, around in parsed.text_at)))
+    counts = []
+    for reading in [whole] + [[(read, around) for read, around in whole if shows(parsed, around, visual, True)]
+                              for visual in (True, False)]:
+        alts = [index for index, (_, around) in enumerate(reading) if around and parsed.starts[around[-1]][0] == "img"]
+        most = 0
+        for kept in itertools.product((True, False), repeat=len(alts)):
+            left = {index for index, keep in zip(alts, kept) if not keep}
+            joined = label_text("".join(read for index, (read, _) in enumerate(reading) if index not in left))
+            most = max(most, sum(joined.count(label_text(label)) for label in LABELS))
+        counts.append(most)
+    return tuple(counts)
 
 
-def shows(parsed: Placement, around: list[tuple[int, int]], visual: bool = False) -> bool:
+def shows(parsed: Placement, around: list[tuple[int, int]], visual: bool = False, opened: bool = False) -> bool:
     """Whether text whose open elements start at around, outermost first, shows: no INERT element, no element the
     install gate reads as hiding (given visual, with its aria-hidden attribute left out, since aria-hidden="true"
-    hides an element from assistive technology only) and no details without open (directly, or by a child other
-    than its first summary) holds it."""
+    hides an element from assistive technology only) and, unless opened (a reader opens every details), no details
+    without open (directly, or by a child other than its first summary) holds it."""
     return not (any(parsed.starts[at][0] in INERT
                     or IS_HIDING(parsed.starts[at][0], {name: value for name, value in parsed.starts[at][1].items()
                                                         if not (visual and name == "aria-hidden")})
                     for at in around)
-                or closed_details(parsed, around)
-                or (around and parsed.starts[around[-1]][0] == "details"
+                or (not opened and closed_details(parsed, around))
+                or (not opened and around and parsed.starts[around[-1]][0] == "details"
                     and "open" not in parsed.starts[around[-1]][1]))
 
 
@@ -564,12 +575,13 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     """The About block of specification 7.24, which the generator writes: on the landing page, exactly 1 p.value,
     with no INERT ancestor, not hidden by itself or by an ancestor as tools/check-install-page.py reads hiding (its
     is_hiding_element(), and a details without open outside its first summary child), holding no element but an a
-    with no attribute but href or an em with no attribute and no character but those of VALUE_SPACES and
-    VALUE_CATEGORIES after NFC, with at least 1 letter, no dot span followed directly
+    with no attribute but href or an em with no attribute and no character but those of VALUE_SPACES, VALUE_SIGNS
+    and VALUE_CATEGORIES after NFC, with at least 1 letter, no dot span followed directly
     by a link (the 1.6.1 markup, refused apart from about_line()), and the whole About block once, byte for byte,
     starting where the end tag of that paragraph's region (the div.region nearest it among its open elements) ends,
     the region and the block each with exactly the ancestors ANCESTORS, the region holding exactly REGION_CHILDREN
-    (a p.lbl whose text that shows, aria-hidden apart, holds a letter or a digit, then the div that holds the
+    (a p.lbl whose text that shows, aria-hidden and alt text apart, holds a letter or a digit, then the div that
+    holds the
     p.value) and no text directly, its row the only parsed element whose classes include about, and the page's
     text, and its text that shows in both readings, each carrying LABELS once, inside the block
     (labels(): with the block's label taken out, none; in any letter case where shown_upper() reads upper case); on
@@ -604,8 +616,8 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     inside = [start for at, start in parsed.starts.items() if values[0] in parsed.lineage[at]]
     text_in = unicodedata.normalize("NFC", "".join(data for data, around in parsed.text_at if values[0] in around))
     if (any(tag not in ("a", "em") or set(attrs) - ({"href"} if tag == "a" else set()) for tag, attrs, *_ in inside)
-            or any(character not in VALUE_SPACES and unicodedata.category(character) not in VALUE_CATEGORIES
-                   for character in text_in)
+            or any(character not in VALUE_SPACES + VALUE_SIGNS
+                   and unicodedata.category(character) not in VALUE_CATEGORIES for character in text_in)
             or not any(unicodedata.category(character) in ("Lu", "Ll", "Lt") for character in text_in)):
         return [f"{page} carries its value paragraph with markup or text outside its pin (specification 7.24)"]
     if "&middot;</span><a" in text:
@@ -629,8 +641,9 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     # shows (aria-hidden apart) holds a letter or a digit, then the div that holds the p.value, and no text directly.
     inner = [*parsed.lineage[nearest[0]], nearest[0]]
     children = [at for at in parsed.starts if parsed.lineage[at] == inner]
-    label_shown = "".join(data for data, around in parsed.text_at
-                          if children and children[0] in around and shows(parsed, around, True))
+    # Text, not an img's alt text (held by the img), which a browser shows only when the image does not load.
+    label_shown = "".join(data for data, around in parsed.text_at if children and children[0] in around
+                          and parsed.starts[around[-1]][0] != "img" and shows(parsed, around, True))
     if (any(data.strip(" \t\n\f\r") for data, around in parsed.text_at if around == inner)
             or [(parsed.starts[at][0], sorted(set(class_names(parsed.starts[at][1].get("class", "")))))
                 for at in children] != REGION_CHILDREN
@@ -827,6 +840,13 @@ VALUE_END = "outside its aim.</p></div></div>"
 VALUE_PIN_RULE = "the value paragraph holds markup or text outside its pin"
 VALUE_CATEGORIES = {"Lu", "Ll", "Lt", "Nd", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Sc", "Sm"}
 VALUE_SPACES = " \t\n\r\u00a0"
+# Since DISCOVERY round 8 the pin also admits these visible signs by name: the copyright, registered and trade mark
+# signs, the degree sign, and the vulgar fractions one quarter, one half and three quarters.
+VALUE_SIGNS = "\u00a9\u00ae\u2122\u00b0\u00bc\u00bd\u00be"
+# A table's children in the order a browser shows them (since DISCOVERY round 8), and at most 1 hero on a page.
+TABLE_ORDER_RULE = "a browser shows a table's caption first and its thead before its tbody"
+HEROES_RULE = "a page source carries at most 1 hero"
+LOGO = "{{base}}assets/baseline/logos/cleanlanguage.svg"
 # A page source carries no class name outside the generator's SOURCE_CLASSES, and the value paragraph's region none
 # outside VALUE_REGION_CLASSES; nor may a page source (with_about()) or a page (validate()) carry a bidi formatting
 # character, each refused by its own message.
@@ -1165,11 +1185,13 @@ SOURCE_REFUSALS = [
         root, HOME, '<a href="{{base}}license/">free', '<a href="{{base}}license/" class="x">free'), VALUE_PIN_RULE),
     ("a value paragraph of digits only", value_content("2026"), VALUE_PIN_RULE),
     # The pin admits an em with no attribute, whitespace a browser shows as a space, and currency and math symbols
-    # (since round 6), but no other element, no So (which holds U+2800), no Lo (which holds the Hangul fillers) and no
+    # (since round 6), but no other element, no So outside VALUE_SIGNS (So holds U+2800; the signs since DISCOVERY
+    # round 8), no Lo (which holds the Hangul fillers) and no
     # other whitespace.
     ("an em with a class in the value paragraph", value_content('Rules <em class="lbl">apply</em>'), VALUE_PIN_RULE),
     ("a strong in the value paragraph", value_content("Rules <strong>apply</strong>"), VALUE_PIN_RULE),
-    ("a copyright sign (So) in the value paragraph", value_content("Rules &copy; 2026"), VALUE_PIN_RULE),
+    ("a black star (So, outside VALUE_SIGNS) in the value paragraph", value_content("Rules &#x2605; 2026"),
+        VALUE_PIN_RULE),
     ("2 CJK ideographs (Lo) in the value paragraph", value_content("Rules \u89c4\u5219"), VALUE_PIN_RULE),
     ("a value paragraph of only whitespace", value_content(" \n\t&nbsp; "), VALUE_PIN_RULE),
     ("U+000C in the value paragraph", value_content("Rules\x0capply"), VALUE_PIN_RULE),
@@ -1368,6 +1390,41 @@ SOURCE_REFUSALS = [
         edit(root, HOME, HERO_KICKER + HERO_STATEMENT, '<h1 class="statement">project</h1>'),
         edit(root, HOME, HERO_ALT, 'alt="About this"'),
         edit(root, "site-src/site.json", f'"logo_alt": "{HERO_ALT[5:-1]}"', '"logo_alt": "About this"')), LABEL_RULE),
+    # Built with exit 0 at 4887fe1 (DISCOVERY round 8): the value region's label as an img alone, whose alt text a
+    # browser shows only when it does not load; and an img's alt text splitting the label, which a browser shows
+    # without it when the image loads. The region's label holds text, and each alt text is read kept and left out.
+    ("the value region's label as an img with its text as alt text", lambda root: edit(
+        root, HOME, REGION_LABEL, f'<p class="lbl"><img src="{LOGO}" alt="What it gives you"></p>'),
+        REGION_CHILDREN_RULE),
+    ("the label split by an img's alt text in a p.lbl after the value region in home.html",
+        after_value(f'<p class="lbl">About <img src="{LOGO}" alt="x">this project</p>'), LABEL_RULE),
+    ("the label from 1 img's alt text, split by another's, in prose", inject(
+        f'<p>About <img src="{LOGO}" alt="this"> <img src="{LOGO}" alt="x"> project</p>'), LABEL_RULE),
+    # Built with exit 0 at 4887fe1: a browser shows a table's caption first and its thead before its tbody, so text in
+    # a caption or thead after a tbody joined the body's text in another order than the source's.
+    ("the label split between a caption after a tbody and that tbody", inject(
+        "<table><tbody><tr><td>project</td></tr></tbody><caption>About this</caption></table>"), TABLE_ORDER_RULE),
+    ("a thead after a tbody", inject(
+        "<table><caption>c</caption><tbody><tr><td>project</td></tr></tbody><thead><tr><td>About this</td></tr></thead>"
+        "</table>"), TABLE_ORDER_RULE),
+    ("a caption after a thead", inject(
+        "<table><thead><tr><th>h</th></tr></thead><caption>c</caption><tbody><tr><td>d</td></tr></tbody></table>"),
+        TABLE_ORDER_RULE),
+    ("2 captions in a table", inject("<table><caption>c</caption><caption>d</caption></table>"), TABLE_ORDER_RULE),
+    ("2 theads in a table", inject(
+        "<table><thead><tr><th>h</th></tr></thead><thead><tr><th>i</th></tr></thead></table>"), TABLE_ORDER_RULE),
+    # Built with exit 0 at 4887fe1: a label inside a closed details, which shows once a reader opens it; the label
+    # rule reads a details as opened.
+    ("the label split by a hidden span in a p.lbl in a closed details", inject(
+        '<details><summary>x</summary><p class="lbl">About<span hidden>y</span>this project</p></details>'),
+        LABEL_RULE),
+    ("the label split by a hidden span directly in a closed details",
+        inject("<details>About <span hidden>y</span>this project</details>"), LABEL_RULE),
+    # Built with exit 0 at 4887fe1: a second hero, whose narrow-width order the label rule did not read.
+    ("a second hero in home.html", lambda root: edit(
+        root, HOME, "</section>", '</section><section class="hero" aria-label="x"><div class="hero-text">'
+        '<p class="lbl">About this</p><p class="intro">x</p></div><div class="hero-art">'
+        f"<img src=\"{LOGO}\" {HERO_ALT}></div></section>"), HEROES_RULE),
 ] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
      for character in LABEL_IGNORED] + [
     # A page source carries no dialog (SOURCE_ELEMENTS) and no inert or popover (SOURCE_ATTRIBUTES);
@@ -1461,6 +1518,17 @@ SOURCE_PASSES = [
         edit(root, HOME, HERO_KICKER + HERO_STATEMENT, '<h1 class="statement">About this</h1>'),
         edit(root, HOME, HERO_ALT, 'alt="project"'),
         edit(root, "site-src/site.json", f'"logo_alt": "{HERO_ALT[5:-1]}"', '"logo_alt": "project"'))),
+    # Since DISCOVERY round 8 (exit 1 at 4887fe1): each sign of VALUE_SIGNS in the value paragraph, as written and as a
+    # character reference; and, inside the new pins, a table with 2 tbody elements after its caption and thead, and
+    # an img beside the text of the value region's label.
+    ("a value paragraph with the signs of VALUE_SIGNS", value_content(f"Rules{VALUE_SIGNS} 2026")),
+    ("a value paragraph with the signs of VALUE_SIGNS as character references",
+        value_content("Rules&trade; &copy; &reg; 20&deg;, &frac14; &frac12; &frac34;")),
+    ("a table with a caption, a thead and 2 tbody elements", inject(
+        "<table><caption>c</caption><thead><tr><th>h</th></tr></thead><tbody><tr><td>d</td></tr></tbody>"
+        "<tbody><tr><td>e</td></tr></tbody></table>")),
+    ("an img beside the text of the value region's label", lambda root: edit(
+        root, HOME, REGION_LABEL, f'<p class="lbl"><img src="{LOGO}" alt="x">What it gives you</p>')),
 ]
 
 
@@ -1878,13 +1946,25 @@ def check_about_block(failures: list[str]) -> int:
             [(VALUE, VALUE + "Rules <span hidden>"), (end, end_in("</span>"))], value_rule),
         ("a value paragraph of 1 word", [(VALUE + content, VALUE + "Rules")], None),
         # Since round 6: whitespace a browser shows as a space, currency and math symbols and an em with no attribute
-        # pass; an em with an attribute and So do not. An img's alt text, Latin small capitals and fullwidth Latin
-        # letters carry the label.
+        # pass; an em with an attribute and So outside VALUE_SIGNS do not. An img's alt text, Latin small capitals
+        # and fullwidth Latin letters carry the label.
         ("a value paragraph with whitespace, symbols and an em",
             [(VALUE + content, VALUE + "Rules\r\n\tcost&nbsp;$1 + <em>tax</em>")], None),
         ("an em with a class in the value paragraph", [(VALUE + content, VALUE + 'Rules <em class="x">tax</em>')],
             value_rule),
-        ("a copyright sign in the value paragraph", [(VALUE + content, VALUE + "Rules &copy; 2026")], value_rule),
+        ("a black star in the value paragraph", [(VALUE + content, VALUE + "Rules &#x2605; 2026")], value_rule),
+        # Since DISCOVERY round 8: the signs of VALUE_SIGNS pass; an img alone is no label text in the value region;
+        # an img's alt text is read kept and left out; and a closed details is read as opened for the label.
+        ("the signs of VALUE_SIGNS in the value paragraph",
+            [(VALUE + content, VALUE + "Rules &copy; &reg; &trade; 20&deg; &frac14; &frac12; &frac34;")], None),
+        ("the value region's label as an img with its text as alt text",
+            [(REGION_LABEL, '<p class="lbl"><img src="/assets/baseline/logos/cleanlanguage.svg" '
+                            'alt="What it gives you"></p>')], region_rule),
+        ("a second label split by an img's alt text in a p.lbl after the block",
+            [(block, block + '<p class="lbl">About <img src="/instructions/" alt="x">this project</p>')], label_rule),
+        ("a second label split by a hidden span in a p.lbl in a closed details after the block",
+            [(block, block + '<details><summary>x</summary><p class="lbl">About<span hidden>y</span>this project</p>'
+                             "</details>")], label_rule),
         # Since round 5.1 the pin reads the text after NFC: e and U+0301 pass; e and U+034F do not.
         ("a value paragraph with e and U+0301", [(VALUE + content, VALUE + "Cafe\u0301 rules")], None),
         ("a value paragraph with e and U+034F", [(VALUE + content, VALUE + "Cafe\u034f rules")], value_rule),
