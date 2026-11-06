@@ -21,18 +21,24 @@ Behaviour:
     bump, the page shows no checksum and says that it appears once the
     version is published; the version is read from that note and the site
     checksum is taken as the placeholder, so a published release fails as
-    drift. A page with that note must keep the rules of that state that
-    ``tools/check-release-links.py`` applies (placeholder_page_problems): the
-    note exactly once, for 1 version, and no element with the checksum
-    element's id, no "published checksum" wording, no link to a ``.sha256``
-    file or to a path that ``site/_redirects`` sends there, and no step that
-    tells the reader not to install the file. A page without the note must
-    keep the rest of the published state (published_page_problems): the step 1
-    lead, a link to the checksum file of the version it names, and step 3,
-    which compares the 2 values and tells a reader whose value still differs
-    not to install the file. Both rules read the page as parsed markup
-    (PageReader). A page that breaks any of them, or shows the placeholder as
-    the published checksum, exits 3 before any release is read.
+    drift. Without the note, the version is read from the first sentence that
+    names the published checksum's version and the checksum from the first
+    checksum element. The page must then keep the rule that
+    ``tools/check-release-links.py`` applies (download_block_problems), for
+    that version and that checksum or the placeholder: it carries the download
+    block that ``tools/build-site.py`` renders for them (download_block)
+    exactly once, byte for byte, where build() writes it, and no other part of
+    the page, comments, scripts and hidden elements included, carries the
+    checksum element's id, the class ``sum``, the not-yet-published note,
+    "published checksum" wording, a 64 digit hexadecimal value, a link to a
+    ``.sha256`` file or to a path that ``site/_redirects`` sends there, or a
+    step that tells the reader not to install the file. Since the block holds
+    the checksum the page was read by, a page that passes shows that checksum
+    and no other, and the comparison below holds it to the published one. The
+    rule reads markup, not stylesheets or scripts. ``site/_redirects`` is a
+    required file in either state. A page that breaks the rule, or shows the
+    placeholder as the published checksum, exits 3 before any release is read,
+    as does a generator that cannot render the block.
   - If the release ``vX`` for that version is not published yet, the pass is
     conditional. The site is legitimately ahead of the release only when it
     names the current skill version (``Version:`` in ``cleanlanguage/skills/cleanlanguage/SKILL.md``)
@@ -93,7 +99,8 @@ Exit codes:
      not exactly true, the release SKILL.md names returns a status other than
      200 or 404, or the tag exists with no published release)
   3  a required file could not be read, the verify page is in neither state
-     the generator writes (see Behaviour), the SKILL.md Released line is
+     the generator writes or the generator could not render its download
+     block (see Behaviour), the SKILL.md Released line is
      malformed, a call of tools/skill-release-date.py, which runs in a
      child process, did not give a result the gate could accept (see
      run_release_date_child), or SIGCHLD could not be reset to its default
@@ -191,6 +198,7 @@ error text it reported was before.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -211,25 +219,31 @@ REDIRECTS = REPO_ROOT / "site" / "_redirects"
 SKILL = REPO_ROOT / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
 REPO = "jposluns/cleanlanguage"
 
-# The verify page's checksum element exactly as tools/build-site.py writes it; no other attribute passes.
+# The verify page's checksum element exactly as tools/build-site.py writes it, from which the gate reads the
+# checksum and the version that select the download block it requires (download_block_problems).
 DISPLAYED_SUM = re.compile(r'<code class="sum" id="published-checksum">([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 # The verify page's note while site-src/release.json holds the zero placeholder (tools/build-site.py, sum_tokens).
 PENDING_VERSION = re.compile(r"The checksum for version ([0-9][0-9.]*) appears here once that version is published\.")
-# The rest of the not-yet-published state, read by placeholder_page_problems, as tools/check-release-links.py reads it.
-PUBLISHED_WORDING = re.compile(r"published checksum", re.I)
-REJECTING_STEP = re.compile(r"\bdo not install\b", re.I)
 PLACEHOLDER = "0" * 64
-# The rest of the published state, read by published_page_problems, as tools/build-site.py writes it (sum_tokens).
-PUBLISHED_LEAD = "Download the skill. The published checksum is shown under the link."
-SUM_URL = "https://github.com/jposluns/cleanlanguage/releases/download/v{version}/cleanlanguage-{version}.zip.sha256"
-COMPARE_STEP = re.compile(
-    r"Step 3\s+Compare the value your computer prints with the published checksum shown in step 1\."
-)
-# The id of the checksum element, which placeholder_page_problems finds whatever the element's other attributes, and
-# the address of the verify page, against which it resolves a relative link.
+# What download_block_problems refuses outside the download block, as tools/check-release-links.py reads it, and the
+# address of the verify page, against which it resolves a relative link.
+PENDING_NOTE = re.compile(r"appears\s+here\s+once\s+that\s+version\s+is\s+published", re.I)
+PUBLISHED_WORDING = re.compile(r"published\s+checksum", re.I)
+REJECTING_STEP = re.compile(r"\bdo\s+not\s+install\b|\bdon['’]t\s+install\b", re.I)
+HEX64 = re.compile(r"[0-9a-fA-F]{64}")
 SUM_ID = "published-checksum"
 VERIFY_URL = "https://cleanlanguage.ai/verify/"
+# The generator, which renders the download block (download_block), and the elements build() writes around that
+# block on the verify page, each with its attributes: html, body, main, the wrap div and the source's doc div.
+GENERATOR = Path(__file__).resolve().parent / "build-site.py"
+BLOCK_ANCESTORS = (
+    ("html", (("lang", "en"), ("class", "site-cleanlanguage"))),
+    ("body", ()),
+    ("main", (("id", "main-content"),)),
+    ("div", (("class", "wrap"),)),
+    ("div", (("class", "doc"),)),
+)
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 SKILL_VERSION = re.compile(r"^Version:[ \t]*([0-9]+\.[0-9]+\.[0-9]+)[ \t]*$", re.M)
 VERSION_LINE = re.compile(r"^Version:[^\n]*", re.M)
@@ -956,53 +970,92 @@ def published_digest(tag: str, zip_name: str, manifest_name: str) -> str:
 
 
 class PageReader(HTMLParser):
-    """The verify page as parsed markup, as the state rules read it: the id of each element, the value of each
-    attribute, the href of each link and the text outside comments, scripts and styles, with character references
-    decoded, so that the order of attributes, their quoting and the markup between words do not change what a rule
-    sees. tools/check-release-links.py and tools/check-release-checksum-live.py carry this class verbatim."""
+    """The verify page, or a part of it, as parsed markup, as download_block_problems reads it: the id, the class
+    names and the value of each attribute of each element, and the text outside scripts and styles, with character
+    references decoded and runs of whitespace read as 1 space, so that the order of attributes, their quoting and
+    the markup between words do not change what a rule sees; the same of the markup inside each comment, read
+    apart (comment_text); and, at the offset of each start tag, the elements open there (open_at). Hidden elements
+    are read like any other. tools/check-release-links.py and tools/check-release-checksum-live.py carry this
+    class verbatim."""
+
+    VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track",
+                      "wbr"})
 
     def __init__(self, text: str) -> None:
         super().__init__(convert_charrefs=True)
+        self.line_starts = [0] + [index + 1 for index, character in enumerate(text) if character == "\n"]
+        self.open: list[tuple[str, tuple[tuple[str, str | None], ...]]] = []
+        self.open_at: dict[int, tuple[tuple[str, tuple[tuple[str, str | None], ...]], ...]] = {}
+        self.starts: list[str] = []
         self.ids: list[str] = []
+        self.classes: list[str] = []
         self.values: list[str] = []
-        self.links: list[str] = []
         self.chunks: list[str] = []
+        self.comments: list[str] = []
         self.skipping = 0
         self.feed(text)
         self.close()
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        line, column = self.getpos()
+        self.open_at[self.line_starts[line - 1] + column] = tuple(self.open)
+        self.starts.append(tag)
         for name, value in attrs:
             if value is None:
                 continue
             self.values.append(value)
             if name == "id":
                 self.ids.append(value.strip())
-            elif tag == "a" and name == "href":
-                self.links.append(value.strip())
+            elif name == "class":
+                self.classes += [part for part in re.split(r"[ \t\n\f\r]+", value) if part]
         if tag in ("script", "style"):
             self.skipping += 1
+        if tag not in self.VOID:
+            self.open.append((tag, tuple(attrs)))
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # As in a browser, a self-closing tag leaves an element open unless it is void or inside svg or math.
+        self.handle_starttag(tag, attrs)
+        if tag not in self.VOID and any(name in ("svg", "math") for name, _ in self.open[:-1]):
+            self.handle_endtag(tag)
 
     def handle_endtag(self, tag: str) -> None:
         if tag in ("script", "style") and self.skipping:
             self.skipping -= 1
+        for index in range(len(self.open) - 1, -1, -1):
+            if self.open[index][0] == tag:
+                del self.open[index:]
+                break
 
     def handle_data(self, data: str) -> None:
         if not self.skipping:
             self.chunks.append(data)
 
+    def handle_comment(self, data: str) -> None:
+        inner = PageReader(data)
+        self.ids += inner.ids
+        self.classes += inner.classes
+        self.values += inner.values
+        self.comments.append(inner.text())
+        self.comments += inner.comments
+
     def text(self) -> str:
-        return "".join(self.chunks)
+        return re.sub(r"\s+", " ", "".join(self.chunks))
+
+    def comment_text(self) -> str:
+        return re.sub(r"\s+", " ", " ".join(self.comments))
 
 
 def checksum_paths(redirects: str) -> set[str]:
     """The site paths that serve the checksum file: each source in ``redirects`` (site/_redirects) whose target is
-    a .sha256 file or another such path, in lower case and without a final slash."""
+    a .sha256 file or another such path, in lower case, with each run of slashes read as 1 and without a final
+    slash."""
     rules = [line.split()[:2] for line in redirects.splitlines()
              if len(line.split()) >= 2 and not line.split()[0].startswith("#")]
     paths: set[str] = set()
     while True:
-        found = {source.rstrip("/").lower() for source, target in rules if targets_checksum(target, paths)}
+        found = {re.sub(r"/+", "/", source).rstrip("/").lower() for source, target in rules
+                 if targets_checksum(target, paths)}
         if found <= paths:
             return paths
         paths |= found
@@ -1010,58 +1063,71 @@ def checksum_paths(redirects: str) -> set[str]:
 
 def targets_checksum(value: str, paths: set[str]) -> bool:
     """Whether ``value``, read as a link on the verify page, reaches the checksum file: a .sha256 file at any
-    address, or a path in ``paths`` (checksum_paths) at any host. A value that is not a URL reaches nothing."""
+    address, or a path in ``paths`` (checksum_paths) at any host, with each run of slashes read as 1. A value
+    that is not a URL reaches nothing."""
     try:
         path = urllib.parse.unquote(urllib.parse.urlsplit(urllib.parse.urljoin(VERIFY_URL, value.strip())).path)
     except ValueError:
         return False
-    return path.lower().endswith(".sha256") or path.rstrip("/").lower() in paths
+    path = re.sub(r"/+", "/", path).lower()
+    return path.endswith(".sha256") or path.rstrip("/") in paths
 
 
-def placeholder_page_problems(text: str, version: str, redirects: str) -> list[str]:
-    """The rules of the verify page while release.json holds the zero placeholder, one problem for each rule
-    ``text`` breaks: the page says once, for ``version``, that the checksum appears once that version is
-    published, and shows no element with the checksum element's id, no "published checksum" wording, no link
-    to a .sha256 file or to a path that ``redirects`` (site/_redirects) sends there, and no step that tells
-    the reader not to install the file. tools/check-release-links.py and tools/check-release-checksum-live.py
-    carry this function, published_page_problems, PageReader, checksum_paths, targets_checksum and the
-    patterns they read verbatim, and tools/test-release-checksum-live.py requires that the 2 copies match."""
+def download_block(version: str, checksum: str) -> str:
+    """The verify page's download block as tools/build-site.py writes it for ``version``, the tag v``version`` and
+    ``checksum`` (verify_download_block): steps 1 to 3, with the published checksum, the link to its file and step
+    3, or, for the zero placeholder, the not-yet-published note. Raises LookupError when the generator cannot
+    render it. Both gates carry this function verbatim, as download_block_problems says."""
+    try:
+        spec = importlib.util.spec_from_file_location("build_site", GENERATOR)
+        if spec is None or spec.loader is None:
+            raise ImportError("no loader")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.verify_download_block(module.REPO_ROOT, version, f"v{version}", checksum)
+    except Exception as error:
+        raise LookupError(f"tools/build-site.py could not render the verify page's download block: {error}") from error
+
+
+def download_block_problems(text: str, block: str, redirects: str) -> list[str]:
+    """The rule of the verify page in either state, one problem for each part ``text`` breaks: it carries
+    ``block``, the download block tools/build-site.py renders for that state (download_block), exactly once and
+    byte for byte, as a start tag that the parsed page opens inside exactly the elements that build() writes
+    around it (BLOCK_ANCESTORS), in a page with 1 html and 1 body start tag; and no other part of the page,
+    comments, scripts and hidden elements included, carries the checksum element's id, the class sum, the
+    not-yet-published note, "published checksum" wording, a 64 digit hexadecimal value, a link to a .sha256 file
+    or to a path that ``redirects`` (site/_redirects) sends there, or a step that tells the reader not to install
+    the file. tools/check-release-links.py and tools/check-release-checksum-live.py carry this function,
+    download_block, PageReader, checksum_paths, targets_checksum and the patterns and constants they read
+    verbatim, and tools/test-release-checksum-live.py requires that the 2 copies match."""
+    found = text.count(block)
+    if found != 1:
+        return [f"does not carry the download block that tools/build-site.py writes for this state exactly once, "
+                f"byte for byte (found {found})"]
+    start = text.index(block)
     page = PageReader(text)
+    problems: list[str] = []
+    if page.open_at.get(start) != BLOCK_ANCESTORS or page.starts.count("html") != 1 or page.starts.count("body") != 1:
+        problems.append("does not carry the download block where tools/build-site.py writes it")
     paths = checksum_paths(redirects)
-    problems: list[str] = []
-    if PENDING_VERSION.findall(text) != [version]:
-        problems.append(
-            f"does not say exactly once that the checksum for version {version} appears here once that "
-            f"version is published"
-        )
-    if SUM_ID in page.ids:
-        problems.append("shows a checksum element")
-    if any(PUBLISHED_WORDING.search(source) for source in (text, page.text())):
-        problems.append('says "published checksum"')
-    if ".zip.sha256" in text or any(targets_checksum(value, paths) for value in page.values):
-        problems.append("links a .sha256 checksum file")
-    if any(REJECTING_STEP.search(source) for source in (text, page.text())):
-        problems.append("has a step that tells the reader not to install the file")
-    return problems
-
-
-def published_page_problems(text: str, version: str) -> list[str]:
-    """The rules of the verify page while release.json holds a published checksum, beyond the checksum element
-    and the sentence that names its version, which each gate reads itself: one problem for each rule ``text``
-    breaks. Step 1 says that the published checksum is shown under the link, the page links the checksum file
-    of ``version``, and step 3 compares the 2 values and tells a reader whose value still differs not to
-    install the file. Both gates carry this function verbatim, as placeholder_page_problems says."""
-    page = PageReader(text)
-    problems: list[str] = []
-    if PUBLISHED_LEAD not in page.text():
-        problems.append("does not say in step 1 that the published checksum is shown under the link")
-    if SUM_URL.format(version=version) not in page.links:
-        problems.append(f"does not link the checksum file of version {version}")
-    if not COMPARE_STEP.search(page.text()):
-        problems.append("has no step 3 that compares the 2 values")
-    if not REJECTING_STEP.search(page.text()):
-        problems.append("has no step that tells the reader not to install the file")
-    return problems
+    for rest in (text[:start], text[start + len(block):]):
+        part = PageReader(rest)
+        sources = (rest, part.text(), part.comment_text())
+        if SUM_ID in rest.lower() or SUM_ID in (value.lower() for value in part.ids):
+            problems.append("carries the checksum element's id outside the download block")
+        if "sum" in part.classes:
+            problems.append("carries the class sum outside the download block")
+        if any(PENDING_NOTE.search(source) for source in sources):
+            problems.append("carries the not-yet-published note outside the download block")
+        if any(PUBLISHED_WORDING.search(source) for source in sources):
+            problems.append('says "published checksum" outside the download block')
+        if any(HEX64.search(source) for source in (*sources, *part.values)):
+            problems.append("carries a 64 digit hexadecimal value outside the download block")
+        if ".sha256" in rest.lower() or any(targets_checksum(value, paths) for value in part.values):
+            problems.append("links a .sha256 checksum file outside the download block")
+        if any(REJECTING_STEP.search(source) for source in sources):
+            problems.append("has a step that tells the reader not to install the file outside the download block")
+    return list(dict.fromkeys(problems))
 
 
 def check_site_checksum(load_code: int = 0) -> int:
@@ -1082,18 +1148,8 @@ def check_site_checksum(load_code: int = 0) -> int:
     pending = PENDING_VERSION.search(verify)
     if pending is not None:
         # The not-yet-published state: the site holds the zero placeholder, so a
-        # published release makes it drift below. A page that breaks a rule of
-        # that state, the rules tools/check-release-links.py applies, is in
-        # neither state the generator writes.
+        # published release makes it drift below.
         version = pending.group(1)
-        require_regular_file(REDIRECTS, str(REDIRECTS.relative_to(REPO_ROOT)))
-        try:
-            redirects = REDIRECTS.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
-            die(f"{REDIRECTS.relative_to(REPO_ROOT)} could not be read: {type(error).__name__}: {error}")
-        problems = placeholder_page_problems(verify, version, redirects)
-        if problems:
-            die("the verify page carries the not-yet-published note, but " + "; ".join(problems))
         site_sum = PLACEHOLDER
     else:
         shown = DISPLAYED_SUM.search(verify)
@@ -1109,11 +1165,22 @@ def check_site_checksum(load_code: int = 0) -> int:
         if stated is None:
             die("the verify page does not state which version its checksum belongs to")
         version = stated.group(1)
-        # The rest of the published state, the rules tools/check-release-links.py applies: a page that
-        # breaks one is in neither state the generator writes.
-        problems = published_page_problems(verify, version)
-        if problems:
-            die("the verify page shows a published checksum, but " + "; ".join(problems))
+    # The rule tools/check-release-links.py applies: the page carries the download block that tools/build-site.py
+    # writes for the version and checksum read above, and nothing outside it that belongs to either state. A page
+    # that breaks it is in neither state the generator writes.
+    require_regular_file(REDIRECTS, str(REDIRECTS.relative_to(REPO_ROOT)))
+    try:
+        redirects = REDIRECTS.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        die(f"{REDIRECTS.relative_to(REPO_ROOT)} could not be read: {type(error).__name__}: {error}")
+    try:
+        block = download_block(version, site_sum)
+    except LookupError as error:
+        die(str(error))
+    problems = download_block_problems(verify, block, redirects)
+    if problems:
+        state = "carries the not-yet-published note" if pending is not None else "shows a published checksum"
+        die(f"the verify page {state}, but " + "; ".join(problems))
     tag = f"v{version}"
     zip_name = f"cleanlanguage-{version}.zip"
     manifest_name = f"{zip_name}.sha256"

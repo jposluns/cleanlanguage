@@ -11,10 +11,11 @@ unverifiable, and the published-release comparison and the transient-error
 handling are preserved. The page a version bump builds from the zero
 placeholder, which says that the checksum appears once the version is
 published, passes in the pre-tag window and fails as drift once the release is
-published; a page in neither state exits 3, with 1 case for each rule of the
-not-yet-published state and of the rest of the published state, including
-markup that a browser shows the same way, and those rules are pinned to the
-copy that check-release-links.py carries. Once the release SKILL.md names is published, its
+published; a page in neither state exits 3, with 1 case for each part of the
+rule that holds the page to the download block tools/build-site.py renders for
+it, including markup that a browser shows the same way, comments and hidden
+elements, and that rule is pinned to the copy that check-release-links.py
+carries. Once the release SKILL.md names is published, its
 Released line (item 26) must name the UTC day of the release published_at
 record (G4), checked for the release SKILL.md names whatever version the site
 names, and that release must be immutable; an unpublished release SKILL.md
@@ -70,18 +71,27 @@ ZIP_BYTES = b"not a real zip, but hashing does not care"
 ZIP_SUM = hashlib.sha256(ZIP_BYTES).hexdigest()
 OTHER_SUM = "f" * 64
 
-VERIFY = """<!doctype html>
-<html><body>
-<p>Download the skill. The published checksum is shown under the link.</p>
-<p>The published checksum for version {version} is:</p>
-<code class="sum" id="published-checksum">{checksum}</code>
-<p>The same value is in the <a
-href="https://github.com/jposluns/cleanlanguage/releases/download/v{version}/cleanlanguage-{version}.zip.sha256">file</a>.</p>
-<p>Step 3</p>
-<p>Compare the value your computer prints with the published checksum shown in step 1.</p>
-<p>If the values still differ after a fresh download, do not install the file.</p>
-</body></html>
-"""
+def verify_page(version: str, checksum: str) -> str:
+    """A verify page laid out as tools/build-site.py writes it: the download block the generator renders for
+    ``version`` and ``checksum`` (the gate's download_block), inside the elements build() writes around it
+    (BLOCK_ANCESTORS)."""
+    return ('<!doctype html>\n<html lang="en" class="site-cleanlanguage">\n<head><title>Verify</title></head>\n<body>\n'
+            '<main id="main-content">\n<div class="wrap"><div class="doc"><h1>Verify your download</h1>\n'
+            + gate.download_block(version, checksum) + '<div class="next"></div></div></div>\n</main>\n</body>\n</html>\n')
+
+
+class Page:
+    """A verify page in 1 state, written with format as the fixtures were: VERIFY.format(version=..., checksum=...)
+    for a published checksum, PENDING.format(version=...) for the zero placeholder."""
+
+    def __init__(self, checksum: str | None = None) -> None:
+        self.checksum = checksum
+
+    def format(self, version: str, checksum: str | None = None) -> str:
+        return verify_page(version, self.checksum or checksum)
+
+
+VERIFY = Page()
 # site/_redirects, with the short path to the checksum file the verify page may not link in the placeholder state.
 REDIRECTS = (
     f"/download https://github.com/jposluns/cleanlanguage/releases/download/v{AHEAD}/cleanlanguage-{AHEAD}.zip 302\n"
@@ -89,11 +99,12 @@ REDIRECTS = (
     f"cleanlanguage-{AHEAD}.zip.sha256 302\n"
 )
 # The verify page while site-src/release.json holds the zero placeholder, as tools/build-site.py writes it.
-PENDING = """<!doctype html>
-<html><body>
-<p>The checksum for version {version} appears here once that version is published.</p>
-</body></html>
-"""
+PENDING = Page("0" * 64)
+
+
+def outside(page: str, extra: str) -> str:
+    """``page`` with ``extra`` after the download block, inside main."""
+    return page.replace('<div class="next">', extra + '<div class="next">', 1)
 
 
 # Row 80: the gate runs the extractor as a separate python3 -I child, so a
@@ -880,7 +891,7 @@ class ConditionalPassTest(unittest.TestCase):
             except SystemExit as stop:
                 self.fail(f"loading the gate stopped with exit {stop.code} before main ran: {err.getvalue()}")
         for name in (
-            "REPO_ROOT", "VERIFY_PAGE", "SKILL", "REDIRECTS", "release_status", "tag_status", "gh",
+            "REPO_ROOT", "VERIFY_PAGE", "SKILL", "REDIRECTS", "GENERATOR", "release_status", "tag_status", "gh",
             "release_published_at", "release_immutable",
         ):
             setattr(fresh, name, getattr(gate, name))
@@ -1193,83 +1204,131 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertIn(f"  - the published cleanlanguage-{CURRENT}.zip is {ZIP_SUM}\n", out)
 
     def test_a_page_in_neither_state_exits_3(self):
-        # The zero placeholder shown as the published checksum, and a page with the note that breaks a
-        # rule of the not-yet-published state (placeholder_page_problems), are refused before any
-        # release is read: 1 case for each rule.
+        # The zero placeholder shown as the published checksum, and a page with the note that breaks the rule
+        # (download_block_problems), are refused before any release is read: 1 case for each part of the rule.
         note = f"<p>The checksum for version {CURRENT} appears here once that version is published.</p>\n"
         mixed = "the verify page carries the not-yet-published note, but "
-        once = (f"does not say exactly once that the checksum for version {CURRENT} appears here once that "
-                f"version is published")
         url = f"https://github.com/jposluns/cleanlanguage/releases/download/v{CURRENT}/cleanlanguage-{CURRENT}.zip"
+        pending = PENDING.format(version=CURRENT)
+        element = "carries the checksum element's id outside the download block"
+        sum_class = "carries the class sum outside the download block"
+        noted = "carries the not-yet-published note outside the download block"
+        worded = 'says "published checksum" outside the download block'
+        hexadecimal = "carries a 64 digit hexadecimal value outside the download block"
+        linked = "links a .sha256 checksum file outside the download block"
+        rejects = "has a step that tells the reader not to install the file outside the download block"
+        block = "does not carry the download block that tools/build-site.py writes for this state exactly once, byte for byte"
+        placed = "does not carry the download block where tools/build-site.py writes it"
+        start, end = pending.index('<p class="lbl blk">Step 1</p>'), pending.index('<div class="next">')
         for label, page, report in (
-            ("the placeholder as the published checksum", VERIFY.format(version=CURRENT, checksum="0" * 64),
+            ("the placeholder as the published checksum",
+             VERIFY.format(version=CURRENT, checksum=ZIP_SUM).replace(ZIP_SUM, "0" * 64),
              "the verify page shows the zero placeholder as the published checksum"),
-            ("the note beside a published checksum", VERIFY.format(version=CURRENT, checksum=ZIP_SUM) + note,
-             mixed + 'shows a checksum element; says "published checksum"; links a .sha256 checksum file; '
-             "has a step that tells the reader not to install the file"),
-            # Finding 1 (DISCOVERY round 2): the page is read as parsed markup, so markup that a browser shows
-            # the same way is held to the same rule.
+            ("the note beside a published checksum", outside(VERIFY.format(version=CURRENT, checksum=ZIP_SUM), note),
+             mixed + block + " (found 0)"),
+            # Finding 1 (DISCOVERY round 2) and findings 2 and 5 (VERIFY round 2.1): outside the block, the page
+            # is read as parsed markup and as written, comments and hidden elements included.
             ("the note beside the checksum element with its attributes in the other order",
-             note + f'<code id="published-checksum" class="sum">{ZIP_SUM}</code>\n', mixed + "shows a checksum element"),
+             outside(pending, f'<code id="published-checksum" class="sum">{ZIP_SUM}</code>\n'),
+             mixed + "; ".join((element, sum_class, hexadecimal))),
             ("the note beside the checksum element with another attribute",
-             note + f"<code class='sum' hidden id=published-checksum>{ZIP_SUM}</code>\n", mixed + "shows a checksum element"),
-            ("the note beside a link through the checksum redirect", note + '<a href="/download/checksum">file</a>\n',
-             mixed + "links a .sha256 checksum file"),
+             outside(pending, "<code class='x' hidden id=published-checksum></code>\n"), mixed + element),
+            ("the note beside 64 zeros in an element of the class sum without the id",
+             outside(pending, f'<code class="sum">{"0" * 64}</code>\n'), mixed + "; ".join((sum_class, hexadecimal))),
+            ("the note beside a link through the checksum redirect", outside(pending, '<a href="/download/checksum">f</a>\n'),
+             mixed + linked),
+            ("the note beside a link through the checksum redirect with a doubled slash",
+             outside(pending, '<a href="/download//checksum">f</a>\n'), mixed + linked),
             ("the note beside a relative link through the checksum redirect",
-             note + '<a href="../download/Checksum/">file</a>\n', mixed + "links a .sha256 checksum file"),
+             outside(pending, '<a href="../download/Checksum/">file</a>\n'), mixed + linked),
             ("the note beside a link to the checksum file with an encoded dot",
-             note + f'<a href="{url}%2Esha256">file</a>\n', mixed + "links a .sha256 checksum file"),
+             outside(pending, f'<a href="{url}%2Esha256">file</a>\n'), mixed + linked),
             ("the note beside published checksum wording split by markup",
-             note + "<p>The published <b>checksum</b> is below.</p>\n", mixed + 'says "published checksum"'),
+             outside(pending, "<p>The published <b>checksum</b> is below.</p>\n"), mixed + worded),
             ("the note beside a step that rejects the download split by markup",
-             note + "<p>If they differ, do <em>not</em> install the file.</p>\n",
-             mixed + "has a step that tells the reader not to install the file"),
+             outside(pending, "<p>If they differ, do <em>not</em> install the file.</p>\n"), mixed + rejects),
             ("the note beside the checksum sentence alone",
-             note + f"<p>The published checksum for version {CURRENT} is:</p>\n",
-             mixed + 'says "published checksum"'),
-            ("the note beside a checksum element alone", note + f'<code class="sum" id="published-checksum">{ZIP_SUM}</code>\n',
-             mixed + "shows a checksum element"),
-            ("the note beside other published checksum wording",
-             note + "<p>Compare it with the published checksum shown in step 1.</p>\n", mixed + 'says "published checksum"'),
-            ("the note beside a link to the checksum file", note + f'<a href="{url}.sha256">checksum file</a>\n',
-             mixed + "links a .sha256 checksum file"),
+             outside(pending, f"<p>The published checksum for version {CURRENT} is:</p>\n"), mixed + worded),
+            ("the note beside a link to the checksum file", outside(pending, f'<a href="{url}.sha256">checksum file</a>\n'),
+             mixed + linked),
             ("the note beside a step that rejects the download",
-             note + "<p>Compare the 2 values. If they still differ, do not install the file.</p>\n",
-             mixed + "has a step that tells the reader not to install the file"),
-            ("2 notes", PENDING.format(version=CURRENT) + note, mixed + once),
-            ("a second note for another version", PENDING.format(version=CURRENT) + note.replace(CURRENT, BOGUS),
-             mixed + once),
+             outside(pending, "<p>Compare the 2 values. If they still differ, do not install the file.</p>\n"),
+             mixed + rejects),
+            ("the note beside 64 hexadecimal digits in a comment", outside(pending, f"<!-- {ZIP_SUM} -->\n"),
+             mixed + hexadecimal),
+            ("2 notes", outside(pending, note), mixed + noted),
+            ("a second note for another version", outside(pending, note.replace(CURRENT, BOGUS)), mixed + noted),
+            ("the note only in a comment", pending.replace(note.strip(), f"<!-- {note.strip()} -->"),
+             mixed + block + " (found 0)"),
+            ("the block hidden", pending[:start] + "<div hidden>" + pending[start:end] + "</div>" + pending[end:],
+             mixed + placed),
+            ("the block in a template", pending[:start] + "<template>" + pending[start:end] + "</template>" + pending[end:],
+             mixed + placed),
+            ("a stray body start tag with a hidden attribute", outside(pending, "<body hidden>"), mixed + placed),
+            ("the block twice", outside(pending, pending[start:end]), mixed + block + " (found 2)"),
+            ("a stray html start tag", outside(pending, "<html hidden>"), mixed + placed),
+            ("the block in a self-closed div, which a browser leaves open",
+             pending[:start] + "<div hidden/>" + pending[start:], mixed + placed),
+            ("the note beside the class sum in a comment", outside(pending, '<!-- <i class="x sum"></i> -->'),
+             mixed + sum_class),
+            ("the note beside the checksum element's id in a script",
+             outside(pending, '<script>f("published-checksum")</script>'), mixed + element),
+            ("the note beside the checksum element's id as a character reference",
+             outside(pending, "<i id=published&#45;checksum></i>"), mixed + element),
+            ("the note beside a link to the checksum file in a script", outside(pending, '<script>f("/x.SHA256")</script>'),
+             mixed + linked),
+            ("the note beside a step that rejects the download in a contraction",
+             outside(pending, "<p>If they differ, don&#8217;t install the file.</p>"), mixed + rejects),
         ):
             with self.subTest(label):
+                self.assertNotEqual(page, pending)
                 gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
                 gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
                 gate.release_status = unexpected_call
                 self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {report}\n"))
 
     def test_a_published_page_without_the_rest_of_its_state_exits_3(self):
-        # Finding 2 (DISCOVERY round 2): a page with a real checksum keeps the step 1 lead, the link to the
-        # checksum file of its version and step 3 (published_page_problems), or it is refused before any
-        # release is read: 1 case for each rule, and the page the finding reported, which lacks all of them.
+        # Finding 2 (DISCOVERY round 2) and findings 1, 3 and 4 (VERIFY round 2.1): a page with a real checksum
+        # carries the download block the generator writes for it, unchanged and where the generator writes it,
+        # and nothing outside it that belongs to either state, or it is refused before any release is read.
         page = VERIFY.format(version=CURRENT, checksum=ZIP_SUM)
-        lead = "<p>Download the skill. The published checksum is shown under the link.</p>\n"
-        link = f"/v{CURRENT}/cleanlanguage-{CURRENT}.zip.sha256"
-        step = "<p>Step 3</p>\n"
-        reject = "<p>If the values still differ after a fresh download, do not install the file.</p>\n"
+        lead = "<p>Download the skill. The published checksum is shown under the link.</p>"
+        link_start = page.index(f'<a href="https://github.com/jposluns/cleanlanguage/releases/download/v{CURRENT}/'
+                                f'cleanlanguage-{CURRENT}.zip.sha256"')
+        link = page[link_start:page.index("</a>", link_start) + 4]
+        start, end = page.index('<p class="lbl blk">Step 1</p>'), page.index('<div class="next">')
+        step = page[page.index('<p class="lbl blk">Step 3</p>'):end]
+        code = f'<code class="sum" id="published-checksum">{ZIP_SUM}</code>'
         shown = "the verify page shows a published checksum, but "
-        no_lead = "does not say in step 1 that the published checksum is shown under the link"
-        no_link = f"does not link the checksum file of version {CURRENT}"
-        no_step = "has no step 3 that compares the 2 values"
-        no_reject = "has no step that tells the reader not to install the file"
+        block = ("does not carry the download block that tools/build-site.py writes for this state exactly once, "
+                 "byte for byte (found 0)")
+        placed = "does not carry the download block where tools/build-site.py writes it"
         for label, changed, report in (
-            ("no step 1 lead", page.replace(lead, ""), no_lead),
-            ("the step 1 lead in a comment only", page.replace(lead, f"<!-- {lead.strip()} -->\n"), no_lead),
-            ("no link to the checksum file", page.replace(link, f"/v{CURRENT}/cleanlanguage-{CURRENT}.zip"), no_link),
-            ("a link to the checksum file of another version", page.replace(link, link.replace(CURRENT, BOGUS)), no_link),
-            ("no step 3", page.replace(step, ""), no_step),
-            ("no step that rejects the download", page.replace(reject, ""), no_reject),
+            ("no step 1 lead", page.replace(lead, "<p>Download the skill.</p>"), block),
+            ("the step 1 lead in a comment only", page.replace(lead, f"<p>Download the skill.<!-- {lead} --></p>"), block),
+            ("the step 1 lead hidden", page.replace(lead, f"<div hidden>{lead}</div>"), block),
+            ("no link to the checksum file", page.replace(link, "published checksum file"), block),
+            ("the link to the checksum file hidden", page.replace(link, f"<span hidden>{link}</span>"), block),
+            ("a link to the checksum file of another version", page.replace(link, link.replace(CURRENT, BOGUS)), block),
+            ("no step 3", page.replace(step, ""), block),
+            ("step 3 hidden", page.replace(step, f"<div hidden>{step}</div>"), block),
+            ("a step 3 that rejects a matching value", page.replace("still differ after", "match after"), block),
             ("step 3, the link and the step 1 lead removed",
-             page.replace(lead, "").replace(link, f"/v{CURRENT}/cleanlanguage-{CURRENT}.zip").replace(step, "")
-             .replace(reject, ""), "; ".join((no_lead, no_link, no_step, no_reject))),
+             page.replace(lead, "<p>Download the skill.</p>").replace(link, "published checksum file").replace(step, ""),
+             block),
+            ("the checksum element in a comment beside a visible one",
+             page.replace(code, f'<!-- {code} --><code id="published-checksum" class="sum">{OTHER_SUM}</code>'), block),
+            ("a second, wrong checksum element beside the real one",
+             page.replace(code, code + f'<code class="sum" id="published-checksum">{OTHER_SUM}</code>'), block),
+            ("a second, wrong checksum element after the block",
+             outside(page, f'<code class="sum" id="published-checksum">{OTHER_SUM}</code>'),
+             "carries the checksum element's id outside the download block; carries the class sum outside the "
+             "download block; carries a 64 digit hexadecimal value outside the download block"),
+            ("the note split by markup after the block",
+             outside(page, "<p>It appears <b>here</b> once that version is published.</p>"),
+             "carries the not-yet-published note outside the download block"),
+            ("the whole block hidden", page[:start] + "<div hidden>" + page[start:end] + "</div>" + page[end:], placed),
+            ("the whole block in a comment", page[:start] + "<!--" + page[start:end] + "-->" + page[end:], placed),
         ):
             with self.subTest(label):
                 self.assertNotEqual(changed, page)
@@ -1278,13 +1337,31 @@ class ConditionalPassTest(unittest.TestCase):
                 gate.release_status = unexpected_call
                 self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {shown}{report}\n"))
 
-    def test_the_placeholder_state_reads_site_redirects(self):
-        # The paths to the checksum file come from site/_redirects, a required file in that state.
-        gate.VERIFY_PAGE.write_text(PENDING.format(version=CURRENT), encoding="utf-8")
+    def test_each_state_reads_site_redirects(self):
+        # The paths to the checksum file come from site/_redirects, a required file in either state.
+        for label, page in (("placeholder", PENDING.format(version=CURRENT)),
+                            ("published", VERIFY.format(version=CURRENT, checksum=ZIP_SUM))):
+            with self.subTest(label):
+                gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
+                gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+                gate.release_status = unexpected_call
+                if gate.REDIRECTS.exists():
+                    gate.REDIRECTS.unlink()
+                self.assertEqual(self.main_reports(), (3, "", "check-release-checksum-live: _redirects does not exist\n"))
+
+    def test_a_generator_that_cannot_render_the_block_exits_3(self):
+        gate.VERIFY_PAGE.write_text(VERIFY.format(version=CURRENT, checksum=ZIP_SUM), encoding="utf-8")
         gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
         gate.release_status = unexpected_call
-        gate.REDIRECTS.unlink()
-        self.assertEqual(self.main_reports(), (3, "", "check-release-checksum-live: _redirects does not exist\n"))
+        saved = gate.GENERATOR
+        gate.GENERATOR = Path(self._tmp.name) / "build-site.py"
+        try:
+            code, out, err = self.main_reports()
+        finally:
+            gate.GENERATOR = saved
+        self.assertEqual((code, out), (3, ""))
+        self.assertIn("check-release-checksum-live: tools/build-site.py could not render the verify page's download "
+                      "block", err)
 
     def pre_tag_reports(self, version, released=None):
         """Run the gate in the pre-tag window for ``version``, asserting the
@@ -2428,53 +2505,29 @@ class ConditionalPassTest(unittest.TestCase):
                 ), ""))
                 self.assertEqual(probed, [f"v{version}"])
 
-    def test_the_first_checksum_block_and_version_sentence_are_read(self):
-        # Fix round 14 (VERIFY round 9.3, finding 4): a verify page with two
-        # checksum blocks, or two version sentences, is read by its first.
-        # A release status read for a tag means that the checksum and the
-        # version were accepted, and the tag names the version that was read.
-        sha = "is not a 64 character lower-case SHA-256"
-        block = '<code class="sum" id="published-checksum">{}</code>\n'
-
-        def sentence(version):
-            return f"<p>The published checksum for version {version} is:</p>\n"
-
-        def rest(version):
-            # The rest of the published state (published_page_problems), for the version that is read.
-            return VERIFY.format(version=version, checksum="").replace(sentence(version), "")
-
-        class Probed(Exception):
-            pass
-
-        def probe(tag):
-            raise Probed(tag)
-
-        for label, page, tag in (
-            ("a valid checksum block first", sentence(CURRENT) + block.format(ZIP_SUM) + block.format("abc"),
-             f"v{CURRENT}"),
-            ("the current version first", sentence(CURRENT) + sentence("1234.0.100") + block.format(ZIP_SUM),
-             f"v{CURRENT}"),
-            ("another version first", sentence("1234.0.100") + sentence(CURRENT) + block.format(ZIP_SUM),
-             "v1234.0.100"),
+    def test_a_second_checksum_block_or_version_sentence_exits_3(self):
+        # Fix round 14 (VERIFY round 9.3, finding 4) read a page with 2 checksum blocks, or 2 version sentences, by
+        # its first. Finding 1 (VERIFY round 2.1): such a page now carries more than the download block of the
+        # checksum and version it is read by, so it is refused before any release is read.
+        page = VERIFY.format(version=CURRENT, checksum=ZIP_SUM)
+        code = f'<code class="sum" id="published-checksum">{ZIP_SUM}</code>'
+        sentence = f"<p>The published checksum for version {CURRENT} is:</p>"
+        shown = "check-release-checksum-live: the verify page shows a published checksum, but "
+        block = ("does not carry the download block that tools/build-site.py writes for this state exactly once, "
+                 "byte for byte (found 0)")
+        for label, changed, report in (
+            ("a second checksum block after the first", page.replace(code, code + code.replace(ZIP_SUM, "abc")), block),
+            ("a second, wrong checksum block before the block, which is read",
+             page.replace("<h1>", code.replace(ZIP_SUM, OTHER_SUM) + "<h1>"), block),
+            ("another version first", page.replace("<h1>", sentence.replace(CURRENT, "1234.0.100") + "<h1>"), block),
+            ("a second sentence after the block", outside(page, sentence),
+             'says "published checksum" outside the download block'),
         ):
             with self.subTest(label):
-                gate.VERIFY_PAGE.write_text(page + rest(tag[1:]), encoding="utf-8")
+                gate.VERIFY_PAGE.write_text(changed, encoding="utf-8")
                 gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
-                gate.release_status = probe
-                out, err = io.StringIO(), io.StringIO()
-                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                    with self.assertRaises(Probed) as caught:
-                        gate.main()
-                self.assertEqual((str(caught.exception), out.getvalue(), err.getvalue()), (tag, "", ""))
-        with self.subTest("an invalid checksum block first"):
-            gate.VERIFY_PAGE.write_text(
-                sentence(CURRENT) + block.format("abc") + block.format(ZIP_SUM), encoding="utf-8"
-            )
-            gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
-            gate.release_status = unexpected_call
-            self.assertEqual(
-                self.main_reports(), (3, "", f"check-release-checksum-live: the displayed checksum 'abc' {sha}\n")
-            )
+                gate.release_status = unexpected_call
+                self.assertEqual(self.main_reports(), (3, "", f"{shown}{report}\n"))
 
     def test_a_manifest_with_or_without_a_final_newline_is_one_line(self):
         # Fix round 14 (VERIFY round 9.3, finding 3): the manifest is read
@@ -4116,6 +4169,12 @@ class ModuleLoadTest(unittest.TestCase):
             page = root / "site" / "verify" / "index.html"
             page.parent.mkdir(parents=True)
             page.write_text(VERIFY.format(version=AHEAD, checksum=OTHER_SUM), encoding="utf-8")
+            # The generator and the page source the gate renders the download block from, and site/_redirects.
+            shutil.copy2(MODULE_PATH.parent / "build-site.py", tools / "build-site.py")
+            source = root / "site-src" / "pages" / "verify.html"
+            source.parent.mkdir(parents=True)
+            shutil.copy2(MODULE_PATH.parent.parent / "site-src" / "pages" / "verify.html", source)
+            (root / "site" / "_redirects").write_text(REDIRECTS, encoding="utf-8")
             skill = root / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
             skill.parent.mkdir(parents=True)
             skill.write_text(f"Version: {AHEAD}\n", encoding="utf-8")
@@ -4709,9 +4768,8 @@ class ContractRoutingTest(unittest.TestCase):
 
 
 class SharedPlaceholderRuleTest(unittest.TestCase):
-    """The rules of the not-yet-published verify page are one rule in 2 copies: this gate and
-    check-release-links.py carry placeholder_page_problems and the patterns it reads verbatim, so the
-    2 gates cannot accept different pages in that state."""
+    """The rule of the verify page is one rule in 2 copies: this gate and check-release-links.py carry
+    download_block_problems and what it reads verbatim, so the 2 gates cannot accept different pages."""
 
     def test_the_two_gates_carry_the_same_rule(self):
         links_path = MODULE_PATH.parent / "check-release-links.py"
@@ -4726,16 +4784,16 @@ class SharedPlaceholderRuleTest(unittest.TestCase):
             self.assertEqual(len(found), 1, path.name)
             return found[0]
 
-        # Both state rules, the reader of the parsed page and the reading of site/_redirects.
-        for name in ("placeholder_page_problems", "published_page_problems", "PageReader", "checksum_paths",
-                     "targets_checksum"):
+        # The rule, its rendering of the download block, the reader of the parsed page and the reading of
+        # site/_redirects.
+        for name in ("download_block_problems", "download_block", "PageReader", "checksum_paths", "targets_checksum"):
             with self.subTest(name):
                 self.assertEqual(definition(MODULE_PATH, name), definition(links_path, name))
-        for name in ("PENDING_VERSION", "DISPLAYED_SUM", "PUBLISHED_WORDING", "REJECTING_STEP", "COMPARE_STEP"):
+        for name in ("PENDING_VERSION", "DISPLAYED_SUM", "PENDING_NOTE", "PUBLISHED_WORDING", "REJECTING_STEP", "HEX64"):
             with self.subTest(name):
                 ours, theirs = getattr(gate, name), getattr(links, name)
                 self.assertEqual((ours.pattern, ours.flags), (theirs.pattern, theirs.flags))
-        for name in ("PLACEHOLDER", "PUBLISHED_LEAD", "SUM_URL", "SUM_ID", "VERIFY_URL"):
+        for name in ("PLACEHOLDER", "SUM_ID", "VERIFY_URL", "GENERATOR", "BLOCK_ANCESTORS"):
             with self.subTest(name):
                 self.assertEqual(getattr(gate, name), getattr(links, name))
 

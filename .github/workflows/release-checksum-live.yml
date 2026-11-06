@@ -22,6 +22,8 @@ on:
       - "tools/test-release-checksum-live.py"
       - "tools/skill-release-date.py"
       - "tools/check-release-links.py"
+      - "tools/build-site.py"
+      - "site-src/pages/verify.html"
       - ".github/workflows/release-checksum-live.yml"
   pull_request:
     paths:
@@ -32,6 +34,8 @@ on:
       - "tools/test-release-checksum-live.py"
       - "tools/skill-release-date.py"
       - "tools/check-release-links.py"
+      - "tools/build-site.py"
+      - "site-src/pages/verify.html"
       - ".github/workflows/release-checksum-live.yml"
   schedule:
     - cron: "17 13 * * *"

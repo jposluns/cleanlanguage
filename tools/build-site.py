@@ -28,6 +28,9 @@ Sources
   line of ``cleanlanguage/skills/cleanlanguage/SKILL.md``. While its checksum
   is the zero placeholder of a version bump, the verify page shows no checksum
   and says that it appears once that version is published (``sum_tokens()``).
+  ``verify_download_block()`` renders the verify page's download block alone,
+  which ``tools/check-release-links.py`` and
+  ``tools/check-release-checksum-live.py`` require on the page.
 - ``site-src/pages/<page>.html``: the hand-written content of each page, with
   ``{{token}}`` placeholders.
 - ``site-src/assets/site.css``, optional: only the measured per-site constants
@@ -249,6 +252,11 @@ ABOUT_BLOCK = '<div class="region"><p class="lbl">About this project</p><div>{ro
 SLICE_COUNT = 6
 # The checksum a version bump writes into site-src/release.json until the post-release flip sets the published one.
 PLACEHOLDER_CHECKSUM = "0" * 64
+# The verify page's download block in its source: steps 1 to 3, from the step 1 label to the end of the step 3 token
+# (verify_download_block()).
+VERIFY_SOURCE = SRC / "pages" / "verify.html"
+DOWNLOAD_START = '<p class="lbl blk">Step 1</p>\n'
+DOWNLOAD_END = "{{release.sum_compare}}"
 
 
 class BuildError(Exception):
@@ -311,6 +319,12 @@ def load_release(root: Path, override: dict | None = None) -> dict:
             f"site-src/release.json names version {version}, but SKILL.md says {expected}; "
             "run tools/set-release-links.py for the release, never edit one without the other"
         )
+    return release_tokens(version, tag, checksum)
+
+
+def release_tokens(version: str, tag: str, checksum: str) -> dict:
+    """The release.* tokens of these release values, which load_release() gives every page and
+    verify_download_block() the verify page's download block."""
     zip_name = f"cleanlanguage-{version}.zip"
     zip_url = f"https://github.com/{REPO_SLUG}/releases/download/{tag}/{zip_name}"
     return {
@@ -353,6 +367,18 @@ def sum_tokens(version: str, checksum: str, sum_url: str) -> dict:
             f"{external('https://github.com/jposluns/cleanlanguage/issues', 'report it on GitHub')}.</p>\n"
         ),
     }
+
+
+def verify_download_block(root: Path, version: str, tag: str, checksum: str) -> str:
+    """The verify page's download block, byte for byte as build() writes it for these release values: steps 1 to 3
+    of site-src/pages/verify.html, from DOWNLOAD_START to the end of DOWNLOAD_END, with the release.* tokens
+    replaced. tools/check-release-links.py and tools/check-release-checksum-live.py render it here and require it
+    on the verify page exactly once."""
+    source = read_text(root, VERIFY_SOURCE)
+    start, end = source.find(DOWNLOAD_START), source.find(DOWNLOAD_END)
+    if source.count(DOWNLOAD_START) != 1 or source.count(DOWNLOAD_END) != 1 or end < start:
+        raise Unreadable(f"{VERIFY_SOURCE} does not hold the download block once, from its step 1 label to {DOWNLOAD_END}")
+    return substitute(source[start:end + len(DOWNLOAD_END)], release_tokens(version, tag, checksum), str(VERIFY_SOURCE))
 
 
 # Markdown subset for the skill's reference files ------------------------------
