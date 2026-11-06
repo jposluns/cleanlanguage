@@ -39,8 +39,16 @@ Behaviour:
     that a browser shows the same way, such as one with a double space in
     step 1 or with the html element's attributes in another order: the
     committed page is always the generator's render, so the remedy is to run
-    ``tools/build-site.py``. For a clearer report, the gate first applies the
-    rule that ``tools/check-release-links.py`` also applies
+    ``tools/build-site.py``. While ``site-src/site.json`` names a base other
+    than /, a draft is staged: ``tools/build-site.py`` writes only the draft,
+    not the live pages, and the gate still renders this page at base / from
+    the sources, the draft's changes included. So a correct live page that
+    the draft renders differently exits 3, and running
+    ``tools/build-site.py`` cannot clear it; the report then says that a
+    draft is staged and that promoting it, after the owner approves it, is
+    the remedy (staged_draft). Every page that is not the render exits 3,
+    whether or not a draft is staged. For a clearer report, the gate first
+    applies the rule that ``tools/check-release-links.py`` also applies
     (download_block_problems), and reports the equality only for a page that
     keeps it: the page carries the download block that ``tools/build-site.py``
     renders for that version and checksum (download_block) exactly once, byte
@@ -1234,6 +1242,28 @@ def rendered_verify_page(version: str, checksum: str) -> bytes:
         raise LookupError(f"tools/build-site.py could not render the verify page: {error}") from error
 
 
+def staged_draft() -> str | None:
+    """The base path site-src/site.json names when it is not /, which means a draft is staged, or None. The gate
+    renders the live verify page at base / from the sources, the draft's changes included, while tools/build-site.py
+    writes only the draft, so this selects the report and never the verdict. None also when the file cannot be read
+    or names no base as a string, so the report is as without a draft; the generator refuses a site.json it cannot
+    read (exit 3)."""
+    try:
+        config = json.loads((REPO_ROOT / "site-src" / "site.json").read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    base = config.get("base") if isinstance(config, dict) else None
+    return base if isinstance(base, str) and base != "/" else None
+
+
+def draft_advice(base: str) -> str:
+    """The advice while site-src/site.json names ``base``, a base other than /, so a draft is staged (staged_draft)."""
+    return (f"site-src/site.json names base {base}, so a draft is staged: tools/build-site.py writes only the draft, "
+            f"not the live pages, and this gate renders the live verify page at base / from the sources, the draft's "
+            f"changes included. Promoting the draft after the owner approves it (tools/build-site.py --base / "
+            f"--promote) is the remedy")
+
+
 def first_difference(written: bytes, rendered: bytes) -> str:
     """Where ``written`` first departs from ``rendered``, by line, for the report."""
     lines, expected = written.split(b"\n"), rendered.split(b"\n")
@@ -1299,12 +1329,16 @@ def check_site_checksum(load_code: int = 0) -> int:
         written = VERIFY_PAGE.read_bytes()
     except OSError as error:
         die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} could not be read: {type(error).__name__}: {error}")
+    # DISCOVERY round 8, finding 1: while a draft is staged, tools/build-site.py does not write the live page.
+    staged = staged_draft()
     if not problems and written != rendered:
         problems.append(f"is not the page tools/build-site.py renders for version {version} and that checksum from "
-                        f"the committed sources ({first_difference(written, rendered)}); run tools/build-site.py")
+                        f"the committed sources ({first_difference(written, rendered)})"
+                        + ("; run tools/build-site.py" if staged is None else ""))
     if problems:
         state = "carries the not-yet-published note" if pending is not None else "shows a published checksum"
-        die(f"the verify page {state}, but " + "; ".join(problems))
+        die(f"the verify page {state}, but " + "; ".join(problems)
+            + ("" if staged is None else f". {draft_advice(staged)}"))
     tag = f"v{version}"
     zip_name = f"cleanlanguage-{version}.zip"
     manifest_name = f"{zip_name}.sha256"

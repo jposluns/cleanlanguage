@@ -5077,6 +5077,47 @@ class WholePageTest(unittest.TestCase):
                     self.assertIn(report, output)
             self.page.write_text(page, encoding="utf-8")
 
+    def test_a_staged_draft_names_promotion_as_the_remedy(self):
+        # DISCOVERY round 8, finding 1: with a draft staged under /draft/ and one nav label changed, tools/build-site.py
+        # writes only site/draft/, so the correct live page is not the render; the gate exits 3, says so and names
+        # promotion, and still refuses a wrong live page. Without a draft, it still says to run tools/build-site.py.
+        rendered = (f"is not the page tools/build-site.py renders for version {self.version} and that checksum from "
+                    "the committed sources (first at line ")
+        staged = ("). site-src/site.json names base /draft/, so a draft is staged: tools/build-site.py writes only the "
+                  "draft, not the live pages")
+        remedy = "Promoting the draft after the owner approves it (tools/build-site.py --base / --promote) is the remedy"
+        site_json = self.root / "site-src/site.json"
+        original = site_json.read_text(encoding="utf-8")
+        for checksum, state in (("0" * 64, "placeholder"), (self.SUM, "published")):
+            with self.subTest(state):
+                page = self.publish(checksum)
+                wrong = outside(page, "<p>If the values differ, install the file anyway.</p>")
+                self.page.write_text(wrong, encoding="utf-8")
+                code, output = self.gate_run()
+                self.assertEqual(code, 3, output)
+                self.assertIn(rendered, output)
+                self.assertIn("; run tools/build-site.py", output)
+                self.assertNotIn("a draft is staged", output)
+                self.page.write_text(page, encoding="utf-8")
+                config = json.loads(original)
+                config["base"] = "/draft/"
+                next(entry for entry in config["pages"] if entry["id"] == "install")["nav_label"] = "Install it"
+                site_json.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(self.generator.main(["--root", str(self.root)]), 0)
+                self.assertEqual(self.page.read_text(encoding="utf-8"), page)
+                self.assertTrue((self.root / "site/draft/verify/index.html").is_file())
+                for label, written in (("the correct live page", page), ("a wrong live page", wrong)):
+                    self.page.write_text(written, encoding="utf-8")
+                    code, output = self.gate_run()
+                    self.assertEqual(code, 3, f"{label}: {output}")
+                    self.assertIn(rendered, output)
+                    self.assertIn(staged, output)
+                    self.assertIn(remedy, output)
+                    self.assertNotIn("run tools/build-site.py", output)
+                site_json.write_text(original, encoding="utf-8")
+                self.page.write_text(page, encoding="utf-8")
+
 
 if __name__ == "__main__":
     unittest.main()

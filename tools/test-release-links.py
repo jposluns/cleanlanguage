@@ -1117,6 +1117,45 @@ class WholePageTest(unittest.TestCase):
                                   f"committed sources, while site-src/release.json {state} (first at line ", output)
             self.page.write_text(page, encoding="utf-8")
 
+    def test_a_staged_draft_names_promotion_as_the_remedy(self):
+        # DISCOVERY round 8, finding 1: with a draft staged under /draft/ and one nav label changed, tools/build-site.py
+        # writes only site/draft/, so the correct live page is not the render; the gate says so and names promotion,
+        # and still fails a wrong live page. Without a draft, it still says to run tools/build-site.py.
+        staged = "site-src/site.json names base /draft/, so a draft is staged: "
+        remedy = "Promoting the draft after the owner approves it (tools/build-site.py --base / --promote) is the remedy."
+        for checksum, state in ((ZEROS, "holds the zero placeholder"), (SUM, "holds a published checksum")):
+            with self.subTest(state):
+                site_json = self.root / "site-src/site.json"
+                original = site_json.read_text(encoding="utf-8")
+                page = self.publish(checksum)
+                wrong = outside(page, "<p>If the values differ, install the file anyway.</p>")
+                self.page.write_text(wrong, encoding="utf-8")
+                code, output = self.gate_run()
+                self.assertEqual(code, 1, output)
+                self.assertIn(f"site-src/release.json {state} (first at line ", output)
+                self.assertIn("; run tools/build-site.py\n", output)
+                self.assertNotIn("a draft is staged", output)
+                self.page.write_text(page, encoding="utf-8")
+                config = json.loads(original)
+                config["base"] = "/draft/"
+                next(entry for entry in config["pages"] if entry["id"] == "install")["nav_label"] = "Install it"
+                site_json.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(self.generator.main(["--root", str(self.root)]), 0)
+                self.assertEqual(self.page.read_text(encoding="utf-8"), page)
+                self.assertTrue((self.root / "site/draft/verify/index.html").is_file())
+                for label, written in (("the correct live page", page), ("a wrong live page", wrong)):
+                    self.page.write_text(written, encoding="utf-8")
+                    code, output = self.gate_run()
+                    self.assertEqual(code, 1, f"{label}: {output}")
+                    self.assertIn(f"site-src/release.json {state} (first at line ", output)
+                    self.assertIn("); a draft is staged (see below)\n", output)
+                    self.assertIn(staged, output)
+                    self.assertIn(remedy, output)
+                    self.assertNotIn("; run tools/build-site.py", output)
+                site_json.write_text(original, encoding="utf-8")
+                self.page.write_text(page, encoding="utf-8")
+
 
 class WorkflowPathsTest(unittest.TestCase):
     """DISCOVERY round 5, finding 4: the offline gate holds the verify page to the generator's render, so

@@ -51,6 +51,14 @@ What it verifies
    the same way, such as one with the html element's attributes in another
    order or a double space in step 1: the committed page is always the
    generator's render, so the remedy is to run ``tools/build-site.py``.
+   While ``site-src/site.json`` names a base other than /, a draft is
+   staged: ``tools/build-site.py`` writes only the draft, not the live
+   pages, and the gate still renders this page at base / from the sources,
+   the draft's changes included. So a correct live page that the draft
+   renders differently fails, and running ``tools/build-site.py`` cannot
+   clear it; the gate then says that a draft is staged and that promoting
+   it, after the owner approves it, is the remedy (staged_draft). It fails
+   every page that is not the render, whether or not a draft is staged.
    ``tools/check-release-checksum-live.py`` holds the same page to the render
    for the version and checksum it shows. The equality holds the page to the
    generator, not the generator to what it should write: a change to
@@ -133,6 +141,8 @@ published, and flip the site after that; otherwise flip the
 site with ``tools/set-release-links.py`` using the published release checksum,
 then run ``tools/build-site.py``. Neither advice offers an edit by hand: the
 whole-page equality refuses any page that is not the generator's render.
+While a draft is staged, the advice also says so and names promotion as the
+remedy, as neither tool writes the live pages then.
 
 Exit codes:
   0  every check above passes, so every release link names the SKILL.md
@@ -378,6 +388,10 @@ def main() -> int:
                 f"release checksum (see the release runbook), then run tools/build-site.py, "
                 f"so the site matches SKILL.md ({expected})."
             )
+        staged = staged_draft()
+        if staged is not None:
+            # DISCOVERY round 8, finding 1: while a draft is staged, neither tool above writes the live pages.
+            print(f"\n{draft_advice(staged)}.")
         return 1
 
     places = sum(len(v) for v in found.values())
@@ -458,10 +472,11 @@ def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool
             except OSError as error:
                 die(f"{relative} could not be read: {error}")
             if written != rendered:
+                remedy = "run tools/build-site.py" if staged_draft() is None else "a draft is staged (see below)"
                 problems.append(
                     f"{relative} is not the page tools/build-site.py renders for it from the committed sources, "
                     f"while site-src/release.json {state} ({first_difference(written, rendered)}); "
-                    f"run tools/build-site.py"
+                    f"{remedy}"
                 )
         # Clearer reports of the commonest ways a page leaves the published state.
         if checksum != PLACEHOLDER:
@@ -493,6 +508,30 @@ def rendered_verify_page() -> bytes:
         return module.verify_page(REPO_ROOT)
     except Exception as error:
         raise LookupError(f"tools/build-site.py could not render the verify page: {error}") from error
+
+
+def staged_draft() -> str | None:
+    """The base path site-src/site.json names when it is not /, which means a draft is staged, or None. The gate
+    renders the live verify page at base / from the sources, the draft's changes included, while tools/build-site.py
+    and tools/set-release-links.py write only the draft, so this selects the advice and never the verdict. None also
+    when the file cannot be read or names no base as a string, so the advice is as without a draft; the generator
+    refuses a site.json it cannot read (exit 3)."""
+    import json
+
+    try:
+        config = json.loads((REPO_ROOT / "site-src" / "site.json").read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, ValueError):
+        return None
+    base = config.get("base") if isinstance(config, dict) else None
+    return base if isinstance(base, str) and base != "/" else None
+
+
+def draft_advice(base: str) -> str:
+    """The advice while site-src/site.json names ``base``, a base other than /, so a draft is staged (staged_draft)."""
+    return (f"site-src/site.json names base {base}, so a draft is staged: tools/build-site.py and "
+            f"tools/set-release-links.py write only the draft, not the live pages, and this gate renders the live "
+            f"verify page at base / from the sources, the draft's changes included. Promoting the draft after the "
+            f"owner approves it (tools/build-site.py --base / --promote) is the remedy")
 
 
 def first_difference(written: bytes, rendered: bytes) -> str:
