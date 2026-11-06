@@ -1940,6 +1940,7 @@ def check_inner_about_rows(failures: list[str]) -> int:
         *[(f"<p>About th{character}is project</p>", label_rule) for character in LABEL_IGNORED],
         ("<p>ABOUT THIS PROJECT</p>", label_rule),
         (f'<div class="region"><p class="lbl">{LABEL}</p></div>', label_rule),
+        ("<noscript><p>About <span hidden>x</span>this project</p></noscript>", label_rule),
         (f'<p title="{LABEL}">x</p>', None),
         (f'<p title="x>{LABEL}">y</p>', None),
         (f"<!-- {LABEL} -->", None),

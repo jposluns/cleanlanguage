@@ -392,7 +392,10 @@ so a value paragraph inside a later open member was hidden while every rule
 passed. The rules model ``hidden``, ``aria-hidden`` and ``class`` (as
 ``tools/check-install-page.py`` reads hiding, stylesheet rules apart, as
 above); by the HTML Standard's rules, the others admitted neither hide nor
-move an element, and only ``data-copy`` has a script that reads it:
+move an element, and only ``data-copy`` makes a script show an element
+(``copy.js`` also reads ``id``, to write its status text into
+``#copy-status``, which the generator writes, and ``rail.js`` reads
+``href``, to mark the rail link of the section the reader is on):
 ``copy.js`` shows every ``button`` with ``data-copy`` whose value names an
 element and, on a copy, replaces its content with plain text, so
 ``placement_pin()`` holds it to the committed copy button (below). An
@@ -2239,7 +2242,8 @@ def with_about(content: str, page: dict, base: str, logo_alt: str | None = None)
     PLACED_CHILDREN with text or children outside their pinned order, a data-copy attribute outside the committed copy
     button (COPY_BUTTON_PIN), or a hero image whose alt text is not logo_alt, site.json's, which
     build() passes; without it, any hero image is refused (placement_pin()). Each rule after the grammar reads 1
-    PageScan of the source; the About block goes where the parser read the region's end tag end (end_tag_end())."""
+    PageScan of the source, and the label rule also a second, read with scripting off (scripting_off()); the About
+    block goes where the parser read the region's end tag end (end_tag_end())."""
     where = page["source"]
     problem = source_problem(content)
     if problem is not None:
