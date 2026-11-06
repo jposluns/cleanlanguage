@@ -406,6 +406,9 @@ def read_checks(repo: str, full_sha: str, deadline: float):
     outlast the wait window."""
     remaining = deadline - time.time()
     if remaining <= 0:
+        # Defence in depth: after a good reading in wait mode, main's top-of-loop
+        # guard returns 2 first, so this is reached there only if the deadline
+        # passes in the moment between that guard and the clock read above.
         raise WindowClosed("the wait window closed before the read")
     try:
         proc = _gh(["api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"], remaining)

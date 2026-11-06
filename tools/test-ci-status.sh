@@ -602,6 +602,13 @@ CASE_ABSENT="check read failed" \
 CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000" \
   run_case "failed read then a read cut off at the deadline -> unreadable" \
   "$GA_PRESENT" "" "f s" 3 --wait --timeout 5
+# Without --wait, the confirmation read after a green reading is the only second
+# read, and it is bounded by the same deadline. A cut-off there keeps its old
+# result, the read failure (exit 3), not a timed-out wait.
+CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000" \
+  CASE_ABSENT="still unsettled" \
+  run_case "green reading then a confirmation read cut off without --wait -> unreadable" \
+  "$GA_PRESENT" "" "g s" 3 --timeout 5
 run_case "failed required check -> red" \
   "$(runs '{"status":"completed","conclusion":"failure","name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 1
 run_case "failing impostor of a required name beside the full set -> red" \
