@@ -60,11 +60,14 @@ Behaviour:
   - The equality holds the page to the generator, not the generator to what
     it should write: a change to ``site-src/pages/verify.html``, to the
     generator code that renders the page, or to what its head loads, made in
-    the sources and regenerated, passes this gate, a second checksum in the
-    page source included. ``tools/test-build-site.py`` pins the whole
-    rendered page in each state (VERIFY_PAGE_PIN) and the site's own
-    stylesheet (SITE_CSS_PIN), so such a change fails there until the pin is
-    updated on purpose. ``tools/check-release-links.py`` names the
+    the sources and regenerated, passes this gate only when the rule above
+    (download_block_problems) misses it, as it misses a second checksum in
+    the page source whose groups are joined by dots. A regenerated form that
+    the rule refuses still exits 3, such as a plain 64 digit hexadecimal
+    value added before the next-page link. ``tools/test-build-site.py`` pins
+    the whole rendered page in each state (VERIFY_PAGE_PIN) and the site's
+    own stylesheet (SITE_CSS_PIN), so such a change fails there until the pin
+    is updated on purpose. ``tools/check-release-links.py`` names the
     stylesheet and script files the page loads and the gate that pins each.
   - If the release ``vX`` for that version is not published yet, the pass is
     conditional. The site is legitimately ahead of the release only when it
