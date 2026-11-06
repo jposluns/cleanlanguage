@@ -127,8 +127,9 @@ zero placeholder, such as a mistyped placeholder, fails check 7, and the writer 
 the generator refuse it.
 
 When a check fails, the closing advice fits the state of ``release.json``: while it
-holds the zero placeholder, rerun ``tools/set-release-links.py`` with the placeholder
-until the release is published, and flip the site after that; otherwise flip the
+holds the zero placeholder or a checksum close to it (check 7), rerun
+``tools/set-release-links.py`` with the placeholder until the release is
+published, and flip the site after that; otherwise flip the
 site with ``tools/set-release-links.py`` using the published release checksum,
 then run ``tools/build-site.py``. Neither advice offers an edit by hand: the
 whole-page equality refuses any page that is not the generator's render.
@@ -353,18 +354,21 @@ def main() -> int:
                 f"but SKILL.md says {expected}"
             )
 
-    source_problems, placeholder = check_release_source(expected, redirects)
+    source_problems, placeholder, near = check_release_source(expected, redirects)
     problems += source_problems
 
     if problems:
         print("Release link problems found:")
         for problem in dict.fromkeys(problems):
             print(f"  - {problem}")
-        if placeholder:
+        if placeholder or near:
             # DISCOVERY round 5, finding 5: before the release, there is no published checksum to flip the site to.
+            # VERIFY round 7.1, finding 1: a checksum close to the placeholder is a mistyped placeholder (check 7).
+            held, which = (("the zero placeholder of a version bump", "that placeholder") if placeholder else
+                           ("a checksum close to the zero placeholder", "the zero placeholder"))
             print(
-                f"\nsite-src/release.json holds the zero placeholder of a version bump. Until release v{expected} "
-                f"is published, run tools/set-release-links.py for version {expected} with that placeholder (see "
+                f"\nsite-src/release.json holds {held}. Until release v{expected} "
+                f"is published, run tools/set-release-links.py for version {expected} with {which} (see "
                 f"the release runbook), so the site matches SKILL.md; once it is published, flip the site with "
                 f"tools/set-release-links.py using the published release checksum."
             )
@@ -389,9 +393,10 @@ def main() -> int:
     return 0
 
 
-def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool]:
+def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool, bool]:
     """Checks 7 and 8: release.json, and the install and verify pages generated from it. Returns the problems
-    found and whether release.json holds the zero placeholder, which selects the closing advice in main.
+    found, whether release.json holds the zero placeholder, and whether it holds a well-formed checksum close to it,
+    which select the closing advice in main.
 
     A stale bare file name on either page is check 6's (ZIP_NAME, site-wide), so it is
     not reported twice here; these pages must still name the release at least once.
@@ -465,7 +470,8 @@ def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool
             shown = DISPLAYED_SUM.findall(text)
             if shown and shown[0].strip() != checksum:
                 problems.append(f"{relative} shows a checksum other than site-src/release.json")
-    return problems, checksum == PLACEHOLDER
+    near = isinstance(checksum, str) and bool(SHA256.match(checksum)) and near_placeholder(checksum)
+    return problems, checksum == PLACEHOLDER, near
 
 
 def near_placeholder(checksum: str) -> bool:

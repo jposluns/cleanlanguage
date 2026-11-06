@@ -175,6 +175,12 @@ class ReleaseSourceTest(unittest.TestCase):
                     self.assertIn(report + f"{checksum.count('0')} of its 64 digits 0, such as a mistyped placeholder; "
                                   "until release v1.0.14 is published, run tools/set-release-links.py with the zero "
                                   "placeholder", output)
+                    # VERIFY round 7.1, finding 1: the closing advice is the placeholder's, as the report says.
+                    self.assertIn("site-src/release.json holds a checksum close to the zero placeholder. Until release "
+                                  "v1.0.14 is published, run tools/set-release-links.py for version 1.0.14 with the "
+                                  "zero placeholder", output)
+                    self.assertNotIn("Flip the site with tools/set-release-links.py using the published", output)
+                    self.assertNotIn("holds the zero placeholder of a version bump", output)
                 else:
                     self.assertNotIn(report, output)
 

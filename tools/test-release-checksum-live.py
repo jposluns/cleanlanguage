@@ -5022,9 +5022,11 @@ class WholePageTest(unittest.TestCase):
                 self.page.write_text(page.replace(self.SUM, checksum), encoding="utf-8")
                 code, output = self.gate_run()
                 self.assertEqual(code, 3, output)
-                self.assertIn(f"tools/build-site.py could not render the verify page: site-src/release.json checksum "
+                # VERIFY round 7.1, finding 2: the checksum comes from the page, not release.json, which holds SUM.
+                self.assertIn(f"tools/build-site.py could not render the verify page: the checksum "
                               f"{checksum} is not the zero placeholder but has {checksum.count('0')} of its 64 digits 0",
                               output)
+                self.assertNotIn("release.json", output)
 
     def test_every_reported_form_exits_3(self):
         start_tag = '<p class="lbl blk">Step 1</p>'

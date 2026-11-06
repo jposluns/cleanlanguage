@@ -324,8 +324,11 @@ def load_release(root: Path, override: dict | None = None, any_version: bool = F
     if not isinstance(checksum, str) or not HEX64.match(checksum):
         raise BuildError("site-src/release.json checksum is not a 64 character lower-case SHA-256")
     if near_placeholder(checksum):
+        # The report names release.json only for a checksum read from it, not for one given in ``override``, such as
+        # the checksum tools/check-release-checksum-live.py reads from the verify page.
+        source = "site-src/release.json checksum" if override is None else "the checksum"
         raise BuildError(
-            f"site-src/release.json checksum {checksum} is not the zero placeholder but has {checksum.count('0')} of "
+            f"{source} {checksum} is not the zero placeholder but has {checksum.count('0')} of "
             "its 64 digits 0, such as a mistyped placeholder; run tools/set-release-links.py with the zero placeholder "
             "until the release is published, and with the published release checksum after that"
         )

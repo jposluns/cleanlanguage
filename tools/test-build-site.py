@@ -555,6 +555,9 @@ SOURCE_REFUSALS = [
     ("a p.value whose nearest region is a section", lambda root: (
         edit(root, HOME, VALUE_REGION, '<section class="region" id="what-it-fixes">'),
         edit(root, HOME, VALUE_END, VALUE_END[:-len("</div>")] + "</section>")), REGION_RULE),
+    # VERIFY round 7.1, finding 2: a checksum close to the placeholder read from release.json is reported as its own.
+    ("release.json checksum close to the zero placeholder", lambda root: set_release(root, checksum="0" * 63 + "1"),
+        "site-src/release.json checksum " + "0" * 63 + "1 is not the zero placeholder but has 63 of its 64 digits 0"),
 ]
 
 
@@ -1188,7 +1191,8 @@ def check_release_near_placeholder(failures: list[str]) -> int:
         try:
             tokens = generator.load_release(REPO_ROOT, release, any_version=True)
         except generator.BuildError as error:
-            if not refused or "is not the zero placeholder but has" not in str(error):
+            # VERIFY round 7.1, finding 2: the checksum is the override's, so the report does not name release.json.
+            if not refused or not str(error).startswith(f"the checksum {checksum} is not the zero placeholder but has"):
                 failures.append(f"release near placeholder: {checksum} refused: {error}")
             continue
         if refused or tokens["release.checksum"] != checksum:
