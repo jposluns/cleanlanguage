@@ -187,7 +187,11 @@ which each choice reads closed or opened, so a hidden element inside the label
 does not split it and a details hides the label in neither state, first with
 an element that only ``aria-hidden="true"`` hides kept, since that attribute
 hides an element from assistive technology alone and a browser shows it,
-then with it deleted too, as before; the label counts in any reading), a
+then with it deleted too, as before; those 2 are each read again as a
+browser with scripting off shows the page (``scripting_off()``), with the
+content of each ``noscript`` kept, its hiding rules applying, since a
+``noscript`` paragraph holding ``About``, a hidden span, then ``this
+project`` built with exit 0 at 77823df; the label counts in any reading), a
 landing page whose text carries it other than once, from inside the About
 block, in each reading, and any other page whose text carries it; and a
 release version that disagrees with SKILL.md. The page source grammar leaves
@@ -338,10 +342,12 @@ exception: the content of a noscript element,
 which a browser with scripting on reads as text up to the first
 ``</noscript``, and the parser reads as elements. The rules stay safe for it.
 They read everything inside a noscript as not rendered, so nothing there can
-meet a rule that needs a rendered element; and under these rules the first
-``</noscript`` after a noscript start tag is that element's own end tag, the
-one the parser reads as closing it on a page ``validate()`` accepts, since no
-``<`` sits in text, a comment or an attribute value and no noscript starts
+meet a rule that needs a rendered element, apart from the label rule's
+readings with scripting off, in which a browser reads that content as
+elements, as the parser does (``scripting_off()``); and under these rules
+the first ``</noscript`` after a noscript start tag is that element's own
+end tag, the one the parser reads as closing it on a page ``validate()``
+accepts, since no ``<`` sits in text, a comment or an attribute value and no noscript starts
 inside another. A noscript inside a noscript was allowed before: with
 scripting on, a browser ended the outer one at the inner one's end tag, so a
 later ``</summary>`` closed a summary the parser read as still open, and the
@@ -386,8 +392,16 @@ so a value paragraph inside a later open member was hidden while every rule
 passed. The rules model ``hidden``, ``aria-hidden`` and ``class`` (as
 ``tools/check-install-page.py`` reads hiding, stylesheet rules apart, as
 above); by the HTML Standard's rules, the others admitted neither hide nor
-move an element. An attribute is added only after a review of what it makes
-a browser do.
+move an element, and only ``data-copy`` has a script that reads it:
+``copy.js`` shows every ``button`` with ``data-copy`` whose value names an
+element and, on a copy, replaces its content with plain text, so
+``placement_pin()`` holds it to the committed copy button (below). An
+attribute is added only after a review of what it makes a browser do.
+``open`` stays out (accepted residual, refused, not modelled): the rules read
+a details with ``open`` as opened only, where a reader can close it, so once
+``open`` was admitted, a label that shows only on closing and a value
+paragraph in its folded content each built with exit 0 (a probe on 77823df),
+and an ordinary ``<details open>`` is refused.
 
 ``SOURCE_CLASSES`` admits only the class names the committed sources use, as
 ``with_about()`` reads them, and in the landing page's value region only
@@ -446,6 +460,15 @@ starts:
   browser shows them in source order;
 - a second ``section.hero``: the label rule reads the narrow-width order of
   1 hero, the first;
+- a ``data-copy`` attribute other than on a ``button.copy`` (so with
+  ``hidden``, first in a ``pre.hascopy``) whose value is that pre's ``id``
+  and whose content is only the text ``Copy``, as the committed sources
+  write it (``COPY_BUTTON_PIN``): ``copy.js`` selects every
+  ``button[data-copy]``, shows it and, on a copy, replaces its content with
+  plain text, whatever its classes, so at 77823df a hidden, unclassed button
+  with ``data-copy`` holding ``About``, a hidden span, then ``this project``
+  (a second label once the script runs), and the value paragraph wrapped in
+  such a button (its markup lost on a copy), built with exit 0;
 - an image in the ``div.hero-art`` whose alt text is not ``site.json``'s
   ``logo_alt``, which ``build()`` passes to ``with_about()`` (without it, any
   such image is refused): at 600 px and below a browser shows the image in
@@ -512,8 +535,9 @@ The tree rules read the source alone, which the generator writes inside
 table part open around it, on a page with a DOCTYPE, so no quirks-mode rule
 applies. ``noscript`` is the exception the grammar names: a browser with
 scripting on reads its content as text, which the rules read as not
-rendered. One difference remains that places no element elsewhere: a browser
-drops a line feed that is the next token after a ``pre`` start tag. The
+rendered (with scripting off, a browser reads it as elements, as the parser
+does, and the label rule reads it so too). One difference remains that
+places no element elsewhere: a browser drops a line feed that is the next token after a ``pre`` start tag. The
 placement pins read it as a browser does (``PageScan`` leaves it out of
 what they read, so a ``button.copy`` after it still comes first in its
 ``pre``); the other rules read it as text, which the label rule deletes as
@@ -691,6 +715,13 @@ PLACED_CLASSES = {
     "intro": ("p", (), ("div.hero-text",), (), False),
     "start": ("a", (), ("div.hero-text", "div.next"), (), False),
 }
+# The refusal of a data-copy attribute outside the copy button as the committed sources write it (placement_pin()):
+# copy.js shows every button with data-copy whose value names an element, which the rules read as hidden, and on a
+# copy replaces its content with plain text, so the attribute sits only on a button.copy (PLACED_CLASSES: with hidden,
+# first in a pre.hascopy) whose value is that pre's id and whose content is only the text Copy.
+COPY_BUTTON_PIN = ("copy.js shows every button with data-copy and replaces its content on a copy, so a page source "
+                   "carries it only on a button.copy with hidden, first in a pre.hascopy whose id is its value, "
+                   "holding only the text Copy (COPY_BUTTON_PIN)")
 # The children of the elements whose grid template places them by area, as the committed sources order them: for the
 # element with each class name (for entries, each a inside it), the slots in order, each the element and class names
 # (sorted) that may fill it. Each slot is filled at most once, and the element holds no text other than whitespace,
@@ -1506,10 +1537,16 @@ class PageScan(HTMLParser):
     for rail(), and the hero's narrow-width order, for labels(). It is the one parse every page source rule reads. An
     element's attributes are the first of each repeated name, as a browser and tools/check-install-page.py's
     PageParser read them. validate() also pins the markup from <body> to the end of header.mast, and the landing
-    page's About block; --check compares the committed pages with a build that passed it."""
+    page's About block; --check compares the committed pages with a build that passed it. With scripting False
+    (scripting_off()), the text that shows is read as a browser with scripting off shows it: the content of each
+    noscript as rendered, its hiding rules all applying, and that of every other element of INERT_TAGS as not."""
 
-    def __init__(self, switch_at: tuple[int, int] | None = None, about_at: tuple[int, int] | None = None) -> None:
+    def __init__(self, switch_at: tuple[int, int] | None = None, about_at: tuple[int, int] | None = None,
+                 scripting: bool = True) -> None:
         super().__init__(convert_charrefs=True)
+        # The elements whose content the text that shows leaves out: INERT_TAGS, or, with scripting off, all but
+        # noscript, whose content a browser then renders as page elements, as the parser reads it.
+        self.unrendered = INERT_TAGS if scripting else INERT_TAGS - {"noscript"}
         self.ids: list[str] = []
         self.links: list[tuple[str, str]] = []
         self.h1 = 0
@@ -1545,7 +1582,7 @@ class PageScan(HTMLParser):
         self.document_tags: list[tuple[str, tuple[int, int]]] = []
         # Where each math start tag starts; the text the parser reads (attribute values and comments apart), in upper
         # case where the stylesheets show it so (uppercase_here()), as a browser shows it; that text outside every
-        # element of INERT_TAGS and every element hidden as tools/check-install-page.py reads hiding, folded content
+        # element of unrendered and every element hidden as tools/check-install-page.py reads hiding, folded content
         # kept, first with an element that only aria-hidden="true"
         # hides read as shown, since it hides an element from assistive technology alone (shown), then with it read
         # as hidden (unhidden); for each piece of each of the 3, the keys of the optional groups it is in, outermost
@@ -1626,6 +1663,8 @@ class PageScan(HTMLParser):
         self.open_index: list[int] = []
         self.filled: set[int | None] = set()
         self.texts: set[int | None] = set()
+        # The text directly in each element, by its index (None for the top level), for the data-copy pin.
+        self.own_texts: dict[int | None, list[str]] = {}
         self.after_pre = False
         # Each h2 with an id, as (id, its text but that of a span.num inside it), for rail(); and the depth in open
         # of the h2 whose text is being read.
@@ -1685,12 +1724,15 @@ class PageScan(HTMLParser):
         inert = any(name in INERT_TAGS for name, _ in self.open)
         if not inert:
             self.live_starts.add(self.getpos())
-        # Whether the element hides itself and its content: by tools/check-install-page.py's is_hiding_element().
-        hides = is_hiding(tag, attrs)
+        # Whether the element hides itself and its content: by tools/check-install-page.py's is_hiding_element(), whose
+        # HIDING_ELEMENTS holds noscript; with scripting off, a browser renders a noscript, which then hides only by
+        # its attributes, read as on a span.
+        shape = "span" if tag == "noscript" and "noscript" not in self.unrendered else tag
+        hides = is_hiding(shape, attrs)
         # Whether it hides other than by aria-hidden="true" alone, which hides an element from assistive technology
         # only: a browser shows it, so the text that shows (shown) keeps its text.
-        covers = hides and ("aria-hidden" not in attrs
-                            or is_hiding(tag, {name: value for name, value in attrs.items() if name != "aria-hidden"}))
+        covers = hides and ("aria-hidden" not in attrs or is_hiding(
+            shape, {name: value for name, value in attrs.items() if name != "aria-hidden"}))
         # Whether it is folded: as that gate's PageParser reads it, a child of a details without open other than its
         # first summary. The value paragraph rule and the value region's label read it as hidden; the label rule
         # reads it both as hidden and as a reader who opens the details sees it (fold_keys(), label_count()), so a label
@@ -1739,10 +1781,11 @@ class PageScan(HTMLParser):
             self.text.append(alt)
             self.chains[0].append(chain)
             shown = unhidden = None
-            if not (self.covering or covers or inert):
+            unrendered = any(name in self.unrendered for name, _ in self.open)
+            if not (self.covering or covers or unrendered):
                 self.show(alt, chain)
                 shown = len(self.shown) - 1
-            if not (self.hiding or hides or inert):
+            if not (self.hiding or hides or unrendered):
                 self.unhidden.append(alt)
                 self.chains[2].append(chain)
                 unhidden = len(self.unhidden) - 1
@@ -1823,6 +1866,7 @@ class PageScan(HTMLParser):
     def handle_data(self, data: str) -> None:
         shaped = data[1:] if self.after_pre and data.startswith("\n") else data
         self.after_pre = False
+        self.own_texts.setdefault(self.open_index[-1] if self.open_index else None, []).append(data)
         if shaped:
             self.filled.add(self.open_index[-1] if self.open_index else None)
             if shaped.strip(" \t\n\f\r"):
@@ -1836,7 +1880,7 @@ class PageScan(HTMLParser):
         # groups of fold_keys(), which the label rule reads both left out and shown.
         chain = self.fold_keys()
         self.chains[0].append(chain)
-        if not any(name in INERT_TAGS for name, _ in self.open):
+        if not any(name in self.unrendered for name, _ in self.open):
             if not self.covering:
                 self.show(self.text[-1], chain)
             if not self.hiding:
@@ -1939,7 +1983,8 @@ class PageScan(HTMLParser):
         and img apart from the others (chains), and the reading counts the most that any 1 such choice gives
         (label_count()). Each reading is also read in the hero's narrow-width
         order, with the hero image's alt text moved to the end of the kicker, or to the start of the hero's text when
-        its first child is not a p.lbl (kicker_end, hero_alt), and counts the more of its 2 orders."""
+        its first child is not a p.lbl (kicker_end, hero_alt), and counts the more of its 2 orders. With scripting
+        off (scripting_off()), the text that shows keeps the content of each noscript, its hiding rules applying."""
         counts = []
         for which, text in enumerate((self.text, self.shown, self.unhidden)):
             orders = [list(range(len(text)))]
@@ -2182,7 +2227,8 @@ def with_about(content: str, page: dict, base: str, logo_alt: str | None = None)
     browser's tree builder would place elsewhere, a table child out of TABLE_ORDER, or a summary after text in its
     details (misnested(), PageScan.table_ranks and PageScan.details_text, the page source tree rules), and, right after
     source_problem(), a source with a bidi formatting character (bidi_control()); then a source with an
-    element whose classes include about, a source whose text carries the About block's label (PageScan.labels()), and a
+    element whose classes include about, a source whose text carries the About block's label (PageScan.labels(), with
+    scripting on and off: scripting_off()), and a
     landing page source without exactly 1 p.value, with that p.value inside an element of INERT_TAGS, hidden by
     itself or by an ancestor as tools/check-install-page.py reads hiding, holding markup or text outside its pin
     (PageScan.value_problem()), or with no div.region among its ancestors, or with a class name outside
@@ -2190,8 +2236,8 @@ def with_about(content: str, page: dict, base: str, logo_alt: str | None = None)
     (PageScan.region_problem()), or with 1 of those class names away from its place there
     (PageScan.region_class_problem()); and last, any source with a class name outside SOURCE_CLASSES (class_pin()),
     then any source with a class of PLACED_CLASSES outside its pinned place, a second section.hero, an element of
-    PLACED_CHILDREN with text or children outside their pinned order, or a hero image whose alt text is not
-    logo_alt, site.json's, which
+    PLACED_CHILDREN with text or children outside their pinned order, a data-copy attribute outside the committed copy
+    button (COPY_BUTTON_PIN), or a hero image whose alt text is not logo_alt, site.json's, which
     build() passes; without it, any hero image is refused (placement_pin()). Each rule after the grammar reads 1
     PageScan of the source; the About block goes where the parser read the region's end tag end (end_tag_end())."""
     where = page["source"]
@@ -2220,7 +2266,7 @@ def with_about(content: str, page: dict, base: str, logo_alt: str | None = None)
     if scan.about_classes:
         raise BuildError(f"{where}: an element whose classes include about; the generator writes the About block of "
                          "specification 7.24 itself, on the landing page only")
-    if any(scan.labels()):
+    if any(scan.labels()) or any(scripting_off(content).labels()):
         raise BuildError(f"{where}: the About block's label in the page source's text; the generator writes it, in "
                          "the About block of specification 7.24, on the landing page only")
     if page["path"] != "":
@@ -2279,6 +2325,17 @@ def class_pin(scan: PageScan, where: str) -> None:
                          "it, such as .scheme .sun, which hides an element")
 
 
+def scripting_off(text: str) -> PageScan:
+    """text read by PageScan as a browser with scripting off shows it, for labels(): the text that shows keeps the
+    content of each noscript, which such a browser renders as page elements, as the parser reads it, with the hiding
+    of each element in it and around it applying (the noscript itself hides only by its attributes, read as on a
+    span); every other element of INERT_TAGS is still read as not rendered."""
+    scan = PageScan(scripting=False)
+    scan.feed(text)
+    scan.close()
+    return scan
+
+
 def source_shape(content: str) -> PageScan:
     """content read by PageScan, for rail_pin() and rail(), which read a page source before with_about() does: the
     same tokens, self-closing tags and end tags as every other rule reads."""
@@ -2299,9 +2356,10 @@ def placement_pin(shape: PageScan, where: str, logo_alt: str | None) -> None:
     (for copy) after text or an element in its parent; with a second section.hero, since the label rule reads the
     narrow-width order of 1 hero; with an element of PLACED_CHILDREN (for entries, an a inside
     it) that holds text other than whitespace directly, or children outside its slots, in their order, each filled
-    at most once; or with an img in a div.hero-art whose alt text is not logo_alt. Each refusal names where the
-    start tag starts."""
-    for tag, classes, attrs, at, parent, after in shape.elements:
+    at most once; with a data-copy attribute other than on a button.copy whose value is its parent's id and whose
+    content is only the text Copy (COPY_BUTTON_PIN); or with an img in a div.hero-art whose alt text is not logo_alt.
+    Each refusal names where the start tag starts."""
+    for index, (tag, classes, attrs, at, parent, after) in enumerate(shape.elements):
         above = shape.elements[parent] if parent is not None else None
         for name in classes:
             if name not in PLACED_CLASSES:
@@ -2319,7 +2377,13 @@ def placement_pin(shape: PageScan, where: str, logo_alt: str | None) -> None:
                                  "stylesheet rule places an element with it out of its source order, so a page source "
                                  f"carries it only on {place}, {'first ' if first else ''}inside {inside} "
                                  "(PLACED_CLASSES)")
-    heroes = [at for _, classes, _, at, _, _ in shape.elements if "hero" in classes]
+        if "data-copy" in attrs and (tag != "button" or "copy" not in classes or above is None
+                                     or attrs["data-copy"] != above[2].get("id")
+                                     or any(child[4] == index for child in shape.elements)
+                                     or "".join(shape.own_texts.get(index, [])) != "Copy"):
+            raise BuildError(f"{where}: a data-copy attribute {source_at(at)} outside the copy button's pinned form; "
+                             f"{COPY_BUTTON_PIN}")
+    heroes =[at for _, classes, _, at, _, _ in shape.elements if "hero" in classes]
     if len(heroes) > 1:
         raise BuildError(f"{where}: a second section.hero {source_at(heroes[1])}; a page source carries at most 1 "
                          "hero, the one whose narrow-width order the label rule reads")
@@ -2478,9 +2542,10 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
     # INERT_TAGS, and the only elements in it that hide are its dot spans (aria-hidden="true") and the two notices
     # NEW_TAB writes in its row (span.vh, "(opens in a new tab)"). The block's row is then the only parsed element
     # whose classes include about. On any other page, no such element appears, inside an element of INERT_TAGS or
-    # not. The page's text, and its text that shows in both readings (PageScan.labels()), each carry the block's label
-    # once on the landing page, inside the block (with the block's label taken out, they carry none), and nowhere
-    # else, in any letter case where the stylesheets show text in upper case (uppercase_here()).
+    # not. The page's text, and its text that shows in both readings (PageScan.labels()), with scripting on and off
+    # (scripting_off()), each carry the block's label once on the landing page, inside the block (with the block's
+    # label taken out, they carry none), and nowhere else, in any letter case where the stylesheets show text in upper
+    # case (uppercase_here()).
     if page["path"] == "":
         block, value = about_block(base), scan.values[0] if len(scan.values) == 1 else None
         at = page_html.find(block)
@@ -2501,17 +2566,19 @@ def validate(page_html: str, page: dict, config: dict, base: str) -> PageScan:
             problems.append(f"{VALUE_PIN} ({scan.value_problem()})")
         if scan.region_problem() is not None:
             problems.append(f"the value paragraph's region holds {scan.region_problem()}; {VALUE_REGION_PIN}")
+        unlabelled_html = page_html.replace(block, block.replace(f">{ABOUT_LABELS[0]}<", "><", 1), 1)
         unlabelled = PageScan()
-        unlabelled.feed(page_html.replace(block, block.replace(f">{ABOUT_LABELS[0]}<", "><", 1), 1))
+        unlabelled.feed(unlabelled_html)
         unlabelled.close()
-        if scan.labels() != (1, 1, 1) or any(unlabelled.labels()):
+        if (scan.labels() != (1, 1, 1) or any(unlabelled.labels()) or scripting_off(page_html).labels() != (1, 1, 1)
+                or any(scripting_off(unlabelled_html).labels())):
             problems.append("the About block's label must appear in the page's text exactly once, inside the About "
                             "block (specification 7.24)")
     else:
         if scan.about_classes:
             problems.append("About markup (an element whose classes include about), which only the landing page's "
                             "About block carries (specification 7.24)")
-        if any(scan.labels()):
+        if any(scan.labels()) or any(scripting_off(page_html).labels()):
             problems.append("the About block's label in the page's text, which only the landing page's About block "
                             "carries (specification 7.24)")
     for tag, value in scan.links:

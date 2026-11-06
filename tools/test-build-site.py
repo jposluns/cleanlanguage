@@ -177,6 +177,14 @@ class Placement(HTMLParser):
         self.text: list[str] = []
         self.text_at: list[tuple[str, list[tuple[int, int]]]] = []
         self.upper: list[bool] = []
+        # The hero's narrow-width order (at 600 px and below, the hero image sits in the kicker's row, before the
+        # statement), as the generator's PageScan reads it: the length of text where the first child of the first
+        # div.hero-text in a section.hero ends when that child is the kicker (a p.lbl), and otherwise where that
+        # div.hero-text starts (hero_start); and the index in text of the alt text of the first img in a div.hero-art
+        # in a section.hero.
+        self.hero_start: int | None = None
+        self.kicker_end: int | None = None
+        self.hero_alt: int | None = None
 
     def handle_starttag(self, tag: str, attrs) -> None:
         first = {name: value or "" for name, value in reversed(attrs)}
@@ -196,6 +204,13 @@ class Placement(HTMLParser):
                                 bool(self.upper) and self.upper[-1])
             self.text.append(first["alt"].upper() if upper else first["alt"])
             self.text_at.append((first["alt"], [*self.open_at, self.getpos()]))
+            if (self.hero_alt is None and len(self.open) >= 2 and self.open[-1][0] == "div"
+                    and "hero-art" in self.open[-1][1] and self.open[-2][0] == "section"
+                    and "hero" in self.open[-2][1]):
+                self.hero_alt = len(self.text) - 1
+        if (self.kicker_end is None and tag == "div" and "hero-text" in class_names(first.get("class", ""))
+                and self.open and self.open[-1][0] == "section" and "hero" in self.open[-1][1]):
+            self.hero_start = len(self.text)
         self.previous = (tag, class_names(first.get("class", ""))) if tag in VOID else None
         if tag not in VOID:
             self.open.append((tag, class_names(first.get("class", ""))))
@@ -215,6 +230,11 @@ class Placement(HTMLParser):
             self.previous = self.open.pop()
             self.upper.pop()
             self.ends[self.getpos()] = (*self.previous, len(self.open), self.open_at.pop())
+            if (self.kicker_end is None and len(self.open) >= 2 and self.open[-1][0] == "div"
+                    and "hero-text" in self.open[-1][1] and self.open[-2][0] == "section"
+                    and "hero" in self.open[-2][1]):
+                kicker = self.previous[0] == "p" and "lbl" in self.previous[1]
+                self.kicker_end = len(self.text) if kicker else self.hero_start
 
     def handle_data(self, data: str) -> None:
         self.text.append(data.upper() if self.upper and self.upper[-1] else data)
@@ -495,31 +515,42 @@ def label_text(joined: str) -> str:
     return joined.translate(read)
 
 
-def labels(text: str) -> tuple[int, int, int]:
+def labels(text: str) -> tuple[int, int, int, int, int]:
     """How many times the parsed text of text (attribute values and comments apart, character references decoded),
     joined across elements and read by label_text(), carries LABELS, case-sensitive, but with the text that a
     browser shows in upper case (shown_upper()) in upper case, so there in any letter case: in all of it, and twice
     in the text that shows, outside every INERT element and every element the install gate reads as hiding, first
     with an element that only aria-hidden="true" hides read as shown (a browser shows it), then with it read as
-    hidden. In every choice for the reading, each details without open is read closed (its content other than its
-    first summary left out) or opened, and each img's alt text kept or left out (a browser shows one only when its
-    image does not load), and each reading counts the most that a choice gives, its labels counted together."""
+    hidden; and those 2 again as a browser with scripting off shows the page, with the content of each noscript kept
+    (its hiding rules applying), as the generator's scripting_off() reads it. In every choice for the reading, each
+    details without open is read closed (its content other than its first summary left out) or opened, and each
+    img's alt text kept or left out (a browser shows one only when its image does not load), and each reading counts
+    the most that a choice gives, its labels counted together. Each reading is also read in the hero's narrow-width
+    order, as the generator reads it, with the hero image's alt text moved to the end of the kicker, or to the start
+    of the hero's text when its first child is not a p.lbl (Placement.kicker_end, hero_alt), and counts the more of
+    its 2 orders."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
     whole = list(zip(parsed.text, (around for _, around in parsed.text_at)))
+    orders = [list(range(len(whole)))]
+    kicker, alt = parsed.kicker_end, parsed.hero_alt
+    if kicker is not None and alt is not None and kicker <= alt:
+        orders.append([*range(kicker), alt, *range(kicker, alt), *range(alt + 1, len(whole))])
     counts = []
-    for reading in [whole] + [[(read, around) for read, around in whole if shows(parsed, around, visual, True)]
-                              for visual in (True, False)]:
-        # For each piece, the details that fold it and, for an alt text, its img: it shows when all of them do.
-        needs = [folding(parsed, around) | ({around[-1]} if around and parsed.starts[around[-1]][0] == "img" else set())
-                 for _, around in reading]
-        options = sorted(set().union(*needs))
+    for visual, scripting in ((None, True), (True, True), (False, True), (True, False), (False, False)):
         most = 0
-        for kept in itertools.product((True, False), repeat=len(options)):
-            left = {option for option, keep in zip(options, kept) if not keep}
-            joined = label_text("".join(read for (read, _), need in zip(reading, needs) if not need & left))
-            most = max(most, sum(joined.count(label_text(label)) for label in LABELS))
+        for order in orders:
+            reading = [whole[index] for index in order
+                       if visual is None or shows(parsed, whole[index][1], visual, True, scripting)]
+            # For each piece, the details that fold it and, for an alt text, its img: it shows when all of them do.
+            needs = [folding(parsed, around) | ({around[-1]} if around and parsed.starts[around[-1]][0] == "img"
+                                                else set()) for _, around in reading]
+            options = sorted(set().union(*needs))
+            for kept in itertools.product((True, False), repeat=len(options)):
+                left = {option for option, keep in zip(options, kept) if not keep}
+                joined = label_text("".join(read for (read, _), need in zip(reading, needs) if not need & left))
+                most = max(most, sum(joined.count(label_text(label)) for label in LABELS))
         counts.append(most)
     return tuple(counts)
 
@@ -533,14 +564,19 @@ def folding(parsed: Placement, around: list[tuple[int, int]]) -> set[tuple[int, 
     return folds
 
 
-def shows(parsed: Placement, around: list[tuple[int, int]], visual: bool = False, opened: bool = False) -> bool:
-    """Whether text whose open elements start at around, outermost first, shows: no INERT element, no element the
-    install gate reads as hiding (given visual, with its aria-hidden attribute left out, since aria-hidden="true"
-    hides an element from assistive technology only) and, unless opened (a reader opens every details), no details
-    without open (directly, or by a child other than its first summary) holds it."""
-    return not (any(parsed.starts[at][0] in INERT
-                    or IS_HIDING(parsed.starts[at][0], {name: value for name, value in parsed.starts[at][1].items()
-                                                        if not (visual and name == "aria-hidden")})
+def shows(parsed: Placement, around: list[tuple[int, int]], visual: bool = False, opened: bool = False,
+          scripting: bool = True) -> bool:
+    """Whether text whose open elements start at around, outermost first, shows: no INERT element (with scripting
+    off, no INERT element but noscript, whose content a browser then renders, and which then hides only by its
+    attributes, read as on a span), no element the install gate reads as hiding (given visual, with its aria-hidden
+    attribute left out, since aria-hidden="true" hides an element from assistive technology only) and, unless opened
+    (a reader opens every details), no details without open (directly, or by a child other than its first summary)
+    holds it."""
+    return not (any(parsed.starts[at][0] in (INERT if scripting else INERT - {"noscript"})
+                    or IS_HIDING("span" if not scripting and parsed.starts[at][0] == "noscript"
+                                 else parsed.starts[at][0],
+                                 {name: value for name, value in parsed.starts[at][1].items()
+                                  if not (visual and name == "aria-hidden")})
                     for at in around)
                 or (not opened and closed_details(parsed, around))
                 or (not opened and around and parsed.starts[around[-1]][0] == "details"
@@ -595,8 +631,9 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     (a p.lbl whose text that shows, aria-hidden and alt text apart, holds a letter or a digit, then the div that
     holds the
     p.value) and no text directly, its row the only parsed element whose classes include about, and the page's
-    text, and its text that shows in both readings, each carrying LABELS once, inside the block
-    (labels(): with the block's label taken out, none; in any letter case where shown_upper() reads upper case); on
+    text, and its text that shows in both readings with scripting on and off, each carrying LABELS once, inside the
+    block, in either hero order (labels(): with the block's label taken out, none; in any letter case where
+    shown_upper() reads upper case); on
     any other page, no such element, with an INERT ancestor or not, and no LABELS in its text.
     It does not model a stylesheet beyond the install gate's HIDING_CLASSES, or a hidden attribute that HTML5 copies
     from a stray body or html start tag onto the page's body or html element. The generator refuses such a start tag
@@ -664,7 +701,7 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
                 "then the div that holds its value paragraph"]
     if len(abouts) != 1:
         return [f"{page} carries About markup outside its About block (specification 7.24)"]
-    if labels(text) != (1, 1, 1) or any(labels(text.replace(block, block.replace(f">{LABEL}<", "><", 1), 1))):
+    if labels(text) != (1,) * 5 or any(labels(text.replace(block, block.replace(f">{LABEL}<", "><", 1), 1))):
         return [f"{page} carries the About block's label in its text other than once, inside its About block "
                 "(specification 7.24)"]
     return []
@@ -884,6 +921,7 @@ REGION_PLACE_RULE = "is away from its place in the value paragraph's region"
 # outside the place the committed sources use it; an element of PLACED_CHILDREN whose children are outside their
 # order; a hero image whose alt text is not site.json's logo_alt; and a class that only the generator's rail carries.
 PLACED_RULE = "is outside its pinned place"
+DATA_COPY_RULE = "outside the copy button's pinned form"
 ORDER_RULE = "holds text or children outside its pinned order"
 HERO_ALT_RULE = "has an alt text other than site.json's logo_alt"
 RAIL_RULE = "which only the rail the generator writes at <!--rail--> carries"
@@ -1476,6 +1514,35 @@ SOURCE_REFUSALS = [
     ("a fraction numerator one (U+215F, No) in the value paragraph", value_content("Rules &#x215F;3"),
         VALUE_PIN_RULE),
     ("a subscript two (U+2082, No) in the value paragraph", value_content("Rules H&#x2082;O"), VALUE_PIN_RULE),
+    # Built with exit 0 at 77823df (DISCOVERY round 9): copy.js shows every button with data-copy, whatever its
+    # classes, and replaces its content with plain text on a copy, so data-copy sits only on the copy button.
+    ("a hidden unclassed button with data-copy holding the label split by a hidden span", after_value(
+        '<button type="button" data-copy="what-it-fixes" hidden>About <span hidden>x</span>this project</button>'),
+        DATA_COPY_RULE),
+    ("the value paragraph in an unclassed button with data-copy",
+        wrap_value('<button type="button" data-copy="what-it-fixes">', "</button>"), DATA_COPY_RULE),
+    ("data-copy on a span", inject('<p><span data-copy="x">y</span></p>'), DATA_COPY_RULE),
+    ("a button.copy whose data-copy names another pre", inject(
+        '<pre id="c1" class="hascopy"><button class="copy" type="button" data-copy="c2" hidden>Copy</button>x</pre>'
+        '<pre id="c2">y</pre>'), DATA_COPY_RULE),
+    ("a button.copy with data-copy holding other text", inject(
+        '<pre id="c1" class="hascopy"><button class="copy" type="button" data-copy="c1" hidden>Copy it</button>'
+        "x</pre>"), DATA_COPY_RULE),
+    ("a button.copy with data-copy holding an element", inject(
+        '<pre id="c1" class="hascopy"><button class="copy" type="button" data-copy="c1" hidden><span>Copy</span>'
+        "</button>x</pre>"), DATA_COPY_RULE),
+    # Built with exit 0 at 77823df (DISCOVERY round 9): a browser with scripting off shows a noscript's content, so
+    # the label rule also reads the text that shows with scripting off, hiding inside the noscript applying.
+    ("the label split by a hidden span in a noscript paragraph",
+        inject("<noscript><p>About <span hidden>x</span>this project</p></noscript>"), LABEL_RULE),
+    ("the label split by a hidden span in a noscript p.lbl",
+        inject('<noscript><p class="lbl">About <span hidden>x</span>this project</p></noscript>'), LABEL_RULE),
+    ("the label across a hidden span and a noscript paragraph",
+        inject("<p>About <span hidden>x</span></p><noscript><p>this project</p></noscript>"), LABEL_RULE),
+    # Refused at 77823df and since (DISCOVERY round 9, an accepted residual): open stays outside SOURCE_ATTRIBUTES,
+    # since the rules read a details with open as opened only, where a reader can close it.
+    ("an ordinary open details outside the value region",
+        inject("<details open><summary>Help</summary><p>More information</p></details>"), ATTRIBUTE_RULE),
 ] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
      for character in LABEL_IGNORED] + [
     # A page source carries no dialog (SOURCE_ELEMENTS) and no inert or popover (SOURCE_ATTRIBUTES);
@@ -1589,6 +1656,9 @@ SOURCE_PASSES = [
     ("the value region's label beside a closed details", lambda root: edit(
         root, HOME, REGION_LABEL, '<p class="lbl">What it gives you<button type="button"><details><summary>'
         "</summary><p>x</p></details></button></p>")),
+    # Since DISCOVERY round 9: the copy button as the committed sources write it, its data-copy naming its pre.
+    ("a button.copy with data-copy naming its pre.hascopy", inject(
+        '<pre id="c1" class="hascopy"><button class="copy" type="button" data-copy="c1" hidden>Copy</button>x</pre>')),
 ]
 
 
@@ -1928,7 +1998,8 @@ def check_about_block(failures: list[str]) -> int:
     label's rule (the page's text, an img's alt text among it, and its text that shows, carry the block's label once,
     inside the block, in any letter case where the stylesheets show text in upper case, read after NFKD and with
     Latin small capitals as capitals, with an element that only aria-hidden="true" hides read as shown in 1 of the
-    readings of the text that shows), by the value paragraph's pin (no element but an a with only href or an em
+    readings of the text that shows, each also with scripting off, and in either hero order), by the value
+    paragraph's pin (no element but an a with only href or an em
     with no attribute, no character outside its lists after NFC, at least 1 letter) or by its region's (a p.lbl
     with text that shows, then the div that holds the p.value, and no text), and the build test's helper
     judges each case as the generator should. The label in an attribute value, a comment, prose in lower or mixed
@@ -2119,6 +2190,13 @@ def check_about_block(failures: list[str]) -> int:
         ("a second label split by an aria-hidden img's alt text after the block",
             [(block, block + '<p>About <img src="/instructions/" alt="x" aria-hidden="true">this project</p>')],
             label_rule),
+        # Since DISCOVERY round 9 (at 77823df the generator refused the first and the helper passed it; both passed
+        # the second): the helper reads the hero's narrow-width order, and both read the text that shows with
+        # scripting off.
+        ("a second label from the hero kicker About this and its image's alt text PROJECT",
+            [(HERO_KICKER, '<p class="lbl gold">About this</p>'), (HERO_ALT, 'alt="PROJECT"')], label_rule),
+        ("a second label split by a hidden span in a noscript paragraph after the block",
+            [(block, block + "<noscript><p>About <span hidden>x</span>this project</p></noscript>")], label_rule),
     ] + [(name, [(block, block + snippet)], None) for name, snippet in RESET_PASSES] + [
         (f"the value paragraph inside {name}",
          [(VALUE, start + VALUE), (VALUE_END, VALUE_END.replace("</p>", "</p>" + end, 1))], rule)
