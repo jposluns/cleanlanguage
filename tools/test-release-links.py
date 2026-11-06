@@ -882,6 +882,21 @@ class WriterTest(unittest.TestCase):
         self.assertEqual(json.loads(planned["site-src/release.json"]),
                          {"version": self.next, "tag": "v" + self.next, "checksum": "a" * 64})
 
+    def test_a_staged_draft_gets_the_redirects_and_no_live_page(self):
+        # VERIFY round 8.1, finding 1: while a draft is staged, the writer writes what the offline gate's draft advice
+        # says: site/_redirects, release.json, the modified dates in site.json and the draft's pages, no live page.
+        site_json = self.root / "site-src/site.json"
+        text = site_json.read_text(encoding="utf-8")
+        self.assertEqual(text.count('"base": "/",'), 1)
+        site_json.write_text(text.replace('"base": "/",', '"base": "/draft/",'), encoding="utf-8")
+        planned = self.plan()
+        for name in ("site/_redirects", "site-src/release.json", "site-src/site.json", "site/draft/verify/index.html"):
+            self.assertIn(name, planned)
+        self.assertEqual([name for name in planned if name.startswith("site/") and not name.startswith("site/draft/")],
+                         ["site/_redirects"])
+        self.assertEqual(sorted(name for name in planned if not name.startswith("site/")),
+                         ["site-src/release.json", "site-src/site.json"])
+
     def apply(self, checksum: str) -> str:
         """Write what the writer plans for ``checksum`` into the copy, returning the verify page."""
         for path, data in writer.rewrite(self.next, "v" + self.next, checksum, "2026-11-04").items():
@@ -1121,8 +1136,17 @@ class WholePageTest(unittest.TestCase):
         # DISCOVERY round 8, finding 1: with a draft staged under /draft/ and one nav label changed, tools/build-site.py
         # writes only site/draft/, so the correct live page is not the render; the gate says so and names promotion,
         # and still fails a wrong live page. Without a draft, it still says to run tools/build-site.py.
-        staged = "site-src/site.json names base /draft/, so a draft is staged: "
-        remedy = "Promoting the draft after the owner approves it (tools/build-site.py --base / --promote) is the remedy."
+        # VERIFY round 8.1, finding 1: the advice says what each tool writes and points to the whole promotion.
+        staged = ("site-src/site.json names base /draft/, so a draft is staged: tools/build-site.py writes only the "
+                  "draft, and tools/set-release-links.py writes site/_redirects, site-src/release.json, the modified "
+                  "dates in site-src/site.json and the draft's pages, so neither writes the live verify page, and this "
+                  "gate renders that page at base / from the sources, the draft's changes included.")
+        remedy = ("Promotion after the owner approves it is the remedy: the pull request of step 5 under \"Staging at "
+                  "/draft/ and promotion\" in .baseline/README.md, of which tools/build-site.py --base / --promote is "
+                  "1 step.")
+        readme = (WriterTest.REPO / ".baseline/README.md").read_text(encoding="utf-8")
+        self.assertIn("### Staging at `/draft/` and promotion\n", readme)
+        self.assertIn("\n5. Promotion, after the owner's approval only. In 1 pull request: ", readme)
         for checksum, state in ((ZEROS, "holds the zero placeholder"), (SUM, "holds a published checksum")):
             with self.subTest(state):
                 site_json = self.root / "site-src/site.json"
@@ -1155,6 +1179,27 @@ class WholePageTest(unittest.TestCase):
                     self.assertNotIn("; run tools/build-site.py", output)
                 site_json.write_text(original, encoding="utf-8")
                 self.page.write_text(page, encoding="utf-8")
+
+    def test_a_staged_draft_gets_no_draft_advice_for_another_failure(self):
+        # VERIFY round 8.1, finding 1: with a draft staged under /draft/ and the verify page the render, a stale
+        # site/_redirects fails with no draft advice: tools/set-release-links.py rewrites it, and the promotion
+        # build does not.
+        site_json, redirects = self.root / "site-src/site.json", self.root / "site/_redirects"
+        version = json.loads((self.root / "site-src/release.json").read_text(encoding="utf-8"))["version"]
+        text = site_json.read_text(encoding="utf-8")
+        self.assertEqual(text.count('"base": "/",'), 1)
+        site_json.write_text(text.replace('"base": "/",', '"base": "/draft/",'), encoding="utf-8")
+        code, output = self.gate_run()
+        self.assertEqual(code, 0, output)
+        written = redirects.read_text(encoding="utf-8")
+        self.assertIn(f"/v{version}/", written)
+        redirects.write_text(written.replace(f"/v{version}/", "/v0.0.1/", 1), encoding="utf-8")
+        code, output = self.gate_run()
+        self.assertEqual(code, 1, output)
+        self.assertIn(f"site/_redirects uses tag v0.0.1 for version {version}", output)
+        self.assertRegex(output, r"[Ff]lip the site with tools/set-release-links\.py")
+        self.assertNotIn("a draft is staged", output)
+        self.assertNotIn("Promotion", output)
 
 
 class WorkflowPathsTest(unittest.TestCase):

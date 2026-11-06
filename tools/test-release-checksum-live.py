@@ -5085,7 +5085,10 @@ class WholePageTest(unittest.TestCase):
                     "the committed sources (first at line ")
         staged = ("). site-src/site.json names base /draft/, so a draft is staged: tools/build-site.py writes only the "
                   "draft, not the live pages")
-        remedy = "Promoting the draft after the owner approves it (tools/build-site.py --base / --promote) is the remedy"
+        # VERIFY round 8.1, finding 1: the advice points to the whole promotion, not only the build, 1 step of it.
+        remedy = ("Promotion after the owner approves it is the remedy: the pull request of step 5 under \"Staging at "
+                  "/draft/ and promotion\" in .baseline/README.md, of which tools/build-site.py --base / --promote is "
+                  "1 step")
         site_json = self.root / "site-src/site.json"
         original = site_json.read_text(encoding="utf-8")
         for checksum, state in (("0" * 64, "placeholder"), (self.SUM, "published")):

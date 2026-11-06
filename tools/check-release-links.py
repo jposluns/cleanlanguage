@@ -56,9 +56,12 @@ What it verifies
    pages, and the gate still renders this page at base / from the sources,
    the draft's changes included. So a correct live page that the draft
    renders differently fails, and running ``tools/build-site.py`` cannot
-   clear it; the gate then says that a draft is staged and that promoting
-   it, after the owner approves it, is the remedy (staged_draft). It fails
-   every page that is not the render, whether or not a draft is staged.
+   clear it; the gate then says that a draft is staged and that promotion,
+   after the owner approves it, is the remedy (staged_draft, draft_advice):
+   the pull request of step 5 under "Staging at /draft/ and promotion" in
+   ``.baseline/README.md``, of which ``tools/build-site.py --base /
+   --promote`` is 1 step. It fails every page that is not the render,
+   whether or not a draft is staged.
    ``tools/check-release-checksum-live.py`` holds the same page to the render
    for the version and checksum it shows. The equality holds the page to the
    generator, not the generator to what it should write: a change to
@@ -141,8 +144,12 @@ published, and flip the site after that; otherwise flip the
 site with ``tools/set-release-links.py`` using the published release checksum,
 then run ``tools/build-site.py``. Neither advice offers an edit by hand: the
 whole-page equality refuses any page that is not the generator's render.
-While a draft is staged, the advice also says so and names promotion as the
-remedy, as neither tool writes the live pages then.
+While a draft is staged, ``tools/build-site.py`` writes only the draft, and
+``tools/set-release-links.py`` writes ``site/_redirects``,
+``site-src/release.json``, the ``modified`` dates in ``site-src/site.json``
+and the draft's pages, so neither writes the live verify page. Only when that
+page is not the render does the advice then also say so and name promotion
+as the remedy; every other failure gets only the advice above.
 
 Exit codes:
   0  every check above passes, so every release link names the SKILL.md
@@ -364,7 +371,7 @@ def main() -> int:
                 f"but SKILL.md says {expected}"
             )
 
-    source_problems, placeholder, near = check_release_source(expected, redirects)
+    source_problems, placeholder, near, staged = check_release_source(expected, redirects)
     problems += source_problems
 
     if problems:
@@ -388,9 +395,9 @@ def main() -> int:
                 f"release checksum (see the release runbook), then run tools/build-site.py, "
                 f"so the site matches SKILL.md ({expected})."
             )
-        staged = staged_draft()
         if staged is not None:
-            # DISCOVERY round 8, finding 1: while a draft is staged, neither tool above writes the live pages.
+            # DISCOVERY round 8, finding 1: while a draft is staged, neither tool above writes the live verify page.
+            # VERIFY round 8.1, finding 1: only that page's equality with the render gets this advice.
             print(f"\n{draft_advice(staged)}.")
         return 1
 
@@ -407,10 +414,11 @@ def main() -> int:
     return 0
 
 
-def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool, bool]:
+def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool, bool, str | None]:
     """Checks 7 and 8: release.json, and the install and verify pages generated from it. Returns the problems
     found, whether release.json holds the zero placeholder, and whether it holds a well-formed checksum close to it,
-    which select the closing advice in main.
+    which select the closing advice in main, and the base of a staged draft (staged_draft) when the verify page is
+    not the render while one is staged, or None, which selects the draft advice there.
 
     A stale bare file name on either page is check 6's (ZIP_NAME, site-wide), so it is
     not reported twice here; these pages must still name the release at least once.
@@ -419,6 +427,7 @@ def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool
     import json
 
     problems: list[str] = []
+    staged: str | None = None
     try:
         release = json.loads(RELEASE_JSON.read_text(encoding="utf-8", errors="strict"))
     except (OSError, UnicodeError, ValueError) as error:
@@ -472,7 +481,8 @@ def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool
             except OSError as error:
                 die(f"{relative} could not be read: {error}")
             if written != rendered:
-                remedy = "run tools/build-site.py" if staged_draft() is None else "a draft is staged (see below)"
+                staged = staged_draft()
+                remedy = "run tools/build-site.py" if staged is None else "a draft is staged (see below)"
                 problems.append(
                     f"{relative} is not the page tools/build-site.py renders for it from the committed sources, "
                     f"while site-src/release.json {state} ({first_difference(written, rendered)}); "
@@ -486,7 +496,7 @@ def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool
             if shown and shown[0].strip() != checksum:
                 problems.append(f"{relative} shows a checksum other than site-src/release.json")
     near = isinstance(checksum, str) and bool(SHA256.match(checksum)) and near_placeholder(checksum)
-    return problems, checksum == PLACEHOLDER, near
+    return problems, checksum == PLACEHOLDER, near, staged
 
 
 def near_placeholder(checksum: str) -> bool:
@@ -513,7 +523,8 @@ def rendered_verify_page() -> bytes:
 def staged_draft() -> str | None:
     """The base path site-src/site.json names when it is not /, which means a draft is staged, or None. The gate
     renders the live verify page at base / from the sources, the draft's changes included, while tools/build-site.py
-    and tools/set-release-links.py write only the draft, so this selects the advice and never the verdict. None also
+    and tools/set-release-links.py write the draft's pages and not that page, so this selects the advice for that
+    page's equality with the render (check_release_source) and never the verdict. None also
     when the file cannot be read or names no base as a string, so the advice is as without a draft; the generator
     refuses a site.json it cannot read (exit 3)."""
     import json
@@ -527,11 +538,14 @@ def staged_draft() -> str | None:
 
 
 def draft_advice(base: str) -> str:
-    """The advice while site-src/site.json names ``base``, a base other than /, so a draft is staged (staged_draft)."""
-    return (f"site-src/site.json names base {base}, so a draft is staged: tools/build-site.py and "
-            f"tools/set-release-links.py write only the draft, not the live pages, and this gate renders the live "
-            f"verify page at base / from the sources, the draft's changes included. Promoting the draft after the "
-            f"owner approves it (tools/build-site.py --base / --promote) is the remedy")
+    """The advice when the verify page is not the render while site-src/site.json names ``base``, a base other than /,
+    so a draft is staged (staged_draft)."""
+    return (f"site-src/site.json names base {base}, so a draft is staged: tools/build-site.py writes only the draft, "
+            f"and tools/set-release-links.py writes site/_redirects, site-src/release.json, the modified dates in "
+            f"site-src/site.json and the draft's pages, so neither writes the live verify page, and this gate renders "
+            f"that page at base / from the sources, the draft's changes included. Promotion after the owner approves "
+            f"it is the remedy: the pull request of step 5 under \"Staging at /draft/ and promotion\" in "
+            f".baseline/README.md, of which tools/build-site.py --base / --promote is 1 step")
 
 
 def first_difference(written: bytes, rendered: bytes) -> str:

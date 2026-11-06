@@ -45,9 +45,12 @@ Behaviour:
     the sources, the draft's changes included. So a correct live page that
     the draft renders differently exits 3, and running
     ``tools/build-site.py`` cannot clear it; the report then says that a
-    draft is staged and that promoting it, after the owner approves it, is
-    the remedy (staged_draft). Every page that is not the render exits 3,
-    whether or not a draft is staged. For a clearer report, the gate first
+    draft is staged and that promotion, after the owner approves it, is the
+    remedy (staged_draft, draft_advice): the pull request of step 5 under
+    "Staging at /draft/ and promotion" in ``.baseline/README.md``, of which
+    ``tools/build-site.py --base / --promote`` is 1 step. Every page that is
+    not the render exits 3, whether or not a draft is staged. For a clearer
+    report, the gate first
     applies the rule that ``tools/check-release-links.py`` also applies
     (download_block_problems), and reports the equality only for a page that
     keeps it: the page carries the download block that ``tools/build-site.py``
@@ -1260,8 +1263,9 @@ def draft_advice(base: str) -> str:
     """The advice while site-src/site.json names ``base``, a base other than /, so a draft is staged (staged_draft)."""
     return (f"site-src/site.json names base {base}, so a draft is staged: tools/build-site.py writes only the draft, "
             f"not the live pages, and this gate renders the live verify page at base / from the sources, the draft's "
-            f"changes included. Promoting the draft after the owner approves it (tools/build-site.py --base / "
-            f"--promote) is the remedy")
+            f"changes included. Promotion after the owner approves it is the remedy: the pull request of step 5 under "
+            f"\"Staging at /draft/ and promotion\" in .baseline/README.md, of which tools/build-site.py --base / "
+            f"--promote is 1 step")
 
 
 def first_difference(written: bytes, rendered: bytes) -> str:
