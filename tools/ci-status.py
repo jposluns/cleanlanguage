@@ -164,9 +164,11 @@ Usage:
 Exit codes:
   0  every check passed, confirmed across two consecutive readings
   1  at least one check failed, was cancelled, or timed out
-  2  checks are still running, or --wait hit its timeout
-  3  the result could not be read, no checks exist, usage was wrong, or output
-     failed
+  2  checks are still running, or --wait hit its timeout, which includes a
+     window that closed with no checks registered, unless 3 applies
+  3  the result could not be read, no checks exist (with --wait, only when the
+     window had closed by the time an empty reading was handled), usage was
+     wrong, or output failed
 """
 
 from __future__ import annotations
