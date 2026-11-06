@@ -70,11 +70,17 @@ Behaviour:
     the whole rendered page in each state (VERIFY_PAGE_PIN) and the site's
     own stylesheet (SITE_CSS_PIN), so such a change fails there until the pin
     is updated on purpose. The pin holds the page as rendered for a stand-in
-    release (PIN_VERSION, PIN_CHECKSUM) and the stand-in date PIN_DATE, while
-    this gate renders it at the ``modified`` dates in ``site-src/site.json``,
-    so a generator change that renders differently only for other release
-    values, or only for those dates, passes the pin and, once regenerated,
-    this gate; only review of the generator's diff stops that.
+    release (PIN_VERSION, PIN_CHECKSUM) and the stand-in date PIN_DATE, and
+    the same test requires the render for ``site-src/release.json`` at the
+    ``modified`` dates in ``site-src/site.json``, which
+    ``tools/check-release-links.py`` requires this page to be, to be the
+    pinned rendering of the same state with the stand-in values replaced
+    (check_committed_render). A generator change that renders differently
+    only for release values and dates that neither the stand-in nor the
+    committed state uses passes the pin, that test and, once regenerated,
+    this gate, until a commit sets ``release.json`` or the verify page's
+    ``modified`` date to such a value; the test runs on every pull request
+    and push to ``main`` (``site-draft.yml``), so it fails then.
     ``tools/check-release-links.py`` names the
     stylesheet and script files the page loads and the gate that pins each.
   - If the release ``vX`` for that version is not published yet, the pass is

@@ -55,11 +55,16 @@ What it verifies
    ``tools/test-build-site.py`` pins the whole rendered page in each state
    (VERIFY_PAGE_PIN) to catch that. The pin holds the page as rendered for a
    stand-in release (PIN_VERSION, PIN_CHECKSUM) and the stand-in date
-   PIN_DATE, while this gate renders it at the ``modified`` dates in
-   ``site-src/site.json``, so a generator change that renders differently
-   only for other release values, or only for those dates, passes the pin
-   and, once regenerated, this gate; only review of the generator's diff
-   stops that. For a
+   PIN_DATE, and the same test requires the page this gate renders, for
+   ``release.json`` at the ``modified`` dates in ``site-src/site.json``, to
+   be the pinned rendering of the same state with the stand-in values
+   replaced (check_committed_render). A generator change that renders
+   differently only for release values and dates that neither the stand-in
+   nor the committed state uses passes the pin, that test and, once
+   regenerated, this gate, until a commit sets ``release.json`` or the
+   verify page's ``modified`` date to such a value; the test runs on every
+   pull request and push to ``main`` (``site-draft.yml``), so it fails
+   then. For a
    clear report of what is wrong, the gate also applies the rule that both
    gates carry (download_block_problems): ``tools/build-site.py`` renders the
    page's download block, steps 1 to 3, for the SKILL.md version and the
@@ -116,7 +121,9 @@ fails that page while the release and its tag do not exist.
 When a check fails, the closing advice fits the state of ``release.json``: while it
 holds the zero placeholder, rerun ``tools/set-release-links.py`` with the placeholder
 until the release is published, and flip the site after that; otherwise flip the
-site with the published release checksum.
+site with ``tools/set-release-links.py`` using the published release checksum,
+then run ``tools/build-site.py``. Neither advice offers an edit by hand: the
+whole-page equality refuses any page that is not the generator's render.
 
 Exit codes:
   0  every check above passes, so every release link names the SKILL.md
@@ -353,8 +360,8 @@ def main() -> int:
         else:
             print(
                 f"\nFlip the site with tools/set-release-links.py using the published "
-                f"release checksum (see the release runbook), or update the version and "
-                f"checksum by hand, so the site matches SKILL.md ({expected})."
+                f"release checksum (see the release runbook), then run tools/build-site.py, "
+                f"so the site matches SKILL.md ({expected})."
             )
         return 1
 

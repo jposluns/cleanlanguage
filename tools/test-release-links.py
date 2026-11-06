@@ -287,6 +287,10 @@ class ReleaseSourceTest(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertIn("Flip the site with tools/set-release-links.py using the published", output)
         self.assertNotIn("holds the zero placeholder of a version bump", output)
+        # DISCOVERY round 6, finding 4: whole-page equality refuses a page edited by hand, so the advice names only
+        # the writer and the generator.
+        self.assertIn("then run tools/build-site.py", output)
+        self.assertNotIn("by hand", output)
 
     def test_comments_nested_too_deeply_fail_without_a_traceback(self):
         # DISCOVERY round 5, finding 6: 400 nested comment openers before step 1 make PageReader recurse past the
