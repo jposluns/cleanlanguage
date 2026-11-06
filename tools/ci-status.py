@@ -291,7 +291,10 @@ def _gh(args, timeout: float):
     exit 0. A status that cannot be observed raises ChildProcessError, an OSError,
     and an end other than a normal exit gives returncode -1, so neither can read
     as success. Output goes to unnamed temporary files, so gh never blocks on a
-    full pipe while it is polled. OSError and TimeoutExpired reach the caller."""
+    full pipe while it is polled. OSError and TimeoutExpired reach the caller.
+    TimeoutExpired means the kill at the deadline ended gh; a gh that ended on its
+    own just before the kill gives its own result, and a status lost at that last
+    reap raises ChildProcessError, as at any other reap."""
     env = {
         k: v for k, v in os.environ.items()
         if not (k.startswith("GIT_") or k in GH_REDIRECTS)
@@ -310,9 +313,15 @@ def _gh(args, timeout: float):
             if time.monotonic() >= end:
                 os.kill(proc.pid, signal.SIGKILL)
                 try:
-                    os.waitpid(proc.pid, 0)
-                except ChildProcessError:
-                    pass
+                    pid, status = os.waitpid(proc.pid, 0)
+                except ChildProcessError as exc:
+                    proc.returncode = -1  # the child is gone; Popen must not wait for it
+                    raise ChildProcessError("the exit status of gh was lost") from exc
+                # gh can end on its own between the last poll and the kill. Only an
+                # end by the kill is a read the deadline cut off; any other status
+                # is the read's own result.
+                if not (os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL):
+                    break
                 proc.returncode = -1
                 raise subprocess.TimeoutExpired(proc.args, timeout)
             time.sleep(0.02)
