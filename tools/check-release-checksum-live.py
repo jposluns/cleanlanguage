@@ -104,10 +104,13 @@ Behaviour:
     still checked, with no further network call: a malformed line exits 3, and
     a line missing above the undated baseline fails. Before the tag, no
     checksum for the version is published, so a page that shows a well-formed
-    checksum as published there (the previous version's digest, a locally
-    built one or a mistyped placeholder passed to
-    ``tools/set-release-links.py``) is an inconsistency and fails, the
-    Released line still checked and the more severe code winning. A different
+    checksum as published there (the previous version's digest or a locally
+    built one passed to ``tools/set-release-links.py``) is an inconsistency
+    and fails, the Released line still checked and the more severe code
+    winning. ``tools/build-site.py`` refuses a checksum close to the zero
+    placeholder (56 or more of its 64 digits 0), such as a mistyped
+    placeholder, so a page that shows one is not the render and exits 3
+    before any release is read. A different
     version with no release is a real
     inconsistency and fails. An existing tag with no published release is a
     deleted or unfinished release and reads as unverifiable, as does a release
@@ -1375,9 +1378,10 @@ def check_site_checksum(load_code: int = 0) -> int:
         situation = f"release {tag} is not published yet and its tag does not exist"
         if pending is None:
             # DISCOVERY round 5, finding 1: before the tag, the only page that states nothing false is the note. A
-            # checksum shown as published for a version with no release (the previous version's digest, a locally
-            # built one or a mistyped placeholder passed to tools/set-release-links.py) fails, as does a page whose
-            # step 3 then rejects the download. The Released line is still checked, and the more severe code wins.
+            # checksum shown as published for a version with no release (the previous version's digest or a locally
+            # built one passed to tools/set-release-links.py) fails, as does a page whose step 3 then rejects the
+            # download. A checksum close to the zero placeholder, such as a mistyped one, exits 3 above, as the
+            # generator refuses to render it. The Released line is still checked, and the more severe code wins.
             print("Release checksum inconsistency found:")
             print(f"  - the verify page shows {site_sum} as the published checksum for version {version}")
             print(f"  - {situation}, so no checksum for {version} is published")

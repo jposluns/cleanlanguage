@@ -1177,6 +1177,26 @@ def check_release_placeholder(failures: list[str]) -> int:
     return 1
 
 
+def check_release_near_placeholder(failures: list[str]) -> int:
+    """DISCOVERY round 7: load_release() refuses a checksum other than the zero placeholder with 56 or more of its 64
+    digits 0, such as a mistyped placeholder, and accepts the placeholder, 55 digits 0 and a real-looking checksum."""
+    generator = load_module(GENERATOR)
+    cases = (("0" * 63 + "1", True), ("0" * 56 + "89abcdef", True), ("0" * 64, False), ("0" * 55 + "123456789", False),
+             ("1234abcd" * 8, False))
+    for checksum, refused in cases:
+        release = {"version": "9.8.7", "tag": "v9.8.7", "checksum": checksum}
+        try:
+            tokens = generator.load_release(REPO_ROOT, release, any_version=True)
+        except generator.BuildError as error:
+            if not refused or "is not the zero placeholder but has" not in str(error):
+                failures.append(f"release near placeholder: {checksum} refused: {error}")
+            continue
+        if refused or tokens["release.checksum"] != checksum:
+            failures.append(f"release near placeholder: {checksum} accepted, expected the refusal" if refused else
+                            f"release near placeholder: {checksum} gave the checksum {tokens['release.checksum']}")
+    return len(cases)
+
+
 # The pin of the whole verify page (DISCOVERY round 4, findings 1 to 4): the sha256 of each state's rendering by
 # verify_page() of the whole site/verify/index.html, for the stand-in release PIN_VERSION (tag v PIN_VERSION) with the
 # zero placeholder and with PIN_CHECKSUM, and PIN_DATE as every page's modified date, each as rendered, with nothing
@@ -1561,6 +1581,7 @@ def main() -> int:
     ran += check_family_pages(failures)
     ran += check_release_flip(failures)
     ran += check_release_placeholder(failures)
+    ran += check_release_near_placeholder(failures)
     ran += check_verify_page_pin(failures)
     ran += check_committed_render(failures)
     ran += check_check_mode(failures)

@@ -1236,14 +1236,13 @@ class ConditionalPassTest(unittest.TestCase):
     def test_a_checksum_shown_as_published_before_the_tag_fails(self):
         # DISCOVERY round 5, finding 1: an honest mistake at the bump, a well-formed checksum passed to
         # tools/set-release-links.py for a version with no release and no tag, fails (exit 1), the Released line still
-        # checked and the more severe code winning; nothing beyond the release and the tag is read over the network.
-        mistyped = "0" * 63 + "1"
+        # checked and the more severe code winning; nothing beyond the release and the tag is read over the network. A
+        # mistyped placeholder exits 3 before this, as the generator refuses to render it (WholePageTest).
         for label, checksum, released, expected in (
             ("the previous version's digest", ZIP_SUM, "Released: 2026-11-15", 1),
             ("a locally built digest", OTHER_SUM, "Released: 2026-11-15", 1),
-            ("a mistyped placeholder", mistyped, "Released: 2026-11-15", 1),
-            ("a mistyped placeholder and a missing Released line", mistyped, None, 1),
-            ("a mistyped placeholder and a malformed Released line", mistyped, "Released: soon", 3),
+            ("a locally built digest and a missing Released line", OTHER_SUM, None, 1),
+            ("a locally built digest and a malformed Released line", OTHER_SUM, "Released: soon", 3),
         ):
             with self.subTest(label):
                 self.fixtures(AHEAD, checksum, AHEAD, released)
@@ -5012,6 +5011,20 @@ class WholePageTest(unittest.TestCase):
                 code, output = self.gate_run()
                 self.assertEqual(code, 1, output)
                 self.assertIn(f"  - the verify page names version {BOGUS}, which has no published release\n", output)
+
+    def test_a_checksum_close_to_the_placeholder_exits_3(self):
+        # DISCOVERY round 7: the generator refuses a checksum other than the zero placeholder with 56 or more of its 64
+        # digits 0, such as a mistyped placeholder, so a page that shows one is not the render: exit 3 before any
+        # release is read.
+        page = self.publish(self.SUM)
+        for checksum in ("0" * 63 + "1", "0" * 56 + "89abcdef"):
+            with self.subTest(checksum):
+                self.page.write_text(page.replace(self.SUM, checksum), encoding="utf-8")
+                code, output = self.gate_run()
+                self.assertEqual(code, 3, output)
+                self.assertIn(f"tools/build-site.py could not render the verify page: site-src/release.json checksum "
+                              f"{checksum} is not the zero placeholder but has {checksum.count('0')} of its 64 digits 0",
+                              output)
 
     def test_every_reported_form_exits_3(self):
         start_tag = '<p class="lbl blk">Step 1</p>'

@@ -255,6 +255,10 @@ ABOUT_BLOCK = '<div class="region"><p class="lbl">About this project</p><div>{ro
 SLICE_COUNT = 6
 # The checksum a version bump writes into site-src/release.json until the post-release flip sets the published one.
 PLACEHOLDER_CHECKSUM = "0" * 64
+# A checksum other than the placeholder with at least this many 0 digits of its 64 is close to the placeholder, such as a
+# mistyped one, and load_release() refuses it (near_placeholder()); a real SHA-256 has that many with a probability of
+# about 10^-58. tools/set-release-links.py and tools/check-release-links.py apply the same rule.
+NEAR_PLACEHOLDER_ZEROS = 56
 # The verify page's download block in its source: steps 1 to 3, from the step 1 label to the end of the step 3 token
 # (verify_download_block()).
 VERIFY_SOURCE = SRC / "pages" / "verify.html"
@@ -319,6 +323,12 @@ def load_release(root: Path, override: dict | None = None, any_version: bool = F
         raise BuildError(f"site-src/release.json tag {tag!r} is not v{version}")
     if not isinstance(checksum, str) or not HEX64.match(checksum):
         raise BuildError("site-src/release.json checksum is not a 64 character lower-case SHA-256")
+    if near_placeholder(checksum):
+        raise BuildError(
+            f"site-src/release.json checksum {checksum} is not the zero placeholder but has {checksum.count('0')} of "
+            "its 64 digits 0, such as a mistyped placeholder; run tools/set-release-links.py with the zero placeholder "
+            "until the release is published, and with the published release checksum after that"
+        )
     expected = version if any_version else skill_version(root)
     if version != expected:
         raise BuildError(
@@ -326,6 +336,12 @@ def load_release(root: Path, override: dict | None = None, any_version: bool = F
             "run tools/set-release-links.py for the release, never edit one without the other"
         )
     return release_tokens(version, tag, checksum)
+
+
+def near_placeholder(checksum: str) -> bool:
+    """Whether ``checksum`` is not the zero placeholder but has NEAR_PLACEHOLDER_ZEROS or more of its digits 0, such as
+    a mistyped placeholder, which load_release() refuses."""
+    return checksum != PLACEHOLDER_CHECKSUM and checksum.count("0") >= NEAR_PLACEHOLDER_ZEROS
 
 
 def release_tokens(version: str, tag: str, checksum: str) -> dict:

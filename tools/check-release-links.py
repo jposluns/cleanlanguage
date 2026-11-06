@@ -31,7 +31,11 @@ What it verifies
    This covers every page under ``site/``.
 7. ``site-src/release.json``, the one source of every version string the
    generated pages show, names the same version, the tag ``v<version>``, and a
-   well-formed checksum.
+   well-formed checksum that is the zero placeholder or not close to it: a
+   checksum other than the placeholder with 56 or more of its 64 digits 0
+   (NEAR_PLACEHOLDER_ZEROS), such as a mistyped placeholder, fails, and
+   ``tools/set-release-links.py`` and ``tools/build-site.py`` refuse it. A real
+   SHA-256 has that many 0 digits with a probability of about 10^-58.
 8. On the install and verify pages, every ``version X.Y.Z`` label names that
    version, and each page names the release at least once. The verify page is
    in 1 of 2 states, chosen by ``release.json``, and is checked against what
@@ -116,9 +120,11 @@ true value of the published asset, only that it is well formed and consistent wi
 the site. Confirming the value against the release requires the network and is
 done by the orchestrator's post-release site flip, which reads the published checksum.
 So it passes a well-formed checksum in ``release.json`` for a version that has no
-release yet, such as the previous version's digest or a mistyped placeholder passed
+release yet, such as the previous version's digest or a locally built one passed
 to ``tools/set-release-links.py`` at a bump; ``tools/check-release-checksum-live.py``
-fails that page while the release and its tag do not exist.
+fails that page while the release and its tag do not exist. A checksum close to the
+zero placeholder, such as a mistyped placeholder, fails check 7, and the writer and
+the generator refuse it.
 
 When a check fails, the closing advice fits the state of ``release.json``: while it
 holds the zero placeholder, rerun ``tools/set-release-links.py`` with the placeholder
@@ -178,6 +184,9 @@ DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) i
 PENDING_VERSION = re.compile(r"The checksum for version ([0-9][0-9.]*) appears here once that version is published; "
                              r"compare the checksum of your file with it then\.")
 PLACEHOLDER = "0" * 64
+# A checksum other than the placeholder with at least this many 0 digits of its 64 is close to it, such as a mistyped
+# placeholder: check 7 fails it, as tools/build-site.py and tools/set-release-links.py refuse it.
+NEAR_PLACEHOLDER_ZEROS = 56
 # What download_block_problems refuses outside the download block: the note in any version and any letter case, the
 # "published checksum" wording, a step that tells the reader not to install the file, a 64 digit hexadecimal value,
 # and the id of the checksum element; and the address of the verify page, against which it resolves a relative link.
@@ -404,6 +413,12 @@ def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool
     checksum = release.get("checksum")
     if not isinstance(checksum, str) or not SHA256.match(checksum):
         problems.append("site-src/release.json carries no 64 character lower-case SHA-256 checksum")
+    elif near_placeholder(checksum):
+        problems.append(
+            f"site-src/release.json holds {checksum}, which is not the zero placeholder but has {checksum.count('0')} "
+            f"of its 64 digits 0, such as a mistyped placeholder; until release v{expected} is published, run "
+            f"tools/set-release-links.py with the zero placeholder"
+        )
     for page in (INSTALL_PAGE, VERIFY_PAGE):
         relative = page.relative_to(REPO_ROOT).as_posix()
         try:
@@ -415,7 +430,9 @@ def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool
             problems.append(f"{relative} names no release version")
         for version in sorted(labels - {expected}):
             problems.append(f"{relative} names version {version}, but SKILL.md says {expected}")
-        if page != VERIFY_PAGE or not isinstance(checksum, str) or not SHA256.match(checksum):
+        # The generator refuses a checksum close to the placeholder, which is reported above, so it renders no page.
+        if (page != VERIFY_PAGE or not isinstance(checksum, str) or not SHA256.match(checksum)
+                or near_placeholder(checksum)):
             continue
         # The gate: the download block that tools/build-site.py writes for the state release.json selects.
         state = "holds the zero placeholder" if checksum == PLACEHOLDER else "holds a published checksum"
@@ -449,6 +466,12 @@ def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool
             if shown and shown[0].strip() != checksum:
                 problems.append(f"{relative} shows a checksum other than site-src/release.json")
     return problems, checksum == PLACEHOLDER
+
+
+def near_placeholder(checksum: str) -> bool:
+    """Whether ``checksum`` is not the zero placeholder but has NEAR_PLACEHOLDER_ZEROS or more of its digits 0, such as
+    a mistyped placeholder, which check 7 fails."""
+    return checksum != PLACEHOLDER and checksum.count("0") >= NEAR_PLACEHOLDER_ZEROS
 
 
 def rendered_verify_page() -> bytes:

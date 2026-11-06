@@ -155,6 +155,29 @@ class ReleaseSourceTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("site/verify/index.html shows a checksum other than site-src/release.json", output)
 
+    def test_a_checksum_close_to_the_placeholder_fails(self):
+        # DISCOVERY round 7: a checksum other than the zero placeholder with 56 or more of its 64 digits 0, such as a
+        # mistyped placeholder, fails check 7, and the page is not rendered (the generator refuses it). A checksum with
+        # 55 digits 0, and one that looks real, still pass.
+        def refuse() -> bytes:
+            raise AssertionError("rendered for a checksum close to the zero placeholder")
+
+        for checksum, expected in (("0" * 63 + "1", 1), ("0" * 56 + "89abcdef", 1), ("0" * 55 + "123456789", 0),
+                                   ("1234abcd" * 8, 0)):
+            with self.subTest(checksum):
+                gate.rendered_verify_page = refuse if expected else fixture_render
+                self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % checksum)
+                self.write(gate.VERIFY_PAGE, verify_page("1.0.14", checksum))
+                code, output = self.run_gate()
+                self.assertEqual(code, expected, output)
+                report = f"site-src/release.json holds {checksum}, which is not the zero placeholder but has "
+                if expected:
+                    self.assertIn(report + f"{checksum.count('0')} of its 64 digits 0, such as a mistyped placeholder; "
+                                  "until release v1.0.14 is published, run tools/set-release-links.py with the zero "
+                                  "placeholder", output)
+                else:
+                    self.assertNotIn(report, output)
+
     def test_install_keeps_an_old_filename(self):
         # The known version-text issue: a bare filename left at the old version.
         self.write(gate.INSTALL_PAGE, INSTALL.format(v="1.0.14").replace("<code>cleanlanguage-1.0.14.zip", "<code>cleanlanguage-1.0.13.zip"))
@@ -891,6 +914,40 @@ class WriterTest(unittest.TestCase):
         self.assertNotIn(note, published)
         self.assertEqual(self.gate_code(), 0)
         self.assertEqual(self.apply(ZEROS), pending)
+
+    def write_links(self, checksum: str) -> tuple[int, str]:
+        """Run set-release-links.py's main on the copy for ``checksum``, returning its exit code and stderr."""
+        argv = ["set-release-links.py", "--version", self.next, "--checksum", checksum, "--date", "2026-11-04"]
+        err = io.StringIO()
+        with unittest.mock.patch("sys.argv", argv), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(err):
+            try:
+                code = writer.main()
+            except SystemExit as stop:
+                code = stop.code
+        return code, err.getvalue()
+
+    def test_a_checksum_close_to_the_placeholder_is_refused(self):
+        # DISCOVERY round 7: the writer refuses a checksum other than the zero placeholder with 56 or more of its 64
+        # digits 0, such as a mistyped placeholder, before it writes anything, and the gate fails one written by hand
+        # (exit 1, not the generator's refusal). The zero placeholder, 55 digits 0 and a real-looking checksum pass.
+        release = self.root / "site-src/release.json"
+        before = release.read_bytes()
+        for checksum in ("0" * 63 + "1", "0" * 56 + "89abcdef"):
+            with self.subTest(checksum):
+                code, err = self.write_links(checksum)
+                self.assertEqual(code, 2, err)
+                self.assertIn(f"set-release-links: {checksum} is not the zero placeholder but has "
+                              f"{checksum.count('0')} of its 64 digits 0, such as a mistyped placeholder", err)
+                self.assertEqual(release.read_bytes(), before)
+        for checksum in (ZEROS, "0" * 55 + "123456789", "1234abcd" * 8):
+            with self.subTest(checksum):
+                self.assertEqual(self.write_links(checksum), (0, ""))
+                self.assertEqual(json.loads(release.read_text(encoding="utf-8"))["checksum"], checksum)
+                self.assertEqual(self.gate_code(), 0)
+        release.write_text(release.read_text(encoding="utf-8").replace("1234abcd" * 8, "0" * 63 + "1"),
+                           encoding="utf-8")
+        self.assertEqual(self.gate_code(), 1)
 
     def test_only_the_changed_pages_are_restamped(self):
         planned = self.plan()
