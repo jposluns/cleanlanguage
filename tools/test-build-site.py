@@ -1531,6 +1531,14 @@ SOURCE_REFUSALS = [
     ("a button.copy with data-copy holding an element", inject(
         '<pre id="c1" class="hascopy"><button class="copy" type="button" data-copy="c1" hidden><span>Copy</span>'
         "</button>x</pre>"), DATA_COPY_RULE),
+    # Each meets every condition of the data-copy pin but 1 (a button.copy; no child element), so a pin without that
+    # condition admits it.
+    ("an unclassed hidden button with data-copy holding Copy first in its pre.hascopy", inject(
+        '<pre id="c1" class="hascopy"><button type="button" data-copy="c1" hidden>Copy</button>x</pre>'),
+        DATA_COPY_RULE),
+    ("a button.copy with data-copy holding Copy and a hidden span", inject(
+        '<pre id="c1" class="hascopy"><button class="copy" type="button" data-copy="c1" hidden>Copy<span hidden>x'
+        "</span></button>x</pre>"), DATA_COPY_RULE),
     # Built with exit 0 at 77823df (DISCOVERY round 9): a browser with scripting off shows a noscript's content, so
     # the label rule also reads the text that shows with scripting off, hiding inside the noscript applying.
     ("the label split by a hidden span in a noscript paragraph",

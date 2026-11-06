@@ -347,12 +347,12 @@ readings with scripting off, in which a browser reads that content as
 elements, as the parser does (``scripting_off()``); and under these rules
 the first ``</noscript`` after a noscript start tag is that element's own
 end tag, the one the parser reads as closing it on a page ``validate()``
-accepts, since no ``<`` sits in text, a comment or an attribute value and no noscript starts
-inside another. A noscript inside a noscript was allowed before: with
-scripting on, a browser ended the outer one at the inner one's end tag, so a
-later ``</summary>`` closed a summary the parser read as still open, and the
-value paragraph and the About block after it became hidden children of a
-closed details while every rule passed.
+accepts, since no ``<`` sits in text, a comment or an attribute value and no
+noscript starts inside another. A noscript inside a noscript was allowed
+before: with scripting on, a browser ended the outer one at the inner one's
+end tag, so a later ``</summary>`` closed a summary the parser read as still
+open, and the value paragraph and the About block after it became hidden
+children of a closed details while every rule passed.
 
 The generator's own readers then read what the parser reads. Every rule that
 reads elements, attributes or text of a page source reads them from 1 parser
@@ -537,11 +537,11 @@ applies. ``noscript`` is the exception the grammar names: a browser with
 scripting on reads its content as text, which the rules read as not
 rendered (with scripting off, a browser reads it as elements, as the parser
 does, and the label rule reads it so too). One difference remains that
-places no element elsewhere: a browser drops a line feed that is the next token after a ``pre`` start tag. The
-placement pins read it as a browser does (``PageScan`` leaves it out of
-what they read, so a ``button.copy`` after it still comes first in its
-``pre``); the other rules read it as text, which the label rule deletes as
-whitespace. The
+places no element elsewhere: a browser drops a line feed that is the next
+token after a ``pre`` start tag. The placement pins read it as a browser
+does (``PageScan`` leaves it out of what they read, so a ``button.copy``
+after it still comes first in its ``pre``); the other rules read it as text,
+which the label rule deletes as whitespace. The
 grammar refuses ``</br>``, which a browser reads as a ``br`` start tag (and,
 directly inside a ``table``, ``thead``, ``tbody`` or ``tr``, moves to before
 the table), where the parser ignores it.
@@ -2383,7 +2383,7 @@ def placement_pin(shape: PageScan, where: str, logo_alt: str | None) -> None:
                                      or "".join(shape.own_texts.get(index, [])) != "Copy"):
             raise BuildError(f"{where}: a data-copy attribute {source_at(at)} outside the copy button's pinned form; "
                              f"{COPY_BUTTON_PIN}")
-    heroes =[at for _, classes, _, at, _, _ in shape.elements if "hero" in classes]
+    heroes = [at for _, classes, _, at, _, _ in shape.elements if "hero" in classes]
     if len(heroes) > 1:
         raise BuildError(f"{where}: a second section.hero {source_at(heroes[1])}; a page source carries at most 1 "
                          "hero, the one whose narrow-width order the label rule reads")
