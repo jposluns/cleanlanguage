@@ -25,6 +25,7 @@
 # and the CI workflows depend on. See ci-status.py for the contract and exit codes:
 #   0 all checks passed (confirmed twice)  1 a check failed  2 still running / timed out
 #   3 unreadable, no checks, or usage error.
+# That list is a summary; the exit-code list in ci-status.py is the full contract.
 # -I isolates the interpreter: PYTHONPATH, the user site directory and the script
 # directory cannot shadow a standard-library import used by the gate.
 # The wrapper first exits 3 when it runs under a shell other than bash, such as

@@ -164,8 +164,10 @@ Usage:
 Exit codes:
   0  every check passed, confirmed across two consecutive readings
   1  at least one check failed, was cancelled, or timed out
-  2  checks are still running, or --wait hit its timeout, which includes a
-     window that closed with no checks registered, unless 3 applies
+  2  checks are still running; without --wait, a passing set of checks kept
+     changing across readings, so it could not be confirmed; or --wait hit
+     its timeout, which includes a window that closed with no checks
+     registered, unless 3 applies
   3  the result could not be read, no checks exist (with --wait, only when the
      window had closed by the time an empty reading was handled), usage was
      wrong, or output failed
@@ -294,9 +296,11 @@ def _gh(args, timeout: float):
     and an end other than a normal exit gives returncode -1, so neither can read
     as success. Output goes to unnamed temporary files, so gh never blocks on a
     full pipe while it is polled. OSError and TimeoutExpired reach the caller.
-    TimeoutExpired means the kill at the deadline ended gh; a gh that ended on its
-    own just before the kill gives its own result, and a status lost at that last
-    reap raises ChildProcessError, as at any other reap."""
+    TimeoutExpired means the reap after the kill at the deadline found gh ended by
+    SIGKILL, which is the kill itself unless something else sent gh a SIGKILL just
+    before it; a gh that ended any other way just before the kill gives its own
+    result, and a status lost at that last reap raises ChildProcessError, as at
+    any other reap."""
     env = {
         k: v for k, v in os.environ.items()
         if not (k.startswith("GIT_") or k in GH_REDIRECTS)

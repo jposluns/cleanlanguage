@@ -622,6 +622,13 @@ CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=3 \
   run_case "pending reading, a failed read, then a read cut off at the deadline -> unreadable" \
   "$GA_IN_PROGRESS" "" "g f s" 3 --wait --timeout 5
+# An empty reading (no checks) is a successful reading too, so a read cut off at
+# the deadline after it is the wait timing out (exit 2), as the top-of-loop guard
+# gives for the same reading.
+CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
+  CASE_ABSENT="check read failed" CASE_READS=2 \
+  run_case "empty reading then a read cut off at the deadline -> not green, timed out" \
+  '{"total_count":0,"check_runs":[]}' "" "g s" 2 --wait --timeout 5
 # Without --wait, the confirmation read after a green reading is the only second
 # read, and it is bounded by the same deadline. A cut-off there keeps its old
 # result, the read failure (exit 3), not a timed-out wait.
@@ -2259,25 +2266,33 @@ sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > /dev/null 2>&1 || got=$?
 
 run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 
-# run_final_reap_case NAME MODE NEEDLE: the gate runs in process in wait mode
-# after a pending reading, with os.waitpid replaced so the second check-runs call
-# looks unfinished to every poll and its status is first seen at the reap after
-# the kill at the deadline. That gh ends on its own at once: MODE exit has it
-# exit 1, MODE signal has it end itself with SIGTERM, and MODE lost has it exit 1
-# and makes the reap after the kill raise ChildProcessError. None is a read the
-# deadline cut off, so each must exit 3 with NEEDLE on standard error, never 2
-# as a timed-out wait.
+# run_final_reap_case NAME MODE WANT NEEDLE: the gate runs in process in wait
+# mode after a pending reading, with os.waitpid replaced so the second check-runs
+# call looks unfinished to every poll and its status is first seen at the reap
+# after the kill at the deadline. That gh ends on its own at once: MODE exit has
+# it exit 1, MODE signal has it end itself with SIGTERM, MODE lost has it exit 1
+# and makes the reap after the kill raise ChildProcessError, and MODE red has it
+# print a red reading and exit 0. None is a read the deadline cut off, so each
+# must exit WANT, never 2 as a timed-out wait: 3 with NEEDLE on standard error,
+# or for MODE red the red verdict, 1 with NEEDLE on standard output. The
+# replaced os.waitpid also requires the status it reaps after the kill to be
+# that end of gh, not the kill, so no case passes without reaching it.
 run_final_reap_case() {
-  local name="$1" mode="$2" needle="$3"
+  local name="$1" mode="$2" want="$3" needle="$4"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
   local bin="$tmp/bin"; mkdir -p "$bin"
   printf "%s" "$GA_IN_PROGRESS" > "$tmp/def.json"
+  printf "%s" "$GA_RED" > "$tmp/red.json"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
 case "\$*" in
   *check-runs*)
     if [ -e "$tmp/read" ]; then
-      case "$mode" in signal) kill -TERM \$\$; sleep 60 ;; *) exit 1 ;; esac
+      case "$mode" in
+        signal) kill -TERM \$\$; sleep 60 ;;
+        red) cat "$tmp/red.json"; exit 0 ;;
+        *) exit 1 ;;
+      esac
     fi
     : > "$tmp/read"; cat "$tmp/def.json" ;;
   *"repo view"*) printf "owner/name";; *) printf "";;
@@ -2285,8 +2300,8 @@ esac
 GH
   chmod +x "$bin/gh"
   local got=0
-  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, sys
-path, mode = sys.argv[1], sys.argv[3]
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, signal, sys
+path, mode, own = sys.argv[1], sys.argv[3], sys.argv[4]
 spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
@@ -2300,23 +2315,38 @@ def waitpid(pid, options):
     if options & os.WNOHANG:
         return 0, 0
     result = real_waitpid(pid, options)
+    status = result[1]
+    if mode == "signal":
+        ended = os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGTERM
+    else:
+        code = 0 if mode == "red" else 1
+        ended = os.WIFEXITED(status) and os.WEXITSTATUS(status) == code
+    if ended:
+        open(own, "w").close()  # gh ended on its own, as MODE intends
     if mode == "lost":
         raise ChildProcessError(10, "No child processes")
     return result
 os.waitpid = waitpid
 sys.argv = [path, "--repo", "owner/name", "--wait", "--timeout", "3", "--interval", "1", sys.argv[2]]
-sys.exit(mod.run())' "${here}/ci-status.py" "$C1" "$mode" > /dev/null 2> "$tmp/err" || got=$?
-  if [ "$got" -eq 3 ] && grep -q -F -- "$needle" "$tmp/err"; then printf "ok   %s (exit %s)\n" "$name" "$got";
-  else printf "FAIL %s (got %s, want 3 with the read failure)\n" "$name" "$got"; fails=$((fails + 1)); fi
+sys.exit(mod.run())' "${here}/ci-status.py" "$C1" "$mode" "$tmp/own" > "$tmp/out" 2> "$tmp/err" || got=$?
+  local stream="$tmp/err" why=""
+  [ "$mode" = red ] && stream="$tmp/out"
+  [ "$got" -eq "$want" ] || why="$why exit"
+  grep -q -F -- "$needle" "$stream" || why="$why message"
+  [ -e "$tmp/own" ] || why="$why reap"
+  if [ -z "$why" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want %s;%s)\n" "$name" "$got" "$want" "$why"; fails=$((fails + 1)); fi
   rm -rf "$tmp"
 }
 
-run_final_reap_case "gh exiting 1 just before the kill at the deadline exits 3, not 2" exit \
+run_final_reap_case "gh exiting 1 just before the kill at the deadline exits 3, not 2" exit 3 \
   "check read failed for ${C1}: gh api failed"
-run_final_reap_case "gh ending itself by a signal just before the kill at the deadline exits 3, not 2" signal \
+run_final_reap_case "gh ending itself by a signal just before the kill at the deadline exits 3, not 2" signal 3 \
   "check read failed for ${C1}: gh api failed"
-run_final_reap_case "gh exit status lost at the reap after the kill at the deadline exits 3, not 2" lost \
+run_final_reap_case "gh exit status lost at the reap after the kill at the deadline exits 3, not 2" lost 3 \
   "check read failed for ${C1}: could not run gh: the exit status of gh was lost"
+run_final_reap_case "gh exiting 0 with a red reading just before the kill at the deadline exits 1, not 2" red 1 \
+  "ci-status: a check did not pass for ${C1}"
 
 # A skipped case is not verified, so any skip makes the suite incomplete and
 # nonzero; the final line then names the count.
