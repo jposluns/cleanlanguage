@@ -130,9 +130,11 @@ What it verifies
    and no other stylesheet loads: every stylesheet the page loads, and every
    ``<link>`` start tag naming ``stylesheet`` that a text match finds, a tag in
    a comment included, is 1 of those 3 in exactly the form
-   ``<link rel="stylesheet" href="/assets/baseline/NAME?v=X.Y.Z">``, so the rule
-   pin of ``tools/test-install-page.py`` reads every stylesheet the 6 pages
-   load. ``/assets/site.css``, which none of them loads, fails, so a
+   ``<link rel="stylesheet" href="/assets/baseline/NAME?v=X.Y.Z">``, so, with
+   check 7's refusal of a ``Link`` header, the rule pin of
+   ``tools/test-install-page.py`` reads every stylesheet that the 6 pages'
+   markup or ``site/_headers`` loads; a header that Cloudflare adds outside
+   that file is not read. ``/assets/site.css``, which none of them loads, fails, so a
    ``site-src/assets/site.css``, which ``tools/build-site.py`` adds to the head
    of every page it builds, needs this check and that pin changed with it. ``scheme.js`` loads
    exactly once, as
@@ -172,7 +174,10 @@ What it verifies
    exact lines. The policy allows ``'unsafe-inline'``, so a browser does not
    block inline code on these pages. The site's own pages must not use it
    (template specification, section 5), and check 5 and
-   ``tools/check-inline-code.py`` enforce that rule.
+   ``tools/check-inline-code.py`` enforce that rule. No rule sets a ``Link``
+   header, which a browser can read as a stylesheet load that check 6 and the
+   rule pin do not see; it refuses every ``Link`` header, one that only
+   preloads included, because it does not read the header's value.
 8. On the 6 pages, each checked element, each of its ancestors, as the parser
    holds them open, and each element it holds carries only the classes that
    the committed pages give an element of that tag there (``CLASS_PIN``): the
@@ -195,10 +200,29 @@ What it verifies
    reads it as hiding the element that carries it and all it holds.
    ``tools/test-install-page.py`` fails unless ``RULE_ATTRIBUTES`` holds
    exactly the attributes, ``hidden`` aside, that the attribute selectors of
-   the rules it pins name. No ``html`` or ``body`` start tag other than the
+   the rules it pins name. So a correct future baseline rule that names an
+   attribute that a committed checked element, ancestor or element it holds
+   carries (``class``, ``id``, ``href``, or ``lang`` on ``html``, say) makes
+   this check refuse the committed pages. To land such a rule, read it and
+   confirm that it hides, clips, zeroes the opacity of and moves no checked
+   element, as for any change to the rule pin, then exempt that attribute in
+   ``tools/test-install-page.py``, beside ``hidden`` (``HIDING_ATTRIBUTE``),
+   name the exemption here, and review both with the new pin in the same pull
+   request. No ``html`` or ``body`` start tag other than the
    first of each on the page carries any attribute, because a browser adds its
    attributes to the page's own element, an ancestor of every checked element,
-   so a later ``<body class="fresh">`` fails.
+   so a later ``<body class="fresh">`` fails. Nor does any ``html`` or ``body``
+   start tag that is not, as the parser holds it open, an ancestor of every
+   checked element, for the same reason: on a page whose opening ``<body>``
+   was removed, a first ``<body data-preset>`` or ``<body class="fresh">``
+   after ``</main>`` fails, and so does ``<html class="fresh">`` after
+   ``</main>`` on a page whose opening ``html`` start tag was removed (check 6
+   refuses that page too, because its head is then not ``html > head``). Each
+   page begins with exactly ``<!doctype html>`` on its own line, as
+   ``tools/build-site.py`` writes it: without it a browser renders the page in
+   quirks mode, where a class selector matches a class name without regard to
+   case, while this check and the rule pin compare class names with regard to
+   case (``.DOC { display: none; }`` would hide ``div.doc``).
 
 It reads the markup with ``html.parser``. Its readers are not a full HTML5 tree
 builder: they model the open elements as tags nest, void elements, the head's
@@ -215,7 +239,20 @@ or as the load of ``copy.js``; nor do checks 3 and 4 count an id or a link
 inside one. What guarantees the committed pages is the
 generator: ``tools/build-site.py --check``, a deploy gate, compares them byte
 for byte with a fresh build, and the generator's validator holds each page's
-``header.mast`` block to its pinned markup. An ancestor in checks 1 and 4 is an
+``header.mast`` block to its pinned markup. The generator, not a page source,
+writes each page's shell: ``head()`` writes the doctype and the ``html`` and
+``head`` start tags, and ``build()`` the ``<body>`` line before the skip
+link, while a page source in ``site-src/pages`` fills only ``div.wrap`` in
+``main``. So a page whose doctype or opening ``<body>`` is gone can reach the
+committed site only through a change to the generator's template or code, a
+reviewed change to a tool; and check 8 refuses a page without the doctype,
+and an ``html`` or ``body`` start tag with an attribute that is not an
+ancestor of every checked element. At this commit the generator
+still builds a page source that holds an ``html`` or ``body`` start tag (a
+closed ``<body data-preset></body>`` in ``div.doc``), which check 8 refuses
+when it carries an attribute; a change in flight (PR 225) is to make the
+generator refuse ``html``, ``head`` and ``body`` start tags in a page source.
+An ancestor in checks 1 and 4 is an
 element that the parser holds open, and the gate follows a browser in these
 ways where the two differ: ``/>`` on an element that is not void
 does not close it, so ``<div hidden/>`` hides what follows; of 2 attributes with
@@ -290,10 +327,14 @@ or the class or an attribute of a sibling or an earlier element (a pinned
 rule whose selector ends in ``.lbl + h1`` can match an ``h1`` right after an
 element with the class ``lbl``); the font files and images that a pinned rule
 names, which the test does not read, so a font whose glyphs show nothing
-passes; and a box that covers a checked element, positioned or given an
-outline or a shadow, where that box is neither the element, an ancestor nor
-an element it holds (a sibling or an earlier element, say): neither pin
-reaches it, so a rule for its class need not be pinned. The test reads
+passes; and a box that is neither a checked element, an ancestor nor an
+element it holds (a sibling or an earlier element, say), which can cover a
+checked element (positioned, or given an outline or a shadow) or move it by
+its own size or place in the flow (``.fresh { margin-bottom: 300vh; }`` on
+``p.meta`` moves the "Pick your AI" label and the family links 3 screen
+heights down): neither pin reaches it, so a rule for its class need not be
+pinned, and only the whole-file pin of ``tools/check-baseline-pin.py``
+refuses that change to a stylesheet. The test reads
 comments and strings as CSS does, a backslash in a string escaping the
 character after it, so a brace in either delimits no rule, and a bracket, a
 comma or a class name in a string counts for no selector. It refuses a
@@ -382,7 +423,7 @@ which runs the gate without the suite.
 Exit codes:
   0  every check above passes
   1  a family link, family page, id, retired attribute, inline code, asset token, stylesheet, class pin, pinned
-     attribute, later html or body attribute, or header discipline regressed
+     attribute, html or body attribute, doctype, or header discipline regressed
   3  a file could not be read, a gate it reuses is missing, or the Python version is 3.9 or later and
      either not 3.14 or not one that tools/check-inline-code.py supports
 """
@@ -417,6 +458,10 @@ SCHEME_TAG = re.compile(r'<script data-cfasync="false" src="/assets/baseline/sch
 DEFERRED_TAG = re.compile(r'<script src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+" defer></script>')
 # Every stylesheet loads in exactly this form, 1 of the 3 that the rule pin of tools/test-install-page.py reads.
 SHEET_TAG = re.compile(r'<link rel="stylesheet" href="/assets/baseline/(fonts|palettes|baseline)\.css\?v=[0-9]+\.[0-9]+\.[0-9]+">')
+# Each page begins with exactly this, as tools/build-site.py writes it: the doctype that keeps a browser in standards
+# mode, where class selectors match class names with regard to case, as the class pin and the rule pin read them
+# (check 8).
+DOCTYPE = "<!doctype html>\n"
 DRAFT_PATTERN = "/draft/*"
 # The (major, minor) Python versions the gate is tested on; main() refuses every other version, 3.9 or later,
 # with exit 3 before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
@@ -541,7 +586,8 @@ CLASS_PIN = {
 }
 # Check 8: the attributes that an attribute selector of a rule the rule pin holds names, hidden aside, which the gate
 # reads as hiding; no checked element, ancestor or element it holds may carry one. tools/test-install-page.py fails
-# unless these are exactly the attributes the pinned rules name.
+# unless these are exactly the attributes the pinned rules name, so a pinned rule that names an attribute the committed
+# pages give 1 of those elements (href, say) makes the gate refuse them; check 8 in the docstring gives the procedure.
 RULE_ATTRIBUTES = (
     "aria-current", "aria-disabled", "aria-pressed", "data-col-toggles", "data-grp", "data-heat", "data-preset",
     "data-scheme",
@@ -831,8 +877,8 @@ def parse(text: str) -> PageParser:
 
 
 def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
-    """Checks 2, 3 (duplicates), 5 and 6, and check 8's refusal of a later html or body start tag with attributes,
-    which hold on all 6 pages."""
+    """Checks 2, 3 (duplicates), 5 and 6, and check 8's refusals of a page without the doctype and of a later html or
+    body start tag with attributes, which hold on all 6 pages."""
     problems: list[str] = []
     for carrier in parser.retired:
         problems.append(f"{where}: the retired selector attribute appears on {carrier}; this site no longer uses select.js.")
@@ -840,6 +886,11 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
         if count > 1:
             problems.append(f'{where}: the id "{dup_id}" appears {count} times.')
     problems += inline_code(where, text)
+    # Without the doctype a browser matches class names without regard to case, so .DOC would match div.doc.
+    if not text.startswith(DOCTYPE):
+        problems.append(f"{where}: the page does not begin with <!doctype html> on its own line, as tools/build-site.py "
+                        "writes it; without it a browser matches class names without regard to case, which the rule "
+                        "pin does not.")
     loads = LoadScan(text)
     loads.feed(text)
     loads.close()
@@ -996,6 +1047,24 @@ def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, di
     return list(problems)
 
 
+def page_tag_problems(where: str, parser: PageParser, kinds: list[tuple[str, dict]]) -> list[str]:
+    """Check 8: each html or body start tag with an attribute that is not, as the parser holds it open, an ancestor of
+    every checked element. A browser adds its attributes to the page's own html or body element, around every checked
+    element, while the class pin reads only the ancestors the parser holds open; so a first body start tag that comes
+    late, after a page whose opening body was removed, cannot carry an attribute past it."""
+    shared: set[int] | None = None
+    for _, element in kinds:
+        chain = {other["order"] for position, other in pin_positions(parser, element) if position == 1}
+        shared = chain if shared is None else shared & chain
+    tags = [f"<{element['tag']} {' '.join(element['attrs'])}>" for element in parser.elements
+            if element["tag"] in ("html", "body") and element["attrs"] and element["order"] not in (shared or set())]
+    if tags:
+        return [f"{where}: an html or body start tag that is not an ancestor of every checked element carries "
+                f"attributes ({', '.join(tags)}), which a browser adds to the page's own element, around every checked "
+                "element."]
+    return []
+
+
 def outside_problems(where: str, parser: PageParser) -> list[str]:
     """Check 1: each element or text that a browser can move into the body, above its first element, and that the
     pin, which reads only what the body holds, does not read: an element, other than html, outside every element; an
@@ -1130,7 +1199,8 @@ def check_install_page(text: str) -> list[str]:
     if not parser.h1:
         problems.append(f"{where}: the page has no h1, so nothing marks the hero; the family links sit at the top.")
     problems += opening_problems(where, parser, found) + outside_problems(where, parser)
-    problems += class_pin_problems(where, parser, install_kinds(parser))
+    kinds = install_kinds(parser)
+    problems += class_pin_problems(where, parser, kinds) + page_tag_problems(where, parser, kinds)
     for gid in TEMPLATE_IDS + FAMILIES:
         if gid not in parser.id_live:
             problems.append(
@@ -1176,7 +1246,8 @@ def check_family_page(fam: str, text: str) -> list[str]:
         elif not any(anchor["href"] == target and not anchor["inert"] and not anchor["hidden"] and anchor["text"]
                      for anchor in parser.anchors):
             problems.append(f"{where}: every link to {target} reads as hidden or has no text that reads as visible.")
-    return problems + class_pin_problems(where, parser, family_kinds(parser))
+    kinds = family_kinds(parser)
+    return problems + class_pin_problems(where, parser, kinds) + page_tag_problems(where, parser, kinds)
 
 
 def check_headers(headers: str) -> list[str]:
@@ -1199,7 +1270,12 @@ def check_headers(headers: str) -> list[str]:
             f"the shared policy: {site_csp[0][2]!r}"
         )
     for number, pattern, kind, name, _ in entries:
-        if name.lower() == "x-content-security-policy":
+        if name.lower() == "link" and kind == "set":
+            problems.append(
+                f"site/_headers line {number} sets a Link header under {pattern}, which can load a stylesheet that "
+                "the rule pin does not read; no rule may set one."
+            )
+        elif name.lower() == "x-content-security-policy":
             problems.append(
                 f"site/_headers line {number} names X-Content-Security-Policy under {pattern}; "
                 "only Content-Security-Policy carries the policy."
@@ -1258,11 +1334,12 @@ def main() -> int:
         "to the downloads and to the test; ids "
         "are unique, every checked element, its ancestors and what it holds carry only the classes the committed "
         "pages give them there and no attribute that a pinned stylesheet rule names, no html or body start tag on "
-        "the six pages carries dir, and none but the first of each carries an attribute, no retired selector attribute "
+        "the six pages carries dir, and none carries an attribute unless it is the first of each and an ancestor of "
+        "every checked element, each page begins with the doctype, no retired selector attribute "
         "remains, the six pages pass the inline-code checks, the "
         "light and dark switch included, load the baseline's versioned stylesheets and no other, and copy.js, load scheme.js "
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
-        "the /* rule of site/_headers carries exactly the shared policy."
+        "the /* rule of site/_headers carries exactly the shared policy and no rule there sets a Link header."
     )
     return 0
 

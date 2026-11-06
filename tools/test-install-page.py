@@ -43,10 +43,14 @@ beside its file name and preludes, which name it (pin_lines()), after
 css_rules() normalizes only CSS whitespace and comments: each
 run of CSS whitespace (space, tab, line feed, carriage return and form feed,
 and no other character) outside a string reads as 1 space, a comment reads as
-nothing, or as a space between 2 characters of names outside a selector
-(``@media/**/screen`` reads as ``@media screen``), and a string stays as
-written. So ``.fresh { --PAD: 9999px; padding: 0 var(--PAD); }`` passes here,
-and the gate refuses ``<h1 class="fresh">``, while ``.btn { writing-mode:
+nothing where deleting it joins no 2 tokens (beside CSS whitespace, at either
+end of a prelude or a declaration, or beside a parenthesis, a bracket, a
+brace, a comma, a colon or a semicolon, but a ``(`` after a character of
+names), and elsewhere as an empty comment, ``/**/``, so that the boundary it
+keeps stays (``var/**/(--pad)``, which CSS reads as an invalid value, does not
+read as ``var(--pad)``), and a string stays as written. So
+``.fresh { --PAD: 9999px; padding: 0 var(--PAD); }`` passes here, and the
+gate refuses ``<h1 class="fresh">``, while ``.btn { writing-mode:
 vertical-rl; }`` fails here. It judges no value: what a pinned rule does is
 what a reviewer accepted when it was pinned.
 
@@ -79,6 +83,7 @@ unless stylesheet_problems(), which compares the committed stylesheets with
 RULE_PIN, gives each of PIN_CASES, on a copy of the 3 stylesheets and RULE_PIN
 with its fault, the problems that case expects: the copy as committed passes,
 and a pinned rule changed, removed or moved, a rule the pin must hold added,
+a comment between ``var`` and its ``(`` in a pinned rule (``.wrap``),
 a pin entry with another digest, and 4 rules that the pin must hold only
 because a string is read as CSS reads it (``h1[title="].fresh"]``,
 ``h1[title="\\"].fresh"]``, ``[title="\\\\"] .fresh, h1`` and a used custom
@@ -156,6 +161,13 @@ PINNED = "which the committed pages do not give"
 RULE_NAMED = "which a pinned stylesheet rule names"
 LATER_TAG = "a later html or body start tag carries attributes"
 OTHER_SHEET = "the only stylesheets that the rule pin reads"
+# The gate's messages for an html or body start tag with attributes that is not an ancestor of every checked element,
+# a page without the doctype, and a Link header in site/_headers; and the opening lines that the generator writes.
+NOT_ANCESTOR = "an html or body start tag that is not an ancestor of every checked element carries attributes"
+NO_DOCTYPE = "the page does not begin with <!doctype html>"
+LINK_SET = "sets a Link header"
+DOCTYPE = "<!doctype html>\n"
+HTML = '<html lang="en" class="site-cleanlanguage">\n'
 # The scheme.js tag of template specification 7.33 (baseline 1.8.0), as the committed pages carry it.
 SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.8.0"></script>'
 COPY = '<script src="/assets/baseline/copy.js?v=1.8.0" defer></script>'
@@ -173,9 +185,14 @@ PRINT_PIN = "--print-rule-pin"
 CSS_SPACE = " \t\n\r\f"
 CSS_WHITESPACE = re.compile(r"[ \t\n\r\f]+")
 # A character of a CSS name, number or unit. Without a comment between 2 of them they read as 1 token, so css_rules()
-# reads such a comment as a space (@media/**/screen is @media screen), but refuses it in a selector, where CSS reads it
-# as no space at all and the selector as invalid (.a/**/b is neither .ab nor .a b).
+# refuses such a comment in a selector, where CSS reads the selector as invalid (.a/**/b is neither .ab nor .a b).
 NAME_CHAR = re.compile(r"[\w\u0080-\U0010ffff-]")
+# The characters CSS always reads as a token of their own. A comment beside 1 of them separates no 2 tokens that its
+# deletion would join, so css_rules() reads it as nothing, unless a "(" follows a character of names, which CSS reads
+# with that name as 1 function (var( is not var/**/( ). Between any other 2 characters other than CSS whitespace it
+# reads as an empty comment, /**/, which keeps the boundary: deleted, it could join 2 tokens, and as a space it could
+# add 1 (calc(1px/**/-/**/2px) is not calc(1px - 2px)).
+OWN_TOKENS = "()[]{},:;"
 # A custom property that a var() names, compared with regard to case, as CSS compares them (--PAD is not --pad).
 VAR_NAME = re.compile(r"var\([ \t\n\r\f]*(--[\w\u0080-\U0010ffff-]+)")
 # The class selectors of a compound selector, and the type selector or * that starts it, once what sits in its
@@ -210,6 +227,10 @@ SHEET_CASES = (
     ("the pinned rules with only whitespace and comments changed", '/* note */ h1  {\n  margin: 0\tvar(--pad); /* } */\n'
         '  font-family: "a  b",\n serif;\n}\n.y{--pad: var(--q);}/* a { b } c */.z { --q: 1rem; }', ""),
     ("a comment in place of a space in a pinned rule", CASE_SHEET.replace("--q: 1rem", "--q:/**/1rem"), GONE),
+    # Deleted, a comment between a name and "(" would join them into 1 function, which CSS does not.
+    ("a comment between a function's name and its ( in a pinned rule",
+        CASE_SHEET.replace("var(--pad)", "var/**/(--pad)"), GONE),
+    ("a comment after a function's ( in a pinned rule", CASE_SHEET.replace("var(--pad)", "var(/**/--pad)"), ""),
     # A rule whose subject, the last compound selector, can match an h1 that carries only x, or any element that
     # carries no class, is pinned, read conservatively where the selector says more than names and classes.
     ("a rule for an unpinned class", CASE_SHEET + " .fresh { display: none; }", ""),
@@ -240,7 +261,7 @@ SHEET_CASES = (
     # A comment keeps 2 names apart; in a selector, where CSS reads it as no space, it is refused.
     ("@media and a comment with no space", CASE_SHEET + " @media/**/screen { .fresh { margin: 0; } }", ""),
     ("@media and a comment with no space, around a pinned class", CASE_SHEET + " @media/**/screen { .x { margin: 0; } }",
-        "@media screen { .x {"),
+        "@media/**/screen { .x {"),
     ("a comment inside a compound selector", CASE_SHEET + " h1/**/.fresh { display: none; }", ""),
     ("a comment between 2 names in a selector", CASE_SHEET + " .fresh/**/h1 { display: none; }", "a comment between"),
     ("a comment between 2 names in a value", CASE_SHEET + " .fresh { margin: 0/**/auto; }", ""),
@@ -522,6 +543,23 @@ CASES = [
     ("a later html start tag with a class on a family page", edit(CLAUDE, "</main>", '</main><html class="fresh">'),
         (1, LATER_TAG)),
     ("a later body start tag with no attribute", edit(PAGE, "</main>", "</main><body>"), 0),
+    # Nor may an html or body start tag that is not an ancestor of every checked element, as the parser holds it open,
+    # carry any, the first of each included: on a page whose opening body is gone, a browser opens the body itself.
+    ("a family page whose opening body is gone, with a later body start tag with data-preset",
+        both(edit(CHATGPT, "<body>\n", ""), edit(CHATGPT, "</main>", "</main><body data-preset>")), (1, NOT_ANCESTOR)),
+    ("a family page whose opening body is gone, with a later body start tag with a class",
+        both(edit(CHATGPT, "<body>\n", ""), edit(CHATGPT, "</main>", '</main><body class="fresh">')), (1, NOT_ANCESTOR)),
+    ("a family page whose opening body is gone, with a later body start tag with no attribute",
+        both(edit(CHATGPT, "<body>\n", ""), edit(CHATGPT, "</main>", "</main><body>")), 0),
+    # With its opening html start tag gone, a page's head is not html > head, which check 6 refuses, and a later html
+    # start tag with an attribute is not an ancestor of every checked element, which check 8 refuses.
+    ("the install page whose opening html is gone, with a later html start tag with a class",
+        both(edit(PAGE, HTML, ""), edit(PAGE, "</main>", '</main><html class="fresh">')), (1, NOT_ANCESTOR)),
+    ("a family page whose opening html is gone, with a later html start tag with a class",
+        both(edit(GEMINI, HTML, ""), edit(GEMINI, "</main>", '</main><html class="fresh">')), (1, NOT_ANCESTOR)),
+    # Without the doctype a browser matches class names without regard to case; the class pin and the rule pin do not.
+    ("the install page without its doctype", edit(PAGE, DOCTYPE, ""), (1, NO_DOCTYPE)),
+    ("a family page without its doctype", edit(CHATGPT, DOCTYPE, ""), (1, NO_DOCTYPE)),
     ("the pick label emptied", edit(PAGE, PICK, PICK.replace(">Pick your AI<", "><")),
         (1, 'the "pick" label has no text that reads as visible')),
     ("the pick label of only U+200B", edit(PAGE, PICK, PICK.replace(">Pick your AI<", ">" + chr(0x200B) + "<")),
@@ -966,6 +1004,12 @@ CASES = [
     ("the inline-code gate missing", lambda root: (root / "tools/check-inline-code.py").unlink(), 3),
     ("N3 (H1): /install/* detaching the policy", append(HEADERS, "\n/install/*\n  ! Content-Security-Policy\n"), 1),
     ("a staged /draft/* rule with its own detach", append(HEADERS, DRAFT_RULE), 0),
+    # A Link header can load a stylesheet that the rule pin does not read; the gate reads no value, so it refuses all.
+    ("a Link header that loads a stylesheet",
+        append(HEADERS, "\n/install/*\n  Link: </assets/site.css>; rel=stylesheet\n"), (1, LINK_SET)),
+    ("a lower-case link header that only preloads a stylesheet, on every page",
+        edit(HEADERS, SITE_LINE, SITE_LINE + "\n  link: </assets/baseline/fonts.css>; rel=preload; as=style"),
+        (1, LINK_SET)),
 ]
 # Faults the gate passes, and the words of the gate's docstring that name each (compared with runs of whitespace
 # read as 1 space).
@@ -1002,6 +1046,10 @@ RESIDUALS = [
         "``Scope``'s label, ``p.verified``, a step list or a link back"),
     ("a family link label in a bdi", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><bdi>Claude</bdi><")),
         "a family link label in a ``bdi``"),
+    # A box that is neither a checked element, an ancestor nor an element it holds can cover or move 1, so neither pin
+    # reaches a class on it.
+    ("p.meta with a further class", edit(PAGE, '<p class="meta">', '<p class="meta fresh">'),
+        "``.fresh { margin-bottom: 300vh; }`` on ``p.meta``"),
 ]
 # Faults to a copy of STYLESHEETS and PIN_FILE for stylesheet_problems(), the comparison of the committed stylesheets
 # with RULE_PIN, and the words that its problems must hold, each in 1 of them; none for none. Each rule is named as
@@ -1010,6 +1058,7 @@ BASELINE = STYLESHEETS[2]
 INLINE_RULE = ".btn.inline { position: static; display: inline-block; text-decoration: none; margin: 0 0.6rem 0.6rem 0; }"
 HOVER_RULE = ".btn.inline:hover { color: var(--text); }"
 WIDER_RULE = INLINE_RULE.replace("static", "absolute")
+WRAP_RULE = ".wrap { margin: 0; padding: 0 var(--pad); }"
 # A class name, a ] and a comma in a string count for no selector, and a quote after an even run of backslashes ends
 # its string: "\\" is 1 backslash. Each rule can match a pinned element, or sets a custom property a pinned rule uses.
 STRING_RULE = 'h1[title="].fresh"] { display: none; }'
@@ -1025,6 +1074,8 @@ PIN_CASES = (
     ("a pinned rule removed", edit(BASELINE, HOVER_RULE + "\n", ""), (f"{GONE} 'baseline.css: .btn.inline:hover' there",)),
     ("a pinned rule moved", edit(BASELINE, INLINE_RULE + "\n" + HOVER_RULE, HOVER_RULE + "\n" + INLINE_RULE),
         (f"{GONE} 'baseline.css: .btn.inline:hover' there", f"the rule '{BASELINE}: {HOVER_RULE}', {ADDED}")),
+    ("a comment between var and its ( in a pinned rule", edit(BASELINE, WRAP_RULE, WRAP_RULE.replace("var(", "var/**/(")),
+        (f"{GONE} 'baseline.css: .wrap' there", f"the rule '{BASELINE}: {WRAP_RULE.replace('var(', 'var/**/(')}', {ADDED}")),
     ("a pin entry with another digest", repin("baseline.css: .btn.inline"),
         (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE}: {INLINE_RULE}', {ADDED}")),
     *[(name, append(BASELINE, f"\n{rule}\n"), (f"the rule {f'{BASELINE}: {rule}'!r}, {ADDED}",)) for name, rule in (
@@ -1049,8 +1100,10 @@ def css_rules(css: str) -> tuple[list[tuple[str, str, tuple[str, ...]]], str]:
     makes it unreadable.
 
     It normalizes only CSS whitespace and comments. Outside a string, each run of CSS whitespace reads as 1 space,
-    and none at either end of a prelude or a block; a comment reads as nothing, or as a space between 2 NAME_CHAR
-    outside a selector, so that 2 tokens stay apart (@media/**/screen reads as @media screen); a string stays as
+    and none at either end of a prelude or a block; a comment reads as nothing beside CSS whitespace, at either end of
+    a prelude or a declaration, or beside a character of OWN_TOKENS (but a "(" after a NAME_CHAR), and as an empty
+    comment, /**/, between any other 2 characters, so that the boundary it keeps between 2 tokens stays
+    (var/**/(--pad) does not read as var(--pad), 1 function, and @media/**/screen reads as itself); a string stays as
     written, in its own quotes. So a comment ends at the first "*/" and opens nowhere inside a string, a string ends
     at its next unescaped quote and opens nowhere inside a comment, and no brace, ";" or comment opener in either
     delimits anything. It fails closed on what it does not model: an unclosed comment, a comment between 2 NAME_CHAR
@@ -1071,13 +1124,16 @@ def css_rules(css: str) -> tuple[list[tuple[str, str, tuple[str, ...]]], str]:
             if end < 0:
                 return [], "has an unclosed comment"
             index = end + 2
-            if NAME_CHAR.match("".join(text)[-1:]) and NAME_CHAR.match(css[index:index + 1]):
+            before, after = "".join(text)[-1:], css[index:index + 1]
+            if (before.strip(CSS_SPACE) and after.strip(CSS_SPACE) and before not in OWN_TOKENS
+                    and (after not in OWN_TOKENS or (after == "(" and NAME_CHAR.match(before)))):
                 # Declarations sit in a style rule's block or an @font-face block; a prelude of a style rule is a
                 # selector, and 1 of an at-rule starts with "@".
                 values = blocks and (not blocks[-1][0].startswith("@") or re.match("@font-face", blocks[-1][0], re.I))
-                if not values and not "".join(text).lstrip(" ").startswith("@"):
+                if (NAME_CHAR.match(before) and NAME_CHAR.match(after) and not values
+                        and not "".join(text).lstrip(" ").startswith("@")):
                     return [], "has a comment between 2 characters of names in a selector, which CSS reads as no space"
-                text.append(" ")
+                text.append("/**/")
             continue
         if char in CSS_SPACE:
             if not (text and text[-1].endswith(" ")):
@@ -1309,7 +1365,7 @@ def stylesheet_problems(root: Path = REPO_ROOT) -> list[str]:
 
 def pin_case_problems() -> list[str]:
     """stylesheet_problems(), on a copy of STYLESHEETS and PIN_FILE with the fault of each of PIN_CASES, gives problems
-    that hold each of its words, or none where it gives none."""
+    that hold each of its words, or none where it gives none; a fault whose text the copy does not hold is a problem."""
     problems: list[str] = []
     for name, fault, words in PIN_CASES:
         with tempfile.TemporaryDirectory() as scratch:
@@ -1317,8 +1373,14 @@ def pin_case_problems() -> list[str]:
             for relative in (*STYLESHEETS, PIN_FILE):
                 (root / relative).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(REPO_ROOT / relative, root / relative)
-            if fault:
-                fault(root)
+            # A committed stylesheet that no longer holds the text a fault edits is a problem, not a crash, so the
+            # comparison of the committed stylesheets with the pin still runs and names the rule.
+            try:
+                if fault:
+                    fault(root)
+            except AssertionError as error:
+                problems.append(f"{name}: its fault could not be applied: {error}")
+                continue
             found = stylesheet_problems(root)
         if [word for word in words if not any(word in problem for problem in found)] if words else found:
             problems.append(f"{name}: expected " + (f"problems with {words!r}" if words else "none") + f", got {found}")
