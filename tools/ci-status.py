@@ -206,6 +206,12 @@ class Unreadable(Exception):
     """A reading that cannot be trusted: a transport error or a malformed payload."""
 
 
+class WindowClosed(Unreadable):
+    """A read the wait deadline cut off: the window closed before it began, or gh
+    had not returned when it closed. Still unreadable, but after a successful
+    unsettled reading in wait mode, main reads it as the wait timing out (exit 2)."""
+
+
 def parse_args(argv):
     sha = repo = None
     wait = False
@@ -400,11 +406,11 @@ def read_checks(repo: str, full_sha: str, deadline: float):
     outlast the wait window."""
     remaining = deadline - time.time()
     if remaining <= 0:
-        raise Unreadable("the wait window closed before the read")
+        raise WindowClosed("the wait window closed before the read")
     try:
         proc = _gh(["api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"], remaining)
     except subprocess.TimeoutExpired as exc:
-        raise Unreadable(f"gh api did not return within {int(remaining)} seconds") from exc
+        raise WindowClosed(f"gh api did not return within {int(remaining)} seconds") from exc
     except OSError as exc:
         raise Unreadable(f"could not run gh: {exc}") from exc
     if proc.returncode != 0:
@@ -625,6 +631,18 @@ def main() -> int:
         try:
             checks = read_checks(repo, full_sha, deadline)
         except Unreadable as exc:
+            # A read the deadline cut off after a reading that succeeded and was
+            # still unsettled is the wait timing out (exit 2), the same verdict as
+            # the top-of-loop guard above, not a fresh unreadable read: a loaded
+            # host can start a read with little of the window left, so the verdict
+            # must not depend on how long that read took. The cut-off is still
+            # named on standard error. With no successful reading yet, or after a
+            # failed one, the read-failure path below reports it (exit 3).
+            if wait and last_read_ok and isinstance(exc, WindowClosed):
+                sys.stderr.write(f"ci-status: the wait window cut off the last read ({exc})\n")
+                sys.stderr.write(f"ci-status: still unsettled after {timeout} seconds; giving up\n")
+                report(last_checks, sys.stderr)
+                return 2
             last_read_ok = False
             # A failed or malformed read breaks any confirmation in progress and is
             # never a verdict; it is also not a changing check set, so it does not

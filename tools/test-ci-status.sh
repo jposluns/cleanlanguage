@@ -31,8 +31,9 @@
 # range-checked.
 #
 # Each reading case puts a fake gh on PATH serving check-runs from a per-call
-# "plan" (tokens g/a/t/f: default payload, alternate payload, third payload,
-# or a failed call), runs ci-status and asserts its exit code. Many cases also
+# "plan" (tokens g/a/t/f/s: default payload, alternate payload, third payload,
+# a failed call, or a call that hangs until ci-status ends it at the wait
+# deadline), runs ci-status and asserts its exit code. Many cases also
 # assert a fixed string on standard error (CASE_NEEDLE and run_err_case), such
 # as the required check named as missing, the malformed field, or a line of the
 # report; some assert a fixed string on standard output (CASE_OUT); some assert
@@ -172,6 +173,7 @@ case "\$*" in
     fi
     case "\$tok" in
       f) printf 'simulated check-runs read failure\n' >&2; exit 1 ;;
+      s) exec sleep 60 ;;
       a) cat "$tmp/alt.json" ;;
       t) cat "$tmp/third.json" ;;
       *) cat "$tmp/def.json" ;;
@@ -553,7 +555,7 @@ CASE_NEEDLE="$(printf '  %-28s %s' extra neutral)" \
   "$(runs "$REQ_GA" "$CF" "$(extra_run success extra github-actions)")" \
   "$(runs "$REQ_GA" "$CF" "$(extra_run neutral extra github-actions)")" "g a g a g a" 2
 CASE_NEEDLE="$(printf '  %-28s %s' "Plugin manifests" in_progress)" \
-  run_case "the report gives an unfinished run its status" "$GA_IN_PROGRESS" "" "" 2 --wait --timeout 2
+  run_case "the report gives an unfinished run its status" "$GA_IN_PROGRESS" "" "" 2 --wait --timeout 5
 # A zero-length wait window fails closed rather than overrunning the deadline.
 run_case "zero-timeout wait window fails closed" "$GA_IN_PROGRESS" "" "" 3 --wait --timeout 0
 CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000: the wait window closed before the read" \
@@ -583,7 +585,23 @@ run_case "required name in another letter case does not count -> not green" \
   "$(runs '{"status":"completed","conclusion":"success","name":"plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 2
 run_case "required name with a trailing space does not count -> not green" \
   "$(runs "$PM_OK" '{"status":"completed","conclusion":"success","name":"Skill discovery ","app":{"slug":"github-actions"}}' "$APM_OK" "$CF")" "" "" 2
-run_case "unfinished required check with --wait stays not green at the deadline" "$GA_IN_PROGRESS" "" "" 2 --wait --timeout 2
+run_case "unfinished required check with --wait stays not green at the deadline" "$GA_IN_PROGRESS" "" "" 2 --wait --timeout 5
+# A read that the deadline cuts off after a reading that succeeded and was still
+# unsettled is the wait timing out (exit 2), not an unreadable result (exit 3): a
+# loaded host can start a read with little of the window left (TODO row 103). The
+# plan token s is a gh call that hangs until the tool ends it at the deadline, so
+# the cut-off happens however fast or slow the host is; only the first reading
+# must arrive within the window. After a failed read, a read cut off at the
+# deadline still reports the read failure (exit 3).
+CASE_NEEDLE="still unsettled after 5 seconds; giving up" CASE_ABSENT="check read failed" \
+  run_case "pending reading then a read cut off at the deadline -> not green, timed out" \
+  "$GA_IN_PROGRESS" "" "g s" 2 --wait --timeout 5
+CASE_ABSENT="check read failed" \
+  run_case "green reading then a confirmation read cut off at the deadline -> not green, timed out" \
+  "$GA_PRESENT" "" "g s" 2 --wait --timeout 5
+CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000" \
+  run_case "failed read then a read cut off at the deadline -> unreadable" \
+  "$GA_PRESENT" "" "f s" 3 --wait --timeout 5
 run_case "failed required check -> red" \
   "$(runs '{"status":"completed","conclusion":"failure","name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 1
 run_case "failing impostor of a required name beside the full set -> red" \
