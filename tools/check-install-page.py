@@ -14,8 +14,10 @@ or switched off. This site no longer uses the template's install selector
 where the family buttons sit near the top: the opening of the page's content
 is pinned as the page builds it, so in that content only the opening label,
 the hero's ``h1``, ``div.rail``, the meta line and the "Pick your AI" label
-sit above the buttons, with no other element or text, as the parser reads the
-markup (check 1; it does not model implied end tags).
+sit above the buttons, with no other element or text, and no element or text
+sits outside the head and the body, or in the head where a head may not hold
+it, which a browser can move into the body above them, as the parser reads
+the markup (check 1; it does not model implied end tags).
 
 This is a TRIPWIRE for the common regressions in the STATIC MARKUP. It is
 deliberately NOT a CSS engine or a browser.
@@ -72,7 +74,14 @@ What it verifies
    adds its attributes to the page's own element. The pin of elements and
    text reads every element and text there, shown or hidden, and nothing
    inside ``header.mast``, whose markup the generator's validator pins (see
-   below), or after the button row.
+   below), or after the button row. Because a browser can move into the body,
+   above its first element, what the pin of the body does not read, the page
+   holds, shown or hidden, no element outside every element but ``html``, no
+   element directly in that ``html`` but its ``head`` and body, no element at
+   any depth in that ``head`` outside those a head may hold (``HEAD_TAGS``,
+   check 6), and no text other than whitespace outside every element,
+   directly in that ``html`` or ``head``, or in an element in that ``head``
+   other than ``title``, ``script`` or ``style``.
 2. No element on any of the 6 pages carries the retired selector attributes
    ``data-picker``, ``data-family-link``, ``data-family-section``,
    ``data-picker-reset`` or ``data-picker-status``.
@@ -227,7 +236,7 @@ selector such as ``.only-dark``, whose name may be any CSS identifier) that is
 not in ``HIDING_CLASSES`` or its exempt list. It reads together the
 declarations of every rule in the 3 stylesheets whose selector list holds
 that class, inside an at-rule or not and whatever its condition, so
-``.x { height: 3px; } .x { overflow: hidden; }`` hides ``.x``. It fails
+``.x { height: 3px; } .x { overflow: auto; }`` hides ``.x``. It fails
 closed on properties as well as values: a declaration shows only when its
 property is a custom property or 1 of the test's ``SHOWING_PROPERTIES``,
 which paint a colour or a line behind or around the text or in an SVG, count,
@@ -249,30 +258,38 @@ to its values in the 3 stylesheets today (among them each palette colour that
 a listed ``color`` value names), as the colour of a border or an outline, or
 in the middle of a ``clamp()`` between 2 positive lengths in ``rem``. It also
 pins the keyframes of each animation it lists (``field-in``) and each
-``@font-face`` descriptor to what the stylesheets carry today. The joined
+``@font-face`` descriptor to what the stylesheets carry today, and the
+strings of ``font-feature-settings`` and ``grid-template-areas`` to those
+values. No ``overflow``, ``overflow-x``, ``overflow-y``, ``overflow-block`` or
+``overflow-inline`` value that holds ``hidden`` or ``clip`` is listed, so each
+hides, whatever else the rules declare, because a size in another class, or
+``white-space: nowrap`` beside it, can cut the text off. The joined
 declarations of a class also hide when they declare a size (``width``,
 ``height``, ``inline-size``, ``block-size``, their ``max-`` forms,
 ``aspect-ratio``, ``flex``, ``flex-basis``, ``container``,
-``container-type`` or ``border-radius``) beside an ``overflow``,
-``overflow-x``, ``overflow-y``, ``overflow-block`` or ``overflow-inline``
-that holds ``hidden`` or ``clip``, whatever the values, so
-``height: 3px; overflow: hidden`` hides, or beside 1 that holds ``auto`` or
-``scroll`` with a size value outside the test's ``SCROLL_SIZES``. It compares
-the value in lower case, with each run of whitespace read as 1 space and a
-final ``!important`` dropped, and reads neither which declaration wins nor its
+``container-type`` or ``border-radius``) beside an overflow value that holds
+``auto`` or ``scroll`` with a size value outside the test's ``SCROLL_SIZES``,
+so ``height: 3px; overflow: auto`` hides. It compares the value in lower case,
+with each run of CSS whitespace (space, tab, line feed, carriage return and
+form feed, and no other character) read as 1 space and a final
+``!important`` dropped, and reads neither which declaration wins nor its
 importance, so ``opacity: 0; opacity: 1`` hides there as ``opacity: 1
 !important; opacity: 0`` does. It does not prove that no other mix of listed
 values hides, and among those it passes are the 3 negative margins it lists,
 of at most 0.8rem, which can take a box that small off an edge it sits at; a
-colour that matches what is behind the text in context or lets it show
-through: a listed ``color`` value whose palette colour matches the
-background there (each pinned custom property may take any of its listed
-values in any rule, so a dark scheme's ``--text`` set in a light one passes),
-or a value of a paint property of ``SHOWING_PROPERTIES``, which may take any
-value, that matches the text's colour (``background: var(--text)``, say); a
-font that a family name or an ``src`` URL picks, because it reads every
-string as empty, so a font whose glyphs show nothing passes; and a box that
-another, positioned or given an outline or a shadow, covers. A class it
+scroll box (an ``overflow`` or ``overflow-x`` of ``auto``, which
+``.prompt-block``, ``.nav`` and ``.tablewrap`` need) that a size in another
+class or in a rule it does not read makes small; a colour that matches what
+is behind the text in context or lets it show through: a listed ``color``
+value whose palette colour matches the background there (each pinned custom
+property may take any of its listed values in any rule, so a dark scheme's
+``--text`` set in a light one passes), or a value of a paint property of
+``SHOWING_PROPERTIES``, which may take any value, that matches the text's
+colour (``background: var(--text)``, say); a font that a family name (in
+``font-family``, ``font`` or ``@font-face``) or an ``src`` URL picks, because
+it reads every string as empty but those of ``font-feature-settings`` and
+``grid-template-areas``, so a font whose glyphs show nothing passes; and a box
+that another, positioned or given an outline or a shadow, covers. A class it
 refuses that does not hide belongs in its exempt list, with a comment saying
 why, or its value in ``SHOWING_VALUES``. It reads no compound, descendant or
 attribute selector, and so no rule that hides through one. It reads comments
@@ -687,10 +704,11 @@ class PageParser(HTMLParser):
             for record in (heading, anchor, *(frame["element"] for frame in self.stack)):
                 if record is not None:
                     record["chars"] += data
-        # Text other than whitespace that sits directly in an element, shown or hidden, with the order of the last
-        # start tag before it, for the pin of /install/'s opening; and visible text counts for every open element.
-        if self.stack and data.strip(" \t\n\f\r"):
-            self.texts.append((self.stack[-1]["order"], self.order))
+        # Text other than whitespace that sits directly in an element, or outside every element (None), shown or
+        # hidden, with the order of the last start tag before it, for the pin of /install/'s opening; and visible text
+        # counts for every open element.
+        if data.strip(" \t\n\f\r"):
+            self.texts.append((self.stack[-1]["order"] if self.stack else None, self.order))
         if not hidden and has_visible_text(data):
             for record in (heading, anchor, *items, *(frame["element"] for frame in self.stack)):
                 if record is not None:
@@ -858,6 +876,37 @@ def reorderers(where: str, parser: PageParser, last: dict, what: str) -> list[st
     return problems
 
 
+def outside_problems(where: str, parser: PageParser) -> list[str]:
+    """Check 1: each element or text that a browser can move into the body, above its first element, and that the
+    pin, which reads only what the body holds, does not read: an element, other than html, outside every element; an
+    element directly in such an html other than its head and body; an element at any depth in that head outside
+    HEAD_TAGS; and text other than whitespace outside every element, directly in that html or that head, or in an
+    element in that head other than title, script or style. Each is refused, shown or hidden; a browser moves an
+    element of HEAD_TAGS between the head and the body back into the head, so there this refuses more."""
+    html = {element["order"] for element in parser.elements if element["parent"] is None and element["tag"] == "html"}
+    head = {element["order"] for element in parser.elements if element["parent"] in html and element["tag"] == "head"}
+    raw: set[int] = set()
+    names = []
+    for element in parser.elements:
+        if element["parent"] in head:
+            head.add(element["order"])
+            if element["tag"] in ("title", "script", "style"):
+                raw.add(element["order"])
+            if element["tag"] not in HEAD_TAGS:
+                names.append(element["tag"])
+        elif (element["parent"] is None and element["tag"] != "html") or (
+                element["parent"] in html and element["tag"] not in ("head", "body")):
+            names.append(element["tag"])
+    problems: list[str] = []
+    if names:
+        problems.append(f"{where}: the elements {names} sit outside the head and the body, or in the head, which may "
+                        "not hold them; a browser can move them into the body, above the family links.")
+    if any(parent is None or parent in html or (parent in head and parent not in raw) for parent, _ in parser.texts):
+        problems.append(f"{where}: text other than whitespace sits outside the head and the body, or in the head; a "
+                        "browser can move it into the body, above the family links.")
+    return problems
+
+
 def opening_problems(where: str, parser: PageParser, found: list[dict]) -> list[str]:
     """Check 1's pin of the opening of /install/'s content: BODY_OPENING, then MAIN_OPENING, then DOC_OPENING, whose
     last element is the paragraph of the family links found, with the hero's h1 and the "pick" label shown and the h1
@@ -960,7 +1009,7 @@ def check_install_page(text: str) -> list[str]:
             problems.append(f"{where}: the family links are not in the order {', '.join(FAMILIES)}.")
     if not parser.h1:
         problems.append(f"{where}: the page has no h1, so nothing marks the hero; the family links sit at the top.")
-    problems += opening_problems(where, parser, found)
+    problems += opening_problems(where, parser, found) + outside_problems(where, parser)
     for gid in TEMPLATE_IDS + FAMILIES:
         if gid not in parser.id_live:
             problems.append(
@@ -1075,7 +1124,8 @@ def main() -> int:
 
     print(
         "The install page links all five family pages in order before the get id, with the opening of its content "
-        "as pinned, the buttons right after the pick label and that label after the hero's h1, the button row "
+        "as pinned, nothing outside its head and body or out of place in its head, the buttons right after the pick "
+        "label and that label after the hero's h1, the button row "
         "holding only the family links, no element that starts before that row ends a bdo or with dir, the h1 and "
         "that label with text read as visible, neither read as hidden "
         "and neither with a bidi control, bdo or dir, each link with text read as visible and no bidi control, bdo "
