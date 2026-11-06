@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -402,14 +403,14 @@ REFUSALS = [
     ("a second light and dark switch", inject(SWITCH)),
     ("a second element with data-scheme-toggle, a button in the content", inject(TOGGLE)),
     ("a second element with data-scheme-toggle in upper case", inject('<div DATA-SCHEME-TOGGLE hidden></div>')),
-    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.8.0">')),
-    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.8.0">')),
+    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.11.1">')),
+    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.11.1">')),
     ("a bare svg outside the switch", inject("<svg></svg>")),
     ("an upper-case SVG outside the switch", inject("<SVG></SVG>")),
     ("a second scheme.js load in another spelling",
-        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.8.0" defer></SCRIPT>')),
+        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.11.1" defer></SCRIPT>')),
     ("a second scheme.js load as the first of 2 src attributes", inject(
-        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.8.0" src="{{base}}assets/baseline/copy.js?v=1.8.0" defer></SCRIPT>')),
+        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.11.1" src="{{base}}assets/baseline/copy.js?v=1.11.1" defer></SCRIPT>')),
     ("an attribute repeated on any other tag", inject('<p class="lead" class="x">x</p>')),
     ("a link to the pinned build tool, which is never served",
         inject('<p><a href="/.baseline/check_palette.py">palette gate</a></p>')),
@@ -614,15 +615,15 @@ def check_scheme_validation(failures: list[str]) -> int:
         ("the scheme.js line after the first stylesheet", text.replace(tag, "", 1).replace("</head>", tag + "</head>", 1), False),
         ("a second scheme.js line", text[:sheet] + tag + text[sheet:], False),
         ("a second scheme.js in upper case with a character reference", text.replace(
-            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.8.0" defer></SCRIPT></head>', 1), False),
+            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.11.1" defer></SCRIPT></head>', 1), False),
         ("the scheme.js line inside a comment, loaded in another spelling", text.replace(tag, "<!--" + tag.rstrip("\n")
-            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.8.0"></script>\n', 1), False),
+            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.11.1"></script>\n', 1), False),
         ("an upper-case stylesheet before the scheme.js line", text.replace(
-            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.8.0">\n' + tag, 1), False),
+            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.11.1">\n' + tag, 1), False),
         ("a second scheme.js load as the first of 2 src attributes", text.replace("</head>", '<SCRIPT SRC='
-            '"/assets/baseline/sch&#101;me.js?v=1.8.0" src="/assets/baseline/copy.js?v=1.8.0" defer></SCRIPT></head>', 1), False),
+            '"/assets/baseline/sch&#101;me.js?v=1.11.1" src="/assets/baseline/copy.js?v=1.11.1" defer></SCRIPT></head>', 1), False),
         ("a stylesheet before the scheme.js line as the first of 2 rel attributes", text.replace(
-            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.8.0">\n' + tag, 1), False),
+            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.11.1">\n' + tag, 1), False),
         # The parsed reading allows it, but the header block must be byte for byte what mast() is meant to write.
         ("a newline between nav.nav and the switch", text.replace("</nav>" + SWITCH, "</nav>\n" + SWITCH, 1), False),
         ("a second element with data-scheme-toggle after header.mast", text.replace(
@@ -631,7 +632,7 @@ def check_scheme_validation(failures: list[str]) -> int:
             SWITCH + "</header>", SWITCH + '</header><div DATA-SCHEME-TOGGLE hidden></div>', 1), False),
         ("a later stylesheet moved into the body", text.replace(later, "", 1).replace("<body>\n", "<body>\n" + later, 1), False),
         ("a later stylesheet in upper case at the end of the body", text.replace(
-            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.8.0">\n</body>', 1), False),
+            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.11.1">\n</body>', 1), False),
         ("a later stylesheet in a second head after the body", text.replace(later, "", 1).replace(
             "</body>\n", "</body>\n<head>\n" + later + "</head>\n", 1), False),
         # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>; the loads
@@ -1114,6 +1115,43 @@ def check_family_pages(failures: list[str]) -> int:
     return 2
 
 
+VENDORREPLIES_LOGO = "assets/baseline/logos/vendorreplies.png"
+
+
+def check_footer(failures: list[str]) -> int:
+    """The footer holds the 6 rotated cards and the seventh card of specification 7.19 (baseline 1.11.0).
+
+    This guards a partial adoption: a copy of baseline 1.11.0 or later without the generator's seventh card passes
+    every other gate while the footer silently keeps 6 cards.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        out = Path(scratch) / "out"
+        result = run(root, "--out", str(out))
+        if result.returncode != 0:
+            failures.append(f"footer: exit {result.returncode}: {result.stderr.strip()}")
+            return 1
+        home = (out / "index.html").read_text(encoding="utf-8")
+        match = re.search(r'<ul class="cards rainbow" aria-label="([^"]*)">(.*?)</ul>', home, re.S)
+        if match is None:
+            failures.append("footer: the home page has no card list")
+            return 1
+        label, cards = match.groups()
+        if label != "The 7 project sites":
+            failures.append(f"footer: the card list is labelled {label!r}, expected 'The 7 project sites'")
+        slices = re.findall(r'<li class="slice ([^"]*)">(.*?)</li>', cards, re.S)
+        if len(slices) != 7 or cards.count('<li class="slice ') != 7:
+            failures.append(f"footer: the home page holds {len(slices)} cards, expected 7")
+        if not slices or slices[0][0] != "slice-4" or 'aria-current="page"' not in slices[0][1]:
+            failures.append("footer: the first card is not slice-4 with aria-current=\"page\"")
+        if not slices or slices[-1][0] != "slice-vr" or f'<img src="/{VENDORREPLIES_LOGO}" alt="">' not in slices[-1][1]:
+            failures.append(f"footer: the last card is not slice-vr with the image /{VENDORREPLIES_LOGO}")
+        pinned = tomllib.loads((root / ".baseline/pin.toml").read_text(encoding="utf-8")).get("files", {})
+        if VENDORREPLIES_LOGO not in pinned:
+            failures.append(f"footer: {VENDORREPLIES_LOGO} is not pinned in .baseline/pin.toml")
+    return 1
+
+
 def check_release_flip(failures: list[str]) -> int:
     """Every version string on the install and verify pages follows release.json (the known version-text issue)."""
     with tempfile.TemporaryDirectory() as scratch:
@@ -1279,6 +1317,7 @@ def main() -> int:
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
     ran += check_family_pages(failures)
+    ran += check_footer(failures)
     ran += check_release_flip(failures)
     ran += check_check_mode(failures)
     ran += check_promotion_build(failures)

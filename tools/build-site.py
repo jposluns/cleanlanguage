@@ -245,6 +245,13 @@ ABOUT_DOT = '<span class="dot" aria-hidden="true">&middot;</span>'
 # landing page only, directly after the end tag of the value paragraph's region, and validate() requires it there once.
 ABOUT_BLOCK = '<div class="region"><p class="lbl">About this project</p><div>{row}</div></div>'
 SLICE_COUNT = 6
+# The seventh footer card of template specification 7.19 (baseline 1.11.0): vendorreplies.ai, always last, after
+# the 6 rotated cards, on every site; its logo is a PNG.
+SEVENTH_CARD = (
+    '<li class="slice slice-vr"><a class="card" href="https://vendorreplies.ai/" target="_blank" rel="noopener noreferrer">'
+    '<img src="{logos}/vendorreplies.png" alt=""><span class="cname">VendorReplies<span class="tld">.ai</span></span>'
+    + NEW_TAB + "</a></li>"
+)
 
 
 class BuildError(Exception):
@@ -684,6 +691,7 @@ def footer(config: dict, base: str) -> str:
                 f"{image}{name}{NEW_TAB}</a>"
             )
         cards.append(f'<li class="slice slice-{index + 1}">{link}</li>')
+    cards.append(SEVENTH_CARD.format(logos=logos))
     tail = (
         '<ul class="tail" aria-label="Jeff Posluns elsewhere">'
         '<li class="tile tile-1"><a class="card" href="https://github.com/jposluns" target="_blank" rel="noopener noreferrer">'
@@ -701,7 +709,7 @@ def footer(config: dict, base: str) -> str:
         'Jeff<span class="gold">@</span>Posluns<span class="gold">.ca</span><span class="post"> Project</span></a></div>'
     )
     return (
-        '<footer class="family wrap"><div class="bar"><ul class="cards rainbow" aria-label="The 6 project sites">'
+        '<footer class="family wrap"><div class="bar"><ul class="cards rainbow" aria-label="The 7 project sites">'
         + "".join(cards)
         + "</ul>"
         + tail
