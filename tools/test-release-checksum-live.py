@@ -5002,7 +5002,8 @@ class WholePageTest(unittest.TestCase):
 
     def test_a_page_for_another_version_reaches_the_inconsistency_report(self):
         # The render is for the version and checksum the page shows, not for release.json, so a page that the
-        # generator writes for a version other than the SKILL.md version is still an inconsistency (exit 1).
+        # generator writes for a version other than the SKILL.md version, one with no published release, is
+        # still an inconsistency (exit 1).
         for checksum in ("0" * 64, self.SUM):
             with self.subTest(checksum[:8]):
                 self.publish(checksum)
