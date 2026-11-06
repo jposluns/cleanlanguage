@@ -101,8 +101,8 @@ element other than an ``a`` with no attribute but ``href`` or an ``em`` with
 no attribute, a character of its text after NFC other than those of
 ``VALUE_SPACES`` (the ordinary space, U+0009, U+000A and U+000D, which a
 browser collapses to a space, and U+00A0), ``VALUE_SIGNS`` (the visible
-signs U+00A9, U+00AE, U+2122 and U+00B0, and the vulgar fractions U+00BC to
-U+00BE, each by name) and ``VALUE_CATEGORIES`` (letters
+signs U+00A9, U+00AE, U+2122, U+2120 and U+00B0, the superscript digits, and
+every vulgar fraction, each by name) and ``VALUE_CATEGORIES`` (letters
 Lu, Ll and Lt, decimal digits, punctuation, and currency and math symbols), or
 no letter (the pin leaves no element in the paragraph that could hide its
 text, so no visible-text model applies there; it refuses Lo, which holds the
@@ -120,14 +120,21 @@ from its place (in the landing page source, ``region`` only on the region,
 region holds other than ``VALUE_REGION_CHILDREN``, in the landing page source
 and, in ``validate()``, on the built landing page: exactly a ``p.lbl`` whose
 text that shows (its text, not an ``img``'s alt text, which a browser shows
-only when the image does not load) holds a letter or a digit, then the
-``div`` that holds the
+only when the image does not load, nor the folded content of a ``details``
+without ``open``, which shows only once a reader opens it) holds a letter or a
+digit, then the ``div`` that holds the
 ``p.value``, and no text other than whitespace directly (above 1000 px
 ``.region`` shows its first child in its label column, so a missing, moved,
 repeated or hidden label, or a ``div`` closed before the ``p.value``, puts
 the paragraph there; read from the stylesheet, not checked in a browser); a
 page source with a
-class name outside ``SOURCE_CLASSES`` (below); a page source with a bidi
+class name outside ``SOURCE_CLASSES`` (below); a page source with a
+``hidden`` attribute whose value holds ``until-found`` in any letter case
+(``UNTIL_FOUND``), since a browser shows such an element's content when
+find-in-page matches text in it, where every rule here reads it as hidden (no
+committed source uses it; ``validate()`` does not refuse it on a built page,
+where only page sources and the generator's own markup, which carries none,
+can put it); a page source with a bidi
 formatting character (``BIDI_CONTROLS``: U+061C, U+200E, U+200F, U+202A to
 U+202E and U+2066 to U+2069), as written or as a character reference, and a
 page with one, since a browser reorders the text it shows around one, where
@@ -157,8 +164,11 @@ the elements inside it that neither matches; there the label counts in any
 letter case. The text is joined across elements, with
 character references decoded and each ``img``'s ``alt`` text read as text in
 its place (a browser shows it there when the image does not load) and also
-left out (as when the image loads), each apart from the others, the label
-counting in any such choice (``label_count()``), each
+left out (as when the image loads), and the folded content of each
+``details`` without ``open`` (all but its first ``summary`` child) read both
+shown (opened) and left out (closed), each image and details apart from the
+others, the label counting in any such choice (``label_count()`` counts the
+labels of 1 choice together and takes the most that any choice gives), each
 character of general category Cf (format characters, such as the zero-width
 and soft hyphen characters), each Default_Ignorable_Code_Point
 (``DEFAULT_IGNORABLE``, such as U+034F, the variation selectors and the
@@ -172,9 +182,9 @@ or a digit, such as whitespace, punctuation, a mark or U+2800, deleted from
 it and from the label, other attribute values and comments apart. It is read
 3 times: whole, and twice with the
 text of every element hidden as the value paragraph rule reads hiding
-deleted, other than the content of a ``details`` without ``open``, which it
-reads as a reader who opens the details sees it, so a hidden element inside
-the label does not split it and a closed details does not hide it, first with
+deleted, other than the folded content of a ``details`` without ``open``,
+which each choice reads closed or opened, so a hidden element inside the label
+does not split it and a details hides the label in neither state, first with
 an element that only ``aria-hidden="true"`` hides kept, since that attribute
 hides an element from assistive technology alone and a browser shows it,
 then with it deleted too, as before; the label counts in any reading), a
@@ -480,7 +490,11 @@ with a message naming where it starts:
   browser shows a table's captions first and its first ``thead`` before its
   ``tbody`` elements, whatever their order in the source (no stylesheet the
   pages load sets ``caption-side``), so the label rule reads a table's text
-  in the order it shows.
+  in the order it shows;
+- a ``summary`` start tag after text other than ASCII whitespace directly in
+  its ``details``: a browser shows a details' first summary before the rest
+  of its content, opened or closed, so the label rule reads a details' text
+  in the order it shows, its folded content as 1 run after the summary.
 
 Why that suffices (an argument from the standard's rules, not checked in a
 browser): with these refused, the parser's open elements and a browser's are
@@ -711,6 +725,14 @@ TABLE_PARTS = {"caption", "thead", "tbody", "tr", "td", "th"}
 # its first thead, then its tbody elements (no stylesheet the pages load sets caption-side). A table holds them in that
 # order, at most 1 caption and 1 thead (PageScan.table_ranks), so the label rule reads them in the order they show.
 TABLE_ORDER = ("caption", "thead", "tbody")
+# The refusal of a summary after text in its details: a browser shows a details' first summary before the rest of its
+# content, so the label rule, which reads text in source order, reads a details' folded content as 1 run after it.
+SUMMARY_ORDER_PIN = ("a browser shows a details' summary before the rest of its content, so a page source writes no "
+                     "text other than ASCII whitespace in a details before its summary")
+# The refusal of hidden="until-found": a browser shows such an element's content when find-in-page matches text in it,
+# where the rules read it as hidden (tools/check-install-page.py's is_hiding_element() reads hidden in any value).
+UNTIL_FOUND = ("a browser shows the content of an element with hidden=until-found when find-in-page matches text in "
+               "it, where the rules read it as hidden, so a page source carries no hidden attribute with that value")
 TABLE_ORDER_PIN = ("a browser shows a table's caption first and its thead before its tbody, whatever their order in "
                    "the source, so a table holds at most 1 caption, then at most 1 thead, then its tbody elements "
                    "(TABLE_ORDER)")
@@ -784,10 +806,14 @@ RESET_SELECTORS = (".lbl.file", "table.matrix tbody th", "table.matrix th .org",
 # q, refused.
 VALUE_CATEGORIES = {"Lu", "Ll", "Lt", "Nd", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Sc", "Sm"}
 # The visible signs outside VALUE_CATEGORIES that the value paragraph's text may also hold, each by name: the
-# copyright, registered and trade mark signs (U+00A9, U+00AE and U+2122, So), the degree sign (U+00B0, So) and the
-# vulgar fractions one quarter, one half and three quarters (U+00BC to U+00BE, No). Each shows a glyph; none is
-# blank, whitespace or a Default_Ignorable_Code_Point, and NFC leaves each as it is.
-VALUE_SIGNS = "\u00a9\u00ae\u2122\u00b0\u00bc\u00bd\u00be"
+# copyright, registered, trade mark and service mark signs (U+00A9, U+00AE, U+2122 and U+2120, So), the degree sign
+# (U+00B0, So), the superscript digits (U+2070, U+00B9, U+00B2, U+00B3 and U+2074 to U+2079, No) and every character
+# named VULGAR FRACTION (U+00BC to U+00BE, U+2150 to U+215E and U+2189, No). Each shows a glyph; none is blank,
+# whitespace or a Default_Ignorable_Code_Point, and NFC leaves each as it is. Every other character of So and No,
+# such as U+2800, U+215F (fraction numerator one) or a subscript digit, stays refused.
+VALUE_SIGNS = ("\u00a9\u00ae\u2122\u2120\u00b0\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079"
+               "\u00bc\u00bd\u00be\u2150\u2151\u2152\u2153\u2154\u2155\u2156\u2157\u2158\u2159\u215a\u215b\u215c"
+               "\u215d\u215e\u2189")
 # The whitespace the value paragraph's text may hold: the ordinary space and U+0009, U+000A and U+000D, which a
 # browser collapses with it, and U+00A0 (&nbsp;), which it shows as a space.
 VALUE_SPACES = " \t\n\r\u00a0"
@@ -1468,9 +1494,10 @@ class PageScan(HTMLParser):
     shows only its first summary child), where each value paragraph starts and where the region of the first one
     ends, that region's ancestors and those of the element at about_at, where each element whose classes include
     about starts, where each html, head, body, frameset and math start tag is, each start tag or text a browser's
-    tree builder would place elsewhere (misnested(), and a table child out of TABLE_ORDER), its text, each img's alt
-    text among it (alts), all of it and that which shows (with a details without open read as opened, and an
-    element that only aria-hidden="true" hides read as shown, and then as hidden), in upper
+    tree builder would place elsewhere (misnested(), a table child out of TABLE_ORDER, and a summary after text in its
+    details), each start tag with hidden=until-found, its text, all of it and that which shows (with an element that
+    only aria-hidden="true" hides read as shown, and then as hidden), each piece with the optional groups it is in
+    (chains: the folded content of a details without open, an img's alt text), in upper
     case where the stylesheets show it so (labels(), uppercase_here()), the first p.value's text and the first start
     tag in it outside its pin (value_problem()), the children of its region and the text that shows in each
     (region_problem()) and where each of its class names sits (region_class_problem()), each start tag's class names
@@ -1518,14 +1545,18 @@ class PageScan(HTMLParser):
         self.document_tags: list[tuple[str, tuple[int, int]]] = []
         # Where each math start tag starts; the text the parser reads (attribute values and comments apart), in upper
         # case where the stylesheets show it so (uppercase_here()), as a browser shows it; that text outside every
-        # element of INERT_TAGS and every element hidden as tools/check-install-page.py reads hiding, with a details
-        # without open read as opened (folding), first with an element that only aria-hidden="true"
+        # element of INERT_TAGS and every element hidden as tools/check-install-page.py reads hiding, folded content
+        # kept, first with an element that only aria-hidden="true"
         # hides read as shown, since it hides an element from assistive technology alone (shown), then with it read
-        # as hidden (unhidden); and, for each open element, whether its text shows in upper case.
+        # as hidden (unhidden); for each piece of each of the 3, the keys of the optional groups it is in, outermost
+        # first (chains, label_count()): where each details without open starts whose folded content holds it
+        # (fold_keys()), then, for an img's alt text, where the img starts; and, for each open element, whether its text
+        # shows in upper case.
         self.maths: list[tuple[int, int]] = []
         self.text: list[str] = []
         self.shown: list[str] = []
         self.unhidden: list[str] = []
+        self.chains: tuple[list[tuple], list[tuple], list[tuple]] = ([], [], [])
         self.uppercase: list[bool] = []
         # Each start tag or text that a browser's tree builder would place elsewhere (misnested()), as (what, where it
         # starts, why): in a page source, a refusal.
@@ -1538,10 +1569,13 @@ class PageScan(HTMLParser):
         self.covering: list[int] = []
         self.closed: dict[int, bool] = {}
         # The depth in open of each element folded in a details without open (a child other than its first summary),
-        # which the value paragraph rule reads as hidden and the label rule as shown; and, for each open table by its
-        # depth, the place in TABLE_ORDER of its last child.
+        # which the value paragraph rule reads as hidden and the label rule both as hidden and as shown; for each open
+        # table by its depth, the place in TABLE_ORDER of its last child; the depth of each open details that holds
+        # text other than ASCII whitespace directly; and where each start tag with hidden=until-found starts.
         self.folding: list[int] = []
         self.table_ranks: dict[int, int] = {}
+        self.details_text: set[int] = set()
+        self.until_found: list[tuple[int, int]] = []
         # For each div.region, by where it starts: its children (name, classes and where each starts) and whether it
         # holds text other than whitespace directly; and, for each child of a div.region, the text in it that shows.
         self.region_children: dict[tuple[int, int], list[tuple[str, list[str], tuple[int, int]]]] = {}
@@ -1605,9 +1639,6 @@ class PageScan(HTMLParser):
         self.hero_start: tuple[int, int, int] | None = None
         self.kicker_end: tuple[int, int, int] | None = None
         self.hero_alt: tuple[int | None, int | None, int | None] | None = None
-        # The index in text, shown and unhidden of each img's alt text, which a browser shows only when the image does
-        # not load (label_count()).
-        self.alts: tuple[set[int], set[int], set[int]] = (set(), set(), set())
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
         # A browser reads the first of 2 attributes with the same name, as tools/check-install-page.py does.
@@ -1637,6 +1668,10 @@ class PageScan(HTMLParser):
                 self.misnested.append((f"a <{tag}> start tag after a {TABLE_ORDER[last]} in a table", self.getpos(),
                                        TABLE_ORDER_PIN))
             self.table_ranks[len(self.open) - 1] = max(rank, last or 0)
+        if tag == "summary" and len(self.open) - 1 in self.details_text:
+            self.misnested.append(("a <summary> start tag after text in its details", self.getpos(), SUMMARY_ORDER_PIN))
+        if "until-found" in attrs.get("hidden", "").lower():
+            self.until_found.append(self.getpos())
         if (tag == "body" and [name for name, _ in self.open] == ["html"] and self.heads == 1 and not self.head_ended
                 and self.previous is not None and self.previous[0] == "head"):
             self.body_at = self.getpos()
@@ -1657,8 +1692,9 @@ class PageScan(HTMLParser):
         covers = hides and ("aria-hidden" not in attrs
                             or is_hiding(tag, {name: value for name, value in attrs.items() if name != "aria-hidden"}))
         # Whether it is folded: as that gate's PageParser reads it, a child of a details without open other than its
-        # first summary. The value paragraph rule reads it as hidden; the label rule reads it as a reader who opens
-        # the details sees it, so a label there counts (folding apart, its hiding rules all apply).
+        # first summary. The value paragraph rule and the value region's label read it as hidden; the label rule
+        # reads it both as hidden and as a reader who opens the details sees it (fold_keys(), label_count()), so a label
+        # counts in either state (folding apart, its hiding rules all apply).
         folds = False
         if len(self.open) - 1 in self.closed:
             if tag == "summary" and not self.closed[len(self.open) - 1]:
@@ -1694,22 +1730,22 @@ class PageScan(HTMLParser):
         if tag == "img" and attrs.get("alt"):
             # A browser shows an img's alt text in its place when the image does not load, and none when it loads, in
             # upper case where the stylesheets show its text so, so the label rule reads it as text there that it may
-            # also leave out (alts, label_count()). It is no text of a region's child (show()), so the value region's
-            # label holds text, not an image alone.
+            # also leave out (an optional group of its own, keyed by where the img starts, inside those of fold_keys()).
+            # It is no text of a region's child (show()), so the value region's label holds text, not an image alone.
             upper = uppercase_here([*self.open, (tag, classes)])
             alt = attrs["alt"].upper() if (bool(self.uppercase and self.uppercase[-1]) if upper is None
                                            else upper) else attrs["alt"]
+            chain = (*self.fold_keys(), self.getpos())
             self.text.append(alt)
-            self.alts[0].add(len(self.text) - 1)
+            self.chains[0].append(chain)
             shown = unhidden = None
             if not (self.covering or covers or inert):
-                self.shown.append(alt)
+                self.show(alt, chain)
                 shown = len(self.shown) - 1
-                self.alts[1].add(shown)
             if not (self.hiding or hides or inert):
                 self.unhidden.append(alt)
+                self.chains[2].append(chain)
                 unhidden = len(self.unhidden) - 1
-                self.alts[2].add(unhidden)
             if (self.hero_alt is None and len(self.open) >= 2 and self.open[-1][0] == "div"
                     and "hero-art" in self.open[-1][1] and self.open[-2][0] == "section" and "hero" in self.open[-2][1]):
                 self.hero_alt = (len(self.text) - 1, shown, unhidden)
@@ -1796,12 +1832,18 @@ class PageScan(HTMLParser):
             self.headings[-1][1].append(data)
         self.text.append(data.upper() if self.uppercase and self.uppercase[-1] else data)
         # Text directly inside a details without open, or inside a child other than its first summary, shows once a
-        # reader opens it, so the readings of the text that shows keep it (folding).
+        # reader opens it and not while it is closed, so the readings of the text that shows keep it in the optional
+        # groups of fold_keys(), which the label rule reads both left out and shown.
+        chain = self.fold_keys()
+        self.chains[0].append(chain)
         if not any(name in INERT_TAGS for name, _ in self.open):
             if not self.covering:
-                self.show(self.text[-1])
+                self.show(self.text[-1], chain)
             if not self.hiding:
                 self.unhidden.append(self.text[-1])
+                self.chains[2].append(chain)
+        if self.open and self.open[-1][0] == "details" and data.strip(" \t\n\f\r"):
+            self.details_text.add(len(self.open) - 1)
         if self.open and self.open[-1][0] == "div" and "region" in self.open[-1][1] and data.strip(" \t\n\f\r"):
             self.region_texts.add(self.open_at[-1])
         if self.value_depth is not None:
@@ -1852,6 +1894,7 @@ class PageScan(HTMLParser):
             self.uppercase.pop()
             self.closed.pop(len(self.open), None)
             self.table_ranks.pop(len(self.open), None)
+            self.details_text.discard(len(self.open))
             if self.switch_parent is not None and self.switch_parent_end is None and len(self.open) < self.switch_depth:
                 self.switch_parent_end = self.getpos()
         if tag == "main":
@@ -1865,13 +1908,22 @@ class PageScan(HTMLParser):
                 self.problems.append(f"the external link {self.anchor['href']} lacks target, rel or the new-tab text")
             self.anchor = None
 
-    def show(self, text: str) -> None:
-        """Add text to the text that shows (shown) and, inside a child of a div.region, to that child's."""
+    def show(self, text: str, chain: tuple) -> None:
+        """Add text to the text that shows (shown), with the keys of the optional groups it is in (chain), and, inside
+        a child of a div.region and in no such group, to that child's: an img's alt text, or text that only a reader
+        who opens a details sees, is no text that shows of the value region's label."""
         self.shown.append(text)
+        self.chains[1].append(chain)
         depth = next((depth for depth in range(len(self.open) - 1, -1, -1)
                       if self.open[depth][0] == "div" and "region" in self.open[depth][1]), None)
-        if depth is not None and depth + 1 < len(self.open):
+        if depth is not None and depth + 1 < len(self.open) and not chain:
             self.child_shown.setdefault(self.open_at[depth + 1], []).append(text)
+
+    def fold_keys(self) -> tuple[tuple[int, int], ...]:
+        """Where each open details without open starts, outermost first, whose folded content holds the next text or
+        void element: it is directly inside that details, or inside a child of it other than its first summary."""
+        return tuple(self.open_at[depth] for depth in sorted(self.closed)
+                     if depth == len(self.open) - 1 or depth + 1 in self.folding)
 
     def labels(self) -> tuple[int, int, int]:
         """How many times the text the parser reads (each img's alt text in its place, other attribute values and
@@ -1880,11 +1932,12 @@ class PageScan(HTMLParser):
         label_count(): in all of it, and twice in the text that shows, with the text of every element of INERT_TAGS
         and every element hidden as tools/check-install-page.py reads hiding deleted, so a hidden element inside the
         label does not split it: first with an element that only aria-hidden="true" hides kept, since a browser
-        shows it, then with it deleted too. A details without open is read as a reader who opens it sees it, its
-        folded children shown. Text that the stylesheets show in upper case (uppercase_here()) is read in upper
-        case, so there the label counts in any letter case. Each img's alt text is read both kept and left out, each
-        apart from the others, as a browser shows it when the image does not load and when it does (alts), and the
-        reading counts the most that any such choice gives. Each reading is also read in the hero's narrow-width
+        shows it, then with it deleted too. Text that the stylesheets show in upper case (uppercase_here()) is read
+        in upper case, so there the label counts in any letter case. The folded content of each details without
+        open is read both left out and shown, as a reader sees the details closed and opened, and each img's alt
+        text both left out and kept, as a browser shows it when the image loads and when it does not, each details
+        and img apart from the others (chains), and the reading counts the most that any 1 such choice gives
+        (label_count()). Each reading is also read in the hero's narrow-width
         order, with the hero image's alt text moved to the end of the kicker, or to the start of the hero's text when
         its first child is not a p.lbl (kicker_end, hero_alt), and counts the more of its 2 orders."""
         counts = []
@@ -1894,15 +1947,15 @@ class PageScan(HTMLParser):
             if kicker is not None and alt is not None and kicker <= alt:
                 orders.append([*range(kicker), alt, *range(kicker, alt), *range(alt + 1, len(text))])
             counts.append(max(label_count([text[index] for index in order],
-                                          [index in self.alts[which] for index in order]) for order in orders))
+                                          [self.chains[which][index] for index in order]) for order in orders))
         return tuple(counts)
 
     def region_problem(self) -> str | None:
         """What the first p.value's region (the div.region nearest it) holds outside VALUE_REGION_CHILDREN: text other
         than whitespace directly in it, children other than its slots, each filled once and in order, a p.lbl whose
-        text that shows (its text, no img's alt text; aria-hidden="true" alone hiding nothing) holds no letter or digit
-        as label_text()
-        reads it, or the p.value outside its div; None if it holds none of these, or if the p.value has no region."""
+        text that shows (its text, no img's alt text and no folded content of a details without open, as it shows with
+        every details closed; aria-hidden="true" alone hiding nothing) holds no letter or digit as label_text() reads
+        it, or the p.value outside its div; None if it holds none of these, or if the p.value has no region."""
         if self.value_region_at is None:
             return None
         if self.value_region_at in self.region_texts:
@@ -2027,37 +2080,52 @@ def label_texts(texts: list[str]) -> list[str]:
     return [text.translate(read) for text in texts]
 
 
-def label_count(parts: list[str], optional: list[bool]) -> int:
+def label_count(parts: list[str], chains: list[tuple]) -> int:
     """How many times the text that parts join to carries the About block's label (ABOUT_LABELS, case-sensitive),
-    both read by label_text(), at most over every choice of keeping or leaving out each part that optional marks (an
-    img's alt text, which a browser shows only when the image does not load). The parts between 2 marked ones are
-    read as 1 run; each label is followed through the runs and marked parts from each of its proper prefixes that the
-    text read so far can end in, keeping the most labels found for each."""
-    pieces, run = [], []
-    for part, may_leave in zip(parts, optional):
-        if may_leave:
-            pieces += [("".join(run), False), (part, True)]
-            run = []
-        else:
-            run.append(part)
-    pieces.append(("".join(run), False))
-    read = label_texts([piece for piece, _ in pieces] + list(ABOUT_LABELS))
-    total = 0
-    for label in read[len(pieces):]:
-        # The most labels found so far, for each proper prefix of the label that the text read so far ends in.
-        best = {"": 0}
-        for text, (_, may_leave) in zip(read, pieces):
-            after = dict(best) if may_leave else {}
-            for prefix, count in best.items():
-                joined = prefix + text
+    both read by label_text(), at most over every choice of showing or leaving out each optional group: chains gives,
+    for each part, the keys of the groups it is in, outermost first (the folded content of a details without open,
+    which a reader sees only once the details is opened, and an img's alt text, which a browser shows only when the
+    image does not load), and a group inside another shows only when that one does. The labels of 1 choice are
+    counted together, so the count is the most that any 1 choice gives. Each group is read as the run of parts that
+    carry its key (the page source tree rules keep a details' folded content to 1 run), and the labels are followed
+    through the text from each tuple of their proper prefixes that the text read so far can end in (label_states())."""
+    read = label_texts(list(parts) + list(ABOUT_LABELS))
+    labels = tuple(read[len(parts):])
+    # The parts as a tree: each group a list of the parts and groups it holds, in order, in the list around it.
+    tree: list = []
+    stack: list[tuple[tuple, list]] = [((), tree)]
+    for text, chain in zip(read, chains):
+        while chain[:len(stack[-1][0])] != stack[-1][0]:
+            stack.pop()
+        for depth in range(len(stack[-1][0]), len(chain)):
+            stack[-1][1].append([])
+            stack.append((chain[:depth + 1], stack[-1][1][-1]))
+        stack[-1][1].append(text)
+    return max(label_states(tree, {("",) * len(labels): 0}, labels).values())
+
+
+def label_states(items: list, best: dict[tuple[str, ...], int], labels: tuple[str, ...]) -> dict[tuple[str, ...], int]:
+    """best after the text that items (label_count()'s tree) hold: best maps each tuple of the labels' proper
+    prefixes, 1 for each label, that the text read so far ends in to the most labels found in a choice that ends so.
+    A group is read both left out and shown, and each tuple keeps the more labels of the 2."""
+    for item in items:
+        if isinstance(item, list):
+            closed, opened = best, label_states(item, best, labels)
+            best = {state: max(closed.get(state, -1), opened.get(state, -1)) for state in {**closed, **opened}}
+            continue
+        after: dict[tuple[str, ...], int] = {}
+        for state, count in best.items():
+            ends = []
+            for prefix, label in zip(state, labels):
+                joined = prefix + item
                 found = joined.count(label)
+                count += found
                 tail = joined[joined.rfind(label) + len(label):] if found else joined
-                end = next(tail[len(tail) - size:] for size in range(min(len(label) - 1, len(tail)), -1, -1)
-                           if label.startswith(tail[len(tail) - size:]))
-                after[end] = max(after.get(end, 0), count + found)
-            best = after
-        total += max(best.values())
-    return total
+                ends.append(next(tail[len(tail) - size:] for size in range(min(len(label) - 1, len(tail)), -1, -1)
+                                 if label.startswith(tail[len(tail) - size:])))
+            after[tuple(ends)] = max(after.get(tuple(ends), 0), count)
+        best = after
+    return best
 
 
 def label_ignored(character: str) -> bool:
@@ -2109,9 +2177,10 @@ def with_about(content: str, page: dict, base: str, logo_alt: str | None = None)
     onto the page's own, a stray head is refused because the generator writes the head, and
     tools/check-install-page.py reads a frameset start tag as hiding the whole page) or a math start tag (inside math,
     a browser can read a title, textarea, script or style element's content as markup, which the parser reads as text;
-    validate() refuses svg, the other such element), each also as the parser reads it; then a start tag or text that a
-    browser's tree builder would place elsewhere, or a table child out of TABLE_ORDER (misnested() and
-    PageScan.table_ranks, the page source tree rules), and, right after
+    validate() refuses svg, the other such element), each also as the parser reads it; then a start tag with a hidden
+    attribute whose value holds until-found in any letter case (UNTIL_FOUND); then a start tag or text that a
+    browser's tree builder would place elsewhere, a table child out of TABLE_ORDER, or a summary after text in its
+    details (misnested(), PageScan.table_ranks and PageScan.details_text, the page source tree rules), and, right after
     source_problem(), a source with a bidi formatting character (bidi_control()); then a source with an
     element whose classes include about, a source whose text carries the About block's label (PageScan.labels()), and a
     landing page source without exactly 1 p.value, with that p.value inside an element of INERT_TAGS, hidden by
@@ -2142,6 +2211,9 @@ def with_about(content: str, page: dict, base: str, logo_alt: str | None = None)
     if scan.maths:
         raise BuildError(f"{where}: a <math> start tag {source_at(scan.maths[0])}; inside math, a browser can read a "
                          "title, textarea, script or style element's content as markup, which the parser reads as text")
+    if scan.until_found:
+        raise BuildError(f"{where}: a hidden attribute with until-found {source_at(scan.until_found[0])}; "
+                         f"{UNTIL_FOUND}")
     if scan.misnested:
         what, at, why = scan.misnested[0]
         raise BuildError(f"{where}: {what} {source_at(at)}; {why}")

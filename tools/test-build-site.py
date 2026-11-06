@@ -499,11 +499,11 @@ def labels(text: str) -> tuple[int, int, int]:
     """How many times the parsed text of text (attribute values and comments apart, character references decoded),
     joined across elements and read by label_text(), carries LABELS, case-sensitive, but with the text that a
     browser shows in upper case (shown_upper()) in upper case, so there in any letter case: in all of it, and twice
-    in the text that shows, outside every INERT element and every element the install gate reads as hiding, with
-    a details without open read as opened, first with an element that only aria-hidden="true" hides read as shown
-    (a browser shows it), then with it read as hidden. Each img's alt text is read kept and left out, in every
-    choice for the alt texts of the reading (a browser shows one only when its image does not load), and each
-    reading counts the most that a choice gives."""
+    in the text that shows, outside every INERT element and every element the install gate reads as hiding, first
+    with an element that only aria-hidden="true" hides read as shown (a browser shows it), then with it read as
+    hidden. In every choice for the reading, each details without open is read closed (its content other than its
+    first summary left out) or opened, and each img's alt text kept or left out (a browser shows one only when its
+    image does not load), and each reading counts the most that a choice gives, its labels counted together."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
@@ -511,14 +511,26 @@ def labels(text: str) -> tuple[int, int, int]:
     counts = []
     for reading in [whole] + [[(read, around) for read, around in whole if shows(parsed, around, visual, True)]
                               for visual in (True, False)]:
-        alts = [index for index, (_, around) in enumerate(reading) if around and parsed.starts[around[-1]][0] == "img"]
+        # For each piece, the details that fold it and, for an alt text, its img: it shows when all of them do.
+        needs = [folding(parsed, around) | ({around[-1]} if around and parsed.starts[around[-1]][0] == "img" else set())
+                 for _, around in reading]
+        options = sorted(set().union(*needs))
         most = 0
-        for kept in itertools.product((True, False), repeat=len(alts)):
-            left = {index for index, keep in zip(alts, kept) if not keep}
-            joined = label_text("".join(read for index, (read, _) in enumerate(reading) if index not in left))
+        for kept in itertools.product((True, False), repeat=len(options)):
+            left = {option for option, keep in zip(options, kept) if not keep}
+            joined = label_text("".join(read for (read, _), need in zip(reading, needs) if not need & left))
             most = max(most, sum(joined.count(label_text(label)) for label in LABELS))
         counts.append(most)
     return tuple(counts)
+
+
+def folding(parsed: Placement, around: list[tuple[int, int]]) -> set[tuple[int, int]]:
+    """Where each details without open starts that folds text whose open elements (and, for an img's alt text, the
+    img) start at around, outermost first: it holds the text directly, or by a child other than its first summary."""
+    folds = {at for at, child in zip(around, around[1:]) if closed_details(parsed, [at, child])}
+    if around and parsed.starts[around[-1]][0] == "details" and "open" not in parsed.starts[around[-1]][1]:
+        folds.add(around[-1])
+    return folds
 
 
 def shows(parsed: Placement, around: list[tuple[int, int]], visual: bool = False, opened: bool = False) -> bool:
@@ -841,8 +853,14 @@ VALUE_PIN_RULE = "the value paragraph holds markup or text outside its pin"
 VALUE_CATEGORIES = {"Lu", "Ll", "Lt", "Nd", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Sc", "Sm"}
 VALUE_SPACES = " \t\n\r\u00a0"
 # Since DISCOVERY round 8 the pin also admits these visible signs by name: the copyright, registered and trade mark
-# signs, the degree sign, and the vulgar fractions one quarter, one half and three quarters.
-VALUE_SIGNS = "\u00a9\u00ae\u2122\u00b0\u00bc\u00bd\u00be"
+# signs, the degree sign, and the vulgar fractions one quarter, one half and three quarters; since VERIFY round 8.1
+# also the service mark, the superscript digits and every other character named VULGAR FRACTION.
+VALUE_SIGNS = ("\u00a9\u00ae\u2122\u2120\u00b0\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079"
+               "\u00bc\u00bd\u00be\u2150\u2151\u2152\u2153\u2154\u2155\u2156\u2157\u2158\u2159\u215a\u215b\u215c"
+               "\u215d\u215e\u2189")
+# Since VERIFY round 8.1: a page source carries no hidden=until-found, and no text in a details before its summary.
+UNTIL_FOUND_RULE = "a browser shows the content of an element with hidden=until-found"
+SUMMARY_ORDER_RULE = "a browser shows a details' summary before the rest of its content"
 # A table's children in the order a browser shows them (since DISCOVERY round 8), and at most 1 hero on a page.
 TABLE_ORDER_RULE = "a browser shows a table's caption first and its thead before its tbody"
 HEROES_RULE = "a page source carries at most 1 hero"
@@ -982,12 +1000,13 @@ SOURCE_REFUSALS = [
     ("no p.value", lambda root: edit(root, HOME, VALUE, '<p class="lead">'), VALUE_RULE),
     ("the value paragraph inside noscript", wrap_value("<noscript>", "</noscript>"), VALUE_RULE),
     ("the value paragraph inside canvas", wrap_value("<canvas>", "</canvas>"), ELEMENT_RULE),
+    # Since VERIFY round 8.1 the until-found rule refuses these before the value paragraph rule reads them as hidden.
     ("the value paragraph inside a div with hidden=until-found", wrap_value('<div hidden="until-found">', "</div>"),
-        VALUE_RULE),
+        UNTIL_FOUND_RULE),
     ("the value paragraph with a hidden attribute", lambda root: edit(root, HOME, VALUE, '<p class="value" hidden>'),
         VALUE_RULE),
     ("the value paragraph with hidden=until-found", lambda root: edit(
-        root, HOME, VALUE, '<p class="value" hidden="until-found">'), VALUE_RULE),
+        root, HOME, VALUE, '<p class="value" hidden="until-found">'), UNTIL_FOUND_RULE),
     ("the value paragraph's region with a hidden attribute", lambda root: edit(
         root, HOME, VALUE_REGION, VALUE_REGION.replace(">", " hidden>")), VALUE_RULE),
     ("a p.value with no region", lambda root: edit(root, HOME, VALUE_REGION, '<div id="what-it-fixes">'), REGION_RULE),
@@ -1414,7 +1433,7 @@ SOURCE_REFUSALS = [
     ("2 theads in a table", inject(
         "<table><thead><tr><th>h</th></tr></thead><thead><tr><th>i</th></tr></thead></table>"), TABLE_ORDER_RULE),
     # Built with exit 0 at 4887fe1: a label inside a closed details, which shows once a reader opens it; the label
-    # rule reads a details as opened.
+    # rule reads a details as opened (since VERIFY round 8.1, both closed and opened).
     ("the label split by a hidden span in a p.lbl in a closed details", inject(
         '<details><summary>x</summary><p class="lbl">About<span hidden>y</span>this project</p></details>'),
         LABEL_RULE),
@@ -1425,6 +1444,38 @@ SOURCE_REFUSALS = [
         root, HOME, "</section>", '</section><section class="hero" aria-label="x"><div class="hero-text">'
         '<p class="lbl">About this</p><p class="intro">x</p></div><div class="hero-art">'
         f"<img src=\"{LOGO}\" {HERO_ALT}></div></section>"), HEROES_RULE),
+    # Built with exit 0 at 1b389b5 and exit 1 at 4887fe1 (VERIFY round 8.1): a closed details shows its summary and
+    # not the rest, so the label reads across it. The label rule reads each details both closed and opened.
+    ("the label across a closed details whose body is a paragraph", inject(
+        "<details><summary>About this</summary><p>More information</p></details><p>project</p>"), LABEL_RULE),
+    ("the label across a closed details whose body is text", inject(
+        "<details><summary>About this</summary>More information</details><p>project</p>"), LABEL_RULE),
+    # Built with exit 0 at 4887fe1 and at 1b389b5: the label shows with an opened details around a closed one.
+    ("the label across a closed details inside an opened one", inject(
+        "<details><summary>x</summary><p>About this</p><details><summary></summary><p>z</p></details></details>"
+        "<p>project</p>"), LABEL_RULE),
+    # Built with exit 0 at 1b389b5 and exit 1 at 4887fe1: the value region's label as folded text alone, which shows
+    # only once a reader opens the details.
+    ("the value region's label folded in a closed details in a button", lambda root: edit(
+        root, HOME, REGION_LABEL, '<p class="lbl"><button type="button"><details><summary></summary>'
+        "<p>What it gives you</p></details></button></p>"), REGION_CHILDREN_RULE),
+    # Built with exit 0 at 4887fe1 and at 1b389b5: find-in-page shows the content of hidden=until-found.
+    ("the label split by a hidden span in a p with hidden=until-found",
+        inject('<p hidden="until-found">About <span hidden>y</span>this project</p>'), UNTIL_FOUND_RULE),
+    ("hidden=Until-Found in mixed case", inject('<p hidden="Until-Found">x</p>'), UNTIL_FOUND_RULE),
+    ("hidden=until-found with a character reference", inject('<p hidden="until&#45;found">x</p>'), UNTIL_FOUND_RULE),
+    # Built with exit 0 at 4887fe1 and at 1b389b5: a browser shows a details' summary first, so this shows the label.
+    ("the label from a summary after text in its details",
+        inject("<details>this project<summary>About</summary></details>"), SUMMARY_ORDER_RULE),
+    ("a summary after text in a details (a source pass until VERIFY round 8.1)",
+        inject("<details>x <summary>y</summary><p>z</p></details>"), SUMMARY_ORDER_RULE),
+    # Refused before and since VERIFY round 8.1: each choice of the alt text carries 1 label, and the count is 1.
+    ("the label with and without an alt text that carries it in upper case",
+        inject(f'<p>About this<img src="{LOGO}" alt="ABOUT THIS PROJECT">project</p>'), LABEL_RULE),
+    # Refused before and since VERIFY round 8.1: characters of No outside VALUE_SIGNS.
+    ("a fraction numerator one (U+215F, No) in the value paragraph", value_content("Rules &#x215F;3"),
+        VALUE_PIN_RULE),
+    ("a subscript two (U+2082, No) in the value paragraph", value_content("Rules H&#x2082;O"), VALUE_PIN_RULE),
 ] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
      for character in LABEL_IGNORED] + [
     # A page source carries no dialog (SOURCE_ELEMENTS) and no inert or popover (SOURCE_ATTRIBUTES);
@@ -1444,9 +1495,9 @@ SOURCE_PASSES = [
     ("a single quote in a double-quoted attribute value", inject("<p aria-label=\"the project's aim\">x</p>")),
     ("a noscript around a plain paragraph", inject("<noscript><p>x</p></noscript>")),
     ("a noscript after a noscript", inject("<noscript><p>x</p></noscript><noscript><p>y</p></noscript>")),
-    # Inside the page source tree rules: text before a details' first summary, a div in a button in a p, a list in an
-    # li, and a table whose parts hold only their own children, with whitespace between them.
-    ("a summary after text in a details", inject("<details>x <summary>y</summary><p>z</p></details>")),
+    # Inside the page source tree rules: a div in a button in a p, a list in an li, and a table whose parts hold only
+    # their own children, with whitespace between them. (Text before a details' first summary passed here until
+    # VERIFY round 8.1; SOURCE_REFUSALS now refuses it.)
     ("a div inside a button inside a p", inject('<p><button type="button"><div>x</div></button></p>')),
     ("a list inside an li", inject("<ul><li>x<ul><li>y</li></ul></li></ul>")),
     ("a table with a caption, a thead and a tbody", inject(
@@ -1529,6 +1580,15 @@ SOURCE_PASSES = [
         "<tbody><tr><td>e</td></tr></tbody></table>")),
     ("an img beside the text of the value region's label", lambda root: edit(
         root, HOME, REGION_LABEL, f'<p class="lbl"><img src="{LOGO}" alt="x">What it gives you</p>')),
+    # Since VERIFY round 8.1 (exit 1 at 4887fe1 and at 1b389b5): the service mark, superscript digits and vulgar
+    # fractions added to VALUE_SIGNS, as character references; and, inside the new rules, whitespace in a details
+    # before its summary and the value region's label beside a closed details.
+    ("a value paragraph with the added signs of VALUE_SIGNS as character references",
+        value_content("Rules&#x2120; x&sup2; y&sup1; &#x2070; &frac13; &frac23; &frac18; &#x2189;")),
+    ("whitespace in a details before its summary", inject("<details>\n <summary>x</summary>y</details>")),
+    ("the value region's label beside a closed details", lambda root: edit(
+        root, HOME, REGION_LABEL, '<p class="lbl">What it gives you<button type="button"><details><summary>'
+        "</summary><p>x</p></details></button></p>")),
 ]
 
 
@@ -1824,6 +1884,41 @@ def check_inner_about_rows(failures: list[str]) -> int:
     return 2 * len(cases)
 
 
+def check_label_count(failures: list[str]) -> int:
+    """The generator's label_count(), called directly (since VERIFY round 8.1): it counts the labels of 1 choice of
+    its optional groups together, each group read left out and shown, a group inside another shown only with it. The
+    keys stand for where a details or an img starts."""
+    details, inner, img = (1, 0), (2, 0), (3, 0)
+    cases = [
+        # Each choice of the alt text carries 1 label (in upper case kept, as written left out): 1, not 2.
+        ("an alt text that carries the label between its halves", ["About this", "ABOUT THIS PROJECT", "project"],
+            [(), (img,), ()], 1),
+        ("the label with the alt text left out, and once more after it", ["About this", "x", "project",
+            "ABOUT THIS PROJECT"], [(), (img,), (), ()], 2),
+        ("the label across a closed details", ["About this", "More information", "project"], [(), (details,), ()], 1),
+        ("the label in an opened details", ["x", "About this project"], [(), (details,)], 1),
+        ("the label across a closed details in an opened one", ["About this", "z", "project"],
+            [(details,), (details, inner), ()], 1),
+        ("no label in either state", ["About this", "x", "y", "project"], [(), (), (details,), ()], 0),
+    ]
+    for name, parts, chains, count in cases:
+        if LOADED.label_count(parts, chains) != count:
+            failures.append(f"label_count '{name}': {LOADED.label_count(parts, chains)}, expected {count}")
+    return len(cases)
+
+
+def check_value_signs(failures: list[str]) -> int:
+    """VALUE_SIGNS, the generator's and the test's copy alike, holds only visible signs of So and No that NFC leaves
+    as they are, none whitespace or a Default_Ignorable_Code_Point (since VERIFY round 8.1)."""
+    if LOADED.VALUE_SIGNS != VALUE_SIGNS:
+        failures.append("the generator's VALUE_SIGNS differs from the test's copy")
+    for sign in VALUE_SIGNS:
+        if (unicodedata.category(sign) not in ("So", "No") or unicodedata.normalize("NFC", sign) != sign
+                or sign.isspace() or any(first <= ord(sign) <= last for first, last in LOADED.DEFAULT_IGNORABLE)):
+            failures.append(f"VALUE_SIGNS holds U+{ord(sign):04X}, which is not a visible sign of So or No")
+    return 1 + len(VALUE_SIGNS)
+
+
 def check_about_block(failures: list[str]) -> int:
     """The whole About block of specification 7.24 on the landing page: validate(), called directly on the committed
     landing page with 1 fault each, refuses by the block's rule (exactly 1 p.value, with no INERT ancestor, not
@@ -1954,7 +2049,8 @@ def check_about_block(failures: list[str]) -> int:
             value_rule),
         ("a black star in the value paragraph", [(VALUE + content, VALUE + "Rules &#x2605; 2026")], value_rule),
         # Since DISCOVERY round 8: the signs of VALUE_SIGNS pass; an img alone is no label text in the value region;
-        # an img's alt text is read kept and left out; and a closed details is read as opened for the label.
+        # an img's alt text is read kept and left out; and a closed details is read as opened for the label (since
+        # VERIFY round 8.1, both closed and opened).
         ("the signs of VALUE_SIGNS in the value paragraph",
             [(VALUE + content, VALUE + "Rules &copy; &reg; &trade; 20&deg; &frac14; &frac12; &frac34;")], None),
         ("the value region's label as an img with its text as alt text",
@@ -1965,6 +2061,16 @@ def check_about_block(failures: list[str]) -> int:
         ("a second label split by a hidden span in a p.lbl in a closed details after the block",
             [(block, block + '<details><summary>x</summary><p class="lbl">About<span hidden>y</span>this project</p>'
                              "</details>")], label_rule),
+        # Since VERIFY round 8.1: a closed details is read closed and opened for the label, its folded content is no
+        # text that shows of the value region's label, and the added signs of VALUE_SIGNS pass.
+        ("a second label across a closed details after the block",
+            [(block, block + "<details><summary>About this</summary><p>More information</p></details><p>project</p>")],
+            label_rule),
+        ("the value region's label folded in a closed details in a button",
+            [(REGION_LABEL, '<p class="lbl"><button type="button"><details><summary></summary><p>What it gives you</p>'
+                            "</details></button></p>")], region_rule),
+        ("the added signs of VALUE_SIGNS in the value paragraph",
+            [(VALUE + content, VALUE + "Rules&#x2120; x&sup2; &frac13; &frac23; &#x2189;")], None),
         # Since round 5.1 the pin reads the text after NFC: e and U+0301 pass; e and U+034F do not.
         ("a value paragraph with e and U+0301", [(VALUE + content, VALUE + "Cafe\u0301 rules")], None),
         ("a value paragraph with e and U+034F", [(VALUE + content, VALUE + "Cafe\u034f rules")], value_rule),
@@ -2735,6 +2841,8 @@ def main() -> int:
     ran += check_scheme_validation(failures)
     ran += check_inert_validation(failures)
     ran += check_inner_about_rows(failures)
+    ran += check_label_count(failures)
+    ran += check_value_signs(failures)
     ran += check_about_block(failures)
     ran += check_uppercase_selectors(failures)
     ran += check_about_spacing(failures)
