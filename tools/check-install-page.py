@@ -51,7 +51,8 @@ What it verifies
    first 6 elements in that ``div.doc`` are, in order, the opening label
    (``p.lbl``, "Install"), the hero's ``h1``, ``div.rail``, ``p.meta``, the
    "Pick your AI" label (``p.lbl`` with the ``pick`` id) and that ``p``, with
-   or without the class ``first`` on any of them. Of those 6, the
+   or without the class ``first`` on the opening label, ``div.rail`` or
+   ``p.meta`` (check 8 refuses it on the other 3). Of those 6, the
    first 5 hold no element, but ``div.rail``, which holds only 1 ``img``, and
    that ``p`` holds no element but the 5 family links; no text other than
    whitespace sits directly in that ``p``, or in the body, that ``main``,
@@ -125,9 +126,16 @@ What it verifies
 6. Versioned asset tokens and loads on each of the 6 pages: ``fonts.css``,
    ``palettes.css`` and ``baseline.css`` load as stylesheets, and ``copy.js``
    as a script with ``defer`` outside every element of ``INERT_ELEMENTS``,
-   from ``/assets/baseline/`` with ``?v=X.Y.Z``;
-   where the text names ``/assets/site.css``, or a stylesheet loads it, it loads
-   with ``?v=`` and 12 hexadecimal characters. ``scheme.js`` loads exactly once, as
+   from ``/assets/baseline/`` with ``?v=X.Y.Z``,
+   and no other stylesheet loads: every stylesheet the page loads, and every
+   ``<link>`` start tag naming ``stylesheet`` that a text match finds, a tag in
+   a comment included, is 1 of those 3 in exactly the form
+   ``<link rel="stylesheet" href="/assets/baseline/NAME?v=X.Y.Z">``, so the rule
+   pin of ``tools/test-install-page.py`` reads every stylesheet the 6 pages
+   load. ``/assets/site.css``, which none of them loads, fails, so a
+   ``site-src/assets/site.css``, which ``tools/build-site.py`` adds to the head
+   of every page it builds, needs this check and that pin changed with it. ``scheme.js`` loads
+   exactly once, as
    exactly ``<script data-cfasync="false" src="/assets/baseline/scheme.js?v=X.Y.Z"></script>``,
    with no ``defer`` or ``async``, before the first stylesheet, and it and every
    stylesheet start inside ``<head>``, read as parsed elements: ``html > head``,
@@ -179,7 +187,18 @@ What it verifies
    all fail, while a ``span`` without a class in it passes.
    ``tools/test-install-page.py`` fails unless ``CLASS_PIN`` holds exactly the
    classes the committed pages give, and pins every stylesheet rule that can
-   match an element with those names and classes (see below).
+   match an element with those names and classes (see below). No checked
+   element, ancestor or element it holds carries an attribute that an
+   attribute selector of a pinned rule names (``RULE_ATTRIBUTES``), so ``data-preset`` on a family page's ``h1``,
+   which baseline.css hides in print (``@media print { ... [data-preset] {
+   display: none; } }``), fails; ``hidden`` is left out, because the gate
+   reads it as hiding the element that carries it and all it holds.
+   ``tools/test-install-page.py`` fails unless ``RULE_ATTRIBUTES`` holds
+   exactly the attributes, ``hidden`` aside, that the attribute selectors of
+   the rules it pins name. No ``html`` or ``body`` start tag other than the
+   first of each on the page carries any attribute, because a browser adds its
+   attributes to the page's own element, an ancestor of every checked element,
+   so a later ``<body class="fresh">`` fails.
 
 It reads the markup with ``html.parser``. Its readers are not a full HTML5 tree
 builder: they model the open elements as tags nest, void elements, the head's
@@ -265,15 +284,19 @@ vertical-rl; }``, fails the rule pin. These residuals are accepted: what a
 pinned rule does is what a reviewer accepted when it was pinned, and neither
 the gate nor the test judges it (the negative top margin of ``.verified``, or
 a colour that matches what is behind the text in some scheme, say); a pinned
-rule that a checked element comes to match by something the class pin does
-not hold, such as an attribute, an id or a sibling's class
-(``data-preset`` on a family page's ``h1`` hides it in print through
-``@media print { [data-preset] { display: none; } }``); the font files and
-images that a pinned rule names, which the test does not read, so a font
-whose glyphs show nothing passes; and a stylesheet other than those 3, such
-as ``/assets/site.css``, which check 6 allows on a page with a content token
-and which none of the 6 pages loads today. The test reads comments and
-strings as CSS does, so a brace in either delimits no rule, and refuses a
+rule that a checked element comes to match by something that neither the
+class pin nor ``RULE_ATTRIBUTES`` holds: an id, its place among its siblings,
+or the class or an attribute of a sibling or an earlier element (a pinned
+rule whose selector ends in ``.lbl + h1`` can match an ``h1`` right after an
+element with the class ``lbl``); the font files and images that a pinned rule
+names, which the test does not read, so a font whose glyphs show nothing
+passes; and a box that covers a checked element, positioned or given an
+outline or a shadow, where that box is neither the element, an ancestor nor
+an element it holds (a sibling or an earlier element, say): neither pin
+reaches it, so a rule for its class need not be pinned. The test reads
+comments and strings as CSS does, a backslash in a string escaping the
+character after it, so a brace in either delimits no rule, and a bracket, a
+comma or a class name in a string counts for no selector. It refuses a
 stylesheet with what it does not model, such as a backslash outside a
 string, a line break in a string, a comment between 2 characters of names in
 a selector, a brace inside brackets, a rule inside a rule or an unlisted
@@ -358,8 +381,8 @@ which runs the gate without the suite.
 
 Exit codes:
   0  every check above passes
-  1  a family link, family page, id, retired attribute, inline code, asset token, class pin, or header discipline
-     regressed
+  1  a family link, family page, id, retired attribute, inline code, asset token, stylesheet, class pin, pinned
+     attribute, later html or body attribute, or header discipline regressed
   3  a file could not be read, a gate it reuses is missing, or the Python version is 3.9 or later and
      either not 3.14 or not one that tools/check-inline-code.py supports
 """
@@ -373,7 +396,6 @@ import sys
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import unquote
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PAGE = REPO_ROOT / "site" / "install" / "index.html"
@@ -393,7 +415,8 @@ ALLOWED_SCRIPTS = ("copy.js", "search.js", "rail.js")
 SCHEME_TAG = re.compile(r'<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>')
 # Every other script loads in exactly this form.
 DEFERRED_TAG = re.compile(r'<script src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+" defer></script>')
-SITE_SHEET = re.compile(r'<link rel="stylesheet" href="/assets/site\.css\?v=[0-9a-f]{12}">')
+# Every stylesheet loads in exactly this form, 1 of the 3 that the rule pin of tools/test-install-page.py reads.
+SHEET_TAG = re.compile(r'<link rel="stylesheet" href="/assets/baseline/(fonts|palettes|baseline)\.css\?v=[0-9]+\.[0-9]+\.[0-9]+">')
 DRAFT_PATTERN = "/draft/*"
 # The (major, minor) Python versions the gate is tested on; main() refuses every other version, 3.9 or later,
 # with exit 3 before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
@@ -516,6 +539,13 @@ CLASS_PIN = {
         {"a": ("start",)}, {**PIN_ANCESTORS, "div": ("callout", "doc", "next", "wrap")}, {"span": ("arrow",)}
     ),
 }
+# Check 8: the attributes that an attribute selector of a rule the rule pin holds names, hidden aside, which the gate
+# reads as hiding; no checked element, ancestor or element it holds may carry one. tools/test-install-page.py fails
+# unless these are exactly the attributes the pinned rules name.
+RULE_ATTRIBUTES = (
+    "aria-current", "aria-disabled", "aria-pressed", "data-col-toggles", "data-grp", "data-heat", "data-preset",
+    "data-scheme",
+)
 
 
 def class_names(attrs: dict[str, str]) -> list[str]:
@@ -572,6 +602,10 @@ class PageParser(HTMLParser):
         self.page_hidden = False
         # Whether any html or body start tag carries dir: a browser adds it to the page's own element (reorderers).
         self.page_dir = False
+        # The html and body start tags read so far, and each but the first of each that carries an attribute, which
+        # a browser adds to the page's own element, an ancestor of every checked element (check 8).
+        self.page_tags: Counter = Counter()
+        self.later_attrs: list[str] = []
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
         # A browser keeps the first of 2 attributes with the same name, so <p class="vh" class="x"> hides.
@@ -592,6 +626,10 @@ class PageParser(HTMLParser):
             self.page_hidden = True
         if tag in ("html", "body") and "dir" in attrs:
             self.page_dir = True
+        if tag in ("html", "body"):
+            self.page_tags[tag] += 1
+            if self.page_tags[tag] > 1 and attrs:
+                self.later_attrs.append(f"<{tag} {' '.join(attrs)}>")
         # A details without open renders only its first summary child; the rest of its content is hidden.
         if parent and parent["closed"]:
             if tag == "summary" and not parent["summary"]:
@@ -631,11 +669,12 @@ class PageParser(HTMLParser):
                 "inert": inert,
             }
             self.anchors.append(anchor)
-        # "dir" records a bdo element or a dir attribute on the element itself, shown or hidden (reorderers).
+        # "dir" records a bdo element or a dir attribute on the element itself, shown or hidden (reorderers), and
+        # "attrs" the names of its attributes (check 8).
         self.elements.append(
             {"tag": tag, "classes": classes, "id": attrs.get("id"), "hidden": hiding, "order": self.order,
              "parent": parent["order"] if parent else None, "text": False, "chars": "", "bidi": False,
-             "dir": tag == "bdo" or "dir" in attrs}
+             "dir": tag == "bdo" or "dir" in attrs, "attrs": tuple(attrs)}
         )
         heading = None
         if tag == "h1":
@@ -792,7 +831,8 @@ def parse(text: str) -> PageParser:
 
 
 def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
-    """Checks 2, 3 (duplicates), 5 and 6, which hold on all 6 pages."""
+    """Checks 2, 3 (duplicates), 5 and 6, and check 8's refusal of a later html or body start tag with attributes,
+    which hold on all 6 pages."""
     problems: list[str] = []
     for carrier in parser.retired:
         problems.append(f"{where}: the retired selector attribute appears on {carrier}; this site no longer uses select.js.")
@@ -848,9 +888,18 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
         problems.append(f"{where}: scheme.js does not load before the first stylesheet.")
     elif scheme_tags[0] in loads.outside_head or any(at in loads.outside_head for at, _, _ in loads.sheets):
         problems.append(f"{where}: scheme.js or a stylesheet does not load inside <head>.")
-    site_sheets = [at for at, attrs, _ in loads.sheets if "site.css" in unquote(attrs.get("href", ""))]
-    if ("/assets/site.css" in text or site_sheets) and not (site_sheets and all(SITE_SHEET.match(text, at) for at in site_sheets)):
-        problems.append(f"{where}: site.css is not loaded with a ?v= content token.")
+    # Every stylesheet is 1 of the 3 the rule pin reads; the text match also finds a tag in a comment or in text.
+    sheet_tags = [tag for _, _, tag in loads.sheets]
+    sheet_tags += [match.group(0) for match in re.finditer(r"<link\b[^>]*>", text, re.I)
+                   if "stylesheet" in match.group(0).lower()]
+    for tag in dict.fromkeys(sheet_tags):
+        if not SHEET_TAG.fullmatch(tag):
+            problems.append(f"{where}: {tag} is not 1 of fonts.css, palettes.css and baseline.css from /assets/baseline/ "
+                            "with a ?v=X.Y.Z token, the only stylesheets that the rule pin reads.")
+    # Check 8: a browser adds the attributes of a later html or body start tag to the page's own element.
+    for tag in parser.later_attrs:
+        problems.append(f"{where}: a later html or body start tag carries attributes ({tag}), which a browser adds to "
+                        "the page's own element, around every checked element.")
     return problems
 
 
@@ -928,7 +977,8 @@ def pin_positions(parser: PageParser, element: dict) -> list[tuple[int, dict]]:
 
 
 def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, dict]]) -> list[str]:
-    """Check 8: each class that a checked element, an ancestor or an element it holds carries outside CLASS_PIN."""
+    """Check 8: each class that a checked element, an ancestor or an element it holds carries outside CLASS_PIN, and
+    each attribute of RULE_ATTRIBUTES that one of them carries."""
     problems: dict[str, None] = {}
     for kind, element in kinds:
         for position, other in pin_positions(parser, element):
@@ -939,6 +989,10 @@ def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, di
                 if name not in allowed:
                     problems[f"{where}: {what} carries the class {name!r}, which the committed pages do not give "
                              f"{tag} there (CLASS_PIN); a stylesheet rule for it can hide or move {kind}."] = None
+            for name in other["attrs"]:
+                if name in RULE_ATTRIBUTES:
+                    problems[f"{where}: {what} carries the attribute {name!r}, which a pinned stylesheet rule names "
+                             f"(RULE_ATTRIBUTES); that rule can hide or move {kind}."] = None
     return list(problems)
 
 
@@ -1203,9 +1257,10 @@ def main() -> int:
         "list with a step read as visible, none of them read as hidden, and a link with text read as visible back "
         "to the downloads and to the test; ids "
         "are unique, every checked element, its ancestors and what it holds carry only the classes the committed "
-        "pages give them there, no html or body start tag on the six pages carries dir, no retired selector attribute "
+        "pages give them there and no attribute that a pinned stylesheet rule names, no html or body start tag on "
+        "the six pages carries dir, and none but the first of each carries an attribute, no retired selector attribute "
         "remains, the six pages pass the inline-code checks, the "
-        "light and dark switch included, load the baseline's versioned stylesheets and copy.js, load scheme.js "
+        "light and dark switch included, load the baseline's versioned stylesheets and no other, and copy.js, load scheme.js "
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
         "the /* rule of site/_headers carries exactly the shared policy."
     )

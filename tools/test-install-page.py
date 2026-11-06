@@ -17,7 +17,10 @@ unnoticed.
 It also fails unless the gate's CLASS_PIN (check 8) holds exactly the classes
 that the 6 committed pages give each kind of checked element, each of its
 ancestors and each element it holds, by tag, so that the class pin cannot be
-widened unnoticed.
+widened unnoticed, and unless the gate's RULE_ATTRIBUTES (check 8) holds
+exactly the attributes, ``hidden`` aside (HIDING_ATTRIBUTE), that the
+attribute selectors of the rules rule_pins() holds name, read from each rule's
+name with its strings blanked, so that the gate cannot drop one unnoticed.
 
 It also pins the stylesheets every install page loads (fonts.css,
 palettes.css and baseline.css under site/assets/baseline/): it fails unless
@@ -30,7 +33,8 @@ in its list, inside an at-rule or not: a type selector, or ``*``, and the class
 selectors decide, and what it does not read by names and classes (a combinator
 and what comes before it, an attribute selector, an id, a pseudo-class with or
 without arguments, :has(), :is() and :not() among them, and a pseudo-element)
-counts as matching, as does a namespace. It also holds every keyframe and
+counts as matching, as does a namespace; a class name, a bracket or a comma
+in a string counts for nothing. It also holds every keyframe and
 @font-face rule, and every rule that sets a custom property that a rule it
 holds names in var(), compared with regard to case, as CSS compares them, until
 no more is added. Each rule is held verbatim, by the first 16 hexadecimal
@@ -58,8 +62,10 @@ needs CLASS_PIN of the gate and the committed pages changed together, which
 widens the rule pin in turn.
 
 The reader is deliberately small. It reads comments and strings as CSS does,
-so a brace, a ``;`` or a comment opener in a string, or a brace or a quote in a
-comment, delimits nothing, and it fails when a stylesheet cannot be read, holds
+a backslash in a string escaping the character after it (a quote after an odd
+run of backslashes ends no string), so a brace, a ``;``, a comma, a bracket or
+a comment opener in a string, or a brace or a quote in a comment, delimits
+nothing, and it fails when a stylesheet cannot be read, holds
 no rule, or holds what it does not model: an unclosed comment, a comment
 between 2 characters of names in a selector, where CSS reads no space
 (``.a/**/b`` is not ``.a b``), a string that a line break, escaped or not, or its end leaves
@@ -73,7 +79,10 @@ unless stylesheet_problems(), which compares the committed stylesheets with
 RULE_PIN, gives each of PIN_CASES, on a copy of the 3 stylesheets and RULE_PIN
 with its fault, the problems that case expects: the copy as committed passes,
 and a pinned rule changed, removed or moved, a rule the pin must hold added,
-and a pin entry with another digest each fail, naming the rule.
+a pin entry with another digest, and 4 rules that the pin must hold only
+because a string is read as CSS reads it (``h1[title="].fresh"]``,
+``h1[title="\\"].fresh"]``, ``[title="\\\\"] .fresh, h1`` and a used custom
+property set after ``content: "\\\\";``) each fail, naming the rule.
 
 It also fails unless the gate's SUPPORTED_PYTHONS is exactly 3.14 and each of
 its versions is in SUPPORTED_PYTHONS of tools/check-inline-code.py, and runs the
@@ -141,8 +150,12 @@ STEPS = '<ol class="steps">'
 ROW_DIR = "an element that starts before the paragraph of family links ends is a bdo or carries dir"
 H1_DIR = "an element that starts before the <h1> ends is a bdo or carries dir"
 PAGE_DIR = "an html or body start tag carries dir"
-# The gate's message for a class outside its CLASS_PIN.
+# The gate's messages for a class outside its CLASS_PIN, an attribute of its RULE_ATTRIBUTES, a later html or body
+# start tag with attributes, and a stylesheet other than the 3 the rule pin reads.
 PINNED = "which the committed pages do not give"
+RULE_NAMED = "which a pinned stylesheet rule names"
+LATER_TAG = "a later html or body start tag carries attributes"
+OTHER_SHEET = "the only stylesheets that the rule pin reads"
 # The scheme.js tag of template specification 7.33 (baseline 1.8.0), as the committed pages carry it.
 SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.8.0"></script>'
 COPY = '<script src="/assets/baseline/copy.js?v=1.8.0" defer></script>'
@@ -174,6 +187,14 @@ TYPE_NAME = re.compile(r"[\w\u0080-\U0010ffff-]+|\*")
 # bare declarations apply to an element its prelude names, say) makes the stylesheet unreadable.
 AT_RULES = ("container", "font-face", "keyframes", "media", "supports")
 URL_START = re.compile(r"url\(\s*", re.I)
+# A string as css_rules() reads it: a backslash escapes the character after it, so a quote after an odd run of
+# backslashes ends no string ("\\" holds 1 backslash, and ends at its second quote).
+STRING = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'", re.S)
+# The attribute that an attribute selector names, with or without a namespace, once its strings are blanked; HTML
+# reads attribute names in a selector without regard to case.
+ATTRIBUTE_NAME = re.compile(r"\[[ \t\n\r\f]*(?:(?:[\w\u0080-\U0010ffff-]+|\*)?\|)?([\w\u0080-\U0010ffff-]+)")
+# The attribute the pinned rules name that the gate's RULE_ATTRIBUTES leaves out, because the gate reads it as hiding.
+HIDING_ATTRIBUTE = "hidden"
 # Stylesheets for sheet_problems() with CASE_CLASSES and the pin of CASE_RULES in place of the gate's CLASS_PIN and
 # RULE_PIN: an h1 that may carry the class x, and a pin of the 3 rules of CASE_SHEET (the second and third set the custom property
 # the first uses, and 1 it uses). Each case gives the words that 1 of its problems holds, or "" for none; a brace in a
@@ -495,6 +516,12 @@ CASES = [
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", '>Claude<span hidden><b dir="rtl"></span><')), (1, ROW_DIR)),
     # A browser adds the attributes of a later html or body start tag to the page's own element.
     ("a later body start tag with a dir attribute", edit(PAGE, "</main>", '</main><body dir="rtl">'), (1, PAGE_DIR)),
+    # The class pin reads the page's own html and body; a browser adds a later tag's attributes to them, so a later
+    # html or body start tag may carry none.
+    ("a later body start tag with a class", edit(PAGE, "</main>", '</main><body class="fresh">'), (1, LATER_TAG)),
+    ("a later html start tag with a class on a family page", edit(CLAUDE, "</main>", '</main><html class="fresh">'),
+        (1, LATER_TAG)),
+    ("a later body start tag with no attribute", edit(PAGE, "</main>", "</main><body>"), 0),
     ("the pick label emptied", edit(PAGE, PICK, PICK.replace(">Pick your AI<", "><")),
         (1, 'the "pick" label has no text that reads as visible')),
     ("the pick label of only U+200B", edit(PAGE, PICK, PICK.replace(">Pick your AI<", ">" + chr(0x200B) + "<")),
@@ -645,6 +672,17 @@ CASES = [
     ("a family page link back whose arrow carries a further class",
         edit(CHATGPT, '<span class="arrow"', '<span class="arrow fresh"'),
         (1, "a span inside a link back carries the class 'fresh'")),
+    # Nor may any of them carry an attribute that a pinned rule names (the gate's RULE_ATTRIBUTES): baseline.css hides
+    # [data-preset] and [data-col-toggles] in print.
+    ("a family page heading with data-preset", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1 data-preset>ChatGPT</h1>"),
+        (1, "the <h1> carries the attribute 'data-preset', " + RULE_NAMED)),
+    ("div.doc with data-col-toggles", edit(PAGE, '<div class="doc">', '<div class="doc" data-col-toggles>'),
+        (1, "a div around the hero's h1 carries the attribute 'data-col-toggles', " + RULE_NAMED)),
+    ("a family link whose label is in a span with data-preset",
+        edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", '><span data-preset="x">Claude</span><')),
+        (1, "a span inside a family link carries the attribute 'data-preset', " + RULE_NAMED)),
+    ("a family page heading with an attribute no pinned rule names",
+        edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1 data-note="x">ChatGPT</h1>'), 0),
     ("a family page step list hidden", edit(OTHER, '<ol class="steps">', '<ol class="steps" hidden>'), 1),
     ("a family page step list with the class vh", edit(CHATGPT, '<ol class="steps">', '<ol class="steps vh">'), 1),
     ("a family page step list with the class only-dark", edit(COPILOT, '<ol class="steps">', '<ol class="steps only-dark">'), 1),
@@ -887,8 +925,17 @@ CASES = [
         edit(OTHER, "</body>", LATER + "\n</body>")), 1),
     ("a second element with data-scheme-toggle on a family page", edit(CHATGPT, "</main>",
         '<p><button class="scheme" type="button" data-scheme-toggle hidden><span class="vh">Dark mode</span></button></p></main>'), 1),
+    # The rule pin reads only the 3 baseline stylesheets, so no other loads, site.css with its content token included.
     ("site.css without its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?w=1">\n</head>'), 1),
-    ("site.css with its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">\n</head>'), 0),
+    ("site.css with its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">\n</head>'),
+        (1, OTHER_SHEET)),
+    ("another baseline stylesheet on a family page", edit(GEMINI, "</head>",
+        '<link rel="stylesheet" href="/assets/baseline/print.css?v=1.8.0">\n</head>'), (1, OTHER_SHEET)),
+    ("a baseline stylesheet with a media attribute", edit(PAGE, LATER, LATER.replace('">', '" media="all">')),
+        (1, OTHER_SHEET)),
+    # As for scripts, the text match also finds a tag that the parser reads as a comment or as text.
+    ("another stylesheet only inside a comment", edit(PAGE, "</head>",
+        '<!--<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">-->\n</head>'), (1, OTHER_SHEET)),
     ("site.css without its token beside a token inside a comment", edit(PAGE, "</head>",
         '<!--<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">--><link rel="stylesheet" href="/assets/site.css?w=1">\n</head>'), 1),
     # Until PR 218 this was a named residual: the gate matched the tag as text, so a tag in a comment counted.
@@ -963,6 +1010,12 @@ BASELINE = STYLESHEETS[2]
 INLINE_RULE = ".btn.inline { position: static; display: inline-block; text-decoration: none; margin: 0 0.6rem 0.6rem 0; }"
 HOVER_RULE = ".btn.inline:hover { color: var(--text); }"
 WIDER_RULE = INLINE_RULE.replace("static", "absolute")
+# A class name, a ] and a comma in a string count for no selector, and a quote after an even run of backslashes ends
+# its string: "\\" is 1 backslash. Each rule can match a pinned element, or sets a custom property a pinned rule uses.
+STRING_RULE = 'h1[title="].fresh"] { display: none; }'
+QUOTE_RULE = 'h1[title="\\"].fresh"] { display: none; }'
+ESCAPE_RULE = '[title="\\\\"] .fresh, h1 { display: none; }'
+ESCAPE_PROPERTY_RULE = '.fresh { content: "\\\\"; --text: red; }'
 PIN_CASES = (
     ("the committed stylesheets and pin", None, ()),
     ("a pinned rule changed", edit(BASELINE, INLINE_RULE, WIDER_RULE),
@@ -974,6 +1027,11 @@ PIN_CASES = (
         (f"{GONE} 'baseline.css: .btn.inline:hover' there", f"the rule '{BASELINE}: {HOVER_RULE}', {ADDED}")),
     ("a pin entry with another digest", repin("baseline.css: .btn.inline"),
         (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE}: {INLINE_RULE}', {ADDED}")),
+    *[(name, append(BASELINE, f"\n{rule}\n"), (f"the rule {f'{BASELINE}: {rule}'!r}, {ADDED}",)) for name, rule in (
+        ("a pinned name with a class name and a ] in a string", STRING_RULE),
+        ("a pinned name with an escaped quote, a ] and a class name in a string", QUOTE_RULE),
+        ("a pinned name after a string that ends in an escaped backslash", ESCAPE_RULE),
+        ("a used custom property after a string that ends in an escaped backslash", ESCAPE_PROPERTY_RULE))],
 )
 
 
@@ -1091,15 +1149,17 @@ def css_rules(css: str) -> tuple[list[tuple[str, str, tuple[str, ...]]], str]:
     return ([], problem) if (problem := unread_at_rule("".join(text))) else (rules, "")
 
 
+def blank_strings(text: str) -> str:
+    """text with each character inside a string (STRING) read as U+0000, so that no bracket, separator or name in a
+    string counts, and every character keeps its place."""
+    return STRING.sub(lambda match: match.group(0)[0] + "\0" * (len(match.group(0)) - 2) + match.group(0)[-1], text)
+
+
 def split_outside(text: str, separators: str) -> list[str]:
     """The parts of text between the characters of separators that sit outside every string, bracket and parenthesis."""
-    parts, start, depth, quote = [], 0, 0, ""
-    for at, char in enumerate(text):
-        if quote:
-            quote = "" if char == quote and text[at - 1] != "\\" else quote
-        elif char in "\"'":
-            quote = char
-        elif char in "([":
+    parts, start, depth = [], 0, 0
+    for at, char in enumerate(blank_strings(text)):
+        if char in "([":
             depth += 1
         elif char in ")]":
             depth -= 1
@@ -1114,11 +1174,12 @@ def can_match(prelude: str, classes: dict[str, set[str]]) -> bool:
     may carry; any element may carry none), read by the subject of each selector, its last compound selector, and
     conservatively: what it does not read by names and classes (a combinator and what comes before it, an attribute
     selector, an id, a pseudo-class with or without arguments, :has(), :is() and :not() among them, and a
-    pseudo-element) is taken to match, and a namespace makes the selector match."""
+    pseudo-element) is taken to match, and a namespace makes the selector match. What sits in a string counts for
+    nothing (blank_strings)."""
     for selector in split_outside(prelude, ","):
         subject = split_outside(selector.strip(" "), " >+~")[-1]
         depth, kept = 0, []
-        for char in subject:
+        for char in blank_strings(subject):
             depth += char in "(["
             kept.append(char if depth == 0 else "")
             depth -= char in ")]"
@@ -1302,6 +1363,28 @@ def class_pin_problems() -> list[str]:
     return problems
 
 
+def rule_attributes(held: list[tuple[str, str]]) -> set[str]:
+    """The attributes that the attribute selectors of the rules of held name, read from each rule's name (its file
+    name and preludes) with its strings blanked, in lower case."""
+    return {name.lower() for rule, _ in held for name in ATTRIBUTE_NAME.findall(blank_strings(rule))}
+
+
+def attribute_pin_problems() -> list[str]:
+    """The gate's RULE_ATTRIBUTES holds exactly the attributes that the attribute selectors of the committed rules the
+    rule pin holds name, HIDING_ATTRIBUTE aside, so that the gate cannot drop one unnoticed."""
+    held, problems = committed_rules()
+    if problems:
+        return problems
+    try:
+        recorded = set(load_gate().RULE_ATTRIBUTES)
+    except Exception as error:
+        return [f"RULE_ATTRIBUTES could not be read from tools/{GATE.name}: {error!r}"]
+    named = rule_attributes(held) - {HIDING_ATTRIBUTE}
+    if recorded != named:
+        return [f"RULE_ATTRIBUTES of tools/{GATE.name} holds {sorted(recorded)}; the pinned rules name {sorted(named)}."]
+    return []
+
+
 def version_problems() -> list[str]:
     """The gate runs only on 3.14, and under another version, 3.9 or later, exits 3 before it prints a result line."""
     problems: list[str] = []
@@ -1371,6 +1454,7 @@ def main() -> int:
         return 1 if problems else 0
     failures: list[str] = statement_problems()
     failures += [f"the class pin: {problem}" for problem in class_pin_problems()]
+    failures += [f"the pinned attributes: {problem}" for problem in attribute_pin_problems()]
     failures += [f"the stylesheets: {problem}"
                  for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
     failures += [f"the Python version: {problem}" for problem in version_problems()]
@@ -1394,7 +1478,8 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
     print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
-          f"ALLOWED_SCRIPTS, the check of CLASS_PIN, the Python version checks, the {len(SHEET_CASES)} cases of the "
+          f"ALLOWED_SCRIPTS, the checks of CLASS_PIN and RULE_ATTRIBUTES, the Python version checks, the "
+          f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "
           "stylesheets passed.")
     return 0
