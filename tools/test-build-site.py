@@ -612,9 +612,11 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
         return [f"{page} carries an About row dot with no space after it, the 1.6.1 markup (specification 7.24)"]
     block = about_block(base)
     at = text.find(block)
-    if text.count(block) != 1 or text[at - len("</div>"):at] != "</div>":
-        return [f"{page} lacks the whole About block once, byte for byte, right after a </div> (specification 7.24)"]
-    region = parsed.ends.get(position(text, at - len("</div>")))
+    # The end tag that ends where the block starts: </div>, or </div with ASCII whitespace before its >.
+    closing = re.search(r"</div[ \t\n\f\r]*>\Z", text[:at]) if text.count(block) == 1 else None
+    if closing is None:
+        return [f"{page} lacks the whole About block once, byte for byte, right after a div end tag (specification 7.24)"]
+    region = parsed.ends.get(position(text, closing.start()))
     nearest = [ancestor for ancestor in parsed.lineage[values[0]] if parsed.starts[ancestor][0] == "div"
                and "region" in class_names(parsed.starts[ancestor][1].get("class", ""))][-1:]
     if region is None or [region[3]] != nearest:
@@ -695,6 +697,8 @@ REFUSALS = [
     ("a module script", inject('<script type="module">alert(1)</script>')),
     ("an on* handler", inject('<p onclick="x()">x</p>')),
     ("what this is framing", inject("<p>What this is not: a filter.</p>")),
+    ("what this is framing with a character reference", inject("<p>What&#32;this is not: a filter.</p>")),
+    ("an em dash as a character reference", inject("<p>x &mdash; y</p>")),
     ("a second h1", inject("<h1>Another</h1>")),
     ("a duplicate id", inject('<p id="watch">again</p>')),
     ("an unknown token", inject("<p>{{nonsense}}</p>")),
@@ -834,6 +838,9 @@ REGION_CLASS_RULE = "there a page source carries only the class names of VALUE_R
 REGION_CHILDREN_RULE = "the value paragraph's region at line"
 REGION_PIN_RULE = "so it holds only a p.lbl with text that shows, then the div that holds the p.value"
 REGION_LABEL = '<p class="lbl">What it gives you</p>'
+# A class name of VALUE_REGION_CLASSES away from its 1 place in the value region (since DISCOVERY round 7): region only
+# on the region, lbl only on its label and value only on the p.value, since .region sets display: grid.
+REGION_PLACE_RULE = "is away from its place in the value paragraph's region"
 # A class of the generator's PLACED_CLASSES, which a stylesheet rule uses to place an element out of its source order,
 # outside the place the committed sources use it; an element of PLACED_CHILDREN whose children are outside their
 # order; a hero image whose alt text is not site.json's logo_alt; and a class that only the generator's rail carries.
@@ -1327,6 +1334,32 @@ SOURCE_REFUSALS = [
     ("a button.copy with hidden after a comment and a line feed in a pre.hascopy",
         inject('<pre class="hascopy"><!--x-->\n<button class="copy" type="button" hidden>Copy</button>text</pre>'),
         PLACED_RULE),
+    # Built with exit 0 at 9134d0b (DISCOVERY round 7): the placement pins' own parser closed a self-closing ol, so
+    # the link lost its ol.entries, where a browser and PageScan keep the ol open; the pins now read PageScan.
+    ("the label in an ol.entries link after a self-closing ol start tag, its span.d before its span.t", inject(
+        '<ol class="entries"/><li><a href="{{base}}install/"><span class="d">project</span>'
+        '<span class="t">About this</span></a></li></ol>'), ORDER_RULE),
+    # Built with exit 0 at 9134d0b: region, lbl or value away from its place in the value region, where .region
+    # lays out the value paragraph as a grid.
+    ("the value paragraph with the region class", lambda root: edit(root, HOME, VALUE, '<p class="value region">'),
+        REGION_PLACE_RULE),
+    ("the value paragraph with the region class and its content in an em", lambda root: (
+        edit(root, HOME, VALUE, '<p class="value region"><em>'),
+        edit(root, HOME, VALUE_END, VALUE_END.replace("</p>", "</em></p>", 1))), REGION_PLACE_RULE),
+    ("the value paragraph with the lbl class", lambda root: edit(root, HOME, VALUE, '<p class="value lbl">'),
+        REGION_PLACE_RULE),
+    ("a span.lbl in the value region's label", lambda root: edit(
+        root, HOME, REGION_LABEL, '<p class="lbl"><span class="lbl">What it gives you</span></p>'), REGION_PLACE_RULE),
+    ("a span.value in the value region's label", lambda root: edit(
+        root, HOME, REGION_LABEL, '<p class="lbl"><span class="value">What</span> it gives you</p>'),
+        REGION_PLACE_RULE),
+    # Built with exit 0 at 9134d0b: at 600 px and below the hero image sits beside the kicker, before the statement,
+    # so a label split between the kicker and site.json's logo_alt shows as the label; the label rule now also reads
+    # the hero in that order.
+    ("the label split between the hero's kicker and logo_alt in home.html", lambda root: (
+        edit(root, HOME, HERO_KICKER, '<p class="lbl gold">About this</p>'),
+        edit(root, HOME, HERO_ALT, 'alt="PROJECT"'),
+        edit(root, "site-src/site.json", f'"logo_alt": "{HERO_ALT[5:-1]}"', '"logo_alt": "PROJECT"')), LABEL_RULE),
 ] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
      for character in LABEL_IGNORED] + [
     # A page source carries no dialog (SOURCE_ELEMENTS) and no inert or popover (SOURCE_ATTRIBUTES);
@@ -1403,6 +1436,12 @@ SOURCE_PASSES = [
         inject('<pre class="hascopy">\n<button class="copy" type="button" hidden>Copy</button>text</pre>')),
     ("an aria-hidden label in the value region", lambda root: edit(
         root, HOME, REGION_LABEL, '<p class="lbl" aria-hidden="true">What it gives you</p>')),
+    # Since DISCOVERY round 7 (exit 1 at 9134d0b): the About block goes where the parser read the value region's end
+    # tag end, which the grammar admits with ASCII whitespace before its >, and validate() reads it there too.
+    ("the value region's end tag with a space before its >",
+        lambda root: edit(root, HOME, VALUE_END, VALUE_END[:-1] + " >")),
+    ("the value region's end tag with a line feed before its >",
+        lambda root: edit(root, HOME, VALUE_END, VALUE_END[:-1] + "\n>")),
 ]
 
 
@@ -1418,6 +1457,32 @@ RESET_PASSES = [
     ("the label in mixed case in a span.count inside a p.reg-cap after the block",
         f'<p class="reg-cap">x <span class="count">{MIXED_LABEL}</span></p>'),
 ]
+
+
+def check_rail_reader(failures: list[str]) -> int:
+    """The rail reads each h2 with an id as the generator's parser does (since DISCOVERY round 7; at 9134d0b a regex
+    needed exactly id=" and </h2>, so the first 2 cases dropped an entry or ran one into the prose with exit 0): with
+    spaces around an h2's =, a space before its end tag's >, or its id attribute in upper case after a class, the
+    demo page builds with the rail that its committed source gives."""
+    cases = [
+        ("spaces around an h2's =", '<h2 id="try">', '<h2 id = "try">'),
+        ("a space before an h2's end tag's >", "Watch it work</h2>", "Watch it work</h2 >"),
+        ("an h2's id attribute in upper case after a class", '<h2 id="default">', '<h2 class="sec" ID="default">'),
+    ]
+    rails = []
+    for name, old, new in [("the committed demo page", "", "")] + cases:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = make_root(Path(scratch))
+            if old:
+                edit(root, PAGE, old, new)
+            result = run(root, "--out", str(Path(scratch) / "out"))
+            built = Path(scratch) / "out" / "demo" / "index.html"
+            rail = re.search(r'<nav class="rail".*?</nav>', built.read_text(encoding="utf-8")) if built.is_file() else None
+            rails.append(rail.group(0) if rail else None)
+            if result.returncode != 0 or rail is None or (old and rails[-1] != rails[0]):
+                failures.append(f"rail reader '{name}': exit {result.returncode}, expected 0 with the committed rail "
+                                f"({result.stderr.strip()[:200] or (rails[-1] or 'no rail')[-200:]})")
+    return len(cases)
 
 
 def check_source_refusals(failures: list[str]) -> int:
@@ -1837,6 +1902,10 @@ def check_about_block(failures: list[str]) -> int:
             (VALUE_END, VALUE_END.replace("</p></div></div>", "</p></p><div></div></div>"))], region_rule),
         ("an aria-hidden label in the value region",
             [(REGION_LABEL, '<p class="lbl" aria-hidden="true">What it gives you</p>')], None),
+        # Since DISCOVERY round 7: the block starts where the region's end tag ends as the parser reads that tag,
+        # which may hold ASCII whitespace before its >.
+        ("the value region's end tag with a space before its >", [("</div>" + block, "</div >" + block)], None),
+        ("the value region's end tag with a line feed before its >", [("</div>" + block, "</div\n>" + block)], None),
         ("a second label split by an aria-hidden span and a vh span in a p.lbl after the block",
             [(block, block + '<p class="lbl"><span aria-hidden="true">About this</span><span class="vh">Read more'
                               "</span> project</p>")], label_rule),
@@ -2200,9 +2269,10 @@ def check_helper_reader(failures: list[str]) -> int:
 
 def check_page_rules(failures: list[str]) -> int:
     """The rules validate() holds for markup that the page source grammar keeps out of every page source, so that
-    only the generator's own markup could carry it, and for a bidi formatting character, which with_about() refuses
-    in a page source and validate() in any text the generator writes: called directly on committed pages with 1
-    snippet after the h1, validate() refuses each by its rule."""
+    only the generator's own markup could carry it, for a bidi formatting character, which with_about() refuses
+    in a page source and validate() in any text the generator writes, and for an en or em dash and "what this is"
+    written with character references: called directly on committed pages with 1 snippet after the h1, validate()
+    refuses each by its rule."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     pages = {entry["id"]: entry for entry in config["pages"]}
@@ -2219,6 +2289,12 @@ def check_page_rules(failures: list[str]) -> int:
         ("a bare svg outside the switch", "license", "/", "<svg></svg>", "an inline <svg> other than the light and dark"),
         ("U+202E as a character reference", "license", "/", "<p>&#x202E;x</p>", PAGE_BIDI_RULE),
         ("U+2067 as written", "license", "/", "<p>x\u2067y</p>", PAGE_BIDI_RULE),
+        # Since DISCOVERY round 7 the dash refusal reads character references too, and "what this is" is read in the
+        # text the parser reads, character references decoded.
+        ("an em dash as a character reference", "license", "/", "<p>x &mdash; y</p>", "an en or em dash"),
+        ("an en dash as a numeric character reference", "license", "/", "<p>1&#8211;2</p>", "an en or em dash"),
+        ("what this is framing with a character reference", "license", "/", "<p>What&#32;this is not.</p>",
+            '"what this is" framing'),
     ]
     for name, page_id, base, snippet, rule in cases:
         h1 = re.search(r"<h1>[^<]*</h1>", texts[page_id]).group(0)
@@ -2549,6 +2625,7 @@ def main() -> int:
     ran += check_refusals(failures)
     ran += check_source_refusals(failures)
     ran += check_source_passes(failures)
+    ran += check_rail_reader(failures)
     ran += check_unreadable(failures)
     ran += check_unreadable_reader(failures)
     ran += check_helper_reader(failures)
