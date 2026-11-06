@@ -207,11 +207,13 @@ text in source order, so text that a browser shows beside other text in
 another grid column (the rail beside the text column above 1000 px, a label
 column beside its content) counts only in that order, other than in the
 hero, whose text it also reads in its narrow-width order (at 600 px and below
-the hero image sits beside the kicker, before the statement), with the
+the hero image sits in the kicker's row, before the statement), with the
 image's alt text, ``site.json``'s ``logo_alt``, moved to the end of the
-kicker, so a label split between ``logo_alt`` and the kicker or the statement
-counts; and no rule reads a ``transform`` or a negative margin that
-moves an element without reordering it (``.start:hover .arrow``,
+kicker when the first child of the ``div.hero-text`` is the kicker (a
+``p.lbl``), and otherwise to where the ``div.hero-text`` starts, so a label
+split between ``logo_alt`` and the kicker or the statement counts, with a
+kicker or without one; and no rule reads a ``transform`` or a negative
+margin that moves an element without reordering it (``.start:hover .arrow``,
 ``.code-note``, ``.verified``). The label
 rule reads a tie
 in specificity between an uppercase and a reset selector as upper case, and
@@ -424,8 +426,9 @@ starts:
   browser shows them in source order;
 - an image in the ``div.hero-art`` whose alt text is not ``site.json``'s
   ``logo_alt``, which ``build()`` passes to ``with_about()`` (without it, any
-  such image is refused): at 600 px and below a browser shows the image
-  beside the kicker, before the statement.
+  such image is refused): at 600 px and below a browser shows the image in
+  the kicker's row, beside the kicker if the hero has one, before the
+  statement.
 
 ``build()`` also refuses, through ``rail_pin()``, a page source that carries
 ``rail`` or ``rail-logo`` itself, or more than 1 ``<!--rail-->``: above
@@ -1557,10 +1560,12 @@ class PageScan(HTMLParser):
         # of the h2 whose text is being read.
         self.headings: list[tuple[str, list[str]]] = []
         self.heading_depth: int | None = None
-        # The hero's narrow-width order (at 600 px and below, the hero image sits beside the kicker, before the
+        # The hero's narrow-width order (at 600 px and below, the hero image sits in the kicker's row, before the
         # statement): the length of text, shown and unhidden where the first child of the first div.hero-text in a
-        # section.hero ends, and the index in each of the alt text of the first img in a div.hero-art in a
-        # section.hero (None in a reading that leaves it out).
+        # section.hero ends when that child is the kicker (a p.lbl), and otherwise where that div.hero-text starts
+        # (hero_start); and the index in each of the alt text of the first img in a div.hero-art in a section.hero
+        # (None in a reading that leaves it out).
+        self.hero_start: tuple[int, int, int] | None = None
         self.kicker_end: tuple[int, int, int] | None = None
         self.hero_alt: tuple[int | None, int | None, int | None] | None = None
 
@@ -1656,6 +1661,9 @@ class PageScan(HTMLParser):
         if tag == "h2" and attrs.get("id") and self.heading_depth is None:
             self.headings.append((attrs["id"], []))
             self.heading_depth = len(self.open)
+        if (self.kicker_end is None and tag == "div" and "hero-text" in classes and self.open
+                and self.open[-1][0] == "section" and "hero" in self.open[-1][1]):
+            self.hero_start = (len(self.text), len(self.shown), len(self.unhidden))
         parent = self.open_index[-1] if self.open_index else None
         self.elements.append((tag, classes, attrs, self.getpos(), parent, parent in self.filled))
         self.filled.add(parent)
@@ -1769,7 +1777,8 @@ class PageScan(HTMLParser):
                 self.heading_depth = None
             if (self.kicker_end is None and len(self.open) >= 2 and self.open[-1][0] == "div"
                     and "hero-text" in self.open[-1][1] and self.open[-2][0] == "section" and "hero" in self.open[-2][1]):
-                self.kicker_end = (len(self.text), len(self.shown), len(self.unhidden))
+                kicker = self.previous[0] == "p" and "lbl" in self.previous[1]
+                self.kicker_end = (len(self.text), len(self.shown), len(self.unhidden)) if kicker else self.hero_start
             if tag == "div" and "doc" in self.previous[1]:
                 self.doc_closed = True
             if len(self.open) == self.value_region:
@@ -1813,7 +1822,8 @@ class PageScan(HTMLParser):
         element that only aria-hidden="true" hides kept, since a browser shows it, then with it deleted too. Text that
         the stylesheets show in upper case (uppercase_here()) is read in upper case, so there the label counts in any
         letter case. Each reading is also read in the hero's narrow-width order, with the hero image's alt text moved
-        to the end of the kicker (kicker_end, hero_alt), and counts the more of its 2 orders."""
+        to the end of the kicker, or to the start of the hero's text when its first child is not a p.lbl (kicker_end,
+        hero_alt), and counts the more of its 2 orders."""
         counts = []
         for which, text in enumerate((self.text, self.shown, self.unhidden)):
             count = label_count("".join(text))
@@ -2158,7 +2168,7 @@ def placement_pin(shape: PageScan, where: str, logo_alt: str | None) -> None:
                              f"{order}, each at most once and in that order, and no text (PLACED_CHILDREN)")
         if key == "hero-art" and any(child[2].get("alt") != logo_alt for child in children):
             raise BuildError(f"{where}: the img in the div.hero-art {source_at(at)} has an alt text other than "
-                             "site.json's logo_alt; at 600 px and below a browser shows it beside the kicker, before "
+                             "site.json's logo_alt; at 600 px and below a browser shows it in the kicker's row, before "
                              "the statement")
 
 

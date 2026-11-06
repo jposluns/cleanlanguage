@@ -612,8 +612,9 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
         return [f"{page} carries an About row dot with no space after it, the 1.6.1 markup (specification 7.24)"]
     block = about_block(base)
     at = text.find(block)
-    # The end tag that ends where the block starts: </div>, or </div with ASCII whitespace before its >.
-    closing = re.search(r"</div[ \t\n\f\r]*>\Z", text[:at]) if text.count(block) == 1 else None
+    # The end tag that ends where the block starts, as the generator's END_TAG reads it: </div>, its name in any ASCII
+    # letter case, with ASCII whitespace before its > if any.
+    closing = re.search(r"</[dD][iI][vV][ \t\n\f\r]*>\Z", text[:at]) if text.count(block) == 1 else None
     if closing is None:
         return [f"{page} lacks the whole About block once, byte for byte, right after a div end tag (specification 7.24)"]
     region = parsed.ends.get(position(text, closing.start()))
@@ -851,6 +852,7 @@ RAIL_RULE = "which only the rail the generator writes at <!--rail--> carries"
 RAILS_RULE = "more than 1 <!--rail-->"
 HERO_KICKER = '<p class="lbl gold">A skill you install once, anywhere.</p>'
 HERO_ALT = 'alt="A document with a green check mark and a pen, the Clean Language mark"'
+HERO_STATEMENT = '<h1 class="statement">Precise, direct, natural <em>AI writing.</em></h1>'
 BIDI_RULE = "the page source holds a bidi formatting character, U+"
 PAGE_BIDI_RULE = "the page holds a bidi formatting character, U+"
 BIDI = "\u061c\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
@@ -1360,6 +1362,12 @@ SOURCE_REFUSALS = [
         edit(root, HOME, HERO_KICKER, '<p class="lbl gold">About this</p>'),
         edit(root, HOME, HERO_ALT, 'alt="PROJECT"'),
         edit(root, "site-src/site.json", f'"logo_alt": "{HERO_ALT[5:-1]}"', '"logo_alt": "PROJECT"')), LABEL_RULE),
+    # Built with exit 0 at 386d98c: with no kicker, at 600 px and below the hero image still sits before the
+    # statement, which the label rule read before the image's alt text.
+    ("the label split between logo_alt and the statement of a hero with no kicker in home.html", lambda root: (
+        edit(root, HOME, HERO_KICKER + HERO_STATEMENT, '<h1 class="statement">project</h1>'),
+        edit(root, HOME, HERO_ALT, 'alt="About this"'),
+        edit(root, "site-src/site.json", f'"logo_alt": "{HERO_ALT[5:-1]}"', '"logo_alt": "About this"')), LABEL_RULE),
 ] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
      for character in LABEL_IGNORED] + [
     # A page source carries no dialog (SOURCE_ELEMENTS) and no inert or popover (SOURCE_ATTRIBUTES);
@@ -1442,6 +1450,17 @@ SOURCE_PASSES = [
         lambda root: edit(root, HOME, VALUE_END, VALUE_END[:-1] + " >")),
     ("the value region's end tag with a line feed before its >",
         lambda root: edit(root, HOME, VALUE_END, VALUE_END[:-1] + "\n>")),
+    # Since VERIFY round 7.1: that end tag in upper case, which the grammar admits (check_about_block() holds the
+    # test's About helper to it).
+    ("the value region's end tag in upper case",
+        lambda root: edit(root, HOME, VALUE_END, VALUE_END[:-6] + "</DIV>")),
+    # Since VERIFY round 7.1 (exit 1 at 386d98c for the second): with no kicker, the label rule places the hero image's
+    # alt text where the hero's text starts, before the statement, as the grid does at 600 px and below.
+    ("a hero with no kicker", lambda root: edit(root, HOME, HERO_KICKER, "")),
+    ("a hero with no kicker, its statement About this and logo_alt project", lambda root: (
+        edit(root, HOME, HERO_KICKER + HERO_STATEMENT, '<h1 class="statement">About this</h1>'),
+        edit(root, HOME, HERO_ALT, 'alt="project"'),
+        edit(root, "site-src/site.json", f'"logo_alt": "{HERO_ALT[5:-1]}"', '"logo_alt": "project"'))),
 ]
 
 
@@ -1906,6 +1925,8 @@ def check_about_block(failures: list[str]) -> int:
         # which may hold ASCII whitespace before its >.
         ("the value region's end tag with a space before its >", [("</div>" + block, "</div >" + block)], None),
         ("the value region's end tag with a line feed before its >", [("</div>" + block, "</div\n>" + block)], None),
+        # Since VERIFY round 7.1: the helper reads that end tag's name in any ASCII letter case, as the grammar does.
+        ("the value region's end tag in upper case", [("</div>" + block, "</DIV>" + block)], None),
         ("a second label split by an aria-hidden span and a vh span in a p.lbl after the block",
             [(block, block + '<p class="lbl"><span aria-hidden="true">About this</span><span class="vh">Read more'
                               "</span> project</p>")], label_rule),
