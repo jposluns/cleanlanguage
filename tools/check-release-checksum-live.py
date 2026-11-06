@@ -23,42 +23,49 @@ Behaviour:
     checksum is taken as the placeholder, so a published release fails as
     drift. Without the note, the version is read from the first sentence that
     names the published checksum's version and the checksum from the first
-    checksum element. The page must then keep the rule that
-    ``tools/check-release-links.py`` applies (download_block_problems), for
-    that version and that checksum or the placeholder: it carries the download
-    block that ``tools/build-site.py`` renders for them (download_block)
-    exactly once, byte for byte, where build() writes it, and no other part of
-    the page, comments, scripts and hidden elements included, carries the
-    checksum element's id, the class ``sum``, the not-yet-published note,
-    "published checksum" wording, a 64 digit hexadecimal value, a link to a
-    ``.sha256`` file or to a path that ``site/_redirects`` sends there, or a
-    step that tells the reader not to install the file. Since the block holds
-    the checksum the page was read by, a page that passes shows that checksum
-    and no other 64 digit hexadecimal value, whole or, in its text, in groups
-    split by whitespace, hyphens or colons, and the comparison below holds it
-    to the published one. The parsed page closes no element across a
-    ``template``, ``table`` or other scope boundary (PageReader), so markup
-    that ends the document grid inside a template, or misnests an element in
-    a table, before the block is refused. ``site/_redirects`` is a required
-    file in either state. A page that breaks the rule, or shows the
-    placeholder as the published checksum, exits 3 before any release is
-    read, as does a generator that cannot render the block.
-  - This gate keeps that rule rather than whole-page equality. The page it
-    reads is ``site/verify/index.html`` of the checked-out commit, not the
-    deployed site, so it already is the committed page; holding the deployed
-    page to it would mean fetching https://cleanlanguage.ai/verify/, and the
-    push trigger runs this gate as soon as a commit reaches main, while
-    Cloudflare Pages can still be deploying it, so the bump and the flip could
-    each fail their own push run. ``tools/check-release-links.py`` holds the
-    same committed page to the generator's whole render on every pull request
-    that changes it. What this rule leaves to that gate: it does not read the
-    meaning of prose, so a reworded or contradicting step outside the block
-    passes it. Neither gate reads the stylesheet and script files the page
-    loads, so one that hides the block passes both;
-    ``tools/check-release-links.py`` names those files and the gate that pins
-    each. Markup that a browser shows the same way but that differs inside the
-    block, such as a double space in step 1, or that gives the html element
-    its attributes in another order, is refused here too.
+    checksum element. The gate is whole-page equality: the page must equal,
+    byte for byte, the page that ``tools/build-site.py`` renders at base /
+    from the committed sources for that version, its tag and that checksum or
+    the placeholder (rendered_verify_page, verify_page), whatever version
+    SKILL.md names, as ``tools/check-release-links.py`` requires of the same
+    page for ``release.json``. The page it reads is ``site/verify/index.html``
+    of the checked-out commit, not the deployed site, so the gate fetches no
+    page of https://cleanlanguage.ai/, and a deploy that Cloudflare Pages has
+    not finished cannot fail the push run of the commit it deploys. Any other
+    page exits 3, whatever it adds, removes or hides: a contradicting step,
+    markup such as ``noscript``, ``select`` or a misnested ``details`` around
+    or before the download block, an inline script, or a second checksum in
+    any form, its groups joined by U+200B or by dots included. So does a page
+    that a browser shows the same way, such as one with a double space in
+    step 1 or with the html element's attributes in another order: the
+    committed page is always the generator's render, so the remedy is to run
+    ``tools/build-site.py``. For a clearer report, the gate first applies the
+    rule that ``tools/check-release-links.py`` also applies
+    (download_block_problems), and reports the equality only for a page that
+    keeps it: the page carries the download block that ``tools/build-site.py``
+    renders for that version and checksum (download_block) exactly once, byte
+    for byte, where build() writes it, and no other part of the page,
+    comments, scripts and hidden elements included, carries the checksum
+    element's id, the class ``sum``, the not-yet-published note, "published
+    checksum" wording, a 64 digit hexadecimal value (in its text, also in
+    groups split by whitespace, hyphens or colons), a link to a ``.sha256``
+    file or to a path that ``site/_redirects`` sends there, or a step that
+    tells the reader not to install the file. ``site/_redirects`` is a
+    required file in either state. A page that is not the render or breaks the
+    rule, or shows the placeholder as the published checksum, exits 3 before
+    any release is read, as does a generator that cannot render the block or,
+    for any reason it refuses a build, the page. A page that passes is the
+    render, so it shows the checksum it was read by in its checksum element,
+    and the comparison below holds that checksum to the published one.
+  - The equality holds the page to the generator, not the generator to what
+    it should write: a change to ``site-src/pages/verify.html``, to the
+    generator code that renders the page, or to what its head loads, made in
+    the sources and regenerated, passes this gate, a second checksum in the
+    page source included. ``tools/test-build-site.py`` pins the whole
+    rendered page in each state (VERIFY_PAGE_PIN) and the site's own
+    stylesheet (SITE_CSS_PIN), so such a change fails there until the pin is
+    updated on purpose. ``tools/check-release-links.py`` names the
+    stylesheet and script files the page loads and the gate that pins each.
   - If the release ``vX`` for that version is not published yet, the pass is
     conditional. The site is legitimately ahead of the release only when it
     names the current skill version (``Version:`` in ``cleanlanguage/skills/cleanlanguage/SKILL.md``)
@@ -118,9 +125,10 @@ Exit codes:
      its ``published_at`` is unreadable or malformed, its ``immutable`` field is
      not exactly true, the release SKILL.md names returns a status other than
      200 or 404, or the tag exists with no published release)
-  3  a required file could not be read, the verify page is in neither state
-     the generator writes or the generator could not render its download
-     block (see Behaviour), the SKILL.md Released line is
+  3  a required file could not be read, the verify page is not the page the
+     generator writes for the state it shows, or the generator could not
+     render its download block or the page (see Behaviour), the SKILL.md
+     Released line is
      malformed, a call of tools/skill-release-date.py, which runs in a
      child process, did not give a result the gate could accept (see
      run_release_date_child), or SIGCHLD could not be reset to its default
@@ -997,9 +1005,12 @@ class PageReader(HTMLParser):
     references decoded and runs of whitespace read as 1 space, so that the order of attributes, their quoting and
     the markup between words do not change what a rule sees; the same of the markup inside each comment, read
     apart (comment_text); and, at the offset of each start tag, the elements open there (open_at). Hidden elements
-    are read like any other. As in a browser, an end tag closes the nearest open element of its name only when no
-    element of SCOPE, the boundaries of HTML's default scope, is open above it, and is otherwise ignored, so that
-    ``</div>`` inside a ``template`` or ``</details>`` inside a ``table`` closes nothing outside it.
+    are read like any other. An end tag closes the nearest open element of its name only when no element of SCOPE,
+    the boundaries of HTML's default scope, is open above it, and is otherwise ignored, so that ``</div>`` inside a
+    ``template`` or ``</details>`` inside a ``table`` closes nothing outside it. That is the only part of HTML's tree
+    building it models, and a browser builds some other markup otherwise, so the reader can find the block where
+    build() writes it when a browser does not: review found the block after ``<noscript></div><div class="doc">``,
+    the same with ``select``, and ``<span><details></span>`` before step 1. Whole-page equality refuses such a page.
     tools/check-release-links.py and tools/check-release-checksum-live.py carry this class verbatim."""
 
     VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track",
@@ -1160,6 +1171,31 @@ def download_block_problems(text: str, block: str, redirects: str) -> list[str]:
     return list(dict.fromkeys(problems))
 
 
+def rendered_verify_page(version: str, checksum: str) -> bytes:
+    """site/verify/index.html as tools/build-site.py renders it at base / from the committed sources for ``version``,
+    the tag v``version`` and ``checksum`` (verify_page), whatever version SKILL.md names: the page the gate requires
+    byte for byte. Raises LookupError when the generator cannot render it, which a refusal on any page causes."""
+    try:
+        spec = importlib.util.spec_from_file_location("build_site_page", GENERATOR)
+        if spec is None or spec.loader is None:
+            raise ImportError("no loader")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        release = {"version": version, "tag": f"v{version}", "checksum": checksum}
+        return module.verify_page(module.REPO_ROOT, release)
+    except Exception as error:
+        raise LookupError(f"tools/build-site.py could not render the verify page: {error}") from error
+
+
+def first_difference(written: bytes, rendered: bytes) -> str:
+    """Where ``written`` first departs from ``rendered``, by line, for the report."""
+    lines, expected = written.split(b"\n"), rendered.split(b"\n")
+    for number, (line, wanted) in enumerate(zip(lines, expected), start=1):
+        if line != wanted:
+            return f"first at line {number}"
+    return f"the page has {len(lines)} lines, the render {len(expected)}"
+
+
 def check_site_checksum(load_code: int = 0) -> int:
     """Check the site checksum and the release date, returning the most
     severe code of the checks that ran (0 to 3), or stopping with 2 or 3 when
@@ -1205,9 +1241,20 @@ def check_site_checksum(load_code: int = 0) -> int:
         die(f"{REDIRECTS.relative_to(REPO_ROOT)} could not be read: {type(error).__name__}: {error}")
     try:
         block = download_block(version, site_sum)
+        rendered = rendered_verify_page(version, site_sum)
     except LookupError as error:
         die(str(error))
     problems = download_block_problems(verify, block, redirects)
+    # The gate: the whole page, byte for byte, as tools/build-site.py renders it from the committed sources for the
+    # version and checksum read above. The rule above names the commonest faults more clearly, so a page that breaks
+    # it is reported by it alone; both exit 3.
+    try:
+        written = VERIFY_PAGE.read_bytes()
+    except OSError as error:
+        die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} could not be read: {type(error).__name__}: {error}")
+    if not problems and written != rendered:
+        problems.append(f"is not the page tools/build-site.py renders for version {version} and that checksum from "
+                        f"the committed sources ({first_difference(written, rendered)}); run tools/build-site.py")
     if problems:
         state = "carries the not-yet-published note" if pending is not None else "shows a published checksum"
         die(f"the verify page {state}, but " + "; ".join(problems))

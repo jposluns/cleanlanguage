@@ -15,7 +15,7 @@
 <meta property="og:image" content="https://cleanlanguage.ai/images/cleanlanguage-card.png">
 <meta property="og:image:alt" content="CleanLanguage.ai: Precise, direct, natural AI writing. A skill you install once, anywhere.">
 <meta property="article:published_time" content="2026-11-03">
-<meta property="article:modified_time" content="2026-11-05">
+<meta property="article:modified_time" content="2026-11-06">
 <meta property="article:author" content="https://linkedin.com/in/jposluns">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Disclosure | CleanLanguage.ai">
@@ -31,7 +31,7 @@
   "description": "What the Clean Language project claims, the limit of each claim, and the evidence.",
   "license": "https://creativecommons.org/licenses/by-sa/4.0/",
   "datePublished": "2026-11-03",
-  "dateModified": "2026-11-05",
+  "dateModified": "2026-11-06",
   "author": {
     "@type": "Person",
     "@id": "https://cleanlanguage.ai/#jeffposluns",
@@ -89,10 +89,10 @@
 <p class="lbl sec">Entry 4</p>
 <h2 id="d-4">Downloads and checksums</h2>
 <p><strong>Claim:</strong> Each release publishes a SHA-256 checksum for each zip it ships. The verify page shows that checksum once the site is updated after the release, and until then says that the checksum is not yet published. A daily check, <code>tools/check-release-checksum-live.py</code>, reads the verify page as committed in the repository, <code>site/verify/index.html</code>, and compares the checksum it shows with the published release file; it also runs on each change to that page.
-An offline gate, <code>tools/check-release-links.py</code>, requires the committed verify page to be, byte for byte, the page the site generator writes from its sources and the release record, <code>site-src/release.json</code>, so the page carries its download steps exactly as the generator writes them, and nowhere else: the checksum and version in that record, or, while the record holds a placeholder, no checksum and 1 note that the checksum is not yet published.
-A test of the generator pins the wording and markup of those steps, so a change to them fails until the pin is updated on purpose.</p>
+That check and an offline gate, <code>tools/check-release-links.py</code>, each require the committed verify page to be, byte for byte, the page the site generator writes from its sources: the offline gate for the release record, <code>site-src/release.json</code>, and the daily check for the version and checksum the page shows. The page therefore carries its download steps exactly as the generator writes them, and nowhere else: the checksum and version in that record, or, while the record holds a placeholder, no checksum and 1 note that the checksum is not yet published.
+A test of the generator pins the whole verify page and the content of any stylesheet of the site&rsquo;s own, so a change to the page&rsquo;s text or markup, or to what it loads, fails until the pin is updated on purpose.</p>
 <p><strong>Limitation:</strong> A match shows that your copy matches the published release file. The instruction files download from this site and have no published checksum. Rebuilding the zip yourself gives the same checksum only with the same zip implementation. The daily check passes conditionally in 1 case: the verify page names the current version, that version&rsquo;s release tag does not exist yet, and the Released line of SKILL.md is well formed and present wherever the version needs one. A malformed Released line, or a tag with no published release, means the check could not complete; another version with no release fails. Between a release and the site update that follows it, the verify page still says that the checksum is not yet published, and the daily check fails if it runs in that time and can read the published release; if it cannot read that release, the check could not complete.
-The daily check holds the page to its download steps but does not read the meaning of other text on it; the offline gate covers that. Neither check reads the stylesheet and script files the page loads. The verify page loads the 3 stylesheets and 2 scripts of the site template, and <code>tools/check-baseline-pin.py</code> holds each to the file the pinned template version publishes, so an edit to one fails that gate; a new template version, adopted by updating the pin, is not checked for a rule that hides the steps. The site has no stylesheet of its own; if one is added, no check reads its rules.</p>
+Neither check reads the meaning of the page&rsquo;s text, so a change made in its sources and regenerated passes both; only the pin stops it, and updating the pin is a decision that review makes. The pin holds the page as written for a stand-in release, so a generator change that writes differently only for other release values passes it. Neither check reads the stylesheet and script files the page loads. The verify page loads the 3 stylesheets and 2 scripts of the site template, and <code>tools/check-baseline-pin.py</code> holds each to the file the pinned template version publishes, so an edit to one fails that gate; a new template version changes the page, so it fails the pin until the pin is updated. The site has no stylesheet of its own; adding one fails the pin until the pin is updated.</p>
 <p><strong>Evidence:</strong> <a href="/verify/">Verify your download</a> <a href="https://github.com/jposluns/cleanlanguage/blob/main/.github/workflows/release-checksum-live.yml" target="_blank" rel="noopener noreferrer">The daily checksum check<span class="vh"> (opens in a new tab)</span></a> <a href="https://github.com/jposluns/cleanlanguage/blob/main/tools/check-release-links.py" target="_blank" rel="noopener noreferrer">The offline release gate<span class="vh"> (opens in a new tab)</span></a> <a href="https://github.com/jposluns/cleanlanguage/releases" target="_blank" rel="noopener noreferrer">Releases<span class="vh"> (opens in a new tab)</span></a></p>
 <p class="lbl sec">Entry 5</p>
 <h2 id="d-5">Data handling</h2>

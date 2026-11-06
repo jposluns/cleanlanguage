@@ -15,7 +15,10 @@ published; a page in neither state exits 3, with 1 case for each part of the
 rule that holds the page to the download block tools/build-site.py renders for
 it, including markup that a browser shows the same way, comments and hidden
 elements, and that rule is pinned to the copy that check-release-links.py
-carries. Once the release SKILL.md names is published, its
+carries. The page must also be the generator's whole render for the version
+and checksum it shows: elsewhere the fixture page stands in for that render,
+and WholePageTest runs the real generator on a copy of its inputs, on each
+page form reported in review. Once the release SKILL.md names is published, its
 Released line (item 26) must name the UTC day of the release published_at
 record (G4), checked for the release SKILL.md names whatever version the site
 names, and that release must be immutable; an unpublished release SKILL.md
@@ -105,6 +108,47 @@ PENDING = Page("0" * 64)
 def outside(page: str, extra: str) -> str:
     """``page`` with ``extra`` after the download block, inside main."""
     return page.replace('<div class="next">', extra + '<div class="next">', 1)
+
+
+def fixture_render(version: str, checksum: str) -> bytes:
+    """The fixture page for ``version`` and ``checksum``, which stands in for the generator's whole render
+    (rendered_verify_page) in the tests that do not run the real generator on a copy of its inputs."""
+    return verify_page(version, checksum).encode("utf-8")
+
+
+# Appended to a copy of tools/build-site.py that a gate copy runs as a script (ModuleLoadTest): its verify_page()
+# returns fixture-render.html beside the copy's tools folder, which stands in for the whole render.
+STAND_IN_RENDER = (
+    "\n\ndef verify_page(root, release=None, date=None):\n"
+    "    return (root / \"fixture-render.html\").read_bytes()\n"
+)
+
+
+# The inputs tools/build-site.py renders the site from, as tools/test-build-site.py copies them.
+GENERATOR_INPUTS = (
+    "site-src", "cleanlanguage/skills/cleanlanguage/SKILL.md", "cleanlanguage/skills/cleanlanguage/references",
+    "site/downloads", "site/assets/baseline", "site/_headers", "site/_redirects", "site/robots.txt", "site/sitemap.xml",
+    "site/.well-known", "site/README.md", "site/images", ".baseline/pin.toml", "tools/sitemap-config.json",
+)
+
+
+def copy_generator_inputs(root: Path) -> None:
+    """Copy GENERATOR_INPUTS from this repository into ``root``."""
+    for relative in GENERATOR_INPUTS:
+        source, target = MODULE_PATH.parent.parent / relative, root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copyfile(source, target)
+
+
+def render_with(generator: Path, root: Path, version: str, checksum: str) -> bytes:
+    """The whole verify page as the generator at ``generator`` renders it from ``root`` for these release values."""
+    generator_spec = importlib.util.spec_from_file_location("build_site_for_fixture", generator)
+    module = importlib.util.module_from_spec(generator_spec)
+    generator_spec.loader.exec_module(module)
+    return module.verify_page(root, {"version": version, "tag": f"v{version}", "checksum": checksum})
 
 
 # Row 80: the gate runs the extractor as a separate python3 -I child, so a
@@ -281,11 +325,15 @@ class ConditionalPassTest(unittest.TestCase):
         gate.gh = unexpected_call
         gate.release_published_at = unexpected_call
         gate.release_immutable = unexpected_call
+        # The fixture page stands in for the generator's whole render; WholePageTest runs the real one.
+        self._saved_render = gate.rendered_verify_page
+        gate.rendered_verify_page = fixture_render
 
     def tearDown(self):
         (gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL, gate.release_status,
          gate.tag_status, gate.gh, gate.release_published_at,
          gate.release_immutable, gate.REDIRECTS) = self._saved
+        gate.rendered_verify_page = self._saved_render
         (gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS,
          gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT) = self._saved_child
         self._tmp.cleanup()
@@ -892,7 +940,7 @@ class ConditionalPassTest(unittest.TestCase):
                 self.fail(f"loading the gate stopped with exit {stop.code} before main ran: {err.getvalue()}")
         for name in (
             "REPO_ROOT", "VERIFY_PAGE", "SKILL", "REDIRECTS", "GENERATOR", "release_status", "tag_status", "gh",
-            "release_published_at", "release_immutable",
+            "release_published_at", "release_immutable", "rendered_verify_page",
         ):
             setattr(fresh, name, getattr(gate, name))
         return fresh
@@ -4190,8 +4238,11 @@ class ModuleLoadTest(unittest.TestCase):
             page = root / "site" / "verify" / "index.html"
             page.parent.mkdir(parents=True)
             page.write_text(VERIFY.format(version=AHEAD, checksum=OTHER_SUM), encoding="utf-8")
-            # The generator and the page source the gate renders the download block from, and site/_redirects.
-            shutil.copy2(MODULE_PATH.parent / "build-site.py", tools / "build-site.py")
+            # The generator and the page source the gate renders the download block from, and site/_redirects. The
+            # copy's verify_page() returns the fixture page, which stands in for the generator's whole render.
+            (tools / "build-site.py").write_text(
+                (MODULE_PATH.parent / "build-site.py").read_text(encoding="utf-8") + STAND_IN_RENDER, encoding="utf-8")
+            (root / "fixture-render.html").write_bytes(page.read_bytes())
             source = root / "site-src" / "pages" / "verify.html"
             source.parent.mkdir(parents=True)
             shutil.copy2(MODULE_PATH.parent.parent / "site-src" / "pages" / "verify.html", source)
@@ -4851,6 +4902,122 @@ class DisplayedSumMarkupTest(unittest.TestCase):
             f'<code id="published-checksum-old">{ZIP_SUM}</code>',
         ):
             self.assertIsNone(gate.DISPLAYED_SUM.search(page), page)
+
+
+class WholePageTest(unittest.TestCase):
+    """The gate on a copy of the generator's inputs with the real tools/build-site.py: the committed verify page is
+    the render for the version and checksum it shows, a page rendered for another version reaches the
+    inconsistency report, and every page form reported in review (DISCOVERY round 4, findings 1, 2, 4 and 6), made
+    on the page alone, in either state, exits 3 before any release is read."""
+
+    NAMES = ("REPO_ROOT", "VERIFY_PAGE", "SKILL", "REDIRECTS", "GENERATOR", "release_status", "tag_status", "gh",
+             "release_published_at", "release_immutable")
+    SUM = "0123456789abcdef" * 4
+    OTHER = "fedcba9876543210" * 4
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        copy_generator_inputs(self.root)
+        (self.root / "tools").mkdir(exist_ok=True)
+        shutil.copyfile(MODULE_PATH.parent / "build-site.py", self.root / "tools" / "build-site.py")
+        self.page = self.root / "site/verify/index.html"
+        generator_spec = importlib.util.spec_from_file_location("build_site_for_live", self.root / "tools/build-site.py")
+        self.generator = importlib.util.module_from_spec(generator_spec)
+        generator_spec.loader.exec_module(self.generator)
+        self.version = self.generator.skill_version(self.root)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def gate_run(self) -> tuple[int, str]:
+        """Run the gate on the copy in the pre-tag window, the release and its tag absent."""
+        saved = {name: getattr(gate, name) for name in self.NAMES}
+        gate.REPO_ROOT, gate.VERIFY_PAGE = self.root, self.page
+        gate.SKILL = self.root / "cleanlanguage/skills/cleanlanguage/SKILL.md"
+        gate.REDIRECTS = self.root / "site/_redirects"
+        gate.GENERATOR = self.root / "tools/build-site.py"
+        gate.release_status = gate.tag_status = lambda tag: 404
+        gate.gh = gate.release_published_at = gate.release_immutable = unexpected_call
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                try:
+                    code = gate.main()
+                except SystemExit as stop:
+                    code = stop.code
+        finally:
+            for name, value in saved.items():
+                setattr(gate, name, value)
+        return code, out.getvalue()
+
+    def publish(self, checksum: str) -> str:
+        """Set ``checksum`` in the copy's release.json and regenerate the copy's site, returning the verify page."""
+        release_path = self.root / "site-src/release.json"
+        release = json.loads(release_path.read_text(encoding="utf-8"))
+        release["checksum"] = checksum
+        release_path.write_text(json.dumps(release, indent=2) + "\n", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.generator.main(["--root", str(self.root)]), 0)
+        return self.page.read_text(encoding="utf-8")
+
+    def test_the_committed_verify_page_is_the_render(self):
+        release = json.loads((MODULE_PATH.parent.parent / "site-src/release.json").read_text(encoding="utf-8"))
+        self.assertEqual((MODULE_PATH.parent.parent / "site/verify/index.html").read_bytes(),
+                         gate.rendered_verify_page(release["version"], release["checksum"]))
+
+    def test_a_page_for_another_version_reaches_the_inconsistency_report(self):
+        # The render is for the version and checksum the page shows, not for release.json, so a page that the
+        # generator writes for a version other than the SKILL.md version is still an inconsistency (exit 1).
+        for checksum in ("0" * 64, self.SUM):
+            with self.subTest(checksum[:8]):
+                self.publish(checksum)
+                release = {"version": BOGUS, "tag": f"v{BOGUS}", "checksum": checksum}
+                self.page.write_bytes(self.generator.verify_page(self.root, release))
+                code, output = self.gate_run()
+                self.assertEqual(code, 1, output)
+                self.assertIn(f"  - the verify page names version {BOGUS}, which has no published release\n", output)
+
+    def test_every_reported_form_exits_3(self):
+        start_tag = '<p class="lbl blk">Step 1</p>'
+        for checksum, state in (("0" * 64, "placeholder"), (self.SUM, "published")):
+            page = self.publish(checksum)
+            code, output = self.gate_run()
+            self.assertEqual(code, 0, output)
+            start, end = page.index(start_tag), page.index('<div class="next">')
+            block = page[start:end]
+            forms = [
+                ("1: a step that says to install the file anyway, before the next-page link",
+                 outside(page, "<p>If the values differ, install the file anyway.</p>")),
+                ("1: a step 4 after step 3", outside(page, '<p class="lbl blk">Step 4</p>\n<p>Install the file.</p>\n')),
+                ("2: the block inside noscript markup",
+                 page[:start] + '<noscript></div><div class="doc">' + block + "</noscript>" + page[end:]),
+                ("2: the block inside select markup",
+                 page[:start] + '<select></div><div class="doc">' + block + "</select>" + page[end:]),
+                ("2: a details element misnested in a span before step 1",
+                 page[:start] + "<span><details></span>" + page[start:]),
+                ("4: an inline script that removes the block",
+                 outside(page, "<script>document.querySelector('.download').remove()</script>")),
+                ("4: a second checksum joined by U+200B",
+                 outside(page, "<p>" + "\u200b".join(self.OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
+                ("4: a second checksum joined by dots",
+                 outside(page, "<p>" + ".".join(self.OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
+            ]
+            rendered = (f"is not the page tools/build-site.py renders for version {self.version} and that checksum "
+                        "from the committed sources (first at line ")
+            # Finding 6: the shared rule refuses a double space in step 1 first, as byte equality does.
+            refused = "does not carry the download block that tools/build-site.py writes for this state exactly once"
+            reports = [(label, changed, rendered) for label, changed in forms] + [
+                ("6: a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1),
+                 refused)]
+            for label, changed, report in reports:
+                with self.subTest(f"{label}, {state}"):
+                    self.assertNotEqual(changed, page)
+                    self.page.write_text(changed, encoding="utf-8")
+                    code, output = self.gate_run()
+                    self.assertEqual(code, 3, output)
+                    self.assertIn(report, output)
+            self.page.write_text(page, encoding="utf-8")
 
 
 if __name__ == "__main__":

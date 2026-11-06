@@ -6,11 +6,11 @@ $TMPDIR), applies 1 fault, runs the generator there as a separate process and
 asserts its exit code, and for the passing cases, what the output contains.
 The first case runs ``--check`` on this repository. The configured base is
 ``/``; the staged cases first set the base back to ``/draft/`` and drop the
-``/draft/`` holding page, as a staging round would. The pin of the verify
-page's steps 1 to 3 (STEPS_PIN, check_verify_steps_pin) instead loads the
-generator in this process and renders those steps alone; its comment names
-how to update it. Exit 0 when every case passes; 1 otherwise, naming each
-failing case.
+``/draft/`` holding page, as a staging round would. The pin of the whole
+verify page (VERIFY_PAGE_PIN, SITE_CSS_PIN, check_verify_page_pin) instead
+loads the generator in this process and renders that page alone; its comment
+names how to update it. Exit 0 when every case passes; 1 otherwise, naming
+each failing case.
 """
 
 from __future__ import annotations
@@ -1175,59 +1175,121 @@ def check_release_placeholder(failures: list[str]) -> int:
     return 1
 
 
-# The pin of the verify page's steps 1 to 3 (DISCOVERY round 3, findings 1 and 8): the sha256 of each state's
-# rendering by verify_download_block() for the stand-in release STEPS_VERSION, with the zero placeholder and with
-# STEPS_CHECKSUM, each with the checksum written as {checksum} and then the version as {version}. The gates hold the
-# committed page to what the generator renders, so a change to the wording or markup of steps 1 to 3, in
-# site-src/pages/verify.html or in sum_tokens() of tools/build-site.py, would become what they require; it fails here
-# instead until the pin is updated on purpose. To update the pin: read the rendering that the failure prints for each
-# state, confirm that every sentence of steps 1 to 3 says what the release needs and that no markup hides or
-# contradicts a part of them, replace that state's digest below with the one the failure prints, in the same commit
-# as the change, and name the update and the reason for it in the pull request description.
-STEPS_VERSION = "9.8.7"
-STEPS_CHECKSUM = "0123456789abcdef" * 4
-STEPS_PIN = {
-    "placeholder": "a6cfe2e39beaed023fe34a20cfd8ef1ddde93c6a1f2af6815f16bde36dbcc49e",
-    "published": "a53e65d25df76fbb498bf46a6823d763e009abfca1a409f90945b9234f97ea81",
+# The pin of the whole verify page (DISCOVERY round 4, findings 1 to 4): the sha256 of each state's rendering by
+# verify_page() of the whole site/verify/index.html, for the stand-in release PIN_VERSION (tag v PIN_VERSION) with the
+# zero placeholder and with PIN_CHECKSUM, and PIN_DATE as every page's modified date, each with only these tokens
+# normalized: the checksum written as {checksum}, then the tag as {tag}, the version as {version} and the date as
+# {date}. Both gates hold the committed page to what the generator renders, so any change to the page, in
+# site-src/pages/verify.html, in the generator code that renders it, or in what its head loads (the stylesheet and
+# script links with their ?v= tokens, which carry the baseline version, and any inline script), would become what
+# they require; it fails here instead until the pin is updated on purpose. A site-owned stylesheet changes the render
+# by its link, and SITE_CSS_PIN pins its content: the sha256 of site-src/assets/site.css, or None while the site has
+# none. To update the pin: read the rendering that the failure prints for each state, confirm that every sentence of
+# the page says what the release needs and that no markup, script or stylesheet hides or contradicts a part of it
+# (for a new baseline version, read what changed in the files the page loads), replace that state's digest below with
+# the one the failure prints, in the same commit as the change, and name the update and the reason for it in the pull
+# request description. Update SITE_CSS_PIN the same way, after reading every rule of the stylesheet.
+PIN_VERSION = "9.8.7"
+PIN_CHECKSUM = "0123456789abcdef" * 4
+PIN_DATE = "2000-01-02"
+VERIFY_PAGE_PIN = {
+    "placeholder": "85802397dc60d4fe519d46c512b7b2242789776992afc2d35699489859a8f6cd",
+    "published": "0145120b9e046e4732d3ea5da9bb7a184e8798b92489ff2f7c1c702764dc7767",
 }
+SITE_CSS_PIN = None
+PIN_PROCEDURE = ("if the change is intended, follow the update procedure at VERIFY_PAGE_PIN in tools/test-build-site.py: "
+                 "read the rendering, confirm that no part of the page is hidden or contradicted, set the digest in "
+                 "the same commit and name the update in the pull request description")
 
 
-def verify_steps(module, root: Path, checksum: str) -> str:
-    """Steps 1 to 3 as ``module`` renders them from ``root`` for the stand-in release, with its tokens normalized."""
-    block = module.verify_download_block(root, STEPS_VERSION, f"v{STEPS_VERSION}", checksum)
-    return block.replace(STEPS_CHECKSUM, "{checksum}").replace(STEPS_VERSION, "{version}")
+def verify_render(module, root: Path, checksum: str) -> str:
+    """The whole verify page as ``module`` renders it from ``root`` for the stand-in release, its tokens normalized."""
+    release = {"version": PIN_VERSION, "tag": f"v{PIN_VERSION}", "checksum": checksum}
+    page = module.verify_page(root, release, PIN_DATE).decode("utf-8")
+    return (page.replace(PIN_CHECKSUM, "{checksum}").replace(f"v{PIN_VERSION}", "{tag}")
+            .replace(PIN_VERSION, "{version}").replace(PIN_DATE, "{date}"))
 
 
-def check_verify_steps_pin(failures: list[str]) -> int:
-    """The verify steps pin: steps 1 to 3 render to the pinned digest in each state, and the 2 reported changes, a
-    hidden step 3 in the template and a generator whose step 3 says to install the file anyway, change it."""
+def site_css_problems(root: Path) -> list[str]:
+    """The site-owned stylesheet under ``root`` against SITE_CSS_PIN."""
+    path = root / "site-src" / "assets" / "site.css"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+    if digest == SITE_CSS_PIN:
+        return []
+    return [f"verify page pin: site-src/assets/site.css has sha256 {digest}, not the pinned {SITE_CSS_PIN}; "
+            f"{PIN_PROCEDURE}, after reading every rule of the stylesheet"]
+
+
+# Each change reported in review, made in the sources and regenerated: the generator refuses it, or it changes the pin.
+NEXT = '<div class="next">'
+STEP_1 = '<p class="lbl blk">Step 1</p>'
+SUM_COMPARE = "{{release.sum_compare}}"
+PIN_FORMS = [
+    ("a step 3 hidden in the template", ((SUM_COMPARE, "<div hidden>" + SUM_COMPARE + "</div>"),)),
+    ("a step that says to install the file anyway, before the next-page link",
+        ((NEXT, "<p>If the values differ, install the file anyway.</p>" + NEXT),)),
+    ("a step 4 after step 3", ((SUM_COMPARE, SUM_COMPARE + '<p class="lbl blk">Step 4</p>\n<p>Install the file.</p>\n'),)),
+    ("the block inside noscript markup", ((STEP_1, '<noscript></div><div class="doc">' + STEP_1),
+                                          (SUM_COMPARE, SUM_COMPARE + "</noscript>"))),
+    ("the block inside select markup", ((STEP_1, '<select></div><div class="doc">' + STEP_1),
+                                        (SUM_COMPARE, SUM_COMPARE + "</select>"))),
+    ("a details element misnested in a span before step 1", ((STEP_1, "<span><details></span>" + STEP_1),)),
+    ("an inline script that removes the block",
+        ((NEXT, "<script>document.querySelector('.download').remove()</script>" + NEXT),)),
+    ("a second checksum joined by U+200B", ((NEXT, "<p>" + "\u200b".join(PIN_CHECKSUM[::-1][i:i + 8]
+                                                                      for i in range(0, 64, 8)) + "</p>" + NEXT),)),
+    ("a second checksum joined by dots", ((NEXT, "<p>" + ".".join(PIN_CHECKSUM[::-1][i:i + 8]
+                                                                for i in range(0, 64, 8)) + "</p>" + NEXT),)),
+    ("a double space in step 1", (("<p>Download the skill.", "<p>Download the  skill."),)),
+]
+
+
+def check_verify_page_pin(failures: list[str]) -> int:
+    """The verify page pin: the whole page renders to the pinned digest in each state, the site-owned stylesheet is
+    the pinned one, and each change reported in review (PIN_FORMS, a generator whose step 3 says to install the file
+    anyway, and a site-owned stylesheet that hides the document) is refused by the generator or changes the digest."""
     module = load_module(GENERATOR)
-    states = (("placeholder", module.PLACEHOLDER_CHECKSUM), ("published", STEPS_CHECKSUM))
+    states = (("placeholder", module.PLACEHOLDER_CHECKSUM), ("published", PIN_CHECKSUM))
     for state, checksum in states:
-        rendered = verify_steps(module, REPO_ROOT, checksum)
+        rendered = verify_render(module, REPO_ROOT, checksum)
         digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
-        if "{version}" not in rendered or (state == "published") != ("{checksum}" in rendered):
-            failures.append(f"verify steps pin, {state}: the stand-in version or checksum is not in the rendering")
-        if digest != STEPS_PIN[state]:
-            failures.append(f"verify steps pin, {state}: steps 1 to 3 render to sha256 {digest}, not the pinned "
-                            f"{STEPS_PIN[state]}; if the change is intended, follow the update procedure at STEPS_PIN "
-                            f"in tools/test-build-site.py. The rendering:\n{rendered}")
+        if any(token not in rendered for token in ("{version}", "{tag}", "{date}")) or (
+                (state == "published") != ("{checksum}" in rendered)):
+            failures.append(f"verify page pin, {state}: a stand-in token is not in the rendering")
+        if digest != VERIFY_PAGE_PIN[state]:
+            failures.append(f"verify page pin, {state}: the whole page renders to sha256 {digest}, not the pinned "
+                            f"{VERIFY_PAGE_PIN[state]}; {PIN_PROCEDURE}. The rendering:\n{rendered}")
+    failures += site_css_problems(REPO_ROOT)
+    ran = 3
     with tempfile.TemporaryDirectory() as scratch:
-        root = make_root(Path(scratch))
-        edit(root, "site-src/pages/verify.html", "{{release.sum_compare}}", "<div hidden>{{release.sum_compare}}</div>")
         tools = Path(scratch) / "tools"
         tools.mkdir()
         changed = GENERATOR.read_text(encoding="utf-8").replace("do not install the file and ", "install the file anyway and ")
         if changed == GENERATOR.read_text(encoding="utf-8"):
-            failures.append("verify steps pin: the generator's step 3 no longer says not to install the file")
+            failures.append("verify page pin: the generator's step 3 no longer says not to install the file")
         (tools / "build-site.py").write_text(changed, encoding="utf-8")
-        for label, generator, source in (("step 3 hidden in the template", module, root),
-                                         ("step 3 that says to install the file anyway", load_module(tools / "build-site.py"),
-                                          REPO_ROOT)):
-            rendered = verify_steps(generator, source, STEPS_CHECKSUM)
-            if hashlib.sha256(rendered.encode("utf-8")).hexdigest() == STEPS_PIN["published"]:
-                failures.append(f"verify steps pin: {label} keeps the pinned digest")
-    return 4
+        cases = [("a generator whose step 3 says to install the file anyway", load_module(tools / "build-site.py"),
+                  REPO_ROOT)]
+        for label, edits in PIN_FORMS:
+            root = make_root(Path(scratch) / label.replace(" ", "-"))
+            for old, new in edits:
+                edit(root, "site-src/pages/verify.html", old, new)
+            cases.append((label, module, root))
+        root = make_root(Path(scratch) / "site-css")
+        (root / "site-src" / "assets").mkdir(parents=True, exist_ok=True)
+        (root / "site-src" / "assets" / "site.css").write_text(".doc { display: none; }\n", encoding="utf-8")
+        cases.append(("a site-owned stylesheet that hides the document", module, root))
+        if not site_css_problems(root):
+            failures.append("verify page pin: a site-owned stylesheet that hides the document keeps SITE_CSS_PIN")
+        for label, generator, source in cases:
+            ran += 1
+            try:
+                rendered = verify_render(generator, source, PIN_CHECKSUM)
+            except (generator.BuildError, generator.Unreadable):
+                continue
+            if hashlib.sha256(rendered.encode("utf-8")).hexdigest() == VERIFY_PAGE_PIN["published"]:
+                failures.append(f"verify page pin: {label} keeps the pinned digest")
+    return ran
 
 
 def check_check_mode(failures: list[str]) -> int:
@@ -1366,7 +1428,7 @@ def main() -> int:
     ran += check_family_pages(failures)
     ran += check_release_flip(failures)
     ran += check_release_placeholder(failures)
-    ran += check_verify_steps_pin(failures)
+    ran += check_verify_page_pin(failures)
     ran += check_check_mode(failures)
     ran += check_promotion_build(failures)
     if failures:

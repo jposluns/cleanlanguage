@@ -979,6 +979,22 @@ class WholePageTest(unittest.TestCase):
                 ("9: a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1)),
                 ("fix 4: the note in a comment", outside(page, "<!-- " + note + " -->")),
                 ("fix 4: zeros in a code.sum", outside(page, '<code class="sum">' + ZEROS + "</code>")),
+                ("round 4, 1: a step that says to install the file anyway, before the next-page link",
+                 outside(page, "<p>If the values differ, install the file anyway.</p>")),
+                ("round 4, 1: a step 4 after step 3",
+                 outside(page, '<p class="lbl blk">Step 4</p>\n<p>Install the file.</p>\n')),
+                ("round 4, 2: the block inside noscript markup",
+                 page[:start] + '<noscript></div><div class="doc">' + block + "</noscript>" + page[end:]),
+                ("round 4, 2: the block inside select markup",
+                 page[:start] + '<select></div><div class="doc">' + block + "</select>" + page[end:]),
+                ("round 4, 2: a details element misnested in a span before step 1",
+                 page[:start] + "<span><details></span>" + page[start:]),
+                ("round 4, 4: an inline script that removes the block",
+                 outside(page, "<script>document.querySelector('.download').remove()</script>")),
+                ("round 4, 4: a second checksum joined by U+200B",
+                 outside(page, "<p>" + "\u200b".join(OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
+                ("round 4, 4: a second checksum joined by dots",
+                 outside(page, "<p>" + ".".join(OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
             ]
             if checksum != ZEROS:
                 code_element = CODE.format(sum=checksum)

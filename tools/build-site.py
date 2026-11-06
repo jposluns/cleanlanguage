@@ -31,8 +31,8 @@ Sources
   ``verify_download_block()`` renders the verify page's download block alone,
   which ``tools/check-release-links.py`` and
   ``tools/check-release-checksum-live.py`` require on the page, and
-  ``verify_page()`` renders the whole verify page, which
-  ``tools/check-release-links.py`` requires the committed page to equal.
+  ``verify_page()`` renders the whole verify page, which both gates require
+  the committed page to equal and ``tools/test-build-site.py`` pins.
 - ``site-src/pages/<page>.html``: the hand-written content of each page, with
   ``{{token}}`` placeholders.
 - ``site-src/assets/site.css``, optional: only the measured per-site constants
@@ -307,8 +307,9 @@ def skill_version(root: Path) -> str:
     raise Unreadable("SKILL.md has no Version: line")
 
 
-def load_release(root: Path, override: dict | None = None) -> dict:
-    """Release values from site-src/release.json, or from ``override`` (the release writer's new values)."""
+def load_release(root: Path, override: dict | None = None, any_version: bool = False) -> dict:
+    """Release values from site-src/release.json, or from ``override`` (the release writer's new values). With
+    ``any_version`` (verify_page() for given values only), the version need not be the SKILL.md version."""
     release = override if override is not None else read_json(root, SRC / "release.json")
     version, tag, checksum = release.get("version"), release.get("tag"), release.get("checksum")
     if not isinstance(version, str) or not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+$", version):
@@ -317,7 +318,7 @@ def load_release(root: Path, override: dict | None = None) -> dict:
         raise BuildError(f"site-src/release.json tag {tag!r} is not v{version}")
     if not isinstance(checksum, str) or not HEX64.match(checksum):
         raise BuildError("site-src/release.json checksum is not a 64 character lower-case SHA-256")
-    expected = skill_version(root)
+    expected = version if any_version else skill_version(root)
     if version != expected:
         raise BuildError(
             f"site-src/release.json names version {version}, but SKILL.md says {expected}; "
@@ -385,11 +386,15 @@ def verify_download_block(root: Path, version: str, tag: str, checksum: str) -> 
     return substitute(source[start:end + len(DOWNLOAD_END)], release_tokens(version, tag, checksum), str(VERIFY_SOURCE))
 
 
-def verify_page(root: Path) -> bytes:
+def verify_page(root: Path, release: dict | None = None, date: str | None = None) -> bytes:
     """The whole verify page, byte for byte as build() writes site/verify/index.html at base / from the sources under
-    ``root`` and their site-src/release.json. tools/check-release-links.py requires the committed page to equal it.
-    Raises BuildError or Unreadable when build() does, for any page."""
-    _, outputs, _ = build(root, "/")
+    ``root`` and their site-src/release.json, or, given ``release`` (its version, tag and checksum), for those values,
+    whatever version SKILL.md names; ``date`` replaces every page's modified date, as --date does.
+    tools/check-release-links.py requires the committed page to equal the render for release.json, and
+    tools/check-release-checksum-live.py the render for the version and checksum it reads from the page;
+    tools/test-build-site.py pins the render for a stand-in release in each state (VERIFY_PAGE_PIN). Raises
+    BuildError or Unreadable when build() does, for any page."""
+    _, outputs, _ = build(root, "/", date, release, any_version=release is not None)
     return outputs[VERIFY_OUTPUT]
 
 
@@ -1250,11 +1255,13 @@ def build(
     date: str | None = None,
     release: dict | None = None,
     config: dict | None = None,
+    any_version: bool = False,
 ) -> tuple[Path, dict[str, bytes], dict]:
     """Render every output file in memory.
 
     ``release`` replaces site-src/release.json and ``config`` replaces site-src/site.json when
-    given (the release writer's new values, before it writes them).
+    given (the release writer's new values, before it writes them). ``any_version`` lets the
+    release name a version other than SKILL.md's (verify_page() for given values only).
     """
     if config is None:
         config = read_json(root, SRC / "site.json")
@@ -1275,7 +1282,7 @@ def build(
         raise BuildError(f"--date {date!r} is not YYYY-MM-DD")
     check_sitemap_exclusion(root, base, pages)
     statics = static_files(config) if out == Path("site") else []
-    release = load_release(root, release)
+    release = load_release(root, release, any_version)
     baseline_version, pinned = load_pin(root)
     config["pinned"] = pinned
     asset_tokens = {"baseline": baseline_version}

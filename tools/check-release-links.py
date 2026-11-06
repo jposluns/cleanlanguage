@@ -41,16 +41,19 @@ What it verifies
    sources and ``release.json`` (rendered_verify_page, verify_page), checked
    once ``release.json`` names the SKILL.md version, its tag and a
    well-formed checksum. Any other page fails, whatever it adds, removes or
-   hides: a reworded or contradicting step 3, a second checksum in any form,
-   a template element or misnested markup around the download block, or a
-   carriage return. So does a page that a browser shows the same way, such as
-   one with the html element's attributes in another order or a double space
-   in step 1: the committed page is always the generator's render, so the
-   remedy is to run ``tools/build-site.py``. The equality holds the page to
-   the generator, not the generator to what it should write: a change to
-   ``site-src/pages/verify.html`` or ``tools/build-site.py`` that is
-   regenerated passes it, and ``tools/test-build-site.py`` pins the rendering
-   of steps 1 to 3 in each state (STEPS_PIN) to catch that. For a
+   hides: a reworded or contradicting step, a second checksum in any form,
+   a template element or misnested markup around the download block, an
+   inline script, or a carriage return. So does a page that a browser shows
+   the same way, such as one with the html element's attributes in another
+   order or a double space in step 1: the committed page is always the
+   generator's render, so the remedy is to run ``tools/build-site.py``.
+   ``tools/check-release-checksum-live.py`` holds the same page to the render
+   for the version and checksum it shows. The equality holds the page to the
+   generator, not the generator to what it should write: a change to
+   ``site-src/pages/verify.html``, to the generator code that renders the
+   page, or to what its head loads, that is regenerated passes it, and
+   ``tools/test-build-site.py`` pins the whole rendered page in each state
+   (VERIFY_PAGE_PIN) to catch that. For a
    clear report of what is wrong, the gate also applies the rule that both
    gates carry (download_block_problems): ``tools/build-site.py`` renders the
    page's download block, steps 1 to 3, for the SKILL.md version and the
@@ -72,22 +75,23 @@ What it verifies
    that tells the reader not to install the file. Outside the block the page is
    read both as written and as parsed markup (PageReader), in which an end tag
    does not close an element across a ``template``, ``table`` or other scope
-   boundary, as in a browser. tools/check-release-checksum-live.py carries the
-   rule verbatim. Where it gives a clearer report, the gate also names a
-   published page that carries the not-yet-published note or shows a checksum
-   other than ``release.json``. Neither the equality nor the rule reads the
-   stylesheet and script files the page loads. The verify page loads 3
-   stylesheets, the baseline's ``fonts.css``, ``palettes.css`` and
+   boundary. That reading models only that part of how a browser builds the
+   page, so the rule alone passes some markup that hides the block in a
+   browser; the equality refuses it. tools/check-release-checksum-live.py
+   carries the rule verbatim. Where it gives a clearer report, the gate also
+   names a published page that carries the not-yet-published note or shows a
+   checksum other than ``release.json``. Neither the equality nor the rule
+   reads the stylesheet and script files the page loads. The verify page
+   loads 3 stylesheets, the baseline's ``fonts.css``, ``palettes.css`` and
    ``baseline.css`` under ``assets/baseline/``, and 2 baseline scripts,
-   ``scheme.js`` and ``copy.js``; ``tools/check-baseline-pin.py`` holds each
-   to the digest that the pinned baseline version publishes, so an edit to
-   one fails that gate.
-   What remains: a new baseline version, adopted by updating the pin with
-   ``tools/copy-baseline.py``, brings files that no gate reads for a rule
-   that hides the block; and a site-owned stylesheet,
-   ``site-src/assets/site.css``, which the site does not have, would load
-   after the baseline ones, and ``tools/build-site.py --check`` would hold
-   ``site/assets/site.css`` to that source without reading its rules.
+   ``scheme.js`` and ``copy.js``, each with the baseline version as its
+   ``?v=`` token; ``tools/check-baseline-pin.py`` holds each to the digest
+   that the pinned baseline version publishes, so an edit to one fails that
+   gate, and a new baseline version changes the tokens, so it fails the pin
+   in ``tools/test-build-site.py`` until the pin is updated on purpose. A
+   site-owned stylesheet, ``site-src/assets/site.css``, which the site does
+   not have, would add a link to the page, which fails that pin, and
+   SITE_CSS_PIN there pins its content.
 
 What it does not verify
 -----------------------
@@ -439,9 +443,12 @@ class PageReader(HTMLParser):
     references decoded and runs of whitespace read as 1 space, so that the order of attributes, their quoting and
     the markup between words do not change what a rule sees; the same of the markup inside each comment, read
     apart (comment_text); and, at the offset of each start tag, the elements open there (open_at). Hidden elements
-    are read like any other. As in a browser, an end tag closes the nearest open element of its name only when no
-    element of SCOPE, the boundaries of HTML's default scope, is open above it, and is otherwise ignored, so that
-    ``</div>`` inside a ``template`` or ``</details>`` inside a ``table`` closes nothing outside it.
+    are read like any other. An end tag closes the nearest open element of its name only when no element of SCOPE,
+    the boundaries of HTML's default scope, is open above it, and is otherwise ignored, so that ``</div>`` inside a
+    ``template`` or ``</details>`` inside a ``table`` closes nothing outside it. That is the only part of HTML's tree
+    building it models, and a browser builds some other markup otherwise, so the reader can find the block where
+    build() writes it when a browser does not: review found the block after ``<noscript></div><div class="doc">``,
+    the same with ``select``, and ``<span><details></span>`` before step 1. Whole-page equality refuses such a page.
     tools/check-release-links.py and tools/check-release-checksum-live.py carry this class verbatim."""
 
     VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track",
