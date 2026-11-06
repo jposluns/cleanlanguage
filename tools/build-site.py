@@ -30,7 +30,9 @@ Sources
   and says that it appears once that version is published (``sum_tokens()``).
   ``verify_download_block()`` renders the verify page's download block alone,
   which ``tools/check-release-links.py`` and
-  ``tools/check-release-checksum-live.py`` require on the page.
+  ``tools/check-release-checksum-live.py`` require on the page, and
+  ``verify_page()`` renders the whole verify page, which
+  ``tools/check-release-links.py`` requires the committed page to equal.
 - ``site-src/pages/<page>.html``: the hand-written content of each page, with
   ``{{token}}`` placeholders.
 - ``site-src/assets/site.css``, optional: only the measured per-site constants
@@ -257,6 +259,8 @@ PLACEHOLDER_CHECKSUM = "0" * 64
 VERIFY_SOURCE = SRC / "pages" / "verify.html"
 DOWNLOAD_START = '<p class="lbl blk">Step 1</p>\n'
 DOWNLOAD_END = "{{release.sum_compare}}"
+# The verify page among the outputs of the / build (verify_page()).
+VERIFY_OUTPUT = "verify/index.html"
 
 
 class BuildError(Exception):
@@ -379,6 +383,14 @@ def verify_download_block(root: Path, version: str, tag: str, checksum: str) -> 
     if source.count(DOWNLOAD_START) != 1 or source.count(DOWNLOAD_END) != 1 or end < start:
         raise Unreadable(f"{VERIFY_SOURCE} does not hold the download block once, from its step 1 label to {DOWNLOAD_END}")
     return substitute(source[start:end + len(DOWNLOAD_END)], release_tokens(version, tag, checksum), str(VERIFY_SOURCE))
+
+
+def verify_page(root: Path) -> bytes:
+    """The whole verify page, byte for byte as build() writes site/verify/index.html at base / from the sources under
+    ``root`` and their site-src/release.json. tools/check-release-links.py requires the committed page to equal it.
+    Raises BuildError or Unreadable when build() does, for any page."""
+    _, outputs, _ = build(root, "/")
+    return outputs[VERIFY_OUTPUT]
 
 
 # Markdown subset for the skill's reference files ------------------------------

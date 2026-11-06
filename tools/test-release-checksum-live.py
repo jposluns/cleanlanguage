@@ -1329,6 +1329,19 @@ class ConditionalPassTest(unittest.TestCase):
              "carries the not-yet-published note outside the download block"),
             ("the whole block hidden", page[:start] + "<div hidden>" + page[start:end] + "</div>" + page[end:], placed),
             ("the whole block in a comment", page[:start] + "<!--" + page[start:end] + "-->" + page[end:], placed),
+            # DISCOVERY round 3, findings 2, 4 and 7: an end tag does not close an element across a template or a
+            # table, and a second checksum in groups counts.
+            ("a template that ends the doc div around the block",
+             page[:start] + '<template></div><div class="doc">' + page[start:end] + "</div></template>" + page[end:],
+             placed),
+            ("a details element misnested in a table before the block",
+             page[:start] + "<details><table></details>" + page[start:], placed),
+            ("a second checksum in groups of 8 after the block",
+             outside(page, "<p>" + " ".join(OTHER_SUM[i:i + 8] for i in range(0, 64, 8)) + "</p>"),
+             "carries a 64 digit hexadecimal value outside the download block"),
+            ("a second checksum in groups split by hyphens after the block",
+             outside(page, "<p>" + "-".join(ZIP_SUM[i:i + 4] for i in range(0, 64, 4)) + "</p>"),
+             "carries a 64 digit hexadecimal value outside the download block"),
         ):
             with self.subTest(label):
                 self.assertNotEqual(changed, page)
@@ -1336,6 +1349,14 @@ class ConditionalPassTest(unittest.TestCase):
                 gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
                 gate.release_status = unexpected_call
                 self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {shown}{report}\n"))
+
+    def test_prose_outside_the_block_is_a_stated_residual(self):
+        # DISCOVERY round 3, finding 3: the rule does not read the meaning of prose, so a contradicting step 3
+        # outside the block passes it here; tools/check-release-links.py refuses that page by whole-page equality.
+        page = outside(VERIFY.format(version=CURRENT, checksum=ZIP_SUM),
+                       "<p>Correction to step 3: if the two values match, delete the file.</p>")
+        redirects = gate.REDIRECTS.read_text(encoding="utf-8")
+        self.assertEqual(gate.download_block_problems(page, gate.download_block(CURRENT, ZIP_SUM), redirects), [])
 
     def test_each_state_reads_site_redirects(self):
         # The paths to the checksum file come from site/_redirects, a required file in either state.
@@ -4789,7 +4810,8 @@ class SharedPlaceholderRuleTest(unittest.TestCase):
         for name in ("download_block_problems", "download_block", "PageReader", "checksum_paths", "targets_checksum"):
             with self.subTest(name):
                 self.assertEqual(definition(MODULE_PATH, name), definition(links_path, name))
-        for name in ("PENDING_VERSION", "DISPLAYED_SUM", "PENDING_NOTE", "PUBLISHED_WORDING", "REJECTING_STEP", "HEX64"):
+        for name in ("PENDING_VERSION", "DISPLAYED_SUM", "PENDING_NOTE", "PUBLISHED_WORDING", "REJECTING_STEP", "HEX64",
+                     "HEX_GROUPS"):
             with self.subTest(name):
                 ours, theirs = getattr(gate, name), getattr(links, name)
                 self.assertEqual((ours.pattern, ours.flags), (theirs.pattern, theirs.flags))

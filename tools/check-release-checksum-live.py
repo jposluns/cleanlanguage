@@ -34,11 +34,31 @@ Behaviour:
     ``.sha256`` file or to a path that ``site/_redirects`` sends there, or a
     step that tells the reader not to install the file. Since the block holds
     the checksum the page was read by, a page that passes shows that checksum
-    and no other, and the comparison below holds it to the published one. The
-    rule reads markup, not stylesheets or scripts. ``site/_redirects`` is a
-    required file in either state. A page that breaks the rule, or shows the
-    placeholder as the published checksum, exits 3 before any release is read,
-    as does a generator that cannot render the block.
+    and no other 64 digit hexadecimal value, whole or, in its text, in groups
+    split by whitespace, hyphens or colons, and the comparison below holds it
+    to the published one. The parsed page closes no element across a
+    ``template``, ``table`` or other scope boundary (PageReader), so markup
+    that ends the document grid inside a template, or misnests an element in
+    a table, before the block is refused. ``site/_redirects`` is a required
+    file in either state. A page that breaks the rule, or shows the
+    placeholder as the published checksum, exits 3 before any release is
+    read, as does a generator that cannot render the block.
+  - This gate keeps that rule rather than whole-page equality. The page it
+    reads is ``site/verify/index.html`` of the checked-out commit, not the
+    deployed site, so it already is the committed page; holding the deployed
+    page to it would mean fetching https://cleanlanguage.ai/verify/, and the
+    push trigger runs this gate as soon as a commit reaches main, while
+    Cloudflare Pages can still be deploying it, so the bump and the flip could
+    each fail their own push run. ``tools/check-release-links.py`` holds the
+    same committed page to the generator's whole render on every pull request
+    that changes it. What this rule leaves to that gate: it does not read the
+    meaning of prose, so a reworded or contradicting step outside the block
+    passes it. Neither gate reads the stylesheet and script files the page
+    loads, so one that hides the block passes both;
+    ``tools/check-release-links.py`` names those files and the gate that pins
+    each. Markup that a browser shows the same way but that differs inside the
+    block, such as a double space in step 1, or that gives the html element
+    its attributes in another order, is refused here too.
   - If the release ``vX`` for that version is not published yet, the pass is
     conditional. The site is legitimately ahead of the release only when it
     names the current skill version (``Version:`` in ``cleanlanguage/skills/cleanlanguage/SKILL.md``)
@@ -232,6 +252,8 @@ PENDING_NOTE = re.compile(r"appears\s+here\s+once\s+that\s+version\s+is\s+publis
 PUBLISHED_WORDING = re.compile(r"published\s+checksum", re.I)
 REJECTING_STEP = re.compile(r"\bdo\s+not\s+install\b|\bdon['’]t\s+install\b", re.I)
 HEX64 = re.compile(r"[0-9a-fA-F]{64}")
+# A 64 digit hexadecimal value in the page's text, whole or in groups split by whitespace, hyphens or colons.
+HEX_GROUPS = re.compile(r"[0-9a-fA-F](?:[\s:-]*[0-9a-fA-F]){63}")
 SUM_ID = "published-checksum"
 VERIFY_URL = "https://cleanlanguage.ai/verify/"
 # The generator, which renders the download block (download_block), and the elements build() writes around that
@@ -975,11 +997,14 @@ class PageReader(HTMLParser):
     references decoded and runs of whitespace read as 1 space, so that the order of attributes, their quoting and
     the markup between words do not change what a rule sees; the same of the markup inside each comment, read
     apart (comment_text); and, at the offset of each start tag, the elements open there (open_at). Hidden elements
-    are read like any other. tools/check-release-links.py and tools/check-release-checksum-live.py carry this
-    class verbatim."""
+    are read like any other. As in a browser, an end tag closes the nearest open element of its name only when no
+    element of SCOPE, the boundaries of HTML's default scope, is open above it, and is otherwise ignored, so that
+    ``</div>`` inside a ``template`` or ``</details>`` inside a ``table`` closes nothing outside it.
+    tools/check-release-links.py and tools/check-release-checksum-live.py carry this class verbatim."""
 
     VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track",
                       "wbr"})
+    SCOPE = frozenset({"applet", "caption", "html", "marquee", "object", "table", "td", "template", "th"})
 
     def __init__(self, text: str) -> None:
         super().__init__(convert_charrefs=True)
@@ -1025,6 +1050,8 @@ class PageReader(HTMLParser):
         for index in range(len(self.open) - 1, -1, -1):
             if self.open[index][0] == tag:
                 del self.open[index:]
+                break
+            if self.open[index][0] in self.SCOPE:
                 break
 
     def handle_data(self, data: str) -> None:
@@ -1095,11 +1122,13 @@ def download_block_problems(text: str, block: str, redirects: str) -> list[str]:
     byte for byte, as a start tag that the parsed page opens inside exactly the elements that build() writes
     around it (BLOCK_ANCESTORS), in a page with 1 html and 1 body start tag; and no other part of the page,
     comments, scripts and hidden elements included, carries the checksum element's id, the class sum, the
-    not-yet-published note, "published checksum" wording, a 64 digit hexadecimal value, a link to a .sha256 file
-    or to a path that ``redirects`` (site/_redirects) sends there, or a step that tells the reader not to install
-    the file. tools/check-release-links.py and tools/check-release-checksum-live.py carry this function,
-    download_block, PageReader, checksum_paths, targets_checksum and the patterns and constants they read
-    verbatim, and tools/test-release-checksum-live.py requires that the 2 copies match."""
+    not-yet-published note, "published checksum" wording, a 64 digit hexadecimal value (in the text, also in groups
+    split by whitespace, hyphens or colons, HEX_GROUPS), a link to a .sha256 file or to a path that ``redirects``
+    (site/_redirects) sends there, or a step that tells the reader not to install the file. It does not read the
+    meaning of other prose, so a reworded or contradicting step outside the block passes it, nor the stylesheet
+    and script files the page loads. tools/check-release-links.py and tools/check-release-checksum-live.py carry
+    this function, download_block, PageReader, checksum_paths, targets_checksum and the patterns and constants
+    they read verbatim, and tools/test-release-checksum-live.py requires that the 2 copies match."""
     found = text.count(block)
     if found != 1:
         return [f"does not carry the download block that tools/build-site.py writes for this state exactly once, "
@@ -1121,7 +1150,8 @@ def download_block_problems(text: str, block: str, redirects: str) -> list[str]:
             problems.append("carries the not-yet-published note outside the download block")
         if any(PUBLISHED_WORDING.search(source) for source in sources):
             problems.append('says "published checksum" outside the download block')
-        if any(HEX64.search(source) for source in (*sources, *part.values)):
+        if (any(HEX64.search(source) for source in (*sources, *part.values))
+                or any(HEX_GROUPS.search(source) for source in sources[1:])):
             problems.append("carries a 64 digit hexadecimal value outside the download block")
         if ".sha256" in rest.lower() or any(targets_checksum(value, paths) for value in part.values):
             problems.append("links a .sha256 checksum file outside the download block")

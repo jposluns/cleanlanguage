@@ -6,8 +6,11 @@ $TMPDIR), applies 1 fault, runs the generator there as a separate process and
 asserts its exit code, and for the passing cases, what the output contains.
 The first case runs ``--check`` on this repository. The configured base is
 ``/``; the staged cases first set the base back to ``/draft/`` and drop the
-``/draft/`` holding page, as a staging round would. Exit 0 when every case
-passes; 1 otherwise, naming each failing case.
+``/draft/`` holding page, as a staging round would. The pin of the verify
+page's steps 1 to 3 (STEPS_PIN, check_verify_steps_pin) instead loads the
+generator in this process and renders those steps alone; its comment names
+how to update it. Exit 0 when every case passes; 1 otherwise, naming each
+failing case.
 """
 
 from __future__ import annotations
@@ -1172,6 +1175,61 @@ def check_release_placeholder(failures: list[str]) -> int:
     return 1
 
 
+# The pin of the verify page's steps 1 to 3 (DISCOVERY round 3, findings 1 and 8): the sha256 of each state's
+# rendering by verify_download_block() for the stand-in release STEPS_VERSION, with the zero placeholder and with
+# STEPS_CHECKSUM, each with the checksum written as {checksum} and then the version as {version}. The gates hold the
+# committed page to what the generator renders, so a change to the wording or markup of steps 1 to 3, in
+# site-src/pages/verify.html or in sum_tokens() of tools/build-site.py, would become what they require; it fails here
+# instead until the pin is updated on purpose. To update the pin: read the rendering that the failure prints for each
+# state, confirm that every sentence of steps 1 to 3 says what the release needs and that no markup hides or
+# contradicts a part of them, replace that state's digest below with the one the failure prints, in the same commit
+# as the change, and name the update and the reason for it in the pull request description.
+STEPS_VERSION = "9.8.7"
+STEPS_CHECKSUM = "0123456789abcdef" * 4
+STEPS_PIN = {
+    "placeholder": "a6cfe2e39beaed023fe34a20cfd8ef1ddde93c6a1f2af6815f16bde36dbcc49e",
+    "published": "a53e65d25df76fbb498bf46a6823d763e009abfca1a409f90945b9234f97ea81",
+}
+
+
+def verify_steps(module, root: Path, checksum: str) -> str:
+    """Steps 1 to 3 as ``module`` renders them from ``root`` for the stand-in release, with its tokens normalized."""
+    block = module.verify_download_block(root, STEPS_VERSION, f"v{STEPS_VERSION}", checksum)
+    return block.replace(STEPS_CHECKSUM, "{checksum}").replace(STEPS_VERSION, "{version}")
+
+
+def check_verify_steps_pin(failures: list[str]) -> int:
+    """The verify steps pin: steps 1 to 3 render to the pinned digest in each state, and the 2 reported changes, a
+    hidden step 3 in the template and a generator whose step 3 says to install the file anyway, change it."""
+    module = load_module(GENERATOR)
+    states = (("placeholder", module.PLACEHOLDER_CHECKSUM), ("published", STEPS_CHECKSUM))
+    for state, checksum in states:
+        rendered = verify_steps(module, REPO_ROOT, checksum)
+        digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+        if "{version}" not in rendered or (state == "published") != ("{checksum}" in rendered):
+            failures.append(f"verify steps pin, {state}: the stand-in version or checksum is not in the rendering")
+        if digest != STEPS_PIN[state]:
+            failures.append(f"verify steps pin, {state}: steps 1 to 3 render to sha256 {digest}, not the pinned "
+                            f"{STEPS_PIN[state]}; if the change is intended, follow the update procedure at STEPS_PIN "
+                            f"in tools/test-build-site.py. The rendering:\n{rendered}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        edit(root, "site-src/pages/verify.html", "{{release.sum_compare}}", "<div hidden>{{release.sum_compare}}</div>")
+        tools = Path(scratch) / "tools"
+        tools.mkdir()
+        changed = GENERATOR.read_text(encoding="utf-8").replace("do not install the file and ", "install the file anyway and ")
+        if changed == GENERATOR.read_text(encoding="utf-8"):
+            failures.append("verify steps pin: the generator's step 3 no longer says not to install the file")
+        (tools / "build-site.py").write_text(changed, encoding="utf-8")
+        for label, generator, source in (("step 3 hidden in the template", module, root),
+                                         ("step 3 that says to install the file anyway", load_module(tools / "build-site.py"),
+                                          REPO_ROOT)):
+            rendered = verify_steps(generator, source, STEPS_CHECKSUM)
+            if hashlib.sha256(rendered.encode("utf-8")).hexdigest() == STEPS_PIN["published"]:
+                failures.append(f"verify steps pin: {label} keeps the pinned digest")
+    return 4
+
+
 def check_check_mode(failures: list[str]) -> int:
     ran = 0
     def leave(relative: str):
@@ -1308,6 +1366,7 @@ def main() -> int:
     ran += check_family_pages(failures)
     ran += check_release_flip(failures)
     ran += check_release_placeholder(failures)
+    ran += check_verify_steps_pin(failures)
     ran += check_check_mode(failures)
     ran += check_promotion_build(failures)
     if failures:
