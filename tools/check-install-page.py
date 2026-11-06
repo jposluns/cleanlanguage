@@ -177,7 +177,34 @@ What it verifies
    ``tools/check-inline-code.py`` enforce that rule. No rule sets a ``Link``
    header, which a browser can read as a stylesheet load that check 6 and the
    rule pin do not see; it refuses every ``Link`` header, one that only
-   preloads included, because it does not read the header's value.
+   preloads included, because it does not read the header's value. Under a
+   URL pattern that can match an install page, ``/*`` included, only the
+   headers and values that the committed file sets there may appear
+   (``INSTALL_HEADERS``: under ``/*``, ``X-Frame-Options``,
+   ``Permissions-Policy``, ``Cross-Origin-Opener-Policy`` and
+   ``Content-Security-Policy``, each with its committed value), so any other
+   header or value there fails, and so does any detach: a ``Refresh``
+   header, which can send the reader away from the page, a ``Link`` header,
+   and a ``Content-Disposition`` header, which can make a browser download
+   the page instead of showing it, among them. ``tools/test-install-page.py``
+   fails unless ``INSTALL_HEADERS`` holds exactly what the committed file
+   sets under those patterns. The gate reads a pattern from its text alone,
+   not with Cloudflare Pages' matcher, and fails closed (``reaches_install``):
+   a pattern can match an install page unless the first segment of its path,
+   after any ``https://`` and host, is not empty, is made only of ASCII
+   letters and digits, ``.``, ``_``, ``~`` and ``-``, is neither ``.`` nor
+   ``..``, and is not ``install`` in any letter case. So ``/``, ``/*``,
+   ``/:page/*``, ``/install*``, ``/INSTALL/*``, ``/./install/*``,
+   ``https://host`` and ``https://host/install/*`` can, and
+   ``/downloads/cleanlanguage.md``, ``/images/cleanlanguage-card.png``,
+   ``/sitemap.xml`` and ``/draft/*`` cannot. These residuals are accepted:
+   it does not read a rule that reaches an install page through a rewrite in
+   ``site/_redirects`` or through any matching behaviour of Pages beyond that
+   reading, a redirect in ``site/_redirects``, which can also send the reader
+   away from a page, or a header that Cloudflare adds outside
+   ``site/_headers`` (zone settings, Transform Rules and the Pages defaults).
+   A correct new header for every page, such as ``Cache-Control`` under
+   ``/*``, fails until ``INSTALL_HEADERS`` changes with the file.
 8. On the 6 pages, each checked element, each of its ancestors, as the parser
    holds them open, and each element it holds carries only the classes that
    the committed pages give an element of that tag there (``CLASS_PIN``): the
@@ -339,8 +366,9 @@ comments and strings as CSS does, a backslash in a string escaping the
 character after it, so a brace in either delimits no rule, and a bracket, a
 comma or a class name in a string counts for no selector. It refuses a
 stylesheet with what it does not model, such as a backslash outside a
-string, a line break in a string, a comment between 2 characters of names in
-a selector, a brace inside brackets, a rule inside a rule or an unlisted
+string, a line break in a string, a comment, or a run of adjacent comments,
+between 2 characters of names in a selector, a brace inside brackets, a rule
+inside a rule or an unlisted
 at-rule. Of text it reads only whether the headings, the
 "Pick your AI" label, each family link, each step list's steps and the links
 back to the downloads and the test have visible text, whether text sits above
@@ -473,6 +501,21 @@ SHARED_CSP = (
     "style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
     "frame-ancestors 'none'"
 )
+# The headers, by name in lower case, and the values that the committed site/_headers sets under each URL pattern
+# that can match an install page (check 7, reaches_install). Under such a pattern any other header, another value or a
+# detach fails. tools/test-install-page.py fails unless this holds exactly what the committed file sets there.
+INSTALL_HEADERS = {
+    "/*": (
+        ("x-frame-options", "DENY"),
+        ("permissions-policy", "accelerometer=(), autoplay=(), bluetooth=(), browsing-topics=(), camera=(), "
+            "display-capture=(), fullscreen=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), "
+            "midi=(), payment=(), serial=(), usb=()"),
+        ("cross-origin-opener-policy", "same-origin"),
+        ("content-security-policy", SHARED_CSP),
+    ),
+}
+# A first path segment that matches only itself in a URL pattern: letters, digits, ".", "_", "~" and "-" (check 7).
+LITERAL_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
 BASELINE_ASSET = r'/assets/baseline/{name}\?v=[0-9]+\.[0-9]+\.[0-9]+"'
 # The elements a browser never keeps open, whether or not the start tag ends in "/>".
 VOID = {
@@ -1250,8 +1293,18 @@ def check_family_page(fam: str, text: str) -> list[str]:
     return problems + class_pin_problems(where, parser, kinds) + page_tag_problems(where, parser, kinds)
 
 
+def reaches_install(pattern: str) -> bool:
+    """Whether a URL pattern of site/_headers can match an install page (check 7), read from its text alone and
+    failing closed: it can, unless the first segment of its path, after any https:// and host, is LITERAL_SEGMENT,
+    neither "." nor "..", and not "install" in any letter case."""
+    path = re.sub(r"^https://[^/]*", "", pattern)
+    first = path.split("/")[1] if path.startswith("/") else ""
+    return not LITERAL_SEGMENT.fullmatch(first) or first in (".", "..") or first.lower() == "install"
+
+
 def check_headers(headers: str) -> list[str]:
-    """Check 7: the site-wide policy, read with the parser of tools/check-headers.py."""
+    """Check 7: the site-wide policy and the headers that can reach an install page, read with the parser of
+    tools/check-headers.py."""
     problems: list[str] = []
     entries = load_tool("check-headers.py").parse(headers)
     site_csp = [
@@ -1289,6 +1342,13 @@ def check_headers(headers: str) -> list[str]:
             problems.append(
                 f"site/_headers line {number} sets a Content-Security-Policy for {pattern}; only /* and "
                 f"{DRAFT_PATTERN} may set one."
+            )
+    # A detach has no value, so it never matches an entry of INSTALL_HEADERS and always fails here.
+    for number, pattern, kind, name, value in entries:
+        if reaches_install(pattern) and (name.lower(), value) not in INSTALL_HEADERS.get(pattern, ()):
+            problems.append(
+                f"site/_headers line {number} {'sets' if kind == 'set' else 'detaches'} {name} under {pattern}, which "
+                "can match an install page; there only the headers and values of INSTALL_HEADERS may appear."
             )
     return problems
 
@@ -1339,7 +1399,9 @@ def main() -> int:
         "remains, the six pages pass the inline-code checks, the "
         "light and dark switch included, load the baseline's versioned stylesheets and no other, and copy.js, load scheme.js "
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
-        "the /* rule of site/_headers carries exactly the shared policy and no rule there sets a Link header."
+        "the /* rule of site/_headers carries exactly the shared policy, no rule there sets a Link header, and no "
+        "rule that can match an install page sets or detaches any header but those of INSTALL_HEADERS, with their "
+        "values."
     )
     return 0
 

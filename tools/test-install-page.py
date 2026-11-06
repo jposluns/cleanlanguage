@@ -20,7 +20,11 @@ ancestors and each element it holds, by tag, so that the class pin cannot be
 widened unnoticed, and unless the gate's RULE_ATTRIBUTES (check 8) holds
 exactly the attributes, ``hidden`` aside (HIDING_ATTRIBUTE), that the
 attribute selectors of the rules rule_pins() holds name, read from each rule's
-name with its strings blanked, so that the gate cannot drop one unnoticed.
+name with its strings blanked, so that the gate cannot drop one unnoticed,
+and unless the gate's INSTALL_HEADERS (check 7) holds exactly the headers
+and values that the committed site/_headers sets under each URL pattern that
+the gate's reaches_install() reads as able to match an install page, so that
+the header pin cannot be widened unnoticed.
 
 It also pins the stylesheets every install page loads (fonts.css,
 palettes.css and baseline.css under site/assets/baseline/): it fails unless
@@ -72,7 +76,8 @@ a comment opener in a string, or a brace or a quote in a comment, delimits
 nothing, and it fails when a stylesheet cannot be read, holds
 no rule, or holds what it does not model: an unclosed comment, a comment
 between 2 characters of names in a selector, where CSS reads no space
-(``.a/**/b`` is not ``.a b``), a string that a line break, escaped or not, or its end leaves
+(``.a/**/b`` is not ``.a b``), or a run of adjacent comments there
+(``.a/**//**/b``), a string that a line break, escaped or not, or its end leaves
 open, a backslash outside a string, ``<!--`` or ``-->``, an unquoted ``url()``
 holding a quote, a ``(``, a brace, a backslash or a line break, a brace inside
 brackets or parentheses, unbalanced braces, brackets or parentheses, a rule
@@ -162,10 +167,12 @@ RULE_NAMED = "which a pinned stylesheet rule names"
 LATER_TAG = "a later html or body start tag carries attributes"
 OTHER_SHEET = "the only stylesheets that the rule pin reads"
 # The gate's messages for an html or body start tag with attributes that is not an ancestor of every checked element,
-# a page without the doctype, and a Link header in site/_headers; and the opening lines that the generator writes.
+# a page without the doctype, a Link header in site/_headers, and a header outside INSTALL_HEADERS under a URL pattern
+# that can match an install page; and the opening lines that the generator writes.
 NOT_ANCESTOR = "an html or body start tag that is not an ancestor of every checked element carries attributes"
 NO_DOCTYPE = "the page does not begin with <!doctype html>"
 LINK_SET = "sets a Link header"
+INSTALL_HEADER = "which can match an install page"
 DOCTYPE = "<!doctype html>\n"
 HTML = '<html lang="en" class="site-cleanlanguage">\n'
 # The scheme.js tag of template specification 7.33 (baseline 1.8.0), as the committed pages carry it.
@@ -185,7 +192,8 @@ PRINT_PIN = "--print-rule-pin"
 CSS_SPACE = " \t\n\r\f"
 CSS_WHITESPACE = re.compile(r"[ \t\n\r\f]+")
 # A character of a CSS name, number or unit. Without a comment between 2 of them they read as 1 token, so css_rules()
-# refuses such a comment in a selector, where CSS reads the selector as invalid (.a/**/b is neither .ab nor .a b).
+# refuses such a comment in a selector, where CSS reads the selector as invalid (.a/**/b is neither .ab nor .a b), and
+# a run of adjacent comments there too (.a/**//**/b).
 NAME_CHAR = re.compile(r"[\w\u0080-\U0010ffff-]")
 # The characters CSS always reads as a token of their own. A comment beside 1 of them separates no 2 tokens that its
 # deletion would join, so css_rules() reads it as nothing, unless a "(" follows a character of names, which CSS reads
@@ -230,6 +238,8 @@ SHEET_CASES = (
     # Deleted, a comment between a name and "(" would join them into 1 function, which CSS does not.
     ("a comment between a function's name and its ( in a pinned rule",
         CASE_SHEET.replace("var(--pad)", "var/**/(--pad)"), GONE),
+    ("2 adjacent comments between a function's name and its ( in a pinned rule",
+        CASE_SHEET.replace("var(--pad)", "var/**//**/(--pad)"), GONE),
     ("a comment after a function's ( in a pinned rule", CASE_SHEET.replace("var(--pad)", "var(/**/--pad)"), ""),
     # A rule whose subject, the last compound selector, can match an h1 that carries only x, or any element that
     # carries no class, is pinned, read conservatively where the selector says more than names and classes.
@@ -264,6 +274,11 @@ SHEET_CASES = (
         "@media/**/screen { .x {"),
     ("a comment inside a compound selector", CASE_SHEET + " h1/**/.fresh { display: none; }", ""),
     ("a comment between 2 names in a selector", CASE_SHEET + " .fresh/**/h1 { display: none; }", "a comment between"),
+    # The character before a comment is read past the empty comments that adjacent comments left.
+    ("2 adjacent comments between 2 names in a selector", CASE_SHEET + " .fresh/**//**/h1 { display: none; }",
+        "a comment between"),
+    ("3 adjacent comments between 2 names in a selector", CASE_SHEET + " .fresh/**//**//**/h1 { display: none; }",
+        "a comment between"),
     ("a comment between 2 names in a value", CASE_SHEET + " .fresh { margin: 0/**/auto; }", ""),
     ("a comment between 2 numbers in an @font-face", CASE_SHEET + " @font-face { font-weight: 100/**/900; }", ADDED),
     ("a custom property name in a string", CASE_SHEET + ' .fresh { content: "a; --pad: 1px"; }', ""),
@@ -1010,6 +1025,27 @@ CASES = [
     ("a lower-case link header that only preloads a stylesheet, on every page",
         edit(HEADERS, SITE_LINE, SITE_LINE + "\n  link: </assets/baseline/fonts.css>; rel=preload; as=style"),
         (1, LINK_SET)),
+    # Under a URL pattern that can match an install page, /* included, only the headers and values of INSTALL_HEADERS
+    # may appear, and no detach; the gate reads a pattern from its text alone and fails closed (reaches_install).
+    ("a Refresh header that sends the reader away from the install pages",
+        append(HEADERS, "\n/install/*\n  Refresh: 0; url=/\n"), (1, INSTALL_HEADER)),
+    ("a Link header under a family page", append(HEADERS, "\n/install/claude/\n  Link: </>; rel=preload\n"),
+        (1, INSTALL_HEADER)),
+    ("a Content-Disposition header under /INSTALL/*",
+        append(HEADERS, '\n/INSTALL/*\n  Content-Disposition: attachment; filename="install.html"\n'), (1, INSTALL_HEADER)),
+    ("a Refresh header on every page", edit(HEADERS, SITE_LINE, SITE_LINE + "\n  Refresh: 0; url=/"), (1, INSTALL_HEADER)),
+    ("a Refresh header under a placeholder", append(HEADERS, "\n/:page/*\n  Refresh: 0; url=/\n"), (1, INSTALL_HEADER)),
+    ("a Refresh header under /./install/*", append(HEADERS, "\n/./install/*\n  Refresh: 0; url=/\n"),
+        (1, INSTALL_HEADER)),
+    ("a Refresh header under a full URL", append(HEADERS, "\nhttps://cleanlanguage.ai/install/*\n  Refresh: 0; url=/\n"),
+        (1, INSTALL_HEADER)),
+    ("X-Frame-Options with another value on every page",
+        edit(HEADERS, SITE_LINE, "/*\n  X-Frame-Options: SAMEORIGIN"), (1, INSTALL_HEADER)),
+    ("a second /* rule detaching a header", append(HEADERS, "\n/*\n  ! Cross-Origin-Opener-Policy\n"),
+        (1, INSTALL_HEADER)),
+    ("a Refresh header on the sitemap only", edit(HEADERS, "/sitemap.xml\n", "/sitemap.xml\n  Refresh: 0; url=/\n"), 0),
+    ("a Refresh header on a download only, under a full URL",
+        append(HEADERS, "\nhttps://cleanlanguage.ai/downloads/cleanlanguage.md\n  Refresh: 0; url=/\n"), 0),
 ]
 # Faults the gate passes, and the words of the gate's docstring that name each (compared with runs of whitespace
 # read as 1 space).
@@ -1111,7 +1147,8 @@ def css_rules(css: str) -> tuple[list[tuple[str, str, tuple[str, ...]]], str]:
     "<!--" or "-->", an unquoted url() holding a quote, a "(", a brace, a backslash or a line break, a brace inside
     brackets or
     parentheses, unbalanced braces, brackets or parentheses, a rule inside a rule (CSS nesting), and an at-rule outside
-    AT_RULES."""
+    AT_RULES. The character before a comment is the last one read before it and before the empty comments that
+    adjacent comments left, so a run of adjacent comments between 2 NAME_CHAR in a selector fails too."""
     rules: list[tuple[str, str, tuple[str, ...]]] = []
     blocks: list[list[str]] = []
     brackets: list[str] = []
@@ -1124,7 +1161,12 @@ def css_rules(css: str) -> tuple[list[tuple[str, str, tuple[str, ...]]], str]:
             if end < 0:
                 return [], "has an unclosed comment"
             index = end + 2
-            before, after = "".join(text)[-1:], css[index:index + 1]
+            # The character before a comment is read past the empty comments that adjacent comments before it left,
+            # so that .a/**//**/b still holds a comment between 2 characters of names.
+            kept = len(text)
+            while kept and text[kept - 1] == "/**/":
+                kept -= 1
+            before, after = "".join(text[:kept])[-1:], css[index:index + 1]
             if (before.strip(CSS_SPACE) and after.strip(CSS_SPACE) and before not in OWN_TOKENS
                     and (after not in OWN_TOKENS or (after == "(" and NAME_CHAR.match(before)))):
                 # Declarations sit in a style rule's block or an @font-face block; a prelude of a style rule is a
@@ -1447,6 +1489,27 @@ def attribute_pin_problems() -> list[str]:
     return []
 
 
+def header_pin_problems() -> list[str]:
+    """The gate's INSTALL_HEADERS holds, for each URL pattern of the committed site/_headers that the gate's
+    reaches_install() reads as able to match an install page, exactly the headers and values that the file sets
+    there, and no detach, so that the header pin cannot be widened unnoticed."""
+    try:
+        gate = load_gate()
+        entries = gate.load_tool("check-headers.py").parse((REPO_ROOT / HEADERS).read_text(encoding="utf-8"))
+        found: dict[str, list[tuple[str, str, str | None]]] = {}
+        for _, pattern, kind, name, value in entries:
+            if gate.reaches_install(pattern):
+                found.setdefault(pattern, []).append((kind, name.lower(), value))
+        recorded = {pattern: [("set", name, value) for name, value in held] for pattern, held in gate.INSTALL_HEADERS.items()}
+    except (Exception, SystemExit) as error:
+        return [f"INSTALL_HEADERS of tools/{GATE.name} could not be checked: {error!r}"]
+    if ({pattern: sorted(held, key=repr) for pattern, held in recorded.items()}
+            != {pattern: sorted(held, key=repr) for pattern, held in found.items()}):
+        return [f"INSTALL_HEADERS of tools/{GATE.name} holds {recorded}; the committed {HEADERS} sets {found} under "
+                "the URL patterns that can match an install page."]
+    return []
+
+
 def version_problems() -> list[str]:
     """The gate runs only on 3.14, and under another version, 3.9 or later, exits 3 before it prints a result line."""
     problems: list[str] = []
@@ -1517,6 +1580,7 @@ def main() -> int:
     failures: list[str] = statement_problems()
     failures += [f"the class pin: {problem}" for problem in class_pin_problems()]
     failures += [f"the pinned attributes: {problem}" for problem in attribute_pin_problems()]
+    failures += [f"the pinned headers: {problem}" for problem in header_pin_problems()]
     failures += [f"the stylesheets: {problem}"
                  for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
     failures += [f"the Python version: {problem}" for problem in version_problems()]
@@ -1540,7 +1604,7 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
     print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
-          f"ALLOWED_SCRIPTS, the checks of CLASS_PIN and RULE_ATTRIBUTES, the Python version checks, the "
+          f"ALLOWED_SCRIPTS, the checks of CLASS_PIN, RULE_ATTRIBUTES and INSTALL_HEADERS, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "
           "stylesheets passed.")
