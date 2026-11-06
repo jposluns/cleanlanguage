@@ -154,7 +154,15 @@ What it verifies
    ``/assets/baseline/``, with the same token and ``defer``, as exactly
    ``<script src="/assets/baseline/NAME?v=X.Y.Z" defer></script>``;
    ``select.js`` is refused, and the baseline's ``matrix.js`` is left out, by
-   the owner's decision. Each load is read as the parsed element, so a tag
+   the owner's decision. Every ``src`` on the 6 pages is a path from the
+   site's root whose first segment is 1 of ``LOADED_SEGMENTS`` (``assets``,
+   in any letter case), the first segments of every file the committed pages
+   load, so check 7 refuses every header and redirect rule that can match
+   what they load (``src="/images/a.png"`` and ``src="logo.svg"`` fail).
+   ``tools/test-install-page.py`` fails unless ``LOADED_SEGMENTS`` holds
+   exactly the first segments of every ``src``, every ``href`` of a ``link``
+   other than the canonical link, and every ``url()`` of the 3 stylesheets,
+   read from the stylesheet's address. Each load is read as the parsed element, so a tag
    inside a comment loads nothing, and a ``<script>`` or stylesheet written in
    another spelling (letter case, a character reference, attribute order or
    spacing) is still counted. Any tag that carries an attribute twice fails: a
@@ -178,7 +186,8 @@ What it verifies
    header, which a browser can read as a stylesheet load that check 6 and the
    rule pin do not see; it refuses every ``Link`` header, one that only
    preloads included, because it does not read the header's value. Under a
-   URL pattern that can match an install page, ``/*`` included, only the
+   URL pattern that can match an install page or a file the pages load
+   (``reaches_page``, below), ``/*`` included, only the
    headers and values that the committed file sets there may appear
    (``INSTALL_HEADERS``: under ``/*``, ``X-Frame-Options``,
    ``Permissions-Policy``, ``Cross-Origin-Opener-Policy`` and
@@ -186,7 +195,9 @@ What it verifies
    header or value there fails, and so does any detach: a ``Refresh``
    header, which can send the reader away from the page, a ``Link`` header,
    and a ``Content-Disposition`` header, which can make a browser download
-   the page instead of showing it, among them. ``tools/test-install-page.py``
+   the page instead of showing it, among them; under ``/assets/*`` a
+   ``Content-Type: text/plain``, which can stop a browser applying the
+   stylesheets, fails too. ``tools/test-install-page.py``
    fails unless ``INSTALL_HEADERS`` holds exactly what the committed file
    sets under those patterns. The gate reads a pattern from its text alone,
    not with Cloudflare Pages' matcher, and fails closed (``reaches_install``):
@@ -197,27 +208,38 @@ What it verifies
    ``/:page/*``, ``/install*``, ``/INSTALL/*``, ``/./install/*``,
    ``https://host`` and ``https://host/install/*`` can, and
    ``/downloads/cleanlanguage.md``, ``/images/cleanlanguage-card.png``,
-   ``/sitemap.xml`` and ``/draft/*`` cannot. ``site/_redirects`` is read the
-   same way: no rule there may have a source, its first field, that
-   ``reaches_install`` reads as able to match an install page, whatever its
+   ``/sitemap.xml`` and ``/draft/*`` cannot. ``reaches_page`` reads a
+   pattern the same way, and also as able to match a file the pages load
+   when the first segment of its path is 1 of ``LOADED_SEGMENTS`` (check 6)
+   in any letter case: ``/assets/*``, ``/ASSETS/baseline/copy.js`` and
+   ``https://host/assets/baseline/baseline.css`` can. ``site/_redirects`` is
+   read with it: no rule there may have a source, its first field, that
+   ``reaches_page`` reads as able to match an install page or a file the
+   pages load, whatever its
    destination and status, because a redirect sends the reader away from the
-   page and a rewrite (status 200) serves other content at its address; a
+   page and a rewrite (status 200) serves other content at its address, and
+   the same holds for a stylesheet, a script, a font or an image; a
    blank line, and a line whose first field starts with ``#``, is skipped. So
-   ``/install/* / 302``, ``/install/claude/ / 200``, ``/:page/* / 301`` and
-   ``/* / 302`` fail. No committed source can match an install page, nor can
-   any that ``redirects_body`` of ``tools/set-release-links.py``, the release
+   ``/install/* / 302``, ``/install/claude/ / 200``, ``/:page/* / 301``,
+   ``/* / 302``, ``/assets/baseline/baseline.css /assets/baseline/fonts.css
+   200`` and ``/assets/baseline/copy.js /assets/baseline/rail.js 302`` fail.
+   No committed source can match an install page or a file the pages load,
+   nor can any that ``redirects_body`` of ``tools/set-release-links.py``, the release
    writer, writes. These residuals are accepted: a rule of either file that
-   reaches an install page through any matching behaviour of Pages beyond that
+   reaches an install page or a file the pages load through any matching
+   behaviour of Pages beyond that
    reading passes. ``tools/test-release-links.py`` pins ``site/_redirects`` to
    the release writer's output, so a hand edit that adds such a rule fails that
    test, but a change to the writer, with the file written again, does not. Nor
    does the gate read a header that Cloudflare adds outside ``site/_headers``
    (zone settings, Transform Rules and the Pages defaults), or a redirect, a
-   rewrite or a response that Cloudflare makes outside ``site/_redirects``
-   (Bulk Redirects, Page Rules, a Worker, or a Pages Function or
-   ``site/_worker.js``, neither of which exists at this commit).
+   rewrite or a response that Cloudflare makes outside ``site/_redirects`` and
+   the repository (Bulk Redirects, Page Rules, Redirect Rules, other zone
+   settings, or a Worker on a route of the zone); check 10 refuses the server
+   entry points that the repository can hold.
    A correct new header for every page, such as ``Cache-Control`` under
-   ``/*``, fails until ``INSTALL_HEADERS`` changes with the file.
+   ``/*``, fails until ``INSTALL_HEADERS`` changes with the file, and so does
+   any header under ``/assets/*``.
 8. On the 6 pages, each checked element, each of its ancestors, as the parser
    holds them open, and each element it holds carries only the classes that
    the committed pages give an element of that tag there (``CLASS_PIN``): the
@@ -229,7 +251,7 @@ What it verifies
    committed pages do not give a class there may carry none, so
    ``<h1 class="fresh">`` on a family page, a ``<section class="fresh">``
    around it, a ``<span class="fresh">`` in it and an ``ol.steps`` in a step
-   all fail, while a ``span`` without a class in it passes.
+   all fail, while a ``span`` without a class in a step passes.
    ``tools/test-install-page.py`` fails unless ``CLASS_PIN`` holds exactly the
    classes the committed pages give, and pins every stylesheet rule that can
    match an element with those names and classes (see below). No checked
@@ -254,12 +276,28 @@ What it verifies
    which can colour, size or move a checked element with no stylesheet change
    (``<font color="#f6f4e7">``, the light background colour, around a family
    page's ``h1``, ``bgcolor`` on the body or ``align`` on the "Pick your AI"
-   label), and ``hidden``, ``open``, ``dir`` and ``title`` among them, while a
-   ``font`` with no attribute around that ``h1`` passes.
+   label), and ``hidden``, ``open``, ``dir`` and ``title`` among them.
    ``tools/test-install-page.py`` fails unless ``ATTRIBUTE_PIN`` holds exactly
    the attributes the committed pages give. A correct new attribute there (a
    ``title`` on a family link, say) fails until ``ATTRIBUTE_PIN`` changes with
-   the pages. No ``html`` or ``body`` start tag other than the
+   the pages. Each of them is also of a tag that the committed pages give an
+   element there (``TAG_PIN``), so any other tag fails, with or without a
+   class or an attribute: a ``marquee`` around a checked element, which a
+   browser scrolls in and out of view, a ``font`` or a ``details`` around a
+   family page's ``h1``, and a ``span``, a ``br``, a ``div`` or a ``bdi``
+   inside a family link or a family page's ``h1``.
+   ``tools/test-install-page.py`` fails unless ``TAG_PIN`` holds exactly the
+   tags the committed pages give. A correct new tag there (a ``br`` in a
+   family page's ``h1``, say) fails until ``TAG_PIN`` changes with the pages.
+   Every element on the 6 pages, checked or not, shown or hidden, carries only
+   attributes that the committed pages give an element of its tag somewhere
+   on them (``PAGE_ATTRIBUTES``), so a presentation attribute that sizes a box
+   outside the checked scope with no stylesheet change (``height`` on the
+   rail's ``img``) fails, and so do ``dir`` on any element and ``hidden`` on
+   any element but a ``button``. ``tools/test-install-page.py`` fails unless
+   ``PAGE_ATTRIBUTES`` holds exactly what the committed pages give. A correct
+   new attribute (a ``width`` on an ``img``, say) fails until
+   ``PAGE_ATTRIBUTES`` changes with the pages. No ``html`` or ``body`` start tag other than the
    first of each on the page carries any attribute, because a browser adds its
    attributes to the page's own element, an ancestor of every checked element,
    so a later ``<body class="fresh">`` fails. Nor does any ``html`` or ``body``
@@ -290,15 +328,38 @@ What it verifies
    release, and the ``href`` of a stylesheet, which check 6 holds to its exact
    form. So a ``meta`` with ``http-equiv`` in any value fails: ``refresh``,
    which can send the reader away from the page, before a family page's
-   ``h1`` or in a ``noscript``, ``default-style``, which can select another
-   stylesheet set, and ``content-security-policy``, which can block the
-   stylesheets; so do a ``base``, which changes where every relative link
-   goes, a ``viewport`` or ``charset`` with another value, a ``color-scheme``
+   ``h1`` or in a ``noscript``, ``content-security-policy``, which can block
+   the stylesheets, and ``default-style``, which selects among stylesheets
+   that carry a ``title``; these pages have none to select, because check 6
+   holds each stylesheet to an exact form without one, so it fails only as
+   an ``http-equiv`` that no committed page carries. So do a ``base``, whose
+   ``href`` a browser already ignores here, because ``site/_headers`` sets
+   ``base-uri 'none'`` in the shared policy, but whose ``target`` that
+   policy does not restrict, and can open every link elsewhere; a
+   ``viewport`` or ``charset`` with another value, a ``color-scheme``
    meta and a ``link`` of another kind. ``tools/test-install-page.py`` fails
    unless ``HEAD_PIN`` holds exactly what the committed pages carry, with
    exactly the values that its ``FREE_HEAD_VALUES`` leaves free. A correct new
    or changed ``meta`` or ``link`` on these pages (a ``theme-color`` meta, say,
    or another ``og:image``) fails until ``HEAD_PIN`` changes with the pages.
+10. No server entry point that Cloudflare Pages runs exists
+    (``SERVER_ENTRIES``), as a file, a directory or a link: ``functions`` at
+    the repository root, where Pages reads Pages Functions (a
+    ``functions/_middleware.js`` can answer any request to the site), and
+    ``site/_worker.js``, a Worker that Pages runs in place of serving the
+    files. Either can redirect, rewrite or replace an install page or a file
+    the pages load, and no check here reads what it does; ``tools/build-site.py
+    --check`` refuses neither ``functions``, which sits outside ``site/``,
+    nor a ``site/_worker.js`` listed in ``static_files``. Neither exists at
+    this commit. A correct future Function or Worker fails until this check
+    changes with it. These residuals are accepted: a Pages project whose root
+    directory, a dashboard setting, is not the repository root reads
+    ``functions`` from that directory, which the gate does not read; nor does
+    it read a zone feature that can change the HTML in transit (Email Address
+    Obfuscation, Rocket Loader or the automatic Web Analytics script, say), or
+    whether Pages serves a file other than the 6 pages at an install page URL
+    (``tools/build-site.py --check`` refuses any file under ``site/`` that is
+    neither generated nor listed in ``static_files``).
 
 It reads the markup with ``html.parser``. Its readers are not a full HTML5 tree
 builder: they model the open elements as tags nest, void elements, the head's
@@ -346,13 +407,11 @@ more). Where
 ``html.parser`` keeps open an element that a browser closes by an implied end
 tag (a ``p`` before a ``div``, say), the gate sees more ancestors than a
 browser. A hiding one makes it refuse more. Check 1 refuses any element
-directly in the paragraph of family links, so neither ``<div></div>`` between
-2 family links nor ``<p><h2>Pick</h2><a class="btn inline"`` passes, but that
-paragraph can still be one a browser has closed (in
-``<a class="btn inline" id="claude" href="/install/claude/"><div>Claude</div></a>``
-a browser closes the ``p`` at the ``div``, so the later links sit outside
-it), and the end tag of such an element closes here what a browser keeps
-open (see below).
+directly in the paragraph of family links, and check 8 any element inside a
+family link (``TAG_PIN``), so neither ``<div></div>`` between 2 family links,
+nor ``<p><h2>Pick</h2><a class="btn inline"``, nor
+``<a class="btn inline" id="claude" href="/install/claude/"><div>Claude</div></a>``,
+in which a browser closes the ``p`` at the ``div``, passes.
 
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
@@ -403,19 +462,21 @@ or the class or an attribute of a sibling or an earlier element (a pinned
 rule whose selector ends in ``.lbl + h1`` can match an ``h1`` right after an
 element with the class ``lbl``); the font files and images that a pinned rule
 names, which the test does not read, so a font whose glyphs show nothing
-passes; and a box that is neither a checked element, an ancestor nor an
+passes it (``tools/check-baseline-pin.py`` hash-pins every file under
+``site/assets/baseline/`` to ``.baseline/pin.toml``, so only a change of
+the baseline pin can bring one); and a box that is neither a checked element, an ancestor nor an
 element it holds (a sibling or an earlier element, say), which can cover a
 checked element (positioned, or given an outline or a shadow) or move it by
 its own size or place in the flow (``.fresh { margin-bottom: 300vh; }`` on
 ``p.meta`` moves the "Pick your AI" label and the family links 3 screen
 heights down): neither pin reaches it, so a rule for its class need not be
 pinned, and only the whole-file pin of ``tools/check-baseline-pin.py``
-refuses that change to a stylesheet. Check 8 does not read the attributes of
-such a box either, so a presentation attribute that sizes it with no
-stylesheet, such as ``height`` on the rail's ``img``, passes. Check 8 reads
-classes and attributes, not tags, so an element with neither around a checked
-element passes: a ``marquee`` around a checked element, which a browser
-scrolls in and out of view, passes. The test reads
+refuses that change to a stylesheet. Check 8 reads the names of the
+attributes of such a box (``PAGE_ATTRIBUTES``), but not their values, its
+classes or its tag, so an attribute that the committed pages give its tag
+with another value that sizes it (a larger ``width`` on an ``svg``, say),
+and an element of a tag that holds no checked element (a ``marquee`` around
+``Scope``'s label, say), pass. The test reads
 comments and strings as CSS does, a backslash in a string escaping the
 character after it, so a brace in either delimits no rule, and a bracket, a
 comma or a class name in a string counts for no selector. It refuses a
@@ -439,13 +500,14 @@ heading, the "Pick your AI" label, a family link label, a step, or a link back
 to the downloads or the test made only of an invisible character that is not
 whitespace, U+0000 or in ``ZERO_WIDTH`` (such as U+034F, U+115F, U+180E,
 U+2061 to U+2064, U+3164, a variation selector or a tag character) passes the
-visible-text check, which all 5 share. A ``bdo`` or a ``dir`` on an element
+visible-text check, which all 5 share. A ``dir`` on any element fails check
+8 (``PAGE_ATTRIBUTES``), and a ``bdo`` or a ``bdi`` in a checked element
+fails its tag pin (``TAG_PIN``); a ``bdo`` without ``dir`` on an element
 that starts after the paragraph of family links ends on ``/install/``, or
 after the ``h1`` ends on a family page, and that is neither a checked
-element, an ancestor of 1 nor an element 1 holds, whose attributes check 8
-pins (``Scope``'s label, say), passes, and so does a ``bdi``, which carries
-no ``dir`` but sets its text's direction from its first strong letter (a
-family link label in a ``bdi``, say). The gate applies no stylesheet; a
+element, an ancestor of 1 nor an element 1 holds (``Scope``'s label, say),
+passes, and so does a ``bdi`` there, which carries no ``dir`` but sets its
+text's direction from its first strong letter. The gate applies no stylesheet; a
 rule that sets ``direction`` or ``unicode-bidi`` on a checked element or an
 ancestor, such as ``main { direction: rtl; }``, fails the rule pin of
 ``tools/test-install-page.py`` unless a reviewer pins it. An end tag closes
@@ -455,13 +517,15 @@ among them: an end tag a browser ignores because its element is not in scope
 (``</div>`` inside a table cell leaves a hiding ``div`` outside the table open)
 or, for an element outside the HTML standard's special category, because a
 special element such as ``div`` is open inside it (after
-``<span hidden><div></span>`` the ``span`` stays open); an end tag whose
+``<span class="vh"><div></span>`` the ``span`` stays open); an end tag whose
 element a browser has already closed by an implied end tag (after
-``<p><div hidden></p>`` the ``div`` stays open); and a formatting element
+``<p><div class="vh"></p>`` the ``div`` stays open); and a formatting element
 (``a``, ``b``, ``big``, ``code``, ``em``, ``font``, ``i``, ``nobr``, ``s``,
 ``small``, ``strike``, ``strong``, ``tt`` or ``u``) that a browser reopens with
 its attributes after an end tag closed it out of order, so after
-``<p><b hidden>x</p>`` a link is hidden in a browser and visible here. The
+``<p><a class="vh">x</p>`` the text of a later heading is hidden in a browser
+and visible here. Check 8 refuses ``hidden`` on every element but a
+``button`` (``PAGE_ATTRIBUTES``), so in these each element hides by a class. The
 inline-code checks, and the load reading of check 6, share the residual that
 ``tools/check-inline-code.py`` states: ``html.parser`` is not a browser's parser.
 
@@ -505,9 +569,9 @@ which runs the gate without the suite.
 
 Exit codes:
   0  every check above passes
-  1  a family link, family page, id, retired attribute, inline code, asset token, stylesheet, class pin, pinned
-     attribute, attribute pin, html or body attribute, doctype, header, redirect, or meta, link or base discipline
-     regressed
+  1  a family link, family page, id, retired attribute, inline code, asset token, stylesheet, load path, class pin,
+     pinned attribute, attribute pin, tag pin, page attribute pin, html or body attribute, doctype, header, redirect,
+     meta, link or base discipline, or server entry point regressed
   3  a file could not be read, a gate it reuses is missing, or the Python version is 3.9 or later and
      either not 3.14 or not one that tools/check-inline-code.py supports
 """
@@ -559,8 +623,9 @@ SHARED_CSP = (
     "frame-ancestors 'none'"
 )
 # The headers, by name in lower case, and the values that the committed site/_headers sets under each URL pattern
-# that can match an install page (check 7, reaches_install). Under such a pattern any other header, another value or a
-# detach fails. tools/test-install-page.py fails unless this holds exactly what the committed file sets there.
+# that can match an install page or a file the pages load (check 7, reaches_page). Under such a pattern any other
+# header, another value or a detach fails. tools/test-install-page.py fails unless this holds exactly what the
+# committed file sets there.
 INSTALL_HEADERS = {
     "/*": (
         ("x-frame-options", "DENY"),
@@ -709,6 +774,65 @@ ATTRIBUTE_PIN = {
     "a step": ({}, {**PIN_ANCESTOR_ATTRS, "ol": ("class",)}, {"a": ("href",)}),
     "a link back": ({"a": ("class", "href")}, PIN_ANCESTOR_ATTRS, {"span": ("aria-hidden", "class")}),
 }
+# Check 8: for each kind of checked element, the tags the 6 committed pages give that element (the first tuple), each of
+# its ancestors (the second) and each element it holds (the third). Any other tag there fails, with or without a class
+# or an attribute, so a marquee around a checked element fails. tools/test-install-page.py fails unless these are
+# exactly the tags the committed pages give.
+PIN_ANCESTOR_TAGS = ("body", "div", "html", "main")
+TAG_PIN = {
+    "the hero's h1": (("h1",), PIN_ANCESTOR_TAGS, ()),
+    'the "pick" label': (("p",), PIN_ANCESTOR_TAGS, ()),
+    "the paragraph of family links": (("p",), PIN_ANCESTOR_TAGS, ("a",)),
+    "a family link": (("a",), (*PIN_ANCESTOR_TAGS, "p"), ()),
+    "the <h1>": (("h1",), PIN_ANCESTOR_TAGS, ()),
+    "a verified line": (("p",), PIN_ANCESTOR_TAGS, ()),
+    "a step list": (("ol",), PIN_ANCESTOR_TAGS, ("a", "code", "li", "span", "strong")),
+    "a step": (("li",), (*PIN_ANCESTOR_TAGS, "ol"), ("a", "code", "span", "strong")),
+    "a link back": (("a",), (*PIN_ANCESTOR_TAGS, "details", "p"), ("span",)),
+}
+# Check 8: the attributes that the 6 committed pages give an element of each tag, anywhere on them, checked or not; a
+# tag not listed carries none there, so it may carry none. Any other attribute on any element of the 6 pages fails, so a
+# presentation attribute that sizes a box outside the checked scope (height on the rail's img) fails, and so do dir and
+# hidden on any element but those listed. tools/test-install-page.py fails unless this is exactly what the committed
+# pages give.
+PAGE_ATTRIBUTES = {
+    "a": ("aria-current", "aria-label", "class", "href", "id", "rel", "target"),
+    "button": ("aria-pressed", "class", "data-copy", "data-scheme-toggle", "hidden", "type"),
+    "caption": ("class",),
+    "circle": ("cx", "cy", "r"),
+    "div": ("class", "tabindex"),
+    "footer": ("class",),
+    "h2": ("id",),
+    "header": ("class",),
+    "html": ("class", "lang"),
+    "img": ("alt", "class", "src"),
+    "li": ("class",),
+    "link": ("href", "rel", "type"),
+    "main": ("id",),
+    "meta": ("charset", "content", "name", "property"),
+    "nav": ("aria-label", "class"),
+    "ol": ("class",),
+    "p": ("aria-live", "class", "id", "role"),
+    "path": ("d",),
+    "pre": ("class", "id"),
+    "script": ("data-cfasync", "defer", "src", "type"),
+    "span": ("aria-hidden", "class"),
+    "svg": (
+        "aria-hidden", "class", "fill", "focusable", "height", "stroke", "stroke-linecap", "stroke-linejoin",
+        "stroke-width", "viewbox", "width",
+    ),
+    "ul": ("aria-label", "class"),
+}
+# Checks 6 and 7: the first path segment of every file the 6 committed pages load (each src, each href of a link other
+# than the canonical link, and each url() of the 3 stylesheets, read from the stylesheet's address). Every src on the 6
+# pages must be a path under 1 of them (check 6), and no rule of site/_headers or site/_redirects may have a pattern or a
+# source that can match a path under 1 of them (check 7, reaches_page), so neither file can change, redirect or replace
+# what the pages load. tools/test-install-page.py fails unless this is exactly what the committed tree loads.
+LOADED_SEGMENTS = ("assets",)
+# Check 10: the server entry points that Cloudflare Pages runs when they are present, and that can redirect, rewrite or
+# replace any response: a Pages Function directory at the repository root, and a Worker in the output directory, as a
+# file or a directory. Neither exists at this commit; the gate refuses each.
+SERVER_ENTRIES = ("functions", "site/_worker.js")
 # Check 9: the attributes that name what a meta, link or base element is, in this order; the first of them that an
 # element carries, with its value, is the element's key in HEAD_PIN (head_key).
 KEY_ATTRIBUTES = ("charset", "http-equiv", "name", "property", "rel")
@@ -1113,7 +1237,25 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
     for tag in parser.later_attrs:
         problems.append(f"{where}: a later html or body start tag carries attributes ({tag}), which a browser adds to "
                         "the page's own element, around every checked element.")
-    return problems + head_problems(where, text, parser)
+    return problems + page_attribute_problems(where, parser) + head_problems(where, text, parser)
+
+
+def page_attribute_problems(where: str, parser: PageParser) -> list[str]:
+    """Check 8: each attribute that an element of the page carries outside PAGE_ATTRIBUTES, checked or not; and check
+    6: each src that is not a path under 1 of LOADED_SEGMENTS."""
+    problems: dict[str, None] = {}
+    for element in parser.elements:
+        tag = ("an " if element["tag"][:1] in "aeiou" else "a ") + element["tag"]
+        for name in element["attrs"]:
+            if name not in PAGE_ATTRIBUTES.get(element["tag"], ()):
+                problems[f"{where}: {tag} carries the attribute {name!r}, which the committed pages give no "
+                         f"{element['tag']} (PAGE_ATTRIBUTES); a browser can hide, size or move it or what is near it "
+                         "by it."] = None
+        src = element["values"].get("src")
+        if src is not None and (not src.startswith("/") or path_segment(src).lower() not in LOADED_SEGMENTS):
+            problems[f"{where}: {tag} loads {src!r}, which is not under /{'/, /'.join(LOADED_SEGMENTS)}/ "
+                     "(LOADED_SEGMENTS), where check 7 refuses every header and redirect rule."] = None
+    return list(problems)
 
 
 def reorderers(where: str, parser: PageParser, last: dict, what: str) -> list[str]:
@@ -1190,9 +1332,9 @@ def pin_positions(parser: PageParser, element: dict) -> list[tuple[int, dict]]:
 
 
 def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, dict]]) -> list[str]:
-    """Check 8: each class that a checked element, an ancestor or an element it holds carries outside CLASS_PIN, each
-    attribute of RULE_ATTRIBUTES that one of them carries, and each other attribute that one of them carries outside
-    ATTRIBUTE_PIN."""
+    """Check 8: each tag of a checked element, an ancestor or an element it holds outside TAG_PIN, each class that 1
+    of them carries outside CLASS_PIN, each attribute of RULE_ATTRIBUTES that 1 of them carries, and each other
+    attribute that 1 of them carries outside ATTRIBUTE_PIN."""
     problems: dict[str, None] = {}
     for kind, element in kinds:
         for position, other in pin_positions(parser, element):
@@ -1200,6 +1342,9 @@ def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, di
             given = ATTRIBUTE_PIN[kind][position].get(other["tag"], ())
             tag = ("an " if other["tag"][:1] in "aeiou" else "a ") + other["tag"]
             what = (kind, f"{tag} around {kind}", f"{tag} inside {kind}")[position]
+            if other["tag"] not in TAG_PIN[kind][position]:
+                problems[f"{where}: {what} is {tag}, a tag that the committed pages do not give an element there "
+                         f"(TAG_PIN); a browser can hide, scroll or move {kind} by it."] = None
             for name in other["classes"]:
                 if name not in allowed:
                     problems[f"{where}: {what} carries the class {name!r}, which the committed pages do not give "
@@ -1262,14 +1407,23 @@ def head_problems(where: str, text: str, parser: PageParser) -> list[str]:
 
 
 def redirect_problems(redirects: str) -> list[str]:
-    """Check 7: each rule of site/_redirects whose source can match an install page, read with reaches_install."""
+    """Check 7: each rule of site/_redirects whose source can match an install page or a file the pages load, read
+    with reaches_page."""
     problems: list[str] = []
     for number, line in enumerate(redirects.splitlines(), 1):
         fields = line.split()
-        if fields and not fields[0].startswith("#") and reaches_install(fields[0]):
+        if fields and not fields[0].startswith("#") and reaches_page(fields[0]):
             problems.append(f"site/_redirects line {number} has the source {fields[0]}, which can match an install "
-                            "page; a rule there can send the reader away from the page or serve other content.")
+                            "page or a file the install pages load; a rule there can send the reader away from the "
+                            "page or serve other content.")
     return problems
+
+
+def server_entry_problems() -> list[str]:
+    """Check 10: each of SERVER_ENTRIES that exists, as a file, a directory or a link."""
+    return [f"{name} exists; Cloudflare Pages runs it for the requests it matches, and it can redirect, rewrite or "
+            "replace an install page or a file the pages load, which no check here reads."
+            for name in SERVER_ENTRIES if (REPO_ROOT / name).exists() or (REPO_ROOT / name).is_symlink()]
 
 
 def page_tag_problems(where: str, parser: PageParser, kinds: list[tuple[str, dict]]) -> list[str]:
@@ -1475,13 +1629,25 @@ def check_family_page(fam: str, text: str) -> list[str]:
     return problems + class_pin_problems(where, parser, kinds) + page_tag_problems(where, parser, kinds)
 
 
+def path_segment(pattern: str) -> str:
+    """The first segment of the path of a URL pattern, after any https:// and host ("" if the path is empty)."""
+    path = re.sub(r"^https://[^/]*", "", pattern)
+    return path.split("/")[1] if path.startswith("/") else ""
+
+
 def reaches_install(pattern: str) -> bool:
     """Whether a URL pattern of site/_headers can match an install page (check 7), read from its text alone and
     failing closed: it can, unless the first segment of its path, after any https:// and host, is LITERAL_SEGMENT,
     neither "." nor "..", and not "install" in any letter case."""
-    path = re.sub(r"^https://[^/]*", "", pattern)
-    first = path.split("/")[1] if path.startswith("/") else ""
+    first = path_segment(pattern)
     return not LITERAL_SEGMENT.fullmatch(first) or first in (".", "..") or first.lower() == "install"
+
+
+def reaches_page(pattern: str) -> bool:
+    """Whether a URL pattern of site/_headers or a source of site/_redirects can match an install page or a file the
+    pages load (check 7): reaches_install, or a first segment of its path that is 1 of LOADED_SEGMENTS in any letter
+    case."""
+    return reaches_install(pattern) or path_segment(pattern).lower() in LOADED_SEGMENTS
 
 
 def check_headers(headers: str) -> list[str]:
@@ -1527,10 +1693,11 @@ def check_headers(headers: str) -> list[str]:
             )
     # A detach has no value, so it never matches an entry of INSTALL_HEADERS and always fails here.
     for number, pattern, kind, name, value in entries:
-        if reaches_install(pattern) and (name.lower(), value) not in INSTALL_HEADERS.get(pattern, ()):
+        if reaches_page(pattern) and (name.lower(), value) not in INSTALL_HEADERS.get(pattern, ()):
             problems.append(
                 f"site/_headers line {number} {'sets' if kind == 'set' else 'detaches'} {name} under {pattern}, which "
-                "can match an install page; there only the headers and values of INSTALL_HEADERS may appear."
+                "can match an install page or a file the install pages load; there only the headers and values of "
+                "INSTALL_HEADERS may appear."
             )
     return problems
 
@@ -1554,7 +1721,7 @@ def main() -> int:
     problems = check_install_page(page_text)
     for fam in FAMILIES:
         problems += check_family_page(fam, family_texts[fam])
-    problems += check_headers(headers) + redirect_problems(redirects)
+    problems += check_headers(headers) + redirect_problems(redirects) + server_entry_problems()
 
     if problems:
         print("Install page problems found:")
@@ -1575,8 +1742,10 @@ def main() -> int:
         "line and a step list, each step "
         "list with a step read as visible, none of them read as hidden, and a link with text read as visible back "
         "to the downloads and to the test; ids "
-        "are unique, every checked element, its ancestors and what it holds carry only the classes and attributes the "
-        "committed pages give them there and no attribute that a pinned stylesheet rule names, every meta, link and "
+        "are unique, every checked element, its ancestors and what it holds are of the tags and carry only the classes "
+        "and attributes the committed pages give them there and no attribute that a pinned stylesheet rule names, "
+        "every element on the six pages carries only attributes the committed pages give its tag, every src is under "
+        "the loaded segments, every meta, link and "
         "base element on the six pages is one the committed pages carry, with its attributes and values, no html or "
         "body start tag on "
         "the six pages carries dir, and none carries an attribute unless it is the first of each and an ancestor of "
@@ -1585,8 +1754,9 @@ def main() -> int:
         "light and dark switch included, load the baseline's versioned stylesheets and no other, and copy.js, load scheme.js "
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
         "the /* rule of site/_headers carries exactly the shared policy, no rule there sets a Link header, and no "
-        "rule that can match an install page sets or detaches any header but those of INSTALL_HEADERS, with their "
-        "values, and no rule of site/_redirects has a source that can match an install page."
+        "rule that can match an install page or a file the pages load sets or detaches any header but those of "
+        "INSTALL_HEADERS, with their values, no rule of site/_redirects has a source that can match an install page "
+        "or a file the pages load, and no Pages Function or site/_worker.js exists."
     )
     return 0
 

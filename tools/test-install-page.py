@@ -23,15 +23,27 @@ attribute selectors of the rules rule_pins() holds name, read from each rule's
 name with its strings blanked, so that the gate cannot drop one unnoticed,
 and unless the gate's INSTALL_HEADERS (check 7) holds exactly the headers
 and values that the committed site/_headers sets under each URL pattern that
-the gate's reaches_install() reads as able to match an install page, so that
-the header pin cannot be widened unnoticed. It also fails unless the gate's
+the gate's reaches_page() reads as able to match an install page or a file
+the pages load, so that the header pin cannot be widened unnoticed. It also
+fails unless the gate's
 ATTRIBUTE_PIN (check 8) holds exactly the attributes that the 6 committed
 pages give each kind of checked element, each of its ancestors and each
 element it holds, by tag, and unless the gate's HEAD_PIN (check 9) holds
 exactly the meta, link and base elements that the 6 committed pages carry, by
 the gate's head_key(), each with its attributes and their values, None only
 where FREE_HEAD_VALUES below leaves a value free, so that neither pin can be
-widened unnoticed.
+widened unnoticed. It also fails unless the gate's TAG_PIN (check 8) holds
+exactly the tags that the 6 committed pages give each kind of checked
+element, each of its ancestors and each element it holds; unless its
+PAGE_ATTRIBUTES (check 8) holds exactly the attributes that they give an
+element of each tag anywhere on them; and unless its LOADED_SEGMENTS (checks
+6 and 7) holds exactly the first path segments of every file they load (each
+src, each href of a link other than the canonical link, and each url() of
+the 3 stylesheets, read from the stylesheet's address). And it fails unless
+each of the 2 path lists of .github/workflows/install-page.yml covers every
+file the gate, this test and that workflow read and each path of the gate's SERVER_ENTRIES
+(check 10), as a file or under a directory, and unless that check refuses the
+workflow with site/_redirects removed from 1 list or from both.
 
 It also pins the stylesheets every install page loads (fonts.css,
 palettes.css and baseline.css under site/assets/baseline/): it fails unless
@@ -124,6 +136,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -198,10 +211,16 @@ NO_DOCTYPE = "the page does not begin with <!doctype html>"
 LINK_SET = "sets a Link header"
 INSTALL_HEADER = "which can match an install page"
 # The gate's messages for an attribute outside its ATTRIBUTE_PIN, a meta, link or base element outside its HEAD_PIN,
-# and a rule of site/_redirects whose source can match an install page.
+# and a rule of site/_redirects whose source can match an install page or a file the pages load.
 GIVEN = "which the committed pages do not give"
 HEAD_PINNED = "(HEAD_PIN)"
-REDIRECT = "which can match an install page; a rule there can send the reader away"
+REDIRECT = "which can match an install page or a file the install pages load; a rule there can send the reader away"
+# The gate's messages for a tag outside its TAG_PIN, an attribute outside its PAGE_ATTRIBUTES, a src outside its
+# LOADED_SEGMENTS and 1 of its SERVER_ENTRIES that exists.
+TAG_GIVEN = "a tag that the committed pages do not give an element there (TAG_PIN)"
+NONE_GIVEN = "which the committed pages give no"
+OUTSIDE_LOADS = "(LOADED_SEGMENTS)"
+SERVER_ENTRY = "exists; Cloudflare Pages runs it"
 REFRESH = '<meta http-equiv="refresh" content="0; url=/">'
 DOCTYPE = "<!doctype html>\n"
 HTML = '<html lang="en" class="site-cleanlanguage">\n'
@@ -215,6 +234,12 @@ STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.
 # 1 per line, in the order the stylesheets give them. Update it only as the docstring says.
 PIN_FILE = "tools/install-page-rules.txt"
 RULE_PIN = REPO_ROOT / PIN_FILE
+# The workflow that runs this test and the gate, and the files it reads besides those of the gate and this test; each of
+# its 2 path lists must cover all of them (workflow_path_problems).
+WORKFLOW = ".github/workflows/install-page.yml"
+WORKFLOW_ALSO = ("tools/check-python-version.py", ".python-version", WORKFLOW)
+# A url() of a stylesheet, quoted or not, for the files that STYLESHEETS load (loaded_segment_problems).
+CSS_URL = re.compile(r"""url\(\s*["']?([^"')\s]+)""", re.I)
 PRINT_PIN = "--print-rule-pin"
 # CSS whitespace: space, tab, line feed, carriage return and form feed. str.split() and str.strip() also take U+00A0
 # and other spaces, which CSS reads as part of a name or a value (.fresh U+00A0 name is 1 class), so the reader
@@ -405,6 +430,17 @@ def remove(relative: str):
     return lambda root: (root / relative).unlink()
 
 
+def create(relative: str, text: str):
+    """Write a new file, and any directory it needs, that the copy does not hold."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            raise AssertionError(f"{relative} already exists")
+        path.write_text(text, encoding="utf-8")
+    return apply
+
+
 def both(*faults):
     return lambda root: [fault(root) for fault in faults][-1]
 
@@ -527,9 +563,12 @@ CASES = [
     ("a heading above the h1, outside main", edit(PAGE, "<main", "<h2>Install</h2>\n<main"), 1),
     ("main opened after the h1", both(edit(PAGE, MAIN, ""), edit(PAGE, HERO + "\n", HERO + "\n" + MAIN)), 1),
     ("a label above the h1, outside main", edit(PAGE, MAIN, '<p class="lbl">Install</p>\n' + MAIN), 1),
-    # The pin reads the body's elements before main, not what header.mast holds, so a hidden heading in its nav passes.
+    # The pin reads the body's elements before main, not what header.mast holds, so a hidden span in its nav passes.
+    ("a vh span in the nav", edit(PAGE, '<nav class="nav" aria-label="Site">',
+        '<nav class="nav" aria-label="Site"><span class="vh">Site</span>'), 0),
+    # The committed pages give no h2 a class (PAGE_ATTRIBUTES), so a vh heading fails wherever it sits.
     ("a vh heading in the nav", edit(PAGE, '<nav class="nav" aria-label="Site">',
-        '<nav class="nav" aria-label="Site"><h2 class="vh">Site</h2>'), 0),
+        '<nav class="nav" aria-label="Site"><h2 class="vh">Site</h2>'), (1, "a h2 carries the attribute 'class', " + NONE_GIVEN)),
     # The class first only changes the opening label's padding (baseline.css), so a label without it is correct.
     ("the opening label without the class first", edit(PAGE, '<p class="lbl first">Install</p>', '<p class="lbl">Install</p>'), 0),
     ("the hero's h1 hidden", edit(PAGE, HERO, HERO.replace("<h1>", '<h1 class="vh">')), (1, "the hero's h1 reads as hidden")),
@@ -683,7 +722,9 @@ CASES = [
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><style>Claude</style><")), 1),
     ("a family link whose only label is in an SVG desc",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><svg><desc>Claude</desc></svg><")), 1),
-    ("a family link whose label is in a span", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><span>Claude</span><")), 0),
+    # The committed pages put no element inside a family link (TAG_PIN).
+    ("a family link whose label is in a span", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><span>Claude</span><")),
+        (1, "a span inside a family link is a span, " + TAG_GIVEN)),
     ("a family link with a label and a hidden span",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", '>Claude<span class="vh"> setup</span><')), (1, PINNED)),
     ("the family links out of order", both(
@@ -711,10 +752,11 @@ CASES = [
         lambda root: edit(COPILOT, steps_of(root, COPILOT), STEPS + "<li><span></span></li></ol>")(root), 1),
     ("a family page whose steps are only in a hidden li",
         lambda root: edit(OTHER, steps_of(root, OTHER), STEPS + "<li hidden><span>Save the file.</span></li></ol>")(root), 1),
-    # Text in a list inside a step counts for that step too, unless it is hidden. A step list inside a step carries a
-    # class that the committed pages do not give an ol there (CLASS_PIN).
+    # Text in a list inside a step counts for that step too, unless it is hidden; but the committed pages put no list
+    # inside a step (TAG_PIN), and a step list inside a step carries a class that they do not give an ol there
+    # (CLASS_PIN).
     ("a family page step whose only text is in a nested list", lambda root: edit(OTHER, steps_of(root, OTHER),
-        STEPS + "<li><ol><li>Save the file.</li></ol></li></ol>")(root), 0),
+        STEPS + "<li><ol><li>Save the file.</li></ol></li></ol>")(root), (1, "an ol inside a step is an ol, " + TAG_GIVEN)),
     ("a family page step whose only text is hidden in a nested list", lambda root: edit(OTHER, steps_of(root, OTHER),
         STEPS + "<li><ol><li><span hidden>Save the file.</span></li></ol></li></ol>")(root), 1),
     ("a family page step list nested in a step", lambda root: edit(OTHER, steps_of(root, OTHER),
@@ -772,7 +814,34 @@ CASES = [
     ("a family page heading in a font with the light background colour",
         wrap(CHATGPT, "<h1>", "</h1>", '<font color="#f6f4e7">', "</font>"),
         (1, "a font around the <h1> carries the attribute 'color', " + GIVEN)),
-    ("a family page heading in a font with no attribute", wrap(CHATGPT, "<h1>", "</h1>", "<font>", "</font>"), 0),
+    # Nor any tag that the committed pages do not give an element there (the gate's TAG_PIN), with or without a class
+    # or an attribute: a marquee scrolls what it holds in and out of view.
+    ("a family page heading in a font with no attribute", wrap(CHATGPT, "<h1>", "</h1>", "<font>", "</font>"),
+        (1, "a font around the <h1> is a font, " + TAG_GIVEN)),
+    ("a family page heading in a marquee", wrap(CHATGPT, "<h1>", "</h1>", "<marquee>", "</marquee>"),
+        (1, "a marquee around the <h1> is a marquee, " + TAG_GIVEN)),
+    ("a div inside a family link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><div>Claude</div><")),
+        (1, "a div inside a family link is a div, " + TAG_GIVEN)),
+    ("a family link label in a bdi", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><bdi>Claude</bdi><")),
+        (1, "a bdi inside a family link is a bdi, " + TAG_GIVEN)),
+    ("a step list holding a span, as committed", lambda root: edit(OTHER, steps_of(root, OTHER),
+        STEPS + "<li><span>Save the file.</span></li></ol>")(root), 0),
+    # Nor, on any element of the 6 pages, checked or not, an attribute that the committed pages give no element of
+    # its tag (the gate's PAGE_ATTRIBUTES): a presentation attribute can size a box that moves a checked element.
+    ("the rail's img with a height", edit(PAGE, '<div class="rail"><img ', '<div class="rail"><img height="3000" '),
+        (1, "an img carries the attribute 'height', " + NONE_GIVEN)),
+    ("a dir attribute on the label after the button row", edit(PAGE, SCOPE, SCOPE.replace('">', '" dir="rtl">')),
+        (1, "a p carries the attribute 'dir', " + NONE_GIVEN)),
+    ("a family page with a dir attribute on a label after its heading", edit(CHATGPT,
+        '<p class="lbl accent blk">Team', '<p class="lbl accent blk" dir="rtl">Team'),
+        (1, "a p carries the attribute 'dir', " + NONE_GIVEN)),
+    ("a family page step list after <span hidden><div></span>", edit(OTHER, STEPS, "<span hidden><div></span>" + STEPS),
+        (1, "a span carries the attribute 'hidden', " + NONE_GIVEN)),
+    ("a family page step list after <p><div hidden></p>", edit(OTHER, STEPS, "<p><div hidden></p>" + STEPS),
+        (1, "a div carries the attribute 'hidden', " + NONE_GIVEN)),
+    ("an unknown element with an attribute below the steps", edit(OTHER, "</main>", '<x-note data-x="1"></x-note></main>'),
+        (1, "a x-note carries the attribute 'data-x', " + NONE_GIVEN)),
+    ("a nav link with a target, as committed pages give an a", edit(PAGE, '<a href="/standard/"', '<a target="_self" href="/standard/"'), 0),
     ("the body with bgcolor around a family page heading", edit(GEMINI, "<body>", '<body bgcolor="#f6f4e7">'),
         (1, "a body around the <h1> carries the attribute 'bgcolor', " + GIVEN)),
     ("div.doc with bgcolor around the hero's h1", edit(PAGE, '<div class="doc">', '<div class="doc" bgcolor="#000">'),
@@ -817,14 +886,16 @@ CASES = [
     ("a family page heading naming its family only in a vh span",
         edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>Setup<span class="vh"> ChatGPT</span></h1>'), 1),
     ("the Claude and ChatGPT family pages swapped", swap(CLAUDE, CHATGPT), 1),
-    ("a family page heading naming its family in a span", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1><span>ChatGPT</span></h1>"), 0),
+    # The committed pages put no element inside a family page's h1 (TAG_PIN), so a span or a br there fails.
+    ("a family page heading naming its family in a span", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1><span>ChatGPT</span></h1>"),
+        (1, "a span inside the <h1> is a span, " + TAG_GIVEN)),
     # The name is compared without regard to case, with U+0000 and ZERO_WIDTH but U+00A0 deleted, and each run of
     # whitespace, U+00A0 included, and each br that no element hides read as a space.
     ("a family page heading naming its family in another case",
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI Systems</h1>"), 0),
     ("a family page heading naming its family with a soft hyphen", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>Chat&shy;GPT</h1>"), 0),
     ("a family page heading naming its family across a br",
-        edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI<br>systems</h1>"), 0),
+        edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI<br>systems</h1>"), (1, "a br inside the <h1> is a br, " + TAG_GIVEN)),
     ("a family page heading naming its family across a no-break space",
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI\u00a0systems</h1>"), 0),
     ("a family page heading naming its family with U+034F inside it",
@@ -833,7 +904,7 @@ CASES = [
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI<br hidden>systems</h1>"), 1),
     # A browser reads </br> as <br>.
     ("a family page heading naming its family across </br>",
-        edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI</br>systems</h1>"), 0),
+        edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI</br>systems</h1>"), (1, "a br inside the <h1> is a br, " + TAG_GIVEN)),
     ("a family page heading joining its family's name across </br> in a hidden span",
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI<span hidden></br></span>systems</h1>"), 1),
     # A bidi control can show the name's letters in another order: Chat, U+202E, GPT and U+202C show "ChatTPG".
@@ -891,8 +962,10 @@ CASES = [
     ("a family page heading inside a noscript", wrap(OTHER, "<h1>", "</h1>", "<noscript>", "</noscript>"), 1),
     ("a family page heading inside an rp", wrap(CLAUDE, "<h1>", "</h1>", "<rp>", "</rp>"), 1),
     ("a family page heading inside a title", wrap(CHATGPT, "<h1>", "</h1>", "<title>", "</title>"), 1),
+    # The committed pages put no details or summary around a family page's h1 (TAG_PIN).
     ("a family page heading in the summary of a closed details",
-        wrap(GEMINI, "<h1>", "</h1>", "<details><summary>", "</summary><p>More</p></details>"), 0),
+        wrap(GEMINI, "<h1>", "</h1>", "<details><summary>", "</summary><p>More</p></details>"),
+        (1, "a summary around the <h1> is a summary, " + TAG_GIVEN)),
     ("a family page heading after the summary of a closed details",
         wrap(COPILOT, "<h1>", "</h1>", "<details><summary>More</summary>", "</details>"), 1),
     ("a family page heading inside an open dialog", wrap(OTHER, "<h1>", "</h1>", '<dialog open="">', "</dialog>"),
@@ -1124,6 +1197,35 @@ CASES = [
     ("a redirect between 2 downloads", append(REDIRECTS, "/downloads/old.md /downloads/cleanlanguage.md 301\n"), 0),
     ("a redirect from the install pages only in a comment", append(REDIRECTS, "# /install/* / 302\n"), 0),
     ("the redirects file missing", remove(REDIRECTS), 3),
+    # Nor may a source, or a pattern of site/_headers, match a file the install pages load: each sits under a first
+    # segment of LOADED_SEGMENTS (assets), in any letter case.
+    ("a rewrite of baseline.css to fonts.css",
+        append(REDIRECTS, "/assets/baseline/baseline.css /assets/baseline/fonts.css 200\n"),
+        (1, "site/_redirects line 11 has the source /assets/baseline/baseline.css, " + REDIRECT)),
+    ("a redirect of copy.js to rail.js", append(REDIRECTS, "/assets/baseline/copy.js /assets/baseline/rail.js 302\n"),
+        (1, REDIRECT)),
+    ("a redirect of every asset, in capitals", append(REDIRECTS, "/ASSETS/* / 302\n"), (1, REDIRECT)),
+    ("a redirect of the rail's img under a full URL",
+        append(REDIRECTS, "https://cleanlanguage.ai/assets/baseline/logos/cleanlanguage.svg /x.svg 302\n"),
+        (1, REDIRECT)),
+    ("a redirect of an image the install pages do not load",
+        append(REDIRECTS, "/images/old.png /images/cleanlanguage-card.png 301\n"), 0),
+    ("a Content-Type header on the stylesheets",
+        append(HEADERS, "\n/assets/baseline/*.css\n  Content-Type: text/plain\n"), (1, INSTALL_HEADER)),
+    # Every src on the 6 pages is a path under LOADED_SEGMENTS, so check 7 covers what it loads.
+    ("the rail's img loaded from another first segment",
+        edit(PAGE, 'src="/assets/baseline/logos/cleanlanguage.svg" alt="A document',
+             'src="/images/cleanlanguage-card.png" alt="A document'), (1, OUTSIDE_LOADS)),
+    ("a family page script loaded by a relative path", edit(CLAUDE, 'src="/assets/baseline/copy.js', 'src="assets/baseline/copy.js'),
+        (1, OUTSIDE_LOADS)),
+    # No server entry point that Cloudflare Pages runs may exist (SERVER_ENTRIES).
+    ("a Pages Function that redirects",
+        create("functions/_middleware.js", 'export const onRequest = () => Response.redirect("https://example.com/", 302);\n'),
+        (1, "functions " + SERVER_ENTRY)),
+    ("a Worker in the output directory", create("site/_worker.js", "export default { fetch: () => new Response('') };\n"),
+        (1, "site/_worker.js " + SERVER_ENTRY)),
+    ("a Worker directory in the output directory", create("site/_worker.js/index.js", "export default {};\n"),
+        (1, "site/_worker.js " + SERVER_ENTRY)),
     # Every meta, link and base element on the 6 pages, at any depth, shown or hidden, and every such start tag that a
     # text match finds, is 1 that the committed pages carry, with its attributes and values (the gate's HEAD_PIN).
     ("a meta refresh before a family page heading", edit(CHATGPT, "<h1>ChatGPT</h1>", REFRESH + "<h1>ChatGPT</h1>"),
@@ -1164,13 +1266,12 @@ CASES = [
 # read as 1 space).
 RESIDUALS = [
     # On a family page: the pin of /install/'s opening refuses any element or text it reads between the pick label
-    # and the row.
-    ("a family page step list after <span hidden><div></span>", edit(OTHER, STEPS, "<span hidden><div></span>" + STEPS),
-        "after ``<span hidden><div></span>`` the ``span`` stays open"),
-    ("a family page step list after <p><div hidden></p>", edit(OTHER, STEPS, "<p><div hidden></p>" + STEPS),
-        "after ``<p><div hidden></p>`` the ``div`` stays open"),
-    ("a div inside a family link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><div>Claude</div><")),
-        "a browser closes the ``p`` at the ``div``, so the later links sit outside it"),
+    # and the row. The committed pages give no span or div hidden (PAGE_ATTRIBUTES), so these hide by a class.
+    ("a family page step list after <span class=\"vh\"><div></span>",
+        edit(OTHER, STEPS, '<span class="vh"><div></span>' + STEPS),
+        "after ``<span class=\"vh\"><div></span>`` the ``span`` stays open"),
+    ("a family page step list after <p><div class=\"vh\"></p>", edit(OTHER, STEPS, '<p><div class="vh"></p>' + STEPS),
+        "after ``<p><div class=\"vh\"></p>`` the ``div`` stays open"),
     ("a family link with another family's label", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">ChatGPT<")),
         "a wrong family link label (another family's, say)"),
     ("a family link labelled only with U+034F", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">" + chr(0x034F) + "<")),
@@ -1186,23 +1287,14 @@ RESIDUALS = [
     ("a family page with 1 setup step dropped",
         edit(OTHER, STEPS + '<li><span>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</span></li>', STEPS),
         "not its steps or their wording"),
-    # A bdo or a dir after the button row, or after a family page's h1, on an element that is not checked, an ancestor
-    # or an element 1 holds, passes, as does a bdi.
-    ("a dir attribute on the label after the button row", edit(PAGE, SCOPE, SCOPE.replace('">', '" dir="rtl">')),
-        "(``Scope``'s label, say)"),
-    ("a family page with a dir attribute on a label after its heading", edit(CHATGPT,
-        '<p class="lbl accent blk">Team', '<p class="lbl accent blk" dir="rtl">Team'), "(``Scope``'s label, say)"),
-    ("a family link label in a bdi", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><bdi>Claude</bdi><")),
-        "a family link label in a ``bdi``"),
-    # A box that is neither a checked element, an ancestor nor an element it holds can cover or move 1, so neither pin
-    # reaches a class or an attribute on it.
+    # A bdo without dir or a bdi on an element that starts after the button row, or after a family page's h1, and that
+    # is not checked, an ancestor or an element 1 holds, passes; the tag pin refuses either inside a checked element.
+    ("a bdi in the label after the button row", edit(PAGE, SCOPE, SCOPE.replace(">Scope<", "><bdi>Scope</bdi><")),
+        "and so does a ``bdi`` there"),
+    # A box that is neither a checked element, an ancestor nor an element it holds can cover or move 1, so the class
+    # pin does not reach a class on it.
     ("p.meta with a further class", edit(PAGE, '<p class="meta">', '<p class="meta fresh">'),
         "``.fresh { margin-bottom: 300vh; }`` on ``p.meta``"),
-    ("the rail's img with a height", edit(PAGE, '<div class="rail"><img ', '<div class="rail"><img height="3000" '),
-        "``height`` on the rail's ``img``"),
-    # The pins read classes and attributes, not tags: an element with neither around a checked element passes.
-    ("a family page heading in a marquee", wrap(CHATGPT, "<h1>", "</h1>", "<marquee>", "</marquee>"),
-        "a ``marquee`` around a checked element"),
 ]
 # Faults to a copy of STYLESHEETS and PIN_FILE for stylesheet_problems(), the comparison of the committed stylesheets
 # with RULE_PIN, and the words that its problems must hold, each in 1 of them; none for none. Each rule is named as
@@ -1642,7 +1734,7 @@ def header_pin_problems() -> list[str]:
         entries = gate.load_tool("check-headers.py").parse((REPO_ROOT / HEADERS).read_text(encoding="utf-8"))
         found: dict[str, list[tuple[str, str, str | None]]] = {}
         for _, pattern, kind, name, value in entries:
-            if gate.reaches_install(pattern):
+            if gate.reaches_page(pattern):
                 found.setdefault(pattern, []).append((kind, name.lower(), value))
         recorded = {pattern: [("set", name, value) for name, value in held] for pattern, held in gate.INSTALL_HEADERS.items()}
     except (Exception, SystemExit) as error:
@@ -1650,8 +1742,126 @@ def header_pin_problems() -> list[str]:
     if ({pattern: sorted(held, key=repr) for pattern, held in recorded.items()}
             != {pattern: sorted(held, key=repr) for pattern, held in found.items()}):
         return [f"INSTALL_HEADERS of tools/{GATE.name} holds {recorded}; the committed {HEADERS} sets {found} under "
-                "the URL patterns that can match an install page."]
+                "the URL patterns that can match an install page or a file the install pages load."]
     return []
+
+
+def tag_pin_problems() -> list[str]:
+    """The gate's TAG_PIN holds, for each kind, exactly the tags the committed pages give that checked element, each
+    of its ancestors and each element it holds, so that the pin cannot be widened unnoticed."""
+    try:
+        gate = load_gate()
+        found = {kind: (set(), set(), set()) for kind in gate.TAG_PIN}
+        for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
+            parser = gate.parse((REPO_ROOT / relative).read_text(encoding="utf-8"))
+            for kind, element in (gate.install_kinds if relative == PAGE else gate.family_kinds)(parser):
+                for position, other in gate.pin_positions(parser, element):
+                    found[kind][position].add(other["tag"])
+        recorded = {kind: tuple(set(tags) for tags in held) for kind, held in gate.TAG_PIN.items()}
+    except Exception as error:
+        return [f"TAG_PIN of tools/{GATE.name} could not be checked: {error!r}"]
+    return [f"TAG_PIN of tools/{GATE.name} gives {kind} {recorded[kind]}; the committed pages give {found[kind]}."
+            for kind in recorded if recorded[kind] != found[kind]]
+
+
+def page_attribute_pin_problems() -> list[str]:
+    """The gate's PAGE_ATTRIBUTES holds, for each tag, exactly the attributes that the committed pages give an element
+    of that tag, anywhere on them, and no tag whose elements carry none, so that the pin cannot be widened unnoticed."""
+    try:
+        gate = load_gate()
+        found: dict[str, set[str]] = {}
+        for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
+            for element in gate.parse((REPO_ROOT / relative).read_text(encoding="utf-8")).elements:
+                if element["attrs"]:
+                    found.setdefault(element["tag"], set()).update(element["attrs"])
+        recorded = {tag: set(names) for tag, names in gate.PAGE_ATTRIBUTES.items()}
+    except Exception as error:
+        return [f"PAGE_ATTRIBUTES of tools/{GATE.name} could not be checked: {error!r}"]
+    if recorded != found:
+        return [f"PAGE_ATTRIBUTES of tools/{GATE.name} holds {recorded}; the committed pages give {found}."]
+    return []
+
+
+def loaded_segment_problems() -> list[str]:
+    """The gate's LOADED_SEGMENTS holds exactly the first path segments of the files the committed pages load: each
+    src, each href of a link other than the canonical link, and each url() of STYLESHEETS, read from the address of
+    its stylesheet, so that the redirect and header refusal of check 7 covers every 1 of them."""
+    try:
+        gate = load_gate()
+        loads: set[str] = set()
+        for relative in (PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER):
+            for element in gate.parse((REPO_ROOT / relative).read_text(encoding="utf-8")).elements:
+                values = element["values"]
+                if "src" in values:
+                    loads.add(values["src"])
+                if element["tag"] == "link" and values.get("rel") != "canonical":
+                    loads.add(values.get("href", ""))
+        for relative in STYLESHEETS:
+            address = "/" + relative.removeprefix("site/")
+            for match in CSS_URL.finditer((REPO_ROOT / relative).read_text(encoding="utf-8")):
+                loads.add(urllib.parse.urljoin(address, match.group(1)))
+        found = {gate.path_segment(load).lower() for load in loads}
+        recorded = set(gate.LOADED_SEGMENTS)
+    except Exception as error:
+        return [f"LOADED_SEGMENTS of tools/{GATE.name} could not be checked: {error!r}"]
+    if any(not load.startswith("/") for load in loads):
+        return [f"the committed pages load {sorted(load for load in loads if not load.startswith('/'))}, which is "
+                "not a path from the site's root, so LOADED_SEGMENTS cannot cover it."]
+    if recorded != found:
+        return [f"LOADED_SEGMENTS of tools/{GATE.name} holds {sorted(recorded)}; the committed pages load files under "
+                f"{sorted(found)}."]
+    return []
+
+
+def glob_pattern(pattern: str) -> re.Pattern:
+    """A path filter of a workflow as GitHub reads it, as far as this test needs: ** matches any characters, / among
+    them, and * any characters but /."""
+    parts = re.split(r"(\*\*|\*)", pattern)
+    return re.compile("".join({"**": ".*", "*": "[^/]*"}.get(part, re.escape(part)) for part in parts))
+
+
+def workflow_path_problems(text: str | None = None) -> list[str]:
+    """Each of the 2 path lists of WORKFLOW (pull_request and push) covers every file the gate, this test and the
+    workflow read, and every path of the gate's SERVER_ENTRIES, as a file or under a directory, so that a change to any
+    of them runs the workflow."""
+    try:
+        if text is None:
+            text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
+        gate = load_gate()
+        entries = [path for name in gate.SERVER_ENTRIES for path in (name, f"{name}/index.js")]
+    except Exception as error:
+        return [f"{WORKFLOW} could not be checked: {error!r}"]
+    lists: list[list[str]] = []
+    for line in text.splitlines():
+        if line.strip() == "paths:":
+            lists.append([])
+        elif lists and re.fullmatch(r' +- "[^"]+"', line):
+            lists[-1].append(line.split('"')[1])
+    lists = [held for held in lists if held]
+    if len(lists) != 2:
+        return [f"{WORKFLOW} has {len(lists)} path lists with entries, not 2 (pull_request and push)."]
+    read = [f"tools/{GATE.name}", f"tools/{Path(__file__).name}", *FILES, *STYLESHEETS, PIN_FILE, *WORKFLOW_ALSO]
+    problems: list[str] = []
+    for number, held in enumerate(lists, 1):
+        patterns = [glob_pattern(pattern) for pattern in held]
+        problems += [f"path list {number} of {WORKFLOW} does not cover {path}, which the gate, its test or the "
+                     "workflow reads."
+                     for path in [*read, *entries] if not any(pattern.fullmatch(path) for pattern in patterns)]
+    return problems
+
+
+def workflow_case_problems() -> list[str]:
+    """workflow_path_problems() refuses the committed workflow with site/_redirects removed from 1 path list, or from
+    both."""
+    text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
+    line = '      - "site/_redirects"\n'
+    if text.count(line) != 2:
+        return [f"{WORKFLOW} lists site/_redirects {text.count(line)} times, not once in each path list."]
+    problems: list[str] = []
+    for name, edited in (("from the first path list", text.replace(line, "", 1)), ("from both", text.replace(line, ""))):
+        if not workflow_path_problems(edited):
+            problems.append(f"site/_redirects removed {name}: workflow_path_problems() found no problem.")
+    return problems
 
 
 def version_problems() -> list[str]:
@@ -1727,6 +1937,10 @@ def main() -> int:
     failures += [f"the head pin: {problem}" for problem in head_pin_problems()]
     failures += [f"the pinned attributes: {problem}" for problem in attribute_pin_problems()]
     failures += [f"the pinned headers: {problem}" for problem in header_pin_problems()]
+    failures += [f"the tag pin: {problem}" for problem in tag_pin_problems()]
+    failures += [f"the page attribute pin: {problem}" for problem in page_attribute_pin_problems()]
+    failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
+    failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
                  for problem in sheet_case_problems() + pin_case_problems() + stylesheet_problems()]
     failures += [f"the Python version: {problem}" for problem in version_problems()]
@@ -1750,8 +1964,8 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
     print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
-          f"ALLOWED_SCRIPTS, the checks of CLASS_PIN, ATTRIBUTE_PIN, HEAD_PIN, RULE_ATTRIBUTES and INSTALL_HEADERS, the "
-          f"Python version checks, the "
+          f"ALLOWED_SCRIPTS, the checks of CLASS_PIN, ATTRIBUTE_PIN, HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
+          f"PAGE_ATTRIBUTES and LOADED_SEGMENTS, the workflow's path lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "
           "stylesheets passed.")
