@@ -165,6 +165,21 @@ What it verifies
    block inline code on these pages. The site's own pages must not use it
    (template specification, section 5), and check 5 and
    ``tools/check-inline-code.py`` enforce that rule.
+8. On the 6 pages, each checked element, each of its ancestors, as the parser
+   holds them open, and each element it holds carries only the classes that
+   the committed pages give an element of that tag there (``CLASS_PIN``): the
+   hero's ``h1``, the "Pick your AI" label, the paragraph of family links and
+   each family link on ``/install/``, and, on each family page, each ``h1``,
+   ``p.verified`` and ``ol.steps``, each step (an ``li`` whose nearest list is
+   an ``ol.steps``) and each link to ``/install/#get`` or ``/install/#test``
+   outside every element of ``INERT_ELEMENTS``. An element of a tag that the
+   committed pages do not give a class there may carry none, so
+   ``<h1 class="fresh">`` on a family page, a ``<section class="fresh">``
+   around it, a ``<span class="fresh">`` in it and an ``ol.steps`` in a step
+   all fail, while a ``span`` without a class in it passes.
+   ``tools/test-install-page.py`` fails unless ``CLASS_PIN`` holds exactly the
+   classes the committed pages give, and pins every stylesheet rule that can
+   match an element with those names and classes (see below).
 
 It reads the markup with ``html.parser``. Its readers are not a full HTML5 tree
 builder: they model the open elements as tags nest, void elements, the head's
@@ -210,10 +225,11 @@ open (see below).
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
 
-It does not apply any stylesheet or run any script. It does NOT detect a
-stylesheet rule that hides a link or a step list, a custom CLASS outside
-``HIDING_CLASSES`` that hides, clips, zeroes opacity or positions off-screen,
-a DESCENDANT wipe, or hiding by id. Of the elements the HTML standard hides
+It does not apply any stylesheet or run any script, and it does NOT judge
+whether a stylesheet rule hides, clips, zeroes the opacity of or moves a
+checked element: check 8 and the rule pin of ``tools/test-install-page.py``
+keep the rules that can reach one to those a reviewer has pinned (see
+below). Of the elements the HTML standard hides
 with no stylesheet, it does not list those that cannot hold a checked element
 or its text: the void elements (``area``, ``base``, ``basefont``, ``link``,
 ``meta``, ``param``, and ``input`` with ``type=hidden``) and ``head`` (a
@@ -228,75 +244,40 @@ not model a script that opens a popover, a dialog or a ``details``, or a
 browser's find-in-page that reveals ``hidden=until-found`` content.
 Among the descendant wipes, baseline.css hides, each at some widths,
 ``.figure .stack``, ``.figure .wide``, ``.family .cards .cname``, and
-``.family .sig .pre`` and ``.family .sig .post``; those classes hide only in
-that context, so they are not in ``HIDING_CLASSES`` and the gate passes an
-element that carries one of them there. ``tools/test-install-page.py`` fails
-when fonts.css, palettes.css or baseline.css hides a bare single class (a
-selector such as ``.only-dark``, whose name may be any CSS identifier) that is
-not in ``HIDING_CLASSES`` or its exempt list. It reads together the
-declarations of every rule in the 3 stylesheets whose selector list holds
-that class, inside an at-rule or not and whatever its condition, so
-``.x { height: 3px; } .x { overflow: auto; }`` hides ``.x``. It fails
-closed on properties as well as values: a declaration shows only when its
-property is a custom property or 1 of the test's ``SHOWING_PROPERTIES``,
-which paint a colour or a line behind or around the text or in an SVG, count,
-point or scroll, and cannot hide or move a box, or when its value is in the
-test's ``SHOWING_VALUES`` for its property, an exact list of values the
-stylesheets carry today that do not hide (``opacity: 1``, say, and no
-``visibility``, ``clip``, ``content`` or ``bottom`` value at all); ``color``
-and the font properties have such lists. Every other declaration hides, read
-or not: any value of a property neither lists (``content-visibility``,
-``zoom``, ``contain``, ``filter``, ``mask``, ``direction`` or an unknown one,
-say), and any value outside a list, valid or not (a computed 1 such as
-``calc()`` or ``var()``, a CSS-wide keyword, an ``opacity`` of 0.5, -1 or
-``0e1``, ``inset: -9999px``, ``font-size: 0``, ``max-width: 0``, ``color:
-transparent`` or ``color: var(--surface-raised)``); a vendor prefix such as
-``-webkit-`` is dropped first, and the test refuses a stylesheet that holds a
-backslash outside a string, so no property name it reads holds a CSS escape.
-A listed value holds ``var()`` only of a custom property that the test pins
-to its values in the 3 stylesheets today (among them each palette colour that
-a listed ``color`` value names), as the colour of a border or an outline, or
-in the middle of a ``clamp()`` between 2 positive lengths in ``rem``. It also
-pins the keyframes of each animation it lists (``field-in``) and each
-``@font-face`` descriptor to what the stylesheets carry today, and the
-strings of ``font-feature-settings`` and ``grid-template-areas`` to those
-values. No ``overflow``, ``overflow-x``, ``overflow-y``, ``overflow-block`` or
-``overflow-inline`` value that holds ``hidden`` or ``clip`` is listed, so each
-hides, whatever else the rules declare, because a size in another class, or
-``white-space: nowrap`` beside it, can cut the text off. The joined
-declarations of a class also hide when they declare a size (``width``,
-``height``, ``inline-size``, ``block-size``, their ``max-`` forms,
-``aspect-ratio``, ``flex``, ``flex-basis``, ``container``,
-``container-type`` or ``border-radius``) beside an overflow value that holds
-``auto`` or ``scroll`` with a size value outside the test's ``SCROLL_SIZES``,
-so ``height: 3px; overflow: auto`` hides. It compares the value in lower case,
-with each run of CSS whitespace (space, tab, line feed, carriage return and
-form feed, and no other character) read as 1 space and a final
-``!important`` dropped, and reads neither which declaration wins nor its
-importance, so ``opacity: 0; opacity: 1`` hides there as ``opacity: 1
-!important; opacity: 0`` does. It does not prove that no other mix of listed
-values hides, and among those it passes are the 3 negative margins it lists,
-of at most 0.8rem, which can take a box that small off an edge it sits at; a
-scroll box (an ``overflow`` or ``overflow-x`` of ``auto``, which
-``.prompt-block``, ``.nav`` and ``.tablewrap`` need) that a size in another
-class or in a rule it does not read makes small; a colour that matches what
-is behind the text in context or lets it show through: a listed ``color``
-value whose palette colour matches the background there (each pinned custom
-property may take any of its listed values in any rule, so a dark scheme's
-``--text`` set in a light one passes), or a value of a paint property of
-``SHOWING_PROPERTIES``, which may take any value, that matches the text's
-colour (``background: var(--text)``, say); a font that a family name (in
-``font-family``, ``font`` or ``@font-face``) or an ``src`` URL picks, because
-it reads every string as empty but those of ``font-feature-settings`` and
-``grid-template-areas``, so a font whose glyphs show nothing passes; and a box
-that another, positioned or given an outline or a shadow, covers. A class it
-refuses that does not hide belongs in its exempt list, with a comment saying
-why, or its value in ``SHOWING_VALUES``. It reads no compound, descendant or
-attribute selector, and so no rule that hides through one. It reads comments
-and strings as CSS does, so a brace in either delimits no rule, and refuses a
-stylesheet with what it does not model, such as a backslash outside a string,
-a brace inside brackets, a rule inside a rule, an unlisted at-rule, or
-keyframes named by a string. Of text it reads only whether the headings, the
+``.family .sig .pre`` and ``.family .sig .post``; none of those classes is in
+``CLASS_PIN``, so no checked element, ancestor or element it holds may carry
+one. ``tools/test-install-page.py`` pins, verbatim after normalizing only CSS
+whitespace and comments, every rule of fonts.css, palettes.css and
+baseline.css whose selector can match an element with the names and classes
+of ``CLASS_PIN`` (any element may carry no class), read by the last compound
+selector of each selector and conservatively: an attribute selector, an id, a
+pseudo-class, ``:has()``, ``:is()`` and ``:not()`` among them, and a
+pseudo-element count as matching, inside an at-rule or not. It also pins
+every keyframe and ``@font-face`` rule, and every rule that sets a custom
+property that a pinned rule names in ``var()``, compared with regard to case.
+A change to the 3 stylesheets that adds, changes, moves or removes such a rule
+fails that test, naming the rule, until a reviewer updates the pin as its
+docstring says, and ``tools/check-baseline-pin.py`` hash-pins the 3 files. So
+a rule for a new class, such as ``.fresh { padding: 0 var(--PAD); }``, cannot
+reach a checked element, which may not carry that class, and a new or changed
+rule for a pinned name or class, such as ``.btn { writing-mode:
+vertical-rl; }``, fails the rule pin. These residuals are accepted: what a
+pinned rule does is what a reviewer accepted when it was pinned, and neither
+the gate nor the test judges it (the negative top margin of ``.verified``, or
+a colour that matches what is behind the text in some scheme, say); a pinned
+rule that a checked element comes to match by something the class pin does
+not hold, such as an attribute, an id or a sibling's class
+(``data-preset`` on a family page's ``h1`` hides it in print through
+``@media print { [data-preset] { display: none; } }``); the font files and
+images that a pinned rule names, which the test does not read, so a font
+whose glyphs show nothing passes; and a stylesheet other than those 3, such
+as ``/assets/site.css``, which check 6 allows on a page with a content token
+and which none of the 6 pages loads today. The test reads comments and
+strings as CSS does, so a brace in either delimits no rule, and refuses a
+stylesheet with what it does not model, such as a backslash outside a
+string, a line break in a string, a comment between 2 characters of names in
+a selector, a brace inside brackets, a rule inside a rule or an unlisted
+at-rule. Of text it reads only whether the headings, the
 "Pick your AI" label, each family link, each step list's steps and the links
 back to the downloads and the test have visible text, whether text sits above
 the family links or directly in their paragraph, whether the visible text of
@@ -317,11 +298,11 @@ that starts after the paragraph of family links ends on ``/install/``, or
 after the ``h1`` ends on a family page (``Scope``'s label, ``p.verified``, a
 step list or a link back, say), passes, and so does a ``bdi``, which carries
 no ``dir`` but sets its text's direction from its first strong letter (a
-family link label in a ``bdi``, say). The gate applies no stylesheet, so a
-rule that sets ``direction`` or ``unicode-bidi`` through a selector that
-``tools/test-install-page.py`` does not read (``main { direction: rtl; }``)
-passes too. An end tag closes here the open
-element it names and every element opened inside it; the gate
+family link label in a ``bdi``, say). The gate applies no stylesheet; a
+rule that sets ``direction`` or ``unicode-bidi`` on a checked element or an
+ancestor, such as ``main { direction: rtl; }``, fails the rule pin of
+``tools/test-install-page.py`` unless a reviewer pins it. An end tag closes
+here the open element it names and every element opened inside it; the gate
 does not model the browser repairs that can hide markup it reads as visible,
 among them: an end tag a browser ignores because its element is not in scope
 (``</div>`` inside a table cell leaves a hiding ``div`` outside the table open)
@@ -377,7 +358,8 @@ which runs the gate without the suite.
 
 Exit codes:
   0  every check above passes
-  1  a family link, family page, id, retired attribute, inline code, asset token, or header discipline regressed
+  1  a family link, family page, id, retired attribute, inline code, asset token, class pin, or header discipline
+     regressed
   3  a file could not be read, a gate it reuses is missing, or the Python version is 3.9 or later and
      either not 3.14 or not one that tools/check-inline-code.py supports
 """
@@ -503,7 +485,7 @@ def inert_elements() -> tuple[str, ...]:
 # which it shows again only on an img in the dark scheme, and skip (".skip { position: absolute; left: 1rem;
 # top: -4rem; ... }"), off-screen until it has focus. Classes it hides only as a descendant (.figure .stack,
 # .figure .wide, .family .cards .cname, .family .sig .pre and .post) are not listed; the docstring names them.
-# tools/test-install-page.py fails when a stylesheet the pages load hides a bare single class not listed here.
+# No checked element, ancestor or element it holds may carry any of these: none is in CLASS_PIN (check 8).
 HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
 # The HTML standard's rendering rules hide these with no stylesheet: display: none on datalist, rp, script and
 # title, and on noscript when scripting is on. The parser here reads each as an element that can hold the checked
@@ -516,6 +498,24 @@ HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
 HIDING_ELEMENTS = (
     "datalist", "noscript", "rp", "script", "title", "audio", "canvas", "meter", "object", "progress", "select", "video"
 )
+# Check 8: for each kind of checked element, the classes the 6 committed pages give, by tag, that element (the first
+# map), each of its ancestors (the second) and each element it holds (the third); any other tag there carries no class
+# on those pages, so it may carry none. tools/test-install-page.py fails unless these are exactly the sets the
+# committed pages give, and pins every stylesheet rule that can match an element with these names and classes.
+PIN_ANCESTORS = {"html": ("site-cleanlanguage",), "div": ("doc", "wrap")}
+CLASS_PIN = {
+    "the hero's h1": ({}, PIN_ANCESTORS, {}),
+    'the "pick" label': ({"p": ("blk", "lbl")}, PIN_ANCESTORS, {}),
+    "the paragraph of family links": ({}, PIN_ANCESTORS, {"a": ("btn", "inline")}),
+    "a family link": ({"a": ("btn", "inline")}, PIN_ANCESTORS, {}),
+    "the <h1>": ({}, PIN_ANCESTORS, {}),
+    "a verified line": ({"p": ("verified",)}, PIN_ANCESTORS, {}),
+    "a step list": ({"ol": ("steps",)}, PIN_ANCESTORS, {}),
+    "a step": ({}, {**PIN_ANCESTORS, "ol": ("steps",)}, {}),
+    "a link back": (
+        {"a": ("start",)}, {**PIN_ANCESTORS, "div": ("callout", "doc", "next", "wrap")}, {"span": ("arrow",)}
+    ),
+}
 
 
 def class_names(attrs: dict[str, str]) -> list[str]:
@@ -876,6 +876,72 @@ def reorderers(where: str, parser: PageParser, last: dict, what: str) -> list[st
     return problems
 
 
+def install_kinds(parser: PageParser) -> list[tuple[str, dict]]:
+    """Check 8: the checked elements of /install/, each with its kind in CLASS_PIN: the first h1 (the hero's), the
+    element with the "pick" id, each family link and each element that holds 1."""
+    by_order = {element["order"]: element for element in parser.elements}
+    links = [anchor for anchor in parser.anchors if anchor["id"] in FAMILIES]
+    kinds = [("the hero's h1", element) for element in parser.elements if element["tag"] == "h1"][:1]
+    kinds += [('the "pick" label', element) for element in parser.elements if element["id"] == "pick"][:1]
+    rows = dict.fromkeys(link["parent"][1] for link in links if link["parent"])
+    kinds += [("the paragraph of family links", by_order[order]) for order in rows]
+    return kinds + [("a family link", by_order[link["order"]]) for link in links]
+
+
+def family_kinds(parser: PageParser) -> list[tuple[str, dict]]:
+    """Check 8: the checked elements of a family page, each with its kind in CLASS_PIN: each h1, p.verified and
+    ol.steps, each li whose nearest open list is an ol.steps, and each link to /install/#get or /install/#test outside
+    every element of INERT_ELEMENTS."""
+    by_order = {element["order"]: element for element in parser.elements}
+    kinds: list[tuple[str, dict]] = []
+    for element in parser.elements:
+        if element["tag"] == "h1":
+            kinds.append(("the <h1>", element))
+        elif element["tag"] == "p" and "verified" in element["classes"]:
+            kinds.append(("a verified line", element))
+        elif element["tag"] == "ol" and "steps" in element["classes"]:
+            kinds.append(("a step list", element))
+        elif element["tag"] == "li":
+            parent = element["parent"]
+            while parent is not None and by_order[parent]["tag"] not in ("ol", "ul"):
+                parent = by_order[parent]["parent"]
+            if parent is not None and by_order[parent]["tag"] == "ol" and "steps" in by_order[parent]["classes"]:
+                kinds.append(("a step", element))
+    return kinds + [("a link back", by_order[anchor["order"]]) for anchor in parser.anchors
+                    if anchor["href"] in ("/install/#get", "/install/#test") and not anchor["inert"]]
+
+
+def pin_positions(parser: PageParser, element: dict) -> list[tuple[int, dict]]:
+    """Check 8: element (0), each of its ancestors, as the parser holds them open (1), and each element it holds (2)."""
+    by_order = {other["order"]: other for other in parser.elements}
+    positions = [(0, element)]
+    parent = element["parent"]
+    while parent is not None:
+        positions.append((1, by_order[parent]))
+        parent = by_order[parent]["parent"]
+    inside = {element["order"]}
+    for other in parser.elements:
+        if other["parent"] in inside:
+            inside.add(other["order"])
+            positions.append((2, other))
+    return positions
+
+
+def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, dict]]) -> list[str]:
+    """Check 8: each class that a checked element, an ancestor or an element it holds carries outside CLASS_PIN."""
+    problems: dict[str, None] = {}
+    for kind, element in kinds:
+        for position, other in pin_positions(parser, element):
+            allowed = CLASS_PIN[kind][position].get(other["tag"], ())
+            tag = ("an " if other["tag"][:1] in "aeiou" else "a ") + other["tag"]
+            what = (kind, f"{tag} around {kind}", f"{tag} inside {kind}")[position]
+            for name in other["classes"]:
+                if name not in allowed:
+                    problems[f"{where}: {what} carries the class {name!r}, which the committed pages do not give "
+                             f"{tag} there (CLASS_PIN); a stylesheet rule for it can hide or move {kind}."] = None
+    return list(problems)
+
+
 def outside_problems(where: str, parser: PageParser) -> list[str]:
     """Check 1: each element or text that a browser can move into the body, above its first element, and that the
     pin, which reads only what the body holds, does not read: an element, other than html, outside every element; an
@@ -1010,6 +1076,7 @@ def check_install_page(text: str) -> list[str]:
     if not parser.h1:
         problems.append(f"{where}: the page has no h1, so nothing marks the hero; the family links sit at the top.")
     problems += opening_problems(where, parser, found) + outside_problems(where, parser)
+    problems += class_pin_problems(where, parser, install_kinds(parser))
     for gid in TEMPLATE_IDS + FAMILIES:
         if gid not in parser.id_live:
             problems.append(
@@ -1055,7 +1122,7 @@ def check_family_page(fam: str, text: str) -> list[str]:
         elif not any(anchor["href"] == target and not anchor["inert"] and not anchor["hidden"] and anchor["text"]
                      for anchor in parser.anchors):
             problems.append(f"{where}: every link to {target} reads as hidden or has no text that reads as visible.")
-    return problems
+    return problems + class_pin_problems(where, parser, family_kinds(parser))
 
 
 def check_headers(headers: str) -> list[str]:
@@ -1135,7 +1202,8 @@ def main() -> int:
         "line and a step list, each step "
         "list with a step read as visible, none of them read as hidden, and a link with text read as visible back "
         "to the downloads and to the test; ids "
-        "are unique, no html or body start tag on the six pages carries dir, no retired selector attribute "
+        "are unique, every checked element, its ancestors and what it holds carry only the classes the committed "
+        "pages give them there, no html or body start tag on the six pages carries dir, no retired selector attribute "
         "remains, the six pages pass the inline-code checks, the "
         "light and dark switch included, load the baseline's versioned stylesheets and copy.js, load scheme.js "
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "

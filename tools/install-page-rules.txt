@@ -1,0 +1,301 @@
+626c055333eec3b1 fonts.css: @font-face
+59fbcc8d6a503267 fonts.css: @font-face
+b4cacd70ea0cb36e fonts.css: @font-face
+15f434ce8dde2179 fonts.css: @font-face
+53b4d17c2ba3dd2b fonts.css: @font-face
+6568d3e7107d3a1a fonts.css: @font-face
+d5ba021556770f39 fonts.css: @font-face
+c044588b2ec2d4c0 palettes.css: .site-secureconfig
+bca391d825fc67eb palettes.css: @media (prefers-color-scheme: dark) { .site-secureconfig:not([data-scheme="light"])
+19ef488a91540bab palettes.css: [data-scheme="light"].site-secureconfig
+7c9a99e5554c2271 palettes.css: [data-scheme="dark"].site-secureconfig
+3bffc9bb6f218227 palettes.css: .site-opfiles
+f34cc026f118c155 palettes.css: @media (prefers-color-scheme: dark) { .site-opfiles:not([data-scheme="light"])
+612835fb1d4c7205 palettes.css: [data-scheme="light"].site-opfiles
+f4dcf83498e04dc9 palettes.css: [data-scheme="dark"].site-opfiles
+dbfc04e15724afa7 palettes.css: .site-auditthis
+bc3acfbb5f22d18b palettes.css: @media (prefers-color-scheme: dark) { .site-auditthis:not([data-scheme="light"])
+553bc9d1f5a6d644 palettes.css: [data-scheme="light"].site-auditthis
+cb6262962f1a3530 palettes.css: [data-scheme="dark"].site-auditthis
+274e02e881eb1589 palettes.css: .site-cleanlanguage
+c8f2dce4c330598c palettes.css: @media (prefers-color-scheme: dark) { .site-cleanlanguage:not([data-scheme="light"])
+73696c89246eee64 palettes.css: [data-scheme="light"].site-cleanlanguage
+5fce48e0be79b1cc palettes.css: [data-scheme="dark"].site-cleanlanguage
+77467ebc23fb821e palettes.css: .site-aiqt
+3cc39147df74f279 palettes.css: @media (prefers-color-scheme: dark) { .site-aiqt:not([data-scheme="light"])
+a10ed6535af7031d palettes.css: [data-scheme="light"].site-aiqt
+fd0d5e1f7d41fed1 palettes.css: [data-scheme="dark"].site-aiqt
+044230c003b0e824 palettes.css: .site-grclibrary
+38af7dc4cceae588 palettes.css: @media (prefers-color-scheme: dark) { .site-grclibrary:not([data-scheme="light"])
+13a53eeb4918c870 palettes.css: [data-scheme="light"].site-grclibrary
+c945c3c707b8e237 palettes.css: [data-scheme="dark"].site-grclibrary
+6733f2b603f4c83c palettes.css: :root, [data-scheme="light"]
+855961d4a9fa2175 palettes.css: @media (prefers-color-scheme: dark) { :root:not([data-scheme="light"])
+617f66e676e4dfac palettes.css: [data-scheme="dark"]
+421b6e0380604cef palettes.css: :root
+42415eaab0f59299 baseline.css: :root
+cd5bedf1629c046e baseline.css: :root
+64d1002932bf5822 baseline.css: :root
+566f27f6652974a7 baseline.css: @media (prefers-color-scheme: dark) { :root:not([data-scheme="light"])
+c00a9c9ce5f05fc3 baseline.css: :root[data-scheme="dark"]
+6d71f16bf7601c76 baseline.css: *, *::before, *::after
+ffc891a76463ad52 baseline.css: [hidden]
+8074bbab74480652 baseline.css: :root
+d50601b1897f8f3f baseline.css: :root[data-scheme="light"]
+15c098d4ad3ccdcd baseline.css: :root[data-scheme="dark"]
+84747121cfa32f09 baseline.css: html
+8f242bff96c269cf baseline.css: body
+7df78f88a352e7f3 baseline.css: ::selection
+90749ee803ed7c4a baseline.css: a
+bd938e150bc5c8f5 baseline.css: a:hover
+af86e7c1d5626fba baseline.css: :focus-visible
+1543c1cf34e3b16d baseline.css: .lbl, .label
+d735d49e38ff9e1e baseline.css: .lbl a
+d5e91e0cdc525a1b baseline.css: .lbl a:hover
+1ef15fdf2dcdf622 baseline.css: .wrap
+2c90ff7e816f7e7a baseline.css: .nav a
+849e3e4b9c7e0b04 baseline.css: .nav a:hover
+fdd02f6c215bf633 baseline.css: .nav a[aria-current="page"]
+eba674b6dd34ffd8 baseline.css: .scheme svg
+7be0f3fd120270db baseline.css: .hero .lbl
+828d02d1a136e0d3 baseline.css: .hero-art img
+fa39198d3973543f baseline.css: @keyframes field-in { from
+59384710144a3d20 baseline.css: @keyframes field-in { to
+0e67c8a8f50bcd1a baseline.css: .statement em
+7f7ae3582e46a1f9 baseline.css: .start
+569cbfcd61ffe349 baseline.css: .start:hover
+76de1760bcabb845 baseline.css: .start .arrow
+414a8da12d23644e baseline.css: .start:hover .arrow
+c5811c251c0be084 baseline.css: .region > .lbl
+a15f8d01e1126c08 baseline.css: .region.narrow > div
+84fc348fbf7f3d66 baseline.css: .region p
+6c677bf5eacd54ad baseline.css: .region p:last-child
+7a58d823a82bad40 baseline.css: .plan li
+375d1ba7090802f3 baseline.css: .plan li a
+48583b8c35fc48e9 baseline.css: .plan li a:hover
+69380c5128db31d6 baseline.css: .plan li small
+a41b776f8cf8ba12 baseline.css: .plan.described li
+c115e7371d1b676f baseline.css: .plan.described li a, .plan.described li .n
+90b863d1c9dc61f1 baseline.css: .doc
+23d675c06d2df388 baseline.css: :is(.doc, .doc > section, .doc > article) > :is(p, h1, h2, h3, ul, ol.num, dl.record:not(.cols), blockquote, .callout, .download, details, .pair, .search)
+cacafe0985415e93 baseline.css: .doc :is(p, li, dt, dd, h1, h2, h3, h4, blockquote, figcaption, .callout)
+0fb72cb0aca371b1 baseline.css: :is(.doc, .doc > section, .doc > article) > .steps
+0b7a90f6c6df5599 baseline.css: :is(.doc, .doc > section, .doc > article) > *
+6c9f01160fcce152 baseline.css: :is(.doc, .doc > section, .doc > article) > .lbl
+8eb615dcc72c75ac baseline.css: .doc section, .doc article
+3b28ad9a41a883c3 baseline.css: .doc h1
+e54e75f06dd8b7c3 baseline.css: .doc h2
+89b00451118ee68a baseline.css: .doc h3
+12482d9f27ebf571 baseline.css: :is(.doc, .doc > section, .doc > article) > .lbl + h1, :is(.doc, .doc > section, .doc > article) > .lbl + h3
+d5a0aaec825a9489 baseline.css: :is(.doc, .doc > section, .doc > article) > .lbl + h2
+2d3df2fae2fd649f baseline.css: :is(.doc, .doc > section, .doc > article) > .lbl.blk
+8ddb4966394ad66f baseline.css: :is(.doc, .doc > section, .doc > article) > .lbl + .tablewrap + *
+114fd2c574098c95 baseline.css: :is(.doc, .doc > section, .doc > article) > .side dd
+a85583a25c89981b baseline.css: .region ol.num > li
+547a91ff8dc559f3 baseline.css: .region ol.num > li::before
+461ab198780bfdaf baseline.css: :is(.doc, .doc > section, .doc > article) > details
+54b02177fe784277 baseline.css: details summary
+5d0df36be4e4a6c6 baseline.css: details p, details ul
+f042283887d8f953 baseline.css: details ul ul
+c56ce80d4b82b142 baseline.css: .doc p, .doc ul, .doc ol, .doc dl
+f38677764e35d4aa baseline.css: .doc ul
+4f03ff8d8aa9721a baseline.css: .doc li
+56574d1e82b56ff8 baseline.css: .doc ol.num > li
+06852dbd2495ae3f baseline.css: .doc ol.num > li::before
+2897060a4487c508 baseline.css: .doc ol.num ol
+22ac21df0d29a9b4 baseline.css: .doc blockquote
+4ded92d6814a15f4 baseline.css: .rail
+5c291796a63f8063 baseline.css: .site-opfiles .rail
+39fe4171821261bb baseline.css: .site-auditthis .rail
+658d7c67a388a600 baseline.css: .site-cleanlanguage .rail
+d5dbb3d6432d9a48 baseline.css: .site-aiqt .rail
+99c97c925a5de411 baseline.css: .site-grclibrary .rail
+b15e7ebf874b181e baseline.css: .rail .lbl
+1b8e85a4fa186700 baseline.css: .rail ol, .rail ul
+b5a1b6528ca38323 baseline.css: .rail li
+738b9cf2a7495d17 baseline.css: .rail li a
+fafc053f605717c4 baseline.css: .rail ol li a::before
+a37dedc2a7cdf812 baseline.css: .rail ul li a
+05a795b69f4b1b07 baseline.css: .rail li a:hover
+356b9c2059845138 baseline.css: .rail li a[aria-current="location"], .rail li a[aria-current="true"]
+30ef88eedef69663 baseline.css: .rail > .lbl, .rail > ol, .rail > ul
+2ce7496eef096ea3 baseline.css: :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > *, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .wide, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .next
+8e7d689e5c14e1e8 baseline.css: :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl.sec, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl.blk
+c7c78a5a66064953 baseline.css: :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl + h2
+5395888fe072c26c baseline.css: .doc.left-rail > .lrail
+22073b846876cc5a baseline.css: .site-opfiles .lrail
+f6b8905dde51929a baseline.css: .site-auditthis .lrail
+760ca9febfdca968 baseline.css: .site-cleanlanguage .lrail
+f6fadd22d56b1111 baseline.css: .site-aiqt .lrail
+7fc930536a36a7d3 baseline.css: .site-grclibrary .lrail
+a5147acae22d70b3 baseline.css: .lrail > nav
+0a4e4b8744935d00 baseline.css: .lrail .lbl
+95532691a84e7b94 baseline.css: .lrail ul
+312d18bfb5a403ba baseline.css: .lrail li
+81c17a525d1f4bef baseline.css: .lrail li a, .lrail li button
+d8a6ab467860f420 baseline.css: .lrail li a:hover, .lrail li button:hover
+d30e912d985b717d baseline.css: .lrail li [aria-current="true"], .lrail li [aria-pressed="true"]
+79ce8b368e7f10ac baseline.css: .callout
+944eb8ef0054c8e8 baseline.css: .callout p
+0054c2e562da89b7 baseline.css: .callout p:last-child, .callout ul:last-child, .callout ol:last-child
+7974208121cd2b64 baseline.css: pre, .code
+9db7c17aaa2a8d0f baseline.css: code
+cd37e4ecbaf3abde baseline.css: pre code
+8e3604163c436904 baseline.css: .copy, .btn
+640e2d0ec44877e2 baseline.css: .copy:hover, .btn:hover
+e11e433767db5750 baseline.css: .btn.inline
+3a97217da1eb2129 baseline.css: .btn.inline:hover
+4bcc73dd2563cff0 baseline.css: table
+1196c3d12ebae402 baseline.css: th
+b330d8e85fb2f554 baseline.css: td
+573074b16f45602d baseline.css: td code
+55e89c80b5e6593d baseline.css: td.id code
+f48f19449ce9d77f baseline.css: table.fixed th
+32f7e5dac3d39869 baseline.css: th:last-child, td:last-child
+cfad15996024a023 baseline.css: .sticky thead th
+b32eaaf21a29725d baseline.css: table.sticky-col th:first-child, table.sticky-col td:first-child
+f7ba1a0e47be5e63 baseline.css: table.sticky-col thead th:first-child
+93bd35f161529395 baseline.css: table [hidden]
+2d88f6a54c5a55ea baseline.css: table.matrix tbody th
+460847c4fc015ae8 baseline.css: table.matrix td
+508afff4b2a43b5a baseline.css: table.matrix td code
+251159b8a0f8a86b baseline.css: table.matrix td a
+561ff85b50f11cfd baseline.css: col.r6
+fb65f28c2c35aba9 baseline.css: col.r8
+3a6ea7e5494a8a36 baseline.css: col.r10
+7cc1346c6dc8ae87 baseline.css: col.r12
+7be8b9ddcee7de0c baseline.css: col.r14
+f41b080e87c83b77 baseline.css: col.r16
+293ebacd09510d79 baseline.css: col.r18
+02260f2080195830 baseline.css: col.r20
+6499ee1b390a013f baseline.css: col.r22
+c7b3c00ce854b3f8 baseline.css: col.r24
+5c989a31b15f99c5 baseline.css: .fixed col
+3c4ca3d1758f4ef9 baseline.css: td.nowrap, td.nowrap code
+6339f4778db0a6a2 baseline.css: table.matrix.cells-wrap td:not(.nowrap, .id), table.matrix.cells-wrap td:not(.nowrap, .id) code
+eb139ecfd3f2cb8e baseline.css: table.sticky-col.pin-cap :is(th, td):first-child
+d30db992b5f785fd baseline.css: table.pin-cap.pin-r6
+7e40789d75245cd8 baseline.css: table.pin-cap.pin-r8
+d4b1d2095aeb6ee6 baseline.css: table.pin-cap.pin-r10
+136c5469a5f663e0 baseline.css: table.pin-cap.pin-r12
+a53aa01e4fbad713 baseline.css: table.pin-cap.pin-r14
+c1ba6c81a20b02fe baseline.css: table.pin-cap.pin-r16
+5416348fa28a242d baseline.css: table.pin-cap.pin-r18
+30eae76ff466ddc4 baseline.css: table.pin-cap.pin-r20
+9cfe2ba2e4ac4bd6 baseline.css: table.zebra tbody tr:nth-child(even) > *
+1b871e100a407068 baseline.css: table.rowhover tbody tr:hover > *
+c4b6b71d2f00373b baseline.css: table.matrix tbody tr > td[data-heat], table.matrix tbody tr > td[data-heat] :is(.sub, .n)
+5081629e87e32ada baseline.css: table.matrix tbody tr > td[data-heat="0"], .tag[data-heat="0"]
+fa9339ea6ea04eeb baseline.css: table.matrix tbody tr > td[data-heat="1"], .tag[data-heat="1"]
+fb29a83d5ef97ad1 baseline.css: table.matrix tbody tr > td[data-heat="2"], .tag[data-heat="2"]
+2639c4daebb6a883 baseline.css: table.matrix tbody tr > td[data-heat="3"], .tag[data-heat="3"]
+2aec009985fe5c59 baseline.css: table.matrix tbody tr > td[data-heat="4"], .tag[data-heat="4"]
+2142f6f96390066b baseline.css: table.matrix td[data-heat] :focus-visible, table.matrix td[data-heat]:focus-visible
+19a1cb515c128fc6 baseline.css: table.matrix thead th[data-grp="1"]
+23c53537577cf38f baseline.css: table.matrix thead th[data-grp="2"]
+89f7fcbb9144d6fd baseline.css: table.matrix thead th[data-grp="3"]
+055cdbb2a2bff6f2 baseline.css: table.matrix thead th[data-grp="4"]
+7b26a97927ed97b1 baseline.css: table.matrix thead th[data-grp="5"]
+b0feb096f46db2c8 baseline.css: table.matrix thead th[data-grp="6"]
+75acdad871ddfed1 baseline.css: .matrix-toggles .lbl
+f7fdb2181a9dc219 baseline.css: dl.record dt
+527f157c41ef858a baseline.css: dl.record dd
+fc26d80eb2d861bc baseline.css: dl.record dd:last-child
+2eea60ef6e7ec0a0 baseline.css: dl.record.cols div
+630489353369d840 baseline.css: .pair > div
+d624c94f3fc9a4db baseline.css: .pair > div p
+d8c729fea2a87238 baseline.css: .pair .lbl
+ff74526e9ca26a9b baseline.css: .pair .after .lbl
+285bdc05fae908bb baseline.css: .download .file a
+e6ada9207faaf67e baseline.css: .download pre
+9f3092b0be881956 baseline.css: .picker a
+d2267b05394c9a37 baseline.css: .picker a:hover
+ed15373a1edde513 baseline.css: .picker a[aria-current="true"]
+743c011702575a96 baseline.css: .verified
+67361946001aa3ca baseline.css: .search label
+740a8f8ac708cab8 baseline.css: .search input
+856f01358205bebc baseline.css: .search input::placeholder
+5a9623ef0915e8f4 baseline.css: .chips a
+bda5ac44646ba739 baseline.css: .chips a:hover
+132f3ce1c5036055 baseline.css: .chips button
+dad2b9e7c06a4993 baseline.css: .chips button:hover
+1c8a93382992f99f baseline.css: .chips [aria-pressed="true"], .chips [aria-current="true"]
+228968e12a76246a baseline.css: .plan li[hidden]
+4d0a9ed48873b5ce baseline.css: .chips a[aria-disabled="true"], .chips button[aria-disabled="true"]
+82c5e4d762505d98 baseline.css: .chips a[aria-disabled="true"]:hover, .chips button[aria-disabled="true"]:hover
+1c3a2270efb84bea baseline.css: .figure svg
+afc2b1ce4cdd6b34 baseline.css: .figure svg .arrow
+4b26bd0de7aecb28 baseline.css: .figure figcaption
+fc1d5fed1ca9b348 baseline.css: .srcview pre
+b232165005370c43 baseline.css: .srcview .view h4
+fe07550c23a2b028 baseline.css: .srcview .view ul
+a7c952dc16a9ba86 baseline.css: .srcview .view li
+dca71c518844d415 baseline.css: .srcview .lbl
+13e6e5d055c7fb73 baseline.css: .region .about a
+ae75e0b09b7954bb baseline.css: .region .about a:hover
+c4f00320346cc6b6 baseline.css: .family .card img
+0f75ed2367601b0f baseline.css: .family .tail .card img
+b3f1f95fa6d99852 baseline.css: @container footer (max-width: 1399px) { .family .cards .card img
+192c46a9ffaed70a baseline.css: @container footer (max-width: 1399px) { .family .tail .card img
+f11e30b0fc62b359 baseline.css: @container footer (max-width: 1039px) { .family .cards .card img
+8921e9994b461da7 baseline.css: @container footer (max-width: 1039px) { .family .tail .card img
+c7762cefefc3b7c1 baseline.css: @container footer (max-width: 599px) { .family .tail .card img
+7dfc4921763377df baseline.css: .control div
+37c60f2a9c3d5bb9 baseline.css: .control dt
+263bb3da592a55ee baseline.css: .control dd
+c270f1fe88ac626c baseline.css: ol.clauses > li
+ed44ff34f75e5f28 baseline.css: ol.clauses p
+a5503b617dfd95a8 baseline.css: .note > div
+7b4a73244eb96961 baseline.css: .note p
+1f5a0bc56559c28e baseline.css: .note p:last-child
+7e9f26fcfe2990a9 baseline.css: .reg-cap b
+74fa3f0dccb2c6b0 baseline.css: .entries li
+e5a50f0ee2d64096 baseline.css: .entries a
+e3a811b651e9587b baseline.css: .entries a::before
+d793fc5fa4823202 baseline.css: .fig-aside > p
+61085594037be2a6 baseline.css: .steps
+50e8c12b4618e9a5 baseline.css: .steps li
+faeb47a376f2c4a5 baseline.css: .steps li::before
+c8719359ca0f9112 baseline.css: .steps li > span
+b5d908d2ef7b5dd0 baseline.css: .next
+78ad1213e126b1ce baseline.css: .next p
+ed2ae59dea59518a baseline.css: :is(.doc, .doc > section, .doc > article) > .next
+9c0cbd50ce92c568 baseline.css: @media (max-width: 1000px) { .doc
+5fe4652db9235485 baseline.css: @media (max-width: 1000px) { :is(.doc, .doc > section, .doc > article) > *, :is(.doc, .doc > section, .doc > article) > .lbl, :is(.doc, .doc > section, .doc > article) > .wide, :is(.doc, .doc > section, .doc > article) > .full
+19ada92dceade56b baseline.css: @media (max-width: 1000px) { :is(.doc, .doc > section, .doc > article) > .lbl, :is(.doc, .doc > section, .doc > article) > .lbl.sec, :is(.doc, .doc > section, .doc > article) > .lbl.blk
+4d49814a060a228c baseline.css: @media (max-width: 1000px) { :is(.doc, .doc > section, .doc > article) > .lbl + h2
+dd5627696db3ee51 baseline.css: @media (max-width: 1000px) { :is(.doc, .doc > section, .doc > article) > .side dd
+d90e6bd20dcb1d65 baseline.css: @media (max-width: 1000px) { .rail ol
+b9977b4185ec1ec1 baseline.css: @media (max-width: 1000px) { .rail li
+610f8d7515d92662 baseline.css: @media (max-width: 1000px) { .region > .lbl
+05e7bd3e4a446e98 baseline.css: @media (max-width: 1000px) { .doc
+458577940bce1be4 baseline.css: @media (max-width: 1000px) { .rail > .lbl, .rail > ol, .rail > ul
+031cebfd9ebdb4f5 baseline.css: @media (max-width: 1000px) { .entries a
+35f519f99351b250 baseline.css: @media (max-width: 1000px) { .entries a::before
+a3140a018a464c2e baseline.css: @media (max-width: 1000px) { :is(.doc, .doc > section, .doc > article) > .next
+0d05b5705d42e99b baseline.css: @media (max-width: 600px) { .rail ol
+738ce8ab8b16b0b3 baseline.css: @media (max-width: 600px) { .hero-art img
+835033579c3e194f baseline.css: @media (max-width: 600px) { .hero .lbl
+0b9f16a6a7ef9b3e baseline.css: @media (max-width: 600px) { body
+2f29862b0d76a412 baseline.css: @media (max-width: 600px) { .statement.two em
+9dc8d7435ca6d848 baseline.css: @media (max-width: 600px) { .doc h1
+7edaae30b4b487c3 baseline.css: @media (max-width: 600px) { .doc h2
+aea6a6655320e684 baseline.css: @media (max-width: 600px) { pre, .code
+46b5f5d83f93bf87 baseline.css: @media (prefers-reduced-motion: reduce) { .start .arrow
+fbcfb5efd05f0c1d baseline.css: @media (prefers-reduced-motion: reduce) { .start:hover .arrow
+a3d6ba133053d00b baseline.css: @media (prefers-color-scheme: dark) { :root:not([data-scheme="light"]) .statement, :root:not([data-scheme="light"]) .doc h1
+a330f126ab5936a2 baseline.css: [data-scheme="dark"] .statement, [data-scheme="dark"] .doc h1
+1df5bdebf590920a baseline.css: @media (max-width: 1000px) { :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > *, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .wide, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .next, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .full
+aafca32246b3cb4c baseline.css: @media (max-width: 1000px) { .lrail > nav
+833b8b99db70cc64 baseline.css: @media (max-width: 1000px) { .lrail ul
+7987446185c29ad6 baseline.css: @media (max-width: 1000px) { .lrail li
+9d7f1a665f5812bc baseline.css: @media (max-width: 600px) { .lrail ul
+461856b0c7bde074 baseline.css: @media print { table.sticky thead th, table.sticky-col :is(th, td):first-child
+96834e2b47920296 baseline.css: @media print { table thead
+e27eafdf5a79075e baseline.css: @media print { table tr
+09b0b4edba65e49a baseline.css: @media print { table, table.fixed
+4a5ada3d1c911b0a baseline.css: @media print { .fixed col
+82dfb097b58b6cd9 baseline.css: @media print { :is(table, table.matrix.matrix) :is(th, td), :is(table, table.matrix.matrix) :is(th, td) :is(code, .mono, .hash)
+51146d4062c24c61 baseline.css: @media print { [data-col-toggles], .lrail li [data-preset], .chips [data-preset], [data-preset]
+0ee58b39433764a4 baseline.css: @media print { table.matrix.matrix :is(thead, tbody) tr > :is(th, td)
+ce51d5acde2a08a3 baseline.css: @media print { table.matrix.matrix :is(thead, tbody) tr > :is(th, td) :is(a, code, .org, .grp, .sub, .n)
