@@ -78,7 +78,8 @@ SUM_LINK = ('<a href="' + URL + '.sha256" target="_blank" rel="noopener noreferr
 STEP_3 = '<p class="lbl blk">Step 3</p>\n'
 REJECT = "If the values still differ after a fresh download, do not install the file and "
 CODE = '<code class="sum" id="published-checksum">{sum}</code>'
-NOTE = "<p>The checksum for version {v} appears here once that version is published.</p>"
+NOTE = ("<p>The checksum for version {v} appears here once that version is published; compare the checksum of your "
+        "file with it then.</p>")
 
 
 def outside(page: str, extra: str) -> str:
@@ -270,6 +271,37 @@ class ReleaseSourceTest(unittest.TestCase):
         code, output = self.pending(PENDING.format(v="1.0.14"))
         self.assertEqual(code, 0, output)
         self.assertIn("the verify page says the checksum appears once that version is published", output)
+
+    def test_the_closing_advice_fits_the_state(self):
+        # DISCOVERY round 5, finding 5: while release.json holds the zero placeholder, there is no published checksum
+        # to flip the site to, so the advice is to rerun the writer with the placeholder until the release publishes.
+        self.write(gate.INSTALL_PAGE, "<p>No download here.</p>")
+        code, output = self.pending(PENDING.format(v="1.0.14"))
+        self.assertEqual(code, 1, output)
+        self.assertIn("site-src/release.json holds the zero placeholder of a version bump. Until release v1.0.14 is "
+                      "published, run tools/set-release-links.py for version 1.0.14 with that placeholder", output)
+        self.assertNotIn("Flip the site with tools/set-release-links.py using the published", output)
+        self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % SUM)
+        self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM))
+        code, output = self.run_gate()
+        self.assertEqual(code, 1, output)
+        self.assertIn("Flip the site with tools/set-release-links.py using the published", output)
+        self.assertNotIn("holds the zero placeholder of a version bump", output)
+
+    def test_comments_nested_too_deeply_fail_without_a_traceback(self):
+        # DISCOVERY round 5, finding 6: 400 nested comment openers before step 1 make PageReader recurse past the
+        # interpreter's limit; the rule reports it as 1 problem, in either state, never an uncaught RecursionError.
+        deep = "<!--" * 400 + "-->"
+        for checksum, page, state in ((SUM, VERIFY.format(v="1.0.14", sum=SUM), self.SHOWS),
+                                      (ZEROS, PENDING.format(v="1.0.14"), self.HOLDS)):
+            with self.subTest(state):
+                self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % checksum)
+                step = page.index('<p class="lbl blk">Step 1</p>')
+                self.write(gate.VERIFY_PAGE, page[:step] + deep + page[step:])
+                code, output = self.run_gate()
+                self.assertEqual(code, 1, output)
+                self.assertIn("site/verify/index.html nests comments too deeply to be read" + state, output)
+                self.assertNotIn("Traceback", output)
 
     def test_the_committed_verify_page_carries_its_block_where_the_generator_writes_it(self):
         # The rule holds on the page tools/build-site.py writes, so BLOCK_ANCESTORS is the generator's layout.
@@ -841,7 +873,8 @@ class WriterTest(unittest.TestCase):
 
     def test_the_placeholder_and_the_flip_round_trip(self):
         # A bump writes the zero placeholder and the not-yet-published page; the flip restores the published one.
-        note = f"The checksum for version {self.next} appears here once that version is published."
+        note = (f"The checksum for version {self.next} appears here once that version is published; compare the "
+                "checksum of your file with it then.")
         pending = self.apply(ZEROS)
         self.assertIn(note, pending)
         for gone in ("published checksum", 'id="published-checksum"', ".zip.sha256", "Step 3", "do not install"):
@@ -953,7 +986,8 @@ class WholePageTest(unittest.TestCase):
 
     def test_every_reported_form_fails(self):
         version = json.loads((self.root / "site-src/release.json").read_text(encoding="utf-8"))["version"]
-        note = f"<p>The checksum for version {version} appears here once that version is published.</p>"
+        note = (f"<p>The checksum for version {version} appears here once that version is published; compare the "
+                "checksum of your file with it then.</p>")
         for checksum, state in ((ZEROS, "holds the zero placeholder"), (SUM, "holds a published checksum")):
             page = self.publish(checksum)
             code, output = self.gate_run()
@@ -1015,6 +1049,34 @@ class WholePageTest(unittest.TestCase):
                     self.assertIn("site/verify/index.html is not the page tools/build-site.py renders for it from the "
                                   f"committed sources, while site-src/release.json {state} (first at line ", output)
             self.page.write_text(page, encoding="utf-8")
+
+
+class WorkflowPathsTest(unittest.TestCase):
+    """DISCOVERY round 5, finding 4: the offline gate holds the verify page to the generator's render, so
+    .github/workflows/link-check.yml runs it on a pull request or a push to main that changes the generator or any
+    input it reads (WriterTest.INPUTS): each trigger lists a path filter that covers each of them."""
+
+    COVERING = {
+        "tools/build-site.py": "tools/build-site.py",
+        "site-src": "site-src/**",
+        "cleanlanguage/skills/cleanlanguage/SKILL.md": "cleanlanguage/**/*.md",
+        "cleanlanguage/skills/cleanlanguage/references": "cleanlanguage/**/*.md",
+        "site": "site/**",
+        ".baseline/pin.toml": ".baseline/pin.toml",
+        "tools/sitemap-config.json": "tools/sitemap-config.json",
+    }
+
+    def test_each_trigger_covers_every_generator_input(self):
+        self.assertEqual(set(self.COVERING), set(WriterTest.INPUTS))
+        references = WriterTest.REPO / "cleanlanguage/skills/cleanlanguage/references"
+        self.assertEqual([path.name for path in references.rglob("*") if path.suffix != ".md"], [])
+        text = (WriterTest.REPO / ".github/workflows/link-check.yml").read_text(encoding="utf-8")
+        triggers = text.split("\n  push:\n")
+        self.assertEqual(len(triggers), 2)
+        for name, part in zip(("pull_request", "push"), triggers):
+            for relative, pattern in self.COVERING.items():
+                with self.subTest(f"{name}: {relative}"):
+                    self.assertIn(f'      - "{pattern}"\n', part)
 
 
 if __name__ == "__main__":

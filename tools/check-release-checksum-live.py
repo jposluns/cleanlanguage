@@ -50,7 +50,9 @@ Behaviour:
     checksum" wording, a 64 digit hexadecimal value (in its text, also in
     groups split by whitespace, hyphens or colons), a link to a ``.sha256``
     file or to a path that ``site/_redirects`` sends there, or a step that
-    tells the reader not to install the file. ``site/_redirects`` is a
+    tells the reader not to install the file. A page whose comments nest too
+    deeply for the rule's reader breaks the rule too, never an uncaught
+    RecursionError. ``site/_redirects`` is a
     required file in either state. A page that is not the render or breaks the
     rule, or shows the placeholder as the published checksum, exits 3 before
     any release is read, as does a generator that cannot render the block or,
@@ -67,16 +69,29 @@ Behaviour:
     value added before the next-page link. ``tools/test-build-site.py`` pins
     the whole rendered page in each state (VERIFY_PAGE_PIN) and the site's
     own stylesheet (SITE_CSS_PIN), so such a change fails there until the pin
-    is updated on purpose. ``tools/check-release-links.py`` names the
+    is updated on purpose. The pin holds the page as rendered for a stand-in
+    release (PIN_VERSION, PIN_CHECKSUM) and the stand-in date PIN_DATE, while
+    this gate renders it at the ``modified`` dates in ``site-src/site.json``,
+    so a generator change that renders differently only for other release
+    values, or only for those dates, passes the pin and, once regenerated,
+    this gate; only review of the generator's diff stops that.
+    ``tools/check-release-links.py`` names the
     stylesheet and script files the page loads and the gate that pins each.
   - If the release ``vX`` for that version is not published yet, the pass is
-    conditional. The site is legitimately ahead of the release only when it
-    names the current skill version (``Version:`` in ``cleanlanguage/skills/cleanlanguage/SKILL.md``)
-    and the tag ``vX`` does not exist yet, which is the pre-tag window the
-    release runbook creates. In that window the SKILL.md ``Released:`` line is
+    conditional. The site is ahead of the release in the one state this gate
+    passes only when it names the current skill version (``Version:`` in
+    ``cleanlanguage/skills/cleanlanguage/SKILL.md``), the page carries the
+    not-yet-published note, and the tag ``vX`` does not exist yet, which is
+    the pre-tag window the release runbook creates. In that window the
+    SKILL.md ``Released:`` line is
     still checked, with no further network call: a malformed line exits 3, and
-    a line missing above the undated baseline fails. A different version with
-    no release is a real
+    a line missing above the undated baseline fails. Before the tag, no
+    checksum for the version is published, so a page that shows a well-formed
+    checksum as published there (the previous version's digest, a locally
+    built one or a mistyped placeholder passed to
+    ``tools/set-release-links.py``) is an inconsistency and fails, the
+    Released line still checked and the more severe code winning. A different
+    version with no release is a real
     inconsistency and fails. An existing tag with no published release is a
     deleted or unfinished release and reads as unverifiable, as does a release
     or tag status that cannot be read; on each such path the SKILL.md
@@ -115,13 +130,15 @@ Requires the ``gh`` CLI and, in CI, ``GH_TOKEN`` with ``contents: read``.
 
 Exit codes:
   0  the site checksum matches the published release, or the site is
-     legitimately ahead of an unpublished release (it names the current skill
-     version, the tag does not exist yet, and the SKILL.md Released line is
+     ahead of an unpublished release in the pre-tag window (it names the
+     current skill version and carries the not-yet-published note, the tag
+     does not exist yet, and the SKILL.md Released line is
      well formed, and present above the undated baseline)
   1  drift or inconsistency: the release is published but the site shows a
      different checksum or says that the checksum is not yet published, or
      the site names an unreleased version that is not the current skill
-     version, or the SKILL.md Released date disagrees with
+     version, or it shows a checksum as published while the release and its
+     tag do not exist, or the SKILL.md Released date disagrees with
      the published release, or the Released line is missing above the undated
      baseline (also in the pre-tag window)
   2  could not verify (gh or network error, the published release is malformed,
@@ -255,7 +272,8 @@ REPO = "jposluns/cleanlanguage"
 DISPLAYED_SUM = re.compile(r'<code class="sum" id="published-checksum">([^<]*)</code>')
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 # The verify page's note while site-src/release.json holds the zero placeholder (tools/build-site.py, sum_tokens).
-PENDING_VERSION = re.compile(r"The checksum for version ([0-9][0-9.]*) appears here once that version is published\.")
+PENDING_VERSION = re.compile(r"The checksum for version ([0-9][0-9.]*) appears here once that version is published; "
+                             r"compare the checksum of your file with it then\.")
 PLACEHOLDER = "0" * 64
 # What download_block_problems refuses outside the download block, as tools/check-release-links.py reads it, and the
 # address of the verify page, against which it resolves a relative link.
@@ -1142,19 +1160,25 @@ def download_block_problems(text: str, block: str, redirects: str) -> list[str]:
     meaning of other prose, so a reworded or contradicting step outside the block passes it, nor the stylesheet
     and script files the page loads. tools/check-release-links.py and tools/check-release-checksum-live.py carry
     this function, download_block, PageReader, checksum_paths, targets_checksum and the patterns and constants
-    they read verbatim, and tools/test-release-checksum-live.py requires that the 2 copies match."""
+    they read verbatim, and tools/test-release-checksum-live.py requires that the 2 copies match. A page whose
+    comments nest too deeply for PageReader, which reads each comment's markup apart, is 1 problem, never an uncaught
+    RecursionError."""
     found = text.count(block)
     if found != 1:
         return [f"does not carry the download block that tools/build-site.py writes for this state exactly once, "
                 f"byte for byte (found {found})"]
     start = text.index(block)
-    page = PageReader(text)
+    rests = (text[:start], text[start + len(block):])
+    try:
+        page = PageReader(text)
+        parts = [PageReader(rest) for rest in rests]
+    except RecursionError:
+        return ["nests comments too deeply to be read"]
     problems: list[str] = []
     if page.open_at.get(start) != BLOCK_ANCESTORS or page.starts.count("html") != 1 or page.starts.count("body") != 1:
         problems.append("does not carry the download block where tools/build-site.py writes it")
     paths = checksum_paths(redirects)
-    for rest in (text[:start], text[start + len(block):]):
-        part = PageReader(rest)
+    for rest, part in zip(rests, parts):
         sources = (rest, part.text(), part.comment_text())
         if SUM_ID in rest.lower() or SUM_ID in (value.lower() for value in part.ids):
             problems.append("carries the checksum element's id outside the download block")
@@ -1331,6 +1355,21 @@ def check_site_checksum(load_code: int = 0) -> int:
                     )
                 situation = f"release {tag} is not published and the state of its tag could not be verified"
             return max(2, offline_release_line_code(situation))
+        situation = f"release {tag} is not published yet and its tag does not exist"
+        if pending is None:
+            # DISCOVERY round 5, finding 1: before the tag, the only page that states nothing false is the note. A
+            # checksum shown as published for a version with no release (the previous version's digest, a locally
+            # built one or a mistyped placeholder passed to tools/set-release-links.py) fails, as does a page whose
+            # step 3 then rejects the download. The Released line is still checked, and the more severe code wins.
+            print("Release checksum inconsistency found:")
+            print(f"  - the verify page shows {site_sum} as the published checksum for version {version}")
+            print(f"  - {situation}, so no checksum for {version} is published")
+            print(
+                f"\nBefore the tag, the verify page can only say that the checksum is not yet published. Run "
+                f"tools/set-release-links.py for {version} with the zero placeholder checksum, and flip the site "
+                f"to the published checksum once release {tag} is published; see the release runbook."
+            )
+            return max(1, offline_release_line_code(situation))
         print(
             f"Release {tag} is not published yet; the site and SKILL.md both name "
             f"{version} ahead of the release, which is expected before the tag."
@@ -1340,7 +1379,7 @@ def check_site_checksum(load_code: int = 0) -> int:
         # undated baseline, is still reported in this window. Fix round 8:
         # the window says there is nothing to reconcile only when that check
         # and the extractor probe both pass, so the gate then exits 0.
-        code = offline_release_line_code(f"release {tag} is not published yet and its tag does not exist")
+        code = offline_release_line_code(situation)
         if max(load_code, code) == 0:
             print("Nothing to reconcile.")
         return code

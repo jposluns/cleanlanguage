@@ -27,7 +27,8 @@ Sources
   from here, and the build refuses to run if it disagrees with the ``Version:``
   line of ``cleanlanguage/skills/cleanlanguage/SKILL.md``. While its checksum
   is the zero placeholder of a version bump, the verify page shows no checksum
-  and says that it appears once that version is published (``sum_tokens()``).
+  and says that it appears once that version is published, and to compare the
+  checksum of the downloaded file with it then (``sum_tokens()``).
   ``verify_download_block()`` renders the verify page's download block alone,
   which ``tools/check-release-links.py`` and
   ``tools/check-release-checksum-live.py`` require on the page, and
@@ -346,13 +347,15 @@ def release_tokens(version: str, tag: str, checksum: str) -> dict:
 def sum_tokens(version: str, checksum: str, sum_url: str) -> dict:
     """The verify page's checksum wording in each state of release.json, which tools/check-release-links.py and
     tools/check-release-checksum-live.py read: the published checksum, its file and the step that compares them;
-    or, while the checksum is the zero placeholder, a note that it appears once the version is published, with no
-    value called the published checksum, no link to the checksum file and no step that rejects the download."""
+    or, while the checksum is the zero placeholder, a note that it appears once the version is published and that
+    tells the reader to compare the checksum of the file with it then, with no value called the published checksum,
+    no link to the checksum file and no step that rejects the download."""
     if checksum == PLACEHOLDER_CHECKSUM:
         return {
             "release.sum_lead": "",
             "release.sum_block": f'<p class="lbl size">zip, version {version}</p>'
-                                 f"<p>The checksum for version {version} appears here once that version is published.</p>",
+                                 f"<p>The checksum for version {version} appears here once that version is published; "
+                                 "compare the checksum of your file with it then.</p>",
             "release.sum_compare": "",
         }
     return {

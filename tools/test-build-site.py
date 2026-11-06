@@ -1164,7 +1164,8 @@ def check_release_placeholder(failures: list[str]) -> int:
             failures.append(f"release placeholder: exit {result.returncode}: {result.stderr.strip()}")
             return 1
         verify = (out / "verify/index.html").read_text(encoding="utf-8")
-        for needed in ("<p>The checksum for version 9.8.7 appears here once that version is published.</p>",
+        for needed in ("<p>The checksum for version 9.8.7 appears here once that version is published; compare the "
+                       "checksum of your file with it then.</p>",
                        '<p class="lbl size">zip, version 9.8.7</p>', "sha256sum cleanlanguage-9.8.7.zip"):
             if needed not in verify:
                 failures.append(f"release placeholder: verify page lacks {needed!r}")
@@ -1177,9 +1178,10 @@ def check_release_placeholder(failures: list[str]) -> int:
 
 # The pin of the whole verify page (DISCOVERY round 4, findings 1 to 4): the sha256 of each state's rendering by
 # verify_page() of the whole site/verify/index.html, for the stand-in release PIN_VERSION (tag v PIN_VERSION) with the
-# zero placeholder and with PIN_CHECKSUM, and PIN_DATE as every page's modified date, each with only these tokens
-# normalized: the checksum written as {checksum}, then the tag as {tag}, the version as {version} and the date as
-# {date}. Both gates hold the committed page to what the generator renders, so any change to the page, in
+# zero placeholder and with PIN_CHECKSUM, and PIN_DATE as every page's modified date, each as rendered, with nothing
+# normalized (DISCOVERY round 5, finding 2), so a source that writes {tag}, {version} or another placeholder where the
+# generator writes a release value changes the digest. Both gates hold the committed page to what the generator
+# renders, so any change to the page, in
 # site-src/pages/verify.html, in the generator code that renders it, or in what its head loads (the stylesheet and
 # script links with their ?v= tokens, which carry the baseline version, and any inline script), would become what
 # they require; it fails here instead until the pin is updated on purpose. A site-owned stylesheet changes the render
@@ -1193,8 +1195,8 @@ PIN_VERSION = "9.8.7"
 PIN_CHECKSUM = "0123456789abcdef" * 4
 PIN_DATE = "2000-01-02"
 VERIFY_PAGE_PIN = {
-    "placeholder": "85802397dc60d4fe519d46c512b7b2242789776992afc2d35699489859a8f6cd",
-    "published": "0145120b9e046e4732d3ea5da9bb7a184e8798b92489ff2f7c1c702764dc7767",
+    "placeholder": "c152510bd0fdce4e086d9d9367a393fddb1d819e3a4ca2a14d7ad2aa96b353b5",
+    "published": "467b1c4c26d6c125901dd0d9b80b92baa2bba5a3b1546491bc19363ad5c05cf4",
 }
 SITE_CSS_PIN = None
 PIN_PROCEDURE = ("if the change is intended, follow the update procedure at VERIFY_PAGE_PIN in tools/test-build-site.py: "
@@ -1203,11 +1205,11 @@ PIN_PROCEDURE = ("if the change is intended, follow the update procedure at VERI
 
 
 def verify_render(module, root: Path, checksum: str) -> str:
-    """The whole verify page as ``module`` renders it from ``root`` for the stand-in release, its tokens normalized."""
+    """The whole verify page as ``module`` renders it from ``root`` for the stand-in release and PIN_DATE, as rendered:
+    the pin hashes these bytes, and a failure prints them, so no text copied from it can match the pin in place of a
+    release value."""
     release = {"version": PIN_VERSION, "tag": f"v{PIN_VERSION}", "checksum": checksum}
-    page = module.verify_page(root, release, PIN_DATE).decode("utf-8")
-    return (page.replace(PIN_CHECKSUM, "{checksum}").replace(f"v{PIN_VERSION}", "{tag}")
-            .replace(PIN_VERSION, "{version}").replace(PIN_DATE, "{date}"))
+    return module.verify_page(root, release, PIN_DATE).decode("utf-8")
 
 
 def site_css_problems(root: Path) -> list[str]:
@@ -1241,6 +1243,11 @@ PIN_FORMS = [
     ("a second checksum joined by dots", ((NEXT, "<p>" + ".".join(PIN_CHECKSUM[::-1][i:i + 8]
                                                                 for i in range(0, 64, 8)) + "</p>" + NEXT),)),
     ("a double space in step 1", (("<p>Download the skill.", "<p>Download the  skill."),)),
+    # DISCOVERY round 5, finding 2: the download link with {tag} and {version} written literally, as an earlier pin's
+    # failure rendering showed them; the generator writes them as they are, and the live link then holds them.
+    ("the download link with {tag} and {version} written literally",
+        (("{{release.zip_url}}", "https://github.com/jposluns/cleanlanguage/releases/download/{tag}/cleanlanguage-"
+                                 "{version}.zip"),)),
 ]
 
 
@@ -1253,9 +1260,9 @@ def check_verify_page_pin(failures: list[str]) -> int:
     for state, checksum in states:
         rendered = verify_render(module, REPO_ROOT, checksum)
         digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
-        if any(token not in rendered for token in ("{version}", "{tag}", "{date}")) or (
-                (state == "published") != ("{checksum}" in rendered)):
-            failures.append(f"verify page pin, {state}: a stand-in token is not in the rendering")
+        if any(value not in rendered for value in (PIN_VERSION, f"v{PIN_VERSION}", PIN_DATE)) or (
+                (state == "published") != (PIN_CHECKSUM in rendered)):
+            failures.append(f"verify page pin, {state}: a stand-in value is not in the rendering")
         if digest != VERIFY_PAGE_PIN[state]:
             failures.append(f"verify page pin, {state}: the whole page renders to sha256 {digest}, not the pinned "
                             f"{VERIFY_PAGE_PIN[state]}; {PIN_PROCEDURE}. The rendering:\n{rendered}")
@@ -1272,8 +1279,13 @@ def check_verify_page_pin(failures: list[str]) -> int:
                   REPO_ROOT)]
         for label, edits in PIN_FORMS:
             root = make_root(Path(scratch) / label.replace(" ", "-"))
-            for old, new in edits:
-                edit(root, "site-src/pages/verify.html", old, new)
+            try:
+                for old, new in edits:
+                    edit(root, "site-src/pages/verify.html", old, new)
+            except AssertionError as error:
+                # The source no longer holds what the form edits, so the form cannot be made: a failure, not a crash.
+                failures.append(f"verify page pin: {label} cannot be made in the sources: {error}")
+                continue
             cases.append((label, module, root))
         root = make_root(Path(scratch) / "site-css")
         (root / "site-src" / "assets").mkdir(parents=True, exist_ok=True)

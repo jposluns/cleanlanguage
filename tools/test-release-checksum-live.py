@@ -2,9 +2,10 @@
 """Tests for the live checksum gate's conditional 404 pass.
 
 The gate must not pass unconditionally when the release the verify page names
-is not published. It passes on a 404 only in the legitimate pre-tag window:
-the site names the current skill version and the tag does not exist yet,
-and even then the Released line is checked with no further network call, so
+is not published. It passes on a 404 only in the pre-tag window: the site
+names the current skill version and carries the not-yet-published note, and
+the tag does not exist yet; a checksum shown as published there fails. Even
+then the Released line is checked with no further network call, so
 a malformed line exits 3 and a line missing above the baseline fails. A
 mismatched unreleased version fails, a tag with no published release is
 unverifiable, and the published-release comparison and the transient-error
@@ -1225,10 +1226,40 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(gate.main(), 1)
 
     def test_pre_tag_window_passes(self):
+        # DISCOVERY round 5, finding 1: before the tag, the only page the window passes is the note.
         self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15")
+        gate.VERIFY_PAGE.write_text(PENDING.format(version=AHEAD), encoding="utf-8")
         gate.release_status = lambda tag: 404
         gate.tag_status = lambda tag: 404
         self.assertEqual(gate.main(), 0)
+
+    def test_a_checksum_shown_as_published_before_the_tag_fails(self):
+        # DISCOVERY round 5, finding 1: an honest mistake at the bump, a well-formed checksum passed to
+        # tools/set-release-links.py for a version with no release and no tag, fails (exit 1), the Released line still
+        # checked and the more severe code winning; nothing beyond the release and the tag is read over the network.
+        mistyped = "0" * 63 + "1"
+        for label, checksum, released, expected in (
+            ("the previous version's digest", ZIP_SUM, "Released: 2026-11-15", 1),
+            ("a locally built digest", OTHER_SUM, "Released: 2026-11-15", 1),
+            ("a mistyped placeholder", mistyped, "Released: 2026-11-15", 1),
+            ("a mistyped placeholder and a missing Released line", mistyped, None, 1),
+            ("a mistyped placeholder and a malformed Released line", mistyped, "Released: soon", 3),
+        ):
+            with self.subTest(label):
+                self.fixtures(AHEAD, checksum, AHEAD, released)
+                self.published(None, statuses={f"v{AHEAD}": 404})
+                gate.gh = unexpected_call
+                code, out, err = self.main_reports()
+                self.assertEqual(code, expected, (out, err))
+                self.assertEqual((self.probed, self.tag_probed), ([f"v{AHEAD}"], [f"v{AHEAD}"]))
+                self.assertIn("Release checksum inconsistency found:\n"
+                              f"  - the verify page shows {checksum} as the published checksum for version {AHEAD}\n"
+                              f"  - release v{AHEAD} is not published yet and its tag does not exist, so no checksum for "
+                              f"{AHEAD} is published\n", out)
+                self.assertIn(f"tools/set-release-links.py for {AHEAD} with the zero placeholder checksum", out)
+                self.assertNotIn("Nothing to reconcile", out)
+                if released is None:
+                    self.assertIn(f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line", out)
 
     def test_not_yet_published_page_passes_in_the_pre_tag_window(self):
         # The page a version bump builds from the zero placeholder names its version in the note.
@@ -1254,7 +1285,8 @@ class ConditionalPassTest(unittest.TestCase):
     def test_a_page_in_neither_state_exits_3(self):
         # The zero placeholder shown as the published checksum, and a page with the note that breaks the rule
         # (download_block_problems), are refused before any release is read: 1 case for each part of the rule.
-        note = f"<p>The checksum for version {CURRENT} appears here once that version is published.</p>\n"
+        note = (f"<p>The checksum for version {CURRENT} appears here once that version is published; compare the "
+                "checksum of your file with it then.</p>\n")
         mixed = "the verify page carries the not-yet-published note, but "
         url = f"https://github.com/jposluns/cleanlanguage/releases/download/v{CURRENT}/cleanlanguage-{CURRENT}.zip"
         pending = PENDING.format(version=CURRENT)
@@ -1435,8 +1467,10 @@ class ConditionalPassTest(unittest.TestCase):
     def pre_tag_reports(self, version, released=None):
         """Run the gate in the pre-tag window for ``version``, asserting the
         release and the tag are each probed once and nothing else is read
-        over the network; returns (exit code, stdout, stderr)."""
+        over the network; returns (exit code, stdout, stderr). The page is the
+        note, the only page the window passes (DISCOVERY round 5, finding 1)."""
         self.fixtures(version, OTHER_SUM, version, released)
+        gate.VERIFY_PAGE.write_text(PENDING.format(version=version), encoding="utf-8")
         self.published(None, statuses={f"v{version}": 404})
         gate.gh = unexpected_call
         gate.release_published_at = unexpected_call
@@ -1498,6 +1532,7 @@ class ConditionalPassTest(unittest.TestCase):
         # there is nothing to reconcile. Row 80: the probe is the first
         # child, and its failure is reported once.
         self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+        gate.VERIFY_PAGE.write_text(PENDING.format(version=AHEAD), encoding="utf-8")
         gate.release_status = lambda tag: 404
         gate.tag_status = lambda tag: 404
         tool = self.fake_extractor(logging_extractor(fail_first=True))
@@ -4983,7 +5018,12 @@ class WholePageTest(unittest.TestCase):
         for checksum, state in (("0" * 64, "placeholder"), (self.SUM, "published")):
             page = self.publish(checksum)
             code, output = self.gate_run()
-            self.assertEqual(code, 0, output)
+            # DISCOVERY round 5, finding 1: in the pre-tag window the render with a published checksum is an
+            # inconsistency (exit 1), the render with the note passes.
+            self.assertEqual(code, 0 if state == "placeholder" else 1, output)
+            if state == "published":
+                self.assertIn(f"  - the verify page shows {self.SUM} as the published checksum for version {self.version}\n",
+                              output)
             start, end = page.index(start_tag), page.index('<div class="next">')
             block = page[start:end]
             forms = [
@@ -5009,7 +5049,10 @@ class WholePageTest(unittest.TestCase):
             refused = "does not carry the download block that tools/build-site.py writes for this state exactly once"
             reports = [(label, changed, rendered) for label, changed in forms] + [
                 ("6: a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1),
-                 refused)]
+                 refused),
+                # DISCOVERY round 5, finding 6: comments nested 400 deep before step 1 exit 3, never a traceback.
+                ("round 5, 6: comments nested 400 deep before step 1",
+                 page[:start] + "<!--" * 400 + "-->" + page[start:], "nests comments too deeply to be read")]
             for label, changed, report in reports:
                 with self.subTest(f"{label}, {state}"):
                     self.assertNotEqual(changed, page)

@@ -56,7 +56,7 @@
      "description": "Click-by-click setup for Clean Language in Copilot: load the full skill in Copilot Studio, or paste the instructions into a Microsoft 365 Copilot agent."},
     {"id": "install-other-ai", "path": "install/other-ai/", "title": "Install in other AI systems", "nav_label": "Install in other AI systems", "source": "install-other-ai.html", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-11-03",
      "description": "Set up Clean Language in local models, API-based assistants, and other AI systems that accept custom instructions, system prompts, or uploaded files."},
-    {"id": "verify", "path": "verify/", "title": "Verify", "nav_label": "Verify", "source": "verify.html", "scripts": ["copy.js"], "modified": "2026-11-05", "published": "2026-07-27",
+    {"id": "verify", "path": "verify/", "title": "Verify", "nav_label": "Verify", "source": "verify.html", "scripts": ["copy.js"], "modified": "2026-11-06", "published": "2026-07-27",
      "description": "Optional steps to confirm that the Clean Language download matches its published SHA-256 checksum. If you trust the source, you can skip this."},
     {"id": "instructions", "path": "instructions/", "title": "Instructions", "nav_label": "Instructions", "source": "instructions.html", "scripts": ["copy.js"], "modified": "2026-11-05", "published": "2026-08-15",
      "description": "The complete Clean Language instructions as plain text, ready to copy into Claude, ChatGPT, Gemini, Copilot, or any other AI."},

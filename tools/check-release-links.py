@@ -53,7 +53,13 @@ What it verifies
    ``site-src/pages/verify.html``, to the generator code that renders the
    page, or to what its head loads, that is regenerated passes it, and
    ``tools/test-build-site.py`` pins the whole rendered page in each state
-   (VERIFY_PAGE_PIN) to catch that. For a
+   (VERIFY_PAGE_PIN) to catch that. The pin holds the page as rendered for a
+   stand-in release (PIN_VERSION, PIN_CHECKSUM) and the stand-in date
+   PIN_DATE, while this gate renders it at the ``modified`` dates in
+   ``site-src/site.json``, so a generator change that renders differently
+   only for other release values, or only for those dates, passes the pin
+   and, once regenerated, this gate; only review of the generator's diff
+   stops that. For a
    clear report of what is wrong, the gate also applies the rule that both
    gates carry (download_block_problems): ``tools/build-site.py`` renders the
    page's download block, steps 1 to 3, for the SKILL.md version and the
@@ -72,7 +78,9 @@ What it verifies
    hexadecimal value (in its text, also in groups split by whitespace,
    hyphens or colons), a link to a ``.sha256`` file or to a path that
    ``site/_redirects`` sends there (a run of slashes read as 1), or a step
-   that tells the reader not to install the file. Outside the block the page is
+   that tells the reader not to install the file. A page whose comments nest
+   too deeply for the rule's reader breaks the rule too, never an uncaught
+   RecursionError. Outside the block the page is
    read both as written and as parsed markup (PageReader), in which an end tag
    does not close an element across a ``template``, ``table`` or other scope
    boundary. That reading models only that part of how a browser builds the
@@ -100,6 +108,15 @@ It does not fetch anything. It cannot tell whether the displayed checksum is the
 true value of the published asset, only that it is well formed and consistent within
 the site. Confirming the value against the release requires the network and is
 done by the orchestrator's post-release site flip, which reads the published checksum.
+So it passes a well-formed checksum in ``release.json`` for a version that has no
+release yet, such as the previous version's digest or a mistyped placeholder passed
+to ``tools/set-release-links.py`` at a bump; ``tools/check-release-checksum-live.py``
+fails that page while the release and its tag do not exist.
+
+When a check fails, the closing advice fits the state of ``release.json``: while it
+holds the zero placeholder, rerun ``tools/set-release-links.py`` with the placeholder
+until the release is published, and flip the site after that; otherwise flip the
+site with the published release checksum.
 
 Exit codes:
   0  every check above passes, so every release link names the SKILL.md
@@ -149,7 +166,8 @@ DISPLAYED_SUM = re.compile(r'<code class="sum" id="published-checksum">([^<]*)</
 SUM_ELEMENT = '<code class="sum" id="published-checksum">'
 DISPLAYED_VERSION = re.compile(r"published checksum for version ([0-9][0-9.]*) is")
 # The verify page's note while release.json holds the zero placeholder, as tools/build-site.py writes it (sum_tokens).
-PENDING_VERSION = re.compile(r"The checksum for version ([0-9][0-9.]*) appears here once that version is published\.")
+PENDING_VERSION = re.compile(r"The checksum for version ([0-9][0-9.]*) appears here once that version is published; "
+                             r"compare the checksum of your file with it then\.")
 PLACEHOLDER = "0" * 64
 # What download_block_problems refuses outside the download block: the note in any version and any letter case, the
 # "published checksum" wording, a step that tells the reader not to install the file, a 64 digit hexadecimal value,
@@ -317,17 +335,27 @@ def main() -> int:
                 f"but SKILL.md says {expected}"
             )
 
-    problems += check_release_source(expected, redirects)
+    source_problems, placeholder = check_release_source(expected, redirects)
+    problems += source_problems
 
     if problems:
         print("Release link problems found:")
         for problem in dict.fromkeys(problems):
             print(f"  - {problem}")
-        print(
-            f"\nFlip the site with tools/set-release-links.py using the published "
-            f"release checksum (see the release runbook), or update the version and "
-            f"checksum by hand, so the site matches SKILL.md ({expected})."
-        )
+        if placeholder:
+            # DISCOVERY round 5, finding 5: before the release, there is no published checksum to flip the site to.
+            print(
+                f"\nsite-src/release.json holds the zero placeholder of a version bump. Until release v{expected} "
+                f"is published, run tools/set-release-links.py for version {expected} with that placeholder (see "
+                f"the release runbook), so the site matches SKILL.md; once it is published, flip the site with "
+                f"tools/set-release-links.py using the published release checksum."
+            )
+        else:
+            print(
+                f"\nFlip the site with tools/set-release-links.py using the published "
+                f"release checksum (see the release runbook), or update the version and "
+                f"checksum by hand, so the site matches SKILL.md ({expected})."
+            )
         return 1
 
     places = sum(len(v) for v in found.values())
@@ -343,8 +371,9 @@ def main() -> int:
     return 0
 
 
-def check_release_source(expected: str, redirects: str) -> list[str]:
-    """Checks 7 and 8: release.json, and the install and verify pages generated from it.
+def check_release_source(expected: str, redirects: str) -> tuple[list[str], bool]:
+    """Checks 7 and 8: release.json, and the install and verify pages generated from it. Returns the problems
+    found and whether release.json holds the zero placeholder, which selects the closing advice in main.
 
     A stale bare file name on either page is check 6's (ZIP_NAME, site-wide), so it is
     not reported twice here; these pages must still name the release at least once.
@@ -410,7 +439,7 @@ def check_release_source(expected: str, redirects: str) -> list[str]:
             shown = DISPLAYED_SUM.findall(text)
             if shown and shown[0].strip() != checksum:
                 problems.append(f"{relative} shows a checksum other than site-src/release.json")
-    return problems
+    return problems, checksum == PLACEHOLDER
 
 
 def rendered_verify_page() -> bytes:
@@ -577,19 +606,25 @@ def download_block_problems(text: str, block: str, redirects: str) -> list[str]:
     meaning of other prose, so a reworded or contradicting step outside the block passes it, nor the stylesheet
     and script files the page loads. tools/check-release-links.py and tools/check-release-checksum-live.py carry
     this function, download_block, PageReader, checksum_paths, targets_checksum and the patterns and constants
-    they read verbatim, and tools/test-release-checksum-live.py requires that the 2 copies match."""
+    they read verbatim, and tools/test-release-checksum-live.py requires that the 2 copies match. A page whose
+    comments nest too deeply for PageReader, which reads each comment's markup apart, is 1 problem, never an uncaught
+    RecursionError."""
     found = text.count(block)
     if found != 1:
         return [f"does not carry the download block that tools/build-site.py writes for this state exactly once, "
                 f"byte for byte (found {found})"]
     start = text.index(block)
-    page = PageReader(text)
+    rests = (text[:start], text[start + len(block):])
+    try:
+        page = PageReader(text)
+        parts = [PageReader(rest) for rest in rests]
+    except RecursionError:
+        return ["nests comments too deeply to be read"]
     problems: list[str] = []
     if page.open_at.get(start) != BLOCK_ANCESTORS or page.starts.count("html") != 1 or page.starts.count("body") != 1:
         problems.append("does not carry the download block where tools/build-site.py writes it")
     paths = checksum_paths(redirects)
-    for rest in (text[:start], text[start + len(block):]):
-        part = PageReader(rest)
+    for rest, part in zip(rests, parts):
         sources = (rest, part.text(), part.comment_text())
         if SUM_ID in rest.lower() or SUM_ID in (value.lower() for value in part.ids):
             problems.append("carries the checksum element's id outside the download block")
