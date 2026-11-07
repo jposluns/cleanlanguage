@@ -6,8 +6,9 @@ python3 -I, passes that file through the test-only --mode-file argument, since C
 /opt/orch-operator, and asserts the exit code and the verdict the guard prints. The files a case
 creates belong to the uid running the tests, so every case passes that uid through the test-only
 --expect-owner-uid argument, except the cases that test the owner check itself. A missing guard
-fails every case rather than skipping it, so an absent file cannot read as a green run. The last
-case checks that .claude/settings.json registers the guard once, with neither test-only argument.
+fails every behaviour case rather than skipping it, so an absent file cannot read as a green run.
+The last case reads only .claude/settings.json and checks that it registers the guard once, with
+neither test-only argument.
 
 Usage: python3 -I tools/test-ask-mode-guard.py
 """
@@ -86,6 +87,10 @@ class AskModeGuard(unittest.TestCase):
         self.write_mode(UNATTENDED_LINE)
         reason = self.assert_denies(self.run_guard(), "unattended")
         self.assertIn("RECORD the decision as pending", reason)
+        # Only the unattended reason tells the maintainer how to take over; the deny for any other
+        # mode also contains "unattended", so the substring above cannot tell the two apart.
+        self.assertIn("is unattended", reason)
+        self.assertIn("the maintainer sets \"mode\" to \"attended\"", reason)
 
     def test_attended_record_allows_silently(self):
         self.write_mode(ATTENDED_LINE)
@@ -166,6 +171,15 @@ class AskModeGuard(unittest.TestCase):
             with self.subTest(case=name):
                 self.write_mode(content)
                 self.assert_denies(self.run_guard(), cause)
+
+    def test_non_json_constants_deny(self):
+        # json.loads accepts NaN, Infinity and -Infinity by default, but JSON has no such values, so
+        # an attended record that holds one is not one JSON document.
+        for name, member in (("NaN", '"phase": NaN'), ("Infinity", '"set_at": Infinity'),
+                             ("nested -Infinity", '"extra": [-Infinity]')):
+            with self.subTest(case=name):
+                self.write_mode('{"mode": "attended", ' + member + '}\n')
+                self.assert_denies(self.run_guard(), "not one JSON document")
 
     def test_unknown_mode_values_deny(self):
         for value in ("Unattended", "ATTENDED", "attended ", "maintenance", ""):

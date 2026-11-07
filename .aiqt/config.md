@@ -116,8 +116,10 @@ other repositories, or non-Claude worker families; a session that can edit the g
 `.claude/settings.json` can disarm it, visibly in review; removing `/opt/orch-operator` disarms
 it; the guard trusts root's file, so root controls the decision, and it does not check the
 directory that holds the file; the file holds one mode for the whole host, so an attended session
-is blocked while the host says unattended; and `orch_ask_guard` continues to log a fail-open audit
-event on every question until the upstream fix is re-vendored.
+is blocked while the host says unattended; the 4096-byte bound limits size, not time, so a slow
+open or read of the file is bounded only by the hook's 10-second timeout, and the tests do not
+show what Claude Code does with the call when that timeout expires; and `orch_ask_guard` continues
+to log a fail-open audit event on every question until the upstream fix is re-vendored.
 
 One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
 empties, so cross-repository writes deny), but the scope-gated guards do not react to it

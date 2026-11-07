@@ -15,17 +15,22 @@ hook reads the JSON file.
 
 Decisions, in the order the guard makes them:
 
+- an argument it does not know or cannot parse, or a hook payload that is not a JSON object: deny,
+  whatever the tool, because the guard reads both before it looks at the tool;
 - a tool other than AskUserQuestion: allow, silently;
 - /opt/orch-operator itself absent: allow, with a one-line systemMessage, so that contributor
   machines and hosts without the orchestrator stay usable;
+- /opt/orch-operator present but failing lstat for any other reason: deny;
 - the mode file missing, unreadable, a symlink (opened with O_NOFOLLOW), or not a regular file: deny;
 - the opened file not owned by uid 0, or writable by its group or by others (fstat on the open
   descriptor): deny;
-- content over 4096 bytes, not strict UTF-8, not one JSON object, holding a duplicate key, or with
-  a "mode" that is absent or not a string: deny;
+- content over 4096 bytes, not strict UTF-8, not one JSON object (NaN, Infinity and -Infinity
+  included, since JSON has no such values), holding a duplicate key, or with a "mode" that is
+  absent or not a string: deny;
 - "mode" exactly "attended": allow, silently; "unattended" or any other value, including a case
   variant: deny;
-- any internal error of the guard: deny, since a denied question cannot wedge a session.
+- any other internal error of the guard, at any step: deny, since a denied question cannot wedge a
+  session.
 
 The phase, set_by and set_at members do not affect the decision. The guard writes nothing. The deny
 output has the shape the vendored hooks use: permissionDecision deny on exit 0.
@@ -40,9 +45,11 @@ families; a session that can edit this script or .claude/settings.json can disar
 review; removing /opt/orch-operator disarms it; the guard trusts root's file: it checks that uid 0
 owns /opt/orch-operator/operating-mode and that neither its group nor others can write it, so root
 controls the decision, and it does not check the directory that holds the file; the file holds one
-mode for the whole host, so an attended session is blocked while the host says unattended; and the
-vendored orch_ask_guard continues to log a fail-open audit event on every question until the
-upstream fix is re-vendored.
+mode for the whole host, so an attended session is blocked while the host says unattended; the
+4096-byte bound limits size, not time, so a slow open or read of a regular file, such as one on a
+stalled network filesystem, is bounded only by the hook's 10-second timeout, and the tests do not
+show what Claude Code does with the call when that timeout expires; and the vendored orch_ask_guard
+continues to log a fail-open audit event on every question until the upstream fix is re-vendored.
 """
 import errno
 import json
@@ -91,6 +98,12 @@ def deny_cause(cause):
                 "({}). Treat the session as unattended. {}".format(cause, RECORD_AND_CONTINUE),
                 "Repository guard: denied a blocking question; the host operating-mode cannot be "
                 "confirmed as attended: {}.".format(cause))
+
+
+def reject_constant(name):
+    """A json parse_constant hook that refuses NaN, Infinity and -Infinity, which json.loads accepts
+    although JSON does not define them."""
+    raise ValueError("{} is not a JSON value".format(name))
 
 
 def reject_duplicates(pairs):
@@ -154,7 +167,8 @@ def read_mode(mode_file, expect_uid):
     except UnicodeDecodeError:
         raise Unusable("{} is not UTF-8".format(mode_file)) from None
     try:
-        record = json.loads(text, object_pairs_hook=reject_duplicates)
+        record = json.loads(text, object_pairs_hook=reject_duplicates,
+                            parse_constant=reject_constant)
     except ValueError as exc:
         raise Unusable("{} is not one JSON document: {}".format(mode_file, exc)) from None
     if not isinstance(record, dict):
