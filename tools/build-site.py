@@ -2238,10 +2238,10 @@ def with_about(content: str, page: dict, base: str, logo_alt: str | None = None)
     then any source with a class of PLACED_CLASSES outside its pinned place, a second section.hero, an element of
     PLACED_CHILDREN with text or children outside their pinned order, a data-copy attribute outside the committed copy
     button (COPY_BUTTON_PIN), or a hero image whose alt text is not logo_alt, site.json's, which
-    build() passes; without it, any hero image is refused (placement_pin()). bidi_control() reads the source's
-    text, with its character references decoded; each other rule after the grammar reads 1 PageScan of the source,
-    and the label rule also a second, read with scripting off (scripting_off()). The About block goes where the
-    parser read the region's end tag end (end_tag_end())."""
+    build() passes; without it, any hero image is refused (placement_pin()). bidi_control() reads every character
+    of the source, with its character references decoded; each other rule after the grammar reads 1 PageScan of the
+    source, and the label rule also a second, read with scripting off (scripting_off()). The About block goes where
+    the parser read the region's end tag end (end_tag_end())."""
     where = page["source"]
     problem = source_problem(content)
     if problem is not None:
