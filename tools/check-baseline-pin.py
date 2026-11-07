@@ -106,7 +106,10 @@ Each problem and each error it prints is 1 line, whatever the file names in
 it: a character that is not printable, such as a newline, a carriage return
 or an escape, is written as Python writes it in a string literal (``\\n``,
 ``\\r``, ``\\x1b``). A backslash is printed as it is, so a printed ``\\n`` can
-also stand for a backslash followed by ``n``.
+also stand for a backslash followed by ``n``. Any other error, such as a
+RecursionError from a deeply nested pin or ``site-src/site.json``, ends the run
+with exit 3 and 1 line that names it, rather than a traceback. An interrupt
+(Ctrl-C) ends the run with Python's own traceback.
 
 What it does not verify
 -----------------------
@@ -134,7 +137,9 @@ Exit codes:
      SHA256SUMS line, or site-src/site.json or its base path is malformed;
      the copy folder under the output root is missing; the README
      lacks its version heading or a step 7 NOTICE entry in the form item 7
-     gives, or holds a carriage return; or Python is older than 3.11
+     gives, or holds a carriage return; Python is older than 3.11; or any
+     other error stops the run, such as a RecursionError from a deeply nested
+     pin or site-src/site.json
 """
 
 from __future__ import annotations
@@ -474,21 +479,29 @@ def check(root: Path) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    root = Path(argv[1]).resolve() if len(argv) > 1 else REPO_ROOT
     try:
+        root = Path(argv[1]).resolve() if len(argv) > 1 else REPO_ROOT
         problems = check(root)
+        if problems:
+            print("Baseline pin problems found:")
+            for problem in problems:
+                print(f"  - {one_line(problem)}")
+            return 1
+        version, files = load_pin(root)
+        print(f"All {len(files)} copied files of baseline {version} match the pin and the version's SHA256SUMS, and no file is unpinned; "
+              f"its README names {version} and NOTICE.md carries its Site template entry.")
+        return 0
     except Unreadable as error:
         print(f"check-baseline-pin: {one_line(str(error))}", file=sys.stderr)
         return 3
-    if problems:
-        print("Baseline pin problems found:")
-        for problem in problems:
-            print(f"  - {one_line(problem)}")
-        return 1
-    version, files = load_pin(root)
-    print(f"All {len(files)} copied files of baseline {version} match the pin and the version's SHA256SUMS, and no file is unpinned; "
-          f"its README names {version} and NOTICE.md carries its Site template entry.")
-    return 0
+    except Exception as error:
+        # Any other error, such as a RecursionError from a deeply nested pin or site-src/site.json, which the parsers
+        # do not report as malformed, also ends the run with exit 3 and 1 line rather than a traceback, so that the
+        # exit codes and the 1-line rule hold whatever raised it. An interrupt or a SystemExit is not an Exception and
+        # passes through.
+        print(f"check-baseline-pin: stopped by an unexpected {one_line(f'{type(error).__name__}: {error}')}",
+              file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

@@ -8,7 +8,10 @@ clean tree, runs the gate on that tree as a separate process and asserts its
 exit code, and for some cases a line of its output. A further gate case
 runs it on a tree whose root's name holds a newline and without
 ``SHA256SUMS``, and asserts that its error is 1 line with the newline
-written as ``\\n``. The last case runs the gate on this repository. The
+written as ``\\n``. 2 more give it a ``site-src/site.json`` of 200,000
+nested ``[`` and a pin with a deeply nested array appended, each in 1 file,
+and assert exit 3 with 1 line that names the RecursionError, not a
+traceback. The last case runs the gate on this repository. The
 copy-baseline cases run ``tools/copy-baseline.py`` on a small version folder
 and assert:
 
@@ -47,8 +50,9 @@ and assert:
   a gate that does not compile, a ``site-src/`` without ``site.json``, a
   ``site-src/site.json`` without a base path, and a SHA256SUMS or README that
   is not UTF-8 (each exit 3); and, when not run as root, a ``--from`` folder
-  that cannot be listed and a ``.baseline/`` that cannot be searched (each
-  exit 3);
+  that cannot be listed, a ``.baseline/`` that cannot be searched, and a
+  subfolder of the version folder that can be listed but not searched, so
+  that its file cannot be examined once it is listed (each exit 3);
 - that it removes a stray file and folder from ``.baseline/card-fonts/``;
 - that it ends by running the gate on the tree it wrote: a clean copy exits 0
   and says that the gate passes it; a link elsewhere under ``site/``, or a
@@ -446,6 +450,27 @@ def fault_served_link_newline(root: Path) -> None:
     (root / "site" / "a\nb").symlink_to(root / "NOTICE.md")
 
 
+# Deeply nested input, each in 1 file: the JSON and TOML parsers raise RecursionError for it, which is neither the
+# ValueError nor the TOMLDecodeError that the gate reports as malformed, so only its catch-all keeps the exit code 3 and
+# the error 1 line.
+NESTING = 200_000
+
+
+def fault_site_json_nested(root: Path) -> None:
+    (root / "site-src" / "site.json").write_text("[" * NESTING, encoding="utf-8")
+
+
+def fault_pin_nested(root: Path) -> None:
+    with (root / ".baseline" / "pin.toml").open("a", encoding="utf-8") as stream:
+        stream.write("nested = " + "[" * NESTING + "]" * NESTING + "\n")
+
+
+NESTED_INPUTS = [
+    ("a site-src/site.json of 200,000 nested [", fault_site_json_nested),
+    ("a deeply nested array appended to the pin", fault_pin_nested),
+]
+
+
 # The lines of the SHA256SUMS that build() writes: the copied files, reference/landing.html, the palette gate, the card
 # files and the documents.
 SUMS_LINES = len(FILES) + 2 + len(CARD) + len(DOCS)
@@ -763,14 +788,19 @@ def tree_state(root: Path, version: Path | None) -> dict[str, tuple]:
     wherever it is, when there is one, by path: a folder's mode and modification time, which a name created, renamed
     or removed in it changes; a file's inode, size, SHA-256, mode and modification time; a link's target; and any
     other entry's mode, such as a FIFO's. os.walk() passes over a folder that it cannot list, so nothing in one is
-    recorded, as in the case whose --from folder can be searched but not listed. A link under root or the --from
-    folder is recorded, never followed."""
+    recorded, as in the case whose --from folder can be searched but not listed; an entry that lstat cannot examine,
+    such as one in the version subfolder that can be listed but not searched, is recorded by its path alone. A link
+    under root or the --from folder is recorded, never followed."""
     found: dict[str, tuple] = {}
     for top in (root, *((version,) if version is not None else ())):
         for folder, folders, files in os.walk(top):
             paths = [Path(folder)] if Path(folder) == top else []
             for path in paths + [Path(folder) / name for name in folders + files]:
-                status = os.lstat(path)
+                try:
+                    status = os.lstat(path)
+                except PermissionError:
+                    found[str(path)] = ("unexamined",)
+                    continue
                 if stat.S_ISLNK(status.st_mode):
                     found[str(path)] = ("link", os.readlink(path))
                 elif stat.S_ISDIR(status.st_mode):
@@ -1617,19 +1647,23 @@ def input_refusal_problems() -> list[str]:
 
 def permission_refusal_problems() -> list[str]:
     """Inputs that only file permissions make unreadable, so not run as root: a --from folder that can be searched
-    but not listed makes copy-baseline exit 3 saying that it could not be listed, and a .baseline/ that cannot be
-    searched makes it exit 3 saying that .baseline/card-fonts could not be read, each with its own 1 line before its
-    first write."""
+    but not listed makes copy-baseline exit 3 saying that it could not be listed; a .baseline/ that cannot be
+    searched makes it exit 3 saying that .baseline/card-fonts could not be read; and a subfolder of the version
+    folder that can be listed but not searched, whose file lstat cannot then examine, makes it exit 3 saying that
+    the file could not be read; each with its own 1 line before its first write."""
     problems = []
-    for name, expected_line in (("a --from folder that cannot be listed", "1.2.1 could not be listed"),
-                                ("a .baseline/ that cannot be searched", ".baseline/card-fonts could not be read")):
+    for name, relative, mode, expected_line in (
+            ("a --from folder that cannot be listed", "1.2.1", 0o100, "1.2.1 could not be listed"),
+            ("a .baseline/ that cannot be searched", ".baseline", 0, ".baseline/card-fonts could not be read"),
+            ("a version subfolder that can be listed but not searched", "1.2.1/reference", 0o400,
+             "1.2.1/reference/landing.html could not be read")):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
             (root / ".baseline").mkdir()
-            locked = root / "1.2.1" if name.startswith("a --from") else root / ".baseline"
+            locked = root / relative
 
-            def lock(root: Path, version: Path) -> None:
-                os.chmod(locked, 0o100 if locked.name == "1.2.1" else 0)
+            def lock(root: Path, version: Path, locked: Path = locked, mode: int = mode) -> None:
+                os.chmod(locked, mode)
 
             try:
                 result = run_copy(root, dict(PACKAGE), before_run=lock)
@@ -1881,7 +1915,7 @@ def main() -> int:
     # failures.
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         failures += write_failure_problems() + gate_unreadable_problems() + permission_refusal_problems()
-        ran += 2 + 2
+        ran += 2 + 3
     # Every copy-baseline run above, refused or not, must leave each entry but a folder outside the paths it manages,
     # and under its --from folder, as unmanaged() keeps it, and every run that ends before its first write must leave
     # everything that tree_state() records as it was, managed paths included. Each run goes through copy_run(), which
@@ -1931,6 +1965,19 @@ def main() -> int:
                 or "a\\nb/.baseline/SHA256SUMS could not be read" not in lines[0]):
             failures.append(f"a missing SHA256SUMS under a root whose name holds a newline: exit {result.returncode} "
                             f"with {result.stderr.strip()[:200]!r}; expected 3 with 1 line naming the path")
+    # An error that the gate does not report itself ends the run with exit 3 and 1 line naming it, not a traceback.
+    for name, fault in NESTED_INPUTS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            build(root)
+            fault(root)
+            result = run_gate(root)
+            ran += 1
+            lines = result.stderr.splitlines()
+            if (result.returncode != 3 or len(lines) != 1
+                    or not lines[0].startswith("check-baseline-pin: stopped by an unexpected RecursionError")):
+                failures.append(f"{name}: exit {result.returncode} with {len(lines)} lines on stderr, ending "
+                                f"{result.stderr.strip()[-200:]!r}; expected 3 with 1 line naming the RecursionError")
     code = run(REPO_ROOT)
     ran += 1
     if code != 0:
