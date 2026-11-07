@@ -44,7 +44,11 @@ the 3 stylesheets, read from the stylesheet's address), and its load_path()
 reads each of those as 1 of the files that tools/check-baseline-pin.py pins
 (check 6); and unless its parse() and name_text(), run in this process on
 fragments apart from the pins, read a br, a </br> and a hidden br in a heading,
-and its has_visible_text() text of only U+034F, as check 4 says. On a family
+and its has_visible_text() text of only U+034F, as check 4 says; and unless
+its parse(), run in this process on fragments, reads no misnested end tag
+where a fragment leaves out an end tag that its IMPLIED_ENDS holds, and 1
+where a browser keeps open an element that the parser closes or where the
+parser keeps an li open around a sibling (check 8). On a family
 page the checks of CLASS_PIN, ATTRIBUTE_PIN and TAG_PIN read the checked
 elements through the gate's family_checked(), as the gate holds them, so of
 the links to #get and #test they read the required link back to each and,
@@ -58,10 +62,14 @@ file the gate, this test and that workflow read and each path of the gate's SERV
 (check 10), as a file and at any depth under a directory, and holds no
 negative pattern (1 that starts with !, which GitHub reads in order as
 excluding what the patterns before it include; this check reads no order, so
-it refuses every one), and unless that check refuses the workflow with
+it refuses every one) and no line that it cannot read (it reads only an item
+written - "PATTERN", with no backslash and nothing after the closing quote),
+and unless that check refuses the workflow with
 site/_redirects removed from 1 list or from both, with functions/** narrowed
 to functions/* in 1 list or in both, or with !functions/** after
-functions/** in 1 list or in both.
+functions/** in 1 list or in both, double-quoted, single-quoted, escaped as
+\\x21functions/** or followed by a comment, and passes it with a blank line
+and a comment line after functions/** in both.
 
 It also pins the stylesheets every install page loads (fonts.css,
 palettes.css and baseline.css under site/assets/baseline/): it fails unless
@@ -1332,6 +1340,14 @@ CASES = [
         edit(OTHER, STEPS, '<span class="vh"><div></span>' + STEPS), (1, "</span> closes <span> with <div> " + MISNESTED)),
     ("a family page step list after <p><div class=\"vh\"></p>", edit(OTHER, STEPS, '<p><div class="vh"></p>' + STEPS),
         (1, "</p> closes <p> with <div> " + MISNESTED)),
+    # A browser closes <svg/> at once, so the div after it is not in an svg, and keeps the span open past </span>.
+    ("a family page step list after <span class=\"vh\"><svg/><div/></span>",
+        edit(OTHER, STEPS, '<span class="vh"><svg/><div/></span>' + STEPS),
+        (1, "</span> closes <span> with <div> " + MISNESTED)),
+    # The HTML standard lets a page omit the end tag of a td where no more content follows in its tr, and a browser
+    # closes the cell at </tr>, so a valid one-cell table without </td> passes (IMPLIED_ENDS).
+    ("a family page with a one-cell table without </td>", edit(CHATGPT, "</main>", "<table><tr><td>Cell</tr></table></main>"),
+        0),
     # Every src, and every href of a link other than the canonical link, on the 6 pages is 1 of the files
     # tools/check-baseline-pin.py pins, read as a path from the site's root with no . or .. segment.
     ("a family page illustration outside the baseline pin", edit(CHATGPT, '<p class="verified">',
@@ -1983,6 +1999,32 @@ def name_reading_problems() -> list[str]:
     return problems
 
 
+def end_tag_problems() -> list[str]:
+    """The gate's parse(), run in this process on fragments, reads no misnested end tag (check 8) where a page leaves
+    out an end tag that the HTML standard lets it omit where no more content follows in the parent element, for each
+    such element and each parent at whose end tag a browser closes it too (the gate's IMPLIED_ENDS), and reads 1
+    where a browser keeps open an element that the parser closes (a p in a span, a b or an a, and a div around an
+    open table cell, whose end tag a browser ignores), and where the parser keeps an li whose end tag a page omits
+    before a sibling open around that sibling, as the gate's docstring states."""
+    omitted = [f"<{parent}><{child}>x</{parent}>" for child, parents in (
+        ("li", "menu ol ul"), ("dd", "div dl"), ("rt", "ruby"), ("rp", "ruby"), ("optgroup", "select"),
+        ("option", "datalist optgroup select"), ("tbody", "table"), ("tfoot", "table"), ("tr", "table tbody tfoot thead"),
+        ("td", "tr"), ("th", "tr"), ("p", "address article aside blockquote caption dd details dialog div dt fieldset "
+                                           "figcaption figure footer form header hgroup li main nav section td th"),
+    ) for parent in parents.split()]
+    misnested = ['<span class="vh"><p>x</span>', "<b><p>x</b>", "<a><p>x</a>", "<div><table><tr><td>x</div>",
+                 "<ul><li>a<li>b</ul>"]
+    try:
+        gate = load_gate()
+        problems = [f"parse() reads {markup!r} as misnested: {gate.parse(markup).misnested}." for markup in omitted
+                    if gate.parse(markup).misnested]
+        problems += [f"parse() reads {markup!r} with no misnested end tag." for markup in misnested
+                     if not gate.parse(markup).misnested]
+    except Exception as error:
+        return [f"the end tags of tools/{GATE.name} could not be checked: {error!r}"]
+    return problems
+
+
 def loaded_segment_problems() -> list[str]:
     """The gate's LOADED_SEGMENTS holds exactly the first path segments of the files the committed pages load: each
     src, each href of a link other than the canonical link, and each url() of STYLESHEETS, read from the address of
@@ -2031,7 +2073,11 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
     change to any of them runs the workflow, and holds no negative pattern (1 that starts with !). GitHub reads the
     patterns in order, and a negative 1 excludes the paths it matches until a later pattern includes them again; this
     reads each positive pattern as a match on its own, so it fails closed on every negative pattern, wherever it sits
-    and whatever it matches."""
+    and whatever it matches. A path list is the lines after a line that is only paths:, up to the first line, blank
+    lines and comment lines aside, that is not indented deeper than it. Of those lines, this reads only an item
+    written as - "PATTERN", with no backslash in the pattern and nothing after its closing quote, and refuses every
+    other line, so an item it cannot read (single-quoted, unquoted, escaped or followed by a comment), a negative
+    pattern among them, fails instead of going unread."""
     try:
         if text is None:
             text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
@@ -2040,16 +2086,29 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
     except Exception as error:
         return [f"{WORKFLOW} could not be checked: {error!r}"]
     lists: list[list[str]] = []
+    unread: list[str] = []
+    indent = None
     for line in text.splitlines():
+        depth = len(line) - len(line.lstrip(" "))
         if line.strip() == "paths:":
             lists.append([])
-        elif lists and re.fullmatch(r' +- "[^"]+"', line):
-            lists[-1].append(line.split('"')[1])
+            indent = depth
+        elif indent is None or not line.strip() or line.strip().startswith("#"):
+            continue
+        elif depth > indent:
+            item = re.fullmatch(r' *- "([^"\\]+)"', line)
+            if item:
+                lists[-1].append(item.group(1))
+            else:
+                unread.append(line.strip())
+        else:
+            indent = None
+    problems = [f"a path list of {WORKFLOW} holds {line!r}, which this test does not read: it reads only an item "
+                'written - "PATTERN", with no backslash and nothing after the closing quote.' for line in unread]
     lists = [held for held in lists if held]
     if len(lists) != 2:
-        return [f"{WORKFLOW} has {len(lists)} path lists with entries, not 2 (pull_request and push)."]
+        return problems + [f"{WORKFLOW} has {len(lists)} path lists with entries, not 2 (pull_request and push)."]
     read = [f"tools/{GATE.name}", f"tools/{Path(__file__).name}", *FILES, *STYLESHEETS, PIN_FILE, *WORKFLOW_ALSO]
-    problems: list[str] = []
     for number, held in enumerate(lists, 1):
         problems += [f"path list {number} of {WORKFLOW} holds the negative pattern {pattern}; this test does not read "
                      "the order of the patterns, so it refuses every negative 1." for pattern in held if pattern[:1] == "!"]
@@ -2064,7 +2123,9 @@ def workflow_case_problems() -> list[str]:
     """workflow_path_problems() refuses the committed workflow with site/_redirects removed from 1 path list, or from
     both, with functions/** narrowed to functions/*, which covers no nested path, in 1 path list or in both, and with
     !functions/**, which GitHub reads as excluding what functions/** before it includes, after functions/** in 1 path
-    list or in both."""
+    list or in both: double-quoted, single-quoted, written with the escape \\x21 for its !, or double-quoted and
+    followed by a comment. It finds no problem in the committed workflow with a blank line and a comment line after
+    functions/** in both path lists, which GitHub reads as it reads the committed 1."""
     text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
     line = '      - "site/_redirects"\n'
     if text.count(line) != 2:
@@ -2080,11 +2141,16 @@ def workflow_case_problems() -> list[str]:
     for name, edited in (("in the first path list", text.replace(tree, narrow, 1)), ("in both", text.replace(tree, narrow))):
         if not workflow_path_problems(edited):
             problems.append(f"functions/** narrowed to functions/* {name}: workflow_path_problems() found no problem.")
-    excluded = tree + '      - "!functions/**"\n'
-    for name, edited in (("in the first path list", text.replace(tree, excluded, 1)),
-                         ("in both", text.replace(tree, excluded))):
-        if not workflow_path_problems(edited):
-            problems.append(f"!functions/** after functions/** {name}: workflow_path_problems() found no problem.")
+    for item in ('"!functions/**"', "'!functions/**'", '"\\x21functions/**"', '"!functions/**" # excluded'):
+        excluded = tree + f"      - {item}\n"
+        for name, edited in (("in the first path list", text.replace(tree, excluded, 1)),
+                             ("in both", text.replace(tree, excluded))):
+            if not workflow_path_problems(edited):
+                problems.append(f"- {item} after functions/** {name}: workflow_path_problems() found no problem.")
+    spaced = workflow_path_problems(text.replace(tree, tree + "\n      # Pages Functions\n"))
+    if spaced:
+        problems.append(f"a blank line and a comment line after functions/** in both: workflow_path_problems() found "
+                        f"{spaced}, though GitHub reads the lists as committed.")
     return problems
 
 
@@ -2166,6 +2232,7 @@ def main() -> int:
     failures += [f"the page attribute pin: {problem}" for problem in page_attribute_pin_problems()]
     failures += [f"the page tag pin: {problem}" for problem in page_tag_pin_problems()]
     failures += [f"the name reading: {problem}" for problem in name_reading_problems()]
+    failures += [f"the end tags: {problem}" for problem in end_tag_problems()]
     failures += [f"the loaded files: {problem}" for problem in loaded_segment_problems()]
     failures += [f"the workflow paths: {problem}" for problem in workflow_path_problems() + workflow_case_problems()]
     failures += [f"the stylesheets: {problem}"
@@ -2193,7 +2260,7 @@ def main() -> int:
     print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
           f"ALLOWED_SCRIPTS, the checks of CLASS_PIN, ATTRIBUTE_PIN, HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
           f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
-          f"LOADED_SEGMENTS and the pinned loads, the workflow's path "
+          f"the end tags, LOADED_SEGMENTS and the pinned loads, the workflow's path "
           f"lists, the Python version checks, the "
           f"{len(SHEET_CASES)} cases of the "
           f"stylesheet reader, the {len(PIN_CASES)} cases of the rule pin's comparison and the rule pin of the "

@@ -358,7 +358,21 @@ What it verifies
    ignore it, keep 1 of those open or reopen 1 (see below). An ``html``,
    ``head`` or body element, which a browser does not open again for a later
    start tag, and an element that a self-closing tag opens in an ``svg``,
-   which a browser closes there, do not count as open inside.
+   which a browser closes there, do not count as open inside; a self-closing
+   ``<svg/>`` closes at once, as in a browser, so what follows it is not in
+   an ``svg`` (``<span class="vh"><svg/><div/></span>`` fails). Nor does an
+   element whose end tag the HTML standard lets a page omit where no more
+   content follows in its parent, when that parent, as the parser holds
+   it, is 1 at whose end tag a browser closes it too (``IMPLIED_ENDS``: an
+   ``li``, ``dd``, ``p``, ``rt``, ``rp``, ``optgroup``, ``option``,
+   ``tbody``, ``tfoot``, ``tr``, ``td`` or ``th`` in such a parent, so not a
+   ``p`` in a ``span``, whose end tag a browser then ignores), so a
+   one-cell table without ``</td>`` passes, though ``tools/build-site.py``
+   refuses that omission in a page it generates. An end tag that a page
+   omits before a sibling, as in ``<ul><li>a<li>b</ul>``, still counts,
+   because the parser keeps the first ``li`` open around the second, so such
+   a page fails, though it is valid HTML and a browser has closed both
+   ``li`` elements by ``</ul>``.
 9. On the 6 pages, every ``meta``, ``link`` and ``base`` element, at any
    depth, shown or hidden, and every ``meta``, ``link`` and ``base`` start tag
    that a text match finds, a tag in a comment included, is 1 that the
@@ -605,7 +619,8 @@ keeps the ``div`` open); and an end tag that closes a formatting element
 ``small``, ``strike``, ``strong``, ``tt`` or ``u``) out of order, which a
 browser reopens with its attributes (``<p><a class="vh">x</p>``, after which
 a browser hides the text of a later heading). The gate does not model the
-other browser repairs, among them an implied end tag (see above) and a
+other browser repairs, among them an implied end tag (see above; check 8
+reads 1 only where ``IMPLIED_ENDS`` holds it, at its parent's end tag) and a
 formatting element that a browser reopens after an implied end tag closed
 it. The
 inline-code checks, and the load reading of check 6, share the residual that
@@ -730,6 +745,18 @@ VOID = {
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+# Check 8: each element whose end tag the HTML standard lets a page omit where no more content follows in its parent
+# element, with the parents at whose end tag a browser closes it too, so that such a parent's end tag with it left open
+# inside is not refused. A p in a span is not among them: a browser ignores that </span> and keeps the span open.
+P_PARENTS = (
+    "address", "article", "aside", "blockquote", "caption", "dd", "details", "dialog", "div", "dt", "fieldset",
+    "figcaption", "figure", "footer", "form", "header", "hgroup", "li", "main", "nav", "section", "td", "th",
+)
+IMPLIED_ENDS = {
+    "li": ("menu", "ol", "ul"), "dd": ("div", "dl"), "p": P_PARENTS, "rt": ("ruby",), "rp": ("ruby",),
+    "optgroup": ("select",), "option": ("datalist", "optgroup", "select"), "tbody": ("table",), "tfoot": ("table",),
+    "tr": ("table", "tbody", "tfoot", "thead"), "td": ("tr",), "th": ("tr",),
+}
 # HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
 ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # Invisible characters a heading might be reduced to, besides the whitespace str.strip removes: the zero-width space,
@@ -1053,7 +1080,7 @@ class PageParser(HTMLParser):
         self.page_tags: Counter = Counter()
         self.later_attrs: list[str] = []
         # Each end tag that closes an open element other than the innermost, with the elements it would close inside
-        # it, which a browser can keep open, reopen or close differently (check 8).
+        # it, which a browser can keep open, reopen or close differently (check 8), unless IMPLIED_ENDS holds each.
         self.misnested: list[str] = []
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
@@ -1164,10 +1191,13 @@ class PageParser(HTMLParser):
     def handle_startendtag(self, tag: str, attrs_list) -> None:
         # A browser ignores the "/" of "/>" on an element that is not void, so <div hidden/> stays open and hides
         # what follows, as <div hidden> does. A void element never goes on the stack, so it needs no end tag.
-        foreign = tag == "svg" or any(frame["tag"] == "svg" for frame in self.stack)
+        foreign = any(frame["tag"] == "svg" for frame in self.stack)
         self.handle_starttag(tag, attrs_list)
-        # A browser honours the slash in <svg> (foreign content), so an end tag there may close what such a tag opened.
-        if tag not in VOID and foreign:
+        # A browser honours the slash in <svg> (foreign content), so it closes <svg/> at once, and what follows is not
+        # in it; and in an svg an end tag may close what such a tag opened.
+        if tag == "svg":
+            self.stack.pop()
+        elif tag not in VOID and foreign:
             self.stack[-1]["self_closed"] = True
 
     def handle_endtag(self, tag: str) -> None:
@@ -1181,9 +1211,12 @@ class PageParser(HTMLParser):
             if self.stack[i]["tag"] in names:
                 # Here an end tag closes every element opened inside its own; a browser can instead ignore it, keep
                 # 1 of those open or reopen 1 later, so check 8 refuses such an end tag, as tools/build-site.py does. A
-                # browser opens no second html, head or body element, so those this parser opens do not count.
-                inside = [frame["tag"] for frame in self.stack[i + 1:]
-                          if not frame.get("self_closed") and frame["tag"] not in ("html", "head", "body")]
+                # browser opens no second html, head or body element, so those this parser opens do not count, nor
+                # does an element whose end tag a page may omit where its parent, as the parser holds it, ends here
+                # and a browser then closes it too (IMPLIED_ENDS).
+                inside = [frame["tag"] for parent, frame in zip(self.stack[i:], self.stack[i + 1:])
+                          if not frame.get("self_closed") and frame["tag"] not in ("html", "head", "body")
+                          and parent["tag"] not in IMPLIED_ENDS.get(frame["tag"], ())]
                 if inside:
                     self.misnested.append(f"</{tag}> closes <{self.stack[i]['tag']}> with <{inside[0]}> open inside it")
                 del self.stack[i:]
@@ -1948,7 +1981,7 @@ def main() -> int:
         "body start tag on "
         "the six pages carries dir, and none carries an attribute unless it is the first of each and an ancestor of "
         "every checked element, each page begins with the doctype, no end tag closes an element other than the "
-        "innermost open one, no retired selector attribute "
+        "innermost open one but 1 whose end tag the page may omit there, no retired selector attribute "
         "remains, the six pages pass the inline-code checks, the "
         "light and dark switch included, load the baseline's versioned stylesheets and no other, and copy.js, load scheme.js "
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
