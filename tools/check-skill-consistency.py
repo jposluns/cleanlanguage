@@ -72,8 +72,11 @@ either file left out, split into blocks (headings, bullets and paragraphs):
      run some kinds, such as one opened by "<script>" or "<pre>", on past
      blank lines and headings until a closing tag, so a block opened above a
      span could hold the span. A "<" later in a line is refused only in
-     the two spans item 5 covers, unless it starts "<!--", which is
-     refused anywhere.
+     the two spans item 5 covers, and there on every line but the SKILL.md
+     section's own heading line, unless it starts "<!--", which is refused
+     anywhere. Item 5 accepts that heading line without reading its
+     characters, because its text is the section name item 2 matches, not
+     part of the compared bullet.
    The one exception is the front matter at the top of SKILL.md: when line 1
    and a later line are exactly "---", line 1 and the first such later line
    are not refused as a thematic break or an underline. Every other refusal
@@ -171,16 +174,21 @@ Residuals, named here because the check reads text by fixed rules:
   list, such as a line indented by 1 or more spaces that continues a bullet
   or paragraph, a bullet marked
   "*" or "+", a heading of level 3 to 6 in the carve-out section, a bullet
-  whose text starts with a list marker, such as "- - x", and any character
-  outside its list, such as a non-ASCII letter, "*" for emphasis, "&" or
-  "/". A future edit that adds such a line there makes the check exit 3
-  until the edit is rewritten or the check is extended;
+  whose text starts with a list marker, such as "- - x", and, on every line
+  but the SKILL.md section's own heading line, any character outside its
+  list, such as a non-ASCII letter, "*" for emphasis, "&" or "/". A future
+  edit that adds such a line there makes the check exit 3 until the edit is
+  rewritten or the check is extended;
 - outside the two spans item 5 covers, a link title, the title of a link
   reference definition and the markup of raw HTML later in a line, other
   than a comment, are read as text like the rest of the file, so a pointer
   sentence there is found whether or not a rendering shows it. In the spans,
-  each of them needs a character item 5 refuses: "[" for a link title or the
-  title of a link reference definition, and "<" for raw HTML;
+  apart from the SKILL.md section's own heading line, each of them needs a
+  character item 5 refuses: "[" for a link title or the title of a link
+  reference definition, and "<" for raw HTML. That heading line can hold a
+  link title or raw HTML, because item 5 accepts it without reading its
+  characters: its text is the section name item 2 matches, not part of the
+  compared bullet;
 - OPENING, the first sentence of the expected bullet, is a second hand-kept
   copy: rewording that sentence in the checklist fails until OPENING follows
   it;

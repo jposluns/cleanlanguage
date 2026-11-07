@@ -258,9 +258,11 @@ CASES = [
     ("x & y directly under a level 1 heading added after the carve-out section",
         edit(SKILL, NEXT_HEADING, "# More\n" + EDGE + NEXT_HEADING), 0, []),
     # With the carve-out section last in SKILL.md, the section ends at the end of the file, and no line lies past
-    # it: the section with no refused line pins a check that reads past the end, and x & y on its last line, with
-    # and without a final LF, pins a check that stops short of it.
+    # it: the section with no refused line pins a check that reads past the end, and x & y on its last line pins a
+    # check that stops short of it. Each runs with and without a final LF, because a line count that depends on the
+    # final LF, such as one from str.splitlines(), can be right in one form and wrong in the other.
     ("the carve-out section last in SKILL.md", cut(SKILL, "\n" + NEXT_HEADING, ""), 0, []),
+    ("the carve-out section last in SKILL.md, with no LF after it", cut(SKILL, "\n\n" + NEXT_HEADING, ""), 0, []),
     ("x & y as the last line of SKILL.md, with the carve-out section last", cut(SKILL, NEXT_HEADING, EDGE), 3,
         [at(SKILL, NEXT_HEADING) + character("&")]),
     ("x & y as the last line of SKILL.md, with the carve-out section last and no LF after it",
@@ -293,6 +295,11 @@ CASES = [
         [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
     ("x & y as the last line of the checklist, with no LF after it", append(CHECKLIST, EDGE.rstrip("\n")), 3,
         [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    # The committed checklist, whose span runs to the end of the file, ends in LF, so the committed tree pins a check
+    # that reads past the end only in that form; this case pins it for a file with no final LF.
+    ("the checklist with no LF after its last line",
+        lambda root: (root / CHECKLIST).write_text((root / CHECKLIST).read_text(encoding="utf-8").rstrip("\n"),
+                                                   encoding="utf-8"), 0, []),
     ("x & y directly above a heading added after the dash bullet", append(CHECKLIST, EDGE + "## More\n"), 3,
         [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the next heading;"]),
     ("x & y directly under a heading added after the dash bullet", append(CHECKLIST, "## More\n" + EDGE), 0, []),
