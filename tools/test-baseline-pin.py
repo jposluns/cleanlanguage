@@ -71,8 +71,10 @@ gate on this repository. The copy-baseline cases run
   process, counted by an audit hook on Python's ``open`` event that code
   appended to the gate adds, so a second open through ``builtins.open``,
   ``io.open``, ``os.open`` or anything built on them, such as
-  ``shutil.copyfile``, is counted; a second read through the same open file,
-  or a read by another process, is not;
+  ``shutil.copyfile``, is counted; an ``os.open`` of a path relative to a
+  folder's descriptor (``dir_fd``), which the hook resolves against the
+  working folder instead, a second read through the same open file, and a
+  read by another process are not;
 - that a hard link from outside the paths it manages to each file it writes in
   ``.baseline/`` keeps its content through a clean copy, that a link in place
   of ``tools/__pycache__/`` leads to a folder that gains nothing from a
@@ -734,8 +736,9 @@ def tree_state(root: Path, version: Path | None) -> dict[str, tuple]:
 
 
 def unmanaged(state: dict[str, tuple], root: Path, version: Path | None) -> dict[str, tuple]:
-    """The files and links of a tree_state() outside the paths copy-baseline manages, and every one under the --from
-    folder, with a file's inode, size and SHA-256 or a link's target: what a run that changes things must keep."""
+    """Every entry but a folder in a tree_state() outside the paths copy-baseline manages, and every one under the
+    --from folder: a file with its inode, size and SHA-256, a link with its target, and any other entry, such as a
+    FIFO, with its mode. This is what a run that changes things must keep."""
     found: dict[str, tuple] = {}
     managed = managed_folders(root)
     inside = str(version) + os.sep if version is not None else None
@@ -1278,7 +1281,8 @@ FAIL_ON_LOAD = b"\nraise LookupError('injected')\n"
 # COUNT_OPENS counts each open of a path under the --from folder and prints the counts when the run ends. It counts
 # through an audit hook on Python's "open" event, which builtins.open, io.open and os.open raise, and so everything
 # built on them, such as pathlib and shutil.copyfile, so a second open by any of those routes in the tool's process is
-# counted, whichever module makes it.
+# counted, whichever module makes it. The hook resolves a relative path against the working folder, so an os.open of a
+# path relative to a folder's descriptor (dir_fd) is not counted.
 COUNT_OPENS = b"""
 import atexit as _atexit
 import os as _os
@@ -1536,8 +1540,9 @@ def permission_refusal_problems() -> list[str]:
 def read_once_problems() -> list[str]:
     """copy-baseline opens each file in the version folder exactly once in its own process, SHA256SUMS and the README
     included, counted by COUNT_OPENS's audit hook, so a second open by builtins.open, io.open, os.open or anything
-    built on them fails this case. A second read through the same open file, or a read by another process, is not
-    counted."""
+    built on them fails this case. An os.open of a path relative to a folder's descriptor (dir_fd), which the hook
+    resolves against the working folder instead, a second read through the same open file, and a read by another
+    process are not counted."""
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
         result = run_copy(root, dict(PACKAGE), GATE.read_bytes() + COUNT_OPENS)

@@ -51,9 +51,13 @@ target, so it never writes into an existing file: another hard link to a
 target keeps its content. It reads each file in the version folder once,
 checks those bytes against their ``SHA256SUMS`` digest, and writes the same
 bytes, so the file it writes is the file it checked. It compiles the gate it
-loads from source without reading or writing byte code, so a cache file under
-``tools/__pycache__/`` is never run, and before its first change to a managed
-path it writes nothing, not even there.
+loads from its source, so no cached byte code for the gate is read and a cache
+file under ``tools/__pycache__/`` is never run. It sets
+``sys.dont_write_bytecode`` after its own imports, so no module imported from
+then on, the gate's imports included, writes byte code, and before its first
+change to a managed path it writes nothing under the repository, not even
+there. A module that the gate imports may still load cached byte code from
+the standard library.
 
 Before its first write it refuses (exit 1) a link, or a file
 in place of a folder, at a folder it clears or writes into or at any folder
@@ -169,7 +173,9 @@ import stat
 import sys
 from pathlib import Path
 
-# Nothing this tool imports from here on writes byte code: the tool changes no file outside the paths it manages.
+# From here on no module that this tool or the gate imports writes byte code, so that loading the gate writes nothing,
+# not even under tools/__pycache__/. A module may still load cached byte code, and the modules imported above load
+# before this line, so the setting does not cover them.
 sys.dont_write_bytecode = True
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -207,10 +213,11 @@ def die(code: int, message: str) -> None:
 
 def read(path: Path) -> bytes:
     """The bytes of path, a file this tool reads, which is refused (exit 1) before it is opened unless lstat finds a
-    regular file. A link would take the input from wherever it leads, and opening a FIFO would wait for a writer that
-    may never come. The open adds O_NOFOLLOW and O_NONBLOCK, and the opened file is checked again, so that an entry
-    replaced by a link or a FIFO after the first check is neither followed nor waited on. Each refusal has its own
-    message, so that a test can tell which check refused a file."""
+    regular file; it exits 3 when lstat, the open or the read fails. A link would take the input from wherever it
+    leads, and opening a FIFO would wait for a writer that may never come. The open adds O_NOFOLLOW and O_NONBLOCK,
+    and the opened file is checked again, so that an entry replaced by a link or a FIFO after the first check is
+    neither followed nor waited on. Each refusal has its own message, so that a test can tell which check refused a
+    file."""
     try:
         mode = os.lstat(path).st_mode
     except OSError as error:
@@ -314,8 +321,9 @@ def list_files(root: Path) -> list[str]:
 
 def check_target(path: Path, folder: bool, action: str = "write through") -> None:
     """Exit 1 unless path, and each folder above it under the repository root, is absent or a folder and never a link,
-    or, when path is a file this tool writes or reads, unless it is absent or a regular file. Writing through a link
-    would change what it leads to, and reading through one would take an input from wherever it leads."""
+    or, when path is a file this tool writes or reads, unless it is absent or a regular file; exit 3 when lstat fails on
+    one of them for any reason but its absence. Writing through a link would change what it leads to, and reading
+    through one would take an input from wherever it leads."""
     parts = path.relative_to(REPO_ROOT).parts
     for depth in range(1, len(parts) + 1):
         current = REPO_ROOT.joinpath(*parts[:depth])
