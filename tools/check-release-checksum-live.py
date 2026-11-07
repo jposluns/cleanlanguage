@@ -20,9 +20,13 @@ Behaviour:
     While ``site-src/release.json`` holds the zero placeholder of a version
     bump, the page shows no checksum and says that it appears once the
     version is published; the version is read from that note and the site
-    checksum is taken as the placeholder, so a published release fails as
-    drift. Without the note, the version is read from the first sentence that
-    names the published checksum's version and the checksum from the first
+    checksum is taken as the placeholder, so a published release whose zip
+    and ``.sha256`` the gate can download and read, with a well-formed
+    manifest that the zip hashes to, fails as drift (exit 1, unless another
+    of its checks fails with a higher code); otherwise the comparison cannot
+    run and reports no drift (exit 2, unless another of its checks exits 3).
+    Without the note, the version is read from the first sentence that names
+    the published checksum's version and the checksum from the first
     checksum element. The gate is whole-page equality: the page must equal,
     byte for byte, the page that ``tools/build-site.py`` renders at base /
     from the committed sources for that version, its tag and that checksum or
@@ -1295,7 +1299,8 @@ def check_site_checksum(load_code: int = 0) -> int:
     pending = PENDING_VERSION.search(verify)
     if pending is not None:
         # The not-yet-published state: the site holds the zero placeholder, so a
-        # published release makes it drift below.
+        # published release whose assets published_digest can read and check
+        # makes it drift below.
         version = pending.group(1)
         site_sum = PLACEHOLDER
     else:

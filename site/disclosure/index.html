@@ -15,7 +15,7 @@
 <meta property="og:image" content="https://cleanlanguage.ai/images/cleanlanguage-card.png">
 <meta property="og:image:alt" content="CleanLanguage.ai: Precise, direct, natural AI writing. A skill you install once, anywhere.">
 <meta property="article:published_time" content="2026-11-03">
-<meta property="article:modified_time" content="2026-11-06">
+<meta property="article:modified_time" content="2026-11-07">
 <meta property="article:author" content="https://linkedin.com/in/jposluns">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Disclosure | CleanLanguage.ai">
@@ -31,7 +31,7 @@
   "description": "What the Clean Language project claims, the limit of each claim, and the evidence.",
   "license": "https://creativecommons.org/licenses/by-sa/4.0/",
   "datePublished": "2026-11-03",
-  "dateModified": "2026-11-06",
+  "dateModified": "2026-11-07",
   "author": {
     "@type": "Person",
     "@id": "https://cleanlanguage.ai/#jeffposluns",
@@ -93,7 +93,7 @@ That check and an offline gate, <code>tools/check-release-links.py</code>, each 
 A test of the generator pins the whole verify page and the content of any stylesheet of the site&rsquo;s own, so a change to the page&rsquo;s text or markup other than its release values and date, or to that stylesheet, fails that test.</p>
 <p><strong>Limitation:</strong> A match shows that your copy matches the published release file. The instruction files download from this site and have no published checksum. Rebuilding the zip yourself gives the same checksum only with the same zip implementation. The daily check passes conditionally in 1 case: the verify page names the current version and says that its checksum is not yet published, that version&rsquo;s release tag does not exist yet, and the Released line of SKILL.md is well formed and present wherever the version needs one. A malformed Released line, or a tag with no published release, means the check could not complete; another version with no release fails, as does a checksum shown as published for a version with no release and no tag.
 The tools that write the release record and the site refuse a checksum that is not the placeholder but has 56 or more of its 64 digits 0, such as a mistyped placeholder; the offline gate fails a release record that holds one, and the daily check fails on a page that shows one, before it reads the release.
-Between a release and the site update that follows it, the verify page still says that the checksum is not yet published, and the daily check fails if it runs in that time and can read the published release; if it cannot read that release, the check could not complete.
+Between a release and the site update that follows it, the verify page still says that the checksum is not yet published. The daily check reads the page as committed, not as deployed: a run on a commit whose page still says so fails if it can read the published release, and otherwise could not complete. The update is committed before the site deploys it, so a run on the update, or after it is merged, reads the updated page, and the time the deploy takes cannot make the check fail.
 Neither check reads the meaning of the page&rsquo;s text. A change made in its sources and regenerated passes the offline gate unless the regenerated page breaks the rule that both checks apply or another check of the offline gate. The daily check stops such a change only if the regenerated page breaks that rule or another check that the daily check makes before it reads the release, such as that the page carries the note, or a checksum and the sentence that names its version. A plain 64 digit hexadecimal value outside the download steps fails both. A zip file name for another version, written in place of the current one, fails the offline gate but not the daily check. The same 64 digit value with its groups joined by dots passes both checks, and the pin stops it. Updating the pin is a decision that review makes.
 The pin holds the page as written for a stand-in release and a stand-in date, 2 January 2000, and the same test requires 2 pages to be the pinned page with the stand-in release and date replaced: the page that both checks require, written for the release record at the dates in <code>site-src/site.json</code>, and the page written for the same version with a test checksum on 31 December 2099. A generator change that writes differently only for release values and a date that none of these pages uses is not stopped by the pin, that test&rsquo;s comparison or, once regenerated, either check, until the committed release record and verify page date are values it writes differently for; the test runs on every pull request, so it fails then.
 Neither check reads the stylesheet and script files the page loads. The verify page loads the 3 stylesheets and 2 scripts of the site template, and <code>tools/check-baseline-pin.py</code> holds each to the file the pinned template version publishes, so an edit to one fails that gate; a new template version changes the page, so it fails the pin until the pin is updated. The site has no stylesheet of its own; adding one fails the pin until the pin is updated.</p>

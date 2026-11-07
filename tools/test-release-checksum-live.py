@@ -12,7 +12,8 @@ unverifiable, and the published-release comparison and the transient-error
 handling are preserved. The page a version bump builds from the zero
 placeholder, which says that the checksum appears once the version is
 published, passes in the pre-tag window and fails as drift once the release is
-published; a page in neither state exits 3, with 1 case for each part of the
+published and its assets can be read and checked; a page in neither state
+exits 3, with 1 case for each part of the
 rule that holds the page to the download block tools/build-site.py renders for
 it, including markup that a browser shows the same way, comments and hidden
 elements, and that rule is pinned to the copy that check-release-links.py
