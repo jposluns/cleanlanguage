@@ -163,8 +163,11 @@ Usage:
 
 Exit codes:
   0  every check passed, confirmed across two consecutive readings
-  1  at least one check failed, was cancelled, or timed out
-  2  checks are still running; without --wait, a passing set of checks kept
+  1  at least one check completed with a conclusion other than success, neutral
+     or skipped, such as failure, cancelled, timed_out, stale, action_required
+     or startup_failure, or with no conclusion, even while others still run
+  2  checks are still running; without --wait, every registered check passed
+     but a required check has not registered, or a passing set of checks kept
      changing across readings, so it could not be confirmed; or --wait hit
      its timeout, which includes a window that closed with no checks
      registered, unless 3 applies
