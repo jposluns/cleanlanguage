@@ -207,21 +207,21 @@ other than a bare single class its ``HIDING_CLASSES`` lists (that gate's
 tests fail when a stylesheet the pages load hides another bare single class).
 Rather than model the others, the class pins hold the classes a source may
 use: in the value region, ``VALUE_REGION_CLASSES``, and no rule of
-``baseline.css`` 1.11.1 whose class parts are those, ``wrap`` and the site
-class hides an element or positions one absolutely, other than those that
-need the ``hidden`` attribute or one that ``SOURCE_ATTRIBUTES`` leaves out
-(read from the stylesheet, not checked in a browser); elsewhere,
-``SOURCE_CLASSES``, which
+``baseline.css`` of baseline 1.11.1 whose class parts are those, ``wrap``
+and the site class hides an element or positions one absolutely, other
+than those that need the ``hidden`` attribute or one that
+``SOURCE_ATTRIBUTES`` leaves out (read from the stylesheet, not checked in a
+browser); elsewhere, ``SOURCE_CLASSES``, which
 leaves out a class of each rule that sets ``display: none`` or clips an
 element (such as ``.scheme .sun``, ``.figure .stack`` and ``.figure .wide``),
 other than the rules that the hiding reader reads (``[hidden]`` and ``.vh``)
 or that need an attribute ``SOURCE_ATTRIBUTES`` leaves out (such as
 ``[data-preset]``). Where ``SOURCE_CLASSES`` admits a class that a rule of
-``baseline.css`` 1.11.1 uses to place an element out of its source order
-(``copy``, ``btn``, ``entries``, ``t``, ``n``, ``d``, the hero's classes and
-``start``), the placement pins (below) hold it to where the committed
-sources use it, and ``rail_pin()`` keeps ``rail`` and ``rail-logo`` to the
-rail the generator writes. The About block is pinned byte
+``baseline.css`` of baseline 1.11.1 uses to place an element out of its
+source order (``copy``, ``btn``, ``entries``, ``t``, ``n``, ``d``, the hero's
+classes and ``start``), the placement pins (below) hold it to where the
+committed sources use it, and ``rail_pin()`` keeps ``rail`` and ``rail-logo``
+to the rail the generator writes. The About block is pinned byte
 for byte, so its classes are pinned too. The label rule joins text in source
 order, and a page source holds at most 1 hero (``placement_pin()``), whose
 text it also reads in its narrow-width order (at 600 px and below the hero
@@ -240,8 +240,8 @@ that moves an element without reordering it (``.start:hover .arrow``,
 ``.code-note``, ``.verified``); and no rule reads a hiding selector with a
 sibling combinator or of an element name alone (the label rule reads ``th``,
 an element name alone, only as a selector that sets upper case), and none of
-either kind sets ``display: none`` in ``baseline.css`` 1.11.1. The label
-rule reads a tie
+either kind sets ``display: none`` in ``baseline.css`` of baseline 1.11.1.
+The label rule reads a tie
 in specificity between an uppercase and a reset selector as upper case, and
 an uppercase rule inside ``@media`` or ``@supports`` as always applying, so
 it counts the label in any letter case in some text that a browser can show
@@ -432,19 +432,19 @@ Page source placement
 ---------------------
 
 Some admitted classes are safe only where the committed sources use them: a
-rule of ``baseline.css`` 1.11.1 places an element that carries one out of its
-source order, so a browser can show text that the label rule reads apart as
-joined. ``.copy`` and ``.btn`` set ``position: absolute`` (``.btn.inline``
-sets it back to ``static``); ``.hero``, ``.hero-text``, ``.hero-art``,
-``.statement``, ``.hero .intro``, ``.hero .lbl`` and ``.start`` place the
-hero's parts by grid area (at 600 px and below ``.hero-text`` sets
-``display: contents``, so its children are placed by area); and at 1000 px
-and below ``.entries a`` places its ``.t``, ``.n`` and ``.d`` children by
-grid area. Built with exit 0 at c22c9dd: the label split by a ``span.btn``
-in a ``p.lbl`` on the landing page, or by a ``span.copy`` on the demo page,
-and an ``ol.entries`` link whose ``span.d`` came before its ``span.t``. After
-the class pins, ``placement_pin()`` refuses, naming where the start tag
-starts:
+rule of ``baseline.css`` of baseline 1.11.1 places an element that carries
+one out of its source order, so a browser can show text that the label rule
+reads apart as joined. ``.copy`` and ``.btn`` set ``position: absolute``
+(``.btn.inline`` sets it back to ``static``); ``.hero``, ``.hero-text``,
+``.hero-art``, ``.statement``, ``.hero .intro``, ``.hero .lbl`` and
+``.start`` place the hero's parts by grid area (at 600 px and below
+``.hero-text`` sets ``display: contents``, so its children are placed by
+area); and at 1000 px and below ``.entries a`` places its ``.t``, ``.n`` and
+``.d`` children by grid area. Built with exit 0 at c22c9dd: the label split
+by a ``span.btn`` in a ``p.lbl`` on the landing page, or by a ``span.copy``
+on the demo page, and an ``ol.entries`` link whose ``span.d`` came before
+its ``span.t``. After the class pins, ``placement_pin()`` refuses, naming
+where the start tag starts:
 
 - a class of ``PLACED_CLASSES`` on another element, without its companion
   classes or attributes, under another parent, or (``copy``) after text or
@@ -685,10 +685,11 @@ SOURCE_CLASSES = {"accent", "after", "arrow", "before", "blk", "btn", "callout",
                   "prompt-flow", "rail", "rail-logo", "region", "sec", "size", "start", "statement", "steps", "sum",
                   "t", "tablewrap", "value", "verified", "vh", "wide"}
 # The only class names that the landing page source's value region (the div.region nearest its p.value) and the
-# elements inside it may carry: those the committed landing page uses there. No rule of baseline.css 1.11.1 whose class
-# parts are these, wrap and site.json's site_class hides an element or positions one absolutely, other than those that
-# need the hidden attribute, which the hiding reader reads, or an attribute that SOURCE_ATTRIBUTES leaves out; .copy,
-# which SOURCE_CLASSES admits, sets position: absolute. Each has 1 place there (PageScan.region_class_problem()):
+# elements inside it may carry: those the committed landing page uses there. No rule of baseline.css of baseline 1.11.1
+# whose class parts are these, wrap and site.json's site_class hides an element or positions one absolutely, other than
+# those that need the hidden attribute, which the hiding reader reads, or an attribute that SOURCE_ATTRIBUTES leaves
+# out; .copy, which SOURCE_CLASSES admits, sets position: absolute. Each has 1 place there
+# (PageScan.region_class_problem()):
 # region only on the region, lbl only on its label and value only on the p.value, since .region sets display: grid.
 VALUE_REGION_CLASSES = {"region", "lbl", "value"}
 # The children of the landing page's value region, as the committed landing page orders them, in PLACED_CHILDREN's
@@ -701,11 +702,11 @@ VALUE_REGION_CHILDREN = (("p.lbl",), ("div",))
 VALUE_REGION_PIN = ("the grid of .region shows its first child in the label column, so it holds only a p.lbl with "
                     "text that shows, then the div that holds the p.value, and no text (VALUE_REGION_CHILDREN)")
 # The page source placement pins (module docstring, "Page source placement"): each class name of SOURCE_CLASSES that a
-# rule of baseline.css 1.11.1 uses to place an element out of its source order (.copy and .btn set position: absolute;
-# the grid areas of .hero, .hero-text, .hero-art, .statement, .hero .intro, .start and, at 1000 px and below,
-# .entries .t, .n and .d), pinned to where the committed sources use it, as (element, companion classes it needs,
-# parents, attributes it needs, whether it comes first in its parent). A parent is "*" for any, "" for none (the top
-# level of the source), or an element name with at most 1 class name it carries. .btn.inline sets position: static.
+# rule of baseline.css of baseline 1.11.1 uses to place an element out of its source order (.copy and .btn set
+# position: absolute; the grid areas of .hero, .hero-text, .hero-art, .statement, .hero .intro, .start and, at 1000 px
+# and below, .entries .t, .n and .d), pinned to where the committed sources use it, as (element, companion classes it
+# needs, parents, attributes it needs, whether it comes first in its parent). A parent is "*" for any, "" for none (the
+# top level of the source), or an element name with at most 1 class name it carries. .btn.inline sets position: static.
 PLACED_CLASSES = {
     "copy": ("button", (), ("pre.hascopy",), ("hidden",), True),
     "btn": ("a", ("inline",), ("*",), (), False),
