@@ -1271,7 +1271,8 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual((self.probed, self.tag_probed), ([f"v{AHEAD}"], [f"v{AHEAD}"]))
 
     def test_not_yet_published_page_beside_a_published_release_fails(self):
-        # The site still holds the placeholder once the release is live: drift, exit 1.
+        # The site still holds the placeholder once the release is live: drift, exit 1 here, where no other check
+        # fails with a higher code.
         self.fixtures(CURRENT, ZIP_SUM, CURRENT)
         gate.VERIFY_PAGE.write_text(PENDING.format(version=CURRENT), encoding="utf-8")
         gate.release_status = lambda tag: 200
@@ -4940,9 +4941,11 @@ class DisplayedSumMarkupTest(unittest.TestCase):
 
 class WholePageTest(unittest.TestCase):
     """The gate on a copy of the generator's inputs with the real tools/build-site.py: the committed verify page is
-    the render for the version and checksum it shows, a page rendered for another version reaches the
-    inconsistency report, and every page form reported in review (DISCOVERY round 4, findings 1, 2, 4 and 6), made
-    on the page alone, in either state, exits 3 before any release is read."""
+    the render for the version and checksum it shows, a page rendered for another version that has no published
+    release (release status 404) reaches the inconsistency report, and every page form reported in review
+    (DISCOVERY round 4, findings 1, 2, 4 and 6), made on the page alone, in either state, exits 3 before any
+    release is read. A page for another version that has a published release reaches the checksum comparison
+    instead, which these tests do not run."""
 
     NAMES = ("REPO_ROOT", "VERIFY_PAGE", "SKILL", "REDIRECTS", "GENERATOR", "release_status", "tag_status", "gh",
              "release_published_at", "release_immutable")
@@ -5003,7 +5006,7 @@ class WholePageTest(unittest.TestCase):
     def test_a_page_for_another_version_reaches_the_inconsistency_report(self):
         # The render is for the version and checksum the page shows, not for release.json, so a page that the
         # generator writes for a version other than the SKILL.md version, one with no published release, is
-        # still an inconsistency (exit 1).
+        # still an inconsistency: exit 1 here, where no other check fails with a higher code.
         for checksum in ("0" * 64, self.SUM):
             with self.subTest(checksum[:8]):
                 self.publish(checksum)
@@ -5035,7 +5038,8 @@ class WholePageTest(unittest.TestCase):
             page = self.publish(checksum)
             code, output = self.gate_run()
             # DISCOVERY round 5, finding 1: in the pre-tag window the render with a published checksum is an
-            # inconsistency (exit 1), the render with the note passes.
+            # inconsistency (exit 1 here, where no other check fails with a higher code), the render with the note
+            # passes.
             self.assertEqual(code, 0 if state == "placeholder" else 1, output)
             if state == "published":
                 self.assertIn(f"  - the verify page shows {self.SUM} as the published checksum for version {self.version}\n",
