@@ -8,8 +8,8 @@ checklist once named a narrower list than the skill (row 98), and nothing
 caught it. This check makes that drift fail (row 105).
 
 Where this docstring says what CommonMark reads, it gives the reading of
-markdown-it-py 3.0.0 with its commonmark preset, the one parser these
-statements were checked against; another renderer can read a line otherwise.
+markdown-it-py 3.0.0 with its commonmark preset; another renderer can read a
+line otherwise.
 
 What it verifies
 ----------------
@@ -66,7 +66,12 @@ either file left out, split into blocks (headings, bullets and paragraphs):
      third or fourth space after the marker moves further in, so the file
      must hold none. A line that holds only the marker and spaces is refused
      first, as an empty list item or, for a "-" under a line that is not
-     blank, as a setext underline.
+     blank, as a setext underline;
+   - a line that starts with "<" after 0 to 3 spaces. CommonMark can open an
+     HTML block at such a line, and some kinds, such as one opened by
+     "<script>" or "<pre>", run on past blank lines and headings until a
+     closing tag, so a block opened above a span could hold the span. A "<"
+     later in a line is refused only in the two spans item 5 covers.
    The one exception is the front matter at the top of SKILL.md: when line 1
    and a later line are exactly "---", line 1 and the first such later line
    are not refused as a thematic break or an underline. Every other refusal
@@ -91,22 +96,18 @@ either file left out, split into blocks (headings, bullets and paragraphs):
    hold only the lines item 5 accepts.
 5. In the two spans items 3 and 4 name, the check accepts only these lines:
    - a blank line, empty or holding only spaces;
-   - in SKILL.md, the section's own heading line;
-   - plain text: a line that starts with neither a space, nor a list marker
-     ("-", "*" or "+", or 1 to 9 digits with "." or ")", each followed by a
-     space or the end of the line), nor a heading marker ("#" to "######"
-     followed by a space or the end of the line), nor a block quote marker
-     (">"), nor an HTML marker ("<"). Item 1 already refuses a fence anywhere;
+   - in SKILL.md, the section's own heading line, as item 2 finds it;
+   - plain text: a line that starts with neither a space nor a list marker
+     ("-", or 1 to 9 digits with "." or ")", each followed by a space or the
+     end of the line), and that holds only ASCII letters, digits, spaces and
+     the characters ' ( ) , - . : ; and the backtick;
    - a bullet: "- " at the start of the line, followed by plain text.
-   It exits 3 at the first other line in a span and names its file and line
-   number. Item 1 runs first over each whole file, so a line it refuses keeps
-   its message. In these lines each bullet marker is at the start of its line
-   and its text 2 columns in, and every other line that is not blank starts at
-   the start of the line, so the check splits them into the headings, bullets
-   and paragraphs CommonMark reads, apart from a link reference definition: a
-   line of plain text directly under a bullet or paragraph line continues it,
-   and after a blank line it starts a new paragraph. Every line the check
-   compares lies in these spans.
+   The characters are the ones the committed spans use. It exits 3 at the
+   first other line in a span and names its file and line number, and, for a
+   character outside that list, the character. Item 1 runs first over each
+   whole file, so a line it refuses keeps its message, and item 4 checks the
+   kind of the dash block before it reads the checklist span. Every line the
+   check compares lies in these spans.
 6. That whole bullet, with every line that continues it, reads exactly
    OPENING, then " Keep a dash only in ", then the SKILL.md bullet as
    SKILL.md writes it, without its closing ";" or ".", then ".". Any run of
@@ -124,8 +125,10 @@ end of the line; "-", "*" or "+" followed by a space; "1." or "1)" followed by
 a space; or ">". So a line such as "2. text" continues the bullet when no blank
 line comes before it, although CommonMark reads it as the start of an ordered
 list; item 5 refuses such a line in the two spans it covers. A line that holds
-only a list marker, such as "2.", "*" or "+", is refused anywhere as an empty
-list item, and a lone "-" under a line that is not blank as a setext
+only a list marker, such as "2.", "*" or "+", is refused as an empty list item
+when the marker is at the start of the line, as an indented list marker after
+1 to 3 spaces, and, after 4 or more spaces, only in the two spans item 5
+covers; a lone "-" under a line that is not blank is refused as a setext
 underline. The generated copies of the checklist need no check here:
 tools/build-portable-text.py --check and tools/build-site.py --check compare
 them with this source.
@@ -158,23 +161,24 @@ Residuals, named here because the check reads text by fixed rules:
   line, even after a blank line, where CommonMark reads an empty item, and
   even directly under a line of a paragraph outside any list, where
   CommonMark and this check both read a lone "2." or "*" as paragraph text;
-  and a bullet marker followed by 2 or more spaces, even when no later line
-  is indented less than the bullet's text, also make it exit 3;
+  a bullet marker followed by 2 or more spaces, even when no later line is
+  indented less than the bullet's text; and a line that starts with "<"
+  after 0 to 3 spaces, even where CommonMark reads inline HTML or an
+  autolink as text, also make it exit 3;
 - item 5 is wider still: in its two spans it refuses every line it does not
   list, even where CommonMark reads the same text, such as a line indented
   by 1 or more spaces that continues a bullet or paragraph, a bullet marked
   "*" or "+", a heading of level 3 to 6 in the carve-out section, a bullet
-  whose text starts with a marker, such as "- - x", and a line that starts
-  with "<" where CommonMark reads inline HTML or an autolink as text. A
-  future edit that adds such a line there makes the check exit 3 until the
-  edit is rewritten or the check is extended;
+  whose text starts with a list marker, such as "- - x", and any character
+  outside its list, such as a non-ASCII letter, "*" for emphasis, "&" or
+  "/". A future edit that adds such a line there makes the check exit 3
+  until the edit is rewritten or the check is extended;
 - other Markdown that a CommonMark rendering does not show as text, such as
-  the title of a link reference definition or the markup of raw HTML other
-  than a comment, is read as text like the rest of the file, so a pointer
-  sentence there is found although a reader of the rendering does not see it.
-  In the two spans item 5 covers, a line that starts with "<" is refused, so
-  there only a link reference definition and raw HTML later in a line are
-  read this way;
+  a link title, the title of a link reference definition or the markup of
+  raw HTML other than a comment, is read as text like the rest of the file
+  outside the two spans item 5 covers, so a pointer sentence there is found
+  although a reader of the rendering does not see it. In the spans, the
+  characters such Markdown needs are refused;
 - OPENING, the first sentence of the expected bullet, is a second hand-kept
   copy: rewording that sentence in the checklist fails until OPENING follows
   it;
@@ -186,9 +190,10 @@ Residuals, named here because the check reads text by fixed rules:
   "dashes" is not read;
 - the reader handles a small part of Markdown: a heading or block quote
   marker indented by 1 or more spaces, a list marker indented by 1 to 3
-  spaces, an empty list item line, and a bullet marker followed by 2 or more
-  spaces are refused rather than read, and "<!--" written inside inline code
-  is refused like a comment. Outside the two spans item 5 covers, the reader
+  spaces, an empty list item line, a bullet marker followed by 2 or more
+  spaces and a line that starts with "<" after 0 to 3 spaces are refused
+  rather than read, and "<!--" written inside inline code is refused like a
+  comment. Outside the two spans item 5 covers, the reader
   still parts from CommonMark: it reads a list item indented by 4 or more
   spaces under an open bullet, a line indented by 1 space after a blank line
   under a bullet, and a line such as "2. text" directly under a bullet line
@@ -251,9 +256,16 @@ HEADING = re.compile(r"#{1,6}(?: |$)")
 CLOSING = re.compile(r" #+ *$")
 BULLET = re.compile(r"[-*+](?: +|$)")
 BLOCK = re.compile(r"#{1,6}(?: |$)|[-*+] |1[.)] |>")
-# What a line of plain text may not start with: a space, or a list, heading, block quote or HTML marker. A fence
-# needs no entry here, because plain_text() refuses 3 backticks or 3 tildes anywhere in either file.
-NOT_PLAIN = re.compile(r" |[-*+](?: |$)|[0-9]{1,9}[.)](?: |$)|#{1,6}(?: |$)|>|<")
+# Outside a list item or block quote, CommonMark opens an HTML block only at a line that starts with "<" after 0 to
+# 3 spaces; some kinds run on past blank lines and headings, so such a line outside the spans could hide them.
+HTML = re.compile(r" {0,3}<")
+# The characters a line of plain text may hold, apart from ASCII letters, digits and spaces: the ones the
+# committed spans use. Every other character, such as "*", "_", "#", ">", "<", "[" or "&", is refused, so
+# emphasis, a thematic break of "*" or "_", a heading, a block quote, HTML, a link and an entity are refused there.
+OTHER = "'(),-.:;`"
+NOT_ALLOWED = re.compile(r"[^A-Za-z0-9 '(),\-.:;`]")
+# What a line of plain text may not start with, among the characters above: a space, or a list marker.
+NOT_PLAIN = re.compile(r" |-(?: |$)|[0-9]{1,9}[.)](?: |$)")
 
 
 class Unreadable(Exception):
@@ -318,6 +330,9 @@ def plain_text(path: Path) -> str:
             raise Unreadable(f"{path}, line {number}: is a bullet marker followed by 2 or more spaces; this check "
                              "reads a bullet only with 1 space between its marker and its text, so the file must "
                              "hold none")
+        if HTML.match(line):
+            raise Unreadable(f'{path}, line {number}: starts with "<" after 0 to 3 spaces, where an HTML block can '
+                             "open; this check reads no HTML blocks, so the file must hold none")
     return text
 
 
@@ -355,7 +370,7 @@ def blocks(text: str) -> list[tuple[str, str, int]]:
 
 
 def plain(line: str) -> bool:
-    """Whether line is plain text: it starts with a character other than a space, and with no marker NOT_PLAIN names."""
+    """Whether line starts as plain text: with a character other than a space, and with no marker NOT_PLAIN names."""
     return bool(line) and not NOT_PLAIN.match(line)
 
 
@@ -368,12 +383,18 @@ def read_lines(path: Path, text: str, first: int, last: int, span: str, own_head
     lines = text.split("\n")
     for number in range(first, last):
         line = lines[number - 1]
-        if (not line.strip() or own_heading and number == first or plain(line)
-                or line[:2] == "- " and plain(line[2:])):
+        if not line.strip() or own_heading and number == first:
             continue
-        accepted = "blank lines, the section heading, " if own_heading else "blank lines, "
-        raise Unreadable(f"{path}, line {number}: is not a line this check reads in {span}, which must hold only "
-                         f'{accepted}plain text and "- " bullets of plain text, each at the start of the line')
+        words = line[2:] if line[:2] == "- " else line
+        if not plain(words):
+            accepted = "blank lines, the section heading, " if own_heading else "blank lines, "
+            raise Unreadable(f"{path}, line {number}: is not a line this check reads in {span}, which must hold only "
+                             f'{accepted}plain text and "- " bullets of plain text, each at the start of the line')
+        other = NOT_ALLOWED.search(words)
+        if other:
+            raise Unreadable(f'{path}, line {number}: holds U+{ord(other[0]):04X} ("{other[0]}"), a character this '
+                             f"check does not read in {span}; its text may hold only ASCII letters, digits, spaces "
+                             f"and {' '.join(OTHER)}")
 
 
 def heading(words: str) -> tuple[int, str]:
@@ -424,17 +445,18 @@ def dash_bullet(text: str) -> str:
     """The text of the checklist's one block that mentions a dash, which must be a bullet."""
     found = blocks(text)
     dashes = [(kind, words, number) for kind, words, number in found if DASH.search(words)]
-    if len(dashes) == 1:
-        start = dashes[0][2]
-        headings = [number for kind, words, number in found if kind == "heading"]
-        first = max([number for number in headings if number < start], default=0) + 1
-        last = min([number for number in headings if number > start], default=len(text.split("\n")) + 1)
-        read_lines(CHECKLIST, text, first, last, "the lines between the headings around the dash bullet",
-                   own_heading=False)
+    # The kind runs first, so a heading or paragraph that mentions a dash is reported as such, not as a line of
+    # the span around it.
     if len(dashes) != 1 or dashes[0][0] != "bullet":
         kinds = ", ".join(kind for kind, words, number in dashes) or "none"
         raise Unreadable(f"{CHECKLIST}: expected exactly one block that mentions a dash, a bullet; "
                          f"found {len(dashes)} ({kinds})")
+    start = dashes[0][2]
+    headings = [number for kind, words, number in found if kind == "heading"]
+    first = max([number for number in headings if number < start], default=0) + 1
+    last = min([number for number in headings if number > start], default=len(text.split("\n")) + 1)
+    read_lines(CHECKLIST, text, first, last, "the lines between the headings around the dash bullet",
+               own_heading=False)
     return dashes[0][1]
 
 

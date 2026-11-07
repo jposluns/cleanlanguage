@@ -8,7 +8,9 @@ process and asserts its exit code and the fragments the case lists. The case
 named "the committed tree" changes nothing, and the 2 cases named "the skill
 list sorted, and the checklist with it" and "both bullets with 3 spaces after
 the marker, each continued after a blank line by a line indented by 2 spaces",
-and the 4 cases whose names start "an ordered item", each make 2 edits, one in
+the 4 cases whose names start "an ordered item", the 3 cases whose names
+start "the skill bullet under", and the case named "a link title in the skill
+bullet, with the same link in the dash bullet", each make 2 edits, one in
 each file; each other case makes 1 change, which edits, rewrites or removes a
 file. The cases that expect exit 0,
 apart from the committed tree, make edits that keep the 2 files consistent;
@@ -72,12 +74,19 @@ INDENTED_ITEM = "is a list marker indented by 1 to 3 spaces"
 EMPTY_ITEM = "is a list marker with nothing after it, an empty list item"
 SPACED = "is a bullet marker followed by 2 or more spaces"
 UNREAD_LINE = "is not a line this check reads in "
+HTML = 'starts with "<" after 0 to 3 spaces'
 LEAD_IN = "Do not mechanically delete:\n"
 OTHER_BULLET = "- throat-clearing before the substantive point;\n"
-# Lines the gate reads as plain text or as a bullet of plain text in the carve-out section, and lines it refuses there.
-PLAIN_LINES = ["#x", "#######", "+x", "-x", "*x", "1.x", "1234567890. x", ".x", "x <b>y</b>", "- -x", "- #x"]
-UNREAD_LINES = ["* x", "+ x", "### Note", "###### x", "> x", "<b>x</b>", "- - x", "- -", "- 2.", "- #", "- > x",
-                "- 123456789) x", "- <b>x</b>"]
+CHECKLIST_HEADING = "## Mechanics\n"
+# Lines the gate reads as plain text or as a bullet of plain text in the carve-out section; lines it refuses there
+# by how they start; and lines it refuses there by a character, with the first such character.
+PLAIN_LINES = ["-x", "1.x", "1234567890. x", ".x", "- -x", "AZ az 09", "x (y): 'z'; `w`, v."]
+UNREAD_LINES = ["- - x", "- -", "- 2.", "- 123456789) x"]
+CHARACTER_LINES = [("* x", "*"), ("+ x", "+"), ("### Note", "#"), ("###### x", "#"), ("> x", ">"), ("- #", "#"),
+                   ("- > x", ">"), ("- <b>x</b>", "<"), ("#x", "#"), ("#######", "#"), ("+x", "+"), ("*x", "*"),
+                   ("x <b>y</b>", "<"), ("- #x", "#"), ("x [y]", "["), ("x & y", "&"), ("x/y", "/"),
+                   ("x \N{LATIN SMALL LETTER E WITH ACUTE}", "\N{LATIN SMALL LETTER E WITH ACUTE}"),
+                   ("x\N{ZERO WIDTH SPACE}y", "\N{ZERO WIDTH SPACE}")]
 
 
 def listed(items: list[str]) -> str:
@@ -159,6 +168,11 @@ def together(*faults):
     return apply
 
 
+def character(char: str) -> str:
+    """How the gate names a character it does not read in a span."""
+    return f'holds U+{ord(char):04X} ("{char}"), a character this check does not read in '
+
+
 def lacks(item: str) -> str:
     return f"lacks {item!r}"
 
@@ -187,8 +201,38 @@ CASES = [
         edit(SKILL, LEAD_IN, LEAD_IN + "\n".join(PLAIN_LINES) + "\n   \n"), 0, []),
     *[(f"the line {line!r} under the carve-out heading", edit(SKILL, HEADING, HEADING + line + "\n"), 3,
        [at(SKILL, HEADING, 1) + UNREAD_LINE]) for line in UNREAD_LINES],
+    *[(f"the line {line!r} under the carve-out heading, refused for {char!r}",
+       edit(SKILL, HEADING, HEADING + line + "\n"), 3, [at(SKILL, HEADING, 1) + character(char)])
+      for line, char in CHARACTER_LINES],
+    ("the line '<b>x</b>' under the carve-out heading", edit(SKILL, HEADING, HEADING + "<b>x</b>\n"), 3,
+        [at(SKILL, HEADING, 1) + HTML]),
+    ("a character outside the list in the dash bullet",
+        change_dash_line(lambda line: line.replace("Keep a dash", "Keep a *dash*", 1)), 3,
+        [at(CHECKLIST, KEEP) + character("*")]),
+    ("a character outside the list in a checklist line under the heading",
+        edit(CHECKLIST, CHECKLIST_HEADING, CHECKLIST_HEADING + "\nSee [the rules].\n"), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING, 2) + character("[")]),
+    *[(f"the skill bullet under {marks!r}, with the same words in the dash bullet",
+       together(edit(SKILL, SKILL_LINE, marks + "\ncode samples, " + SKILL_LINE[2:]),
+                checklist_lists(ITEMS, KEEP + marks[2:] + " code samples, ")),
+       3, [at(SKILL, SKILL_LINE) + character(marks[2])]) for marks in ("- ***", "- ___", "- _ _ _")],
+    ("a link title in the skill bullet, with the same link in the dash bullet",
+        together(edit(SKILL, SKILL_LINE, SKILL_LINE[:-1] + ' [w](/x "or code samples");'),
+                 checklist_lists(ITEMS[:-1] + [ITEMS[-1] + ' [w](/x "or code samples")'])),
+        3, [at(SKILL, SKILL_LINE) + character("[")]),
+    ("<script> above the carve-out heading", edit(SKILL, HEADING, "<script>\n" + HEADING), 3,
+        [at(SKILL, HEADING) + HTML]),
+    ("<pre> above the checklist heading over the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, "<pre>\n" + CHECKLIST_HEADING), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING) + HTML]),
+    ("<style> after 3 spaces in the checklist", prepend(CHECKLIST, "   <style>\n\n"), 3,
+        [f"{CHECKLIST}, line 1: " + HTML]),
+    ("< later in a line, and < after 4 spaces, continuing a bullet above the carve-out section",
+        edit(SKILL, OTHER_BULLET, OTHER_BULLET + "before <b>the</b> point;\n    <pre>\n"), 0, []),
+    ("a heading as the checklist's one block that mentions a dash", replace_dash_line("## Keep a dash\n"), 3,
+        [f"{NO_DASH}, a bullet; found 1 (heading)"]),
     ("a * bullet above the dash bullet", change_dash_line(lambda line: "* Count words.\n" + line), 3,
-        [at(CHECKLIST, KEEP) + UNREAD_LINE]),
+        [at(CHECKLIST, KEEP) + character("*")]),
     ("an ordered item 2. under the skill bullet, with the same words on the dash bullet line",
         together(edit(SKILL, SKILL_LINE, SKILL_LINE + "\n2. or code samples;"),
                  change_dash_line(lambda line: line.rstrip("\n.") + "; 2. or code samples.\n")),
@@ -320,10 +364,10 @@ CASES = [
         [at(CHECKLIST, KEEP, 2) + UNREAD_LINE]),
     ("an unindented line continuing the dash bullet", change_dash_line(lambda line: line + EXTRA + "\n"), 1, []),
     ("a carve-out after a mixed-mark line in the dash bullet",
-        change_dash_line(lambda line: line + "_*_\n" + SPLIT + "\n"), 1, []),
+        change_dash_line(lambda line: line + "_*_\n" + SPLIT + "\n"), 3, [at(CHECKLIST, KEEP, 1) + character("_")]),
     ("a carve-out after a mixed-mark line in the skill bullet",
-        edit(SKILL, SKILL_LINE, SKILL_LINE + "\n_*_\nor code samples;"), 1,
-        [lacks(ITEMS[-1] + "; _*_"), lacks("code samples"), adds(ITEMS[-1])]),
+        edit(SKILL, SKILL_LINE, SKILL_LINE + "\n_*_\nor code samples;"), 3,
+        [at(SKILL, SKILL_LINE, 1) + character("_")]),
     ("a fenced block in the dash bullet", change_dash_line(lambda line: line + "  ```\n  code samples\n  ```\n"), 3,
         [at(CHECKLIST, KEEP, 1) + FENCED]),
     ("a comment appended to the dash bullet",
