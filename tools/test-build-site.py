@@ -1322,7 +1322,7 @@ def site_css_problems(root: Path) -> list[str]:
             f"{PIN_PROCEDURE}, after reading every rule of the stylesheet"]
 
 
-# Each change reported in review, made in the sources and regenerated: the generator refuses it, or it changes the pin.
+# Each change in PIN_FORMS, made in the sources and regenerated: the generator refuses it, or it changes the pin.
 NEXT = '<div class="next">'
 STEP_1 = '<p class="lbl blk">Step 1</p>'
 SUM_COMPARE = "{{release.sum_compare}}"
@@ -1361,7 +1361,7 @@ PIN_FORMS = [
 def check_verify_page_pin(failures: list[str]) -> int:
     """The verify page pin: the whole page renders to the pinned digest in each state, the site-owned stylesheet is
     the pinned one, site-src/pages/verify.html carries no stand-in value, each stand-in value written there is
-    refused, and each change reported in review (PIN_FORMS, a generator whose step 3 says to install the file anyway,
+    refused, and each change it makes (PIN_FORMS, a generator whose step 3 says to install the file anyway,
     and a site-owned stylesheet that hides the document) is refused by the generator or stand_in_problems(), or
     changes the digest."""
     module = load_module(GENERATOR)

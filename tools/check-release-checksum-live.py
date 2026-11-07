@@ -1084,7 +1084,7 @@ class PageReader(HTMLParser):
     the boundaries of HTML's default scope, is open above it, and is otherwise ignored, so that ``</div>`` inside a
     ``template`` or ``</details>`` inside a ``table`` closes nothing outside it. That is the only part of HTML's tree
     building it models, and a browser builds some other markup otherwise, so the reader can find the block where
-    build() writes it when a browser does not: review found the block after ``<noscript></div><div class="doc">``,
+    build() writes it when a browser does not: examples are the block after ``<noscript></div><div class="doc">``,
     the same with ``select``, and ``<span><details></span>`` before step 1. Whole-page equality refuses such a page.
     tools/check-release-links.py and tools/check-release-checksum-live.py carry this class verbatim."""
 

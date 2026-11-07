@@ -21,7 +21,7 @@ elements, and that rule is pinned to the copy that check-release-links.py
 carries. The page must also be the generator's whole render for the version
 and checksum it shows: elsewhere the fixture page stands in for that render,
 and WholePageTest runs the real generator on a copy of its inputs, on each
-page form reported in review. Once the release SKILL.md names is published, its
+page form that its cases list. Once the release SKILL.md names is published, its
 Released line (item 26) must name the UTC day of the release published_at
 record (G4), checked for the release SKILL.md names whatever version the site
 names, and that release must be immutable; an unpublished release SKILL.md
@@ -4952,8 +4952,8 @@ class DisplayedSumMarkupTest(unittest.TestCase):
 class WholePageTest(unittest.TestCase):
     """The gate on a copy of the generator's inputs with the real tools/build-site.py: the committed verify page is
     the render for the version and checksum it shows, a page rendered for another version that has no published
-    release (release status 404) reaches the inconsistency report, and every page form reported in review,
-    made on the page alone, in either state, exits 3 before any
+    release (release status 404) reaches the inconsistency report, and every page form that
+    test_every_reported_form_exits_3 lists, made on the page alone, in either state, exits 3 before any
     release is read. A page for another version that has a published release reaches the checksum step
     instead, which compares only when the gate can download and read that release's zip and .sha256, with a
     well-formed manifest that the zip hashes to; these tests do not run it."""
@@ -5076,13 +5076,13 @@ class WholePageTest(unittest.TestCase):
             ]
             rendered = (f"is not the page tools/build-site.py renders for version {self.version} and that checksum "
                         "from the committed sources (first at line ")
-            # Finding 6: the shared rule refuses a double space in step 1 first, as byte equality does.
+            # The shared rule refuses a double space in step 1 first, as byte equality does.
             refused = "does not carry the download block that tools/build-site.py writes for this state exactly once"
             reports = [(label, changed, rendered) for label, changed in forms] + [
                 ("6: a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1),
                  refused),
                 # Comments nested 400 deep before step 1 exit 3, never a traceback.
-                ("round 5, 6: comments nested 400 deep before step 1",
+                ("comments nested 400 deep before step 1",
                  page[:start] + "<!--" * 400 + "-->" + page[start:], "nests comments too deeply to be read")]
             for label, changed, report in reports:
                 with self.subTest(f"{label}, {state}"):

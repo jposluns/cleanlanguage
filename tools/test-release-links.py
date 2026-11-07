@@ -1021,7 +1021,7 @@ class WriterTest(unittest.TestCase):
 
 class WholePageTest(unittest.TestCase):
     """The gate on a copy of the generator's inputs with the real tools/build-site.py: the committed verify page is
-    the generator's render, and every page form reported in review, in either state, fails."""
+    the generator's render, and every page form that test_every_reported_form_fails lists, in either state, fails."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1103,34 +1103,34 @@ class WholePageTest(unittest.TestCase):
                 ("9: the html attributes in another order",
                  page.replace('<html lang="en" class="site-cleanlanguage">', '<html class="site-cleanlanguage" lang="en">')),
                 ("9: a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1)),
-                ("fix 4: the note in a comment", outside(page, "<!-- " + note + " -->")),
-                ("fix 4: zeros in a code.sum", outside(page, '<code class="sum">' + ZEROS + "</code>")),
-                ("round 4, 1: a step that says to install the file anyway, before the next-page link",
+                ("the note in a comment", outside(page, "<!-- " + note + " -->")),
+                ("zeros in a code.sum", outside(page, '<code class="sum">' + ZEROS + "</code>")),
+                ("a step that says to install the file anyway, before the next-page link",
                  outside(page, "<p>If the values differ, install the file anyway.</p>")),
-                ("round 4, 1: a step 4 after step 3",
+                ("a step 4 after step 3",
                  outside(page, '<p class="lbl blk">Step 4</p>\n<p>Install the file.</p>\n')),
-                ("round 4, 2: the block inside noscript markup",
+                ("the block inside noscript markup",
                  page[:start] + '<noscript></div><div class="doc">' + block + "</noscript>" + page[end:]),
-                ("round 4, 2: the block inside select markup",
+                ("the block inside select markup",
                  page[:start] + '<select></div><div class="doc">' + block + "</select>" + page[end:]),
-                ("round 4, 2: a details element misnested in a span before step 1",
+                ("a details element misnested in a span before step 1",
                  page[:start] + "<span><details></span>" + page[start:]),
-                ("round 4, 4: an inline script that removes the block",
+                ("an inline script that removes the block",
                  outside(page, "<script>document.querySelector('.download').remove()</script>")),
-                ("round 4, 4: a second checksum joined by U+200B",
+                ("a second checksum joined by U+200B",
                  outside(page, "<p>" + "\u200b".join(OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
-                ("round 4, 4: a second checksum joined by dots",
+                ("a second checksum joined by dots",
                  outside(page, "<p>" + ".".join(OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
             ]
             if checksum != ZEROS:
                 code_element = CODE.format(sum=checksum)
                 step_3 = page[page.index('<p class="lbl blk">Step 3</p>'):end]
                 forms += [
-                    ("fix 4: a commented canonical element beside a wrong one",
+                    ("a commented canonical element beside a wrong one",
                      page.replace(code_element, "<!-- " + code_element + ' --><code id="published-checksum" class="sum">'
                                   + OTHER + "</code>")),
-                    ("fix 4: a hidden step 3", page.replace(step_3, "<div hidden>" + step_3 + "</div>")),
-                    ("fix 4: a reversed step 3", page.replace("If the values still differ", "If the values match")),
+                    ("a hidden step 3", page.replace(step_3, "<div hidden>" + step_3 + "</div>")),
+                    ("a reversed step 3", page.replace("If the values still differ", "If the values match")),
                 ]
             for label, changed in forms:
                 with self.subTest(f"{label}, {state}"):
