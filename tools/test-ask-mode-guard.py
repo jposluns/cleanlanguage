@@ -81,7 +81,7 @@ class AskModeGuard(unittest.TestCase):
         self.assertIn(cause, out["systemMessage"])
         return specific["permissionDecisionReason"]
 
-    # --- the probe the plan asks for: the host record, unattended and attended ----------------------
+    # --- what a valid record decides: unattended denies, attended allows, other tools pass -----------
     def test_unattended_record_denies(self):
         self.write_mode(UNATTENDED_LINE)
         reason = self.assert_denies(self.run_guard(), "unattended")
