@@ -1909,12 +1909,13 @@ def check_inner_about_rows(failures: list[str]) -> int:
     only), with an INERT ancestor or not: validate(), called directly on the committed licence page, refuses it by
     its rule, and so does the build test's helper; a class name that only starts with about passes both. Both also
     refuse the About block's label in the page's text, split across elements (one with an attribute value that holds
-    >, which a reader that strips tags misreads, included), written with a character reference or in upper case, or
+    >, which a reader that strips tags misreads, included), written with a character reference or in upper case,
     interrupted by a soft hyphen, a zero-width joiner or a character of LABEL_IGNORED (format characters and
-    default-ignorable code points), the generator by its own rule (row 144, for which the
-    paragraph case here flipped from passing); in an attribute value (one that holds > included), a comment or
-    lower-case prose, the label passes both. A page is not held to the page source grammar, so > in a value can
-    reach this reading."""
+    default-ignorable code points), or split by a hidden element inside a noscript, where only the readings with
+    scripting off show it (the generator's scripting_off() and the helper's labels()), the generator by its own rule
+    (row 144, for which the paragraph case here flipped from passing); in an attribute value (one that holds >
+    included), a comment or lower-case prose, the label passes both. A page is not held to the page source grammar,
+    so > in a value can reach this reading."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["id"] == "license")
