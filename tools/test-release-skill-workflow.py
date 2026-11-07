@@ -44,9 +44,9 @@ the one form the harness reads; no step naming ``GITHUB_PATH``; no duplicate
 mapping key anywhere in the file (``safe_load`` would otherwise keep the last
 silently); and no read of the repository immutable-releases setting, which the
 workflow token cannot read, so the publication readback is the only
-immutability check. Mutation tests apply the round 4 reproductions (a blank
-line before an ``env:`` override, and an unmodelled step writing
-``RELEASE_DATED=0``) and other forms of the same defects, and require the
+immutability check. Mutation tests apply 2 defects (a blank line before an
+``env:`` override, and an unmodelled step writing ``RELEASE_DATED=0``) and
+other forms of the same defects, and require the
 structural checks to name each one. Residual: a write to the runner command
 files that never names ``GITHUB_ENV`` (for example a path built from pieces,
 or a write from inside an action) is not detected; the pinned step list and
@@ -565,7 +565,7 @@ ASSETS = ["cleanlanguage.zip", "cleanlanguage.zip.sha256",
 # and "differ" names zips published with other bytes and a manifest that
 # matches them, so the two zips differ while each manifest stays valid.
 MISSING = read("missing").split()
-# Fix round 4 (F3): "extra" is a count of further assets listed after the
+# "extra" is a count of further assets listed after the
 # required ones. Each name is about 200 bytes, so 1000 of them overflow a
 # 64 KiB pipe buffer many times over and a reader that exits on its first
 # match always leaves its writer with bytes still to write.
@@ -810,8 +810,8 @@ class WorkflowStepTest(unittest.TestCase):
         self.assertEqual(text.count(SUPERSEDED_RELEASE_ADVICE), times, text)
 
 
-# Fix round 11: an unconditional claim that a release or its assets are
-# immutable, or that nothing (or no workflow) can republish one. Fix round 12:
+# An unconditional claim that a release or its assets are immutable, or that
+# nothing (or no workflow) can republish one. Its close variants count too:
 # up to three words (an adverb such as always, permanently or forever) may
 # stand between the verb and the adjective, the verb may be stay or remain,
 # never mutable or not mutable counts as immutable, no one and nobody count as
@@ -908,9 +908,9 @@ BROKEN_EXTRACTORS = (
 # Row 72: the remedy the not-immutable readback refusal names.
 REMEDY_NOT_IMMUTABLE = "Turn on immutable releases for the repository, then cut a corrective new version."
 
-# Fix round 1: the next step the unreadable readback refusals name (row 78
+# The next step the unreadable readback refusals name (row 78
 # adds the determine-step refusal), and the verification path the force
-# refusal names. Fix round 2: the force and moved-tag refusals name that
+# refusal names. The force and moved-tag refusals name that
 # verifying dispatch first, and a corrective new version only if the
 # verification fails. Repeating a run keeps its
 # force input and run ref, so each names a fresh dispatch without force at
@@ -923,13 +923,13 @@ VERIFY_BY_DISPATCH = ("To verify the published release, first check that .github
                       " workflow again with the force input unchecked and the tag v1.0.15 itself selected as"
                       " the run ref, not main; cut a corrective new version only if that verification fails.")
 
-# Fix round 3: a dispatch at the tag runs the workflow stored at the tag, and a
+# A dispatch at the tag runs the workflow stored at the tag, and a
 # workflow without the publish step name above (older than item 57) can
 # republish. So the refusals of a run that is not at the tag name the
 # verifying dispatch only for a tag carrying that step, and for any other tag
 # forbid a dispatch at it and name a read-only check. The readback refusals
 # (REMEDY_UNREADABLE) run at the tag commit, which carries this workflow.
-# Fix round 7: the one advice for such a tag, declared once in the job env,
+# The one advice for such a tag, declared once in the job env,
 # printed by both sites and repeated in the description. It names the
 # authority, the release step of the workflow at that tag, and no procedure:
 # no command, file or path.
@@ -944,7 +944,7 @@ OLDER_TAG_ADVICE = ("A tag without the step " + PUBLISH + " carries an older wor
                     " a mismatch proves nothing. A command that fails to run is run again and says"
                     " nothing about the release. If the release fails that check, turn on immutable releases if"
                     " they are off, then cut a corrective new version.")
-# Fix round 8: each condition the advice states, pinned by its words; the
+# Each condition the advice states, pinned by its words; the
 # advice reaches all 3 sites from one source, so each is pinned at each.
 ADVICE_CONDITIONS = (
     "never dispatch this workflow at such a tag, or repeat any of its runs, with or without the force input",
@@ -963,7 +963,7 @@ ADVICE_CONDITIONS = (
 )
 NEVER_AT_OLDER_TAG = OLDER_TAG_ADVICE
 OLDER_TAG_ECHO = "echo \"${OLDER_TAG_ADVICE}\" >" + chr(38) + "2"
-# Fix round 7: the tag-gone text, declared once in the job env and printed by
+# The tag-gone text, declared once in the job env and printed by
 # both steps with <tag> replaced.
 TAG_GONE_ADVICE = ("The tag <tag> is no longer on origin, so no dispatch can select it as the run ref to"
                    " verify the published release; cut a corrective new version.")
@@ -993,7 +993,7 @@ DETERMINE_UNREADABLE = ("Once the release record is readable, check that .github
                         " as the run ref, not main, to verify the published release; cut a corrective"
                         " new version only if that verification fails.")
 
-# Fix round 3: a published release whose publication day is not its Released
+# A published release whose publication day is not its Released
 # day is refused in the determine step, naming the remedy, not the packager
 # re-stamp advice, which leads back to the same verifying dispatch.
 PUBLISHED_ON_ANOTHER_DAY = ("Re-stamping the Released line cannot fix this: the published zip carries the"
@@ -1003,7 +1003,7 @@ PUBLISHED_ON_ANOTHER_DAY = ("Re-stamping the Released line cannot fix this: the 
                             " is a corrective new version whose Released line names its own publication"
                             " day.")
 
-# Fix round 2: the remedy both refusals name when the tag of a published
+# The remedy both refusals name when the tag of a published
 # release is no longer on origin, so no dispatch can select it.
 TAG_GONE = ("The tag v1.0.15 is no longer on origin, so no dispatch can select it as the run ref to"
             " verify the published release; cut a corrective new version.")
@@ -1478,14 +1478,14 @@ class ImmutableReleaseTest(WorkflowStepTest):
         code, out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn("this workflow never republishes a published release", err)
-        # Fix round 2: no unconditional corrective-version remedy ahead of the
+        # No unconditional corrective-version remedy ahead of the
         # verifying dispatch.
         self.assertNotIn("The remedy for a published release is a corrective new version", err)
         self.assertIn("only moves the tag of a release that is not yet published", err)
-        # Fix round 1: the refusal names the fresh dispatch that verifies the
+        # The refusal names the fresh dispatch that verifies the
         # published release.
         self.assertIn(VERIFY_BY_DISPATCH, err)
-        # Fix round 3: only at a tag carrying this workflow.
+        # It names that dispatch only for a tag carrying this workflow.
         self.assertIn(NEVER_AT_OLDER_TAG, err)
         self.assert_superseded_advice(err)
         # Row 71: a re-run keeps the force input, so no re-run is advised.
@@ -1496,7 +1496,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assert_no_mutation(self.calls())
 
     def test_the_named_dispatch_verifies_a_release_published_under_force(self):
-        # Fix round 1: a force run publishes, then its readback fails for a
+        # A force run publishes, then its readback fails for a
         # transient reason. Repeating that run keeps force and is refused; the
         # fresh dispatch both refusals name (force unchecked, the tag as the run
         # ref, so the built commit is the tag commit) ends green on the readback.
@@ -1582,7 +1582,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assert_no_mutation(self.calls())
 
     def test_a_long_asset_list_never_reads_a_present_asset_as_missing(self):
-        # Fix round 4 (F3): grep -q exits on its first match, so a printf
+        # grep -q exits on its first match, so a printf
         # pipe into it took SIGPIPE (141) on a long asset list, and pipefail
         # then reported a present asset as missing. Here the four required
         # assets come first and 1000 long names follow them.
@@ -1598,7 +1598,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         assert_readback_ran(self, calls, out)
 
     def test_a_long_asset_list_still_names_a_missing_asset(self):
-        # Fix round 4 (F3): the membership check still refuses an absent
+        # The membership check still refuses an absent
         # asset when the list is long.
         self.published()
         self.set_state(extra="1000", missing="cleanlanguage-1.0.15.zip.sha256")
@@ -1651,7 +1651,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
         self.assertIn("This workflow never republishes a published release, with or without the force input.", err)
-        # Fix round 2: a release whose create call failed after GitHub published
+        # A release whose create call failed after GitHub published
         # it is probably correct, so the refusal names the verifying dispatch
         # first, and a corrective new version only if that verification fails.
         self.assertIn(VERIFY_BY_DISPATCH, err)
@@ -1663,7 +1663,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assert_no_mutation(self.calls())
 
     def test_a_published_release_whose_tag_is_gone_names_a_corrective_new_version(self):
-        # Fix round 2: with the tag gone from origin, no dispatch can select
+        # With the tag gone from origin, no dispatch can select
         # it as the run ref, so neither refusal names the verifying dispatch;
         # each names a corrective new version and changes nothing.
         for force in ("false", "true"):
@@ -1709,7 +1709,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # remedy phrased without either word is neither counted nor checked.
         echoes = [line for line in WORKFLOW_TEXT.splitlines() if "echo " in line]
         remedies = [line for line in echoes if "corrective" in line or "new version" in line]
-        # Fix round 7: the two tag-gone lines now print TAG_GONE_ADVICE from
+        # The two tag-gone lines print TAG_GONE_ADVICE from
         # the job env, so they leave this count; the job env values are
         # pinned by test_the_older_tag_advice_and_the_tag_gone_text_each_have_one_source.
         self.assertEqual(len(remedies), 9, remedies)
@@ -1724,7 +1724,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertNotIn("re-run without", line)
 
     def test_no_test_name_carries_the_retired_wording(self):
-        # Fix round 1: a search for the retired wording finds no test name.
+        # A search for the retired wording finds no test name.
         names = [name for value in list(globals().values())
                  if isinstance(value, type) and issubclass(value, unittest.TestCase)
                  for name in vars(value) if name.startswith("test_")]
@@ -1791,21 +1791,21 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(problems_republish(WF), [])
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
         self.assertTrue(description.startswith("Move the tag of a release that is not yet published"), description)
-        # Fix round 10: a statement about this workflow, not a claim that
+        # A statement about this workflow, not a claim that
         # every published release is immutable, which an older workflow can
         # make false.
         self.assertIn("This workflow never republishes a published release, so this input never overwrites"
                       " one.", description)
         self.assertNotIn("A published release is immutable", description)
         self.assertNotIn("byte for byte", description)
-        # Fix round 2: for a published release the description names the
+        # For a published release the description names the
         # verifying dispatch first, and a corrective new version only if that
         # verification fails or the tag is gone.
         self.assertNotIn("the remedy for a published release is a corrective new version", description)
-        # Fix round 5b: the description ends with the shared advice and then
+        # The description ends with the shared advice and then
         # one sentence naming the two remaining cases, so no condition is
         # stated twice.
-        # Fix round 6: the advice now names two remedies, so the closing
+        # The advice names two remedies, so the closing
         # sentence names its remedy rather than pointing back at one.
         last = ("A corrective new version is also the remedy if the dispatch at the tag fails its"
                 " verification, or if the tag is no longer on origin.")
@@ -1827,7 +1827,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # description names this input for that case. The behavioural
         # pair is test_force_still_moves_the_tag_of_an_unpublished_release
         # and test_moved_tag_of_an_unpublished_release_needs_the_force_input.
-        # Fix round 9: a re-run executes the workflow at the run commit, so
+        # A re-run executes the workflow at the run commit, so
         # the re-run advice is limited to a commit carrying the publish step,
         # consistent with the ban on repeating the runs of an older tag.
         self.assertIn("To finish a run that failed before it published, re-run it only if its commit carries"
@@ -1835,21 +1835,21 @@ class ImmutableReleaseTest(WorkflowStepTest):
                       " same tag.", description)
         self.assertNotIn("re-run it or dispatch", description)
         self.assertIn("or repeat any of its runs", description)
-        # Fix round 9: the subject of the remedy is the release, not a command.
+        # The subject of the remedy is the release, not a command.
         self.assertNotIn("If it fails", description)
         self.assertIn("If that tag is already on origin at another commit, for example because the failed"
                       " run pushed it and main has moved since, check this input on that dispatch from"
                       " main.", description)
-        # Fix round 3: the verifying dispatch is named only for a tag whose
+        # The verifying dispatch is named only for a tag whose
         # workflow has the publish step, and a dispatch at any other tag is
         # forbidden, since an older workflow can republish.
         self.assertIn("To verify a release that is already published, first check that"
                       " .github/workflows/release-skill.yml at the tag has the step " + PUBLISH + "; if it"
                       " does, dispatch this workflow again with this input unchecked and the tag itself"
                       " selected as the run ref, not main", description)
-        # Fix round 5: the description carries the shared advice verbatim.
+        # The description carries the shared advice verbatim.
         self.assertIn(OLDER_TAG_ADVICE, description)
-        # Fix round 4: the description covers every era of tag, so it names
+        # The description covers every era of tag, so it names
         # no asset file and no fixed path inside the zip.
         self.assertNotIn("cleanlanguage.zip", description)
         self.assertNotIn("clean-language", description)
@@ -1863,7 +1863,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertNotIn(stale, extractor)
 
     def test_every_dispatch_at_the_tag_is_conditional_outside_the_readback(self):
-        # Fix round 3: every echo line naming a dispatch at the tag as the run
+        # Every echo line naming a dispatch at the tag as the run
         # ref either sits in confirm_published_release, which runs only at the
         # tag commit and so under this workflow, or names the publish step the
         # tag must carry and is followed by the line forbidding a dispatch at an
@@ -1884,7 +1884,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assertEqual(lines[i + 1].strip(), OLDER_TAG_ECHO)
 
     def test_the_older_tag_advice_and_the_tag_gone_text_each_have_one_source(self):
-        # Fix round 7: the job env declares each text once and each step
+        # The job env declares each text once and each step
         # prints it through one line; the description repeats the advice
         # verbatim. The advice names no command, file or path, and no
         # sentence repeats.
@@ -1903,7 +1903,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                     "SKILL.md", "release-skill.yml", "a/b", "--json"):
             with self.subTest(probe=bad):
                 self.assertIsNotNone(ADVICE_NAMES_A_PROCEDURE.search(bad))
-        # Fix round 8: each stated condition, in the one source and in the
+        # Each stated condition, in the one source and in the
         # verbatim repeat; the two steps print the one source (above).
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
         for condition in ADVICE_CONDITIONS:
@@ -1946,7 +1946,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual(len(sentences), 2, sentences)
 
     def test_a_failed_tag_lookup_stops_the_publish_step_with_no_tag_gone_advice(self):
-        # Fix round 5: a failed lookup is not a tag gone from origin. The
+        # A failed lookup is not a tag gone from origin. The
         # mutant that ignores the failure (|| true) reads it as gone, so this
         # test distinguishes the two.
         self.published()
@@ -1964,14 +1964,14 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assert_superseded_advice(err)
 
     def test_no_printed_text_claims_every_published_release_is_immutable(self):
-        # Fix round 11: an older workflow can republish, so no printed line,
+        # An older workflow can republish, so no printed line,
         # job env value or input description states, unconditionally, that a
         # release or its assets are immutable, or that nothing (or no
         # workflow) can republish one. The allowed lines are the ones whose
         # truth the workflow establishes first (the readback lines after the
         # immutable check) and the conditional re-stamping line. Residual:
-        # this is a pattern over known phrasings, widened in round 12 and in
-        # row 87 to the close variants above, and a claim whose subject is
+        # this is a pattern over known phrasings, widened (in part by row 87)
+        # to the close variants above, and a claim whose subject is
         # "it", a claim split across sentences, or another wording can still
         # slip past it.
         self.assertEqual(immutability_claims(WORKFLOW_TEXT), [])
@@ -1986,7 +1986,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         for probe in ("Every published release is immutable.", "The published assets are immutable.",
                       "Nothing can republish it.", "No workflow republishes a release.",
                       "A release cannot be republished.",
-                      # Fix round 12: the close variants VERIFY 9.2 found.
+                      # Close variants of the claims above.
                       "Every published release is always immutable.",
                       "Releases stay immutable once published.",
                       "No one can republish a published release.",
@@ -2020,7 +2020,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
 
 
 class ValidateStepTest(WorkflowStepTest):
-    """Fix round 8: the version mismatch refusal cannot tell whether the
+    """The version mismatch refusal cannot tell whether the
     tag is already published, so its advice holds in both cases."""
 
     def test_mismatch_advice_holds_whether_or_not_the_tag_is_published(self):
@@ -2086,7 +2086,7 @@ class DetermineStepTest(WorkflowStepTest):
         self.assertEqual(code, 1, err)
         self.assertIn("Could not read published_at for the existing release v1.0.15.", err)
         self.assertNotIn(TAG_GONE, err)
-        # Fix round 3: this step may run away from the tag, so the dispatch
+        # This step may run away from the tag, so the dispatch
         # at the tag is named only for a tag carrying this workflow.
         self.assertIn(DETERMINE_UNREADABLE, err)
         self.assertIn(NEVER_AT_OLDER_TAG, err)
@@ -2094,7 +2094,7 @@ class DetermineStepTest(WorkflowStepTest):
         self.assertNotIn(REMEDY_UNREADABLE, err)
 
     def test_unreadable_published_at_with_the_tag_gone_names_a_corrective_new_version(self):
-        # Fix round 4: as in the publish step, a tag gone from origin cannot
+        # As in the publish step, a tag gone from origin cannot
         # be selected as the run ref, so no dispatch is named.
         self.set_state(status="200", published_at="FAIL", remote_tag="")
         code, _out, err = self.run_step(DETERMINE)
@@ -2106,7 +2106,7 @@ class DetermineStepTest(WorkflowStepTest):
         self.assertTrue(any(c[0] == VCS and c[1][:1] == ["ls-remote"] for c in self.calls()), self.calls())
 
     def test_a_failed_tag_lookup_stops_the_determine_step_with_no_tag_gone_advice(self):
-        # Fix round 5: as in the publish step, and the || true mutant is killed.
+        # As in the publish step, and the || true mutant is killed.
         self.set_state(status="200", published_at="FAIL", ls_remote="FAIL")
         code, _out, err = self.run_step(DETERMINE)
         self.assertNotEqual(code, 0, err)
@@ -2121,7 +2121,7 @@ class DetermineStepTest(WorkflowStepTest):
         self.assert_superseded_advice(err)
 
     def test_a_dated_release_with_no_released_line_reaches_the_packager(self):
-        # Fix round 8: a version above the undated baseline with no Released
+        # A version above the undated baseline with no Released
         # line, and a published release. The determine step must not refuse
         # it with the day mismatch (the line is absent, not wrong); the
         # packager refuses the absent line. The mutant that drops the
@@ -2144,7 +2144,7 @@ class DetermineStepTest(WorkflowStepTest):
         self.assertIn("IS PUBLISHED on 2026-11-14", err)
 
     def test_published_release_on_another_day_names_a_corrective_new_version(self):
-        # Fix round 3: the UTC day rolled over between the window check and
+        # The UTC day rolled over between the window check and
         # publication, so published_at names the next day. The verifying run
         # must name the remedy, not the packager re-stamp advice, which would
         # lead back to this same run.
@@ -2393,7 +2393,7 @@ class ChainedRunTest(WorkflowStepTest):
         self.assertIn("Re-run readback: release v1.0.15 published_at 2026-11-14T08:00:00Z", results[-1][2])
 
     def test_rerun_in_sequence_stops_before_the_packager_on_another_day(self):
-        # Fix round 3: the determine step refuses, so the packager re-stamp
+        # The determine step refuses, so the packager re-stamp
         # advice is never reached.
         self.set_state(status="200", remote_tag=COMMIT, published_at="2026-11-16T00:00:02Z")
         results = self.chain()
@@ -2453,7 +2453,7 @@ class MutationTest(unittest.TestCase):
             self.assertTrue(any(fragment in problem for problem in problems), (fragment, problems))
 
     def test_blank_line_before_an_env_override_is_caught(self):
-        # Round 4 reproduction: valid YAML that the line reader stopped at.
+        # Valid YAML that a reader working line by line stops at.
         wf = self.mutated(FORCE_LINE, FORCE_LINE + "\n          RELEASE_DATED: \"0\"\n")
         self.assertEqual(wf.step_env(PUBLISH)["RELEASE_DATED"], "0")
         self.assertNamed(
@@ -2463,7 +2463,7 @@ class MutationTest(unittest.TestCase):
         )
 
     def test_unmodelled_step_writing_release_dated_is_caught(self):
-        # Round 4 reproduction: an extra step overriding RELEASE_DATED.
+        # An extra step overriding RELEASE_DATED.
         wf = self.mutated(PACKAGE_LINE, unmodelled_step("echo \"RELEASE_DATED=0\" >> \"${GITHUB_ENV}\"") + PACKAGE_LINE)
         self.assertNamed(wf, "the workflow steps are", "step " + repr("Unmodelled step") + " names GITHUB_ENV")
 
@@ -2634,7 +2634,7 @@ class ApiPathTest(WorkflowStepTest):
         self.assert_release_tag([])
 
     def test_determine_probe_of_an_unpublished_release_names_the_release_tag(self):
-        # Gemini (F3): the probe is pinned on the 404 path too, the first
+        # The probe is pinned on the 404 path too, the first
         # release of a version, where it is the only API call.
         self.set_state(status="404")
         code, _out, err = self.run_step(DETERMINE)
@@ -2659,7 +2659,7 @@ class ApiPathTest(WorkflowStepTest):
                 code, _out, err = self.run_step(PUBLISH)
                 self.assertEqual(code, 0, err)
                 self.assert_exact_paths(["status", ".immutable", ".published_at"])
-                # Claude and gemini (F2): the asset list and the verification
+                # The asset list and the verification
                 # download read the release of RELEASE_TAG.
                 self.assert_release_tag(["view", "download"])
 
