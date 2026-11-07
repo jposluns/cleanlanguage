@@ -207,7 +207,7 @@ other than a bare single class its ``HIDING_CLASSES`` lists (that gate's
 tests fail when a stylesheet the pages load hides another bare single class).
 Rather than model the others, the class pins hold the classes a source may
 use: in the value region, ``VALUE_REGION_CLASSES``, and no rule of
-``baseline.css`` 1.7.0 whose class parts are those, ``wrap`` and the site
+``baseline.css`` 1.11.1 whose class parts are those, ``wrap`` and the site
 class hides an element or positions one absolutely, other than those that
 need the ``hidden`` attribute or one that ``SOURCE_ATTRIBUTES`` leaves out
 (read from the stylesheet, not checked in a browser); elsewhere,
@@ -217,7 +217,7 @@ element (such as ``.scheme .sun``, ``.figure .stack`` and ``.figure .wide``),
 other than the rules that the hiding reader reads (``[hidden]`` and ``.vh``)
 or that need an attribute ``SOURCE_ATTRIBUTES`` leaves out (such as
 ``[data-preset]``). Where ``SOURCE_CLASSES`` admits a class that a rule of
-``baseline.css`` 1.7.0 uses to place an element out of its source order
+``baseline.css`` 1.11.1 uses to place an element out of its source order
 (``copy``, ``btn``, ``entries``, ``t``, ``n``, ``d``, the hero's classes and
 ``start``), the placement pins (below) hold it to where the committed
 sources use it, and ``rail_pin()`` keeps ``rail`` and ``rail-logo`` to the
@@ -240,7 +240,7 @@ that moves an element without reordering it (``.start:hover .arrow``,
 ``.code-note``, ``.verified``); and no rule reads a hiding selector with a
 sibling combinator or of an element name alone (the label rule reads ``th``,
 an element name alone, only as a selector that sets upper case), and none of
-either kind sets ``display: none`` in ``baseline.css`` 1.7.0. The label
+either kind sets ``display: none`` in ``baseline.css`` 1.11.1. The label
 rule reads a tie
 in specificity between an uppercase and a reset selector as upper case, and
 an uppercase rule inside ``@media`` or ``@supports`` as always applying, so
@@ -432,7 +432,7 @@ Page source placement
 ---------------------
 
 Some admitted classes are safe only where the committed sources use them: a
-rule of ``baseline.css`` 1.7.0 places an element that carries one out of its
+rule of ``baseline.css`` 1.11.1 places an element that carries one out of its
 source order, so a browser can show text that the label rule reads apart as
 joined. ``.copy`` and ``.btn`` set ``position: absolute`` (``.btn.inline``
 sets it back to ``static``); ``.hero``, ``.hero-text``, ``.hero-art``,
@@ -685,7 +685,7 @@ SOURCE_CLASSES = {"accent", "after", "arrow", "before", "blk", "btn", "callout",
                   "prompt-flow", "rail", "rail-logo", "region", "sec", "size", "start", "statement", "steps", "sum",
                   "t", "tablewrap", "value", "verified", "vh", "wide"}
 # The only class names that the landing page source's value region (the div.region nearest its p.value) and the
-# elements inside it may carry: those the committed landing page uses there. No rule of baseline.css 1.7.0 whose class
+# elements inside it may carry: those the committed landing page uses there. No rule of baseline.css 1.11.1 whose class
 # parts are these, wrap and site.json's site_class hides an element or positions one absolutely, other than those that
 # need the hidden attribute, which the hiding reader reads, or an attribute that SOURCE_ATTRIBUTES leaves out; .copy,
 # which SOURCE_CLASSES admits, sets position: absolute. Each has 1 place there (PageScan.region_class_problem()):
@@ -701,7 +701,7 @@ VALUE_REGION_CHILDREN = (("p.lbl",), ("div",))
 VALUE_REGION_PIN = ("the grid of .region shows its first child in the label column, so it holds only a p.lbl with "
                     "text that shows, then the div that holds the p.value, and no text (VALUE_REGION_CHILDREN)")
 # The page source placement pins (module docstring, "Page source placement"): each class name of SOURCE_CLASSES that a
-# rule of baseline.css 1.7.0 uses to place an element out of its source order (.copy and .btn set position: absolute;
+# rule of baseline.css 1.11.1 uses to place an element out of its source order (.copy and .btn set position: absolute;
 # the grid areas of .hero, .hero-text, .hero-art, .statement, .hero .intro, .start and, at 1000 px and below,
 # .entries .t, .n and .d), pinned to where the committed sources use it, as (element, companion classes it needs,
 # parents, attributes it needs, whether it comes first in its parent). A parent is "*" for any, "" for none (the top
@@ -812,7 +812,7 @@ ABOUT_ANCESTORS = (("html", "{site_class}"), ("body", ""), ("main", ""), ("div",
 # The About block's label, as written and in upper case: the text of a page source carries neither, and the text of
 # the landing page carries 1, inside the block (PageScan.labels() counts them).
 ABOUT_LABELS = ("About this project", "ABOUT THIS PROJECT")
-# Each selector of a rule that sets text-transform: uppercase in the stylesheets every page loads (baseline 1.7.0's
+# Each selector of a rule that sets text-transform: uppercase in the stylesheets every page loads (the baseline's
 # fonts.css, palettes.css and baseline.css, and site-src/assets/site.css when it exists), as written there, and each
 # selector of a rule outside any at-rule that sets it to none (RESET_SELECTORS): a browser shows the text of an
 # element in upper case when an uppercase selector matches it and no reset selector of higher specificity does, or,
