@@ -99,18 +99,23 @@ warning on a mutation outside the record surfaces and blocks nothing.
 The host's operating-mode file is JSON, which `orch_ask_guard` cannot read, so this repository
 adds its own guard for AskUserQuestion. `.claude/hooks/ask_mode_guard.py`, registered in
 `.claude/settings.json`, reads `/opt/orch-operator/operating-mode`, a JSON object whose `"mode"`
-member the orchestrator sets for the whole host. It allows a question when `"mode"` is exactly
-`"attended"`, and in one other case: when `/opt/orch-operator` itself is absent, it allows the
-question with a one-line note, so contributor machines and hosts without the orchestrator stay
-usable. It denies, naming the cause, when the hook payload has no string `tool_name`; when `lstat`
-on `/opt/orch-operator`, which does not follow a symlink there, fails for any other reason, such
+member holds one mode for the whole host. The guard takes its values from the file's only writer,
+the host's `orch-set-mode`, which the operator runs through `orchmod` and which accepts exactly
+`"attended-autonomous"` (`orchmod aa`) and `"unattended"` (`orchmod ua`); a change to that list is
+a change to this guard. It allows a question when `"mode"` is exactly `"attended-autonomous"`,
+and in one other case: when `/opt/orch-operator` itself is absent, it allows the question with a
+one-line note, so contributor machines and hosts without the orchestrator stay usable. It denies,
+naming the cause, when the hook payload has no string `tool_name`; when `lstat` on
+`/opt/orch-operator`, which does not follow a symlink there, fails for any other reason, such
 as a path component that is a regular file; when the file is missing while `/opt/orch-operator`
 exists, unreadable, a symlink, not a
 regular file, not owned by uid 0, writable by its group or by others, over 4096 bytes, not strict
 UTF-8, not one JSON object, or holding a duplicate key; when `"mode"` is absent, not a string,
-`"unattended"`, or any other value; and when the guard raises an exception before it prints its
-verdict. Its deny reason carries the record-and-continue instruction that `orch_ask_guard` gives,
-but it writes no `pending-asks.jsonl` row. `tools/test-ask-mode-guard.py`, run by the
+`"unattended"`, or any other value, including `"attended"`, which the writer never writes; and when
+the guard raises an exception before it prints its verdict. The `"unattended"` deny names the
+remedy: the operator runs `orchmod aa`, since the file is root-owned and `orch-set-mode` writes it.
+Every deny reason carries the record-and-continue instruction that `orch_ask_guard` gives, but
+the guard writes no `pending-asks.jsonl` row. `tools/test-ask-mode-guard.py`, run by the
 Orchestration registry workflow, tests it against temporary files. The guard stays as a second
 layer after an upstream fix lets a re-vendored `orch_ask_guard` read the JSON file, under the
 adopted defence-in-depth default. Residual: the guard covers only AskUserQuestion calls in
@@ -122,13 +127,13 @@ settings file that the repository does not track, such as `.claude/settings.loca
 nothing in this repository shows or tests whether such a file can disable or override this hook;
 removing `/opt/orch-operator` disarms it; the guard trusts root's file, so root controls the
 decision, and it does not check the directory that holds the file; the file holds one mode for the
-whole host, so an attended session is blocked while the host says unattended; the 4096-byte bound
-limits size, not time: the `lstat` of `/opt/orch-operator`, the open of whatever is at the file's
-path, including a device node, which the guard opens before it checks for a regular file, and the
-read of a regular file can each block, and each is bounded only by the hook's 10-second timeout,
-and the tests do not show what Claude Code does with the call when that timeout expires;
-and `orch_ask_guard` continues to log a fail-open audit event on every question until the upstream
-fix is re-vendored.
+whole host, so a session with the operator present is blocked while the host says unattended; the
+4096-byte bound limits size, not time: the `lstat` of `/opt/orch-operator`, the open of whatever is
+at the file's path, including a device node, which the guard opens before it checks for a regular
+file, and the read of a regular file can each block, and each is bounded only by the hook's
+10-second timeout, and the tests do not show what Claude Code does with the call when that timeout
+expires; and `orch_ask_guard` continues to log a fail-open audit event on every question until the
+upstream fix is re-vendored.
 
 One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
 empties, so cross-repository writes deny), but the scope-gated guards do not react to it

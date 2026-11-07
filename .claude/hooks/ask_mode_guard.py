@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Deny AskUserQuestion while the host operating-mode file does not say attended.
+"""Deny AskUserQuestion while the host operating-mode file does not say attended-autonomous.
 
 Claude Code runs this script as a PreToolUse hook that .claude/settings.json registers for
 AskUserQuestion. It reads the hook payload from stdin and, for an AskUserQuestion call, reads
-/opt/orch-operator/operating-mode, a JSON object whose "mode" member the orchestrator sets for the
-whole host. Only the exact value "attended" lets the question through, with one exception: where
-lstat reports /opt/orch-operator itself absent, the host declares no operating-mode, so the guard
-allows the question with a one-line note. Every other state denies and names its cause, because a
+/opt/orch-operator/operating-mode, a JSON object whose "mode" member holds one mode for the whole
+host. The only writer of that file is the host's /usr/local/bin/orch-set-mode, which the operator
+runs through orchmod: `orchmod aa` writes "attended-autonomous" and `orchmod ua` writes
+"unattended", and orch-set-mode refuses every other value. This guard takes its 2 values from that
+list, so a change to the writer's list is a change to this guard. Only the exact value
+"attended-autonomous" lets the question through, with one exception: where lstat reports
+/opt/orch-operator itself absent, the host declares no operating-mode, so the guard allows the
+question with a one-line note. Every other state denies and names its cause, because a
 blocking question in an unattended session stalls the run until someone notices, while a wrongly
 denied question only asks the agent to record the decision and continue.
 
@@ -36,8 +40,9 @@ Decisions, in the order the guard makes them:
 - content over 4096 bytes, not strict UTF-8, not one JSON object (NaN, Infinity and -Infinity
   included, since JSON has no such values), holding a duplicate key, or with a "mode" that is
   absent or not a string: deny;
-- "mode" exactly "attended": allow, silently; "unattended" or any other value, including a case
-  variant: deny;
+- "mode" exactly "attended-autonomous": allow, silently; "unattended": deny, naming `orchmod aa` as
+  the operator's way to let questions through; any other value, including "attended", which the
+  writer never writes, and a case variant: deny, as an unknown mode;
 - any other exception the guard raises at any of these steps, before it prints its verdict: deny,
   since a denied question cannot wedge a session.
 
@@ -59,14 +64,14 @@ checkout, never shows in review, and nothing in this repository shows or tests w
 can disable or override this hook; removing /opt/orch-operator disarms it; the guard trusts root's
 file: it checks that uid 0 owns /opt/orch-operator/operating-mode and that neither its group nor
 others can write it, so root controls the decision, and it does not check the directory that holds
-the file; the file holds one mode for the whole host, so an attended session is blocked while the
-host says unattended; the 4096-byte bound limits size, not time: the lstat of /opt/orch-operator,
-the open of whatever is at the mode file's path, including a device node, which the guard opens
-before it checks for a regular file, and the read of a regular file can each block, such as on a
-stalled network filesystem or in a device driver, and each is bounded only by the hook's 10-second
-timeout, and the tests do not show what Claude Code does with the call when that timeout expires;
-and the vendored orch_ask_guard continues to log a fail-open audit event on every question until
-the upstream fix is re-vendored.
+the file; the file holds one mode for the whole host, so a session with the operator present is
+blocked while the host says unattended; the 4096-byte bound limits size, not time: the lstat of
+/opt/orch-operator, the open of whatever is at the mode file's path, including a device node,
+which the guard opens before it checks for a regular file, and the read of a regular file can each
+block, such as on a stalled network filesystem or in a device driver, and each is bounded only by
+the hook's 10-second timeout, and the tests do not show what Claude Code does with the call when
+that timeout expires; and the vendored orch_ask_guard continues to log a fail-open audit event on
+every question until the upstream fix is re-vendored.
 """
 import errno
 import json
@@ -78,7 +83,9 @@ MODE_FILE = "/opt/orch-operator/operating-mode"
 EXPECTED_OWNER_UID = 0
 MAX_BYTES = 4096
 TOOL = "AskUserQuestion"
-ATTENDED = "attended"
+# The 2 values orch-set-mode accepts, copied from its allow-list; the guard must not invent others,
+# since no sanctioned path could write them.
+ATTENDED_AUTONOMOUS = "attended-autonomous"
 UNATTENDED = "unattended"
 
 # The record-and-continue instruction, worded as the vendored orch_ask_guard words it, so an agent
@@ -104,17 +111,21 @@ def deny(reason, banner):
 
 
 def deny_unattended(mode_file):
+    # The file is root-owned and orch-set-mode is its only writer, so the remedy is orchmod, not an
+    # edit of the file.
     return deny("AskUserQuestion BLOCKED: the host operating-mode in {} is unattended. {} If the "
-                "maintainer is in fact present, the maintainer sets \"mode\" to \"attended\" in that "
-                "file first; then re-issue.".format(mode_file, RECORD_AND_CONTINUE),
+                "operator is in fact present, the operator runs `orchmod aa`, which sets the host "
+                "operating-mode to attended-autonomous; then re-issue.".format(
+                    mode_file, RECORD_AND_CONTINUE),
                 "Repository guard: denied a blocking question; the host operating-mode is unattended.")
 
 
 def deny_cause(cause):
-    return deny("AskUserQuestion BLOCKED: the host operating-mode cannot be confirmed as attended "
-                "({}). Treat the session as unattended. {}".format(cause, RECORD_AND_CONTINUE),
+    return deny("AskUserQuestion BLOCKED: the host operating-mode cannot be confirmed as "
+                "attended-autonomous ({}). Treat the session as unattended. {}".format(
+                    cause, RECORD_AND_CONTINUE),
                 "Repository guard: denied a blocking question; the host operating-mode cannot be "
-                "confirmed as attended: {}.".format(cause))
+                "confirmed as attended-autonomous: {}.".format(cause))
 
 
 def reject_constant(name):
@@ -218,7 +229,7 @@ def decide(payload, mode_file, expect_uid):
         mode = read_mode(mode_file, expect_uid)
     except Unusable as exc:
         return deny_cause(str(exc))
-    if mode == ATTENDED:
+    if mode == ATTENDED_AUTONOMOUS:
         return None
     if mode == UNATTENDED:
         return deny_unattended(mode_file)

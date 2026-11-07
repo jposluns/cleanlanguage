@@ -104,8 +104,12 @@ SWAP_PROBE = LOAD_GUARD + (
     "sys.exit(guard.main(sys.argv[5:]))\n")
 
 # The shape of the host record: a JSON object whose "mode" decides, with members whose values do not.
+# The host's only writer, orch-set-mode, run through orchmod, writes exactly 2 values:
+# "attended-autonomous" (orchmod aa) and "unattended" (orchmod ua). "attended" is not one of them,
+# so its record is kept to show that the guard denies it as an unknown mode.
 UNATTENDED_LINE = ('{"mode": "unattended", "phase": "dispatch", "set_by": "orch-operator", '
                    '"set_at": "2026-11-07T00:00:00Z"}\n')
+ATTENDED_AUTONOMOUS_LINE = UNATTENDED_LINE.replace('"unattended"', '"attended-autonomous"')
 ATTENDED_LINE = UNATTENDED_LINE.replace('"unattended"', '"attended"')
 ASK = {"tool_name": "AskUserQuestion", "session_id": "s1", "tool_use_id": "tu1",
        "tool_input": {"questions": [{"question": "Which option?"}]}}
@@ -162,7 +166,7 @@ class AskModeGuard(unittest.TestCase):
         if os.geteuid() == 0:
             foreign_dir = self._tmp / "foreign"
             foreign_dir.mkdir()
-            path = self.write_mode(ATTENDED_LINE, path=foreign_dir / "operating-mode")
+            path = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=foreign_dir / "operating-mode")
             os.chown(path, 65534, -1)
             return path
         for candidate in ("/etc/passwd", "/etc/group", "/etc/hosts", sys.executable):
@@ -196,19 +200,26 @@ class AskModeGuard(unittest.TestCase):
         self.assertIn(RECORD_AND_CONTINUE, specific["permissionDecisionReason"])
         return specific["permissionDecisionReason"]
 
-    # --- what a valid record decides: unattended denies, attended allows, other tools pass -----------
+    # --- what a valid record decides: the writer's 2 values, "attended", and other tools ----------
     def test_unattended_record_denies(self):
         self.write_mode(UNATTENDED_LINE)
         reason = self.assert_denies(self.run_guard(), "unattended")
         self.assertIn(RECORD_AND_CONTINUE, reason)
-        # Only the unattended reason tells the maintainer how to take over; the deny for any other
-        # mode also contains "unattended", so the substring above cannot tell the two apart.
+        # Only the unattended reason tells the operator how to take over; the deny for any other
+        # mode also contains "unattended", so the substring above cannot tell the two apart. The
+        # file is root-owned and orch-set-mode is its only writer, so the remedy is orchmod.
         self.assertIn("is unattended", reason)
-        self.assertIn("the maintainer sets \"mode\" to \"attended\"", reason)
+        self.assertIn("the operator runs `orchmod aa`", reason)
+        self.assertNotIn("sets \"mode\"", reason)
 
-    def test_attended_record_allows_silently(self):
-        self.write_mode(ATTENDED_LINE)
+    def test_attended_autonomous_record_allows_silently(self):
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         self.assert_allows_silently(self.run_guard())
+
+    def test_attended_record_denies_as_unknown(self):
+        # The writer never writes "attended", so a record that holds it did not come from orchmod.
+        self.write_mode(ATTENDED_LINE)
+        self.assert_denies(self.run_guard(), "unknown mode 'attended'")
 
     def test_other_tool_allows_silently_even_when_unattended(self):
         self.write_mode(UNATTENDED_LINE)
@@ -217,12 +228,12 @@ class AskModeGuard(unittest.TestCase):
 
     def test_members_other_than_mode_do_not_decide(self):
         # With content that passes the whole-content checks, other members, their values, or their
-        # absence leave an attended record allowed and an unattended record denied.
+        # absence leave an attended-autonomous record allowed and an unattended record denied.
         for name, members in (("mode alone", {}),
                               ("other values", {"phase": "maintenance", "set_by": None, "set_at": 0}),
                               ("a nested mode", {"extra": {"mode": "unattended"}})):
-            with self.subTest(record=name, mode="attended"):
-                self.write_mode(json.dumps(dict({"mode": "attended"}, **members)) + "\n")
+            with self.subTest(record=name, mode="attended-autonomous"):
+                self.write_mode(json.dumps(dict({"mode": "attended-autonomous"}, **members)) + "\n")
                 self.assert_allows_silently(self.run_guard())
             with self.subTest(record=name, mode="unattended"):
                 self.write_mode(json.dumps(dict({"mode": "unattended"}, **members)) + "\n")
@@ -243,7 +254,7 @@ class AskModeGuard(unittest.TestCase):
         # permission, must deny rather than read as an absent directory.
         if os.geteuid() == 0:
             self.skipTest("root searches a mode 600 directory, so this case needs a uid other than 0")
-        self.write_mode(ATTENDED_LINE)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         os.chmod(self._tmp, 0o600)
         try:
             result = self.run_guard()
@@ -254,14 +265,14 @@ class AskModeGuard(unittest.TestCase):
     def test_path_component_that_is_a_file_denies(self):
         # A regular file above the host directory makes lstat fail with ENOTDIR, which is not
         # absence, so it must deny rather than read as an absent directory.
-        blocker = self.write_mode(ATTENDED_LINE, path=self._tmp / "blocker")
+        blocker = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self._tmp / "blocker")
         result = self.run_guard(mode_file=blocker / "orch-operator" / "operating-mode")
         self.assert_denies(result, "cannot be checked: {}".format(os.strerror(errno.ENOTDIR)))
 
     def test_regular_file_at_the_host_directory_denies(self):
         # lstat finds the file, so the host directory is present, and the open below it fails.
         self.host_dir.rmdir()
-        self.write_mode(ATTENDED_LINE, path=self.host_dir)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self.host_dir)
         self.assert_denies(self.run_guard(),
                            "is unreadable: {}".format(os.strerror(errno.ENOTDIR)))
 
@@ -285,8 +296,8 @@ class AskModeGuard(unittest.TestCase):
         real_dir.mkdir()
         self.host_dir.rmdir()
         self.host_dir.symlink_to(real_dir)
-        with self.subTest(mode="attended"):
-            self.write_mode(ATTENDED_LINE, path=real_dir / "operating-mode")
+        with self.subTest(mode="attended-autonomous"):
+            self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=real_dir / "operating-mode")
             self.assert_allows_silently(self.run_guard())
         with self.subTest(mode="unattended"):
             self.write_mode(UNATTENDED_LINE, path=real_dir / "operating-mode")
@@ -295,8 +306,8 @@ class AskModeGuard(unittest.TestCase):
     def test_missing_file_with_directory_present_denies(self):
         self.assert_denies(self.run_guard(), "is missing")
 
-    def test_symlink_to_attended_file_denies(self):
-        target = self.write_mode(ATTENDED_LINE, path=self._tmp / "real-mode")
+    def test_symlink_to_attended_autonomous_file_denies(self):
+        target = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self._tmp / "real-mode")
         self.mode_file.symlink_to(target)
         self.assert_denies(self.run_guard(), "symlink")
 
@@ -316,25 +327,25 @@ class AskModeGuard(unittest.TestCase):
     def test_unreadable_file_denies(self):
         if os.geteuid() == 0:
             self.skipTest("root reads a mode 000 file, so this case needs a uid other than 0")
-        self.write_mode(ATTENDED_LINE, mode=0o000)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE, mode=0o000)
         self.assert_denies(self.run_guard(), "unreadable")
 
     def test_read_error_after_open_denies(self):
         # The file opens and passes its checks, then the read fails: that must deny, naming the
-        # error, rather than read as an attended record.
-        self.write_mode(ATTENDED_LINE)
+        # error, rather than read as an attended-autonomous record.
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         self.assert_denies(self.run_probe(READ_ERROR_PROBE),
                            "is unreadable: {}".format(os.strerror(errno.EIO)))
 
     # --- who owns the file and who can write it ------------------------------------------------------
     def test_owner_other_than_expected_denies(self):
-        self.write_mode(ATTENDED_LINE)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         other = os.geteuid() + 1
         self.assert_denies(self.run_guard(owner=other), "owned by uid {}".format(os.geteuid()))
 
     def test_default_expects_root_owner(self):
         # Without the test-only argument the guard expects uid 0, as the production registration does.
-        self.write_mode(ATTENDED_LINE)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         result = self.run_guard(owner=False)
         if os.geteuid() == 0:
             self.assert_allows_silently(result)
@@ -342,56 +353,59 @@ class AskModeGuard(unittest.TestCase):
             self.assert_denies(result, "owned by uid {}, not uid 0".format(os.geteuid()))
 
     def test_group_writable_file_denies(self):
-        self.write_mode(ATTENDED_LINE, mode=0o664)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE, mode=0o664)
         self.assert_denies(self.run_guard(), "writable by group")
 
     def test_other_writable_file_denies(self):
-        self.write_mode(ATTENDED_LINE, mode=0o646)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE, mode=0o646)
         self.assert_denies(self.run_guard(), "writable by others")
 
     def test_checks_judge_the_opened_file_not_its_path(self):
         # The opened file is group-writable; the file renamed over its path just after the open is
         # not. The guard denies on group write only if its write check does not look at the path
         # after the open; the cases below cover a look before the open and the other checks.
-        self.write_mode(ATTENDED_LINE, mode=0o664)
-        replacement = self.write_mode(ATTENDED_LINE, path=self.host_dir / "replacement")
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE, mode=0o664)
+        replacement = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self.host_dir / "replacement")
         self.assert_denies(self.run_swap("after", replacement, self.mode_file), "writable by group")
 
     def test_write_check_judges_the_opened_file_not_an_earlier_look(self):
         # The file at the path before the open passes every check; the group-writable file renamed
         # over it just before the open is the one opened. The guard denies on group write only if
         # its write check does not rely on a look at the path before the open.
-        self.write_mode(ATTENDED_LINE)
-        replacement = self.write_mode(ATTENDED_LINE, mode=0o664, path=self.host_dir / "replacement")
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
+        replacement = self.write_mode(ATTENDED_AUTONOMOUS_LINE, mode=0o664,
+                                      path=self.host_dir / "replacement")
         self.assert_denies(self.run_swap("before", replacement, self.mode_file), "writable by group")
 
     def test_type_check_judges_the_opened_file_not_an_earlier_look(self):
-        # A regular attended file before the open; a FIFO renamed over it just before the open is
-        # the one opened, so only a type check that does not rely on the earlier look denies on type.
-        self.write_mode(ATTENDED_LINE)
+        # A regular attended-autonomous file before the open; a FIFO renamed over it just before the
+        # open is the one opened, so only a type check that does not rely on the earlier look denies
+        # on type.
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         fifo = self.host_dir / "replacement"
         os.mkfifo(fifo)
         os.chmod(fifo, 0o644)
         self.assert_denies(self.run_swap("before", fifo, self.mode_file), "not a regular file")
 
     def test_type_check_judges_the_opened_file_not_a_later_look(self):
-        # A FIFO is opened; a regular attended file renamed over it just after the open passes every
-        # check, so only a type check that does not look at the path after the open denies on type.
+        # A FIFO is opened; a regular attended-autonomous file renamed over it just after the open
+        # passes every check, so only a type check that does not look at the path after the open
+        # denies on type.
         os.mkfifo(self.mode_file)
         os.chmod(self.mode_file, 0o644)
-        replacement = self.write_mode(ATTENDED_LINE, path=self.host_dir / "replacement")
+        replacement = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self.host_dir / "replacement")
         self.assert_denies(self.run_swap("after", replacement, self.mode_file), "not a regular file")
 
     def test_owner_check_judges_the_opened_file_not_an_earlier_look(self):
         # The test cannot give a file it creates to another uid without root, so the rename moves the
         # directory instead: before the open, the host directory is a symlink to a directory whose
-        # attended file the expected uid owns; just before the open, it is repointed at a directory
-        # whose file of the same name another uid owns. Only an owner check that does not rely on
-        # the earlier look denies on owner.
+        # attended-autonomous file the expected uid owns; just before the open, it is repointed at a
+        # directory whose file of the same name another uid owns. Only an owner check that does not
+        # rely on the earlier look denies on owner.
         foreign = self.foreign_file()
         own_dir = self._tmp / "own-dir"
         own_dir.mkdir()
-        self.write_mode(ATTENDED_LINE, path=own_dir / foreign.name)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=own_dir / foreign.name)
         self.host_dir.rmdir()
         self.host_dir.symlink_to(own_dir)
         repoint = self._tmp / "repoint"
@@ -402,12 +416,12 @@ class AskModeGuard(unittest.TestCase):
 
     def test_owner_check_judges_the_opened_file_not_a_later_look(self):
         # The reverse: the file opened is another uid's, and just after the open the host directory
-        # is repointed at a directory whose attended file the expected uid owns. Only an owner check
-        # that does not look at the path after the open denies on owner.
+        # is repointed at a directory whose attended-autonomous file the expected uid owns. Only an
+        # owner check that does not look at the path after the open denies on owner.
         foreign = self.foreign_file()
         own_dir = self._tmp / "own-dir"
         own_dir.mkdir()
-        self.write_mode(ATTENDED_LINE, path=own_dir / foreign.name)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=own_dir / foreign.name)
         self.host_dir.rmdir()
         self.host_dir.symlink_to(foreign.parent)
         repoint = self._tmp / "repoint"
@@ -419,19 +433,22 @@ class AskModeGuard(unittest.TestCase):
     # --- what the file holds -------------------------------------------------------------------------
     def test_unparseable_content_denies(self):
         cases = (
-            ("not JSON", "Operating-mode: attended\n", "not one JSON document"),
-            ("two JSON documents", ATTENDED_LINE + ATTENDED_LINE, "not one JSON document"),
-            ("bad UTF-8", b'{"mode": "attended\xff"}\n', "not UTF-8"),
-            ("a JSON array", '["attended"]\n', "not a JSON object"),
+            ("not JSON", "Operating-mode: attended-autonomous\n", "not one JSON document"),
+            ("two JSON documents", ATTENDED_AUTONOMOUS_LINE + ATTENDED_AUTONOMOUS_LINE,
+             "not one JSON document"),
+            ("bad UTF-8", b'{"mode": "attended-autonomous\xff"}\n', "not UTF-8"),
+            ("a JSON array", '["attended-autonomous"]\n', "not a JSON object"),
             ("no mode member", '{"phase": "dispatch"}\n', "no \"mode\" member"),
             ("a numeric mode", '{"mode": 1}\n', "\"mode\" is not a string"),
-            ("a duplicate mode key", '{"mode": "attended", "mode": "attended"}\n',
+            ("a duplicate mode key",
+             '{"mode": "attended-autonomous", "mode": "attended-autonomous"}\n',
              "duplicate key 'mode'"),
             # A repeated key other than "mode", and one inside a nested object, are refused too.
-            ("a duplicate key other than mode", '{"mode": "attended", "phase": "a", "phase": "b"}\n',
+            ("a duplicate key other than mode",
+             '{"mode": "attended-autonomous", "phase": "a", "phase": "b"}\n',
              "duplicate key 'phase'"),
             ("a duplicate key in a nested object",
-             '{"mode": "attended", "extra": {"set_by": "a", "set_by": "a"}}\n',
+             '{"mode": "attended-autonomous", "extra": {"set_by": "a", "set_by": "a"}}\n',
              "duplicate key 'set_by'"),
         )
         for name, content, cause in cases:
@@ -441,44 +458,48 @@ class AskModeGuard(unittest.TestCase):
 
     def test_non_json_constants_deny(self):
         # json.loads accepts NaN, Infinity and -Infinity by default, but JSON has no such values, so
-        # an attended record that holds one is not one JSON document.
+        # an attended-autonomous record that holds one is not one JSON document.
         for name, member in (("NaN", '"phase": NaN'), ("Infinity", '"set_at": Infinity'),
                              ("nested -Infinity", '"extra": [-Infinity]')):
             with self.subTest(case=name):
-                self.write_mode('{"mode": "attended", ' + member + '}\n')
+                self.write_mode('{"mode": "attended-autonomous", ' + member + '}\n')
                 self.assert_denies(self.run_guard(), "not one JSON document")
 
     def test_unknown_mode_values_deny(self):
-        for value in ("Unattended", "ATTENDED", "attended ", "maintenance", ""):
+        # Case and spacing variants of the writer's 2 values, a near miss, and other strings.
+        for value in ("Unattended", "ATTENDED-AUTONOMOUS", "attended-autonomous ",
+                      "attended_autonomous", "maintenance", ""):
             with self.subTest(mode=value):
                 self.write_mode(json.dumps({"mode": value}) + "\n")
                 self.assert_denies(self.run_guard(), "unknown mode")
 
     def test_content_over_the_size_limit_denies(self):
-        padded = ATTENDED_LINE.rstrip("\n") + " " * (MAX_BYTES + 1 - len(ATTENDED_LINE)) + "\n"
+        padded = (ATTENDED_AUTONOMOUS_LINE.rstrip("\n")
+                  + " " * (MAX_BYTES + 1 - len(ATTENDED_AUTONOMOUS_LINE)) + "\n")
         self.assertEqual(len(padded.encode("utf-8")), MAX_BYTES + 1)
         self.write_mode(padded)
         self.assert_denies(self.run_guard(), "over {} bytes".format(MAX_BYTES))
 
     def test_content_at_the_size_limit_allows(self):
-        padded = ATTENDED_LINE.rstrip("\n") + " " * (MAX_BYTES - len(ATTENDED_LINE)) + "\n"
+        padded = (ATTENDED_AUTONOMOUS_LINE.rstrip("\n")
+                  + " " * (MAX_BYTES - len(ATTENDED_AUTONOMOUS_LINE)) + "\n")
         self.assertEqual(len(padded.encode("utf-8")), MAX_BYTES)
         self.write_mode(padded)
         self.assert_allows_silently(self.run_guard())
 
     # --- the guard's own failures --------------------------------------------------------------------
     def test_unreadable_payload_denies(self):
-        self.write_mode(ATTENDED_LINE)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         self.assert_denies(self.run_guard(stdin="not json"), "guard internal error")
 
     def test_unknown_argument_denies(self):
-        self.write_mode(ATTENDED_LINE)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         self.assert_denies(self.run_guard(extra=["--allow"]), "guard internal error")
 
     def test_payload_that_is_not_an_object_denies_any_tool(self):
         # The guard reads the payload before it looks at the tool, so a payload it cannot read as an
         # object denies even where it names another tool.
-        self.write_mode(ATTENDED_LINE)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         for name, stdin in (("an array", '["tool_name", "Bash"]'), ("a string", '"Bash"'),
                             ("a number", "1"), ("null", "null")):
             with self.subTest(payload=name):
@@ -486,8 +507,9 @@ class AskModeGuard(unittest.TestCase):
 
     def test_payload_without_a_string_tool_name_denies(self):
         # An object payload that names no tool is as malformed as one that is not an object, so it
-        # denies, even while the record says attended, rather than passing as some other tool.
-        self.write_mode(ATTENDED_LINE)
+        # denies, even while the record says attended-autonomous, rather than passing as some other
+        # tool.
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         base = {key: value for key, value in ASK.items() if key != "tool_name"}
         for name, payload in (("missing", base), ("null", dict(base, tool_name=None)),
                               ("a number", dict(base, tool_name=1)),
@@ -500,7 +522,7 @@ class AskModeGuard(unittest.TestCase):
     def test_bad_argument_denies_any_tool(self):
         # The guard reads its arguments before it looks at the tool, so a bad argument denies a Bash
         # call too.
-        self.write_mode(ATTENDED_LINE)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         payload = dict(ASK, tool_name="Bash", tool_input={"command": "true"})
         for name, extra in (("unknown", ["--allow"]), ("unparseable uid", ["--expect-owner-uid", "x"]),
                             ("missing value", ["--mode-file"])):
