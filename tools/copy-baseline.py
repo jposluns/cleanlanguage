@@ -35,17 +35,21 @@ logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and ``NOTICE.md``
 into ``<output root>/assets/baseline/``, where the output root follows the base
 path in ``site-src/site.json`` (``site/draft/`` while staged). It copies each
 build tool in the gate's ``TOOLS`` from ``tools/`` in the version to the same
-path under ``.baseline/``, pinned but never served: ``tools/check_palette.py``
-(from 1.6.0) to ``.baseline/check_palette.py``, and the card builder
-``tools/build_card.js`` with its ``tools/card-fonts/`` files to
-``.baseline/build_card.js`` and ``.baseline/card-fonts/``, since the builder
-reads its fonts from beside itself. It clears ``.baseline/card-fonts/`` before
-it copies, as it clears the served copy folder, so a stray file there never
-outlives a copy.
+path under ``.baseline/``, pinned but not copied into ``site/``:
+``tools/check_palette.py`` (from 1.6.0) to ``.baseline/check_palette.py``,
+and the card builder ``tools/build_card.js`` with its ``tools/card-fonts/``
+files to ``.baseline/build_card.js`` and ``.baseline/card-fonts/``, since the
+builder reads its fonts from beside itself. It clears ``.baseline/card-fonts/``
+before it copies, as it clears the served copy folder, so a stray file there
+does not outlive a copy that writes the pin.
 
-It changes nothing outside the paths it manages: the served copy folder, the
-build tools' folders under ``.baseline/`` such as ``card-fonts/``, and the
-files it writes in ``.baseline/``, with any missing folder above them created.
+Under the repository and the ``--from`` folder it changes nothing outside the
+paths it manages: the served copy folder, the build tools' folders under
+``.baseline/`` such as ``card-fonts/``, and the files it writes in
+``.baseline/``, with any missing folder above them created. Elsewhere, Python
+may write byte code for a standard-library module imported before
+``sys.dont_write_bytecode`` is set (below), when that module's cache folder is
+writable, since ``-I`` does not imply ``-B``.
 It writes each file as a new file beside its target and renames it over the
 target, so it never writes into an existing file: another hard link to a
 target keeps its content. It reads each file in the version folder once,
@@ -62,12 +66,14 @@ the standard library.
 Before its first write it refuses (exit 1) a link, or a file
 in place of a folder, at a folder it clears or writes into or at any folder
 above one under the repository root, and a link or a folder in place of a file
-it writes outside the folders it clears, so it never writes through a link.
+it writes outside the folders it clears, so it does not write through a link
+that is in place when it checks.
 Before it opens a file it reads, the gate ``tools/check-baseline-pin.py``,
 ``site-src/site.json``, ``SHA256SUMS`` or a file in the version folder, it
 refuses (exit 1) one that is a link or not a regular file, such as a FIFO,
 since it would read the input from wherever a link leads or wait on a FIFO
-without end; it opens each without following a link or waiting on a FIFO.
+without end; it opens each without following a link in its place or waiting
+on a FIFO.
 Before its first write it also refuses (exit 1) a link, or an entry of the
 wrong kind, at ``site-src/`` or ``site-src/site.json``, from which it reads
 the output root, since it would read the output root from wherever the link
@@ -99,7 +105,7 @@ relative to the output root and the build tools' keys under ``.baseline/``
 relative to the repository root. The pin is written from scratch with the
 gate's ``TOOLS``, so the 2 tools cannot disagree on the build tools. It also
 copies the documents ``README.md`` and ``SPECIFICATION.md`` to ``.baseline/``,
-like ``SHA256SUMS`` never served and
+like ``SHA256SUMS`` not copied into ``site/`` and
 not pinned (the maintainer ruled on 2026-11-04 to keep these 2 unserved copies):
 ``tools/check-baseline-pin.py`` checks each against its ``SHA256SUMS`` digest,
 the README's version against the pin's and its NOTICE entry against
@@ -124,7 +130,8 @@ Usage:
 
 Exit codes:
   0  copied and pinned, and tools/check-baseline-pin.py passes the tree; or
-     --help, for which argparse prints its help and nothing is read or written
+     --help, for which argparse prints its help, and it reads no input and
+     writes nothing in the repository or the --from folder
   1  before anything is read: the --from folder's name is not a version
      number, or a --sums-sha256 or --archive-sha256 value is not 64 lower-case
      hexadecimal digits, each matched as the whole value, so that a value
@@ -145,7 +152,8 @@ Exit codes:
      a problem in the tree, which it names
   2  argparse refuses the command line, such as a missing or unknown option;
      argparse prints its usage and error lines, not this tool's own 1 line,
-     and nothing is read or written
+     and it reads no input and writes nothing in the repository or the --from
+     folder
   3  an input could not be read, or Python is older than 3.11; or, before the
      first write, the base path in site-src/site.json is readable but is not
      / or a single folder such as /draft/, matched whole; or any failure
@@ -153,8 +161,8 @@ Exit codes:
      whatever raised it (an interrupt aside), with a message that says that
      the copy and the pin may be incomplete; or, after the copy and the pin
      are written, tools/check-baseline-pin.py could not read the tree or found
-     it malformed, which it names; or any other unexpected error, named by its
-     type, in place of a traceback
+     it malformed, which it names; or any other unexpected error but an
+     interrupt, named by its type, in place of a traceback
 """
 
 from __future__ import annotations
@@ -461,8 +469,9 @@ def main() -> int:
     check_target(REPO_ROOT / "site-src" / "site.json", folder=False, action="read through")
     dest = output_root() / PREFIX
     # The build tools' own folders under .baseline/, such as card-fonts/, are rebuilt like the served copy folder, so
-    # that the gate finds no stray file there. Every folder cleared or written into, and every file written beside
-    # them, is checked before the first write.
+    # that the gate finds no stray file there. Each folder cleared, the pin folder, each file written outside the
+    # cleared folders, and each folder above them, is checked before the first write; the folders written into inside
+    # a cleared folder are made new after it is cleared.
     tool_folders = sorted({(REPO_ROOT / key).parent for key in tools} - {PIN_DIR})
     for folder in (dest, PIN_DIR, *tool_folders):
         check_target(folder, folder=True)
@@ -535,6 +544,6 @@ if __name__ == "__main__":
         die(3, f"a file could not be read or written: {error}")
     except Exception as error:
         # Any other error, such as a RecursionError from a deeply nested path, also ends the run with exit 3 and no
-        # traceback, so that a failure after the first change is never reported without saying that the copy and the
-        # pin may be incomplete. An interrupt or a SystemExit is not an Exception and passes through.
+        # traceback, so that a failure after the first change and before the pin is written says that the copy and
+        # the pin may be incomplete. An interrupt or a SystemExit is not an Exception and passes through.
         die(3, f"stopped by an unexpected {type(error).__name__}: {error}")

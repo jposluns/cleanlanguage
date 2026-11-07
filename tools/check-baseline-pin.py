@@ -26,7 +26,8 @@ What it verifies
    that ends in a newline is malformed. Any other key, such as
    ``.baseline/site-card.toml``, is malformed: the card's data file and
    illustration are the site's own, not the version's.
-   A malformed pin is a failure (exit 3), never a pass.
+   A malformed pin is a failure, never a pass: exit 3, or exit 1 when a
+   folder that item 4 checks is refused first.
 2. Each pinned file appears in the version's ``SHA256SUMS`` (kept as
    ``.baseline/SHA256SUMS``) under its name within the package, with the same
    digest, so the pin cannot name a file or a digest the published version
@@ -37,10 +38,11 @@ What it verifies
    same way at their paths from the repository root, such as
    ``.baseline/check_palette.py``.
 4. No file under ``<output root>/assets/baseline/`` or under
-   ``.baseline/card-fonts/`` is missing from the pin, and nothing under
+   ``.baseline/card-fonts/`` is missing from the pin, and no file or link under
    ``site/`` has the file name of a pinned build tool (``check_palette.py``,
    ``build_card.js``, or the name of a pinned font or of its licence): the
-   build tools are pinned but never served. ``.baseline/``, ``site/`` and,
+   build tools are pinned and not meant to be served, and one served under
+   its own name fails. ``.baseline/``, ``site/`` and,
    when present, ``.baseline/card-fonts/`` must be folders, not links, and
    nothing under ``site/`` or ``.baseline/card-fonts/`` may be a link, since
    the files that a link leads to would not be checked. The card builder
@@ -161,8 +163,9 @@ SECTION_END = re.compile(r"^ {0,3}#{1,2}(?:[ \t]|$)")
 COMMENT = "<!--"
 FENCE = re.compile(r"^ {0,3}(?:`{3}|~{3})")
 PREFIX = "assets/baseline/"
-# The pinned build tools, never served: each key in the pin, from the repository root, and its name in SHA256SUMS.
-# tools/copy-baseline.py copies and pins exactly these. The card builder reads its fonts from card-fonts/ beside itself.
+# The pinned build tools, which item 4 keeps out of site/ by name: each key in the pin, from the repository root, and
+# its name in SHA256SUMS. tools/copy-baseline.py copies and pins exactly these. The card builder reads its fonts from
+# card-fonts/ beside itself.
 TOOLS = {
     ".baseline/check_palette.py": "tools/check_palette.py",
     ".baseline/build_card.js": "tools/build_card.js",
@@ -173,9 +176,10 @@ TOOLS = {
 }
 # The card builder's font folder, which must hold no unpinned file (item 4).
 CARD_FONTS = Path(".baseline/card-fonts")
-# The folders the gate reads from or lists, each checked before anything is read through it: a linked folder would let
-# the files reached through it pass as if they were in place. An absent one is reported later: the pin's folder and
-# site/ as unreadable (exit 3), the font folder as each pinned font missing.
+# Folders the gate reads from or lists, each checked before anything is read through it: a linked folder would let the
+# files reached through it pass as if they were in place. site-src/, which holds the site.json that it reads, is not
+# among them. An absent one is reported later: the pin's folder and site/ as unreadable (exit 3), the font folder as
+# each pinned file in it missing.
 FOLDERS = (PIN.parent, CARD_FONTS, Path("site"))
 REQUIRED = [
     PREFIX + name
@@ -421,7 +425,7 @@ def check(root: Path) -> list[str]:
             problems.append(f"{shown}/{PREFIX}{name} is not in the pin.")
 
     # folder_problems() has refused a font folder that is a link or a file; a missing one is already reported above,
-    # as each pinned font missing.
+    # as each pinned file in it missing.
     fonts = CARD_FONTS.as_posix()
     if (root / CARD_FONTS).is_dir():
         font_files, font_links = list_tree(root / CARD_FONTS)

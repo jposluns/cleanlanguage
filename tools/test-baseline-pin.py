@@ -89,11 +89,13 @@ gate on this repository. The copy-baseline cases run
   folder, managed paths included, comparing each folder's and each file's
   mode and modification time as well. Neither comparison covers anything
   else, such as ownership, access time or what is in a folder that the test
-  cannot list. A run ends before its first write
+  cannot list. A run is taken to end before its first write
   when it does not say that it wrote the copy and the pin or that they may be
-  incomplete, as the tool's exit codes give, so the second comparison is made
-  after every refused run in these cases, and after ``--help``, without a
-  case having to ask for it. Every run goes through
+  incomplete, as the tool's exit codes give for every run but one that an
+  interrupt, ``COPY_TIMEOUT`` or an unexpected error after the pin is written
+  stops; a change that such a run made fails the test. So the second
+  comparison is made after every refused run in these cases, and after
+  ``--help``, without a case having to ask for it. Every run goes through
   ``copy_run()``, which makes both comparisons and stops a run still going
   after ``COPY_TIMEOUT`` seconds, so that a run that blocks, such as on a
   FIFO, fails its case instead of hanging the suite, and a further case reads this
@@ -139,8 +141,8 @@ for _name in ("palettes.css", "fonts.css", "copy.js", "select.js", "search.js", 
 # The pinned build tool, kept at .baseline/check_palette.py and never served.
 TOOL = b"# check_palette.py\n"
 TOOL_KEY = ".baseline/check_palette.py"
-# The card builder and its fonts, pinned at .baseline/ beside the palette gate and never served; each key's name in
-# SHA256SUMS is the key with .baseline/ replaced by tools/.
+# The card builder and its fonts, pinned at .baseline/ beside the palette gate and not served by the clean tree; each
+# key's name in SHA256SUMS is the key with .baseline/ replaced by tools/.
 CARD_KEY = ".baseline/build_card.js"
 CARD_FONT_KEY = ".baseline/card-fonts/Inter-Bold.otf"
 CARD = {CARD_KEY: b"// build_card.js\n", CARD_FONT_KEY: b"OTTO Inter-Bold",
@@ -693,15 +695,18 @@ def managed_folders(root: Path) -> tuple[str, ...]:
     return (f"{served}assets/baseline/", ".baseline/card-fonts/")
 
 
-# Each copy-baseline run in which a file outside managed_folders() and MANAGED_FILES, or under the --from folder,
-# changed, appeared or went away.
+# Each copy-baseline run in which a file, a link or another entry that is not a folder, outside managed_folders() and
+# MANAGED_FILES or under the --from folder, changed, appeared or went away, as unmanaged() records it: a file's inode,
+# size and SHA-256, a link's target, or another entry's mode.
 OUTSIDE_CHANGES: list[str] = []
-# Each copy-baseline run that ended before its first write, by the tool's own account, in which anything under the
-# test's root or the --from folder changed, appeared or went away, managed paths included.
+# Each copy-baseline run that ended before its first write, by the tool's own account, in which anything that
+# tree_state() records under the test's root or the --from folder changed, appeared or went away, managed paths
+# included.
 REFUSED_CHANGES: list[str] = []
 # What the tool says when it ends after its first write: on stderr, the gate's check after the copy, or a failure once
-# copying has begun; on stdout, a clean copy. Any other run, --help among them, has by the tool's exit-code contract
-# ended before it.
+# copying has begun; on stdout, a clean copy. Any other run, --help among them, is taken to have ended before it, as
+# the tool's exit-code contract gives for every run but one that an interrupt, COPY_TIMEOUT or an unexpected error
+# after the pin is written stops; a change that such a run made is recorded in REFUSED_CHANGES and fails the test.
 AFTER_WRITE = ("wrote the copy and the pin", "the copy and the pin may be incomplete", "wrote .baseline/pin.toml")
 # The seconds a copy-baseline run may take: a run that blocks, such as on a FIFO it opens, fails its case instead of
 # hanging the suite. A run here takes well under 1 second.
@@ -773,7 +778,8 @@ def copy_run(root: Path, arguments: list[str], version: Path | None = None) -> s
     before and after the run, outside the paths the tool manages or under the version folder when one is given, is
     recorded in OUTSIDE_CHANGES: an entry added or removed, a file's inode, size or SHA-256, a link's target, or
     another entry's mode. A run that does not say that it wrote the copy and the pin or that they may be incomplete
-    (AFTER_WRITE) has ended before its first write, as the tool's exit codes give, --help included, so each
+    (AFTER_WRITE) is taken to have ended before its first write, --help included, as the tool's exit codes give for
+    every run but one that an interrupt, COPY_TIMEOUT or an unexpected error after the pin is written stops, so each
     difference between those records under root or the version folder, managed paths included, is recorded in
     REFUSED_CHANGES: an entry added or removed, a folder's mode or modification time, a file's inode, size, SHA-256,
     mode or modification time, a link's target, or another entry's mode. Either kind of change fails the test,
@@ -814,8 +820,8 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
     carries the 1.2.1 entry (or the given notice), so that the gate's check at the end passes a clean copy. A
     site-src/ that the caller has already made, as a folder or a link, is kept, and so is a tools/ folder. With
     source_link, 1.2.1 is a link to the version folder. With version, the version folder is made there instead, and
-    its SHA256SUMS lists every file in it, so that a version folder that holds the repository still matches its
-    sums. sums_edit, when given, changes the SHA256SUMS text before it is written and hashed, and sums_sha256, when
+    its SHA256SUMS lists every other file in it, so that a version folder that holds the repository still matches
+    its sums. sums_edit, when given, changes the SHA256SUMS text before it is written and hashed, and sums_sha256, when
     given, replaces its digest on the command line. newline_after, when given, names the option whose value on the
     command line gains a trailing newline. before_run, when given, is called with root and the version folder once
     the tree and SHA256SUMS are written, just before the run. copy_run() runs the tool and records each change that
@@ -848,12 +854,12 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
     return copy_run(root, arguments, version)
 
 
-# A version also holds files the site never copies: the 6th script, matrix.js, and reference/.
+# A version also holds files that copy-baseline does not copy: the 6th script, matrix.js, and reference/.
 NOT_COPIED = {"matrix.js": b"/* matrix.js */\n", "reference/landing.html": b"<html></html>\n"}
 PACKAGE = {**FILES, **DOCS, **NOT_COPIED, "tools/check_palette.py": TOOL,
            **{package_name(key): data for key, data in CARD.items()}}
-# Versions copy-baseline refuses (exit 1) before it replaces a served file: each changes PACKAGE in place and gives
-# what the tool's 1 line must say.
+# Versions copy-baseline refuses (exit 1) before it replaces a served file: each changes a copy of PACKAGE in place
+# and gives what the tool's 1 line must say.
 NO_ENTRY = "README.md holds a carriage return or has no step 7"
 COPY_REFUSALS = [
     ("a version without the build tool", lambda package: package.pop("tools/check_palette.py"),
@@ -1043,8 +1049,8 @@ def link_site_json(root: Path) -> None:
 
 
 # Trees copy-baseline refuses (exit 1) before its first write: each makes a folder it writes into, a file it writes,
-# or the site-src/site.json it reads the output root from, a link or of the wrong kind. What the link leads to, in
-# outside/, lies outside the paths the tool manages, so run_copy checks that it is unchanged.
+# or site-src/ or the site-src/site.json it reads the output root from, a link or of the wrong kind. What the link
+# leads to, in outside/, lies outside the paths the tool manages, so run_copy checks that it is unchanged.
 # Each gives what the tool's 1 line must say.
 COPY_TREE_REFUSALS = [
     ("a link in place of .baseline/card-fonts/", link_card_fonts,
@@ -1092,7 +1098,8 @@ def copy_tree_problems() -> list[str]:
         left = sorted(path.relative_to(root).as_posix() for path in fonts.rglob("*"))
         if result.returncode != 0 or left != sorted(key for key in CARD if key.startswith(".baseline/card-fonts/")):
             problems.append(f"copy-baseline: a stray file and folder in .baseline/card-fonts/: exit "
-                            f"{result.returncode}, the folder holds {left}; expected 0 and only the pinned fonts")
+                            f"{result.returncode}, the folder holds {left}; expected 0 and only the pinned fonts and "
+                            "their licence")
     return problems
 
 
@@ -1305,10 +1312,11 @@ _atexit.register(lambda: [print(f"opened {count} {path}", file=_sys.__stderr__) 
 
 
 def failure_problems() -> list[str]:
-    """Each failure below ends copy-baseline with its documented code and its own 1 line, never a traceback: an error
-    that is not an OSError, after the first change, exits 3 saying that the copy and the pin may be incomplete; one
-    before any write exits 3 without saying so; a --from folder whose name is not a version number, or a
-    --sums-sha256 that is not 64 lower-case hexadecimal digits, exits 1; a --from folder that does not exist exits 3.
+    """Each failure below but argparse's ends copy-baseline with its documented code and its own 1 line, never a
+    traceback: an error that is not an OSError, after the first change, exits 3 saying that the copy and the pin may
+    be incomplete; one before any write exits 3 without saying so; a --from folder whose name is not a version
+    number, or a --sums-sha256 that is not 64 lower-case hexadecimal digits, exits 1; a --from folder that does not
+    exist exits 3.
     The 2 runs with an injected error also check that the served files are cleared or kept to match. A command line
     that argparse refuses, and --help, end with argparse's own output instead: no options exits 2 with its usage and
     error lines, and --help exits 0 with its help, each with nothing written."""
@@ -1375,7 +1383,7 @@ def base_newline(root: Path) -> dict:
 
 # Values that copy-baseline matches whole, each with a trailing newline: each gives run_copy's arguments for root, the
 # exit code, and what the tool's 1 line must say. Every other input is valid, so a tool that accepted the newline
-# would go on to copy.
+# would go on to copy or refuse the run later in other words.
 WHOLE_VALUE_REFUSALS = [
     ("a --sums-sha256 that ends in a newline", lambda root: {"newline_after": "--sums-sha256"}, 1,
         "--sums-sha256 is not a 64 character lower-case SHA-256"),
@@ -1776,11 +1784,12 @@ def main() -> int:
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         failures += write_failure_problems() + gate_unreadable_problems() + permission_refusal_problems()
         ran += 2 + 2
-    # Every copy-baseline run above, refused or not, must leave each file and link outside the paths it manages as
-    # tree_state() records it, and every run that ends before its first write must leave everything that tree_state()
-    # records as it was, managed paths included. Each run goes through copy_run(), which records each such change, and
-    # invocation_problems() fails if any other code refers to the tool's path, names its file outside a docstring or,
-    # apart from run_gate(), starts a process, so the first 2 checks cover every run that does not avoid that reading.
+    # Every copy-baseline run above, refused or not, must leave each entry but a folder outside the paths it manages,
+    # and under its --from folder, as unmanaged() keeps it, and every run that ends before its first write must leave
+    # everything that tree_state() records as it was, managed paths included. Each run goes through copy_run(), which
+    # records each such change, and invocation_problems() fails if any other code refers to the tool's path, names its
+    # file outside a docstring or, apart from run_gate(), starts a process, so the first 2 checks cover every run that
+    # does not avoid that reading.
     failures += [f"{change}, outside the paths it manages" for change in OUTSIDE_CHANGES]
     failures += [f"{change}; a run that ends before its first write must not add, remove or change anything that "
                  "tree_state() records" for change in REFUSED_CHANGES]

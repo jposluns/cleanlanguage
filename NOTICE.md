@@ -27,7 +27,7 @@ Site template: the shared site template (baseline 1.11.1, https://posluns.ca/bas
 
 ## Card builder fonts
 
-The Inter font files in `.baseline/card-fonts/` (Inter 4.000, Copyright 2016 The Inter Project Authors), copied byte for byte from the baseline's `tools/card-fonts/`, are licensed under the SIL Open Font License 1.1. Their licence is `.baseline/card-fonts/inter-LICENSE.txt` and must travel with them. They are used only by `.baseline/build_card.js` to render link-preview images, and are never served.
+The Inter font files in `.baseline/card-fonts/` (Inter 4.000, Copyright 2016 The Inter Project Authors), copied byte for byte from the baseline's `tools/card-fonts/`, are licensed under the SIL Open Font License 1.1. Their licence is `.baseline/card-fonts/inter-LICENSE.txt` and must travel with them. They are used only by `.baseline/build_card.js` to render link-preview images, and are not served.
 
 ## Adopted governance rules
 

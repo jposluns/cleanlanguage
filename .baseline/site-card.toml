@@ -3,8 +3,9 @@
 # Strings are in double quotes; paths are relative to this file. Change the copy, the colours and the
 # illustration only on the owner's instruction.
 # The copy, the colours and the illustration are those of the current card, scripts/card/card.html with its
-# illustration.svg, and the name and TLD match site-src/site.json. The centred layout keeps the whole card inside
-# the area Microsoft Teams shows when it crops the image; it is the maintainer's decision of 2026-11-06.
+# illustration.svg, and the name and TLD match site-src/site.json. The centred layout, which the baseline README
+# says keeps the whole card inside the area Microsoft Teams shows when it crops the image, is the maintainer's
+# decision of 2026-11-06.
 # logo and touch_bg are unset: without a logo the builder makes no touch icon, and the site keeps its pinned
 # touch icon. The tag texts are unset because their defaults give the title, description and alt in
 # scripts/card/TAGS.md, not the tags that site/index.html serves now.
