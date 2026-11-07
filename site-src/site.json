@@ -71,8 +71,6 @@
     {"id": "license", "path": "license/", "title": "Licence", "nav_label": "Licence", "source": "license.html", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-11-03",
      "description": "The licence of Clean Language and the cleanlanguage.ai site, CC BY-SA 4.0, summarized in plain language."},
     {"id": "404", "path": "404.html", "title": "Page not found", "nav_label": "404", "source": "404.html", "scripts": ["copy.js"], "modified": "2026-11-03", "published": null, "noindex": true,
-     "description": ""},
-    {"id": "draft", "path": "draft/", "title": "Draft review", "nav_label": "Drafts", "source": "draft.html", "scripts": [], "modified": "2026-11-03", "published": null, "noindex": true,
      "description": ""}
   ],
   "family": [

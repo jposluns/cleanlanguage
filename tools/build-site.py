@@ -4,7 +4,9 @@
 The site is generated from ``site-src/`` into the folder its base path names:
 ``/`` writes ``site/`` (the published site, the current setting in
 ``site-src/site.json`` since promotion), and ``/draft/`` writes ``site/draft/``
-(staging a new version for review). Cloudflare Pages publishes ``site/`` as
+(staging a new version for review, on the ``draft`` branch only: from template
+1.11.0 the owner reviews it at that branch's Cloudflare Pages deployment, and
+the live site carries no ``/draft/``). Cloudflare Pages publishes ``site/`` as
 committed, so the output is committed and this tool's ``--check`` mode proves
 that the committed output is exactly what the sources produce.
 
@@ -253,6 +255,13 @@ ABOUT_DOT = '<span class="dot" aria-hidden="true">&middot;</span>'
 # landing page only, directly after the end tag of the value paragraph's region, and validate() requires it there once.
 ABOUT_BLOCK = '<div class="region"><p class="lbl">About this project</p><div>{row}</div></div>'
 SLICE_COUNT = 6
+# The seventh footer card of template specification 7.19 (baseline 1.11.0): vendorreplies.ai, always last, after
+# the 6 rotated cards, on every site; its logo is a PNG.
+SEVENTH_CARD = (
+    '<li class="slice slice-vr"><a class="card" href="https://vendorreplies.ai/" target="_blank" rel="noopener noreferrer">'
+    '<img src="{logos}/vendorreplies.png" alt=""><span class="cname">VendorReplies<span class="tld">.ai</span></span>'
+    + NEW_TAB + "</a></li>"
+)
 # The checksum a version bump writes into site-src/release.json until the post-release flip sets the published one.
 PLACEHOLDER_CHECKSUM = "0" * 64
 # A checksum other than the placeholder with at least this many 0 digits of its 64 is close to the placeholder, such as a
@@ -414,9 +423,11 @@ def verify_page(root: Path, release: dict | None = None, date: str | None = None
     whatever version SKILL.md names; ``date`` replaces every page's modified date, as --date does.
     tools/check-release-links.py requires the committed page to equal the render for release.json, and
     tools/check-release-checksum-live.py the render for the version and checksum it reads from the page;
-    tools/test-build-site.py pins the render for a stand-in release in each state (VERIFY_PAGE_PIN). Raises
-    BuildError or Unreadable when build() does, for any page."""
-    _, outputs, _ = build(root, "/", date, release, any_version=release is not None)
+    tools/test-build-site.py pins the render for a stand-in release in each state (VERIFY_PAGE_PIN). The render
+    writes nothing, so tools/sitemap-config.json is checked against the base site-src/site.json names, not base /:
+    on a branch that stages a draft, the draft's exclusion is the one its committed site/ needs. Raises BuildError
+    or Unreadable when build() does, for any page."""
+    _, outputs, _ = build(root, "/", date, release, any_version=release is not None, configured_exclusion=True)
     return outputs[VERIFY_OUTPUT]
 
 
@@ -785,6 +796,7 @@ def footer(config: dict, base: str) -> str:
                 f"{image}{name}{NEW_TAB}</a>"
             )
         cards.append(f'<li class="slice slice-{index + 1}">{link}</li>')
+    cards.append(SEVENTH_CARD.format(logos=logos))
     tail = (
         '<ul class="tail" aria-label="Jeff Posluns elsewhere">'
         '<li class="tile tile-1"><a class="card" href="https://github.com/jposluns" target="_blank" rel="noopener noreferrer">'
@@ -802,7 +814,7 @@ def footer(config: dict, base: str) -> str:
         'Jeff<span class="gold">@</span>Posluns<span class="gold">.ca</span><span class="post"> Project</span></a></div>'
     )
     return (
-        '<footer class="family wrap"><div class="bar"><ul class="cards rainbow" aria-label="The 6 project sites">'
+        '<footer class="family wrap"><div class="bar"><ul class="cards rainbow" aria-label="The 7 project sites">'
         + "".join(cards)
         + "</ul>"
         + tail
@@ -1223,10 +1235,10 @@ def out_dir_for(base: str) -> Path:
 def check_sitemap_exclusion(root: Path, base: str, pages: list) -> None:
     """The page-metadata and sitemap gates read */index.html, so each noindex page there must be excluded.
 
-    While a draft is staged, tools/sitemap-config.json must exclude the draft's home page
-    (recorded exclusion E1). At base /, it must exclude exactly the noindex pages whose output
-    is a */index.html (the /draft/ holding page), so every indexable page is checked and no
-    noindex page is.
+    While a draft is staged on the draft branch, tools/sitemap-config.json must exclude the
+    draft's home page (recorded exclusion E1). At base /, it must exclude exactly the noindex
+    pages whose output is a */index.html (none since the /draft/ holding page was removed
+    under template 1.11.0), so every indexable page is checked and no noindex page is.
     """
     config = read_json(root, Path("tools/sitemap-config.json"))
     exclude = config.get("exclude")
@@ -1278,12 +1290,15 @@ def build(
     release: dict | None = None,
     config: dict | None = None,
     any_version: bool = False,
+    configured_exclusion: bool = False,
 ) -> tuple[Path, dict[str, bytes], dict]:
     """Render every output file in memory.
 
     ``release`` replaces site-src/release.json and ``config`` replaces site-src/site.json when
     given (the release writer's new values, before it writes them). ``any_version`` lets the
     release name a version other than SKILL.md's (verify_page() for given values only).
+    ``configured_exclusion`` checks tools/sitemap-config.json against the base the site.json
+    names instead of ``base`` (verify_page() only, which renders at base / and writes nothing).
     """
     if config is None:
         config = read_json(root, SRC / "site.json")
@@ -1302,7 +1317,13 @@ def build(
             raise Unreadable(f"site-src/site.json page {page.get('id')!r} modified {modified!r} is not YYYY-MM-DD")
     if date is not None and not DATE.match(date):
         raise BuildError(f"--date {date!r} is not YYYY-MM-DD")
-    check_sitemap_exclusion(root, base, pages)
+    exclusion_base = base
+    if configured_exclusion:
+        exclusion_base = config.get("base")
+        if not isinstance(exclusion_base, str):
+            raise Unreadable("site-src/site.json has no base")
+        out_dir_for(exclusion_base)
+    check_sitemap_exclusion(root, exclusion_base, pages)
     statics = static_files(config) if out == Path("site") else []
     release = load_release(root, release, any_version)
     baseline_version, pinned = load_pin(root)

@@ -5,10 +5,11 @@ Every case copies the generator's inputs into a temporary folder (under
 $TMPDIR), applies 1 fault, runs the generator there as a separate process and
 asserts its exit code, and for the passing cases, what the output contains.
 The first case runs ``--check`` on this repository. The configured base is
-``/``; the staged cases first set the base back to ``/draft/`` and drop the
-``/draft/`` holding page, as a staging round would. The pin of the whole
-verify page (VERIFY_PAGE_PIN, SITE_CSS_PIN, check_verify_page_pin) and its
-tie to the committed release (check_committed_render) instead load the
+``/``; the staged cases first set the base to ``/draft/`` and exclude the
+draft's home page from the sitemap, as a staging round on the ``draft`` branch
+would (template 1.11.0: the live site carries no ``/draft/``). The pin of the
+whole verify page (VERIFY_PAGE_PIN, SITE_CSS_PIN, check_verify_page_pin) and
+its tie to the committed release (check_committed_render) instead load the
 generator in this process and render that page alone; the pin's comment
 names how to update it. Exit 0 when every case passes; 1 otherwise, naming
 each failing case.
@@ -25,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -382,11 +384,19 @@ def set_page(root: Path, page_id: str, **changes) -> None:
 
 
 def staged(root: Path) -> None:
-    """Set the base back to /draft/ and drop the holding page, as a staging round would."""
+    """Set the base to /draft/ and exclude the draft's home page from the sitemap, as the draft branch would."""
     path = root / "site-src" / "site.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     data["base"] = "/draft/"
-    data["pages"] = [page for page in data["pages"] if page["id"] != "draft"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    exclude_draft_home(root)
+
+
+def exclude_draft_home(root: Path) -> None:
+    """Exclude the draft's home page from the sitemap (recorded exclusion E1), once, as the draft branch does."""
+    path = root / "tools" / "sitemap-config.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["exclude"] = [entry for entry in data["exclude"] if entry != "draft/index.html"] + ["draft/index.html"]
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
@@ -406,14 +416,14 @@ REFUSALS = [
     ("a second light and dark switch", inject(SWITCH)),
     ("a second element with data-scheme-toggle, a button in the content", inject(TOGGLE)),
     ("a second element with data-scheme-toggle in upper case", inject('<div DATA-SCHEME-TOGGLE hidden></div>')),
-    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.8.0">')),
-    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.8.0">')),
+    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.11.1">')),
+    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.11.1">')),
     ("a bare svg outside the switch", inject("<svg></svg>")),
     ("an upper-case SVG outside the switch", inject("<SVG></SVG>")),
     ("a second scheme.js load in another spelling",
-        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.8.0" defer></SCRIPT>')),
+        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.11.1" defer></SCRIPT>')),
     ("a second scheme.js load as the first of 2 src attributes", inject(
-        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.8.0" src="{{base}}assets/baseline/copy.js?v=1.8.0" defer></SCRIPT>')),
+        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.11.1" src="{{base}}assets/baseline/copy.js?v=1.11.1" defer></SCRIPT>')),
     ("an attribute repeated on any other tag", inject('<p class="lead" class="x">x</p>')),
     ("a link to the pinned build tool, which is never served",
         inject('<p><a href="/.baseline/check_palette.py">palette gate</a></p>')),
@@ -430,9 +440,8 @@ REFUSALS = [
     ("an external link without the new-tab text", inject('<p><a href="https://example.org/" target="_blank" rel="noopener noreferrer">x</a></p>')),
     ("an external image", inject('<img src="https://example.org/x.png" alt="">')),
     ("a JSON-LD block on a noindex page", lambda root: edit(
-        root, "site-src/pages/draft.html", "</h1>", '</h1><script type="application/ld+json">{}</script>')),
+        root, "site-src/pages/404.html", "</h1>", '</h1><script type="application/ld+json">{}</script>')),
     ("a page with no modified date", lambda root: set_page(root, "demo", modified=None)),
-    ("the holding page without noindex", lambda root: set_page(root, "draft", noindex=None)),
     ("a static file that is also generated", lambda root: edit(
         root, "site-src/site.json", '"README.md",', '"README.md", "404.html",')),
     ("an in-page link with no target", inject('<p><a href="#nowhere">x</a></p>')),
@@ -461,8 +470,7 @@ REFUSALS = [
         root, "site-src/examples-commentary.json", '"Incident status":', '"Incident report":')),
     ("a Preferred block with no example before it", lambda root: edit(
         root, "cleanlanguage/skills/cleanlanguage/references/examples.md", "### Weak\n\nThe team has been", "### Preferred\n\nThe team has been")),
-    ("the sitemap config no longer excludes the draft holding page", lambda root: edit(
-        root, "tools/sitemap-config.json", ', "draft/index.html"', "")),
+    ("the sitemap config still excludes the removed draft holding page", exclude_draft_home),
     ("an extra closing div (the reference demo's defect)", lambda root: edit(
         root, PAGE, "untested recovery path.</p></div></div>", "untested recovery path.</p></div></div></div>")),
     ("an unclosed div", inject('<div class="callout"><p>x</p>')),
@@ -621,15 +629,15 @@ def check_scheme_validation(failures: list[str]) -> int:
         ("the scheme.js line after the first stylesheet", text.replace(tag, "", 1).replace("</head>", tag + "</head>", 1), False),
         ("a second scheme.js line", text[:sheet] + tag + text[sheet:], False),
         ("a second scheme.js in upper case with a character reference", text.replace(
-            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.8.0" defer></SCRIPT></head>', 1), False),
+            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.11.1" defer></SCRIPT></head>', 1), False),
         ("the scheme.js line inside a comment, loaded in another spelling", text.replace(tag, "<!--" + tag.rstrip("\n")
-            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.8.0"></script>\n', 1), False),
+            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.11.1"></script>\n', 1), False),
         ("an upper-case stylesheet before the scheme.js line", text.replace(
-            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.8.0">\n' + tag, 1), False),
+            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.11.1">\n' + tag, 1), False),
         ("a second scheme.js load as the first of 2 src attributes", text.replace("</head>", '<SCRIPT SRC='
-            '"/assets/baseline/sch&#101;me.js?v=1.8.0" src="/assets/baseline/copy.js?v=1.8.0" defer></SCRIPT></head>', 1), False),
+            '"/assets/baseline/sch&#101;me.js?v=1.11.1" src="/assets/baseline/copy.js?v=1.11.1" defer></SCRIPT></head>', 1), False),
         ("a stylesheet before the scheme.js line as the first of 2 rel attributes", text.replace(
-            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.8.0">\n' + tag, 1), False),
+            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.11.1">\n' + tag, 1), False),
         # The parsed reading allows it, but the header block must be byte for byte what mast() is meant to write.
         ("a newline between nav.nav and the switch", text.replace("</nav>" + SWITCH, "</nav>\n" + SWITCH, 1), False),
         ("a second element with data-scheme-toggle after header.mast", text.replace(
@@ -638,7 +646,7 @@ def check_scheme_validation(failures: list[str]) -> int:
             SWITCH + "</header>", SWITCH + '</header><div DATA-SCHEME-TOGGLE hidden></div>', 1), False),
         ("a later stylesheet moved into the body", text.replace(later, "", 1).replace("<body>\n", "<body>\n" + later, 1), False),
         ("a later stylesheet in upper case at the end of the body", text.replace(
-            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.8.0">\n</body>', 1), False),
+            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.11.1">\n</body>', 1), False),
         ("a later stylesheet in a second head after the body", text.replace(later, "", 1).replace(
             "</body>\n", "</body>\n<head>\n" + later + "</head>\n", 1), False),
         # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>; the loads
@@ -703,8 +711,8 @@ def check_inert_validation(failures: list[str]) -> int:
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     pages = {entry["id"]: entry for entry in config["pages"]}
-    texts = {page_id: (REPO_ROOT / f"site/{page_id}/index.html").read_text(encoding="utf-8") for page_id in ("license", "draft")}
-    texts["home"] = (REPO_ROOT / "site/index.html").read_text(encoding="utf-8")
+    files = {"home": "site/index.html", "license": "site/license/index.html", "404": "site/404.html"}
+    texts = {page_id: (REPO_ROOT / path).read_text(encoding="utf-8") for page_id, path in files.items()}
     skip, status, robots = generator.SKIP_LINK, generator.COPY_STATUS, '<meta name="robots" content="noindex, nofollow">'
     h1 = re.search(r"<h1>[^<]*</h1>", texts["license"]).group(0)
     about = about_line("/")
@@ -714,16 +722,16 @@ def check_inert_validation(failures: list[str]) -> int:
         ("the About row only inside canvas", "home", about, f"<canvas>{about}</canvas>", False),
         ("the h1 only inside canvas", "license", h1, f"<canvas>{h1}</canvas>", False),
         ("the committed licence page", "license", None, None, True),
-        ("the committed draft page", "draft", None, None, True),
+        ("the committed 404 page", "404", None, None, True),
         ("the skip link only inside noscript", "license", skip, f"<noscript>{skip}</noscript>", False),
         ("the skip link only inside a title", "license", skip, f"<title>{skip}</title>", False),
         ("#copy-status only inside noscript", "license", status, f"<noscript>{status}</noscript>", False),
-        ("the robots meta only inside noscript in the head", "draft", robots, f"<noscript>{robots}</noscript>", False),
+        ("the robots meta only inside noscript in the head", "404", robots, f"<noscript>{robots}</noscript>", False),
     ]
     for name, page_id, old, new, passes in cases:
         page_html = texts[page_id] if old is None else texts[page_id].replace(old, new, 1)
         if old is not None and old not in texts[page_id]:
-            failures.append(f"inert validation '{name}': {old!r} is not in site/{'' if page_id == 'home' else page_id + '/'}index.html")
+            failures.append(f"inert validation '{name}': {old!r} is not in {files[page_id]}")
         try:
             generator.validate(page_html, pages[page_id], config, "/")
             passed = True
@@ -1012,13 +1020,13 @@ def check_clean_build(failures: list[str]) -> int:
             failures.append(f"clean build: exit {result.returncode}: {result.stderr.strip()}")
             return 1
         pages = sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html"))
-        if len(pages) != 19:
-            failures.append(f"clean build: {len(pages)} pages, expected 19: {pages}")
+        if len(pages) != 18:
+            failures.append(f"clean build: {len(pages)} pages, expected 18: {pages}")
         config = json.loads((root / "site-src/site.json").read_text(encoding="utf-8"))
         noindex = {p["path"] if p["path"].endswith(".html") else p["path"] + "index.html"
                    for p in config["pages"] if p.get("noindex")}
-        if noindex != {"404.html", "draft/index.html"}:
-            failures.append(f"clean build: the noindex pages are {sorted(noindex)}, expected 404.html and draft/index.html")
+        if noindex != {"404.html"}:
+            failures.append(f"clean build: the noindex pages are {sorted(noindex)}, expected only 404.html")
         modified = {p["id"]: p.get("modified") for p in config["pages"]}
         for page in pages:
             text = (out / page).read_text(encoding="utf-8")
@@ -1037,25 +1045,19 @@ def check_clean_build(failures: list[str]) -> int:
                 failures.append(f"clean build: {page} must carry publish metadata and no noindex")
             for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
                 if value.startswith("/draft/"):
-                    failures.append(f"clean build: {page} links the draft holding page {value}")
+                    failures.append(f"clean build: {page} links {value}, under /draft/, which the live site does not carry")
             failures += [f"clean build: {problem}" for problem in scheme_problems(page, text, "/", config)]
             failures += [f"clean build: {problem}" for problem in about_problems(page, text, "/")]
         for page_id, page in (("home", "index.html"), ("install", "install/index.html"), ("license", "license/index.html")):
             stamp = f'<meta property="article:modified_time" content="{modified[page_id]}">'
             if stamp not in (out / page).read_text(encoding="utf-8"):
                 failures.append(f"clean build: {page} lacks its site.json modified date {stamp!r}")
-        holding = (out / "draft/index.html").read_text(encoding="utf-8")
-        for needed in ('<h1>Draft review</h1>', '<a class="start" href="/">Home', '<div class="rail"><img class="rail-logo"',
-                       "Nothing is staged here now; the published site is at the home page."):
-            if needed not in holding:
-                failures.append(f"clean build: the holding page lacks {needed!r}")
-        scheme_line = re.search(r'^<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>$',
-                                holding, re.M)
-        if 'property="og:' in holding or 'name="description"' in holding or holding.count("<script") != 1 or scheme_line is None:
-            failures.append("clean build: the holding page carries social metadata or a script other than the scheme.js line")
+        # Template 1.11.0: a draft is reviewed on the draft branch's own deployment, so the live build has no /draft/.
+        if (out / "draft").exists():
+            failures.append("clean build: the / build wrote draft/, which the live site no longer carries")
         sitemap_config = json.loads((root / "tools/sitemap-config.json").read_text(encoding="utf-8"))
-        if "draft/index.html" not in sitemap_config["exclude"]:
-            failures.append("clean build: the sitemap config does not exclude the holding page")
+        if "draft/index.html" in sitemap_config["exclude"]:
+            failures.append("clean build: the sitemap config still excludes the removed draft holding page")
         checklist = (out / "checklist/index.html").read_text(encoding="utf-8")
         rail_labels = re.findall(r'<li><a href="#[^"]+">([^<]*)</a></li>', checklist.split('<nav class="rail"', 1)[1].split("</nav>", 1)[0])
         if rail_labels[:2] != ["Accuracy", "Directness"] or any(label[:1].isdigit() for label in rail_labels):
@@ -1119,6 +1121,61 @@ def check_family_pages(failures: list[str]) -> int:
         if result.returncode != 1 or "no family install pages" not in result.stderr:
             failures.append(f"family pages: no family pages gave exit {result.returncode}, expected 1 with the count refusal: {result.stderr.strip()[:200]}")
     return 2
+
+
+VENDORREPLIES_LOGO = "assets/baseline/logos/vendorreplies.png"
+# The seventh footer card of template specification 7.19 (baseline 1.11.0), byte for byte as the footer of the 1.11.1
+# package's reference/landing.html gives it, apart from the logo path: ../logos/ there, /assets/baseline/logos/ here.
+# It is written out here, not read from the generator's SEVENTH_CARD, so that a change to any byte of that card fails.
+REFERENCE_CARD = (
+    '<li class="slice slice-vr"><a class="card" href="https://vendorreplies.ai/" target="_blank" rel="noopener noreferrer">'
+    '<img src="/assets/baseline/logos/vendorreplies.png" alt=""><span class="cname">VendorReplies<span class="tld">.ai</span></span>'
+    '<span class="vh"> (opens in a new tab)</span></a></li>'
+)
+
+
+def check_footer(failures: list[str]) -> int:
+    """The footer holds the 6 rotated cards and the seventh card of specification 7.19 (baseline 1.11.0).
+
+    This guards a partial adoption: a copy of baseline 1.11.0 or later without the generator's seventh card passes
+    every other gate while the footer silently keeps 6 cards. On every generated page, the card list holds 7 cards and
+    ends with REFERENCE_CARD, byte for byte, and no other slice-vr card.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        out = Path(scratch) / "out"
+        result = run(root, "--out", str(out))
+        if result.returncode != 0:
+            failures.append(f"footer: exit {result.returncode}: {result.stderr.strip()}")
+            return 1
+        home = (out / "index.html").read_text(encoding="utf-8")
+        match = re.search(r'<ul class="cards rainbow" aria-label="([^"]*)">(.*?)</ul>', home, re.S)
+        if match is None:
+            failures.append("footer: the home page has no card list")
+            return 1
+        label, cards = match.groups()
+        if label != "The 7 project sites":
+            failures.append(f"footer: the card list is labelled {label!r}, expected 'The 7 project sites'")
+        slices = re.findall(r'<li class="slice ([^"]*)">(.*?)</li>', cards, re.S)
+        if len(slices) != 7 or cards.count('<li class="slice ') != 7:
+            failures.append(f"footer: the home page holds {len(slices)} cards, expected 7")
+        if not slices or slices[0][0] != "slice-4" or 'aria-current="page"' not in slices[0][1]:
+            failures.append("footer: the first card is not slice-4 with aria-current=\"page\"")
+        pages = sorted(path.relative_to(out).as_posix() for path in out.rglob("*.html"))
+        wrong = []
+        for page in pages:
+            text = (out / page).read_text(encoding="utf-8")
+            lists = re.findall(r'<ul class="cards rainbow" aria-label="[^"]*">(.*?)</ul>', text, re.S)
+            if (len(lists) != 1 or lists[0].count('<li class="slice ') != 7 or not lists[0].endswith(REFERENCE_CARD)
+                    or text.count('<li class="slice slice-vr">') != 1):
+                wrong.append(page)
+        if "index.html" not in pages or wrong:
+            failures.append(f"footer: {len(wrong)} of {len(pages)} generated pages do not end a card list of 7 with the "
+                            f"seventh card of specification 7.19, byte for byte: {', '.join(wrong) or 'no home page'}")
+        pinned = tomllib.loads((root / ".baseline/pin.toml").read_text(encoding="utf-8")).get("files", {})
+        if VENDORREPLIES_LOGO not in pinned:
+            failures.append(f"footer: {VENDORREPLIES_LOGO} is not pinned in .baseline/pin.toml")
+    return 1
 
 
 def check_release_flip(failures: list[str]) -> int:
@@ -1222,8 +1279,8 @@ PIN_VERSION = "9.8.7"
 PIN_CHECKSUM = "0123456789abcdef" * 4
 PIN_DATE = "2000-01-02"
 VERIFY_PAGE_PIN = {
-    "placeholder": "c152510bd0fdce4e086d9d9367a393fddb1d819e3a4ca2a14d7ad2aa96b353b5",
-    "published": "467b1c4c26d6c125901dd0d9b80b92baa2bba5a3b1546491bc19363ad5c05cf4",
+    "placeholder": "9ab23193615b67be82e54b361d809683b5d29dea04c2670cb9647c066e6096b7",
+    "published": "eb2d75a29ca16edde89e89eb5b682c9f64ad57fc17b5d3171fa028bf7d36c7a5",
 }
 SITE_CSS_PIN = None
 PIN_PROCEDURE = ("if the change is intended, follow the update procedure at VERIFY_PAGE_PIN in tools/test-build-site.py: "
@@ -1464,6 +1521,7 @@ def check_check_mode(failures: list[str]) -> int:
         ("an old live page left behind", leave("privacy/index.html")),
         ("an old stylesheet left behind", leave("styles.css")),
         ("a staged draft page left behind", leave("draft/install/index.html")),
+        ("the removed draft holding page left behind", leave("draft/index.html")),
     ):
         with tempfile.TemporaryDirectory() as scratch:
             root = make_root(Path(scratch))
@@ -1509,10 +1567,11 @@ def check_promotion_build(failures: list[str]) -> int:
                 failures.append(f"promotion build: the home page lacks {needed!r}")
         if "noindex" in home or "/draft/" in home:
             failures.append("promotion build: the home page still carries draft paths or noindex")
-        for page in ("404.html", "draft/index.html"):
-            text = (out / page).read_text(encoding="utf-8")
-            if '<meta name="robots" content="noindex, nofollow">' not in text or "application/ld+json" in text:
-                failures.append(f"promotion build: {page} must stay noindex without publish metadata")
+        text = (out / "404.html").read_text(encoding="utf-8")
+        if '<meta name="robots" content="noindex, nofollow">' not in text or "application/ld+json" in text:
+            failures.append("promotion build: 404.html must stay noindex without publish metadata")
+        if (out / "draft").exists():
+            failures.append("promotion build: the / build wrote draft/, which the live site no longer carries")
         config = json.loads((root / "site-src/site.json").read_text(encoding="utf-8"))
         for page in sorted(p.relative_to(out).as_posix() for p in out.rglob("*.html")):
             text = (out / page).read_text(encoding="utf-8")
@@ -1522,7 +1581,7 @@ def check_promotion_build(failures: list[str]) -> int:
 
 
 def check_staged_build(failures: list[str]) -> int:
-    """A staging round still builds: every page noindex, nothing linked outside /draft/."""
+    """A staging round on the draft branch still builds: every page noindex, nothing linked outside /draft/."""
     with tempfile.TemporaryDirectory() as scratch:
         root = make_root(Path(scratch))
         staged(root)
@@ -1583,6 +1642,7 @@ def main() -> int:
     ran += check_clean_build(failures)
     ran += check_staged_build(failures)
     ran += check_family_pages(failures)
+    ran += check_footer(failures)
     ran += check_release_flip(failures)
     ran += check_release_placeholder(failures)
     ran += check_release_near_placeholder(failures)
