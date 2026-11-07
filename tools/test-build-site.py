@@ -7,8 +7,14 @@ asserts its exit code, and for the passing cases, what the output contains.
 The first case runs ``--check`` on this repository. The configured base is
 ``/``; the staged cases first set the base to ``/draft/`` and exclude the
 draft's home page from the sitemap, as a staging round on the ``draft`` branch
-would (template 1.11.0: the live site carries no ``/draft/``). Exit 0 when
-every case passes; 1 otherwise, naming each failing case.
+would (template 1.11.0: the live site carries no ``/draft/``). The pin of the
+whole verify page (VERIFY_PAGE_PIN, SITE_CSS_PIN, check_verify_page_pin) and
+its tie to the committed release (check_committed_render) instead load the
+generator in this process and take that page from verify_page(), which runs
+the whole build() and writes nothing, so a fault that makes the generator
+refuse any page fails these cases too; the pin's comment
+names how to update it. Exit 0 when every case passes; 1 otherwise, naming
+each failing case.
 """
 
 from __future__ import annotations
@@ -559,6 +565,9 @@ SOURCE_REFUSALS = [
     ("a p.value whose nearest region is a section", lambda root: (
         edit(root, HOME, VALUE_REGION, '<section class="region" id="what-it-fixes">'),
         edit(root, HOME, VALUE_END, VALUE_END[:-len("</div>")] + "</section>")), REGION_RULE),
+    # A checksum close to the placeholder read from release.json is reported as its own.
+    ("release.json checksum close to the zero placeholder", lambda root: set_release(root, checksum="0" * 63 + "1"),
+        "site-src/release.json checksum " + "0" * 63 + "1 is not the zero placeholder but has 63 of its 64 digits 0"),
 ]
 
 
@@ -1199,7 +1208,304 @@ def check_release_flip(failures: list[str]) -> int:
         for needed in ("zip, version 9.8.7", "for example <code>cleanlanguage-9.8.7.zip</code>"):
             if needed not in install:
                 failures.append(f"release flip: install page lacks {needed!r}")
+        if "appears here once" in verify:
+            failures.append("release flip: the verify page with a published checksum says it is not yet published")
     return 1
+
+
+def check_release_placeholder(failures: list[str]) -> int:
+    """While release.json holds the zero placeholder, the verify page calls no value the published checksum."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch))
+        skill = root / "cleanlanguage/skills/cleanlanguage/SKILL.md"
+        text = skill.read_text(encoding="utf-8")
+        skill.write_text(re.sub(r"^Version: [0-9.]+", "Version: 9.8.7", text, count=1, flags=re.M), encoding="utf-8")
+        set_release(root, version="9.8.7", tag="v9.8.7", checksum="0" * 64)
+        out = Path(scratch) / "out"
+        result = run(root, "--out", str(out))
+        if result.returncode != 0:
+            failures.append(f"release placeholder: exit {result.returncode}: {result.stderr.strip()}")
+            return 1
+        verify = (out / "verify/index.html").read_text(encoding="utf-8")
+        for needed in ("<p>The checksum for version 9.8.7 appears here once that version is published; compare the "
+                       "checksum of your file with it then.</p>",
+                       '<p class="lbl size">zip, version 9.8.7</p>', "sha256sum cleanlanguage-9.8.7.zip"):
+            if needed not in verify:
+                failures.append(f"release placeholder: verify page lacks {needed!r}")
+        for gone in ("published checksum", 'id="published-checksum"', "0" * 64, ".zip.sha256", "Step 3",
+                     "do not install the file"):
+            if gone.lower() in verify.lower():
+                failures.append(f"release placeholder: verify page still carries {gone!r}")
+    return 1
+
+
+def check_release_near_placeholder(failures: list[str]) -> int:
+    """load_release() refuses a checksum other than the zero placeholder with 56 or more of its 64
+    digits 0, such as a mistyped placeholder, and accepts the placeholder, 55 digits 0 and a real-looking checksum."""
+    generator = load_module(GENERATOR)
+    cases = (("0" * 63 + "1", True), ("0" * 56 + "89abcdef", True), ("0" * 64, False), ("0" * 55 + "123456789", False),
+             ("1234abcd" * 8, False))
+    for checksum, refused in cases:
+        release = {"version": "9.8.7", "tag": "v9.8.7", "checksum": checksum}
+        try:
+            tokens = generator.load_release(REPO_ROOT, release, any_version=True)
+        except generator.BuildError as error:
+            # The checksum is the override's, so the report does not name release.json.
+            if not refused or not str(error).startswith(f"the checksum {checksum} is not the zero placeholder but has"):
+                failures.append(f"release near placeholder: {checksum} refused: {error}")
+            continue
+        if refused or tokens["release.checksum"] != checksum:
+            failures.append(f"release near placeholder: {checksum} accepted, expected the refusal" if refused else
+                            f"release near placeholder: {checksum} gave the checksum {tokens['release.checksum']}")
+    return len(cases)
+
+
+# The pin of the whole verify page: the sha256 of each state's rendering by
+# verify_page() of the whole site/verify/index.html, for the stand-in release PIN_VERSION (tag v PIN_VERSION) with the
+# zero placeholder and with PIN_CHECKSUM, and PIN_DATE as every page's modified date, each as rendered, with nothing
+# normalized, so a source that writes {tag}, {version} or another placeholder where the
+# generator writes a release value changes the digest. Both gates hold the committed page to what the generator
+# renders, so any change to the page, in
+# site-src/pages/verify.html, in the generator code that renders it, or in what its head loads (the stylesheet and
+# script links with their ?v= tokens, which carry the baseline version, and any inline script), would become what
+# they require; it fails here instead until the pin is updated on purpose. A site-owned stylesheet changes the render
+# by its link, and SITE_CSS_PIN pins its content: the sha256 of site-src/assets/site.css, or None while the site has
+# none. To update the pin: read the rendering that the failure prints for each state, confirm that every sentence of
+# the page says what the release needs and that no markup, script or stylesheet hides or contradicts a part of it
+# (for a new baseline version, read what changed in the files the page loads), replace that state's digest below with
+# the one the failure prints, in the same commit as the change, and name the update and the reason for it in the pull
+# request description. Update SITE_CSS_PIN the same way, after reading every rule of the stylesheet. The page both
+# gates require, the render for the committed release values at the committed dates, must be the pinned rendering of
+# the same state with the stand-in values replaced (committed_render_problems()).
+PIN_VERSION = "9.8.7"
+PIN_CHECKSUM = "0123456789abcdef" * 4
+PIN_DATE = "2000-01-02"
+VERIFY_PAGE_PIN = {
+    "placeholder": "9ab23193615b67be82e54b361d809683b5d29dea04c2670cb9647c066e6096b7",
+    "published": "eb2d75a29ca16edde89e89eb5b682c9f64ad57fc17b5d3171fa028bf7d36c7a5",
+}
+SITE_CSS_PIN = None
+PIN_PROCEDURE = ("if the change is intended, follow the update procedure at VERIFY_PAGE_PIN in tools/test-build-site.py: "
+                 "read the rendering, confirm that no part of the page is hidden or contradicted, set the digest in "
+                 "the same commit and name the update in the pull request description")
+
+
+def verify_render(module, root: Path, checksum: str) -> str:
+    """The whole verify page as ``module`` renders it from ``root`` for the stand-in release and PIN_DATE, as rendered:
+    the pin hashes these bytes, and a failure prints them. A stand-in value copied from them in place of the token that
+    renders it, such as cleanlanguage-9.8.7.zip for {{release.zip_name}}, renders the same bytes and matches the pin.
+    stand_in_problems() refuses the stand-in values in site-src/pages/verify.html, the only source of the release tokens
+    on this page; written in the generator, a stand-in value is a change that renders differently only for other
+    release values, which committed_render_problems() refuses for the committed release values."""
+    release = {"version": PIN_VERSION, "tag": f"v{PIN_VERSION}", "checksum": checksum}
+    return module.verify_page(root, release, PIN_DATE).decode("utf-8")
+
+
+# The stand-in values, which a correct site-src/pages/verify.html never carries; it writes
+# a release token wherever the page shows a release value.
+STAND_IN_VALUES = (PIN_VERSION, f"v{PIN_VERSION}", PIN_DATE, PIN_CHECKSUM)
+
+
+def stand_in_problems(root: Path) -> list[str]:
+    """Each stand-in value that site-src/pages/verify.html under ``root`` carries: written in place of a release token,
+    it renders the bytes the pin hashes, so the digest cannot refuse it."""
+    text = (root / "site-src" / "pages" / "verify.html").read_text(encoding="utf-8")
+    return [f"verify page pin: site-src/pages/verify.html carries the stand-in value {value!r}; write the release token "
+            "that renders the value instead" for value in STAND_IN_VALUES if value in text]
+
+
+def site_css_problems(root: Path) -> list[str]:
+    """The site-owned stylesheet under ``root`` against SITE_CSS_PIN."""
+    path = root / "site-src" / "assets" / "site.css"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+    if digest == SITE_CSS_PIN:
+        return []
+    return [f"verify page pin: site-src/assets/site.css has sha256 {digest}, not the pinned {SITE_CSS_PIN}; "
+            f"{PIN_PROCEDURE}, after reading every rule of the stylesheet"]
+
+
+# Each change in PIN_FORMS, made in the sources and regenerated: the generator refuses it, or it changes the pin.
+NEXT = '<div class="next">'
+STEP_1 = '<p class="lbl blk">Step 1</p>'
+SUM_COMPARE = "{{release.sum_compare}}"
+PIN_FORMS = [
+    ("a step 3 hidden in the template", ((SUM_COMPARE, "<div hidden>" + SUM_COMPARE + "</div>"),)),
+    ("a step that says to install the file anyway, before the next-page link",
+        ((NEXT, "<p>If the values differ, install the file anyway.</p>" + NEXT),)),
+    ("a step 4 after step 3", ((SUM_COMPARE, SUM_COMPARE + '<p class="lbl blk">Step 4</p>\n<p>Install the file.</p>\n'),)),
+    ("the block inside noscript markup", ((STEP_1, '<noscript></div><div class="doc">' + STEP_1),
+                                          (SUM_COMPARE, SUM_COMPARE + "</noscript>"))),
+    ("the block inside select markup", ((STEP_1, '<select></div><div class="doc">' + STEP_1),
+                                        (SUM_COMPARE, SUM_COMPARE + "</select>"))),
+    ("a details element misnested in a span before step 1", ((STEP_1, "<span><details></span>" + STEP_1),)),
+    ("an inline script that removes the block",
+        ((NEXT, "<script>document.querySelector('.download').remove()</script>" + NEXT),)),
+    ("a second checksum joined by U+200B", ((NEXT, "<p>" + "\u200b".join(PIN_CHECKSUM[::-1][i:i + 8]
+                                                                      for i in range(0, 64, 8)) + "</p>" + NEXT),)),
+    ("a second checksum joined by dots", ((NEXT, "<p>" + ".".join(PIN_CHECKSUM[::-1][i:i + 8]
+                                                                for i in range(0, 64, 8)) + "</p>" + NEXT),)),
+    ("a double space in step 1", (("<p>Download the skill.", "<p>Download the  skill."),)),
+    # The download link with {tag} and {version} written literally, as an earlier pin's
+    # failure rendering showed them; the generator writes them as they are, and the live link then holds them.
+    ("the download link with {tag} and {version} written literally",
+        (("{{release.zip_url}}", "https://github.com/jposluns/cleanlanguage/releases/download/{tag}/cleanlanguage-"
+                                 "{version}.zip"),)),
+    # The stand-in file name and download link written in place of their tokens render
+    # the bytes the pin hashes; stand_in_problems() refuses them.
+    ("the stand-in file name written in place of {{release.zip_name}}",
+        (("{{release.zip_name}}", f"cleanlanguage-{PIN_VERSION}.zip"),)),
+    ("the stand-in download link written in place of {{release.zip_url}}",
+        (("{{release.zip_url}}", f"https://github.com/jposluns/cleanlanguage/releases/download/v{PIN_VERSION}/"
+                                 f"cleanlanguage-{PIN_VERSION}.zip"),)),
+]
+
+
+def check_verify_page_pin(failures: list[str]) -> int:
+    """The verify page pin: the whole page renders to the pinned digest in each state, the site-owned stylesheet is
+    the pinned one, site-src/pages/verify.html carries no stand-in value, each stand-in value written there is
+    refused, and each change it makes (PIN_FORMS, a generator whose step 3 says to install the file anyway,
+    and a site-owned stylesheet that hides the document) is refused by the generator or stand_in_problems(), or
+    changes the digest."""
+    module = load_module(GENERATOR)
+    states = (("placeholder", module.PLACEHOLDER_CHECKSUM), ("published", PIN_CHECKSUM))
+    for state, checksum in states:
+        rendered = verify_render(module, REPO_ROOT, checksum)
+        digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
+        if any(value not in rendered for value in (PIN_VERSION, f"v{PIN_VERSION}", PIN_DATE)) or (
+                (state == "published") != (PIN_CHECKSUM in rendered)):
+            failures.append(f"verify page pin, {state}: a stand-in value is not in the rendering")
+        if digest != VERIFY_PAGE_PIN[state]:
+            failures.append(f"verify page pin, {state}: the whole page renders to sha256 {digest}, not the pinned "
+                            f"{VERIFY_PAGE_PIN[state]}; {PIN_PROCEDURE}. The rendering:\n{rendered}")
+    failures += site_css_problems(REPO_ROOT)
+    failures += stand_in_problems(REPO_ROOT)
+    ran = 4
+    with tempfile.TemporaryDirectory() as scratch:
+        root = make_root(Path(scratch) / "stand-in")
+        for value in STAND_IN_VALUES:
+            ran += 1
+            edit(root, "site-src/pages/verify.html", NEXT, f"<p>{value}</p>" + NEXT)
+            if not any(repr(value) in problem for problem in stand_in_problems(root)):
+                failures.append(f"verify page pin: the stand-in value {value!r} written in site-src/pages/verify.html "
+                                "is not refused")
+            edit(root, "site-src/pages/verify.html", f"<p>{value}</p>" + NEXT, NEXT)
+        tools = Path(scratch) / "tools"
+        tools.mkdir()
+        changed = GENERATOR.read_text(encoding="utf-8").replace("do not install the file and ", "install the file anyway and ")
+        if changed == GENERATOR.read_text(encoding="utf-8"):
+            failures.append("verify page pin: the generator's step 3 no longer says not to install the file")
+        (tools / "build-site.py").write_text(changed, encoding="utf-8")
+        cases = [("a generator whose step 3 says to install the file anyway", load_module(tools / "build-site.py"),
+                  REPO_ROOT)]
+        for label, edits in PIN_FORMS:
+            root = make_root(Path(scratch) / label.replace(" ", "-"))
+            try:
+                for old, new in edits:
+                    edit(root, "site-src/pages/verify.html", old, new)
+            except AssertionError as error:
+                # The source no longer holds what the form edits, so the form cannot be made: a failure, not a crash.
+                failures.append(f"verify page pin: {label} cannot be made in the sources: {error}")
+                continue
+            cases.append((label, module, root))
+        root = make_root(Path(scratch) / "site-css")
+        (root / "site-src" / "assets").mkdir(parents=True, exist_ok=True)
+        (root / "site-src" / "assets" / "site.css").write_text(".doc { display: none; }\n", encoding="utf-8")
+        cases.append(("a site-owned stylesheet that hides the document", module, root))
+        if not site_css_problems(root):
+            failures.append("verify page pin: a site-owned stylesheet that hides the document keeps SITE_CSS_PIN")
+        for label, generator, source in cases:
+            ran += 1
+            if stand_in_problems(source):
+                continue
+            try:
+                rendered = verify_render(generator, source, PIN_CHECKSUM)
+            except (generator.BuildError, generator.Unreadable):
+                continue
+            if hashlib.sha256(rendered.encode("utf-8")).hexdigest() == VERIFY_PAGE_PIN["published"]:
+                failures.append(f"verify page pin: {label} keeps the pinned digest")
+    return ran
+
+
+# The offline gate compares the committed page with the render for the committed
+# release values at the committed dates, and the live gate with the render at those dates for the values the page
+# shows, which are the committed ones on a page the offline gate passes; so that render must be the pinned stand-in
+# rendering of the same state with the stand-in values replaced. The pin and this comparison render the verify page
+# for 4 sets of release values and date: the stand-in release in each state at PIN_DATE, the committed state at the
+# committed dates, and, in check_committed_render(), the committed version with the checksum "a" * 64 and the verify
+# page's modified date 2099-12-31. A generator change that renders differently for one of these sets fails here; one
+# that renders differently only for other sets passes the pin and this comparison, until the committed release.json
+# and the verify page's modified date become a set it renders differently for.
+def committed_render_problems(module, root: Path) -> list[str]:
+    """The verify page as ``module`` renders it from ``root`` for its site-src/release.json at the modified dates in
+    its site-src/site.json, the page both gates require, against the stand-in rendering of the same state, which must
+    have the pinned digest, with PIN_CHECKSUM, PIN_VERSION and PIN_DATE replaced by that checksum, that version and
+    the verify page's modified date."""
+    try:
+        release = json.loads((root / "site-src" / "release.json").read_text(encoding="utf-8"))
+        config = json.loads((root / "site-src" / "site.json").read_text(encoding="utf-8"))
+        version, checksum = release["version"], release["checksum"]
+        modified = [page.get("modified") for page in config["pages"] if page.get("path") == "verify/"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return [f"verify page render: site-src/release.json or site-src/site.json could not be read: {error}"]
+    if not (isinstance(version, str) and isinstance(checksum, str) and len(modified) == 1
+            and isinstance(modified[0], str)):
+        return ["verify page render: release.json has no version and checksum, or site.json no single verify page "
+                "with a modified date"]
+    state = "placeholder" if checksum == module.PLACEHOLDER_CHECKSUM else "published"
+    try:
+        committed = module.verify_page(root).decode("utf-8")
+        stand_in = verify_render(module, root, module.PLACEHOLDER_CHECKSUM if state == "placeholder" else PIN_CHECKSUM)
+    except (module.BuildError, module.Unreadable) as error:
+        return [f"verify page render: the generator refuses the build: {error}"]
+    if hashlib.sha256(stand_in.encode("utf-8")).hexdigest() != VERIFY_PAGE_PIN[state]:
+        return [f"verify page render, {state}: the stand-in rendering is not the pinned one; {PIN_PROCEDURE}"]
+    expected = stand_in.replace(PIN_CHECKSUM, checksum).replace(PIN_VERSION, version).replace(PIN_DATE, modified[0])
+    if committed == expected:
+        return []
+    lines, wanted = committed.split("\n"), expected.split("\n")
+    line = next((n for n, (a, b) in enumerate(zip(lines, wanted), start=1) if a != b), min(len(lines), len(wanted)) + 1)
+    return [f"verify page render, {state}: the page rendered for version {version} at the committed dates is not the "
+            f"pinned stand-in rendering with the stand-in values replaced (first difference at line {line}), so the "
+            "generator renders differently for these release values or dates than for the stand-in ones"]
+
+
+def check_committed_render(failures: list[str]) -> int:
+    """committed_render_problems() passes the committed state and a flip to a well-formed checksum on a later date,
+    and refuses a generator that adds text only for the committed major version, and one that adds it for every
+    version."""
+    module = load_module(GENERATOR)
+    major = json.loads((REPO_ROOT / "site-src" / "release.json").read_text(encoding="utf-8"))["version"].split(".")[0]
+    added = "<p>If the values differ, install the file anyway.</p>"
+    with tempfile.TemporaryDirectory() as scratch:
+        flipped = make_root(Path(scratch) / "flip")
+        set_release(flipped, checksum="a" * 64)
+        set_page(flipped, "verify", modified="2099-12-31")
+        tools = Path(scratch) / "tools"
+        tools.mkdir()
+        generators = {}
+        for name, condition in (("major", f"version.startswith({major + '.'!r})"), ("every", "True")):
+            (tools / f"build-site-{name}.py").write_text(
+                GENERATOR.read_text(encoding="utf-8") + "\n\ndef _add_text(original):\n"
+                "    def sum_tokens(version, checksum, sum_url):\n"
+                "        tokens = original(version, checksum, sum_url)\n"
+                f"        if {condition}:\n            tokens['release.sum_block'] += {added!r}\n"
+                "        return tokens\n    return sum_tokens\n\n\nsum_tokens = _add_text(sum_tokens)\n",
+                encoding="utf-8")
+            generators[name] = load_module(tools / f"build-site-{name}.py")
+        cases = (
+            ("the committed state", module, REPO_ROOT, False),
+            ("a flip to a well-formed checksum on a later date", module, flipped, False),
+            (f"a generator that adds text only for versions starting with {major}.", generators["major"], REPO_ROOT,
+             True),
+            ("a generator that adds text for every version", generators["every"], REPO_ROOT, True),
+        )
+        for label, generator, root, refused in cases:
+            problems = committed_render_problems(generator, root)
+            if refused and not problems:
+                failures.append(f"verify page render: {label} is not refused")
+            elif not refused and problems:
+                failures.append(f"verify page render: {label} is refused: {problems}")
+    return len(cases)
 
 
 def check_check_mode(failures: list[str]) -> int:
@@ -1340,6 +1646,10 @@ def main() -> int:
     ran += check_family_pages(failures)
     ran += check_footer(failures)
     ran += check_release_flip(failures)
+    ran += check_release_placeholder(failures)
+    ran += check_release_near_placeholder(failures)
+    ran += check_verify_page_pin(failures)
+    ran += check_committed_render(failures)
     ran += check_check_mode(failures)
     ran += check_promotion_build(failures)
     if failures:

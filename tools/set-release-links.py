@@ -41,7 +41,10 @@ Usage
     tools/set-release-links.py --version 1.0.12 --checksum <sha256> --date 2026-09-01
 
 ``--tag`` defaults to ``v<version>``. ``--check`` reports what would change and
-exits non-zero if anything would, without writing.
+exits non-zero if anything would, without writing. ``--checksum`` is the zero
+placeholder until the release is published, and the published checksum after
+that; a checksum other than the placeholder with 56 or more of its 64 digits 0,
+such as a mistyped placeholder, is refused (exit 2).
 """
 
 from __future__ import annotations
@@ -59,6 +62,11 @@ SITE = REPO_ROOT / "site"
 REPO_SLUG = "jposluns/cleanlanguage"
 
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
+# The zero placeholder a version bump passes until the release is published. A checksum other than it with at least
+# NEAR_PLACEHOLDER_ZEROS 0 digits of its 64, such as a mistyped placeholder, is refused, as tools/build-site.py
+# and tools/check-release-links.py refuse it; a real SHA-256 has that many with a probability of about 10^-58.
+PLACEHOLDER = "0" * 64
+NEAR_PLACEHOLDER_ZEROS = 56
 
 
 def die(message: str) -> None:
@@ -165,6 +173,12 @@ def main() -> int:
     checksum = args.checksum.strip().split()[0] if args.checksum.strip() else ""
     if not SHA256.match(checksum):
         die(f"{args.checksum!r} is not a 64 character lower-case SHA-256")
+    if checksum != PLACEHOLDER and checksum.count("0") >= NEAR_PLACEHOLDER_ZEROS:
+        die(
+            f"{checksum} is not the zero placeholder but has {checksum.count('0')} of its 64 digits 0, such as "
+            "a mistyped placeholder; pass the zero placeholder until the release is published, and the "
+            "published release checksum after that"
+        )
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", args.date):
         die(f"{args.date!r} is not a YYYY-MM-DD date")
     try:
