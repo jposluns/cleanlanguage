@@ -73,7 +73,9 @@ Behaviour:
     any release is read, as does a generator that cannot render the block or,
     for any reason it refuses a build, the page. A page that passes is the
     render, so it shows the checksum it was read by in its checksum element,
-    and the comparison below holds that checksum to the published one.
+    or the note for the zero placeholder; when the gate can read the
+    published release's assets, the comparison below holds that checksum,
+    or the placeholder, to the published one.
   - The equality holds the page to the generator, not the generator to what
     it should write. A change to ``site-src/pages/verify.html``, to the
     generator code that renders the page, or to what its head loads, made in
