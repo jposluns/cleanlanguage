@@ -1534,9 +1534,9 @@ class PageScan(HTMLParser):
     (region_problem()) and where each of its class names sits (region_class_problem()), each start tag's class names
     with where it and its open elements start (stray_class()), where the page's body starts, each element with its
     parent and what came before it there, for the placement pins and rail_pin(), each h2 with an id and its text,
-    for rail(), and the hero's narrow-width order, for labels(). It is the one parse that every page source rule
-    reads, except 3 reads of the source text itself: the grammar (source_problem()), bidi_control() and
-    rail_pin()'s count of <!--rail-->. An element's
+    for rail(), and the hero's narrow-width order, for labels(). It is not the only read of a page source: some rules
+    read the source text itself, such as the grammar (source_problem()) and bidi_control(), and the module docstring
+    describes reads of that kind. An element's
     attributes are the first of each repeated name, as a browser and tools/check-install-page.py's PageParser
     read them. validate() also pins the markup from <body> to the end of header.mast, and the landing
     page's About block; --check compares the committed pages with a build that passed it. With scripting False
@@ -2240,10 +2240,11 @@ def with_about(content: str, page: dict, base: str, logo_alt: str | None = None)
     then any source with a class of PLACED_CLASSES outside its pinned place, a second section.hero, an element of
     PLACED_CHILDREN with text or children outside their pinned order, a data-copy attribute outside the committed copy
     button (COPY_BUTTON_PIN), or a hero image whose alt text is not logo_alt, site.json's, which
-    build() passes; without it, any hero image is refused (placement_pin()). bidi_control() reads every character
-    of the source, with its character references decoded; each other rule after the grammar reads 1 PageScan of the
-    source, and the label rule also a second, read with scripting off (scripting_off()). The About block goes where
-    the parser read the region's end tag end (end_tag_end())."""
+    build() passes; without it, any hero image is refused (placement_pin()). The rules here that read a parse share 1
+    PageScan of the source, and the label rule reads a second, with scripting off (scripting_off()). Other reads are
+    of the source text itself, such as the grammar's, bidi_control()'s (every character, with its character
+    references decoded) and end_tag_end()'s, which finds where the parser read the region's end tag end; the About
+    block goes there."""
     where = page["source"]
     problem = source_problem(content)
     if problem is not None:
