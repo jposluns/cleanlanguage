@@ -11,15 +11,25 @@ name: Link check
 # labelled with that version. The site links straight at release assets, so the
 # version lives in the pages and goes stale on every release. A stale link still
 # returns a file, just the wrong one, which no other check would notice.
+#
+# The second check also holds the verify page to the page tools/build-site.py
+# renders, so the paths below include every input of the generator and the
+# generator itself: site-src/**, .baseline/pin.toml, tools/sitemap-config.json,
+# tools/check-install-page.py (whose hiding reader the generator applies),
+# tools/build-site.py, and the files under site/ and the Markdown it reads.
 
 on:
   pull_request:
     paths:
       - "site/**"
-      - "site-src/release.json"
+      - "site-src/**"
       - "*.md"
       - ".claude/**/*.md"
       - "cleanlanguage/**/*.md"
+      - ".baseline/pin.toml"
+      - "tools/build-site.py"
+      - "tools/check-install-page.py"
+      - "tools/sitemap-config.json"
       - "tools/check-links.py"
       - "tools/check-release-links.py"
       - "tools/set-release-links.py"
@@ -30,10 +40,14 @@ on:
       - main
     paths:
       - "site/**"
-      - "site-src/release.json"
+      - "site-src/**"
       - "*.md"
       - ".claude/**/*.md"
       - "cleanlanguage/**/*.md"
+      - ".baseline/pin.toml"
+      - "tools/build-site.py"
+      - "tools/check-install-page.py"
+      - "tools/sitemap-config.json"
       - "tools/check-links.py"
       - "tools/check-release-links.py"
       - "tools/set-release-links.py"

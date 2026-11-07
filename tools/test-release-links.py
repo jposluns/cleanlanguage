@@ -8,7 +8,12 @@ fail-closed reads of scanned site files, ``site/_redirects``, and the verify
 page (which build a small site fixture). They also pin the bare file-name
 rule on both sides: the gate fails on a stale version-named file name outside a
 URL, and the writer, which regenerates the pages with tools/build-site.py,
-writes the new names on the install page as well as the verify page. They run
+writes the new names on the install page as well as the verify page. They pin
+the verify page's 2 states (a published checksum, or the zero placeholder with
+the not-yet-published note), each held to the download block tools/build-site.py
+renders for it (the verify page fixtures carry that block), the refusal of a page
+that mixes them, hides or moves the block, and the writer's round trip from the
+placeholder to a published checksum. They run
 offline with the standard library: the fixtures patch each module's file paths,
 and the writer tests run it on a copy of the generator's inputs under $TMPDIR.
 """
@@ -41,11 +46,53 @@ writer_spec.loader.exec_module(writer)
 SUM = "2b57d83fcbe567d5d617a8d2416770e5a832002aa5f01e196ef6d1bcd12f1336"
 URL = "https://github.com/jposluns/cleanlanguage/releases/download/v{v}/cleanlanguage-{v}.zip"
 INSTALL = '<a href="' + URL + '">cleanlanguage-{v}.zip</a><p class="lbl size">zip, version {v}</p><p>for example <code>cleanlanguage-{v}.zip</code></p>'
-VERIFY = (
-    '<a href="' + URL + '">cleanlanguage-{v}.zip</a><p class="lbl size">zip, version {v}, SHA-256</p>'
-    '<p>The published checksum for version {v} is:</p><code class="sum" id="published-checksum">{sum}</code>'
-    '<pre>sha256sum cleanlanguage-{v}.zip</pre>'
-)
+ZEROS = "0" * 64
+OTHER = "0123456789abcdef" * 4
+
+
+def verify_page(v: str, checksum: str) -> str:
+    """A verify page laid out as tools/build-site.py writes it: the download block the generator renders for ``v``
+    and ``checksum`` (the gate's download_block), inside the elements build() writes around it (BLOCK_ANCESTORS)."""
+    return ('<!doctype html>\n<html lang="en" class="site-cleanlanguage">\n<head><title>Verify</title></head>\n<body>\n'
+            '<main id="main-content">\n<div class="wrap"><div class="doc"><h1>Verify your download</h1>\n'
+            + gate.download_block(v, checksum) + '<div class="next"></div></div></div>\n</main>\n</body>\n</html>\n')
+
+
+class Page:
+    """A verify page in 1 state, written with format as the fixtures were: VERIFY.format(v=..., sum=...) for a
+    published checksum, PENDING.format(v=...) for the zero placeholder."""
+
+    def __init__(self, checksum: str | None = None) -> None:
+        self.checksum = checksum
+
+    def format(self, v: str, sum: str | None = None) -> str:
+        return verify_page(v, self.checksum or sum)
+
+
+VERIFY = Page()
+PENDING = Page(ZEROS)
+# The parts of the published state's download block, each as the generator writes it.
+LEAD = '<p>Download the skill. The published checksum is shown under the link.</p>'
+SUM_LINK = ('<a href="' + URL + '.sha256" target="_blank" rel="noopener noreferrer">published checksum file'
+            '<span class="vh"> (opens in a new tab)</span></a>')
+STEP_3 = '<p class="lbl blk">Step 3</p>\n'
+REJECT = "If the values still differ after a fresh download, do not install the file and "
+CODE = '<code class="sum" id="published-checksum">{sum}</code>'
+NOTE = ("<p>The checksum for version {v} appears here once that version is published; compare the checksum of your "
+        "file with it then.</p>")
+
+
+def outside(page: str, extra: str) -> str:
+    """``page`` with ``extra`` after the download block, inside main."""
+    return page.replace('<div class="next">', extra + '<div class="next">', 1)
+
+
+def fixture_render() -> bytes:
+    """The fixtures' stand-in for the whole page tools/build-site.py renders (the gate's rendered_verify_page): the
+    fixture verify page for the version and checksum in the fixture's release.json. WholePageTest runs the real
+    generator on a copy of its inputs."""
+    release = json.loads(gate.RELEASE_JSON.read_text(encoding="utf-8"))
+    return verify_page(release["version"], release["checksum"]).encode("utf-8")
 
 
 class ReleaseSourceTest(unittest.TestCase):
@@ -55,7 +102,8 @@ class ReleaseSourceTest(unittest.TestCase):
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        self._saved = {name: getattr(gate, name) for name in self.NAMES}
+        self._saved = {name: getattr(gate, name) for name in (*self.NAMES, "rendered_verify_page")}
+        gate.rendered_verify_page = fixture_render
         root = Path(self._tmp.name)
         site = root / "site"
         gate.REPO_ROOT = root
@@ -66,7 +114,8 @@ class ReleaseSourceTest(unittest.TestCase):
         gate.VERIFY_PAGE = site / "verify" / "index.html"
         gate.RELEASE_JSON = root / "site-src" / "release.json"
         self.write(gate.SKILL, "Version: 1.0.14\n")
-        self.write(gate.REDIRECTS, "/download " + URL.format(v="1.0.14") + " 302\n")
+        self.write(gate.REDIRECTS, "/download " + URL.format(v="1.0.14") + " 302\n"
+                   + "/download/checksum " + URL.format(v="1.0.14") + ".sha256 302\n")
         self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % SUM)
         self.write(gate.INSTALL_PAGE, INSTALL.format(v="1.0.14"))
         self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM))
@@ -106,6 +155,35 @@ class ReleaseSourceTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("site/verify/index.html shows a checksum other than site-src/release.json", output)
 
+    def test_a_checksum_close_to_the_placeholder_fails(self):
+        # A checksum other than the zero placeholder with 56 or more of its 64 digits 0, such as a
+        # mistyped placeholder, fails check 7, and the page is not rendered (the generator refuses it). A checksum with
+        # 55 digits 0, and one that looks real, still pass.
+        def refuse() -> bytes:
+            raise AssertionError("rendered for a checksum close to the zero placeholder")
+
+        for checksum, expected in (("0" * 63 + "1", 1), ("0" * 56 + "89abcdef", 1), ("0" * 55 + "123456789", 0),
+                                   ("1234abcd" * 8, 0)):
+            with self.subTest(checksum):
+                gate.rendered_verify_page = refuse if expected else fixture_render
+                self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % checksum)
+                self.write(gate.VERIFY_PAGE, verify_page("1.0.14", checksum))
+                code, output = self.run_gate()
+                self.assertEqual(code, expected, output)
+                report = f"site-src/release.json holds {checksum}, which is not the zero placeholder but has "
+                if expected:
+                    self.assertIn(report + f"{checksum.count('0')} of its 64 digits 0, such as a mistyped placeholder; "
+                                  "until release v1.0.14 is published, run tools/set-release-links.py with the zero "
+                                  "placeholder", output)
+                    # The closing advice is the placeholder's, as the report says.
+                    self.assertIn("site-src/release.json holds a checksum close to the zero placeholder. Until release "
+                                  "v1.0.14 is published, run tools/set-release-links.py for version 1.0.14 with the "
+                                  "zero placeholder", output)
+                    self.assertNotIn("Flip the site with tools/set-release-links.py using the published", output)
+                    self.assertNotIn("holds the zero placeholder of a version bump", output)
+                else:
+                    self.assertNotIn(report, output)
+
     def test_install_keeps_an_old_filename(self):
         # The known version-text issue: a bare filename left at the old version.
         self.write(gate.INSTALL_PAGE, INSTALL.format(v="1.0.14").replace("<code>cleanlanguage-1.0.14.zip", "<code>cleanlanguage-1.0.13.zip"))
@@ -125,11 +203,62 @@ class ReleaseSourceTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("site/install/index.html names no release version", output)
 
+    # The reports of the verify page rule (download_block_problems), and the end of each in either state.
+    BLOCK = "site/verify/index.html does not carry the download block that tools/build-site.py writes for this state"
+    PLACED = "site/verify/index.html does not carry the download block where tools/build-site.py writes it"
+    HOLDS = ", but site-src/release.json holds the zero placeholder"
+    SHOWS = ", but site-src/release.json holds a published checksum"
+    # The report of the gate itself, whole-page equality with the page tools/build-site.py renders.
+    EQUAL = "site/verify/index.html is not the page tools/build-site.py renders for it from the committed sources"
+
+    def test_any_other_page_fails_by_whole_page_equality(self):
+        # Whatever the rule reads or misses, a page that is not the
+        # generator's render fails, each with the same report, in either state.
+        for checksum, state in ((SUM, "holds a published checksum"), (ZEROS, "holds the zero placeholder")):
+            page = verify_page("1.0.14", checksum)
+            for label, changed in (
+                ("a contradicting step 3", outside(page, "<p>Correction to step 3: if the two values match, delete "
+                                                         "the file.</p>")),
+                ("a reworded step 3", outside(page, "<p>Never install the file when the values match.</p>")),
+                ("a character added at the end", page + " "),
+                ("a carriage return", page.replace("\n", "\r\n", 1)),
+                ("the html attributes in another order",
+                 page.replace('<html lang="en" class="site-cleanlanguage">', '<html class="site-cleanlanguage" lang="en">')),
+            ):
+                with self.subTest(f"{label}, {state}"):
+                    self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % checksum)
+                    gate.VERIFY_PAGE.write_bytes(changed.encode("utf-8"))
+                    code, output = self.run_gate()
+                    self.assertEqual(code, 1, output)
+                    self.assertIn(f"{self.EQUAL}, while site-src/release.json {state} (", output)
+                    self.assertIn("; run tools/build-site.py", output)
+
+    def test_the_render_is_read_only_for_a_release_json_that_agrees_with_skill_md(self):
+        # The generator refuses such a release.json, so the gate reports it as before and does not render.
+        def refuse() -> bytes:
+            raise AssertionError("rendered for a release.json that disagrees with SKILL.md")
+
+        gate.rendered_verify_page = refuse
+        self.write(gate.RELEASE_JSON, '{"version": "1.0.13", "tag": "v1.0.13", "checksum": "%s"}' % SUM)
+        code, output = self.run_gate()
+        self.assertEqual(code, 1, output)
+        self.assertIn("release.json names version '1.0.13', but SKILL.md says 1.0.14", output)
+
+    def test_a_render_that_fails_stops_the_gate(self):
+        def fail() -> bytes:
+            raise LookupError("tools/build-site.py could not render the verify page: refused")
+
+        gate.rendered_verify_page = fail
+        code, output = self.run_gate()
+        self.assertEqual(code, 3)
+        self.assertIn("check-release-links: tools/build-site.py could not render the verify page: refused", output)
+
     def test_verify_checksum_differs(self):
         self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum="d" * 64))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
         self.assertIn("checksum other than", output)
+        self.assertIn(self.BLOCK, output)
 
     def test_checksum_element_with_another_attribute_fails(self):
         # The element must be exactly the one the generator writes; no other attribute, such as hidden, passes.
@@ -138,7 +267,7 @@ class ReleaseSourceTest(unittest.TestCase):
         code, output = self.run_gate()
         self.assertEqual(code, 1)
         self.assertIn('the verify page has no <code class="sum" id="published-checksum"> block', output)
-        self.assertIn("must show exactly 1", output)
+        self.assertIn(self.BLOCK, output)
 
     def test_the_old_checksum_element_fails(self):
         # The element of the pages retired at promotion no longer passes.
@@ -146,20 +275,278 @@ class ReleaseSourceTest(unittest.TestCase):
             '<code class="sum" id="published-checksum">', '<code id="published-checksum">'))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
-        self.assertIn("must show exactly 1", output)
+        self.assertIn(self.BLOCK, output)
 
     def test_a_second_checksum_element_fails(self):
-        self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM)
-                   + '<code class="sum" id="published-checksum">' + SUM + "</code>")
+        self.write(gate.VERIFY_PAGE, outside(VERIFY.format(v="1.0.14", sum=SUM), CODE.format(sum=SUM)))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
-        self.assertIn("must show exactly 1", output)
+        self.assertIn("site/verify/index.html carries the checksum element's id outside the download block" + self.SHOWS,
+                      output)
 
     def test_verify_without_its_checksum(self):
         self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM).replace('id="published-checksum"', 'id="sum"'))
         code, output = self.run_gate()
         self.assertEqual(code, 1)
-        self.assertIn("exactly 1", output)
+        self.assertIn(self.BLOCK, output)
+
+    def pending(self, page: str) -> tuple[int, str]:
+        """Run the gate with the zero placeholder in release.json and ``page`` as the verify page."""
+        self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % ZEROS)
+        self.write(gate.VERIFY_PAGE, page)
+        return self.run_gate()
+
+    def test_placeholder_with_the_note_passes(self):
+        code, output = self.pending(PENDING.format(v="1.0.14"))
+        self.assertEqual(code, 0, output)
+        self.assertIn("the verify page says the checksum appears once that version is published", output)
+
+    def test_the_closing_advice_fits_the_state(self):
+        # While release.json holds the zero placeholder, there is no published checksum
+        # to flip the site to, so the advice is to rerun the writer with the placeholder until the release publishes.
+        self.write(gate.INSTALL_PAGE, "<p>No download here.</p>")
+        code, output = self.pending(PENDING.format(v="1.0.14"))
+        self.assertEqual(code, 1, output)
+        self.assertIn("site-src/release.json holds the zero placeholder of a version bump. Until release v1.0.14 is "
+                      "published, run tools/set-release-links.py for version 1.0.14 with that placeholder", output)
+        self.assertNotIn("Flip the site with tools/set-release-links.py using the published", output)
+        self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % SUM)
+        self.write(gate.VERIFY_PAGE, VERIFY.format(v="1.0.14", sum=SUM))
+        code, output = self.run_gate()
+        self.assertEqual(code, 1, output)
+        self.assertIn("Flip the site with tools/set-release-links.py using the published", output)
+        self.assertNotIn("holds the zero placeholder of a version bump", output)
+        # Whole-page equality refuses a page edited by hand, so the advice names only
+        # the writer and the generator.
+        self.assertIn("then run tools/build-site.py", output)
+        self.assertNotIn("by hand", output)
+
+    def test_comments_nested_too_deeply_fail_without_a_traceback(self):
+        # 400 nested comment openers before step 1 make PageReader recurse past the
+        # interpreter's limit; the rule reports it as 1 problem, in either state, never an uncaught RecursionError.
+        deep = "<!--" * 400 + "-->"
+        for checksum, page, state in ((SUM, VERIFY.format(v="1.0.14", sum=SUM), self.SHOWS),
+                                      (ZEROS, PENDING.format(v="1.0.14"), self.HOLDS)):
+            with self.subTest(state):
+                self.write(gate.RELEASE_JSON, '{"version": "1.0.14", "tag": "v1.0.14", "checksum": "%s"}' % checksum)
+                step = page.index('<p class="lbl blk">Step 1</p>')
+                self.write(gate.VERIFY_PAGE, page[:step] + deep + page[step:])
+                code, output = self.run_gate()
+                self.assertEqual(code, 1, output)
+                self.assertIn("site/verify/index.html nests comments too deeply to be read" + state, output)
+                self.assertNotIn("Traceback", output)
+
+    def test_the_committed_verify_page_carries_its_block_where_the_generator_writes_it(self):
+        # The rule holds on the page tools/build-site.py writes, so BLOCK_ANCESTORS is the generator's layout.
+        repo = Path(__file__).resolve().parent.parent
+        release = json.loads((repo / "site-src/release.json").read_text(encoding="utf-8"))
+        page = (repo / "site/verify/index.html").read_text(encoding="utf-8")
+        block = gate.download_block(release["version"], release["checksum"])
+        redirects = (repo / "site/_redirects").read_text(encoding="utf-8")
+        self.assertEqual(gate.download_block_problems(page, block, redirects), [])
+        self.assertEqual(gate.PageReader(page).open_at[page.index(block)], gate.BLOCK_ANCESTORS)
+
+    def test_placeholder_shown_as_the_published_checksum_fails(self):
+        # The page 35ac33a committed: the zero placeholder under the published wording.
+        code, output = self.pending(VERIFY.format(v="1.0.14", sum=SUM).replace(SUM, ZEROS))
+        self.assertEqual(code, 1)
+        self.assertIn(self.BLOCK + " exactly once, byte for byte (found 0)" + self.HOLDS, output)
+
+    def test_placeholder_note_beside_published_wording_fails(self):
+        # 1 case for each part of the published state outside the block; each is reported on its own.
+        for label, extra, report in (
+            ("the checksum element", '<p>' + CODE.format(sum="1" * 63) + "</p>",
+             "carries the checksum element's id outside the download block"),
+            ("the published checksum in step 3", "<p>Compare it with the published checksum shown in step 1.</p>",
+             'says "published checksum" outside the download block'),
+            ("a link to the checksum file", '<a href="' + URL.format(v="1.0.14") + '.sha256">file</a>',
+             "links a .sha256 checksum file outside the download block"),
+            ("a step that rejects the download", "<p>If the 2 values still differ, do not install the file.</p>",
+             "has a step that tells the reader not to install the file outside the download block"),
+            ("a second note", NOTE.format(v="1.0.14"), "carries the not-yet-published note outside the download block"),
+            ("a second note for another version", NOTE.format(v="1.0.13"),
+             "carries the not-yet-published note outside the download block"),
+        ):
+            with self.subTest(label):
+                code, output = self.pending(outside(PENDING.format(v="1.0.14"), extra))
+                self.assertEqual(code, 1, output)
+                self.assertIn(f"site/verify/index.html {report}{self.HOLDS}", output)
+
+    def test_placeholder_note_beside_equivalent_markup_fails(self):
+        # Outside the block, the page
+        # is read as parsed markup and as written, comments and hidden elements included, and a link through
+        # site/_redirects to the checksum file is a link to that file.
+        for label, extra, report in (
+            ("the checksum element with its attributes in the other order",
+             '<code id="published-checksum" class="sum">' + ZEROS + "</code>",
+             "carries the checksum element's id outside the download block"),
+            ("the checksum element with another attribute", "<code class='x' hidden id=published&#45;checksum></code>",
+             "carries the checksum element's id outside the download block"),
+            ("the checksum element in a comment", "<!-- " + CODE.format(sum="1" * 3) + " -->",
+             "carries the checksum element's id outside the download block"),
+            ("the checksum element's id in a script", '<script>show("published-checksum")</script>',
+             "carries the checksum element's id outside the download block"),
+            ("a link to the checksum file in a script", '<script>fetch("/v1/x.SHA256")</script>',
+             "links a .sha256 checksum file outside the download block"),
+            ("64 zeros in an element of the class sum without the id", '<code class="sum">' + ZEROS + "</code>",
+             "carries the class sum outside the download block"),
+            ("the class sum in a comment", '<!-- <span class="x sum"></span> -->',
+             "carries the class sum outside the download block"),
+            ("64 zeros as text", "<p>" + ZEROS + "</p>", "carries a 64 digit hexadecimal value outside the download block"),
+            ("64 hexadecimal digits split by markup in an attribute and in a comment",
+             '<p data-x="' + "A" * 64 + '">' + "f" * 32 + "<b></b>" + "f" * 32 + "</p><!-- " + "e" * 64 + " -->",
+             "carries a 64 digit hexadecimal value outside the download block"),
+            # In the text, the value also counts in groups.
+            ("64 hexadecimal digits in groups of 8", "<p>" + " ".join(SUM[i:i + 8] for i in range(0, 64, 8)) + "</p>",
+             "carries a 64 digit hexadecimal value outside the download block"),
+            ("64 hexadecimal digits in groups split by markup, hyphens and colons",
+             "<p>" + "<span>-</span>".join(SUM[i:i + 16] for i in range(0, 64, 16)).replace("-", ": ", 1) + "</p>",
+             "carries a 64 digit hexadecimal value outside the download block"),
+            ("a link through the checksum redirect", '<a href="/download/checksum">file</a>',
+             "links a .sha256 checksum file outside the download block"),
+            ("a link through the checksum redirect with a doubled slash", '<a href="/download//checksum">file</a>',
+             "links a .sha256 checksum file outside the download block"),
+            ("a relative link through the checksum redirect", '<a href="../download/Checksum/">file</a>',
+             "links a .sha256 checksum file outside the download block"),
+            ("an absolute link through the checksum redirect",
+             '<a href="https://cleanlanguage.ai/download/checksum?from=verify">file</a>',
+             "links a .sha256 checksum file outside the download block"),
+            ("a link to the checksum file with an encoded dot", '<a href="' + URL.format(v="1.0.14") + '%2Esha256">file</a>',
+             "links a .sha256 checksum file outside the download block"),
+            ("published checksum wording split by markup", "<p>The published <b>checksum</b> is below.</p>",
+             'says "published checksum" outside the download block'),
+            ("a step that rejects the download split by markup", "<p>If they differ, do <em>not</em> install the file.</p>",
+             "has a step that tells the reader not to install the file outside the download block"),
+            ("a step that rejects the download in a contraction", "<p>If they differ, don&#8217;t install the file.</p>",
+             "has a step that tells the reader not to install the file outside the download block"),
+            ("the note split by markup", "<p>It appears <b>here</b> once that version is published.</p>",
+             "carries the not-yet-published note outside the download block"),
+            ("the note in a comment", "<!-- " + NOTE.format(v="1.0.14") + " -->",
+             "carries the not-yet-published note outside the download block"),
+        ):
+            with self.subTest(label):
+                code, output = self.pending(outside(PENDING.format(v="1.0.14"), extra))
+                self.assertEqual(code, 1, output)
+                self.assertIn(f"site/verify/index.html {report}{self.HOLDS}", output)
+
+    def test_placeholder_note_beside_other_links_keeps_the_rule(self):
+        # A link to the zip, directly or through its redirect, and a value that is not a URL are not links to
+        # the checksum file, so the rule passes; the page is still not the generator's, so the gate refuses it.
+        page = outside(PENDING.format(v="1.0.14"), '<a href="/download">zip</a><a href="http://[x">x</a>')
+        block = gate.download_block("1.0.14", ZEROS)
+        self.assertEqual(gate.download_block_problems(page, block, gate.REDIRECTS.read_text(encoding="utf-8")), [])
+        code, output = self.pending(page)
+        self.assertEqual(code, 1, output)
+        self.assertIn(self.EQUAL + ", while site-src/release.json holds the zero placeholder (first at line ", output)
+        self.assertNotIn("outside the download block", output)
+
+    def test_published_checksum_without_the_rest_of_its_state_fails(self):
+        # Any change to the block, such as a
+        # missing step 1 lead, link to the checksum file or step 3, or a step 3 that rejects a matching value,
+        # leaves the page without the block the generator writes.
+        page = VERIFY.format(v="1.0.14", sum=SUM)
+        link = SUM_LINK.format(v="1.0.14")
+        for label, changed in (
+            ("no step 1 lead", page.replace(LEAD, "<p>Download the skill.</p>")),
+            ("the step 1 lead in a comment only", page.replace(LEAD, "<p>Download the skill.<!-- " + LEAD + " --></p>")),
+            ("no link to the checksum file", page.replace(link, "published checksum file")),
+            ("a link to the checksum file of another version", page.replace(link, link.replace("v1.0.14/", "v1.0.13/"))),
+            ("no step 3", page.replace(STEP_3, "")),
+            ("no step that rejects the download", page.replace(REJECT, "")),
+            ("a step 3 that rejects a matching value", page.replace(REJECT, REJECT.replace("still differ", "match"))),
+            ("step 3, the link and the step 1 lead removed",
+             page.replace(LEAD, "<p>Download the skill.</p>").replace(link, "published checksum file")
+             .replace(page[page.index(STEP_3):page.index('<div class="next">')], "")),
+        ):
+            with self.subTest(label):
+                self.assertNotEqual(changed, page)
+                self.write(gate.VERIFY_PAGE, changed)
+                code, output = self.run_gate()
+                self.assertEqual(code, 1, output)
+                self.assertIn(self.BLOCK + " exactly once, byte for byte (found 0)" + self.SHOWS, output)
+
+    def test_the_block_hidden_or_moved_fails(self):
+        # A part of the block hidden or commented out, or a wrong checksum
+        # beside it, changes the block; the whole block inside other markup, or a page that copies a hidden
+        # attribute onto its body, is not where the generator writes it.
+        page = VERIFY.format(v="1.0.14", sum=SUM)
+        start, end = page.index('<p class="lbl blk">Step 1</p>'), page.index('<div class="next">')
+        step_3 = page[page.index(STEP_3):end]
+        code_element = CODE.format(sum=SUM)
+        for label, changed, report in (
+            ("the step 1 lead hidden", page.replace(LEAD, "<div hidden>" + LEAD + "</div>"), self.BLOCK),
+            ("the link to the checksum file hidden",
+             page.replace(SUM_LINK.format(v="1.0.14"), "<span hidden>" + SUM_LINK.format(v="1.0.14") + "</span>"),
+             self.BLOCK),
+            ("step 3 hidden", page.replace(step_3, "<div hidden>" + step_3 + "</div>"), self.BLOCK),
+            ("the checksum element in a comment beside a visible one",
+             page.replace(code_element, "<!-- " + code_element + ' --><code id="published-checksum" class="sum">'
+                          + "f" * 64 + "</code>"), self.BLOCK),
+            ("a second, wrong checksum element beside the real one",
+             page.replace(code_element, code_element + CODE.format(sum="f" * 64)), self.BLOCK),
+            ("the note split by markup beside the checksum",
+             page.replace(code_element, code_element + "<p>It appears <b>here</b> once that version is published.</p>"),
+             self.BLOCK),
+            ("the whole block hidden", page[:start] + "<div hidden>" + page[start:end] + "</div>" + page[end:], self.PLACED),
+            ("the whole block in a comment", page[:start] + "<!--" + page[start:end] + "-->" + page[end:], self.PLACED),
+            ("the whole block in a template", page[:start] + "<template>" + page[start:end] + "</template>" + page[end:],
+             self.PLACED),
+            ("the whole block in an element left open", page[:start] + "<details>" + page[start:], self.PLACED),
+            # An end tag does not close an element across a template or a
+            # table, as in a browser.
+            ("a template that ends the doc div around the block",
+             page[:start] + '<template></div><div class="doc">' + page[start:end] + "</div></template>" + page[end:],
+             self.PLACED),
+            ("a details element misnested in a table before the block",
+             page[:start] + "<details><table></details>" + page[start:], self.PLACED),
+            ("the whole block in a self-closed div, which a browser leaves open",
+             page[:start] + "<div hidden/>" + page[start:], self.PLACED),
+            ("the block twice", outside(page, page[start:end]), self.BLOCK + " exactly once, byte for byte (found 2)"),
+            ("a stray body start tag with a hidden attribute", outside(page, "<body hidden>"), self.PLACED),
+            ("a stray html start tag", outside(page, "<html hidden>"), self.PLACED),
+            ("the wrap div with another attribute", page.replace('<div class="wrap">', '<div class="wrap" hidden>'),
+             self.PLACED),
+        ):
+            with self.subTest(label):
+                self.assertNotEqual(changed, page)
+                self.write(gate.VERIFY_PAGE, changed)
+                code, output = self.run_gate()
+                self.assertEqual(code, 1, output)
+                self.assertIn(report, output)
+                self.assertIn(self.SHOWS, output)
+
+    def test_placeholder_note_missing_or_repeated_fails(self):
+        for label, page, report in (
+            ("no note", PENDING.format(v="1.0.14").replace(NOTE.format(v="1.0.14"), ""), self.BLOCK),
+            ("the note in a comment only",
+             PENDING.format(v="1.0.14").replace(NOTE.format(v="1.0.14"), "<!-- " + NOTE.format(v="1.0.14") + " -->"),
+             self.BLOCK),
+            ("2 notes", outside(PENDING.format(v="1.0.14"), NOTE.format(v="1.0.14")),
+             "site/verify/index.html carries the not-yet-published note outside the download block"),
+        ):
+            with self.subTest(label):
+                code, output = self.pending(page)
+                self.assertEqual(code, 1, output)
+                self.assertIn(report + (" exactly once" if report == self.BLOCK else ""), output)
+
+    def test_placeholder_note_for_another_version_fails(self):
+        code, output = self.pending(PENDING.format(v="1.0.14").replace(NOTE.format(v="1.0.14"), NOTE.format(v="1.0.13")))
+        self.assertEqual(code, 1)
+        self.assertIn("the verify page says the checksum for version 1.0.13 appears once that version is published, "
+                      "but SKILL.md says 1.0.14", output)
+        self.assertIn(self.BLOCK, output)
+
+    def test_published_checksum_with_the_note_fails(self):
+        for label, page in (
+            ("the note alone", PENDING.format(v="1.0.14")),
+            ("the note beside the published checksum", outside(VERIFY.format(v="1.0.14", sum=SUM), NOTE.format(v="1.0.14"))),
+        ):
+            with self.subTest(label):
+                self.write(gate.VERIFY_PAGE, page)
+                code, output = self.run_gate()
+                self.assertEqual(code, 1, output)
+                self.assertIn("site/verify/index.html says the checksum is not yet published, but "
+                              "site-src/release.json holds a published checksum", output)
 
     def test_missing_install_page_fails_closed(self):
         gate.INSTALL_PAGE.unlink()
@@ -185,7 +572,8 @@ class VersionParseTest(unittest.TestCase):
             gate.REPO_ROOT, gate.SITE_ROOT, gate.SKILL,
             gate.REDIRECTS, gate.VERIFY_PAGE,
         )
-        self._saved_source = (gate.RELEASE_JSON, gate.INSTALL_PAGE)
+        self._saved_source = (gate.RELEASE_JSON, gate.INSTALL_PAGE, gate.rendered_verify_page)
+        gate.rendered_verify_page = fixture_render
         root = Path(self._tmp.name)
         # The release source and the install page (checks 7 and 8) sit outside
         # SITE_ROOT and agree with the 1.0.14 site the bare-name tests write, so no
@@ -211,7 +599,7 @@ class VersionParseTest(unittest.TestCase):
     def tearDown(self):
         (gate.REPO_ROOT, gate.SITE_ROOT, gate.SKILL, gate.REDIRECTS,
          gate.VERIFY_PAGE) = self._saved
-        gate.RELEASE_JSON, gate.INSTALL_PAGE = self._saved_source
+        gate.RELEASE_JSON, gate.INSTALL_PAGE, gate.rendered_verify_page = self._saved_source
         self._tmp.cleanup()
 
     def _expect_die(self, needle: str):
@@ -390,11 +778,7 @@ class VersionParseTest(unittest.TestCase):
         gate.SITE_ROOT.mkdir(parents=True, exist_ok=True)
         (gate.SITE_ROOT / "install.html").write_text(page_text, encoding="utf-8")
         gate.REDIRECTS.write_text(self._valid_url("1.0.14") + "\n", encoding="utf-8")
-        gate.VERIFY_PAGE.write_text(
-            '<p>The published checksum for version 1.0.14 is:</p>\n'
-            '<code class="sum" id="published-checksum">' + "a" * 64 + "</code>\n",
-            encoding="utf-8",
-        )
+        gate.VERIFY_PAGE.write_text(VERIFY.format(v="1.0.14", sum="a" * 64), encoding="utf-8")
 
     def _run_gate(self):
         out = io.StringIO()
@@ -436,6 +820,15 @@ class VersionParseTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("site/install.html links at version 1.0.13", out)
         self.assertNotIn("names the file", out)
+
+
+def exclude_draft_home(root: Path) -> None:
+    """Exclude the draft's home page from the sitemap under ``root``, as the draft branch does: tools/build-site.py
+    refuses to build a staged draft without that exclusion."""
+    path = root / "tools/sitemap-config.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["exclude"] = [entry for entry in data["exclude"] if entry != "draft/index.html"] + ["draft/index.html"]
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 class WriterTest(unittest.TestCase):
@@ -499,6 +892,95 @@ class WriterTest(unittest.TestCase):
         self.assertEqual(json.loads(planned["site-src/release.json"]),
                          {"version": self.next, "tag": "v" + self.next, "checksum": "a" * 64})
 
+    def test_a_staged_draft_gets_the_redirects_and_no_live_page(self):
+        # While a draft is staged, the writer writes what the offline gate's draft advice
+        # says: site/_redirects, release.json, the modified dates in site.json and the draft's pages, no live page.
+        site_json = self.root / "site-src/site.json"
+        text = site_json.read_text(encoding="utf-8")
+        self.assertEqual(text.count('"base": "/",'), 1)
+        site_json.write_text(text.replace('"base": "/",', '"base": "/draft/",'), encoding="utf-8")
+        exclude_draft_home(self.root)
+        planned = self.plan()
+        for name in ("site/_redirects", "site-src/release.json", "site-src/site.json", "site/draft/verify/index.html"):
+            self.assertIn(name, planned)
+        self.assertEqual([name for name in planned if name.startswith("site/") and not name.startswith("site/draft/")],
+                         ["site/_redirects"])
+        self.assertEqual(sorted(name for name in planned if not name.startswith("site/")),
+                         ["site-src/release.json", "site-src/site.json"])
+
+    def apply(self, checksum: str) -> str:
+        """Write what the writer plans for ``checksum`` into the copy, returning the verify page."""
+        for path, data in writer.rewrite(self.next, "v" + self.next, checksum, "2026-11-04").items():
+            path.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
+        return (self.root / "site/verify/index.html").read_text(encoding="utf-8")
+
+    def gate_code(self) -> int:
+        """Run check-release-links.py against the copy."""
+        saved = {name: getattr(gate, name) for name in ReleaseSourceTest.NAMES}
+        gate.REPO_ROOT, gate.SITE_ROOT = self.root, self.root / "site"
+        gate.SKILL = self.root / "cleanlanguage/skills/cleanlanguage/SKILL.md"
+        gate.REDIRECTS = self.root / "site/_redirects"
+        gate.INSTALL_PAGE = self.root / "site/install/index.html"
+        gate.VERIFY_PAGE = self.root / "site/verify/index.html"
+        gate.RELEASE_JSON = self.root / "site-src/release.json"
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                return gate.main()
+        finally:
+            for name, value in saved.items():
+                setattr(gate, name, value)
+
+    def test_the_placeholder_and_the_flip_round_trip(self):
+        # A bump writes the zero placeholder and the not-yet-published page; the flip restores the published one.
+        note = (f"The checksum for version {self.next} appears here once that version is published; compare the "
+                "checksum of your file with it then.")
+        pending = self.apply(ZEROS)
+        self.assertIn(note, pending)
+        for gone in ("published checksum", 'id="published-checksum"', ".zip.sha256", "Step 3", "do not install"):
+            self.assertNotIn(gone, pending)
+        self.assertEqual(self.gate_code(), 0)
+        published = self.apply("a" * 64)
+        for needed in (f"The published checksum for version {self.next} is:", f"cleanlanguage-{self.next}.zip.sha256",
+                       '<code class="sum" id="published-checksum">' + "a" * 64 + "</code>", "Step 3"):
+            self.assertIn(needed, published)
+        self.assertNotIn(note, published)
+        self.assertEqual(self.gate_code(), 0)
+        self.assertEqual(self.apply(ZEROS), pending)
+
+    def write_links(self, checksum: str) -> tuple[int, str]:
+        """Run set-release-links.py's main on the copy for ``checksum``, returning its exit code and stderr."""
+        argv = ["set-release-links.py", "--version", self.next, "--checksum", checksum, "--date", "2026-11-04"]
+        err = io.StringIO()
+        with unittest.mock.patch("sys.argv", argv), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(err):
+            try:
+                code = writer.main()
+            except SystemExit as stop:
+                code = stop.code
+        return code, err.getvalue()
+
+    def test_a_checksum_close_to_the_placeholder_is_refused(self):
+        # The writer refuses a checksum other than the zero placeholder with 56 or more of its 64
+        # digits 0, such as a mistyped placeholder, before it writes anything, and the gate fails one written by hand
+        # (exit 1, not the generator's refusal). The zero placeholder, 55 digits 0 and a real-looking checksum pass.
+        release = self.root / "site-src/release.json"
+        before = release.read_bytes()
+        for checksum in ("0" * 63 + "1", "0" * 56 + "89abcdef"):
+            with self.subTest(checksum):
+                code, err = self.write_links(checksum)
+                self.assertEqual(code, 2, err)
+                self.assertIn(f"set-release-links: {checksum} is not the zero placeholder but has "
+                              f"{checksum.count('0')} of its 64 digits 0, such as a mistyped placeholder", err)
+                self.assertEqual(release.read_bytes(), before)
+        for checksum in (ZEROS, "0" * 55 + "123456789", "1234abcd" * 8):
+            with self.subTest(checksum):
+                self.assertEqual(self.write_links(checksum), (0, ""))
+                self.assertEqual(json.loads(release.read_text(encoding="utf-8"))["checksum"], checksum)
+                self.assertEqual(self.gate_code(), 0)
+        release.write_text(release.read_text(encoding="utf-8").replace("1234abcd" * 8, "0" * 63 + "1"),
+                           encoding="utf-8")
+        self.assertEqual(self.gate_code(), 1)
+
     def test_only_the_changed_pages_are_restamped(self):
         planned = self.plan()
         pages = {page["id"]: page for page in json.loads(planned["site-src/site.json"])["pages"]}
@@ -536,6 +1018,234 @@ class WriterTest(unittest.TestCase):
         release = json.loads((self.REPO / "site-src/release.json").read_text(encoding="utf-8"))
         planned = writer.rewrite(release["version"], release["tag"], release["checksum"], "2026-11-04")
         self.assertNotIn(self.root / "site-src/site.json", planned)
+
+
+class WholePageTest(unittest.TestCase):
+    """The gate on a copy of the generator's inputs with the real tools/build-site.py: the committed verify page is
+    the generator's render, and every page form that test_every_listed_page_form_fails lists, in either state, fails."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        for relative in WriterTest.INPUTS:
+            source, target = WriterTest.REPO / relative, root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if source.is_dir():
+                shutil.copytree(source, target)
+            else:
+                shutil.copyfile(source, target)
+        self.root = root
+        self.page = root / "site/verify/index.html"
+        generator_spec = importlib.util.spec_from_file_location("build_site_for_whole_page", gate.GENERATOR)
+        self.generator = importlib.util.module_from_spec(generator_spec)
+        generator_spec.loader.exec_module(self.generator)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def gate_run(self) -> tuple[int, str]:
+        saved = {name: getattr(gate, name) for name in ReleaseSourceTest.NAMES}
+        gate.REPO_ROOT, gate.SITE_ROOT = self.root, self.root / "site"
+        gate.SKILL = self.root / "cleanlanguage/skills/cleanlanguage/SKILL.md"
+        gate.REDIRECTS = self.root / "site/_redirects"
+        gate.INSTALL_PAGE = self.root / "site/install/index.html"
+        gate.VERIFY_PAGE = self.page
+        gate.RELEASE_JSON = self.root / "site-src/release.json"
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                try:
+                    code = gate.main()
+                except SystemExit as stop:
+                    code = stop.code
+        finally:
+            for name, value in saved.items():
+                setattr(gate, name, value)
+        return code, out.getvalue()
+
+    def publish(self, checksum: str) -> str:
+        """Set ``checksum`` in the copy's release.json and regenerate the copy's site, returning the verify page."""
+        release_path = self.root / "site-src/release.json"
+        release = json.loads(release_path.read_text(encoding="utf-8"))
+        release["checksum"] = checksum
+        release_path.write_text(json.dumps(release, indent=2) + "\n", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.generator.main(["--root", str(self.root)]), 0)
+        return self.page.read_text(encoding="utf-8")
+
+    def test_the_committed_verify_page_is_the_render(self):
+        self.assertEqual((WriterTest.REPO / "site/verify/index.html").read_bytes(),
+                         self.generator.verify_page(WriterTest.REPO))
+
+    def test_every_listed_page_form_fails(self):
+        version = json.loads((self.root / "site-src/release.json").read_text(encoding="utf-8"))["version"]
+        note = (f"<p>The checksum for version {version} appears here once that version is published; compare the "
+                "checksum of your file with it then.</p>")
+        for checksum, state in ((ZEROS, "holds the zero placeholder"), (SUM, "holds a published checksum")):
+            page = self.publish(checksum)
+            code, output = self.gate_run()
+            self.assertEqual(code, 0, output)
+            start, end = page.index('<p class="lbl blk">Step 1</p>'), page.index('<div class="next">')
+            block = page[start:end]
+            forms = [
+                ("step 3 wrapped in a hidden div on the page alone", page.replace('<p class="lbl blk">Step 3</p>',
+                                                                                  '<div hidden><p class="lbl blk">Step 3</p>', 1)
+                 .replace('<div class="next">', '</div><div class="next">', 1)),
+                ("a template that ends the doc div around the block",
+                 page[:start] + '<template></div><div class="doc">' + block + "</div></template>" + page[end:]),
+                ("a contradicting step 3 outside the block",
+                 outside(page, "<p>Correction to step 3: if the two values match, delete the file.</p>")),
+                ("a reworded step 3 outside the block",
+                 outside(page, '<p class="lbl blk">Step 3</p>\n<p>Never install the file when the values match.</p>')),
+                ("a second checksum in groups of 8",
+                 outside(page, "<p>" + " ".join(OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
+                ("a details element misnested in a table before step 1",
+                 page[:start] + "<details><table></details>" + page[start:]),
+                ("the html attributes in another order",
+                 page.replace('<html lang="en" class="site-cleanlanguage">', '<html class="site-cleanlanguage" lang="en">')),
+                ("a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1)),
+                ("the note in a comment", outside(page, "<!-- " + note + " -->")),
+                ("zeros in a code.sum", outside(page, '<code class="sum">' + ZEROS + "</code>")),
+                ("a step that says to install the file anyway, before the next-page link",
+                 outside(page, "<p>If the values differ, install the file anyway.</p>")),
+                ("a step 4 after step 3",
+                 outside(page, '<p class="lbl blk">Step 4</p>\n<p>Install the file.</p>\n')),
+                ("the block inside noscript markup",
+                 page[:start] + '<noscript></div><div class="doc">' + block + "</noscript>" + page[end:]),
+                ("the block inside select markup",
+                 page[:start] + '<select></div><div class="doc">' + block + "</select>" + page[end:]),
+                ("a details element misnested in a span before step 1",
+                 page[:start] + "<span><details></span>" + page[start:]),
+                ("an inline script that removes the block",
+                 outside(page, "<script>document.querySelector('.download').remove()</script>")),
+                ("a second checksum joined by U+200B",
+                 outside(page, "<p>" + "\u200b".join(OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
+                ("a second checksum joined by dots",
+                 outside(page, "<p>" + ".".join(OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
+            ]
+            if checksum != ZEROS:
+                code_element = CODE.format(sum=checksum)
+                step_3 = page[page.index('<p class="lbl blk">Step 3</p>'):end]
+                forms += [
+                    ("a commented canonical element beside a wrong one",
+                     page.replace(code_element, "<!-- " + code_element + ' --><code id="published-checksum" class="sum">'
+                                  + OTHER + "</code>")),
+                    ("a hidden step 3", page.replace(step_3, "<div hidden>" + step_3 + "</div>")),
+                    ("a reversed step 3", page.replace("If the values still differ", "If the values match")),
+                ]
+            for label, changed in forms:
+                with self.subTest(f"{label}, {state}"):
+                    self.assertNotEqual(changed, page)
+                    self.page.write_text(changed, encoding="utf-8")
+                    code, output = self.gate_run()
+                    self.assertEqual(code, 1, output)
+                    self.assertIn("site/verify/index.html is not the page tools/build-site.py renders for it from the "
+                                  f"committed sources, while site-src/release.json {state} (first at line ", output)
+            self.page.write_text(page, encoding="utf-8")
+
+    def test_a_staged_draft_names_promotion_as_the_remedy(self):
+        # With a draft staged under /draft/ and one nav label changed, tools/build-site.py
+        # writes only site/draft/, so the correct live page is not the render; the gate says so and names promotion,
+        # and still fails a wrong live page. Without a draft, it still says to run tools/build-site.py.
+        # The advice says what each tool writes and points to the whole promotion.
+        staged = ("site-src/site.json names base /draft/, so a draft is staged: tools/build-site.py writes only the "
+                  "draft, and tools/set-release-links.py writes site/_redirects, site-src/release.json, the modified "
+                  "dates in site-src/site.json and the draft's pages, so neither writes the live verify page, and this "
+                  "gate renders that page at base / from the sources, the draft's changes included.")
+        remedy = ("Promotion after the owner approves it is the remedy: the pull request of step 5 under \"Staging at "
+                  "/draft/ and promotion\" in .baseline/README.md, of which tools/build-site.py --base / --promote is "
+                  "1 step.")
+        readme = (WriterTest.REPO / ".baseline/README.md").read_text(encoding="utf-8")
+        self.assertIn("### Staging at `/draft/` and promotion\n", readme)
+        self.assertIn("\n5. Promotion, after the owner's approval only. In 1 pull request from the `draft` branch to the "
+                      "production branch: ", readme)
+        for checksum, state in ((ZEROS, "holds the zero placeholder"), (SUM, "holds a published checksum")):
+            with self.subTest(state):
+                site_json = self.root / "site-src/site.json"
+                original = site_json.read_text(encoding="utf-8")
+                sitemap_config = self.root / "tools/sitemap-config.json"
+                original_sitemap = sitemap_config.read_text(encoding="utf-8")
+                page = self.publish(checksum)
+                wrong = outside(page, "<p>If the values differ, install the file anyway.</p>")
+                self.page.write_text(wrong, encoding="utf-8")
+                code, output = self.gate_run()
+                self.assertEqual(code, 1, output)
+                self.assertIn(f"site-src/release.json {state} (first at line ", output)
+                self.assertIn("; run tools/build-site.py\n", output)
+                self.assertNotIn("a draft is staged", output)
+                self.page.write_text(page, encoding="utf-8")
+                config = json.loads(original)
+                config["base"] = "/draft/"
+                next(entry for entry in config["pages"] if entry["id"] == "install")["nav_label"] = "Install it"
+                site_json.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+                exclude_draft_home(self.root)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(self.generator.main(["--root", str(self.root)]), 0)
+                self.assertEqual(self.page.read_text(encoding="utf-8"), page)
+                self.assertTrue((self.root / "site/draft/verify/index.html").is_file())
+                for label, written in (("the correct live page", page), ("a wrong live page", wrong)):
+                    self.page.write_text(written, encoding="utf-8")
+                    code, output = self.gate_run()
+                    self.assertEqual(code, 1, f"{label}: {output}")
+                    self.assertIn(f"site-src/release.json {state} (first at line ", output)
+                    self.assertIn("); a draft is staged (see below)\n", output)
+                    self.assertIn(staged, output)
+                    self.assertIn(remedy, output)
+                    self.assertNotIn("; run tools/build-site.py", output)
+                site_json.write_text(original, encoding="utf-8")
+                sitemap_config.write_text(original_sitemap, encoding="utf-8")
+                self.page.write_text(page, encoding="utf-8")
+
+    def test_a_staged_draft_gets_no_draft_advice_for_another_failure(self):
+        # With a draft staged under /draft/ and the verify page the render, a stale
+        # site/_redirects fails with no draft advice: tools/set-release-links.py rewrites it, and the promotion
+        # build does not.
+        site_json, redirects = self.root / "site-src/site.json", self.root / "site/_redirects"
+        version = json.loads((self.root / "site-src/release.json").read_text(encoding="utf-8"))["version"]
+        text = site_json.read_text(encoding="utf-8")
+        self.assertEqual(text.count('"base": "/",'), 1)
+        site_json.write_text(text.replace('"base": "/",', '"base": "/draft/",'), encoding="utf-8")
+        exclude_draft_home(self.root)
+        code, output = self.gate_run()
+        self.assertEqual(code, 0, output)
+        written = redirects.read_text(encoding="utf-8")
+        self.assertIn(f"/v{version}/", written)
+        redirects.write_text(written.replace(f"/v{version}/", "/v0.0.1/", 1), encoding="utf-8")
+        code, output = self.gate_run()
+        self.assertEqual(code, 1, output)
+        self.assertIn(f"site/_redirects uses tag v0.0.1 for version {version}", output)
+        self.assertRegex(output, r"[Ff]lip the site with tools/set-release-links\.py")
+        self.assertNotIn("a draft is staged", output)
+        self.assertNotIn("Promotion", output)
+
+
+class WorkflowPathsTest(unittest.TestCase):
+    """The offline gate holds the verify page to the generator's render, so
+    .github/workflows/link-check.yml runs it on a pull request or a push to main that changes the generator or any
+    input it reads (WriterTest.INPUTS): each trigger lists a path filter that covers each of them."""
+
+    COVERING = {
+        "tools/build-site.py": "tools/build-site.py",
+        "tools/check-install-page.py": "tools/check-install-page.py",
+        "site-src": "site-src/**",
+        "cleanlanguage/skills/cleanlanguage/SKILL.md": "cleanlanguage/**/*.md",
+        "cleanlanguage/skills/cleanlanguage/references": "cleanlanguage/**/*.md",
+        "site": "site/**",
+        ".baseline/pin.toml": ".baseline/pin.toml",
+        "tools/sitemap-config.json": "tools/sitemap-config.json",
+    }
+
+    def test_each_trigger_covers_every_generator_input(self):
+        self.assertEqual(set(self.COVERING), set(WriterTest.INPUTS))
+        references = WriterTest.REPO / "cleanlanguage/skills/cleanlanguage/references"
+        self.assertEqual([path.name for path in references.rglob("*") if path.suffix != ".md"], [])
+        text = (WriterTest.REPO / ".github/workflows/link-check.yml").read_text(encoding="utf-8")
+        triggers = text.split("\n  push:\n")
+        self.assertEqual(len(triggers), 2)
+        for name, part in zip(("pull_request", "push"), triggers):
+            for relative, pattern in self.COVERING.items():
+                with self.subTest(f"{name}: {relative}"):
+                    self.assertIn(f'      - "{pattern}"\n', part)
 
 
 if __name__ == "__main__":

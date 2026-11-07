@@ -163,10 +163,20 @@ Usage:
 
 Exit codes:
   0  every check passed, confirmed across two consecutive readings
-  1  at least one check failed, was cancelled, or timed out
-  2  checks are still running, or --wait hit its timeout
-  3  the result could not be read, no checks exist, usage was wrong, or output
-     failed
+  1  at least one check completed with a conclusion other than success, neutral
+     or skipped, such as failure, cancelled, timed_out, stale, action_required
+     or startup_failure, or with no conclusion, even while others still run
+  2  checks are still running; without --wait, every registered check passed
+     but a required check has not registered, or a passing set of checks kept
+     changing across readings, so it could not be confirmed; or --wait hit
+     its timeout, which includes a window that closed with no checks
+     registered, unless 3 applies
+  3  the result could not be read, no checks exist (with --wait, only when the
+     window had closed by the time an empty reading was handled), usage was
+     wrong, the repository could not be inferred, or output failed; also an
+     import that raises an exception, a SIGCHLD that cannot be reset to its
+     default disposition before any gh call, an unexpected exception from
+     main, or a status from main that is a bool or not an int
 """
 
 from __future__ import annotations
@@ -204,6 +214,12 @@ def die(message: str) -> "NoReturn":  # type: ignore[name-defined]
 
 class Unreadable(Exception):
     """A reading that cannot be trusted: a transport error or a malformed payload."""
+
+
+class WindowClosed(Unreadable):
+    """A read the wait deadline cut off: the window closed before it began, or gh
+    had not returned when it closed. Still unreadable, but after a successful
+    unsettled reading in wait mode, main reads it as the wait timing out (exit 2)."""
 
 
 def parse_args(argv):
@@ -285,7 +301,12 @@ def _gh(args, timeout: float):
     exit 0. A status that cannot be observed raises ChildProcessError, an OSError,
     and an end other than a normal exit gives returncode -1, so neither can read
     as success. Output goes to unnamed temporary files, so gh never blocks on a
-    full pipe while it is polled. OSError and TimeoutExpired reach the caller."""
+    full pipe while it is polled. OSError and TimeoutExpired reach the caller.
+    TimeoutExpired means the reap after the kill at the deadline found gh ended by
+    SIGKILL, which is the kill itself unless something else sent gh a SIGKILL just
+    before it; a gh that ended any other way just before the kill gives its own
+    result, and a status lost at that last reap raises ChildProcessError, as at
+    any other reap."""
     env = {
         k: v for k, v in os.environ.items()
         if not (k.startswith("GIT_") or k in GH_REDIRECTS)
@@ -304,9 +325,15 @@ def _gh(args, timeout: float):
             if time.monotonic() >= end:
                 os.kill(proc.pid, signal.SIGKILL)
                 try:
-                    os.waitpid(proc.pid, 0)
-                except ChildProcessError:
-                    pass
+                    pid, status = os.waitpid(proc.pid, 0)
+                except ChildProcessError as exc:
+                    proc.returncode = -1  # the child is gone; Popen must not wait for it
+                    raise ChildProcessError("the exit status of gh was lost") from exc
+                # gh can end on its own between the last poll and the kill. Only an
+                # end by the kill is a read the deadline cut off; any other status
+                # is the read's own result.
+                if not (os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL):
+                    break
                 proc.returncode = -1
                 raise subprocess.TimeoutExpired(proc.args, timeout)
             time.sleep(0.02)
@@ -400,11 +427,14 @@ def read_checks(repo: str, full_sha: str, deadline: float):
     outlast the wait window."""
     remaining = deadline - time.time()
     if remaining <= 0:
-        raise Unreadable("the wait window closed before the read")
+        # Defence in depth: after a good reading in wait mode, main's top-of-loop
+        # guard returns 2 first, so this is reached there only if the deadline
+        # passes in the moment between that guard and the clock read above.
+        raise WindowClosed("the wait window closed before the read")
     try:
         proc = _gh(["api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"], remaining)
     except subprocess.TimeoutExpired as exc:
-        raise Unreadable(f"gh api did not return within {int(remaining)} seconds") from exc
+        raise WindowClosed(f"gh api did not return within {int(remaining)} seconds") from exc
     except OSError as exc:
         raise Unreadable(f"could not run gh: {exc}") from exc
     if proc.returncode != 0:
@@ -625,6 +655,18 @@ def main() -> int:
         try:
             checks = read_checks(repo, full_sha, deadline)
         except Unreadable as exc:
+            # A read the deadline cut off after a reading that succeeded and was
+            # still unsettled is the wait timing out (exit 2), the same verdict as
+            # the top-of-loop guard above, not a fresh unreadable read: a loaded
+            # host can start a read with little of the window left, so the verdict
+            # must not depend on how long that read took. The cut-off is still
+            # named on standard error. With no successful reading yet, or after a
+            # failed one, the read-failure path below reports it (exit 3).
+            if wait and last_read_ok and isinstance(exc, WindowClosed):
+                sys.stderr.write(f"ci-status: the wait window cut off the last read ({exc})\n")
+                sys.stderr.write(f"ci-status: still unsettled after {timeout} seconds; giving up\n")
+                report(last_checks, sys.stderr)
+                return 2
             last_read_ok = False
             # A failed or malformed read breaks any confirmation in progress and is
             # never a verdict; it is also not a changing check set, so it does not

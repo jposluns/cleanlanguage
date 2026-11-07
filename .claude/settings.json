@@ -6,5 +6,19 @@
   },
   "enabledPlugins": {
     "aiqt-guardrails-hooks@aiqt-guardrails": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/ask_mode_guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
   }
 }

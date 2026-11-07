@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "cleanlanguage",
   "displayName": "Clean Language",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "Draft, rewrite, proofread, adapt, and audit prose to the Clean Language editorial standard.",
   "author": {
     "name": "Jeff Posluns",
