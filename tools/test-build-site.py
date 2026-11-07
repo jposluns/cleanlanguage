@@ -563,7 +563,7 @@ SOURCE_REFUSALS = [
     ("a p.value whose nearest region is a section", lambda root: (
         edit(root, HOME, VALUE_REGION, '<section class="region" id="what-it-fixes">'),
         edit(root, HOME, VALUE_END, VALUE_END[:-len("</div>")] + "</section>")), REGION_RULE),
-    # VERIFY round 7.1, finding 2: a checksum close to the placeholder read from release.json is reported as its own.
+    # A checksum close to the placeholder read from release.json is reported as its own.
     ("release.json checksum close to the zero placeholder", lambda root: set_release(root, checksum="0" * 63 + "1"),
         "site-src/release.json checksum " + "0" * 63 + "1 is not the zero placeholder but has 63 of its 64 digits 0"),
 ]
@@ -1238,7 +1238,7 @@ def check_release_placeholder(failures: list[str]) -> int:
 
 
 def check_release_near_placeholder(failures: list[str]) -> int:
-    """DISCOVERY round 7: load_release() refuses a checksum other than the zero placeholder with 56 or more of its 64
+    """load_release() refuses a checksum other than the zero placeholder with 56 or more of its 64
     digits 0, such as a mistyped placeholder, and accepts the placeholder, 55 digits 0 and a real-looking checksum."""
     generator = load_module(GENERATOR)
     cases = (("0" * 63 + "1", True), ("0" * 56 + "89abcdef", True), ("0" * 64, False), ("0" * 55 + "123456789", False),
@@ -1248,7 +1248,7 @@ def check_release_near_placeholder(failures: list[str]) -> int:
         try:
             tokens = generator.load_release(REPO_ROOT, release, any_version=True)
         except generator.BuildError as error:
-            # VERIFY round 7.1, finding 2: the checksum is the override's, so the report does not name release.json.
+            # The checksum is the override's, so the report does not name release.json.
             if not refused or not str(error).startswith(f"the checksum {checksum} is not the zero placeholder but has"):
                 failures.append(f"release near placeholder: {checksum} refused: {error}")
             continue
@@ -1258,10 +1258,10 @@ def check_release_near_placeholder(failures: list[str]) -> int:
     return len(cases)
 
 
-# The pin of the whole verify page (DISCOVERY round 4, findings 1 to 4): the sha256 of each state's rendering by
+# The pin of the whole verify page: the sha256 of each state's rendering by
 # verify_page() of the whole site/verify/index.html, for the stand-in release PIN_VERSION (tag v PIN_VERSION) with the
 # zero placeholder and with PIN_CHECKSUM, and PIN_DATE as every page's modified date, each as rendered, with nothing
-# normalized (DISCOVERY round 5, finding 2), so a source that writes {tag}, {version} or another placeholder where the
+# normalized, so a source that writes {tag}, {version} or another placeholder where the
 # generator writes a release value changes the digest. Both gates hold the committed page to what the generator
 # renders, so any change to the page, in
 # site-src/pages/verify.html, in the generator code that renders it, or in what its head loads (the stylesheet and
@@ -1299,7 +1299,7 @@ def verify_render(module, root: Path, checksum: str) -> str:
     return module.verify_page(root, release, PIN_DATE).decode("utf-8")
 
 
-# VERIFY round 5.1, finding 1: the stand-in values, which a correct site-src/pages/verify.html never carries; it writes
+# The stand-in values, which a correct site-src/pages/verify.html never carries; it writes
 # a release token wherever the page shows a release value.
 STAND_IN_VALUES = (PIN_VERSION, f"v{PIN_VERSION}", PIN_DATE, PIN_CHECKSUM)
 
@@ -1343,12 +1343,12 @@ PIN_FORMS = [
     ("a second checksum joined by dots", ((NEXT, "<p>" + ".".join(PIN_CHECKSUM[::-1][i:i + 8]
                                                                 for i in range(0, 64, 8)) + "</p>" + NEXT),)),
     ("a double space in step 1", (("<p>Download the skill.", "<p>Download the  skill."),)),
-    # DISCOVERY round 5, finding 2: the download link with {tag} and {version} written literally, as an earlier pin's
+    # The download link with {tag} and {version} written literally, as an earlier pin's
     # failure rendering showed them; the generator writes them as they are, and the live link then holds them.
     ("the download link with {tag} and {version} written literally",
         (("{{release.zip_url}}", "https://github.com/jposluns/cleanlanguage/releases/download/{tag}/cleanlanguage-"
                                  "{version}.zip"),)),
-    # VERIFY round 5.1, finding 1: the stand-in file name and download link written in place of their tokens render
+    # The stand-in file name and download link written in place of their tokens render
     # the bytes the pin hashes; stand_in_problems() refuses them.
     ("the stand-in file name written in place of {{release.zip_name}}",
         (("{{release.zip_name}}", f"cleanlanguage-{PIN_VERSION}.zip"),)),
@@ -1424,7 +1424,7 @@ def check_verify_page_pin(failures: list[str]) -> int:
     return ran
 
 
-# DISCOVERY round 6, finding 1: the offline gate compares the committed page with the render for the committed
+# The offline gate compares the committed page with the render for the committed
 # release values at the committed dates, and the live gate with the render at those dates for the values the page
 # shows, which are the committed ones on a page the offline gate passes; so that render must be the pinned stand-in
 # rendering of the same state with the stand-in values replaced. The pin and this comparison render the verify page
@@ -1432,7 +1432,7 @@ def check_verify_page_pin(failures: list[str]) -> int:
 # committed dates, and, in check_committed_render(), the committed version with the checksum "a" * 64 and the verify
 # page's modified date 2099-12-31. A generator change that renders differently for one of these sets fails here; one
 # that renders differently only for other sets passes the pin and this comparison, until the committed release.json
-# and the verify page's modified date become a set it renders differently for (VERIFY round 6.1, finding 1).
+# and the verify page's modified date become a set it renders differently for.
 def committed_render_problems(module, root: Path) -> list[str]:
     """The verify page as ``module`` renders it from ``root`` for its site-src/release.json at the modified dates in
     its site-src/site.json, the page both gates require, against the stand-in rendering of the same state, which must

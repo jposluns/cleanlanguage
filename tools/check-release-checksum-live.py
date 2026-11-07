@@ -1358,7 +1358,7 @@ def check_site_checksum(load_code: int = 0) -> int:
         written = VERIFY_PAGE.read_bytes()
     except OSError as error:
         die(f"{VERIFY_PAGE.relative_to(REPO_ROOT)} could not be read: {type(error).__name__}: {error}")
-    # DISCOVERY round 8, finding 1: while a draft is staged, tools/build-site.py does not write the live page.
+    # While a draft is staged, tools/build-site.py does not write the live page, so the report does not say to run it.
     staged = staged_draft()
     if not problems and written != rendered:
         problems.append(f"is not the page tools/build-site.py renders for version {version} and that checksum from "
@@ -1440,7 +1440,7 @@ def check_site_checksum(load_code: int = 0) -> int:
             return max(2, offline_release_line_code(situation))
         situation = f"release {tag} is not published yet and its tag does not exist"
         if pending is None:
-            # DISCOVERY round 5, finding 1: before the tag, the only page that states nothing false is the note. A
+            # Before the tag, the only page that states nothing false is the note. A
             # checksum shown as published for a version with no release (the previous version's digest or a locally
             # built one passed to tools/set-release-links.py) fails, as does a page whose step 3 then rejects the
             # download. A checksum close to the zero placeholder, such as a mistyped one, exits 3 above, as the

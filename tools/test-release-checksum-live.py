@@ -1237,7 +1237,7 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(gate.main(), 1)
 
     def test_pre_tag_window_passes(self):
-        # DISCOVERY round 5, finding 1: before the tag, the only page the window passes is the note.
+        # Before the tag, the only page the window passes is the note.
         self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15")
         gate.VERIFY_PAGE.write_text(PENDING.format(version=AHEAD), encoding="utf-8")
         gate.release_status = lambda tag: 404
@@ -1245,7 +1245,7 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(gate.main(), 0)
 
     def test_a_checksum_shown_as_published_before_the_tag_fails(self):
-        # DISCOVERY round 5, finding 1: an honest mistake at the bump, a well-formed checksum passed to
+        # An honest mistake at the bump, a well-formed checksum passed to
         # tools/set-release-links.py for a version with no release and no tag, fails (exit 1), the Released line still
         # checked and the more severe code winning; nothing beyond the release and the tag is read over the network. A
         # mistyped placeholder exits 3 before this, as the generator refuses to render it (WholePageTest).
@@ -1317,7 +1317,7 @@ class ConditionalPassTest(unittest.TestCase):
              "the verify page shows the zero placeholder as the published checksum"),
             ("the note beside a published checksum", outside(VERIFY.format(version=CURRENT, checksum=ZIP_SUM), note),
              mixed + block + " (found 0)"),
-            # Finding 1 (DISCOVERY round 2) and findings 2 and 5 (VERIFY round 2.1): outside the block, the page
+            # Outside the block, the page
             # is read as parsed markup and as written, comments and hidden elements included.
             ("the note beside the checksum element with its attributes in the other order",
              outside(pending, f'<code id="published-checksum" class="sum">{ZIP_SUM}</code>\n'),
@@ -1379,7 +1379,7 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {report}\n"))
 
     def test_a_published_page_without_the_rest_of_its_state_exits_3(self):
-        # Finding 2 (DISCOVERY round 2) and findings 1, 3 and 4 (VERIFY round 2.1): a page with a real checksum
+        # A page with a real checksum
         # carries the download block the generator writes for it, unchanged and where the generator writes it,
         # and nothing outside it that belongs to either state, or it is refused before any release is read.
         page = VERIFY.format(version=CURRENT, checksum=ZIP_SUM)
@@ -1420,7 +1420,7 @@ class ConditionalPassTest(unittest.TestCase):
              "carries the not-yet-published note outside the download block"),
             ("the whole block hidden", page[:start] + "<div hidden>" + page[start:end] + "</div>" + page[end:], placed),
             ("the whole block in a comment", page[:start] + "<!--" + page[start:end] + "-->" + page[end:], placed),
-            # DISCOVERY round 3, findings 2, 4 and 7: an end tag does not close an element across a template or a
+            # An end tag does not close an element across a template or a
             # table, and a second checksum in groups counts.
             ("a template that ends the doc div around the block",
              page[:start] + '<template></div><div class="doc">' + page[start:end] + "</div></template>" + page[end:],
@@ -1442,7 +1442,7 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {shown}{report}\n"))
 
     def test_prose_outside_the_block_is_a_stated_residual(self):
-        # DISCOVERY round 3, finding 3: the rule does not read the meaning of prose, so a contradicting step 3
+        # The rule does not read the meaning of prose, so a contradicting step 3
         # outside the block passes it here; tools/check-release-links.py refuses that page by whole-page equality.
         page = outside(VERIFY.format(version=CURRENT, checksum=ZIP_SUM),
                        "<p>Correction to step 3: if the two values match, delete the file.</p>")
@@ -1479,7 +1479,7 @@ class ConditionalPassTest(unittest.TestCase):
         """Run the gate in the pre-tag window for ``version``, asserting the
         release and the tag are each probed once and nothing else is read
         over the network; returns (exit code, stdout, stderr). The page is the
-        note, the only page the window passes (DISCOVERY round 5, finding 1)."""
+        note, the only page the window passes."""
         self.fixtures(version, OTHER_SUM, version, released)
         gate.VERIFY_PAGE.write_text(PENDING.format(version=version), encoding="utf-8")
         self.published(None, statuses={f"v{version}": 404})
@@ -2621,9 +2621,8 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(probed, [f"v{version}"])
 
     def test_a_second_checksum_block_or_version_sentence_exits_3(self):
-        # Fix round 14 (VERIFY round 9.3, finding 4) read a page with 2 checksum blocks, or 2 version sentences, by
-        # its first. Finding 1 (VERIFY round 2.1): such a page now carries more than the download block of the
-        # checksum and version it is read by, so it is refused before any release is read.
+        # A page with 2 checksum blocks, or 2 version sentences, is not read by its first: it carries more than the
+        # download block of the checksum and version it is read by, so it is refused before any release is read.
         page = VERIFY.format(version=CURRENT, checksum=ZIP_SUM)
         code = f'<code class="sum" id="published-checksum">{ZIP_SUM}</code>'
         sentence = f"<p>The published checksum for version {CURRENT} is:</p>"
@@ -4953,8 +4952,8 @@ class DisplayedSumMarkupTest(unittest.TestCase):
 class WholePageTest(unittest.TestCase):
     """The gate on a copy of the generator's inputs with the real tools/build-site.py: the committed verify page is
     the render for the version and checksum it shows, a page rendered for another version that has no published
-    release (release status 404) reaches the inconsistency report, and every page form reported in review
-    (DISCOVERY round 4, findings 1, 2, 4 and 6), made on the page alone, in either state, exits 3 before any
+    release (release status 404) reaches the inconsistency report, and every page form reported in review,
+    made on the page alone, in either state, exits 3 before any
     release is read. A page for another version that has a published release reaches the checksum step
     instead, which compares only when the gate can download and read that release's zip and .sha256, with a
     well-formed manifest that the zip hashes to; these tests do not run it."""
@@ -5029,7 +5028,7 @@ class WholePageTest(unittest.TestCase):
                 self.assertIn(f"  - the verify page names version {BOGUS}, which has no published release\n", output)
 
     def test_a_checksum_close_to_the_placeholder_exits_3(self):
-        # DISCOVERY round 7: the generator refuses a checksum other than the zero placeholder with 56 or more of its 64
+        # The generator refuses a checksum other than the zero placeholder with 56 or more of its 64
         # digits 0, such as a mistyped placeholder, so a page that shows one is not the render: exit 3 before any
         # release is read.
         page = self.publish(self.SUM)
@@ -5038,7 +5037,7 @@ class WholePageTest(unittest.TestCase):
                 self.page.write_text(page.replace(self.SUM, checksum), encoding="utf-8")
                 code, output = self.gate_run()
                 self.assertEqual(code, 3, output)
-                # VERIFY round 7.1, finding 2: the checksum comes from the page, not release.json, which holds SUM.
+                # The checksum comes from the page, not release.json, which holds SUM.
                 self.assertIn(f"tools/build-site.py could not render the verify page: the checksum "
                               f"{checksum} is not the zero placeholder but has {checksum.count('0')} of its 64 digits 0",
                               output)
@@ -5049,7 +5048,7 @@ class WholePageTest(unittest.TestCase):
         for checksum, state in (("0" * 64, "placeholder"), (self.SUM, "published")):
             page = self.publish(checksum)
             code, output = self.gate_run()
-            # DISCOVERY round 5, finding 1: in the pre-tag window the render with a published checksum is an
+            # In the pre-tag window the render with a published checksum is an
             # inconsistency (exit 1 here, where no other check fails with a higher code), the render with the note
             # passes.
             self.assertEqual(code, 0 if state == "placeholder" else 1, output)
@@ -5082,7 +5081,7 @@ class WholePageTest(unittest.TestCase):
             reports = [(label, changed, rendered) for label, changed in forms] + [
                 ("6: a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1),
                  refused),
-                # DISCOVERY round 5, finding 6: comments nested 400 deep before step 1 exit 3, never a traceback.
+                # Comments nested 400 deep before step 1 exit 3, never a traceback.
                 ("round 5, 6: comments nested 400 deep before step 1",
                  page[:start] + "<!--" * 400 + "-->" + page[start:], "nests comments too deeply to be read")]
             for label, changed, report in reports:
@@ -5095,14 +5094,14 @@ class WholePageTest(unittest.TestCase):
             self.page.write_text(page, encoding="utf-8")
 
     def test_a_staged_draft_names_promotion_as_the_remedy(self):
-        # DISCOVERY round 8, finding 1: with a draft staged under /draft/ and one nav label changed, tools/build-site.py
+        # With a draft staged under /draft/ and one nav label changed, tools/build-site.py
         # writes only site/draft/, so the correct live page is not the render; the gate exits 3, says so and names
         # promotion, and still refuses a wrong live page. Without a draft, it still says to run tools/build-site.py.
         rendered = (f"is not the page tools/build-site.py renders for version {self.version} and that checksum from "
                     "the committed sources (first at line ")
         staged = ("). site-src/site.json names base /draft/, so a draft is staged: tools/build-site.py writes only the "
                   "draft, not the live pages")
-        # VERIFY round 8.1, finding 1: the advice points to the whole promotion, not only the build, 1 step of it.
+        # The advice points to the whole promotion, not only the build, 1 step of it.
         remedy = ("Promotion after the owner approves it is the remedy: the pull request of step 5 under \"Staging at "
                   "/draft/ and promotion\" in .baseline/README.md, of which tools/build-site.py --base / --promote is "
                   "1 step")

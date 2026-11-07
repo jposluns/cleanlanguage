@@ -156,7 +156,7 @@ class ReleaseSourceTest(unittest.TestCase):
         self.assertIn("site/verify/index.html shows a checksum other than site-src/release.json", output)
 
     def test_a_checksum_close_to_the_placeholder_fails(self):
-        # DISCOVERY round 7: a checksum other than the zero placeholder with 56 or more of its 64 digits 0, such as a
+        # A checksum other than the zero placeholder with 56 or more of its 64 digits 0, such as a
         # mistyped placeholder, fails check 7, and the page is not rendered (the generator refuses it). A checksum with
         # 55 digits 0, and one that looks real, still pass.
         def refuse() -> bytes:
@@ -175,7 +175,7 @@ class ReleaseSourceTest(unittest.TestCase):
                     self.assertIn(report + f"{checksum.count('0')} of its 64 digits 0, such as a mistyped placeholder; "
                                   "until release v1.0.14 is published, run tools/set-release-links.py with the zero "
                                   "placeholder", output)
-                    # VERIFY round 7.1, finding 1: the closing advice is the placeholder's, as the report says.
+                    # The closing advice is the placeholder's, as the report says.
                     self.assertIn("site-src/release.json holds a checksum close to the zero placeholder. Until release "
                                   "v1.0.14 is published, run tools/set-release-links.py for version 1.0.14 with the "
                                   "zero placeholder", output)
@@ -212,7 +212,7 @@ class ReleaseSourceTest(unittest.TestCase):
     EQUAL = "site/verify/index.html is not the page tools/build-site.py renders for it from the committed sources"
 
     def test_any_other_page_fails_by_whole_page_equality(self):
-        # DISCOVERY round 3, findings 3, 4 and 9: whatever the rule reads or misses, a page that is not the
+        # Whatever the rule reads or misses, a page that is not the
         # generator's render fails, each with the same report, in either state.
         for checksum, state in ((SUM, "holds a published checksum"), (ZEROS, "holds the zero placeholder")):
             page = verify_page("1.0.14", checksum)
@@ -302,7 +302,7 @@ class ReleaseSourceTest(unittest.TestCase):
         self.assertIn("the verify page says the checksum appears once that version is published", output)
 
     def test_the_closing_advice_fits_the_state(self):
-        # DISCOVERY round 5, finding 5: while release.json holds the zero placeholder, there is no published checksum
+        # While release.json holds the zero placeholder, there is no published checksum
         # to flip the site to, so the advice is to rerun the writer with the placeholder until the release publishes.
         self.write(gate.INSTALL_PAGE, "<p>No download here.</p>")
         code, output = self.pending(PENDING.format(v="1.0.14"))
@@ -316,13 +316,13 @@ class ReleaseSourceTest(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertIn("Flip the site with tools/set-release-links.py using the published", output)
         self.assertNotIn("holds the zero placeholder of a version bump", output)
-        # DISCOVERY round 6, finding 4: whole-page equality refuses a page edited by hand, so the advice names only
+        # Whole-page equality refuses a page edited by hand, so the advice names only
         # the writer and the generator.
         self.assertIn("then run tools/build-site.py", output)
         self.assertNotIn("by hand", output)
 
     def test_comments_nested_too_deeply_fail_without_a_traceback(self):
-        # DISCOVERY round 5, finding 6: 400 nested comment openers before step 1 make PageReader recurse past the
+        # 400 nested comment openers before step 1 make PageReader recurse past the
         # interpreter's limit; the rule reports it as 1 problem, in either state, never an uncaught RecursionError.
         deep = "<!--" * 400 + "-->"
         for checksum, page, state in ((SUM, VERIFY.format(v="1.0.14", sum=SUM), self.SHOWS),
@@ -373,7 +373,7 @@ class ReleaseSourceTest(unittest.TestCase):
                 self.assertIn(f"site/verify/index.html {report}{self.HOLDS}", output)
 
     def test_placeholder_note_beside_equivalent_markup_fails(self):
-        # Finding 1 (DISCOVERY round 2), and findings 2 and 5 (VERIFY round 2.1): outside the block, the page
+        # Outside the block, the page
         # is read as parsed markup and as written, comments and hidden elements included, and a link through
         # site/_redirects to the checksum file is a link to that file.
         for label, extra, report in (
@@ -396,7 +396,7 @@ class ReleaseSourceTest(unittest.TestCase):
             ("64 hexadecimal digits split by markup in an attribute and in a comment",
              '<p data-x="' + "A" * 64 + '">' + "f" * 32 + "<b></b>" + "f" * 32 + "</p><!-- " + "e" * 64 + " -->",
              "carries a 64 digit hexadecimal value outside the download block"),
-            # DISCOVERY round 3, finding 4: in the text, the value also counts in groups.
+            # In the text, the value also counts in groups.
             ("64 hexadecimal digits in groups of 8", "<p>" + " ".join(SUM[i:i + 8] for i in range(0, 64, 8)) + "</p>",
              "carries a 64 digit hexadecimal value outside the download block"),
             ("64 hexadecimal digits in groups split by markup, hyphens and colons",
@@ -441,7 +441,7 @@ class ReleaseSourceTest(unittest.TestCase):
         self.assertNotIn("outside the download block", output)
 
     def test_published_checksum_without_the_rest_of_its_state_fails(self):
-        # Finding 2 (DISCOVERY round 2) and finding 4 (VERIFY round 2.1): any change to the block, such as a
+        # Any change to the block, such as a
         # missing step 1 lead, link to the checksum file or step 3, or a step 3 that rejects a matching value,
         # leaves the page without the block the generator writes.
         page = VERIFY.format(v="1.0.14", sum=SUM)
@@ -466,7 +466,7 @@ class ReleaseSourceTest(unittest.TestCase):
                 self.assertIn(self.BLOCK + " exactly once, byte for byte (found 0)" + self.SHOWS, output)
 
     def test_the_block_hidden_or_moved_fails(self):
-        # Findings 1 and 3 (VERIFY round 2.1): a part of the block hidden or commented out, or a wrong checksum
+        # A part of the block hidden or commented out, or a wrong checksum
         # beside it, changes the block; the whole block inside other markup, or a page that copies a hidden
         # attribute onto its body, is not where the generator writes it.
         page = VERIFY.format(v="1.0.14", sum=SUM)
@@ -492,7 +492,7 @@ class ReleaseSourceTest(unittest.TestCase):
             ("the whole block in a template", page[:start] + "<template>" + page[start:end] + "</template>" + page[end:],
              self.PLACED),
             ("the whole block in an element left open", page[:start] + "<details>" + page[start:], self.PLACED),
-            # DISCOVERY round 3, findings 2 and 7: an end tag does not close an element across a template or a
+            # An end tag does not close an element across a template or a
             # table, as in a browser.
             ("a template that ends the doc div around the block",
              page[:start] + '<template></div><div class="doc">' + page[start:end] + "</div></template>" + page[end:],
@@ -892,7 +892,7 @@ class WriterTest(unittest.TestCase):
                          {"version": self.next, "tag": "v" + self.next, "checksum": "a" * 64})
 
     def test_a_staged_draft_gets_the_redirects_and_no_live_page(self):
-        # VERIFY round 8.1, finding 1: while a draft is staged, the writer writes what the offline gate's draft advice
+        # While a draft is staged, the writer writes what the offline gate's draft advice
         # says: site/_redirects, release.json, the modified dates in site.json and the draft's pages, no live page.
         site_json = self.root / "site-src/site.json"
         text = site_json.read_text(encoding="utf-8")
@@ -959,7 +959,7 @@ class WriterTest(unittest.TestCase):
         return code, err.getvalue()
 
     def test_a_checksum_close_to_the_placeholder_is_refused(self):
-        # DISCOVERY round 7: the writer refuses a checksum other than the zero placeholder with 56 or more of its 64
+        # The writer refuses a checksum other than the zero placeholder with 56 or more of its 64
         # digits 0, such as a mistyped placeholder, before it writes anything, and the gate fails one written by hand
         # (exit 1, not the generator's refusal). The zero placeholder, 55 digits 0 and a real-looking checksum pass.
         release = self.root / "site-src/release.json"
@@ -1021,7 +1021,7 @@ class WriterTest(unittest.TestCase):
 
 class WholePageTest(unittest.TestCase):
     """The gate on a copy of the generator's inputs with the real tools/build-site.py: the committed verify page is
-    the generator's render, and every page form reported in review, in either state, fails (DISCOVERY round 3)."""
+    the generator's render, and every page form reported in review, in either state, fails."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1143,10 +1143,10 @@ class WholePageTest(unittest.TestCase):
             self.page.write_text(page, encoding="utf-8")
 
     def test_a_staged_draft_names_promotion_as_the_remedy(self):
-        # DISCOVERY round 8, finding 1: with a draft staged under /draft/ and one nav label changed, tools/build-site.py
+        # With a draft staged under /draft/ and one nav label changed, tools/build-site.py
         # writes only site/draft/, so the correct live page is not the render; the gate says so and names promotion,
         # and still fails a wrong live page. Without a draft, it still says to run tools/build-site.py.
-        # VERIFY round 8.1, finding 1: the advice says what each tool writes and points to the whole promotion.
+        # The advice says what each tool writes and points to the whole promotion.
         staged = ("site-src/site.json names base /draft/, so a draft is staged: tools/build-site.py writes only the "
                   "draft, and tools/set-release-links.py writes site/_redirects, site-src/release.json, the modified "
                   "dates in site-src/site.json and the draft's pages, so neither writes the live verify page, and this "
@@ -1196,7 +1196,7 @@ class WholePageTest(unittest.TestCase):
                 self.page.write_text(page, encoding="utf-8")
 
     def test_a_staged_draft_gets_no_draft_advice_for_another_failure(self):
-        # VERIFY round 8.1, finding 1: with a draft staged under /draft/ and the verify page the render, a stale
+        # With a draft staged under /draft/ and the verify page the render, a stale
         # site/_redirects fails with no draft advice: tools/set-release-links.py rewrites it, and the promotion
         # build does not.
         site_json, redirects = self.root / "site-src/site.json", self.root / "site/_redirects"
@@ -1219,7 +1219,7 @@ class WholePageTest(unittest.TestCase):
 
 
 class WorkflowPathsTest(unittest.TestCase):
-    """DISCOVERY round 5, finding 4: the offline gate holds the verify page to the generator's render, so
+    """The offline gate holds the verify page to the generator's render, so
     .github/workflows/link-check.yml runs it on a pull request or a push to main that changes the generator or any
     input it reads (WriterTest.INPUTS): each trigger lists a path filter that covers each of them."""
 

@@ -379,8 +379,8 @@ def main() -> int:
         for problem in dict.fromkeys(problems):
             print(f"  - {problem}")
         if placeholder or near:
-            # DISCOVERY round 5, finding 5: before the release, there is no published checksum to flip the site to.
-            # VERIFY round 7.1, finding 1: a checksum close to the placeholder is a mistyped placeholder (check 7).
+            # Before the release, there is no published checksum to flip the site to.
+            # A checksum close to the placeholder is a mistyped placeholder (check 7).
             held, which = (("the zero placeholder of a version bump", "that placeholder") if placeholder else
                            ("a checksum close to the zero placeholder", "the zero placeholder"))
             print(
@@ -396,8 +396,8 @@ def main() -> int:
                 f"so the site matches SKILL.md ({expected})."
             )
         if staged is not None:
-            # DISCOVERY round 8, finding 1: while a draft is staged, neither tool above writes the live verify page.
-            # VERIFY round 8.1, finding 1: only that page's equality with the render gets this advice.
+            # While a draft is staged, neither tool above writes the live verify page.
+            # Only that page's equality with the render gets this advice.
             print(f"\n{draft_advice(staged)}.")
         return 1
 
