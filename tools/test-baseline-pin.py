@@ -5,7 +5,7 @@ Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
 with the version's README and specification under ``.baseline/`` and a root
 ``NOTICE.md``, applies 1 fault, runs the gate on that tree as a separate
 process and asserts its exit code, and for some cases a line of its output.
-The last case runs the gate on this repository. The first 27 cases run
+The last case runs the gate on this repository. The first 29 cases run
 ``tools/copy-baseline.py`` on a small version folder and assert that the pin
 header it writes, and the committed one, give each key's base; that it copies
 and pins the build tools, the palette gate and the card builder with its
@@ -25,12 +25,19 @@ and a link elsewhere under ``site/`` makes it exit 1 naming the gate's
 problem; that a ``--from`` folder that is a link makes it exit 1 before any
 write; that a ``--from`` folder inside the served copy folder or inside
 ``.baseline/card-fonts/``, or one that holds the repository, makes it exit 1
-before any write, naming both paths and leaving the version folder and the
-served files unchanged; and that on Python older than 3.11, stood in for by a
-gate whose tomllib import fails, it exits 3 with its own message before any
-served file is replaced. When not run as root, a further case makes
-``.baseline/`` read-only and asserts that the copy exits 3 with its own 1
-line rather than a traceback.
+before any write, naming both paths and leaving the served files unchanged;
+that on Python older than 3.11, stood in for by a gate whose tomllib import
+fails, it exits 3 with its own message before any served file is replaced;
+that a hard link from outside the paths it manages to each file it writes in
+``.baseline/`` keeps its content through a clean copy; and that a link in
+place of ``tools/__pycache__/`` leads to a folder that gains nothing from a
+refused copy. When not run as root, a further case makes ``.baseline/``
+read-only and asserts that the copy exits 3 with its own 1 line, which says
+that the copy and the pin may be incomplete, rather than a traceback. A
+further case asserts that no copy-baseline run in these cases, refused or not,
+changes, adds or removes a file or link outside the paths the tool manages or
+under its ``--from`` folder, comparing each one's path, inode, size and
+SHA-256, or a link's target, before and after the run.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
@@ -564,15 +571,47 @@ CASES = [
 ]
 
 
+# The paths copy-baseline manages, relative to the repository root, with the output root at site/ as run_copy's
+# site-src/site.json sets it: the folders it clears and rebuilds, and the files it writes in .baseline/.
+MANAGED_FOLDERS = ("site/assets/baseline/", ".baseline/card-fonts/")
+MANAGED_FILES = {TOOL_KEY, CARD_KEY, ".baseline/SHA256SUMS", ".baseline/pin.toml",
+                 *(f".baseline/{name}" for name in DOCS)}
+# Each copy-baseline run in which a file outside MANAGED_FOLDERS and MANAGED_FILES, or under the --from folder,
+# changed, appeared or went away.
+OUTSIDE_CHANGES: list[str] = []
+
+
+def unmanaged(root: Path, version: Path) -> dict[str, tuple]:
+    """Every file and link under root outside the paths copy-baseline manages, and every one under the --from folder
+    wherever it is, by path, with its inode, size and SHA-256, or a link's target. Links are recorded, never
+    followed."""
+    found: dict[str, tuple] = {}
+    for top, everything in ((root, False), (version, True)):
+        for folder, folders, files in os.walk(top):
+            for name in folders + files:
+                path = Path(folder) / name
+                relative = os.path.relpath(path, root).replace(os.sep, "/")
+                if not everything and (relative in MANAGED_FILES or relative.startswith(MANAGED_FOLDERS)):
+                    continue
+                if os.path.islink(path):
+                    found[str(path)] = ("link", os.readlink(path))
+                elif path.is_file():
+                    status = path.stat()
+                    found[str(path)] = (status.st_ino, status.st_size, digest(path.read_bytes()))
+    return found
+
+
 def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
              source_link: bool = False, version: Path | None = None) -> subprocess.CompletedProcess:
     """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS, with the
     gate (or the given gate source) beside it, from which it loads notice_entry() and check(), and a NOTICE.md that
     carries the 1.2.1 entry, so that the gate's check at the end passes a clean copy. A site-src/ that the caller
-    has already made, as a folder or a link, is kept. With source_link, 1.2.1 is a link to the version folder. With
-    version, the version folder is made there instead, and its SHA256SUMS lists every file in it, so that a version
-    folder that holds the repository still matches its sums."""
-    (root / "tools").mkdir()
+    has already made, as a folder or a link, is kept, and so is a tools/ folder. With source_link, 1.2.1 is a link
+    to the version folder. With version, the version folder is made there instead, and its SHA256SUMS lists every
+    file in it, so that a version folder that holds the repository still matches its sums. Whatever the outcome,
+    any file outside the paths the tool manages, or under the version folder, that differs after the run from
+    before it is recorded in OUTSIDE_CHANGES."""
+    (root / "tools").mkdir(exist_ok=True)
     shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
     (root / "tools" / GATE.name).write_bytes(GATE.read_bytes() if gate is None else gate)
     (root / "NOTICE.md").write_text(NOTICE_TEXT, encoding="utf-8")
@@ -592,7 +631,15 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
     command = [sys.executable, "-I", str(root / "tools" / COPY_TOOL.name), "--from",
                str(root / "1.2.1" if source_link else version),
                "--sums-sha256", digest(sums.encode()), "--archive-sha256", "0" * 64]
-    return subprocess.run(command, capture_output=True, text=True)
+    before = unmanaged(root, version)
+    result = subprocess.run(command, capture_output=True, text=True)
+    after = unmanaged(root, version)
+    changed = sorted((before.keys() ^ after.keys()) | {path for path in before.keys() & after.keys()
+                                                      if before[path] != after[path]})
+    if changed:
+        OUTSIDE_CHANGES.append(f"copy-baseline (exit {result.returncode}) changed "
+                               f"{[os.path.relpath(path, root) for path in changed]}")
+    return result
 
 
 PACKAGE = {**FILES, **DOCS, "tools/check_palette.py": TOOL, **{package_name(key): data for key, data in CARD.items()}}
@@ -657,8 +704,8 @@ def link_site_json(root: Path) -> None:
 
 
 # Trees copy-baseline refuses (exit 1) before its first write: each makes a folder it writes into, a file it writes,
-# or the site-src/site.json it reads the output root from, a link or of the wrong kind. The folder outside/ must be
-# unchanged after the run.
+# or the site-src/site.json it reads the output root from, a link or of the wrong kind. What the link leads to, in
+# outside/, lies outside the paths the tool manages, so run_copy checks that it is unchanged.
 COPY_TREE_REFUSALS = [
     ("a link in place of .baseline/card-fonts/", link_card_fonts),
     ("a file in place of .baseline/card-fonts/", file_card_fonts),
@@ -667,10 +714,6 @@ COPY_TREE_REFUSALS = [
     ("a link in place of site-src/", link_site_src),
     ("a link in place of site-src/site.json", link_site_json),
 ]
-
-
-def snapshot(folder: Path) -> dict[str, bytes]:
-    return {path.relative_to(folder).as_posix(): path.read_bytes() for path in folder.rglob("*") if path.is_file()}
 
 
 def copy_tree_problems() -> list[str]:
@@ -686,11 +729,10 @@ def copy_tree_problems() -> list[str]:
             if not served.exists():
                 served.parent.mkdir(parents=True)
                 served.write_bytes(b"a { color: red; }\n")
-            before = snapshot(root / "outside")
             result = run_copy(root, dict(PACKAGE))
-            if result.returncode != 1 or not served.is_file() or snapshot(root / "outside") != before:
+            if result.returncode != 1 or not served.is_file():
                 problems.append(f"copy-baseline: {name} exits {result.returncode}; expected 1 before any write, the "
-                                f"served files and the files outside the tree kept: {result.stderr.strip()[:200]!r}")
+                                f"served files kept: {result.stderr.strip()[:200]!r}")
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
         fonts = root / ".baseline" / "card-fonts"
@@ -782,7 +824,7 @@ COPY_SOURCE_REFUSALS = [
 
 def copy_source_problems() -> list[str]:
     """copy-baseline refuses each --from folder in COPY_SOURCE_REFUSALS before it writes, naming the folder and the
-    path it overlaps, and leaves the version folder and the served files as they were."""
+    path it overlaps, and leaves the served files as they were; run_copy checks every file in the version folder."""
     problems = []
     for name, layout, needle in COPY_SOURCE_REFUSALS:
         with tempfile.TemporaryDirectory() as scratch:
@@ -791,14 +833,12 @@ def copy_source_problems() -> list[str]:
             served.parent.mkdir(parents=True)
             served.write_bytes(b"a { color: red; }\n")
             result = run_copy(root, dict(PACKAGE), version=version)
-            kept = all((version / key).is_file() and (version / key).read_bytes() == data
-                       for key, data in PACKAGE.items())
-            if (result.returncode != 1 or not kept or not served.is_file()
+            if (result.returncode != 1 or not served.is_file()
                     or (root / ".baseline" / "pin.toml").exists()
                     or f"{version} {needle}" not in result.stderr or "Traceback" in result.stderr):
                 problems.append(f"copy-baseline: {name} exits {result.returncode}; expected 1 before any write, "
-                                f"naming {str(version)!r} and saying {needle!r}, the version folder and the served "
-                                f"files kept: {result.stderr.strip()[-200:]!r}")
+                                f"naming {str(version)!r} and saying {needle!r}, the served files kept: "
+                                f"{result.stderr.strip()[-200:]!r}")
     return problems
 
 
@@ -815,10 +855,48 @@ def write_failure_problems() -> list[str]:
             os.chmod(root / ".baseline", 0o755)
         lines = result.stderr.splitlines()
         if (result.returncode != 3 or len(lines) != 1
-                or not lines[0].startswith("copy-baseline: a file could not be read or written")):
+                or not lines[0].startswith("copy-baseline: a file could not be read or written")
+                or not lines[0].endswith("; the copy and the pin may be incomplete")):
             return [f"copy-baseline: a file it cannot write exits {result.returncode} with "
-                    f"{result.stderr.strip()[-200:]!r}; expected 3 with its own 1 line"]
+                    f"{result.stderr.strip()[-200:]!r}; expected 3 with its own 1 line, saying that the copy and "
+                    "the pin may be incomplete"]
     return []
+
+
+def alias_problems() -> list[str]:
+    """copy-baseline writes each file as a new file and renames it into place, so a hard link to a file it writes in
+    .baseline/, from outside the paths it manages, keeps its content; and it loads the gate without writing byte
+    code, so a tools/__pycache__/ link gains nothing, even on a refused copy."""
+    problems = []
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        (root / "outside").mkdir()
+        (root / ".baseline").mkdir()
+        aliases = {}
+        for relative in sorted(MANAGED_FILES):
+            alias = root / "outside" / Path(relative).name
+            alias.write_bytes(f"not managed: {relative}\n".encode())
+            os.link(alias, root / relative)
+            aliases[alias] = alias.read_bytes()
+        result = run_copy(root, dict(PACKAGE))
+        changed = [alias.name for alias, data in aliases.items() if alias.read_bytes() != data]
+        if result.returncode != 0 or changed or (root / CARD_KEY).read_bytes() != CARD[CARD_KEY]:
+            problems.append(f"copy-baseline: a hard link from outside to each file it writes in .baseline/: exit "
+                            f"{result.returncode}, the outside files changed {changed}; expected 0, each kept, and "
+                            f"the copy written: {result.stderr.strip()[-200:]!r}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        (root / "outside").mkdir()
+        (root / "tools").mkdir()
+        (root / "tools" / "__pycache__").symlink_to(root / "outside")
+        package = dict(PACKAGE)
+        package.pop(package_name(CARD_KEY))
+        result = run_copy(root, package)
+        left = sorted(path.name for path in (root / "outside").iterdir())
+        if result.returncode != 1 or left:
+            problems.append(f"copy-baseline: a link in place of tools/__pycache__/ with a refused copy: exit "
+                            f"{result.returncode}, the folder it leads to holds {left}; expected 1 and nothing there")
+    return problems
 
 
 def copy_problems() -> list[str]:
@@ -886,12 +964,15 @@ def pin_header_problems() -> list[str]:
 
 def main() -> int:
     failures: list[str] = (pin_header_problems() + copy_problems() + copy_tree_problems() + copy_gate_problems()
-                           + python_floor_problems() + copy_source_problems())
-    ran = 9 + len(COPY_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
+                           + python_floor_problems() + copy_source_problems() + alias_problems())
+    ran = 11 + len(COPY_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
     # As root, file permissions do not stop a write, so the write failure cannot be stood in for.
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         failures += write_failure_problems()
         ran += 1
+    # Every copy-baseline run above, refused or not, leaves each file outside the paths it manages as it was.
+    failures += [f"{change}, outside the paths it manages" for change in OUTSIDE_CHANGES]
+    ran += 1
     for name, fault, expected, *needles in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

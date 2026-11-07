@@ -41,7 +41,24 @@ path under ``.baseline/``, pinned but never served: ``tools/check_palette.py``
 ``.baseline/build_card.js`` and ``.baseline/card-fonts/``, since the builder
 reads its fonts from beside itself. It clears ``.baseline/card-fonts/`` before
 it copies, as it clears the served copy folder, so a stray file there never
-outlives a copy. Before its first write it refuses (exit 1) a link, or a file
+outlives a copy.
+
+It changes nothing outside the paths it manages: the served copy folder, the
+build tools' folders under ``.baseline/`` such as ``card-fonts/``, and the
+files it writes in ``.baseline/``, with any missing folder above them created.
+It writes each file as a new file beside its target and renames it over the
+target, so it never writes into an existing file: another hard link to a
+target keeps its content, and a link at a target is replaced, never followed.
+It reads each file it copies once and checks those bytes against their
+``SHA256SUMS`` digest before it writes them. It compiles the gate it loads from
+source without reading or writing byte code, so before its first change to a
+managed path it writes nothing, not even under ``tools/__pycache__/``. A run
+stopped by the system between creating a new file and renaming it leaves that
+file, named ``.<name>.<random>.tmp``, beside its target. Its checks run once,
+before the first change, so they do not cover a process that changes the tree
+while this tool runs.
+
+Before its first write it refuses (exit 1) a link, or a file
 in place of a folder, at a folder it clears or writes into or at any folder
 above one under the repository root, and a link or a folder in place of a file
 it writes outside the folders it clears: it never writes through a link, and
@@ -91,17 +108,20 @@ Usage:
 
 Exit codes:
   0  copied and pinned, and tools/check-baseline-pin.py passes the tree
-  1  a digest did not match, the folder is not a complete version, its README
-     lacks the folder's version heading or the step 7 NOTICE entry, or holds a
-     carriage return; the --from folder is a link, or is, is inside, or holds a
-     folder or file it clears or writes; a folder or file it writes, or
-     site-src/ or site-src/site.json, is a link or of the wrong kind; or,
-     after the copy, tools/check-baseline-pin.py finds a problem in the tree,
-     which it names
-  3  an input could not be read, or Python is older than 3.11; or a file could
-     not be read or written during the copy, which may then be incomplete; or,
-     after the copy, tools/check-baseline-pin.py could not read the tree or
-     found it malformed, which it names
+  1  before the first write: a digest did not match, the folder is not a
+     complete version, its README lacks the folder's version heading or the
+     step 7 NOTICE entry, or holds a carriage return; the --from folder is a
+     link, or is, is inside, or holds a folder or file it clears or writes; a
+     folder or file it writes, or site-src/ or site-src/site.json, is a link or
+     of the wrong kind; or, after the copy and the pin are written,
+     tools/check-baseline-pin.py finds a problem in the tree, which it names
+  3  an input could not be read, or Python is older than 3.11; or any failure
+     after the first change to a managed path and before the pin is written,
+     such as a file that cannot be read or written or a digest that no longer
+     matches, with a message that says that the copy and the pin may be
+     incomplete; or, after the copy and the pin are written,
+     tools/check-baseline-pin.py could not read the tree or found it
+     malformed, which it names
 """
 
 from __future__ import annotations
@@ -114,10 +134,14 @@ import io
 import json
 import os
 import re
+import secrets
 import shutil
 import stat
 import sys
 from pathlib import Path
+
+# Nothing this tool imports from here on writes byte code: the tool changes no file outside the paths it manages.
+sys.dont_write_bytecode = True
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PIN_DIR = REPO_ROOT / ".baseline"
@@ -136,7 +160,15 @@ HEX64 = re.compile(r"^[0-9a-f]{64}$")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 
+# True from just before the first change to a managed path until the pin is written: a failure in that span leaves a
+# partial copy, whatever raised it, so die() reports it as such.
+copying = False
+
+
 def die(code: int, message: str) -> None:
+    if copying:
+        code = 3
+        message = f"{message}; the copy and the pin may be incomplete"
     print(f"copy-baseline: {message}", file=sys.stderr)
     raise SystemExit(code)
 
@@ -149,16 +181,47 @@ def sha256(path: Path) -> str:
     return ""
 
 
+def write_new(target: Path, data: bytes) -> None:
+    """Write data to a new file beside target, then rename it over target. The rename replaces the folder entry, not
+    the file it named, so a write never lands in an existing file: another hard link to target, or whatever a link
+    at target leads to, keeps its content."""
+    temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
+    # O_EXCL refuses an existing entry, a link included, so the new file is always a fresh one.
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+        os.replace(temporary, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
+
+
+def install(source: Path, target: Path, expected: str, name: str) -> None:
+    """Write source's bytes to target as a new file, after checking them against the digest that SHA256SUMS lists.
+    The bytes are read once, so the file checked is the file written."""
+    try:
+        data = source.read_bytes()
+    except OSError as error:
+        die(3, f"{source} could not be read: {error}")
+    if hashlib.sha256(data).hexdigest() != expected:
+        die(1, f"{name} does not match its SHA256SUMS digest")
+    write_new(target, data)
+
+
 def load_gate():
     """tools/check-baseline-pin.py as a module, for its TOOLS, notice_entry(), NOTICE_STEP, ENTRY_PREFIX, and the
-    check() and Unreadable with which this tool checks the tree it wrote. The
-    gate's tomllib guard exits on Python older than 3.11; its message is dropped and this tool reports the floor in its
-    own words."""
+    check() and Unreadable with which this tool checks the tree it wrote. The gate is compiled from its source and
+    no cached byte code is read or written, so loading it writes nothing, not even under tools/__pycache__/, and a
+    stale or planted cache file is never run. The gate's tomllib guard exits on Python older than 3.11; its message
+    is dropped and this tool reports the floor in its own words."""
     try:
         spec = importlib.util.spec_from_file_location("check_baseline_pin", GATE)
         module = importlib.util.module_from_spec(spec)
+        code = compile(GATE.read_bytes(), str(GATE), "exec", dont_inherit=True)
         with contextlib.redirect_stderr(io.StringIO()):
-            spec.loader.exec_module(module)
+            exec(code, module.__dict__)
     except (OSError, SyntaxError) as error:
         die(3, f"{GATE} could not be loaded: {error}")
     except SystemExit:
@@ -347,30 +410,24 @@ def main() -> int:
     # folder or file written below would be changed by the copy, so the copy would remove or alter its own input.
     for target in (dest, *tool_folders, PIN_DIR, *written_files):
         check_source_apart(source, target)
+    global copying
+    copying = True
     for folder in (dest, *tool_folders):
         if folder.exists():
             shutil.rmtree(folder)
     for name in chosen:
         target = dest / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source / name, target)
-        if sha256(target) != listed[name]:
-            die(1, f"the copy of {name} does not match its digest")
+        install(source / name, target, listed[name], name)
 
     PIN_DIR.mkdir(exist_ok=True)
     for key, tool_source in tools.items():
-        if sha256(source / tool_source) != listed[tool_source]:
-            die(1, f"{tool_source} does not match its SHA256SUMS digest")
         target = REPO_ROOT / key
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source / tool_source, target)
-        if sha256(target) != listed[tool_source]:
-            die(1, f"the copy of {tool_source} does not match its digest")
-    shutil.copyfile(sums_path, PIN_DIR / "SHA256SUMS")
+        install(source / tool_source, target, listed[tool_source], tool_source)
+    install(sums_path, PIN_DIR / "SHA256SUMS", args.sums_sha256, "SHA256SUMS")
     for name in DOCUMENTS:
-        shutil.copyfile(source / name, PIN_DIR / name)
-        if sha256(PIN_DIR / name) != listed[name]:
-            die(1, f"the copy of {name} does not match its digest")
+        install(source / name, PIN_DIR / name, listed[name], name)
     lines = [
         "# Baseline pin, in the format of the baseline README (\"Adoption in a repository\", step 3).",
         "# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths under",
@@ -385,7 +442,8 @@ def main() -> int:
     ]
     lines += [f'"{PREFIX}{name}" = "{listed[name]}"' for name in chosen]
     lines += [f'"{key}" = "{listed[tool_source]}"' for key, tool_source in tools.items()]
-    (PIN_DIR / "pin.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_new(PIN_DIR / "pin.toml", ("\n".join(lines) + "\n").encode("utf-8"))
+    copying = False
     # The checks before the first write cover only the paths written and read here; the gate checks the whole tree,
     # so success is reported only for a tree the gate passes.
     try:
@@ -407,6 +465,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except OSError as error:
-        # A file that cannot be read or written once copying has begun ends the run with the documented code, not a
-        # traceback, and says that the copy may be incomplete, since the gate's check at the end has not run.
-        die(3, f"a file could not be read or written, so the copy and the pin may be incomplete: {error}")
+        # A file that cannot be read or written ends the run with the documented code, not a traceback; once copying
+        # has begun, die() adds that the copy and the pin may be incomplete, since the gate's check has not run.
+        die(3, f"a file could not be read or written: {error}")
