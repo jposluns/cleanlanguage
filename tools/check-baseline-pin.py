@@ -21,8 +21,11 @@ What it verifies
    ``.baseline/check_palette.py``, the card builder
    ``.baseline/build_card.js``, and its 3 Inter fonts and their licence in
    ``.baseline/card-fonts/``; and whose every value is a lower-case SHA-256.
-   Any other key, such as ``.baseline/site-card.toml``, is malformed: the
-   card's data file and illustration are the site's own, not the version's.
+   The version, each key and each value are matched whole, as are the base
+   path in ``site-src/site.json`` and each ``SHA256SUMS`` line, so a value
+   that ends in a newline is malformed. Any other key, such as
+   ``.baseline/site-card.toml``, is malformed: the card's data file and
+   illustration are the site's own, not the version's.
    A malformed pin is a failure (exit 3), never a pass.
 2. Each pinned file appears in the version's ``SHA256SUMS`` (kept as
    ``.baseline/SHA256SUMS``) under its name within the package, with the same
@@ -180,10 +183,13 @@ REQUIRED = [
                  "scheme.js", "LICENSE", "NOTICE.md", "marks/NOTICE.md")
 ] + list(TOOLS)
 
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
-VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-REL_PATH = re.compile(r"^[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$")
-SUM_LINE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9._/-]+)$")
+# Each value these validate is matched whole with fullmatch(): "$" also matches before a final newline, so match()
+# would accept a value that ends in one.
+HEX64 = re.compile(r"[0-9a-f]{64}")
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+REL_PATH = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
+SUM_LINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9._/-]+)")
+BASE = re.compile(r"/[a-z0-9-]+/")
 
 
 class Unreadable(Exception):
@@ -212,16 +218,16 @@ def load_pin(root: Path) -> tuple[str, dict[str, str]]:
     if set(pin) != {"version", "files"}:
         raise Unreadable(f"{PIN} must hold exactly version and [files], found {sorted(pin)}")
     version, files = pin["version"], pin["files"]
-    if not isinstance(version, str) or not VERSION.match(version):
+    if not isinstance(version, str) or not VERSION.fullmatch(version):
         raise Unreadable(f"{PIN} version {version!r} is not X.Y.Z")
     if not isinstance(files, dict) or not files:
         raise Unreadable(f"{PIN} pins no [files]")
     for path, digest in files.items():
         if path in TOOLS:
             pass
-        elif not path.startswith(PREFIX) or not REL_PATH.match(path) or ".." in path.split("/"):
+        elif not path.startswith(PREFIX) or not REL_PATH.fullmatch(path) or ".." in path.split("/"):
             raise Unreadable(f"{PIN} pins {path!r}, which is not a relative path under {PREFIX} or a pinned build tool")
-        if not isinstance(digest, str) or not HEX64.match(digest):
+        if not isinstance(digest, str) or not HEX64.fullmatch(digest):
             raise Unreadable(f"{PIN} pins {path} with a malformed sha256")
     return version, files
 
@@ -233,7 +239,7 @@ def output_root(root: Path) -> Path:
         raise Unreadable(f"{SITE_JSON} is not a JSON object with a base: {error}") from error
     if base == "/":
         return root / "site"
-    if not isinstance(base, str) or not re.match(r"^/[a-z0-9-]+/$", base):
+    if not isinstance(base, str) or not BASE.fullmatch(base):
         raise Unreadable(f"{SITE_JSON} base {base!r} must be / or a single folder such as /draft/")
     return root / "site" / base.strip("/")
 
@@ -376,7 +382,7 @@ def check(root: Path) -> list[str]:
     except UnicodeError as error:
         raise Unreadable(f"{SUMS} is not UTF-8: {error}") from error
     for number, line in enumerate(sums_text.splitlines(), start=1):
-        match = SUM_LINE.match(line)
+        match = SUM_LINE.fullmatch(line)
         if match is None:
             raise Unreadable(f"{SUMS} line {number} is malformed")
         published[match.group(2)] = match.group(1)

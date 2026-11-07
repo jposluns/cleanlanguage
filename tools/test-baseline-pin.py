@@ -40,14 +40,21 @@ The last case runs the gate on this repository. The copy-baseline cases run
   change, exits 3 saying that the copy and the pin may be incomplete; a
   ``--from`` folder whose name is not a version number, and a
   ``--sums-sha256`` that is not 64 lower-case hexadecimal digits, each exit 1;
-  a ``--from`` folder that does not exist exits 3; and, when not run as root,
-  a read-only ``.baseline/`` exits 3 saying that the copy and the pin may be
-  incomplete;
+  a ``--sums-sha256``, an ``--archive-sha256`` and a ``--from`` folder name
+  that each end in a newline exit 1, and a base path in
+  ``site-src/site.json`` that ends in one exits 3, each before its first
+  write, on a version that is otherwise valid; a ``--from`` folder that does
+  not exist exits 3; and, when not run as root, a read-only ``.baseline/``
+  exits 3 saying that the copy and the pin may be incomplete;
 - what argparse handles, with argparse's own output rather than the tool's 1
   line: no options exits 2 with argparse's usage and error lines, and
   ``--help`` exits 0 with its help, each with nothing written;
-- that it opens each file in the version folder exactly once, counted by code
-  appended to the gate;
+- that it opens each file in the version folder exactly once in its own
+  process, counted by an audit hook on Python's ``open`` event that code
+  appended to the gate adds, so a second open through ``builtins.open``,
+  ``io.open``, ``os.open`` or anything built on them, such as
+  ``shutil.copyfile``, is counted; a second read through the same open file,
+  or a read by another process, is not;
 - that a hard link from outside the paths it manages to each file it writes in
   ``.baseline/`` keeps its content through a clean copy, that a link in place
   of ``tools/__pycache__/`` leads to a folder that gains nothing from a
@@ -56,8 +63,15 @@ The last case runs the gate on this repository. The copy-baseline cases run
 - and that no copy-baseline run in these cases, refused or not, changes, adds
   or removes a file or link outside the paths the tool manages or under its
   ``--from`` folder, comparing each one's path, inode, size and SHA-256, or
-  a link's target, before and after the run. Every run goes through
-  ``copy_run()``, which makes that comparison, and a further case reads this
+  a link's target, before and after the run; and that every run that ends
+  before its first write, refused or stopped, changes nothing at all under
+  the test's repository root or its ``--from`` folder, managed paths
+  included, comparing each folder's and each file's mode and modification
+  time as well. A run ends before its first write when it does not exit 0
+  and does not say that it wrote the copy and the pin or that they may be
+  incomplete, as the tool's exit codes give, so the comparison holds for
+  every refusal without a case having to ask for it. Every run goes through
+  ``copy_run()``, which makes both comparisons, and a further case reads this
   file's source and fails if any other code refers to the tool's path, names
   its file outside a docstring, or starts a process, apart from
   ``run_gate()``, which runs the gate. A run written to avoid that reading,
@@ -81,6 +95,7 @@ import json
 import os
 import py_compile
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -344,6 +359,26 @@ def fault_card_data_pinned(root: Path) -> None:
              f'"{CARD_KEY}" = "{digest(CARD[CARD_KEY])}"\n".baseline/site-card.toml" = "{digest(TOOL)}"\n')
 
 
+def fault_version_newline(root: Path) -> None:
+    edit_pin(root, 'version = "1.2.1"', 'version = "1.2.1\\n"')
+
+
+def fault_digest_newline(root: Path) -> None:
+    edit_pin(root, f'"{digest(FILES["baseline.css"])}"', f'"{digest(FILES["baseline.css"])}\\n"')
+
+
+def fault_path_newline(root: Path) -> None:
+    edit_pin(root, '"assets/baseline/baseline.css"', '"assets/baseline/baseline.css\\n"')
+
+
+def fault_base_newline(root: Path) -> None:
+    # The copy moves to where the base path with its newline leads, site/draft/<newline>/, so a gate that matched the
+    # base path only up to its newline would find every file in place and pass.
+    (root / "site" / "draft" / "\n").mkdir()
+    shutil.move(copied(root).parent, root / "site" / "draft" / "\n" / "assets")
+    (root / "site-src" / "site.json").write_text(json.dumps({"base": "/draft/\n"}), encoding="utf-8")
+
+
 def fault_promoted_base(root: Path) -> None:
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
 
@@ -583,6 +618,10 @@ CASES = [
     ("a key outside the README format", fault_extra_key, 3),
     ("a version that is not X.Y.Z", fault_bad_version, 3),
     ("a malformed digest", fault_malformed_digest, 3),
+    ("a version that ends in a newline", fault_version_newline, 3),
+    ("a pinned digest that ends in a newline", fault_digest_newline, 3),
+    ("a pinned path that ends in a newline", fault_path_newline, 3),
+    ("a base path that ends in a newline, with the copy where it leads", fault_base_newline, 3),
     ("a path outside assets/baseline/", fault_path_outside, 3),
     ("an unknown .baseline/ key", fault_other_baseline_key, 3),
     ("the card's data file .baseline/site-card.toml pinned", fault_card_data_pinned, 3),
@@ -625,27 +664,55 @@ def managed_folders(root: Path) -> tuple[str, ...]:
 # Each copy-baseline run in which a file outside managed_folders() and MANAGED_FILES, or under the --from folder,
 # changed, appeared or went away.
 OUTSIDE_CHANGES: list[str] = []
+# Each copy-baseline run that ended before its first write, by the tool's own account, in which anything under the
+# test's root or the --from folder changed, appeared or went away, managed paths included.
+REFUSED_CHANGES: list[str] = []
+# What the tool says on stderr when it ends after its first write: the gate's check after the copy, or a failure once
+# copying has begun. Any other run that does not exit 0 has, by the tool's exit-code contract, ended before it.
+AFTER_WRITE = ("wrote the copy and the pin", "the copy and the pin may be incomplete")
 
 
-def unmanaged(root: Path, version: Path | None) -> dict[str, tuple]:
-    """Every file and link under root outside the paths copy-baseline manages, and every one under the --from folder
-    wherever it is, when there is one, by path, with its inode, size and SHA-256, or a link's target. Links are
-    recorded, never followed."""
+def tree_state(root: Path, version: Path | None) -> dict[str, tuple]:
+    """root itself and every folder, file and link under it, and the same under the --from folder wherever it is,
+    when there is one, by path: a folder's mode and modification time, which a name created, renamed or removed in it
+    changes; a file's inode, size, SHA-256, mode and modification time; a link's target. Links are recorded, never
+    followed."""
+    found: dict[str, tuple] = {}
+    for top in (root, *((version,) if version is not None else ())):
+        for folder, folders, files in os.walk(top):
+            paths = [Path(folder)] if Path(folder) == top else []
+            for path in paths + [Path(folder) / name for name in folders + files]:
+                status = os.lstat(path)
+                if stat.S_ISLNK(status.st_mode):
+                    found[str(path)] = ("link", os.readlink(path))
+                elif stat.S_ISDIR(status.st_mode):
+                    found[str(path)] = ("folder", status.st_mode, status.st_mtime_ns)
+                elif stat.S_ISREG(status.st_mode):
+                    found[str(path)] = ("file", status.st_ino, status.st_size, digest(path.read_bytes()),
+                                        status.st_mode, status.st_mtime_ns)
+                else:
+                    found[str(path)] = ("other", status.st_mode)
+    return found
+
+
+def unmanaged(state: dict[str, tuple], root: Path, version: Path | None) -> dict[str, tuple]:
+    """The files and links of a tree_state() outside the paths copy-baseline manages, and every one under the --from
+    folder, with a file's inode, size and SHA-256 or a link's target: what a run that changes things must keep."""
     found: dict[str, tuple] = {}
     managed = managed_folders(root)
-    for top, everything in ((root, False), *(((version, True),) if version is not None else ())):
-        for folder, folders, files in os.walk(top):
-            for name in folders + files:
-                path = Path(folder) / name
-                relative = os.path.relpath(path, root).replace(os.sep, "/")
-                if not everything and (relative in MANAGED_FILES or relative.startswith(managed)):
-                    continue
-                if os.path.islink(path):
-                    found[str(path)] = ("link", os.readlink(path))
-                elif path.is_file():
-                    status = path.stat()
-                    found[str(path)] = (status.st_ino, status.st_size, digest(path.read_bytes()))
+    inside = str(version) + os.sep if version is not None else None
+    for path, value in state.items():
+        relative = os.path.relpath(path, root).replace(os.sep, "/")
+        if value[0] == "folder" or (not (inside and path.startswith(inside))
+                                    and (relative in MANAGED_FILES or relative.startswith(managed))):
+            continue
+        found[path] = value[:4] if value[0] == "file" else value
     return found
+
+
+def differences(before: dict[str, tuple], after: dict[str, tuple]) -> list[str]:
+    return sorted((before.keys() ^ after.keys()) | {path for path in before.keys() & after.keys()
+                                                    if before[path] != after[path]})
 
 
 def install_copy_tool(root: Path) -> Path:
@@ -659,18 +726,25 @@ def install_copy_tool(root: Path) -> Path:
 
 def copy_run(root: Path, arguments: list[str], version: Path | None = None) -> subprocess.CompletedProcess:
     """Install tools/copy-baseline.py in root and run it there with arguments. This is the only code in this file
-    that runs the tool, as invocation_problems() checks, so the comparison here covers every run: whatever the
+    that runs the tool, as invocation_problems() checks, so the comparisons here cover every run. Whatever the
     outcome, any file or link outside the paths the tool manages, or under the version folder when one is given,
-    that differs after the run from before it is recorded in OUTSIDE_CHANGES."""
+    that differs after the run from before it is recorded in OUTSIDE_CHANGES. A run that does not exit 0 and does
+    not say that it wrote the copy or that the copy may be incomplete (AFTER_WRITE) has ended before its first write,
+    so any folder, file or link under root or the version folder that differs after it, managed paths included, is
+    recorded in REFUSED_CHANGES: every refusal changes nothing, whichever case makes it."""
     tool = install_copy_tool(root)
-    before = unmanaged(root, version)
+    before = tree_state(root, version)
     result = subprocess.run([sys.executable, "-I", str(tool), *arguments], capture_output=True, text=True)
-    after = unmanaged(root, version)
-    changed = sorted((before.keys() ^ after.keys()) | {path for path in before.keys() & after.keys()
-                                                      if before[path] != after[path]})
+    after = tree_state(root, version)
+    changed = differences(unmanaged(before, root, version), unmanaged(after, root, version))
     if changed:
         OUTSIDE_CHANGES.append(f"copy-baseline (exit {result.returncode}) changed "
                                f"{[os.path.relpath(path, root) for path in changed]}")
+    if result.returncode != 0 and not any(marker in result.stderr for marker in AFTER_WRITE):
+        changed = differences(before, after)
+        if changed:
+            REFUSED_CHANGES.append(f"copy-baseline (exit {result.returncode}, before its first write) changed "
+                                   f"{[os.path.relpath(path, root) for path in changed]}")
     return result
 
 
@@ -681,7 +755,8 @@ def installed(root: Path, result: subprocess.CompletedProcess) -> str:
 
 def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
              source_link: bool = False, version: Path | None = None, notice: str = NOTICE_TEXT,
-             sums_edit=None, sums_sha256: str | None = None) -> subprocess.CompletedProcess:
+             sums_edit=None, sums_sha256: str | None = None,
+             newline_after: str | None = None) -> subprocess.CompletedProcess:
     """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS, with the
     gate (or the given gate source) beside it, from which it loads notice_entry() and check(), and a NOTICE.md that
     carries the 1.2.1 entry (or the given notice), so that the gate's check at the end passes a clean copy. A
@@ -689,8 +764,9 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
     source_link, 1.2.1 is a link to the version folder. With version, the version folder is made there instead, and
     its SHA256SUMS lists every file in it, so that a version folder that holds the repository still matches its
     sums. sums_edit, when given, changes the SHA256SUMS text before it is written and hashed, and sums_sha256, when
-    given, replaces its digest on the command line. copy_run() runs the tool and records any change outside the
-    paths it manages or under the version folder."""
+    given, replaces its digest on the command line. newline_after, when given, names the option whose value on the
+    command line gains a trailing newline. copy_run() runs the tool and records any change outside the paths it
+    manages or under the version folder, and any change at all from a run that ends before its first write."""
     install_copy_tool(root)
     (root / "tools" / GATE.name).write_bytes(GATE.read_bytes() if gate is None else gate)
     (root / "NOTICE.md").write_text(notice, encoding="utf-8")
@@ -711,6 +787,8 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
         (root / "1.2.1").symlink_to(version)
     arguments = ["--from", str(root / "1.2.1" if source_link else version),
                  "--sums-sha256", sums_sha256 or digest(sums.encode()), "--archive-sha256", "0" * 64]
+    if newline_after is not None:
+        arguments[arguments.index(newline_after) + 1] += "\n"
     return copy_run(root, arguments, version)
 
 
@@ -1019,27 +1097,27 @@ _pathlib.Path.mkdir = _fail
 """
 # FAIL_ON_LOAD raises such an error while the gate loads, before any write.
 FAIL_ON_LOAD = b"\nraise LookupError('injected')\n"
-# COUNT_OPENS counts each open() of a path under the --from folder and prints the counts when the run ends.
+# COUNT_OPENS counts each open of a path under the --from folder and prints the counts when the run ends. It counts
+# through an audit hook on Python's "open" event, which builtins.open, io.open and os.open raise, and so everything
+# built on them, such as pathlib and shutil.copyfile, so a second open by any of those routes in the tool's process is
+# counted, whichever module makes it.
 COUNT_OPENS = b"""
 import atexit as _atexit
-import io as _io
 import os as _os
 import sys as _sys
 
 _version = _os.path.realpath(_sys.argv[_sys.argv.index("--from") + 1])
 _opened = {}
-_open = _io.open
 
 
-def _counting_open(file, *args, **kwargs):
-    if isinstance(file, (str, bytes, _os.PathLike)):
-        path = _os.path.realpath(_os.fsdecode(file))
+def _count_open(event, args):
+    if event == "open" and isinstance(args[0], (str, bytes, _os.PathLike)):
+        path = _os.path.realpath(_os.fsdecode(args[0]))
         if path.startswith(_version + _os.sep):
             _opened[path] = _opened.get(path, 0) + 1
-    return _open(file, *args, **kwargs)
 
 
-_io.open = _counting_open
+_sys.addaudithook(_count_open)
 _atexit.register(lambda: [print(f"opened {count} {path}", file=_sys.__stderr__) for path, count in _opened.items()])
 """
 
@@ -1107,9 +1185,50 @@ def failure_problems() -> list[str]:
     return problems
 
 
+def base_newline(root: Path) -> dict:
+    (root / "site-src").mkdir()
+    (root / "site-src" / "site.json").write_text(json.dumps({"base": "/draft/\n"}), encoding="utf-8")
+    return {}
+
+
+# Values that copy-baseline matches whole, each with a trailing newline: each gives run_copy's arguments for root, the
+# exit code, and what the tool's 1 line must say. Every other input is valid, so a tool that accepted the newline
+# would go on to copy.
+WHOLE_VALUE_REFUSALS = [
+    ("a --sums-sha256 that ends in a newline", lambda root: {"newline_after": "--sums-sha256"}, 1,
+        "--sums-sha256 is not a 64 character lower-case SHA-256"),
+    ("an --archive-sha256 that ends in a newline", lambda root: {"newline_after": "--archive-sha256"}, 1,
+        "--archive-sha256 is not a 64 character lower-case SHA-256"),
+    ("a --from folder whose name ends in a newline", lambda root: {"version": root / "1.2.1\n"}, 1,
+        "the folder name '1.2.1\\n' is not a version number"),
+    ("a site-src/site.json base path that ends in a newline", base_newline, 3,
+        "site-src/site.json base '/draft/\\n' must be / or a single folder"),
+]
+
+
+def whole_value_problems() -> list[str]:
+    """copy-baseline refuses each value in WHOLE_VALUE_REFUSALS with its own 1 line before its first write, and
+    copy_run() checks that nothing under the root changed."""
+    problems = []
+    for name, arguments, expected, needle in WHOLE_VALUE_REFUSALS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            served = root / "site" / "assets" / "baseline" / "served-before.css"
+            served.parent.mkdir(parents=True)
+            served.write_bytes(b"a { color: red; }\n")
+            result = run_copy(root, dict(PACKAGE), **arguments(root))
+            lines = result.stderr.splitlines()
+            if result.returncode != expected or len(lines) != 1 or needle not in lines[0]:
+                problems.append(f"copy-baseline: {name} exits {result.returncode}; expected {expected} with its own "
+                                f"1 line saying {needle!r}: {result.stderr.strip()[-200:]!r}")
+    return problems
+
+
 def read_once_problems() -> list[str]:
-    """copy-baseline opens each file in the version folder exactly once, SHA256SUMS and the README included, so the
-    bytes it checks are the bytes it writes."""
+    """copy-baseline opens each file in the version folder exactly once in its own process, SHA256SUMS and the README
+    included, counted by COUNT_OPENS's audit hook, so a second open by builtins.open, io.open, os.open or anything
+    built on them fails this case. A second read through the same open file, or a read by another process, is not
+    counted."""
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
         result = run_copy(root, dict(PACKAGE), GATE.read_bytes() + COUNT_OPENS)
@@ -1323,21 +1442,25 @@ def invocation_problems() -> list[str]:
 def main() -> int:
     failures: list[str] = (pin_header_problems() + copy_problems() + copy_tree_problems() + copy_gate_problems()
                            + python_floor_problems() + copy_source_problems() + alias_problems()
-                           + failure_problems() + read_once_problems() + planted_cache_problems())
+                           + failure_problems() + whole_value_problems() + read_once_problems()
+                           + planted_cache_problems())
     # The 7 cases of failure_problems(), read_once_problems(), planted_cache_problems(), and in copy_problems() the
     # base path /draft/ and the NOTICE.md entry naming the previous version.
     ran = 11 + 7 + 1 + 1 + 2
-    ran += len(COPY_REFUSALS) + len(COPY_SUMS_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
+    ran += (len(COPY_REFUSALS) + len(COPY_SUMS_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
+            + len(WHOLE_VALUE_REFUSALS))
     # As root, file permissions neither stop a write nor a listing, so neither failure can be stood in for.
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         failures += write_failure_problems() + gate_unreadable_problems()
         ran += 2
-    # Every copy-baseline run above, refused or not, leaves each file outside the paths it manages as it was. Each run
-    # goes through copy_run(), which records any change, and invocation_problems() fails if any other code could run
-    # the tool, so the first check covers every run.
+    # Every copy-baseline run above, refused or not, leaves each file outside the paths it manages as it was, and
+    # every run that ends before its first write leaves everything as it was, managed paths included. Each run goes
+    # through copy_run(), which records any change, and invocation_problems() fails if any other code could run the
+    # tool, so the first 2 checks cover every run.
     failures += [f"{change}, outside the paths it manages" for change in OUTSIDE_CHANGES]
+    failures += [f"{change}; a refusal changes nothing" for change in REFUSED_CHANGES]
     failures += invocation_problems()
-    ran += 2
+    ran += 3
     for name, fault, expected, *needles in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

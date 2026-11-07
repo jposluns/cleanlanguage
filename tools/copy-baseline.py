@@ -118,14 +118,20 @@ Exit codes:
      --help, for which argparse prints its help and nothing is read or written
   1  before anything is read: the --from folder's name is not a version
      number, or a --sums-sha256 or --archive-sha256 value is not 64 lower-case
-     hexadecimal digits;
-     before the first write: a digest did not match, the folder is not a
-     complete version, its README lacks the folder's version heading or the
-     step 7 NOTICE entry, or holds a carriage return; the --from folder is a
-     link, or is, is inside, or holds a folder or file it clears or writes; a
-     folder or file it writes, or site-src/ or site-src/site.json, is a link or
-     of the wrong kind; or, after the copy and the pin are written,
-     tools/check-baseline-pin.py finds a problem in the tree, which it names
+     hexadecimal digits, each matched as the whole value, so that a value
+     with a trailing newline is refused;
+     before the first write: SHA256SUMS or a file in the folder did not match
+     its digest; a SHA256SUMS line is malformed, or names a file twice or
+     outside the folder; the folder lacks a file that SHA256SUMS lists, holds
+     a file that it does not list, or holds an entry that is neither a
+     regular file nor a folder, such as a link; SHA256SUMS does not list a
+     build tool in the gate's TOOLS, README.md or SPECIFICATION.md; its README
+     lacks the folder's version heading or the step 7 NOTICE entry, or holds
+     a carriage return; the --from folder is a link, or is, is inside, or
+     holds a folder or file it clears or writes; a folder or file it writes,
+     or site-src/ or site-src/site.json, is a link or of the wrong kind; or,
+     after the copy and the pin are written, tools/check-baseline-pin.py finds
+     a problem in the tree, which it names
   2  argparse refuses the command line, such as a missing or unknown option;
      argparse prints its usage and error lines, not this tool's own 1 line,
      and nothing is read or written
@@ -169,9 +175,12 @@ GATE = Path(__file__).resolve().parent / "check-baseline-pin.py"
 
 TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "scheme.js", "LICENSE", "NOTICE.md"}
 FOLDERS = ("fonts/", "logos/", "marks/")
-SUM_LINE = re.compile(r"^([0-9a-f]{64})  ([A-Za-z0-9._/-]+)$")
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
-VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+# Each value these validate is matched whole with fullmatch(): "$" also matches before a final newline, so match()
+# would accept a value that ends in one.
+SUM_LINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9._/-]+)")
+HEX64 = re.compile(r"[0-9a-f]{64}")
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
+BASE = re.compile(r"/[a-z0-9-]+/")
 
 
 # True from just before the first change to a managed path until the pin is written: a failure in that span leaves a
@@ -246,7 +255,7 @@ def output_root() -> Path:
         die(3, f"site-src/site.json has no readable base: {error}")
     if base == "/":
         return REPO_ROOT / "site"
-    if not isinstance(base, str) or not re.match(r"^/[a-z0-9-]+/$", base):
+    if not isinstance(base, str) or not BASE.fullmatch(base):
         die(3, f"site-src/site.json base {base!r} must be / or a single folder such as /draft/")
     return REPO_ROOT / "site" / base.strip("/")
 
@@ -339,10 +348,10 @@ def main() -> int:
 
     source = Path(args.source)
     version = source.name
-    if not VERSION.match(version):
+    if not VERSION.fullmatch(version):
         die(1, f"the folder name {version!r} is not a version number")
     for value, label in ((args.sums_sha256, "--sums-sha256"), (args.archive_sha256, "--archive-sha256")):
-        if not HEX64.match(value):
+        if not HEX64.fullmatch(value):
             die(1, f"{label} is not a 64 character lower-case SHA-256")
     # A linked version folder would be read from wherever the link leads, while the version number comes from the
     # link's own name.
@@ -371,7 +380,7 @@ def main() -> int:
 
     listed: dict[str, str] = {}
     for number, line in enumerate(sums_text.splitlines(), start=1):
-        match = SUM_LINE.match(line)
+        match = SUM_LINE.fullmatch(line)
         if match is None:
             die(1, f"SHA256SUMS line {number} is malformed: {line!r}")
         digest, name = match.groups()
