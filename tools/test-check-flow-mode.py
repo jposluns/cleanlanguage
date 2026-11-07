@@ -9,19 +9,23 @@ The verdict cases are these. The committed .claude/commands/flow.md passes on st
 a path argument and as the default path. The mode text of main's flow.md at ee6be48 fails with 9
 findings; the case copies the lines of that flow.md that the check reports, so it needs no git
 history and runs in a shallow checkout. The committed flow.md with 1 change each fails when its
-MODE line names a third value, drops either value or uses a comma as the separator, when the MODE
-line is renamed so that none is left, when a second MODE line is added, when a line holds an
-unquoted bare "attended" in lower case or with a capital letter, and when the absent-record
-sentence is removed. It passes with the MODE values in the other order, with a quoted "attended",
-with a longer word that holds "attended", and with the absent-record sentence in its second
-wording, in capital letters, or wrapped across a line break. A path that does not exist, text
+MODE line names a third value, drops either value, uses a comma as the separator or puts its
+values inside double quotes, when the MODE line is renamed so that none is left, when a second
+MODE line is added, closed or with no closing parenthesis, when the MODE line loses its closing
+parenthesis, when a line holds an unquoted bare "attended" in lower case, with a capital letter
+or inside typographic quotes, and when the absent-record sentence is removed. It passes with the
+MODE values in the other order, with a quoted "attended", with a longer word that holds
+"attended", and with the absent-record sentence in its second wording, in capital letters, or
+wrapped across a line break. A path that does not exist, text
 that is not UTF-8 and 2 arguments each give exit status 1.
 
 The residual cases hold the limits that the check's docstring states: a third value named outside
-the MODE line passes, a retired default inside double quotes passes, a sentence that contradicts
-the absent rule passes, the matched absent-rule sentence negated passes, the absent rule in other
-words fails, an ordinary English use of "attended" fails, and a quoted "attended" whose quotes
-wrap across a line break fails.
+the MODE line passes, an indented line that starts "- MODE (" after its indent is not counted and
+passes, a retired default inside straight double quotes passes, a sentence that contradicts the
+absent rule passes, the matched absent-rule sentence negated passes, the absent-rule sentence
+inside a quotation that rejects it passes, the absent rule in other words fails, an ordinary
+English use of "attended" fails, and a quoted "attended" whose quotes wrap across a line break
+fails.
 
 Usage: python3 -I tools/test-check-flow-mode.py
 Exit 0 when every case passes; 1 otherwise.
@@ -61,6 +65,7 @@ MAIN_MODE_TEXT = """\
 
 WRONG_MODES = "the MODE line names"
 BARE = "unquoted bare \"attended\""
+UNCLOSED = "the MODE line has no closing parenthesis"
 NO_ABSENT = "no statement that an absent mode record is read as unattended"
 
 
@@ -152,11 +157,28 @@ class Verdicts(unittest.TestCase):
         self.assert_fails(added(MODE_LINE + " is repeated."),
                           "expected 1 MODE line starting \"- MODE (\", found 2")
 
+    def test_a_second_unclosed_mode_line_fails(self):
+        status, output = verdict(added("- MODE (supervised is a third mode."))
+        self.assertEqual(status, 1, output)
+        self.assertIn("expected 1 MODE line starting \"- MODE (\", found 2", output)
+        self.assertIn(UNCLOSED, output)
+
+    def test_an_unclosed_mode_line_fails(self):
+        self.assert_fails(changed(MODE_LINE, "- MODE (attended-autonomous | unattended"), UNCLOSED)
+
+    def test_quoted_values_on_the_mode_line_fail(self):
+        self.assert_fails(changed(MODE_LINE, "- MODE (\"attended-autonomous\" | \"unattended\")"),
+                          WRONG_MODES)
+
     def test_an_unquoted_bare_attended_fails(self):
         self.assert_fails(added("- Absent = attended (conservative)."), BARE)
 
     def test_a_capitalized_bare_attended_fails(self):
         self.assert_fails(added("- Attended is the default."), BARE)
+
+    def test_attended_in_typographic_quotes_fails(self):
+        quoted = chr(0x201C) + "attended" + chr(0x201D)
+        self.assert_fails(added("- A record that holds " + quoted + " is a legacy record."), BARE)
 
     def test_the_absent_record_sentence_removed_fails(self):
         self.assert_fails(changed(ABSENT_WORDS, "reads the mode record"), NO_ABSENT)
@@ -198,6 +220,17 @@ class Residual(unittest.TestCase):
 
     def test_a_quoted_retired_default_passes(self):
         status, output = verdict(added("- Absent = \"attended\" (conservative)."))
+        self.assertEqual(status, 0, output)
+
+    def test_an_indented_mode_line_is_not_counted(self):
+        status, output = verdict(added("  - MODE (supervised) is a nested bullet."))
+        self.assertEqual(status, 0, output)
+
+    def test_the_absent_rule_inside_a_rejecting_quotation_passes(self):
+        status, output = verdict(changed(
+            "The session " + ABSENT_WORDS,
+            "It is false that \"the session " + ABSENT_WORDS + "\"; it reads it as"
+            " attended-autonomous"))
         self.assertEqual(status, 0, output)
 
     def test_a_sentence_that_contradicts_the_absent_rule_passes(self):

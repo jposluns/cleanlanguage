@@ -63,9 +63,9 @@ only the affected file(s).
    changed): refresh; if the mode is attended-autonomous or an operator boundary (an inbound operator
    message) is open, surface accumulated decisions, up to 4 per round (per
    .claude/rules/maintainer-questions.md); list the next items; continue on already-authorized safe
-   actions. At an operator boundary while the stored mode is unattended, the guard denies every
-   AskUserQuestion, so the session surfaces those decisions as text in its reply, in the four-role
-   shape, and says that the guard holds AskUserQuestion until the operator runs `orchmod aa`.
+   actions. Whenever the repository's AskUserQuestion guard denies AskUserQuestion at an operator
+   boundary, whatever the reason, the session surfaces those decisions as text in its reply, in the
+   four-role shape, and says that the guard denied AskUserQuestion.
 9. NOTHING ACTIONABLE: seeds/combines/QA in flight -> keep the pipeline topped up + read-only prep on
    upcoming verified-DISJOINT items; re-enter on the next delivery. Nothing in flight -> run
    blocked-verification (below); only on genuine whole-set exhaustion, close on green via /handoff.
@@ -204,19 +204,23 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   may still hold the retired value "attended", which the writer does not write. The session reads
   the record at resume and again at each task boundary. A mode change is an operator act, so a
   change that the operator makes through `orch-set-mode` takes effect at the session's next read.
-  Wherever this file keys on "the mode" (cycle steps 5 and 8 and the DECISIONS bullet), it means the
-  session's mode: the value the session last read, after any decision-timeout switch.
+  Wherever this file keys on "the mode", it means the session's mode: the value the session last
+  read, after any decision-timeout switch.
   "attended" is retired as a selectable mode (lab_infra rule FLEET-05): the session reads a legacy
   stored "attended" as attended-autonomous, never as unattended, and gives 1 warning about it in its
   own output, once per session. The session reads an absent mode record as unattended
   (conservative), and alerts lab_infra through `inbox-send lab_infra` to clarify the mode, once per
   session.
-  When the host's mode folder, `/opt/orch-operator`, is itself absent, the repository's
-  AskUserQuestion guard (`.claude/hooks/ask_mode_guard.py`) still allows a question, with a one-line
-  note, while the session reads the mode as unattended. Until the guard changes, it denies a legacy
-  "attended" as an unknown mode, so a question on such a host is held; the session still reads the
-  mode as attended-autonomous. After a decision-timeout switch, the stored mode is still
-  attended-autonomous, so the guard allows a question while the session's mode is unattended.
+  The repository's AskUserQuestion guard checks the host's mode folder and record afresh on every
+  AskUserQuestion call and decides from what it finds there, never from the session's mode;
+  its decisions are set in `.claude/hooks/ask_mode_guard.py` and described in `.aiqt/config.md`,
+  and this file does not restate them. The session reads the record only at resume and at each task
+  boundary, and a decision-timeout switch changes the session's mode without a write, so the
+  session's mode can differ from what the guard reads. When the host's mode folder,
+  `/opt/orch-operator`, is itself absent, the guard allows a question, with a one-line note, while
+  the session reads the mode as unattended. Whenever the guard denies AskUserQuestion at an
+  operator boundary, whatever the reason, cycle step 8 surfaces the accumulated decisions as text
+  in the session's reply, in the four-role shape.
   The only governed transition is a decision-timeout switching attended-autonomous -> unattended (the
   safe/conservative direction only); it switches this session's question policy, timer and routing,
   and never writes the mode record. The switch holds for the session until the record is written
@@ -224,7 +228,7 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   running `orchmod aa` again, because `orch-set-mode` stamps a fresh `set_at` on every write. The
   session sees that write, as it sees any operator change, at its next read. An inbound
   operator message opens a TRANSIENT operator boundary; it does NOT silently flip
-  the mode, and the guard follows only the stored mode.
+  the mode, and the guard does not read it.
 - DECISIONS: blocking + attended-autonomous -> surface immediately, up to 4 per round, in the four-role shape.
   The repo `.claude/rules/maintainer-questions.md` sets that shape in its "Superseded in part" note:
   the four roles replace its Option A to D lettering. See that note for the roles, their order, and
