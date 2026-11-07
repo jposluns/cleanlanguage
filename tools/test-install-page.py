@@ -47,14 +47,21 @@ fragments apart from the pins, read a br, a </br> and a hidden br in a heading,
 and its has_visible_text() text of only U+034F, as check 4 says. On a family
 page the checks of CLASS_PIN, ATTRIBUTE_PIN and TAG_PIN read the checked
 elements through the gate's family_checked(), as the gate holds them, so of
-the links to #get and #test they read only the required link back to each,
-and they must also pass with a further link back to #get in a Gemini step,
-which the gate passes. And it fails unless
+the links to #get and #test they read the required link back to each and,
+for the pins of a link back, each other link that can become it once the
+links before it are gone (paragraph_links(): shown, with visible text and no
+class, and in no li, such as the ChatGPT page's link to #get in its
+div.callout), and they must also pass with a further link back to #get in a
+Gemini step, which the gate passes. And it fails unless
 each of the 2 path lists of .github/workflows/install-page.yml covers every
 file the gate, this test and that workflow read and each path of the gate's SERVER_ENTRIES
-(check 10), as a file and at any depth under a directory, and unless that
-check refuses the workflow with site/_redirects removed from 1 list or from
-both, or with functions/** narrowed to functions/* in 1 list or in both.
+(check 10), as a file and at any depth under a directory, and holds no
+negative pattern (1 that starts with !, which GitHub reads in order as
+excluding what the patterns before it include; this check reads no order, so
+it refuses every one), and unless that check refuses the workflow with
+site/_redirects removed from 1 list or from both, with functions/** narrowed
+to functions/* in 1 list or in both, or with !functions/** after
+functions/** in 1 list or in both.
 
 It also pins the stylesheets every install page loads (fonts.css,
 palettes.css and baseline.css under site/assets/baseline/): it fails unless
@@ -239,6 +246,7 @@ OUTSIDE_PIN = "which is not 1 of the files tools/check-baseline-pin.py pins"
 PAGE_TAG = "a tag that the committed pages do not use (PAGE_TAGS)"
 WRONG_LABEL = "the claude family link's visible label is not \"Claude\""
 SWITCH = "the page carries the light and dark switch 0 times"
+MISNESTED = "open inside it; a browser can keep that element open, reopen it or ignore the end tag"
 # The words of a Gemini step, which a case extends with a link; the step stays found when it holds 1 already.
 GEMINI_STEP = "<strong>New Gem</strong>"
 VERIFIED = '<p class="verified">'
@@ -839,6 +847,10 @@ CASES = [
         (1, "a link back carries the class 'start'")),
     ("a family page link back holding a span", edit(CHATGPT, PROSE_TEST, PROSE_TEST.replace(">Test it<", "><span>Test it</span><")),
         (1, "a span inside a link back is a span, " + TAG_GIVEN)),
+    # The committed pages also put a link with no class in a paragraph in a div.callout, which the pins of a link back
+    # allow: with the ChatGPT page's link to #get in its prose gone, the 1 in its callout is its required link back.
+    ("a family page whose link back to #get sits in a callout",
+        edit(CHATGPT, '<a href="/install/#get">Get Clean Language</a>.</p>', "Get Clean Language.</p>"), 0),
     # Nor may any of them carry an attribute that a pinned rule names (the gate's RULE_ATTRIBUTES): baseline.css hides
     # [data-preset] and [data-col-toggles] in print.
     ("a family page heading with data-preset", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1 data-preset>ChatGPT</h1>"),
@@ -1310,6 +1322,16 @@ CASES = [
         (1, "wrangler.jsonc " + SERVER_ENTRY)),
     ("a root package.json with an install script", create("package.json", '{"scripts": {"install": "touch site/x"}}\n'),
         (1, "package.json " + SERVER_ENTRY)),
+    ("a root runtime.txt", create("runtime.txt", "python-3.13.3\n"), (1, "runtime.txt " + SERVER_ENTRY)),
+    ("a root requirements.txt", create("requirements.txt", "x==1.0\n"), (1, "requirements.txt " + SERVER_ENTRY)),
+    ("a root Pipfile", create("Pipfile", '[packages]\nx = "*"\n'), (1, "Pipfile " + SERVER_ENTRY)),
+    ("a root Gemfile", create("Gemfile", 'source "https://rubygems.org"\n'), (1, "Gemfile " + SERVER_ENTRY)),
+    # No end tag may close an element other than the innermost: a browser keeps the span open after the first, and the
+    # div after the second, so each hid the step list after it in a browser and passed the gate, named residuals before.
+    ("a family page step list after <span class=\"vh\"><div></span>",
+        edit(OTHER, STEPS, '<span class="vh"><div></span>' + STEPS), (1, "</span> closes <span> with <div> " + MISNESTED)),
+    ("a family page step list after <p><div class=\"vh\"></p>", edit(OTHER, STEPS, '<p><div class="vh"></p>' + STEPS),
+        (1, "</p> closes <p> with <div> " + MISNESTED)),
     # Every src, and every href of a link other than the canonical link, on the 6 pages is 1 of the files
     # tools/check-baseline-pin.py pins, read as a path from the site's root with no . or .. segment.
     ("a family page illustration outside the baseline pin", edit(CHATGPT, '<p class="verified">',
@@ -1381,13 +1403,6 @@ CASES = [
 # Faults the gate passes, and the words of the gate's docstring that name each (compared with runs of whitespace
 # read as 1 space).
 RESIDUALS = [
-    # On a family page: the pin of /install/'s opening refuses any element or text it reads between the pick label
-    # and the row. The committed pages give no span or div hidden (PAGE_ATTRIBUTES), so these hide by a class.
-    ("a family page step list after <span class=\"vh\"><div></span>",
-        edit(OTHER, STEPS, '<span class="vh"><div></span>' + STEPS),
-        "after ``<span class=\"vh\"><div></span>`` the ``span`` stays open"),
-    ("a family page step list after <p><div class=\"vh\"></p>", edit(OTHER, STEPS, '<p><div class="vh"></p>' + STEPS),
-        "after ``<p><div class=\"vh\"></p>`` the ``div`` stays open"),
     ("a family page with 1 setup step dropped",
         edit(OTHER, STEPS + '<li><span>Save the file, or copy everything from the <a href="/instructions/">instructions page</a>.</span></li>', STEPS),
         "not its steps or their wording"),
@@ -1753,11 +1768,33 @@ def diff_problems(pin: list[str], held: list[tuple[str, str]]) -> list[str]:
     return problems
 
 
+def paragraph_links(gate, parser) -> list:
+    """Each link on a family page that can be its required link back as the committed pages give one, with the kind
+    "a link back": a link to /install/#get or /install/#test outside every element of INERT_ELEMENTS, not hidden, with
+    visible text and no class, which no li holds (a link in a step cannot pass the pins of a link back, which allow
+    no li around it). The required link back is the first of them on each committed page, and a later 1 (in a
+    div.callout, say) is the required link back once those before it are gone, so the pins of a link back must hold
+    them all."""
+    by_order = {element["order"]: element for element in parser.elements}
+    links = []
+    for anchor in parser.anchors:
+        element = by_order[anchor["order"]]
+        ancestors = [other["tag"] for position, other in gate.pin_positions(parser, element) if position == 1]
+        if (anchor["href"] in ("/install/#get", "/install/#test") and not anchor["inert"] and not anchor["hidden"]
+                and anchor["text"] and not anchor["classes"] and "li" not in ancestors):
+            links.append(("a link back", element))
+    return links
+
+
 def checked_kinds(gate, relative: str, parser) -> list:
     """The checked elements of a page, each with its kind, as the gate's pins hold them: install_kinds() on the
     install page, and on a family page those of family_checked(), which holds only the required link back to each
-    target."""
-    return gate.install_kinds(parser) if relative == PAGE else gate.family_checked(relative, parser)[0]
+    target, with each of paragraph_links(), which the pins of a link back must also hold."""
+    if relative == PAGE:
+        return gate.install_kinds(parser)
+    kinds = gate.family_checked(relative, parser)[0]
+    held = {element["order"] for kind, element in kinds if kind == "a link back"}
+    return kinds + [link for link in paragraph_links(gate, parser) if link[1]["order"] not in held]
 
 
 def class_pin_problems(pin: str = "CLASS_PIN", field: str = "classes", root: Path = REPO_ROOT) -> list[str]:
@@ -1991,7 +2028,10 @@ def glob_pattern(pattern: str) -> re.Pattern:
 def workflow_path_problems(text: str | None = None) -> list[str]:
     """Each of the 2 path lists of WORKFLOW (pull_request and push) covers every file the gate, this test and the
     workflow read, and every path of the gate's SERVER_ENTRIES, as a file and at any depth under a directory, so that a
-    change to any of them runs the workflow."""
+    change to any of them runs the workflow, and holds no negative pattern (1 that starts with !). GitHub reads the
+    patterns in order, and a negative 1 excludes the paths it matches until a later pattern includes them again; this
+    reads each positive pattern as a match on its own, so it fails closed on every negative pattern, wherever it sits
+    and whatever it matches."""
     try:
         if text is None:
             text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
@@ -2011,7 +2051,9 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
     read = [f"tools/{GATE.name}", f"tools/{Path(__file__).name}", *FILES, *STYLESHEETS, PIN_FILE, *WORKFLOW_ALSO]
     problems: list[str] = []
     for number, held in enumerate(lists, 1):
-        patterns = [glob_pattern(pattern) for pattern in held]
+        problems += [f"path list {number} of {WORKFLOW} holds the negative pattern {pattern}; this test does not read "
+                     "the order of the patterns, so it refuses every negative 1." for pattern in held if pattern[:1] == "!"]
+        patterns = [glob_pattern(pattern) for pattern in held if pattern[:1] != "!"]
         problems += [f"path list {number} of {WORKFLOW} does not cover {path}, which the gate, its test or the "
                      "workflow reads."
                      for path in [*read, *entries] if not any(pattern.fullmatch(path) for pattern in patterns)]
@@ -2020,7 +2062,9 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
 
 def workflow_case_problems() -> list[str]:
     """workflow_path_problems() refuses the committed workflow with site/_redirects removed from 1 path list, or from
-    both, and with functions/** narrowed to functions/*, which covers no nested path, in 1 path list or in both."""
+    both, with functions/** narrowed to functions/*, which covers no nested path, in 1 path list or in both, and with
+    !functions/**, which GitHub reads as excluding what functions/** before it includes, after functions/** in 1 path
+    list or in both."""
     text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
     line = '      - "site/_redirects"\n'
     if text.count(line) != 2:
@@ -2036,6 +2080,11 @@ def workflow_case_problems() -> list[str]:
     for name, edited in (("in the first path list", text.replace(tree, narrow, 1)), ("in both", text.replace(tree, narrow))):
         if not workflow_path_problems(edited):
             problems.append(f"functions/** narrowed to functions/* {name}: workflow_path_problems() found no problem.")
+    excluded = tree + '      - "!functions/**"\n'
+    for name, edited in (("in the first path list", text.replace(tree, excluded, 1)),
+                         ("in both", text.replace(tree, excluded))):
+        if not workflow_path_problems(edited):
+            problems.append(f"!functions/** after functions/** {name}: workflow_path_problems() found no problem.")
     return problems
 
 

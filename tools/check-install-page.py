@@ -270,9 +270,17 @@ What it verifies
    ``p.verified`` and ``ol.steps``, each step (an ``li`` whose nearest list is
    an ``ol.steps``) and, for each of ``/install/#get`` and ``/install/#test``,
    the required link back (check 4), not a further link to it, which the pins
-   of a checked element that holds it hold. The required links back of the
-   committed pages are links with no class in a paragraph, so an ``a.start``
-   that is the only link to 1 of them fails. An element of a tag that the
+   of a checked element that holds it hold. A link back passes its pins only
+   as an ``a`` with no class, no attribute but ``href`` and no element
+   inside, whose ancestors are an ``html``, a body, a ``main``, ``div``
+   elements and ``p`` elements, each with only the classes and attributes
+   of ``PIN_ANCESTORS`` and ``PIN_ANCESTOR_ATTRS``, a ``div`` also the
+   class ``callout``, and a ``p`` none: as on the committed pages, a link in
+   a paragraph in ``div.doc``, or in a ``div.callout`` there, so the ChatGPT
+   page's link to ``/install/#get`` in its callout passes as its required
+   link back once the link in its prose is gone. ``div.next``, which holds
+   no paragraph link on the committed pages, is not allowed, and an
+   ``a.start`` that is the only link to 1 of them fails. An element of a tag that the
    committed pages do not give a class there may carry none, so
    ``<h1 class="fresh">`` on a family page, a ``<section class="fresh">``
    around it, a ``<span class="fresh">`` in it and an ``ol.steps`` in a step
@@ -343,7 +351,14 @@ What it verifies
    ``tools/build-site.py`` writes it: without it a browser renders the page in
    quirks mode, where a class selector matches a class name without regard to
    case, while this check and the rule pin compare class names with regard to
-   case (``.DOC { display: none; }`` would hide ``div.doc``).
+   case (``.DOC { display: none; }`` would hide ``div.doc``). No end tag on
+   the 6 pages closes an open element other than the innermost, as the
+   parser holds them, as ``tools/build-site.py`` refuses it too: here such an
+   end tag closes every element opened inside its own, where a browser can
+   ignore it, keep 1 of those open or reopen 1 (see below). An ``html``,
+   ``head`` or body element, which a browser does not open again for a later
+   start tag, and an element that a self-closing tag opens in an ``svg``,
+   which a browser closes there, do not count as open inside.
 9. On the 6 pages, every ``meta``, ``link`` and ``base`` element, at any
    depth, shown or hidden, and every ``meta``, ``link`` and ``base`` start tag
    that a text match finds, a tag in a comment included, is 1 that the
@@ -375,7 +390,8 @@ What it verifies
    or changed ``meta`` or ``link`` on these pages (a ``theme-color`` meta, say,
    or another ``og:image``) fails until ``HEAD_PIN`` changes with the pages.
 10. No server entry point that Cloudflare Pages runs, no Wrangler
-    configuration file that it reads, and no root ``package.json`` exists
+    configuration file that it reads, and none of the root files named
+    below that its build image can read before the build command exists
     (``SERVER_ENTRIES``), as a file, a directory or a link: ``functions`` at
     the repository root, where Pages reads Pages Functions (a
     ``functions/_middleware.js`` can answer any request to the site),
@@ -386,33 +402,40 @@ What it verifies
     repository root, whose dependencies the build image can install before
     the build command, running its install scripts, which can write under
     ``site/`` (an inference about the build image, not verified here; the
-    refusal is cheap). Each can redirect, rewrite or
-    replace an install page or a file the pages load, or change what Pages
-    serves, and no check here reads what it does; ``tools/build-site.py
-    --check`` refuses neither ``functions``, a Wrangler configuration nor a
-    ``package.json``, which sit outside ``site/``, nor a ``site/_worker.js``
+    refusal is cheap), and, by the same unverified inference,
+    ``runtime.txt`` at the repository root, from which the build image can
+    choose its Python (``site/README.md``), and ``requirements.txt``,
+    ``Pipfile`` and ``Gemfile`` there, from which it can install
+    dependencies before the build command. Each of the first 6 can redirect,
+    rewrite or replace an install page or a file the pages load, or change
+    what Pages serves, each of the last 4 can change what the build image
+    runs before the build command, and no check here reads what any of them
+    does; ``tools/build-site.py --check`` refuses none of those at the
+    repository root, which sit outside ``site/``, nor a ``site/_worker.js``
     listed in ``static_files``. None exists at this commit. A correct future
-    Function, Worker, Wrangler configuration or root ``package.json`` fails
+    Function, Worker, Wrangler configuration or 1 of those root files fails
     until this check changes with it.
     These residuals are accepted: a Pages project whose root
     directory, a dashboard setting, is not the repository root reads
     ``functions`` and a Wrangler configuration from that directory, which the
     gate does not read; the build image reads other files at the repository
     root before the build command, which this check does not refuse:
-    ``.python-version`` and ``runtime.txt``, which choose its Python
+    ``.python-version``, which is committed and chooses its Python
     (``site/README.md``), and any other file by which it chooses a tool's
-    version or installs dependencies (which files those are is not verified
-    here); nor does
+    version or installs dependencies, beyond those refused above (which files
+    those are is not verified here); nor does
     it read a zone feature that can change the HTML in transit (Email Address
     Obfuscation, Rocket Loader or the automatic Web Analytics script, say), or
     whether Pages serves a file other than the 6 pages at an install page URL
     (``tools/build-site.py --check`` refuses any file under ``site/`` that is
-    neither generated nor listed in ``static_files``), or what
-    ``tools/pages-build.sh``, the Pages build command, runs beside its gates:
-    ``tools/test-pages-build.py`` pins the gates it calls, not its other shell
-    commands, so a command added there that writes under ``site/`` after the gates
-    changes what Pages publishes, and this gate, which that script does not
-    run, does not see it.
+    neither generated nor listed in ``static_files``), or
+    ``tools/pages-build.sh``, the Pages build command, which this gate does
+    not run: ``tools/test-pages-build.py`` pins its committed bytes to a
+    recorded sha256 (``SCRIPT_SHA256``), so a command added to it, such as 1
+    that writes under ``site/`` after the gates, fails that test until a
+    reviewer records the new digest; ``.github/workflows/pages-build.yml``
+    runs that test on every pull request and every push to ``main``, but the
+    Pages build does not, so the pin holds only where that workflow runs.
 
 It reads the markup with ``html.parser``. Its readers are not a full HTML5 tree
 builder: they model the open elements as tags nest, void elements, the head's
@@ -567,21 +590,24 @@ in a checked element. The gate applies no stylesheet; a
 rule that sets ``direction`` or ``unicode-bidi`` on a checked element or an
 ancestor, such as ``main { direction: rtl; }``, fails the rule pin of
 ``tools/test-install-page.py`` unless a reviewer pins it. An end tag closes
-here the open element it names and every element opened inside it; the gate
-does not model the browser repairs that can hide markup it reads as visible,
-among them: an end tag a browser ignores because its element is not in scope
-(``</div>`` inside a table cell leaves a hiding ``div`` outside the table open)
-or, for an element outside the HTML standard's special category, because a
-special element such as ``div`` is open inside it (after
-``<span class="vh"><div></span>`` the ``span`` stays open); an end tag whose
-element a browser has already closed by an implied end tag (after
-``<p><div class="vh"></p>`` the ``div`` stays open); and a formatting element
+here the open element it names and every element opened inside it, and
+check 8 refuses an end tag that closes an element other than the innermost,
+so these browser repairs, which can hide markup that the gate reads as
+visible, now fail: an end tag a browser ignores because its element is not
+in scope (``</div>`` inside a table cell, which leaves a hiding ``div``
+outside the table open) or, for an element outside the HTML standard's
+special category, because a special element such as ``div`` is open inside
+it (``<span class="vh"><div></span>``, after which a browser keeps the
+``span`` open); an end tag whose element a browser has already closed by
+an implied end tag (``<p><div class="vh"></p>``, after which a browser
+keeps the ``div`` open); and an end tag that closes a formatting element
 (``a``, ``b``, ``big``, ``code``, ``em``, ``font``, ``i``, ``nobr``, ``s``,
-``small``, ``strike``, ``strong``, ``tt`` or ``u``) that a browser reopens with
-its attributes after an end tag closed it out of order, so after
-``<p><a class="vh">x</p>`` the text of a later heading is hidden in a browser
-and visible here. Check 8 refuses ``hidden`` on every element but a
-``button`` (``PAGE_ATTRIBUTES``), so in these each element hides by a class. The
+``small``, ``strike``, ``strong``, ``tt`` or ``u``) out of order, which a
+browser reopens with its attributes (``<p><a class="vh">x</p>``, after which
+a browser hides the text of a later heading). The gate does not model the
+other browser repairs, among them an implied end tag (see above) and a
+formatting element that a browser reopens after an implied end tag closed
+it. The
 inline-code checks, and the load reading of check 6, share the residual that
 ``tools/check-inline-code.py`` states: ``html.parser`` is not a browser's parser.
 
@@ -627,7 +653,7 @@ Exit codes:
   0  every check above passes
   1  a family link, family page, id, retired attribute, inline code, asset token, stylesheet, load path, pinned load,
      class pin, pinned attribute, attribute pin, tag pin, page attribute pin, page tag pin, html or body attribute,
-     doctype, header, redirect, meta, link or base discipline, or server entry point regressed
+     doctype, end tag order, header, redirect, meta, link or base discipline, or server entry point regressed
   3  a file could not be read, the baseline pin is malformed, a gate it reuses is missing, or the Python version is
      3.9 or later and either not 3.14 or not one that tools/check-inline-code.py supports
 """
@@ -716,7 +742,7 @@ ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 BIDI_CONTROLS = "\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 ZERO_WIDTH = "\u200b\u200c\u200d\ufeff\u00a0\u2060\u00ad" + BIDI_CONTROLS
 # Characters that show nothing, which has_visible_text also reads as invisible, and name_text keeps, so a heading of
-# Chat, U+034F and GPT names no family: Unicode's Default_Ignorable_Code_Point set, other than the characters of
+# Chat, U+034F and GPT names no family: Unicode 18.0's Default_Ignorable_Code_Point set, other than the characters of
 # ZERO_WIDTH, and the Braille pattern blank (U+2800), which is not in that set but shows nothing. Its 12 kinds: the
 # combining grapheme joiner (U+034F); the Hangul fillers (U+115F, U+1160, U+3164 and U+FFA0); the Khmer inherent vowels
 # (U+17B4 and U+17B5); the Mongolian free variation selectors and vowel separator (U+180B to U+180F); the invisible
@@ -807,7 +833,9 @@ HIDING_ELEMENTS = (
 # Check 8: for each kind of checked element, the classes the 6 committed pages give, by tag, that element (the first
 # map), each of its ancestors (the second) and each element it holds (the third); any other tag there carries no class
 # on those pages, so it may carry none. tools/test-install-page.py fails unless these are exactly the sets the
-# committed pages give, and pins every stylesheet rule that can match an element with these names and classes.
+# committed pages give, and pins every stylesheet rule that can match an element with these names and classes. A link
+# back's div may also carry callout: the committed pages put a link with no class in a paragraph in a div.callout
+# (tools/test-install-page.py reads each such link, paragraph_links).
 PIN_ANCESTORS = {"html": ("site-cleanlanguage",), "div": ("doc", "wrap")}
 CLASS_PIN = {
     "the hero's h1": ({}, PIN_ANCESTORS, {}),
@@ -818,7 +846,7 @@ CLASS_PIN = {
     "a verified line": ({"p": ("verified",)}, PIN_ANCESTORS, {}),
     "a step list": ({"ol": ("steps",)}, PIN_ANCESTORS, {}),
     "a step": ({}, {**PIN_ANCESTORS, "ol": ("steps",)}, {}),
-    "a link back": ({}, PIN_ANCESTORS, {}),
+    "a link back": ({}, {**PIN_ANCESTORS, "div": ("callout", "doc", "wrap")}, {}),
 }
 # Check 8: the attributes that an attribute selector of a rule the rule pin holds names, hidden aside, which the gate
 # reads as hiding; no checked element, ancestor or element it holds may carry one. tools/test-install-page.py fails
@@ -912,8 +940,13 @@ LOADED_SEGMENTS = ("assets",)
 # replace any response: a Pages Function directory at the repository root, and a Worker in the output directory, as a
 # file or a directory; and the Wrangler configuration files that Pages reads at the repository root as the project's
 # configuration, which can change what it serves; and a root package.json, whose install scripts the build image can
-# run before the build command (an inference, not verified). None exists at this commit; the gate refuses each.
-SERVER_ENTRIES = ("functions", "site/_worker.js", "wrangler.toml", "wrangler.json", "wrangler.jsonc", "package.json")
+# run before the build command, and the root files from which it can choose its Python (runtime.txt) or install
+# dependencies (requirements.txt, Pipfile and Gemfile) before the build command (an inference, not verified). None
+# exists at this commit; the gate refuses each.
+SERVER_ENTRIES = (
+    "functions", "site/_worker.js", "wrangler.toml", "wrangler.json", "wrangler.jsonc", "package.json", "runtime.txt",
+    "requirements.txt", "Pipfile", "Gemfile",
+)
 # Check 9: the attributes that name what a meta, link or base element is, in this order; the first of them that an
 # element carries, with its value, is the element's key in HEAD_PIN (head_key).
 KEY_ATTRIBUTES = ("charset", "http-equiv", "name", "property", "rel")
@@ -1019,6 +1052,9 @@ class PageParser(HTMLParser):
         # a browser adds to the page's own element, an ancestor of every checked element (check 8).
         self.page_tags: Counter = Counter()
         self.later_attrs: list[str] = []
+        # Each end tag that closes an open element other than the innermost, with the elements it would close inside
+        # it, which a browser can keep open, reopen or close differently (check 8).
+        self.misnested: list[str] = []
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
         # A browser keeps the first of 2 attributes with the same name, so <p class="vh" class="x"> hides.
@@ -1128,7 +1164,11 @@ class PageParser(HTMLParser):
     def handle_startendtag(self, tag: str, attrs_list) -> None:
         # A browser ignores the "/" of "/>" on an element that is not void, so <div hidden/> stays open and hides
         # what follows, as <div hidden> does. A void element never goes on the stack, so it needs no end tag.
+        foreign = tag == "svg" or any(frame["tag"] == "svg" for frame in self.stack)
         self.handle_starttag(tag, attrs_list)
+        # A browser honours the slash in <svg> (foreign content), so an end tag there may close what such a tag opened.
+        if tag not in VOID and foreign:
+            self.stack[-1]["self_closed"] = True
 
     def handle_endtag(self, tag: str) -> None:
         # A browser reads </br> as <br>, so in the h1 it breaks the line too.
@@ -1139,6 +1179,13 @@ class PageParser(HTMLParser):
         names = HEADINGS if tag in HEADINGS else (tag,)
         for i in range(len(self.stack) - 1, -1, -1):
             if self.stack[i]["tag"] in names:
+                # Here an end tag closes every element opened inside its own; a browser can instead ignore it, keep
+                # 1 of those open or reopen 1 later, so check 8 refuses such an end tag, as tools/build-site.py does. A
+                # browser opens no second html, head or body element, so those this parser opens do not count.
+                inside = [frame["tag"] for frame in self.stack[i + 1:]
+                          if not frame.get("self_closed") and frame["tag"] not in ("html", "head", "body")]
+                if inside:
+                    self.misnested.append(f"</{tag}> closes <{self.stack[i]['tag']}> with <{inside[0]}> open inside it")
                 del self.stack[i:]
                 break
 
@@ -1244,8 +1291,9 @@ def parse(text: str) -> PageParser:
 
 
 def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
-    """Checks 2, 3 (duplicates), 5 and 6, and check 8's refusals of a page without the doctype and of a later html or
-    body start tag with attributes, which hold on all 6 pages."""
+    """Checks 2, 3 (duplicates), 5 and 6, and check 8's refusals of a page without the doctype, of an end tag that
+    closes an element other than the innermost and of a later html or body start tag with attributes, which hold on all
+    6 pages."""
     problems: list[str] = []
     for carrier in parser.retired:
         problems.append(f"{where}: the retired selector attribute appears on {carrier}; this site no longer uses select.js.")
@@ -1258,6 +1306,9 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
         problems.append(f"{where}: the page does not begin with <!doctype html> on its own line, as tools/build-site.py "
                         "writes it; without it a browser matches class names without regard to case, which the rule "
                         "pin does not.")
+    for closure in parser.misnested:
+        problems.append(f"{where}: {closure}; a browser can keep that element open, reopen it or ignore the end tag, "
+                        "so what it hides is not what this gate reads, and tools/build-site.py refuses it too.")
     loads = LoadScan(text)
     loads.feed(text)
     loads.close()
@@ -1538,8 +1589,9 @@ def redirect_problems(redirects: str) -> list[str]:
 
 def server_entry_problems() -> list[str]:
     """Check 10: each of SERVER_ENTRIES that exists, as a file, a directory or a link."""
-    return [f"{name} exists; Cloudflare Pages runs it, or reads it as the project's configuration, and it can "
-            "redirect, rewrite or replace an install page or a file the pages load, which no check here reads."
+    return [f"{name} exists; Cloudflare Pages runs it, or reads it as the project's configuration or, by an inference "
+            "not verified here, before the build command, and it can change what Pages serves at an install page or "
+            "for a file the pages load, which no check here reads."
             for name in SERVER_ENTRIES if (REPO_ROOT / name).exists() or (REPO_ROOT / name).is_symlink()]
 
 
@@ -1895,7 +1947,8 @@ def main() -> int:
         "base element on the six pages is one the committed pages carry, with its attributes and values, no html or "
         "body start tag on "
         "the six pages carries dir, and none carries an attribute unless it is the first of each and an ancestor of "
-        "every checked element, each page begins with the doctype, no retired selector attribute "
+        "every checked element, each page begins with the doctype, no end tag closes an element other than the "
+        "innermost open one, no retired selector attribute "
         "remains, the six pages pass the inline-code checks, the "
         "light and dark switch included, load the baseline's versioned stylesheets and no other, and copy.js, load scheme.js "
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
@@ -1903,7 +1956,7 @@ def main() -> int:
         "rule that can match an install page or a file the pages load sets or detaches any header but those of "
         "INSTALL_HEADERS, with their values, no rule of site/_redirects has a source that can match an install page "
         "or a file the pages load, and no Pages Function, site/_worker.js, Wrangler configuration or root "
-        "package.json exists."
+        "package.json, runtime.txt, requirements.txt, Pipfile or Gemfile exists."
     )
     return 0
 
