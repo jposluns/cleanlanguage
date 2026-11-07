@@ -1534,9 +1534,10 @@ class PageScan(HTMLParser):
     (region_problem()) and where each of its class names sits (region_class_problem()), each start tag's class names
     with where it and its open elements start (stray_class()), where the page's body starts, each element with its
     parent and what came before it there, for the placement pins and rail_pin(), each h2 with an id and its text,
-    for rail(), and the hero's narrow-width order, for labels(). It is the one parse every page source rule reads. An
-    element's attributes are the first of each repeated name, as a browser and tools/check-install-page.py's
-    PageParser read them. validate() also pins the markup from <body> to the end of header.mast, and the landing
+    for rail(), and the hero's narrow-width order, for labels(). It is the one parse every page source rule reads
+    after the grammar (source_problem()) and bidi_control(), which read the source text itself. An element's
+    attributes are the first of each repeated name, as a browser and tools/check-install-page.py's PageParser
+    read them. validate() also pins the markup from <body> to the end of header.mast, and the landing
     page's About block; --check compares the committed pages with a build that passed it. With scripting False
     (scripting_off()), the text that shows is read as a browser with scripting off shows it: the content of each
     noscript as rendered, its hiding rules all applying, and that of every other element of INERT_TAGS as not."""
