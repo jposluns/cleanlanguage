@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Behaviour tests for .claude/hooks/ask_mode_guard.py, the repository AskUserQuestion guard.
 
-Each behaviour case sets up a mode file, or its absence, under a temporary directory, runs the guard
-in a subprocess with python3 -I, passes that path through the test-only --mode-file argument, since
-CI has no /opt/orch-operator, and asserts the exit code and the verdict the guard prints. Most cases
+Each behaviour case runs the guard in a subprocess with python3 -I, passes it a mode file path
+through the test-only --mode-file argument, since CI has no /opt/orch-operator, and asserts the exit
+code and the verdict the guard prints. Every behaviour case but one puts that path under a temporary
+directory and sets up what it leads to, or its absence; the device case uses a path below /dev/null,
+since only root can create a device node. Most cases
 run the guard as a script; 7 cases load it as a module in that subprocess and inject a fault before
 they call its main function: a read that fails after the open, and, for each of the type, owner and
 write checks, a rename just before the open and one just after it that changes what the mode file's
@@ -318,11 +320,17 @@ class AskModeGuard(unittest.TestCase):
                            "is unreadable: {}".format(os.strerror(errno.ENOTDIR)))
 
     def test_socket_at_the_host_directory_denies(self):
-        # As for the FIFO: lstat finds the socket, and the open below it fails with ENOTDIR.
+        # As for the FIFO: lstat finds the socket, and the open below it fails with ENOTDIR. The
+        # bind fails where the environment refuses Unix sockets, or where the path is longer than a
+        # socket address holds, as under a long TMPDIR; the case then cannot set up the state it
+        # tests, so it skips, naming the error, and it runs wherever the bind succeeds.
         self.host_dir.rmdir()
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            listener.bind(str(self.host_dir))
+            try:
+                listener.bind(str(self.host_dir))
+            except OSError as error:
+                self.skipTest("cannot bind a Unix socket at the host directory: {}".format(error))
             result = self.run_guard()
         finally:
             listener.close()
