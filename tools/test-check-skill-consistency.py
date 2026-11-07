@@ -277,6 +277,18 @@ CASES = [
         [at(CHECKLIST, CHECKLIST_HEADING, 1) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
     ("x & y directly above the checklist heading above the dash bullet",
         edit(CHECKLIST, CHECKLIST_HEADING, EDGE + CHECKLIST_HEADING), 0, []),
+    # A heading of any level above the dash bullet starts the checklist span, so these 4 cases pin that edge at
+    # levels 1 and 3, apart from the level 2 heading in the 2 cases above them.
+    ("x & y directly under a level 1 checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, CHECKLIST_HEADING[1:] + EDGE), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING, 1) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    ("x & y directly above a level 1 checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, EDGE + CHECKLIST_HEADING[1:]), 0, []),
+    ("x & y directly under a level 3 checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, "#" + CHECKLIST_HEADING + EDGE), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING, 1) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    ("x & y directly above a level 3 checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, EDGE + "#" + CHECKLIST_HEADING), 0, []),
     ("x & y as the last line of the checklist", append(CHECKLIST, EDGE), 3,
         [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
     ("x & y as the last line of the checklist, with no LF after it", append(CHECKLIST, EDGE.rstrip("\n")), 3,
