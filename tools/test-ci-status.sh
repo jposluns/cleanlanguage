@@ -2422,11 +2422,14 @@ run_final_reap_view_case "gh repo view exiting 0 just before the kill without --
 # the top-of-loop guard has found time left, the fixed clock is moved to the
 # deadline, so read_checks finds the window closed before the read and raises
 # WindowClosed without running gh. After that reading this is the wait timing
-# out: the case must exit 2 with the cut-off line, here giving the reason that
-# the window closed before the read, then the still-unsettled line on standard
-# error, no read-failure line, and exactly one check-runs call. The zero-timeout
-# cases and the run_final_reap_view_case cases reach the same raise with no
-# successful reading before it, so they exit 3.
+# out: the case must exit 2; standard output must hold the pending reading's
+# line "ci-status: waiting, 10 seconds left"; standard error must hold the
+# cut-off line, here giving the reason that the window closed before the read,
+# and the still-unsettled line, but no read-failure line; and the fake gh must
+# serve exactly one check-runs call. Each expected line is matched whole by its
+# own grep, so the order of the two standard-error lines is not checked. The
+# zero-timeout cases and the run_final_reap_view_case cases reach the same raise
+# with no successful reading before it, so they exit 3.
 run_closed_window_case() {
   local name="$1"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
