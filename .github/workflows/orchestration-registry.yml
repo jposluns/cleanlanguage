@@ -14,7 +14,9 @@ name: Orchestration registry
 # that key, together with the project orch_doctor tool. Each is its own named step, so a run
 # that omits one is visible in the step list, not only in the overall colour. A lint step fails
 # when a comment or docstring in these sources names a review round or a finding id instead of
-# stating its reason (tools/test-no-qa-labels.py).
+# stating its reason (tools/test-no-qa-labels.py). A further step fails when the /flow command
+# names a mode value other than the 2 that the host's mode writer writes, or stops reading an absent
+# mode record as unattended, since a session follows /flow when it reads that record.
 #
 # Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
 # beside a script cannot shadow a standard library import and no PYTHON* environment variable
@@ -72,6 +74,10 @@ jobs:
       - name: Run the repository AskUserQuestion guard tests
         shell: bash
         run: python3 -I tools/test-ask-mode-guard.py
+
+      - name: Check that /flow names the host mode writer's values
+        shell: bash
+        run: python3 -I tools/check-flow-mode.py
 
       # Re-run the gate against the committed registry by its explicit path, so this step is RED both on
       # a malformed edit and (via the gate tests above, which assert the arming keys are present) on a

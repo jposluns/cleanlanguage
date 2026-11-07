@@ -7,8 +7,8 @@ governs) and is reviewed
 through this repository's PR gate. It adapts the fleet /flow standard, whose reference copy is the
 host's deployed `/usr/local/share/orch/operating-model.md`, a render of lab_infra's
 `docs/operating-model.md`, the NORMATIVE source that governs where the two differ (the former
-reference, `/opt/inbox/FLOW.md`, no longer exists; the deployed render is stale pending lab_infra's
-redeploy, so the cross-check waits for the redeployed copy); that reference is a
+reference, `/opt/inbox/FLOW.md`, no longer exists, so cross-check against the deployed copy, which
+renders lab_infra's source); that reference is a
 cross-check, not an unreviewed override of this file. When lab_infra renders a shared `/flow` command
 (their TODO 208, the on-ramp to the future Orch plugin), adopt it THROUGH this repository's normal
 review, then delete this file; do not switch to it sight-unseen. `/flow` is a REMINDER; the mode is
@@ -59,9 +59,9 @@ only the affected file(s).
    AIQT self-check before the completion claim; records rotation (TODO delete + DONE add) in the same
    change; clear focus.
 8. PAUSE (after a merge, after a plan is verified pre-implementation, or when the queue composition
-   changed): refresh; if an attended-autonomous boundary is open, surface accumulated decisions, up to 4
-   per round (per .claude/rules/maintainer-questions.md); list the next items; continue on
-   already-authorized safe actions.
+   changed): refresh; if an operator boundary (an inbound operator message) is open, surface
+   accumulated decisions, up to 4 per round (per .claude/rules/maintainer-questions.md); list the
+   next items; continue on already-authorized safe actions.
 9. NOTHING ACTIONABLE: seeds/combines/QA in flight -> keep the pipeline topped up + read-only prep on
    upcoming verified-DISJOINT items; re-enter on the next delivery. Nothing in flight -> run
    blocked-verification (below); only on genuine whole-set exhaustion, close on green via /handoff.
@@ -195,17 +195,21 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
 ## Mode, decisions, reversibility
 
 - MODE (attended-autonomous | unattended) parameterizes the question policy/timer/routing; it GRANTS NO
-  authority. These are the only 2 values that the host's mode writer, `orch-set-mode`, writes.
-  "attended" is retired as a selectable mode (lab_infra rule FLEET-05): a legacy stored "attended" is
-  read as attended-autonomous with ONE warning, never as unattended. An absent mode record is read as
-  unattended (conservative), and the session alerts lab_infra through `inbox-send lab_infra` to
-  clarify the mode. The repository's AskUserQuestion guard (`.claude/hooks/ask_mode_guard.py`)
-  differs in one case: when the host's mode folder, `/opt/orch-operator`, is itself absent, the guard
-  still allows a question, with a one-line note, while this file reads the session as unattended.
-  The ONE governed transition is a decision-timeout switching attended-autonomous -> unattended (the
+  authority. The session reads it from the host's mode record, `/opt/orch-operator/operating-mode`,
+  which only the host's mode writer, `orch-set-mode`, writes, and only with these 2 values.
+  "attended" is retired as a selectable mode (lab_infra rule FLEET-05): the session reads a legacy
+  stored "attended" as attended-autonomous, never as unattended, and gives 1 warning about it in its
+  own output, once per session. The session reads an absent mode record as unattended
+  (conservative), and alerts lab_infra through `inbox-send lab_infra` to clarify the mode.
+  When the host's mode folder, `/opt/orch-operator`, is itself absent, the repository's
+  AskUserQuestion guard (`.claude/hooks/ask_mode_guard.py`) still allows a question, with a one-line
+  note, while the session reads the mode as unattended. Until the guard changes, it denies a legacy
+  "attended" as an unknown mode, so a question on such a host is held; the session still reads the
+  mode as attended-autonomous.
+  The only governed transition is a decision-timeout switching attended-autonomous -> unattended (the
   safe/conservative direction only); it switches this session's routing and never writes the mode
-  record. An inbound operator message is a TRANSIENT attended-autonomous boundary and does NOT
-  silently flip the mode.
+  record. An inbound operator message opens a TRANSIENT operator boundary; it does NOT silently flip
+  the mode, and the guard follows only the stored mode.
 - DECISIONS: blocking + attended-autonomous -> surface immediately, up to 4 per round, in the four-role shape.
   The repo `.claude/rules/maintainer-questions.md` sets that shape in its "Superseded in part" note:
   the four roles replace its Option A to D lettering. See that note for the roles, their order, and
