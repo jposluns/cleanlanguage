@@ -4,18 +4,21 @@
 Each behaviour case sets up a mode file, or its absence, under a temporary directory, runs the guard
 in a subprocess with python3 -I, passes that path through the test-only --mode-file argument, since
 CI has no /opt/orch-operator, and asserts the exit code and the verdict the guard prints. Most cases
-run the guard as a script; 2 cases load it as a module in that subprocess and inject a fault before
-they call its main function: a read that fails after the open, and a file renamed over the mode
-file's path after the open. The files a case creates belong to the uid running the tests, so every
-case passes that uid through the test-only --expect-owner-uid argument, except the cases that test
-the owner check itself. A missing guard fails every behaviour case rather than skipping it, so an
-absent file cannot read as a green run. Every deny must carry the complete record-and-continue
-instruction, and one case checks that the vendored orch_ask_guard words that instruction the same
-way. Because the behaviour cases bypass the guard's production mode file, one case loads the guard
-without running it and checks the mode file and owner uid it uses when it receives no argument. One
-case reads only .claude/settings.json and checks every hook, under every event and matcher, whose
-definition names ask_mode_guard: exactly one must, as the AskUserQuestion entry, with neither
-test-only argument.
+run the guard as a script; 7 cases load it as a module in that subprocess and inject a fault before
+they call its main function: a read that fails after the open, and, for each of the type, owner and
+write checks, a rename just before the open and one just after it that changes what the mode file's
+path leads to. The files a case creates belong to the uid running the tests, so every case passes
+that uid through the test-only --expect-owner-uid argument, except the 2 cases that pass another uid
+or none to test the expected owner. The owner rename cases need a readable file that another uid
+owns: run as root, they create one and give it to uid 65534; otherwise they use the first suitable
+file among /etc/passwd, /etc/group, /etc/hosts and the Python interpreter, and skip when none is
+suitable. A missing guard fails every behaviour case rather than skipping it, so an absent file
+cannot read as a green run. Every deny must carry the complete record-and-continue instruction, and
+one case checks that the vendored orch_ask_guard words that instruction the same way. Because the
+behaviour cases bypass the guard's production mode file, one case loads the guard without running it
+and checks the mode file and owner uid it uses when it receives no argument. One case reads only
+.claude/settings.json and checks every hook, under every event and matcher, whose definition names
+ask_mode_guard: exactly one must, as the AskUserQuestion entry, with neither test-only argument.
 
 Usage: python3 -I tools/test-ask-mode-guard.py
 """
@@ -24,6 +27,7 @@ import errno
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -81,17 +85,23 @@ READ_ERROR_PROBE = LOAD_GUARD + (
     "os.read = failing_read\n"
     "sys.exit(guard.main(sys.argv[2:]))\n")
 
-# Wraps os.open so that, once the mode file is open, the file at sys.argv[2] is renamed over its path,
-# then runs main on the remaining arguments. The checks that follow judge the opened file only if they
-# use the open descriptor rather than the path.
-SWAP_AFTER_OPEN_PROBE = LOAD_GUARD + (
+# Wraps os.open so that the entry at sys.argv[3] is renamed over the path sys.argv[4] just before the
+# open, when sys.argv[2] is "before", or just after it, when it is "after", then runs main on the
+# remaining arguments. The guard opens only the mode file, so the rename happens once. A check that
+# looks at the path instead of the open descriptor, on the side of the open where the rename leaves a
+# file that passes it, then judges a file other than the one the guard reads.
+SWAP_PROBE = LOAD_GUARD + (
+    "when, source, target = sys.argv[2:5]\n"
     "real_open = os.open\n"
-    "def open_then_swap(path, flags, *rest):\n"
+    "def open_with_swap(path, flags, *rest):\n"
+    "    if when == 'before':\n"
+    "        os.rename(source, target)\n"
     "    fd = real_open(path, flags, *rest)\n"
-    "    os.rename(sys.argv[2], path)\n"
+    "    if when == 'after':\n"
+    "        os.rename(source, target)\n"
     "    return fd\n"
-    "os.open = open_then_swap\n"
-    "sys.exit(guard.main(sys.argv[3:]))\n")
+    "os.open = open_with_swap\n"
+    "sys.exit(guard.main(sys.argv[5:]))\n")
 
 # The shape of the host record: a JSON object whose "mode" decides, with members whose values do not.
 UNATTENDED_LINE = ('{"mode": "unattended", "phase": "dispatch", "set_by": "orch-operator", '
@@ -131,12 +141,41 @@ class AskModeGuard(unittest.TestCase):
         return subprocess.run(args, input=json.dumps(payload) if stdin is None else stdin,
                               capture_output=True, text=True, timeout=30)
 
-    def run_probe(self, probe, probe_args=()):
+    def run_probe(self, probe, probe_args=(), mode_file=None):
         """Run a fault probe on the guard for the AskUserQuestion payload, with probe_args, then
         --mode-file and --expect-owner-uid; -B keeps the import from writing bytecode."""
         args = [sys.executable, "-I", "-B", "-c", probe, str(GUARD)] + list(probe_args)
-        args += ["--mode-file", str(self.mode_file), "--expect-owner-uid", str(os.geteuid())]
+        args += ["--mode-file", str(mode_file or self.mode_file),
+                 "--expect-owner-uid", str(os.geteuid())]
         return subprocess.run(args, input=json.dumps(ASK), capture_output=True, text=True, timeout=30)
+
+    def run_swap(self, when, source, target, mode_file=None):
+        """Run the swap probe, which renames source over target just before or just after the open,
+        and fail unless the rename took place."""
+        result = self.run_probe(SWAP_PROBE, [when, str(source), str(target)], mode_file)
+        self.assertFalse(os.path.lexists(source), "the probe did not rename {}".format(source))
+        return result
+
+    def foreign_file(self):
+        """A readable regular file that a uid other than the test's owns and that neither its group
+        nor others can write, so that only the owner check refuses it; skips the case without one."""
+        if os.geteuid() == 0:
+            foreign_dir = self._tmp / "foreign"
+            foreign_dir.mkdir()
+            path = self.write_mode(ATTENDED_LINE, path=foreign_dir / "operating-mode")
+            os.chown(path, 65534, -1)
+            return path
+        for candidate in ("/etc/passwd", "/etc/group", "/etc/hosts", sys.executable):
+            path = Path(os.path.realpath(candidate))
+            try:
+                info = path.lstat()
+            except OSError:
+                continue
+            if (stat.S_ISREG(info.st_mode) and info.st_uid != os.geteuid()
+                    and not info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                    and os.access(path, os.R_OK)):
+                return path
+        self.skipTest("no readable file that another uid owns, for the owner check")
 
     def assert_allows_silently(self, result):
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -311,13 +350,71 @@ class AskModeGuard(unittest.TestCase):
         self.assert_denies(self.run_guard(), "writable by others")
 
     def test_checks_judge_the_opened_file_not_its_path(self):
-        # The opened file is group-writable; the file renamed over its path once it is open is not.
-        # The guard denies only if its checks use the open descriptor.
+        # The opened file is group-writable; the file renamed over its path just after the open is
+        # not. The guard denies on group write only if its write check does not look at the path
+        # after the open; the cases below cover a look before the open and the other checks.
         self.write_mode(ATTENDED_LINE, mode=0o664)
         replacement = self.write_mode(ATTENDED_LINE, path=self.host_dir / "replacement")
-        result = self.run_probe(SWAP_AFTER_OPEN_PROBE, [str(replacement)])
-        self.assertFalse(replacement.exists(), "the probe did not rename the replacement")
-        self.assert_denies(result, "writable by group")
+        self.assert_denies(self.run_swap("after", replacement, self.mode_file), "writable by group")
+
+    def test_write_check_judges_the_opened_file_not_an_earlier_look(self):
+        # The file at the path before the open passes every check; the group-writable file renamed
+        # over it just before the open is the one opened. The guard denies on group write only if
+        # its write check does not rely on a look at the path before the open.
+        self.write_mode(ATTENDED_LINE)
+        replacement = self.write_mode(ATTENDED_LINE, mode=0o664, path=self.host_dir / "replacement")
+        self.assert_denies(self.run_swap("before", replacement, self.mode_file), "writable by group")
+
+    def test_type_check_judges_the_opened_file_not_an_earlier_look(self):
+        # A regular attended file before the open; a FIFO renamed over it just before the open is
+        # the one opened, so only a type check that does not rely on the earlier look denies on type.
+        self.write_mode(ATTENDED_LINE)
+        fifo = self.host_dir / "replacement"
+        os.mkfifo(fifo)
+        os.chmod(fifo, 0o644)
+        self.assert_denies(self.run_swap("before", fifo, self.mode_file), "not a regular file")
+
+    def test_type_check_judges_the_opened_file_not_a_later_look(self):
+        # A FIFO is opened; a regular attended file renamed over it just after the open passes every
+        # check, so only a type check that does not look at the path after the open denies on type.
+        os.mkfifo(self.mode_file)
+        os.chmod(self.mode_file, 0o644)
+        replacement = self.write_mode(ATTENDED_LINE, path=self.host_dir / "replacement")
+        self.assert_denies(self.run_swap("after", replacement, self.mode_file), "not a regular file")
+
+    def test_owner_check_judges_the_opened_file_not_an_earlier_look(self):
+        # The test cannot give a file it creates to another uid without root, so the rename moves the
+        # directory instead: before the open, the host directory is a symlink to a directory whose
+        # attended file the expected uid owns; just before the open, it is repointed at a directory
+        # whose file of the same name another uid owns. Only an owner check that does not rely on
+        # the earlier look denies on owner.
+        foreign = self.foreign_file()
+        own_dir = self._tmp / "own-dir"
+        own_dir.mkdir()
+        self.write_mode(ATTENDED_LINE, path=own_dir / foreign.name)
+        self.host_dir.rmdir()
+        self.host_dir.symlink_to(own_dir)
+        repoint = self._tmp / "repoint"
+        repoint.symlink_to(foreign.parent)
+        result = self.run_swap("before", repoint, self.host_dir, self.host_dir / foreign.name)
+        self.assert_denies(result, "owned by uid {}, not uid {}".format(
+            foreign.stat().st_uid, os.geteuid()))
+
+    def test_owner_check_judges_the_opened_file_not_a_later_look(self):
+        # The reverse: the file opened is another uid's, and just after the open the host directory
+        # is repointed at a directory whose attended file the expected uid owns. Only an owner check
+        # that does not look at the path after the open denies on owner.
+        foreign = self.foreign_file()
+        own_dir = self._tmp / "own-dir"
+        own_dir.mkdir()
+        self.write_mode(ATTENDED_LINE, path=own_dir / foreign.name)
+        self.host_dir.rmdir()
+        self.host_dir.symlink_to(foreign.parent)
+        repoint = self._tmp / "repoint"
+        repoint.symlink_to(own_dir)
+        result = self.run_swap("after", repoint, self.host_dir, self.host_dir / foreign.name)
+        self.assert_denies(result, "owned by uid {}, not uid {}".format(
+            foreign.stat().st_uid, os.geteuid()))
 
     # --- what the file holds -------------------------------------------------------------------------
     def test_unparseable_content_denies(self):
@@ -328,7 +425,14 @@ class AskModeGuard(unittest.TestCase):
             ("a JSON array", '["attended"]\n', "not a JSON object"),
             ("no mode member", '{"phase": "dispatch"}\n', "no \"mode\" member"),
             ("a numeric mode", '{"mode": 1}\n', "\"mode\" is not a string"),
-            ("a duplicate mode key", '{"mode": "attended", "mode": "attended"}\n', "duplicate key"),
+            ("a duplicate mode key", '{"mode": "attended", "mode": "attended"}\n',
+             "duplicate key 'mode'"),
+            # A repeated key other than "mode", and one inside a nested object, are refused too.
+            ("a duplicate key other than mode", '{"mode": "attended", "phase": "a", "phase": "b"}\n',
+             "duplicate key 'phase'"),
+            ("a duplicate key in a nested object",
+             '{"mode": "attended", "extra": {"set_by": "a", "set_by": "a"}}\n',
+             "duplicate key 'set_by'"),
         )
         for name, content, cause in cases:
             with self.subTest(case=name):
