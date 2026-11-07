@@ -39,7 +39,13 @@ path under ``.baseline/``, pinned but never served: ``tools/check_palette.py``
 (from 1.6.0) to ``.baseline/check_palette.py``, and the card builder
 ``tools/build_card.js`` with its ``tools/card-fonts/`` files to
 ``.baseline/build_card.js`` and ``.baseline/card-fonts/``, since the builder
-reads its fonts from beside itself. It copies
+reads its fonts from beside itself. It clears ``.baseline/card-fonts/`` before
+it copies, as it clears the served copy folder, so a stray file there never
+outlives a copy. Before its first write it refuses (exit 1) a link, or a file
+in place of a folder, at a folder it clears or writes into or at any folder
+above one under the repository root, and a link or a folder in place of a file
+it writes outside the folders it clears: it never writes through a link, and
+``tools/check-baseline-pin.py`` refuses each of these too. It copies
 ``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
 ``.baseline/pin.toml`` in the README's format: a ``version`` key and a
 ``[files]`` table of path to SHA-256, the paths under ``assets/baseline/``
@@ -63,9 +69,10 @@ Usage:
 
 Exit codes:
   0  copied and pinned
-  1  a digest did not match, the folder is not a complete version, or its README
+  1  a digest did not match, the folder is not a complete version, its README
      lacks the folder's version heading or the step 7 NOTICE entry, or holds a
-     carriage return
+     carriage return, or a folder or file it writes is a link or of the wrong
+     kind
   3  an input could not be read, or Python is older than 3.11
 """
 
@@ -169,6 +176,29 @@ def list_files(root: Path) -> list[str]:
     return sorted(found)
 
 
+def check_target(path: Path, folder: bool) -> None:
+    """Exit 1 unless path, and each folder above it under the repository root, is absent or a folder and never a link,
+    or, when path is a file this tool writes, unless it is absent or a regular file. Writing through a link would
+    change what it leads to, and the gate refuses the result."""
+    parts = path.relative_to(REPO_ROOT).parts
+    for depth in range(1, len(parts) + 1):
+        current = REPO_ROOT.joinpath(*parts[:depth])
+        shown = current.relative_to(REPO_ROOT).as_posix()
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            die(3, f"{shown} could not be read: {error}")
+        if stat.S_ISLNK(mode):
+            die(1, f"{shown} is a link; refusing to write through it")
+        if depth == len(parts) and not folder:
+            if not stat.S_ISREG(mode):
+                die(1, f"{shown} is not a regular file")
+        elif not stat.S_ISDIR(mode):
+            die(1, f"{shown} is not a folder")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Copy and pin a verified baseline version.")
     parser.add_argument("--from", dest="source", required=True, help="unpacked version folder")
@@ -233,8 +263,18 @@ def main() -> int:
 
     chosen = sorted(name for name in listed if wanted(name))
     dest = output_root() / PREFIX
-    if dest.exists():
-        shutil.rmtree(dest)
+    # The build tools' own folders under .baseline/, such as card-fonts/, are rebuilt like the served copy folder, so
+    # that the gate finds no stray file there. Every folder cleared or written into, and every file written beside
+    # them, is checked before the first write.
+    tool_folders = sorted({(REPO_ROOT / key).parent for key in tools} - {PIN_DIR})
+    for folder in (dest, PIN_DIR, *tool_folders):
+        check_target(folder, folder=True)
+    for path in ([REPO_ROOT / key for key in tools if (REPO_ROOT / key).parent == PIN_DIR]
+                 + [PIN_DIR / name for name in ("SHA256SUMS", "pin.toml", *DOCUMENTS)]):
+        check_target(path, folder=False)
+    for folder in (dest, *tool_folders):
+        if folder.exists():
+            shutil.rmtree(folder)
     for name in chosen:
         target = dest / name
         target.parent.mkdir(parents=True, exist_ok=True)

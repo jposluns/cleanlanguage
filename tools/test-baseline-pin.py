@@ -5,7 +5,7 @@ Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
 with the version's README and specification under ``.baseline/`` and a root
 ``NOTICE.md``, applies 1 fault, runs the gate on that tree as a separate
 process and asserts its exit code, and for some cases a line of its output.
-The last case runs the gate on this repository. The first 14 cases run
+The last case runs the gate on this repository. The first 19 cases run
 ``tools/copy-baseline.py`` on a small version folder and assert that the pin
 header it writes, and the committed one, give each key's base; that it copies
 and pins the build tools, the palette gate and the card builder with its
@@ -14,7 +14,11 @@ the specification to ``.baseline/`` without pinning them; that a version
 without the palette gate, the card builder, the README or the specification,
 or whose README names another version, lacks its step 7 NOTICE entry, holds a second
 quoted paragraph in step 7 or has CRLF line ends, on every line or on the
-entry line only, exits 1 before any served file is replaced; and that on
+entry line only, exits 1 before any served file is replaced; that a link or a
+file in place of ``.baseline/card-fonts/``, a link in place of
+``.baseline/check_palette.py``, or a link above the served copy folder makes
+it exit 1 before any write, leaving what the link leads to unchanged; that it
+removes a stray file and folder from ``.baseline/card-fonts/``; and that on
 Python older than 3.11, stood in for by a gate whose tomllib import fails, it
 exits 3 with its own message before any served file is replaced.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
@@ -253,6 +257,37 @@ def fault_card_fonts_link(root: Path) -> None:
     fonts.symlink_to(root / "fonts-elsewhere")
 
 
+def fault_card_fonts_file(root: Path) -> None:
+    shutil.rmtree(root / ".baseline" / "card-fonts")
+    (root / ".baseline" / "card-fonts").write_bytes(b"x")
+
+
+def fault_card_fonts_inner_link(root: Path) -> None:
+    (root / "elsewhere").mkdir()
+    (root / ".baseline" / "card-fonts" / "more").symlink_to(root / "elsewhere")
+
+
+def fault_served_link_to_fonts(root: Path) -> None:
+    # A served folder that is a link to the pinned font folder, so the fonts are served under other paths.
+    (root / "site" / "card-assets").symlink_to(root / ".baseline" / "card-fonts")
+
+
+def fault_copy_folder_link(root: Path) -> None:
+    # The same files in a folder elsewhere, reached through a link in place of the copy folder.
+    shutil.move(copied(root), root / "copy-elsewhere")
+    copied(root).symlink_to(root / "copy-elsewhere")
+
+
+def fault_site_link(root: Path) -> None:
+    shutil.move(root / "site", root / "site-elsewhere")
+    (root / "site").symlink_to(root / "site-elsewhere")
+
+
+def fault_pin_folder_link(root: Path) -> None:
+    shutil.move(root / ".baseline", root / "baseline-elsewhere")
+    (root / ".baseline").symlink_to(root / "baseline-elsewhere")
+
+
 def fault_card_data_pinned(root: Path) -> None:
     edit_pin(root, f'"{CARD_KEY}" = "{digest(CARD[CARD_KEY])}"\n',
              f'"{CARD_KEY}" = "{digest(CARD[CARD_KEY])}"\n".baseline/site-card.toml" = "{digest(TOOL)}"\n')
@@ -452,7 +487,15 @@ CASES = [
     ("an unpinned file in .baseline/card-fonts/", fault_card_font_unpinned, 1,
         ".baseline/card-fonts/Inter-Thin.otf is not in the pin"),
     ("a link in place of the .baseline/card-fonts/ folder", fault_card_fonts_link, 1,
+        ".baseline/card-fonts is a link, not a folder"),
+    ("a file in place of the .baseline/card-fonts/ folder", fault_card_fonts_file, 1,
         ".baseline/card-fonts is not a folder"),
+    ("a link to a folder inside .baseline/card-fonts/", fault_card_fonts_inner_link, 1,
+        ".baseline/card-fonts/more is a link"),
+    ("a site/card-assets link to .baseline/card-fonts/", fault_served_link_to_fonts, 1, "site/card-assets is a link"),
+    ("a link in place of the copy folder", fault_copy_folder_link, 1, "site/draft/assets/baseline is a link"),
+    ("a link in place of the site/ folder", fault_site_link, 1, "site is a link, not a folder"),
+    ("a link in place of the .baseline/ folder", fault_pin_folder_link, 1, ".baseline is a link, not a folder"),
     ("the pin moved to another version, NOTICE.md with it", fault_other_version, 1, "different versions"),
     ("the README not listed in SHA256SUMS", fault_readme_unlisted, 1, "SHA256SUMS does not list README.md"),
     ("the copied README edited", fault_readme_edited, 1),
@@ -553,6 +596,75 @@ COPY_REFUSALS = [
 ]
 
 
+def link_card_fonts(root: Path) -> None:
+    (root / ".baseline").mkdir()
+    (root / ".baseline" / "card-fonts").symlink_to(root / "outside")
+
+
+def file_card_fonts(root: Path) -> None:
+    (root / ".baseline").mkdir()
+    (root / ".baseline" / "card-fonts").write_bytes(b"x")
+
+
+def link_build_tool(root: Path) -> None:
+    (root / "outside" / "check_palette.py").write_bytes(b"# outside\n")
+    (root / ".baseline").mkdir()
+    (root / TOOL_KEY).symlink_to(root / "outside" / "check_palette.py")
+
+
+def link_served_parent(root: Path) -> None:
+    # site/assets/ is a link, so the served copy folder below it is reached through the link.
+    (root / "outside" / "baseline").mkdir()
+    (root / "outside" / "baseline" / "served-before.css").write_bytes(b"a { color: red; }\n")
+    (root / "site").mkdir()
+    (root / "site" / "assets").symlink_to(root / "outside")
+
+
+# Trees copy-baseline refuses (exit 1) before its first write: each makes a folder it writes into, or a file it writes,
+# a link or of the wrong kind. The folder outside/ must be unchanged after the run.
+COPY_TREE_REFUSALS = [
+    ("a link in place of .baseline/card-fonts/", link_card_fonts),
+    ("a file in place of .baseline/card-fonts/", file_card_fonts),
+    ("a link in place of .baseline/check_palette.py", link_build_tool),
+    ("a link in place of site/assets/, above the served copy folder", link_served_parent),
+]
+
+
+def snapshot(folder: Path) -> dict[str, bytes]:
+    return {path.relative_to(folder).as_posix(): path.read_bytes() for path in folder.rglob("*") if path.is_file()}
+
+
+def copy_tree_problems() -> list[str]:
+    """copy-baseline refuses each tree in COPY_TREE_REFUSALS before it writes, and rebuilds .baseline/card-fonts/
+    without the stray entries a previous copy or a hand edit left there."""
+    problems = []
+    for name, prepare in COPY_TREE_REFUSALS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            (root / "outside").mkdir()
+            prepare(root)
+            served = root / "site" / "assets" / "baseline" / "served-before.css"
+            if not served.exists():
+                served.parent.mkdir(parents=True)
+                served.write_bytes(b"a { color: red; }\n")
+            before = snapshot(root / "outside")
+            result = run_copy(root, dict(PACKAGE))
+            if result.returncode != 1 or not served.is_file() or snapshot(root / "outside") != before:
+                problems.append(f"copy-baseline: {name} exits {result.returncode}; expected 1 before any write, the "
+                                f"served files and the files outside the tree kept: {result.stderr.strip()[:200]!r}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        fonts = root / ".baseline" / "card-fonts"
+        (fonts / "old").mkdir(parents=True)
+        (fonts / "Inter-Thin.otf").write_bytes(b"OTTO Inter-Thin")
+        result = run_copy(root, dict(PACKAGE))
+        left = sorted(path.relative_to(root).as_posix() for path in fonts.rglob("*"))
+        if result.returncode != 0 or left != sorted(key for key in CARD if key.startswith(".baseline/card-fonts/")):
+            problems.append(f"copy-baseline: a stray file and folder in .baseline/card-fonts/: exit "
+                            f"{result.returncode}, the folder holds {left}; expected 0 and only the pinned fonts")
+    return problems
+
+
 def python_floor_problems() -> list[str]:
     """On Python older than 3.11 the gate's tomllib guard exits 3; copy-baseline catches that and reports it in its
     own words before it replaces a served file. A gate whose tomllib import fails stands in for the old Python."""
@@ -639,8 +751,8 @@ def pin_header_problems() -> list[str]:
 
 
 def main() -> int:
-    failures: list[str] = pin_header_problems() + copy_problems() + python_floor_problems()
-    ran = 5 + len(COPY_REFUSALS)
+    failures: list[str] = pin_header_problems() + copy_problems() + copy_tree_problems() + python_floor_problems()
+    ran = 6 + len(COPY_REFUSALS) + len(COPY_TREE_REFUSALS)
     for name, fault, expected, *needles in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

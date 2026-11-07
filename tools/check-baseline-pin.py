@@ -34,13 +34,17 @@ What it verifies
    same way at their paths from the repository root, such as
    ``.baseline/check_palette.py``.
 4. No file under ``<output root>/assets/baseline/`` or under
-   ``.baseline/card-fonts/`` is missing from the pin, and no file named as a
-   build tool (``check_palette.py``, ``build_card.js``, or a file name in
-   ``.baseline/card-fonts/``) exists anywhere under ``site/``: the build tools
-   are pinned but never served. ``.baseline/card-fonts/``, when present, must
-   be a folder, not a link. The card builder reads its fonts from that folder
-   by fixed names, so an unpinned file there is not read today; the folder is
-   checked so that it holds only what the pin lists.
+   ``.baseline/card-fonts/`` is missing from the pin, and nothing under
+   ``site/`` has the file name of a pinned build tool (``check_palette.py``,
+   ``build_card.js``, or the name of a pinned font or of its licence): the
+   build tools are pinned but never served. ``.baseline/``, ``site/`` and,
+   when present, ``.baseline/card-fonts/`` must be folders, not links, and
+   nothing under ``site/`` or ``.baseline/card-fonts/`` may be a link, since
+   the files that a link leads to would not be checked. The card builder
+   reads its fonts from that folder by fixed names, so an unpinned file
+   there is not read today; the folder is checked so that it holds no file
+   the pin does not list. A subfolder there is not refused as such: an empty
+   one passes, and a file in one is reported as unpinned.
 5. The pin holds these files of the README's runtime and licence set
    (``REQUIRED``): the 3 stylesheets, 5 of the README's 6 scripts (this site
    leaves out ``matrix.js``, by the owner's decision), ``LICENSE``,
@@ -102,8 +106,10 @@ learn the new form.
 
 Exit codes:
   0  every copied file matches the pin
-  1  a file drifted, is missing, is extra, or disagrees with SHA256SUMS; the
-     pin's version is not the README's; or NOTICE.md's Site template entry
+  1  a file drifted, is missing, is extra, or disagrees with SHA256SUMS; a
+     checked folder is a link or not a folder, or a link is under site/ or
+     .baseline/card-fonts/; the pin's version is not the README's; or
+     NOTICE.md's Site template entry
      is not the one the README prescribes, or NOTICE.md has another line that
      reads as its heading, or a comment opener or code fence line anywhere
   3  the pin or a file could not be read, the pin is malformed, or the README
@@ -162,8 +168,12 @@ TOOLS = {
     ".baseline/card-fonts/Inter-Regular.otf": "tools/card-fonts/Inter-Regular.otf",
     ".baseline/card-fonts/inter-LICENSE.txt": "tools/card-fonts/inter-LICENSE.txt",
 }
-# The card builder's font folder, which must hold only pinned files (item 4).
+# The card builder's font folder, which must hold no unpinned file (item 4).
 CARD_FONTS = Path(".baseline/card-fonts")
+# The folders the gate reads from or lists, each checked before anything is read through it: a linked folder would let
+# the files reached through it pass as if they were in place. An absent one is reported later: the pin's folder and
+# site/ as unreadable (exit 3), the font folder as each pinned font missing.
+FOLDERS = (PIN.parent, CARD_FONTS, Path("site"))
 REQUIRED = [
     PREFIX + name
     for name in ("baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js",
@@ -228,8 +238,27 @@ def output_root(root: Path) -> Path:
     return root / "site" / base.strip("/")
 
 
-def list_tree(directory: Path) -> list[str]:
+def folder_problems(root: Path) -> list[str]:
+    """The first of FOLDERS that is a link or not a folder, so that nothing is read through it."""
+    for folder in FOLDERS:
+        try:
+            mode = os.lstat(root / folder).st_mode
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise Unreadable(f"{folder.as_posix()} could not be read: {error}") from error
+        if stat.S_ISLNK(mode):
+            return [f"{folder.as_posix()} is a link, not a folder."]
+        if not stat.S_ISDIR(mode):
+            return [f"{folder.as_posix()} is not a folder."]
+    return []
+
+
+def list_tree(directory: Path) -> tuple[list[str], list[str]]:
+    """The files and, apart, the links under directory, each relative to it. A link is listed, never followed, so
+    that the caller can refuse it: a linked folder would otherwise hide the files it leads to."""
     found: list[str] = []
+    links: list[str] = []
     stack = [directory]
     while stack:
         current = stack.pop()
@@ -245,8 +274,8 @@ def list_tree(directory: Path) -> list[str]:
             if stat.S_ISDIR(mode):
                 stack.append(Path(entry.path))
             else:
-                found.append(Path(entry.path).relative_to(directory).as_posix())
-    return sorted(found)
+                (links if stat.S_ISLNK(mode) else found).append(Path(entry.path).relative_to(directory).as_posix())
+    return sorted(found), sorted(links)
 
 
 def notice_entry(readme: str) -> str | None:
@@ -336,9 +365,11 @@ def document_problems(root: Path, version: str, published: dict[str, str]) -> li
 
 
 def check(root: Path) -> list[str]:
+    problems = folder_problems(root)
+    if problems:
+        return problems
     version, files = load_pin(root)
     out = output_root(root)
-    problems: list[str] = []
     published: dict[str, str] = {}
     try:
         sums_text = read_bytes(root / SUMS).decode("utf-8")
@@ -378,30 +409,31 @@ def check(root: Path) -> list[str]:
     copied = out / PREFIX
     if not copied.is_dir():
         raise Unreadable(f"{shown}/{PREFIX} is missing")
-    for name in list_tree(copied):
+    # A link at or under the copy folder is reported below with every link under site/, which holds the folder.
+    for name in list_tree(copied)[0]:
         if PREFIX + name not in files:
             problems.append(f"{shown}/{PREFIX}{name} is not in the pin.")
 
-    # A missing font folder is already reported above, as each pinned font missing.
+    # folder_problems() has refused a font folder that is a link or a file; a missing one is already reported above,
+    # as each pinned font missing.
     fonts = CARD_FONTS.as_posix()
-    try:
-        fonts_mode = os.lstat(root / CARD_FONTS).st_mode
-    except FileNotFoundError:
-        fonts_mode = None
-    except OSError as error:
-        raise Unreadable(f"{fonts} could not be read: {error}") from error
-    if fonts_mode is not None and not stat.S_ISDIR(fonts_mode):
-        problems.append(f"{fonts} is not a folder (a link or a file).")
-    elif fonts_mode is not None:
-        for name in list_tree(root / CARD_FONTS):
+    if (root / CARD_FONTS).is_dir():
+        font_files, font_links = list_tree(root / CARD_FONTS)
+        for name in font_files:
             if f"{fonts}/{name}" not in files:
                 problems.append(f"{fonts}/{name} is not in the pin.")
+        for name in font_links:
+            problems.append(f"{fonts}/{name} is a link; the font folder holds no link.")
 
     served = root / "site"
     tool_names = {Path(key).name for key in TOOLS}
-    for name in list_tree(served):
+    served_files, served_links = list_tree(served)
+    for name in sorted(served_files + served_links):
         if Path(name).name in tool_names:
             problems.append(f"site/{name} is a pinned build tool under the served tree; it is never served.")
+    for name in served_links:
+        problems.append(f"site/{name} is a link; nothing under the served tree may be a link, since the files it "
+                        "leads to are not checked.")
     return problems + document_problems(root, version, published)
 
 
