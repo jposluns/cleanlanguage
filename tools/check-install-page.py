@@ -33,7 +33,7 @@ What it verifies
    none with ``aria-current``, none hidden by itself or an ancestor
    (``hidden`` in any value, ``until-found`` included; ``inert``;
    ``aria-hidden="true"`` in any case; ``popover`` in any value, even on an open
-   ``dialog``, which the HTML standard displays; a class
+   ``dialog``, which the HTML standard's rendering rules may display; a class
    in ``HIDING_CLASSES``: ``vh``, the template's visually-hidden class,
    ``visually-hidden``, ``only-dark`` or ``skip``, each matched as a whole class
    name; an element in ``HIDING_ELEMENTS``: ``datalist``, ``noscript``, ``rp``,
@@ -291,7 +291,8 @@ What it verifies
    match an element with those names and classes (see below). No checked
    element, ancestor or element it holds carries an attribute that an
    attribute selector of a pinned rule names (``RULE_ATTRIBUTES``), so ``data-preset`` on a family page's ``h1``,
-   which baseline.css hides in print (``@media print { ... [data-preset] {
+   for which the print rules of baseline.css set ``display: none``
+   (``@media print { ... [data-preset] {
    display: none; } }``), fails; ``hidden`` is left out, because the gate
    reads it as hiding the element that carries it and all it holds.
    ``tools/test-install-page.py`` fails unless ``RULE_ATTRIBUTES`` holds
@@ -352,7 +353,7 @@ What it verifies
    ``tools/build-site.py`` writes it: without it a browser may render the page in
    quirks mode, where a class selector matches a class name without regard to
    case, while this check and the rule pin compare class names with regard to
-   case (``.DOC { display: none; }`` would hide ``div.doc``). No end tag on
+   case (``.DOC { display: none; }`` would match ``div.doc``). No end tag on
    the 6 pages closes an open element other than the innermost, as the
    parser holds them, as ``tools/build-site.py`` refuses it too, but for a
    self-closing tag in an ``svg``, which it reads as closed: here such an
@@ -542,7 +543,7 @@ It does not apply any stylesheet or run any script, and it does NOT judge
 whether a stylesheet rule hides, clips, zeroes the opacity of or moves a
 checked element: check 8 and the rule pin of ``tools/test-install-page.py``
 keep the rules that can reach one to those a reviewer has pinned (see
-below). Of the elements the HTML standard hides
+below). Of the elements that the HTML standard's rendering rules may hide
 with no stylesheet, it does not list those that cannot hold a checked element
 or its text: the void elements (``area``, ``base``, ``basefont``, ``link``,
 ``meta``, ``param``, and ``input`` with ``type=hidden``) and ``head`` (a
@@ -809,8 +810,9 @@ TABLE_PARTS = {
 SVG_SHAPES = ("circle", "path")
 # HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
 ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
-# Invisible characters a heading might be reduced to, besides the whitespace str.strip removes: the zero-width space,
-# non-joiner and joiner (U+200B to U+200D), the zero-width no-break space or byte order mark (U+FEFF), the no-break
+# Characters that has_visible_text reads as invisible, which a heading might be reduced to, besides the whitespace
+# str.strip removes: the zero-width space, non-joiner and joiner (U+200B to U+200D), the zero-width no-break space
+# or byte order mark (U+FEFF), the no-break
 # space (U+00A0), the word joiner (U+2060), the soft hyphen (U+00AD), and the bidi formatting characters: the marks
 # (U+200E, U+200F and U+061C), the embeddings, overrides and their pop (U+202A to U+202E), and the isolates and
 # their pop (U+2066 to U+2069). has_visible_text also drops U+0000, which a browser may ignore in body text. A family
@@ -890,21 +892,22 @@ def inert_elements() -> tuple[str, ...]:
 # The template's visually-hidden class is .vh (site/assets/baseline/baseline.css). The common name
 # visually-hidden is kept although no stylesheet here defines it: an author who adds it means to hide
 # the element, and this gate cannot see whether a later stylesheet defines it, so it fails closed.
-# baseline.css also hides 2 classes on any element: only-dark ("img.only-dark, .only-dark { display: none; }"),
-# which it sets to display: block again only on an img in the dark scheme, and skip (".skip { position: absolute;
-# left: 1rem; top: -4rem; ... }"), off-screen until it has focus. Classes that its rules give display: none, or a
-# 1-pixel clip, only as a descendant (.figure .stack, .figure .wide, .family .cards .cname, .family .sig .pre and
-# .post) are not listed; the docstring names them.
+# The gate also reads 2 classes as hiding on any element: only-dark, on which baseline.css sets display: none
+# ("img.only-dark, .only-dark { display: none; }") and sets display: block again only on an img in the dark scheme,
+# and skip, to which baseline.css gives an offset (".skip { position: absolute; left: 1rem; top: -4rem; ... }") that
+# may put it off-screen until it has focus, depending on its containing block. Classes that the rules of baseline.css
+# give display: none, or a 1-pixel clip, only as a descendant (.figure .stack, .figure .wide, .family .cards .cname,
+# .family .sig .pre and .post) are not listed; the docstring names them.
 # No checked element, ancestor or element it holds may carry any of these: none is in CLASS_PIN (check 8).
 HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
-# The HTML standard's rendering rules hide these with no stylesheet: display: none on datalist, rp, script and
+# The HTML standard's rendering rules may hide these with no stylesheet: display: none on datalist, rp, script and
 # title, and on noscript when scripting is on. The parser here reads each as an element that can hold the checked
 # markup or, for script and title, its text (check 5 allows a structured-data block in a script), so
-# each hides itself and everything inside it. A browser may render the content of audio, canvas (with scripting on),
-# meter, object (when it loads), progress and video only as fallback, and that of select only in its control, so
-# they hide here too, which can refuse more than a browser may hide. Its other hidden elements cannot hold that markup
-# (the docstring names them); a popover attribute, a dialog without open and a details without open are tested in
-# is_hiding_element and PageParser.
+# the gate reads each as hiding itself and everything inside it. A browser may render the content of audio, canvas
+# (with scripting on), meter, object (when it loads), progress and video only as fallback, and that of select only in
+# its control, so they hide here too, which can refuse more than a browser may hide. The other elements that the HTML
+# standard's rendering rules may hide cannot hold that markup (the docstring names them); a popover attribute, a
+# dialog without open and a details without open are tested in is_hiding_element and PageParser.
 HIDING_ELEMENTS = (
     "datalist", "noscript", "rp", "script", "title", "audio", "canvas", "meter", "object", "progress", "select", "video"
 )
