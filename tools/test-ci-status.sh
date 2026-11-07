@@ -2348,6 +2348,70 @@ run_final_reap_case "gh exit status lost at the reap after the kill at the deadl
 run_final_reap_case "gh exiting 0 with a red reading just before the kill at the deadline exits 1, not 2" red 1 \
   "ci-status: a check did not pass for ${C1}"
 
+# run_final_reap_view_case NAME FLAG: the gate runs in process with no --repo,
+# with FLAG --wait, or - for none, and with os.waitpid replaced so gh repo view,
+# the first gh call, looks unfinished to every poll and its status is first seen
+# at the reap after the kill at the deadline. That gh prints owner/name and exits
+# 0 on its own at once, so it is not a call the deadline cut off: the repository
+# is inferred and printed on standard output, and the read after it, finding the
+# window closed, exits 3 with that on standard error, never the line saying the
+# repository could not be inferred, and never makes a check-runs call. The
+# replaced os.waitpid also requires the status it reaps after the kill to be
+# that exit 0, not the kill, so the case does not pass without reaching it.
+run_final_reap_view_case() {
+  local name="$1" flag="$2"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in
+  *check-runs*) : > "$tmp/read"; exit 1 ;;
+  *"repo view"*) printf "owner/name";; *) printf "";;
+esac
+GH
+  chmod +x "$bin/gh"
+  local got=0
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, sys
+path, flag, own = sys.argv[1], sys.argv[3], sys.argv[4]
+spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+real_waitpid = os.waitpid
+seen = []
+def waitpid(pid, options):
+    if pid not in seen:
+        seen.append(pid)
+    if seen.index(pid) != 0:
+        return real_waitpid(pid, options)
+    if options & os.WNOHANG:
+        return 0, 0
+    result = real_waitpid(pid, options)
+    status = result[1]
+    if os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0:
+        open(own, "w").close()  # gh repo view ended on its own with exit 0
+    return result
+os.waitpid = waitpid
+flags = [] if flag == "-" else [flag]
+sys.argv = [path, *flags, "--timeout", "2", "--interval", "1", sys.argv[2]]
+sys.exit(mod.run())' "${here}/ci-status.py" "$C1" "$flag" "$tmp/own" > "$tmp/out" 2> "$tmp/err" || got=$?
+  local why=""
+  [ "$got" -eq 3 ] || why="$why exit"
+  grep -q -x -F -- "ci-status: repository owner/name" "$tmp/out" || why="$why repository"
+  grep -q -F -- "check read failed for ${C1}: the wait window closed before the read" "$tmp/err" \
+    || why="$why message"
+  grep -q -F -- "could not infer the repository" "$tmp/err"
+  case $? in 1) ;; *) why="$why absent" ;; esac
+  [ -e "$tmp/own" ] || why="$why reap"
+  [ ! -e "$tmp/read" ] || why="$why reads"
+  if [ -z "$why" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want 3;%s)\n" "$name" "$got" "$why"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_final_reap_view_case "gh repo view exiting 0 just before the kill at the deadline is accepted, then exits 3" \
+  --wait
+run_final_reap_view_case "gh repo view exiting 0 just before the kill without --wait is accepted, then exits 3" -
+
 # A skipped case is not verified, so any skip makes the suite incomplete and
 # nonzero; the final line then names the count.
 if [ "$skips" -gt 0 ]; then
