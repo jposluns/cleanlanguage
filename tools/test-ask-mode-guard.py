@@ -7,11 +7,16 @@ has no /opt/orch-operator, and asserts the exit code and the verdict the guard p
 creates belong to the uid running the tests, so every case passes that uid through the test-only
 --expect-owner-uid argument, except the cases that test the owner check itself. A missing guard
 fails every behaviour case rather than skipping it, so an absent file cannot read as a green run.
-The last case reads only .claude/settings.json and checks that it registers the guard once, with
-neither test-only argument.
+Every deny must carry the complete record-and-continue instruction, and one case checks that the
+vendored orch_ask_guard words that instruction the same way. Because the behaviour cases bypass the
+guard's production mode file, one case loads the guard without running it and checks the mode file
+and owner uid it uses when it receives no argument. The last case reads only .claude/settings.json
+and checks every hook under every event and matcher: the guard must appear exactly once, as the
+AskUserQuestion entry, with neither test-only argument.
 
 Usage: python3 -I tools/test-ask-mode-guard.py
 """
+import ast
 import json
 import os
 import shutil
@@ -25,8 +30,35 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
 GUARD = REPO_ROOT / ".claude" / "hooks" / "ask_mode_guard.py"
 SETTINGS = REPO_ROOT / ".claude" / "settings.json"
+VENDORED_HOOKS = (REPO_ROOT / "plugin" / "aiqt-guardrails-hooks" / "hooks" / "scripts"
+                  / "aiqt_hooks.py")
 REGISTERED_COMMAND = "python3 -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/ask_mode_guard.py\""
+GUARD_NAME = "ask_mode_guard"
 MAX_BYTES = 4096
+
+# What the registered guard reads and expects, since the registration passes no argument.
+PRODUCTION_MODE_FILE = "/opt/orch-operator/operating-mode"
+PRODUCTION_OWNER_UID = 0
+
+# The whole instruction, so a deny that keeps only its opening words fails.
+RECORD_AND_CONTINUE = (
+    "RECORD the decision as pending (the registry's pending-decisions surface) with your "
+    "recommended option and rationale, then CONTINUE with the next authorized independent item. "
+    "If the decision sits at the human-oversight threshold (high-consequence, irreversible, or "
+    "outward-facing), record it and HOLD that item; the hold never licenses acting without the "
+    "answer.")
+
+# Loads the guard as a module, which does not run main, and prints what parse_args returns for no
+# argument together with the two constants behind it. The -B flag keeps the import from writing
+# bytecode under .claude/hooks.
+DEFAULTS_PROBE = (
+    "import importlib.util, json, sys\n"
+    "spec = importlib.util.spec_from_file_location('ask_mode_guard', sys.argv[1])\n"
+    "guard = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(guard)\n"
+    "mode_file, owner = guard.parse_args([])\n"
+    "print(json.dumps({'parse_args': [mode_file, owner], 'MODE_FILE': guard.MODE_FILE,\n"
+    "                  'EXPECTED_OWNER_UID': guard.EXPECTED_OWNER_UID}))\n")
 
 # The shape of the host record: a JSON object whose "mode" decides, with members the guard ignores.
 UNATTENDED_LINE = ('{"mode": "unattended", "phase": "dispatch", "set_by": "orch-operator", '
@@ -82,14 +114,14 @@ class AskModeGuard(unittest.TestCase):
         self.assertIn(cause, out["systemMessage"])
         # Every deny carries the vendored instruction, so an agent meets one instruction whichever
         # guard denies first.
-        self.assertIn("RECORD the decision as pending", specific["permissionDecisionReason"])
+        self.assertIn(RECORD_AND_CONTINUE, specific["permissionDecisionReason"])
         return specific["permissionDecisionReason"]
 
     # --- what a valid record decides: unattended denies, attended allows, other tools pass -----------
     def test_unattended_record_denies(self):
         self.write_mode(UNATTENDED_LINE)
         reason = self.assert_denies(self.run_guard(), "unattended")
-        self.assertIn("RECORD the decision as pending", reason)
+        self.assertIn(RECORD_AND_CONTINUE, reason)
         # Only the unattended reason tells the maintainer how to take over; the deny for any other
         # mode also contains "unattended", so the substring above cannot tell the two apart.
         self.assertIn("is unattended", reason)
@@ -244,9 +276,45 @@ class AskModeGuard(unittest.TestCase):
                 self.assert_denies(self.run_guard(payload, extra=extra), "guard internal error")
 
 
+class ProductionDefaults(unittest.TestCase):
+    def test_defaults_name_the_host_file_and_root(self):
+        # Every behaviour case passes --mode-file, so only this case fails when the file or owner
+        # the registered guard uses, with no argument, changes.
+        result = subprocess.run([sys.executable, "-I", "-B", "-c", DEFAULTS_PROBE, str(GUARD)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout),
+                         {"parse_args": [PRODUCTION_MODE_FILE, PRODUCTION_OWNER_UID],
+                          "MODE_FILE": PRODUCTION_MODE_FILE,
+                          "EXPECTED_OWNER_UID": PRODUCTION_OWNER_UID})
+
+
+class VendoredWording(unittest.TestCase):
+    def test_vendored_ask_guard_gives_the_same_instruction(self):
+        # The guard words its instruction as the vendored orch_ask_guard does, so an agent meets
+        # one instruction whichever guard denies first. The parser joins adjacent string literals,
+        # so the vendored reason reads as one constant however its source lines are split.
+        tree = ast.parse(VENDORED_HOOKS.read_text(encoding="utf-8"))
+        reasons = [node.value for node in ast.walk(tree)
+                   if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                   and node.value.startswith("AskUserQuestion BLOCKED:")]
+        self.assertEqual(len(reasons), 1, reasons)
+        self.assertIn(RECORD_AND_CONTINUE, reasons[0])
+
+
 class Registration(unittest.TestCase):
     def test_settings_register_the_guard_once_without_test_arguments(self):
         settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
+        # Every hook under every event and matcher, so a second registration of the guard under
+        # another matcher or event, or with a test-only argument, is counted too.
+        found = [(event, entry.get("matcher"), hook)
+                 for event, entries in settings.get("hooks", {}).items()
+                 for entry in entries
+                 for hook in entry.get("hooks", [])
+                 if GUARD_NAME in json.dumps(hook)]
+        self.assertEqual(found, [("PreToolUse", "AskUserQuestion",
+                                  {"type": "command", "command": REGISTERED_COMMAND,
+                                   "timeout": 10})])
         entries = [entry for entry in settings.get("hooks", {}).get("PreToolUse", [])
                    if entry.get("matcher") == "AskUserQuestion"]
         self.assertEqual(len(entries), 1, entries)

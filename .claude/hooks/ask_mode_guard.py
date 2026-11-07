@@ -45,15 +45,19 @@ instead of uid 0. The registration in .claude/settings.json passes neither.
 
 Residual: this guard covers only AskUserQuestion calls in sessions that load this checkout's
 .claude/settings.json. It does not cover other checkouts, other repositories, or non-Claude worker
-families; a session that can edit this script or .claude/settings.json can disarm it, visibly in
-review; removing /opt/orch-operator disarms it; the guard trusts root's file: it checks that uid 0
-owns /opt/orch-operator/operating-mode and that neither its group nor others can write it, so root
-controls the decision, and it does not check the directory that holds the file; the file holds one
-mode for the whole host, so an attended session is blocked while the host says unattended; the
-4096-byte bound limits size, not time, so a slow open or read of a regular file, such as one on a
-stalled network filesystem, is bounded only by the hook's 10-second timeout, and the tests do not
-show what Claude Code does with the call when that timeout expires; and the vendored orch_ask_guard
-continues to log a fail-open audit event on every question until the upstream fix is re-vendored.
+families; a session that can edit this script or .claude/settings.json can disarm it, and the edit
+shows in review only once it is committed; a settings file that the repository does not track, such
+as .claude/settings.local.json, which .gitignore ignores, or a user settings file outside the
+checkout, never shows in review, and nothing in this repository shows or tests whether such a file
+can disable or override this hook; removing /opt/orch-operator disarms it; the guard trusts root's
+file: it checks that uid 0 owns /opt/orch-operator/operating-mode and that neither its group nor
+others can write it, so root controls the decision, and it does not check the directory that holds
+the file; the file holds one mode for the whole host, so an attended session is blocked while the
+host says unattended; the 4096-byte bound limits size, not time, so a slow open or read of a
+regular file, such as one on a stalled network filesystem, is bounded only by the hook's 10-second
+timeout, and the tests do not show what Claude Code does with the call when that timeout expires;
+and the vendored orch_ask_guard continues to log a fail-open audit event on every question until
+the upstream fix is re-vendored.
 """
 import errno
 import json

@@ -114,13 +114,17 @@ layer after an upstream fix lets a re-vendored `orch_ask_guard` read the JSON fi
 adopted defence-in-depth default. Residual: the guard covers only AskUserQuestion calls in
 sessions that load this checkout's `.claude/settings.json`; it does not cover other checkouts,
 other repositories, or non-Claude worker families; a session that can edit the guard or
-`.claude/settings.json` can disarm it, visibly in review; removing `/opt/orch-operator` disarms
-it; the guard trusts root's file, so root controls the decision, and it does not check the
-directory that holds the file; the file holds one mode for the whole host, so an attended session
-is blocked while the host says unattended; the 4096-byte bound limits size, not time, so a slow
-open or read of the file is bounded only by the hook's 10-second timeout, and the tests do not
-show what Claude Code does with the call when that timeout expires; and `orch_ask_guard` continues
-to log a fail-open audit event on every question until the upstream fix is re-vendored.
+`.claude/settings.json` can disarm it, and the edit shows in review only once it is committed; a
+settings file that the repository does not track, such as `.claude/settings.local.json`, which
+`.gitignore` ignores, or a user settings file outside the checkout, never shows in review, and
+nothing in this repository shows or tests whether such a file can disable or override this hook;
+removing `/opt/orch-operator` disarms it; the guard trusts root's file, so root controls the
+decision, and it does not check the directory that holds the file; the file holds one mode for the
+whole host, so an attended session is blocked while the host says unattended; the 4096-byte bound
+limits size, not time, so a slow open or read of the file is bounded only by the hook's 10-second
+timeout, and the tests do not show what Claude Code does with the call when that timeout expires;
+and `orch_ask_guard` continues to log a fail-open audit event on every question until the upstream
+fix is re-vendored.
 
 One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
 empties, so cross-repository writes deny), but the scope-gated guards do not react to it
