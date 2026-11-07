@@ -79,16 +79,36 @@ either file left out, split into blocks (headings, bullets and paragraphs):
    with a closing run of "#" after a space, followed by nothing but spaces,
    which is not part of its text, so "## <section> ##" is the same heading;
    "### <section>" is not, and neither is "## <section>##".
-3. That section, which runs to the next heading of level 1 or 2, holds exactly
-   one bullet that lists "quoted language" as one of its items, in any place.
-   That phrase is a hand-kept anchor: if SKILL.md loses it, this check exits 3
-   rather than passing. Items are found by splitting at each comma, then at
-   each " or " and " and ", with a leading "or" or "and" dropped. An empty
-   item in that bullet is malformed.
+3. That section, which runs to the next heading of level 1 or 2, holds only
+   the lines item 5 accepts, and exactly one bullet that lists "quoted
+   language" as one of its items, in any place. That phrase is a hand-kept
+   anchor: if SKILL.md loses it, this check exits 3 rather than passing. Items
+   are found by splitting at each comma, then at each " or " and " and ", with
+   a leading "or" or "and" dropped. An empty item in that bullet is malformed.
 4. The checklist holds exactly one block that mentions a dash, and that block
-   is a bullet.
-5. That whole bullet, with every line and sub-bullet that continues it, reads
-   exactly OPENING, then " Keep a dash only in ", then the SKILL.md bullet as
+   is a bullet. The lines between the heading line above that block and the
+   next heading line, or the start or end of the file where there is none,
+   hold only the lines item 5 accepts.
+5. In the two spans items 3 and 4 name, the check accepts only these lines:
+   - a blank line, empty or holding only spaces;
+   - in SKILL.md, the section's own heading line;
+   - plain text: a line that starts with neither a space, nor a list marker
+     ("-", "*" or "+", or 1 to 9 digits with "." or ")", each followed by a
+     space or the end of the line), nor a heading marker ("#" to "######"
+     followed by a space or the end of the line), nor a block quote marker
+     (">"), nor an HTML marker ("<"). Item 1 already refuses a fence anywhere;
+   - a bullet: "- " at the start of the line, followed by plain text.
+   It exits 3 at the first other line in a span and names its file and line
+   number. Item 1 runs first over each whole file, so a line it refuses keeps
+   its message. In these lines each bullet marker is at the start of its line
+   and its text 2 columns in, and every other line that is not blank starts at
+   the start of the line, so the check splits them into the headings, bullets
+   and paragraphs CommonMark reads, apart from a link reference definition: a
+   line of plain text directly under a bullet or paragraph line continues it,
+   and after a blank line it starts a new paragraph. Every line the check
+   compares lies in these spans.
+6. That whole bullet, with every line that continues it, reads exactly
+   OPENING, then " Keep a dash only in ", then the SKILL.md bullet as
    SKILL.md writes it, without its closing ";" or ".", then ".". Any run of
    spaces and line breaks counts as 1 space. Any other wording, order or
    sentence in the bullet is drift; the check then prints the bullet it
@@ -102,8 +122,10 @@ a space, across blank lines too, and over each other line until a blank line
 or a line that starts with one of: "#" to "######" followed by a space or the
 end of the line; "-", "*" or "+" followed by a space; "1." or "1)" followed by
 a space; or ">". So a line such as "2. text" continues the bullet when no blank
-line comes before it; a line that holds only a list marker, such as "2.", "*"
-or "+", is refused there as an empty list item, and a lone "-" as a setext
+line comes before it, although CommonMark reads it as the start of an ordered
+list; item 5 refuses such a line in the two spans it covers. A line that holds
+only a list marker, such as "2.", "*" or "+", is refused anywhere as an empty
+list item, and a lone "-" under a line that is not blank as a setext
 underline. The generated copies of the checklist need no check here:
 tools/build-portable-text.py --check and tools/build-site.py --check compare
 them with this source.
@@ -138,10 +160,21 @@ Residuals, named here because the check reads text by fixed rules:
   CommonMark and this check both read a lone "2." or "*" as paragraph text;
   and a bullet marker followed by 2 or more spaces, even when no later line
   is indented less than the bullet's text, also make it exit 3;
+- item 5 is wider still: in its two spans it refuses every line it does not
+  list, even where CommonMark reads the same text, such as a line indented
+  by 1 or more spaces that continues a bullet or paragraph, a bullet marked
+  "*" or "+", a heading of level 3 to 6 in the carve-out section, a bullet
+  whose text starts with a marker, such as "- - x", and a line that starts
+  with "<" where CommonMark reads inline HTML or an autolink as text. A
+  future edit that adds such a line there makes the check exit 3 until the
+  edit is rewritten or the check is extended;
 - other Markdown that a CommonMark rendering does not show as text, such as
   the title of a link reference definition or the markup of raw HTML other
   than a comment, is read as text like the rest of the file, so a pointer
-  sentence there is found although a reader of the rendering does not see it;
+  sentence there is found although a reader of the rendering does not see it.
+  In the two spans item 5 covers, a line that starts with "<" is refused, so
+  there only a link reference definition and raw HTML later in a line are
+  read this way;
 - OPENING, the first sentence of the expected bullet, is a second hand-kept
   copy: rewording that sentence in the checklist fails until OPENING follows
   it;
@@ -154,17 +187,16 @@ Residuals, named here because the check reads text by fixed rules:
 - the reader handles a small part of Markdown: a heading or block quote
   marker indented by 1 or more spaces, a list marker indented by 1 to 3
   spaces, an empty list item line, and a bullet marker followed by 2 or more
-  spaces are refused rather than read; a list item indented by 4 or more
-  spaces under an open bullet is read as part of it; and "<!--" written
-  inside inline code is refused like a comment;
-- after a blank line, a line indented by 1 space is read as part of the open
-  bullet, though CommonMark starts a new paragraph there, below the bullet's
-  text, which starts 2 columns in, so an edit that adds the same words that
-  way to both files passes while the CommonMark readings of the files
-  differ. This gap is tracked separately;
+  spaces are refused rather than read, and "<!--" written inside inline code
+  is refused like a comment. Outside the two spans item 5 covers, the reader
+  still parts from CommonMark: it reads a list item indented by 4 or more
+  spaces under an open bullet, a line indented by 1 space after a blank line
+  under a bullet, and a line such as "2. text" directly under a bullet line
+  as part of that bullet. No compared text comes from those lines, but the
+  pointer sentence and the checklist's mentions of a dash are found there;
 - the items an exit 1 report names come only from the one Keep clause, so a
-  carve-out the bullet adds anywhere else, such as in another sentence or a
-  sub-bullet, is named by no item line, and with no Keep clause or more than
+  carve-out the bullet adds anywhere else, such as in another sentence, is
+  named by no item line, and with no Keep clause or more than
   one no item is named; the check still exits 1 and prints both bullets. The
   items come from the split above, so an item that holds a comma, " or " or
   " and " is named in pieces; the comparison itself is of the whole bullet;
@@ -179,9 +211,9 @@ Exit codes:
   0  the checklist dash bullet matches the bullet built from the SKILL.md one
   1  the checklist dash bullet differs from it
   2  the command line was wrong
-  3  a file could not be read, a file holds a line item 1 refuses, a sentence,
-     heading, bullet or block above is missing or not unique, or the SKILL.md
-     bullet holds an empty item
+  3  a file could not be read, a file holds a line item 1 or item 5 refuses, a
+     sentence, heading, bullet or block above is missing or not unique, or the
+     SKILL.md bullet holds an empty item
 """
 
 from __future__ import annotations
@@ -219,6 +251,9 @@ HEADING = re.compile(r"#{1,6}(?: |$)")
 CLOSING = re.compile(r" #+ *$")
 BULLET = re.compile(r"[-*+](?: +|$)")
 BLOCK = re.compile(r"#{1,6}(?: |$)|[-*+] |1[.)] |>")
+# What a line of plain text may not start with: a space, or a list, heading, block quote or HTML marker. A fence
+# needs no entry here, because plain_text() refuses 3 backticks or 3 tildes anywhere in either file.
+NOT_PLAIN = re.compile(r" |[-*+](?: |$)|[0-9]{1,9}[.)](?: |$)|#{1,6}(?: |$)|>|<")
 
 
 class Unreadable(Exception):
@@ -286,8 +321,8 @@ def plain_text(path: Path) -> str:
     return text
 
 
-def blocks(text: str) -> list[tuple[str, str]]:
-    """Each heading, bullet and paragraph of the text, as (kind, text) with spaces collapsed.
+def blocks(text: str) -> list[tuple[str, str, int]]:
+    """Each heading, bullet and paragraph of the text, as (kind, text, first line number) with spaces collapsed.
 
     A bullet's text holds every line that continues it and drops its marker. A
     heading's text drops any closing run of "#", found on the line as written,
@@ -295,10 +330,10 @@ def blocks(text: str) -> list[tuple[str, str]]:
     refused every thematic break the text could hold, apart from the front
     matter delimiters, which are read as text.
     """
-    found: list[list[str]] = []
+    found: list[list] = []
     open_kind = ""
     after_blank = False
-    for line in text.split("\n"):
+    for number, line in enumerate(text.split("\n"), start=1):
         if not line.strip():
             after_blank = True
             continue
@@ -307,16 +342,38 @@ def blocks(text: str) -> list[tuple[str, str]]:
                           or not after_blank and not BLOCK.match(line)):
             found[-1][1] += " " + line
         elif HEADING.match(line):
-            found.append(["heading", CLOSING.sub("", line)])
+            found.append(["heading", CLOSING.sub("", line), number])
             open_kind = ""
         elif BULLET.match(line):
-            found.append(["bullet", BULLET.sub("", line, count=1)])
+            found.append(["bullet", BULLET.sub("", line, count=1), number])
             open_kind = "bullet"
         else:
-            found.append(["text", line])
+            found.append(["text", line, number])
             open_kind = "text"
         after_blank = False
-    return [(kind, " ".join(words.split())) for kind, words in found]
+    return [(kind, " ".join(words.split()), number) for kind, words, number in found]
+
+
+def plain(line: str) -> bool:
+    """Whether line is plain text: it starts with a character other than a space, and with no marker NOT_PLAIN names."""
+    return bool(line) and not NOT_PLAIN.match(line)
+
+
+def read_lines(path: Path, text: str, first: int, last: int, span: str, own_heading: bool) -> None:
+    """Refuse each line from first up to but not including last that item 5 of the module docstring does not accept.
+
+    The lines are numbered from 1. When own_heading is true, line first is the
+    span's own heading and is accepted.
+    """
+    lines = text.split("\n")
+    for number in range(first, last):
+        line = lines[number - 1]
+        if (not line.strip() or own_heading and number == first or plain(line)
+                or line[:2] == "- " and plain(line[2:])):
+            continue
+        accepted = "blank lines, the section heading, " if own_heading else "blank lines, "
+        raise Unreadable(f"{path}, line {number}: is not a line this check reads in {span}, which must hold only "
+                         f'{accepted}plain text and "- " bullets of plain text, each at the start of the line')
 
 
 def heading(words: str) -> tuple[int, str]:
@@ -337,18 +394,22 @@ def items(text: str) -> list[str]:
 def carve_out_list(text: str) -> tuple[str, str]:
     """The carve-out section's name and its bullet that lists "quoted language", as SKILL.md writes it."""
     found = blocks(text)
-    pointers = POINTER.findall("\n".join(words for kind, words in found))
+    pointers = POINTER.findall("\n".join(words for kind, words, number in found))
     if len(pointers) != 1:
         raise Unreadable(f'{SKILL}: expected exactly one sentence "the carve-outs in <section>.", found {len(pointers)}')
     section = pointers[0].strip()
-    starts = [n for n, (kind, words) in enumerate(found) if kind == "heading" and heading(words) == (2, section)]
+    starts = [n for n, (kind, words, number) in enumerate(found)
+              if kind == "heading" and heading(words) == (2, section)]
     if len(starts) != 1:
         raise Unreadable(f'{SKILL}: expected exactly one heading "## {section}", found {len(starts)}')
     body = []
-    for kind, words in found[starts[0] + 1:]:
+    last = len(text.split("\n")) + 1
+    for kind, words, number in found[starts[0] + 1:]:
         if kind == "heading" and heading(words)[0] <= 2:
+            last = number
             break
         body.append((kind, words))
+    read_lines(SKILL, text, found[starts[0]][2], last, f'section "{section}"', own_heading=True)
     anchored = [words.rstrip(" ;.") for kind, words in body
                 if kind == "bullet" and ANCHOR in items(words.rstrip(" ;."))]
     if len(anchored) != 1:
@@ -361,9 +422,17 @@ def carve_out_list(text: str) -> tuple[str, str]:
 
 def dash_bullet(text: str) -> str:
     """The text of the checklist's one block that mentions a dash, which must be a bullet."""
-    dashes = [(kind, words) for kind, words in blocks(text) if DASH.search(words)]
+    found = blocks(text)
+    dashes = [(kind, words, number) for kind, words, number in found if DASH.search(words)]
+    if len(dashes) == 1:
+        start = dashes[0][2]
+        headings = [number for kind, words, number in found if kind == "heading"]
+        first = max([number for number in headings if number < start], default=0) + 1
+        last = min([number for number in headings if number > start], default=len(text.split("\n")) + 1)
+        read_lines(CHECKLIST, text, first, last, "the lines between the headings around the dash bullet",
+                   own_heading=False)
     if len(dashes) != 1 or dashes[0][0] != "bullet":
-        kinds = ", ".join(kind for kind, words in dashes) or "none"
+        kinds = ", ".join(kind for kind, words, number in dashes) or "none"
         raise Unreadable(f"{CHECKLIST}: expected exactly one block that mentions a dash, a bullet; "
                          f"found {len(dashes)} ({kinds})")
     return dashes[0][1]
