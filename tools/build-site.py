@@ -4,7 +4,9 @@
 The site is generated from ``site-src/`` into the folder its base path names:
 ``/`` writes ``site/`` (the published site, the current setting in
 ``site-src/site.json`` since promotion), and ``/draft/`` writes ``site/draft/``
-(staging a new version for review). Cloudflare Pages publishes ``site/`` as
+(staging a new version for review, on the ``draft`` branch only: from template
+1.11.0 the owner reviews it at that branch's Cloudflare Pages deployment, and
+the live site carries no ``/draft/``). Cloudflare Pages publishes ``site/`` as
 committed, so the output is committed and this tool's ``--check`` mode proves
 that the committed output is exactly what the sources produce.
 
@@ -1130,10 +1132,10 @@ def out_dir_for(base: str) -> Path:
 def check_sitemap_exclusion(root: Path, base: str, pages: list) -> None:
     """The page-metadata and sitemap gates read */index.html, so each noindex page there must be excluded.
 
-    While a draft is staged, tools/sitemap-config.json must exclude the draft's home page
-    (recorded exclusion E1). At base /, it must exclude exactly the noindex pages whose output
-    is a */index.html (the /draft/ holding page), so every indexable page is checked and no
-    noindex page is.
+    While a draft is staged on the draft branch, tools/sitemap-config.json must exclude the
+    draft's home page (recorded exclusion E1). At base /, it must exclude exactly the noindex
+    pages whose output is a */index.html (none since the /draft/ holding page was removed
+    under template 1.11.0), so every indexable page is checked and no noindex page is.
     """
     config = read_json(root, Path("tools/sitemap-config.json"))
     exclude = config.get("exclude")

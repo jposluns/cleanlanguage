@@ -14,8 +14,7 @@ name: Site draft
 # tools/build-site.py generates from site-src/ and the skill's own files, beside
 # only the static files that site-src/site.json lists, that every internal link
 # resolves, and that every page keeps the template's refusals (no dash, no inline
-# code, noindex on the 404 and draft holding pages). See tools/build-site.py for
-# scope.
+# code, noindex on the 404 page). See tools/build-site.py for scope.
 #
 # The third runs the baseline's pinned palette contrast gate,
 # .baseline/check_palette.py, after checking its pin, through
