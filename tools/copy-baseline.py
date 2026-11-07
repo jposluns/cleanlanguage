@@ -209,23 +209,24 @@ def read(path: Path) -> bytes:
     """The bytes of path, a file this tool reads, which is refused (exit 1) before it is opened unless lstat finds a
     regular file. A link would take the input from wherever it leads, and opening a FIFO would wait for a writer that
     may never come. The open adds O_NOFOLLOW and O_NONBLOCK, and the opened file is checked again, so that an entry
-    replaced by a link or a FIFO after the first check is neither followed nor waited on."""
+    replaced by a link or a FIFO after the first check is neither followed nor waited on. Each refusal has its own
+    message, so that a test can tell which check refused a file."""
     try:
         mode = os.lstat(path).st_mode
     except OSError as error:
-        die(3, f"{path} could not be read: {error}")
+        die(3, f"{path} could not be checked before it is opened: {error}")
     if stat.S_ISLNK(mode):
         die(1, f"{path} is a link; refusing to read through it")
     if not stat.S_ISREG(mode):
-        die(1, f"{path} is not a regular file")
+        die(1, f"{path} is not a regular file; refusing to open it")
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
         with os.fdopen(descriptor, "rb") as stream:
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                die(1, f"{path} is not a regular file")
+                die(1, f"{path} was not a regular file once opened; refusing to read it")
             return stream.read()
     except OSError as error:
-        die(3, f"{path} could not be read: {error}")
+        die(3, f"{path} could not be opened or read: {error}")
     return b""
 
 
@@ -328,7 +329,7 @@ def check_target(path: Path, folder: bool, action: str = "write through") -> Non
             die(1, f"{shown} is a link; refusing to {action} it")
         if depth == len(parts) and not folder:
             if not stat.S_ISREG(mode):
-                die(1, f"{shown} is not a regular file")
+                die(1, f"{shown} is not a regular file; refusing to {action} it")
         elif not stat.S_ISDIR(mode):
             die(1, f"{shown} is not a folder")
 
@@ -340,7 +341,7 @@ def identity(path: Path) -> tuple[int, int] | None:
     except FileNotFoundError:
         return None
     except OSError as error:
-        die(3, f"{path} could not be read: {error}")
+        die(3, f"{path} could not be compared by device and inode: {error}")
     return status.st_dev, status.st_ino
 
 
