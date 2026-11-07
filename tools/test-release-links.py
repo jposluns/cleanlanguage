@@ -1021,7 +1021,7 @@ class WriterTest(unittest.TestCase):
 
 class WholePageTest(unittest.TestCase):
     """The gate on a copy of the generator's inputs with the real tools/build-site.py: the committed verify page is
-    the generator's render, and every page form that test_every_reported_form_fails lists, in either state, fails."""
+    the generator's render, and every page form that test_every_listed_page_form_fails lists, in either state, fails."""
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1076,7 +1076,7 @@ class WholePageTest(unittest.TestCase):
         self.assertEqual((WriterTest.REPO / "site/verify/index.html").read_bytes(),
                          self.generator.verify_page(WriterTest.REPO))
 
-    def test_every_reported_form_fails(self):
+    def test_every_listed_page_form_fails(self):
         version = json.loads((self.root / "site-src/release.json").read_text(encoding="utf-8"))["version"]
         note = (f"<p>The checksum for version {version} appears here once that version is published; compare the "
                 "checksum of your file with it then.</p>")
@@ -1090,19 +1090,19 @@ class WholePageTest(unittest.TestCase):
                 ("step 3 wrapped in a hidden div on the page alone", page.replace('<p class="lbl blk">Step 3</p>',
                                                                                   '<div hidden><p class="lbl blk">Step 3</p>', 1)
                  .replace('<div class="next">', '</div><div class="next">', 1)),
-                ("2: a template that ends the doc div around the block",
+                ("a template that ends the doc div around the block",
                  page[:start] + '<template></div><div class="doc">' + block + "</div></template>" + page[end:]),
-                ("3: a contradicting step 3 outside the block",
+                ("a contradicting step 3 outside the block",
                  outside(page, "<p>Correction to step 3: if the two values match, delete the file.</p>")),
-                ("3: a reworded step 3 outside the block",
+                ("a reworded step 3 outside the block",
                  outside(page, '<p class="lbl blk">Step 3</p>\n<p>Never install the file when the values match.</p>')),
-                ("4: a second checksum in groups of 8",
+                ("a second checksum in groups of 8",
                  outside(page, "<p>" + " ".join(OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
-                ("7: a details element misnested in a table before step 1",
+                ("a details element misnested in a table before step 1",
                  page[:start] + "<details><table></details>" + page[start:]),
-                ("9: the html attributes in another order",
+                ("the html attributes in another order",
                  page.replace('<html lang="en" class="site-cleanlanguage">', '<html class="site-cleanlanguage" lang="en">')),
-                ("9: a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1)),
+                ("a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1)),
                 ("the note in a comment", outside(page, "<!-- " + note + " -->")),
                 ("zeros in a code.sum", outside(page, '<code class="sum">' + ZEROS + "</code>")),
                 ("a step that says to install the file anyway, before the next-page link",

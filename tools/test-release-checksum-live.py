@@ -4953,7 +4953,7 @@ class WholePageTest(unittest.TestCase):
     """The gate on a copy of the generator's inputs with the real tools/build-site.py: the committed verify page is
     the render for the version and checksum it shows, a page rendered for another version that has no published
     release (release status 404) reaches the inconsistency report, and every page form that
-    test_every_reported_form_exits_3 lists, made on the page alone, in either state, exits 3 before any
+    test_every_listed_page_form_exits_3 lists, made on the page alone, in either state, exits 3 before any
     release is read. A page for another version that has a published release reaches the checksum step
     instead, which compares only when the gate can download and read that release's zip and .sha256, with a
     well-formed manifest that the zip hashes to; these tests do not run it."""
@@ -5043,7 +5043,7 @@ class WholePageTest(unittest.TestCase):
                               output)
                 self.assertNotIn("release.json", output)
 
-    def test_every_reported_form_exits_3(self):
+    def test_every_listed_page_form_exits_3(self):
         start_tag = '<p class="lbl blk">Step 1</p>'
         for checksum, state in (("0" * 64, "placeholder"), (self.SUM, "published")):
             page = self.publish(checksum)
@@ -5058,20 +5058,20 @@ class WholePageTest(unittest.TestCase):
             start, end = page.index(start_tag), page.index('<div class="next">')
             block = page[start:end]
             forms = [
-                ("1: a step that says to install the file anyway, before the next-page link",
+                ("a step that says to install the file anyway, before the next-page link",
                  outside(page, "<p>If the values differ, install the file anyway.</p>")),
-                ("1: a step 4 after step 3", outside(page, '<p class="lbl blk">Step 4</p>\n<p>Install the file.</p>\n')),
-                ("2: the block inside noscript markup",
+                ("a step 4 after step 3", outside(page, '<p class="lbl blk">Step 4</p>\n<p>Install the file.</p>\n')),
+                ("the block inside noscript markup",
                  page[:start] + '<noscript></div><div class="doc">' + block + "</noscript>" + page[end:]),
-                ("2: the block inside select markup",
+                ("the block inside select markup",
                  page[:start] + '<select></div><div class="doc">' + block + "</select>" + page[end:]),
-                ("2: a details element misnested in a span before step 1",
+                ("a details element misnested in a span before step 1",
                  page[:start] + "<span><details></span>" + page[start:]),
-                ("4: an inline script that removes the block",
+                ("an inline script that removes the block",
                  outside(page, "<script>document.querySelector('.download').remove()</script>")),
-                ("4: a second checksum joined by U+200B",
+                ("a second checksum joined by U+200B",
                  outside(page, "<p>" + "\u200b".join(self.OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
-                ("4: a second checksum joined by dots",
+                ("a second checksum joined by dots",
                  outside(page, "<p>" + ".".join(self.OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
             ]
             rendered = (f"is not the page tools/build-site.py renders for version {self.version} and that checksum "
@@ -5079,7 +5079,7 @@ class WholePageTest(unittest.TestCase):
             # The shared rule refuses a double space in step 1 first, as byte equality does.
             refused = "does not carry the download block that tools/build-site.py writes for this state exactly once"
             reports = [(label, changed, rendered) for label, changed in forms] + [
-                ("6: a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1),
+                ("a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1),
                  refused),
                 # Comments nested 400 deep before step 1 exit 3, never a traceback.
                 ("comments nested 400 deep before step 1",
