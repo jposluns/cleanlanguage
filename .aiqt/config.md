@@ -9,7 +9,7 @@ Active condition set: `always`, `tools-retrieval`, `writes-code`, `agent-harness
 `multi-agent`; `personal-data` off. Equivalent to the Coding profile plus
 `agent-harness` and `multi-agent`, since this repository is maintained with Claude
 Code and a multi-agent orchestrator (worker dispatch, a concurrency lease, a durable
-handoff store, attended and sometimes unattended operation).
+handoff store, attended-autonomous and sometimes unattended operation).
 
 ## Active rule set
 
