@@ -25,8 +25,10 @@
 # and the CI workflows depend on. See ci-status.py for the contract and exit codes:
 #   0 all checks passed (confirmed twice)  1 a check failed  2 still running / timed out
 #   3 unreadable, no checks, or usage error.
-# That list is a summary. The exit-code list in ci-status.py is the full contract
-# of the gate itself; the wrapper adds its own refusals with status 3, described
+# That list is a summary. The exit-code list in ci-status.py is the full
+# exit-code contract of the gate itself, including its exit 3 for an import
+# failure, a SIGCHLD it cannot reset and an unexpected error; the wrapper adds
+# its own refusals with status 3, described
 # below and all made before the gate runs: a shell other than bash, a sourced or
 # restricted run, and a ci-status.py it cannot find or read beside the real
 # wrapper.

@@ -173,7 +173,10 @@ Exit codes:
      registered, unless 3 applies
   3  the result could not be read, no checks exist (with --wait, only when the
      window had closed by the time an empty reading was handled), usage was
-     wrong, or output failed
+     wrong, the repository could not be inferred, or output failed; also an
+     import that raises an exception, a SIGCHLD that cannot be reset to its
+     default disposition before any gh call, an unexpected exception from
+     main, or a status from main that is a bool or not an int
 """
 
 from __future__ import annotations
