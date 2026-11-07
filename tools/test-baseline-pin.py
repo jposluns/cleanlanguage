@@ -5,47 +5,64 @@ Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
 with the version's README and specification under ``.baseline/`` and a root
 ``NOTICE.md``, applies 1 fault, runs the gate on that tree as a separate
 process and asserts its exit code, and for some cases a line of its output.
-The last case runs the gate on this repository. The first 29 cases run
-``tools/copy-baseline.py`` on a small version folder and assert that the pin
-header it writes, and the committed one, give each key's base; that it copies
-and pins the build tools, the palette gate and the card builder with its
-fonts, and counts them among the copied files; that it copies the README and
-the specification to ``.baseline/`` without pinning them; that a version
-without the palette gate, the card builder, the README or the specification,
-or whose README names another version, lacks its step 7 NOTICE entry, holds a second
-quoted paragraph in step 7 or has CRLF line ends, on every line or on the
-entry line only, exits 1 before any served file is replaced; that a link or a
-file in place of ``.baseline/card-fonts/``, a link in place of
-``.baseline/check_palette.py``, a link above the served copy folder, or a link
-in place of ``site-src/`` or ``site-src/site.json`` makes it exit 1 before any
-write, leaving what the link leads to unchanged; that it removes a stray file
-and folder from ``.baseline/card-fonts/``; that it ends by running the gate on
-the tree it wrote, so a clean copy exits 0 and says that the gate passes it,
-and a link elsewhere under ``site/`` makes it exit 1 naming the gate's
-problem; that a ``--from`` folder that is a link makes it exit 1 before any
-write; that a ``--from`` folder inside the served copy folder or inside
-``.baseline/card-fonts/``, or one that holds the repository, makes it exit 1
-before any write, naming both paths and leaving the served files unchanged;
-that on Python older than 3.11, stood in for by a gate whose tomllib import
-fails, it exits 3 with its own message before any served file is replaced;
-that a hard link from outside the paths it manages to each file it writes in
-``.baseline/`` keeps its content through a clean copy; and that a link in
-place of ``tools/__pycache__/`` leads to a folder that gains nothing from a
-refused copy. When not run as root, a further case makes ``.baseline/``
-read-only and asserts that the copy exits 3 with its own 1 line, which says
-that the copy and the pin may be incomplete, rather than a traceback. A
-further case asserts that no copy-baseline run in these cases, refused or not,
-changes, adds or removes a file or link outside the paths the tool manages or
-under its ``--from`` folder, comparing each one's path, inode, size and
-SHA-256, or a link's target, before and after the run.
+The last case runs the gate on this repository. The copy-baseline cases run
+``tools/copy-baseline.py`` on a small version folder and assert:
+
+- what it copies and pins: the runtime and licence files to the served copy
+  folder, under site/ or, with the base path /draft/, under site/draft/, and
+  never matrix.js, reference/ or tools/; the build tools, the palette gate and
+  the card builder with its fonts, copied, pinned and counted; the README and
+  the specification copied to ``.baseline/`` unpinned; and the pin header;
+- what it refuses (exit 1) before any served file is replaced: a SHA256SUMS
+  that does not hash to the digest given; a file that does not match its
+  digest, that SHA256SUMS does not list, or that it lists and the folder lacks;
+  a version without the palette gate, the card builder, the README or the
+  specification; a README that names another version, lacks its step 7 NOTICE
+  entry, holds a second quoted paragraph in step 7 or has CRLF line ends, on
+  every line or on the entry line only; a link or a file in place of
+  ``.baseline/card-fonts/``, a link or a folder in place of
+  ``.baseline/check_palette.py``, a link above the served copy folder, a link
+  in place of ``site-src/``, and a link or a folder in place of
+  ``site-src/site.json``, leaving what a link leads to unchanged; a
+  ``--from`` folder that is a link; and a ``--from`` folder inside the
+  served copy folder or ``.baseline/card-fonts/``, reached through a link
+  into the served copy folder, or holding the repository, naming both paths;
+- that it removes a stray file and folder from ``.baseline/card-fonts/``;
+- that it ends by running the gate on the tree it wrote: a clean copy exits 0
+  and says that the gate passes it; a link elsewhere under ``site/``, or a
+  ``NOTICE.md`` entry naming the previous version, makes it exit 1 naming the
+  gate's problem; and, when not run as root, a folder under ``site/`` that
+  cannot be listed makes it exit 3 saying that the gate could not check it;
+- how it fails, with its own 1 line and never a traceback: on Python older
+  than 3.11, stood in for by a gate whose tomllib import fails, it exits 3
+  before any served file is replaced; an error that is not an OSError, raised
+  by code appended to the gate, exits 3 before any write, or, after the first
+  change, exits 3 saying that the copy and the pin may be incomplete; no
+  options exits 2 with nothing written; a ``--from`` folder that does not
+  exist exits 3; and, when not run as root, a read-only ``.baseline/`` exits 3
+  saying that the copy and the pin may be incomplete;
+- that it opens each file in the version folder exactly once, counted by code
+  appended to the gate;
+- that a hard link from outside the paths it manages to each file it writes in
+  ``.baseline/`` keeps its content through a clean copy, that a link in place
+  of ``tools/__pycache__/`` leads to a folder that gains nothing from a
+  refused copy, and that an unchecked hash-based cache file for the gate under
+  ``tools/__pycache__/``, which the normal loader would run, is never run;
+- and that no copy-baseline run in these cases, refused or not, changes, adds
+  or removes a file or link outside the paths the tool manages or under its
+  ``--from`` folder, comparing each one's path, inode, size and SHA-256, or
+  a link's target, before and after the run.
+
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
+import py_compile
 import shutil
 import subprocess
 import sys
@@ -571,12 +588,24 @@ CASES = [
 ]
 
 
-# The paths copy-baseline manages, relative to the repository root, with the output root at site/ as run_copy's
-# site-src/site.json sets it: the folders it clears and rebuilds, and the files it writes in .baseline/.
-MANAGED_FOLDERS = ("site/assets/baseline/", ".baseline/card-fonts/")
+# The paths copy-baseline manages, relative to the repository root: the folders it clears and rebuilds, the served
+# copy folder among them under the output root that site-src/site.json gives, and the files it writes in .baseline/.
 MANAGED_FILES = {TOOL_KEY, CARD_KEY, ".baseline/SHA256SUMS", ".baseline/pin.toml",
                  *(f".baseline/{name}" for name in DOCS)}
-# Each copy-baseline run in which a file outside MANAGED_FOLDERS and MANAGED_FILES, or under the --from folder,
+
+
+def managed_folders(root: Path) -> tuple[str, ...]:
+    """The folders copy-baseline clears in root: the served copy folder under the output root that a readable
+    site-src/site.json gives (site/ otherwise, as run_copy sets it), and .baseline/card-fonts/."""
+    try:
+        base = json.loads((root / "site-src" / "site.json").read_text(encoding="utf-8"))["base"]
+    except (OSError, ValueError, KeyError, TypeError):
+        base = "/"
+    served = "site/" if base == "/" else f"site/{str(base).strip('/')}/"
+    return (f"{served}assets/baseline/", ".baseline/card-fonts/")
+
+
+# Each copy-baseline run in which a file outside managed_folders() and MANAGED_FILES, or under the --from folder,
 # changed, appeared or went away.
 OUTSIDE_CHANGES: list[str] = []
 
@@ -586,12 +615,13 @@ def unmanaged(root: Path, version: Path) -> dict[str, tuple]:
     wherever it is, by path, with its inode, size and SHA-256, or a link's target. Links are recorded, never
     followed."""
     found: dict[str, tuple] = {}
+    managed = managed_folders(root)
     for top, everything in ((root, False), (version, True)):
         for folder, folders, files in os.walk(top):
             for name in folders + files:
                 path = Path(folder) / name
                 relative = os.path.relpath(path, root).replace(os.sep, "/")
-                if not everything and (relative in MANAGED_FILES or relative.startswith(MANAGED_FOLDERS)):
+                if not everything and (relative in MANAGED_FILES or relative.startswith(managed)):
                     continue
                 if os.path.islink(path):
                     found[str(path)] = ("link", os.readlink(path))
@@ -602,19 +632,22 @@ def unmanaged(root: Path, version: Path) -> dict[str, tuple]:
 
 
 def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
-             source_link: bool = False, version: Path | None = None) -> subprocess.CompletedProcess:
+             source_link: bool = False, version: Path | None = None, notice: str = NOTICE_TEXT,
+             sums_edit=None, sums_sha256: str | None = None) -> subprocess.CompletedProcess:
     """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS, with the
     gate (or the given gate source) beside it, from which it loads notice_entry() and check(), and a NOTICE.md that
-    carries the 1.2.1 entry, so that the gate's check at the end passes a clean copy. A site-src/ that the caller
-    has already made, as a folder or a link, is kept, and so is a tools/ folder. With source_link, 1.2.1 is a link
-    to the version folder. With version, the version folder is made there instead, and its SHA256SUMS lists every
-    file in it, so that a version folder that holds the repository still matches its sums. Whatever the outcome,
-    any file outside the paths the tool manages, or under the version folder, that differs after the run from
-    before it is recorded in OUTSIDE_CHANGES."""
+    carries the 1.2.1 entry (or the given notice), so that the gate's check at the end passes a clean copy. A
+    site-src/ that the caller has already made, as a folder or a link, is kept, and so is a tools/ folder. With
+    source_link, 1.2.1 is a link to the version folder. With version, the version folder is made there instead, and
+    its SHA256SUMS lists every file in it, so that a version folder that holds the repository still matches its
+    sums. sums_edit, when given, changes the SHA256SUMS text before it is written and hashed, and sums_sha256, when
+    given, replaces its digest on the command line. Whatever the outcome, any file outside the paths the tool
+    manages, or under the version folder, that differs after the run from before it is recorded in
+    OUTSIDE_CHANGES."""
     (root / "tools").mkdir(exist_ok=True)
     shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
     (root / "tools" / GATE.name).write_bytes(GATE.read_bytes() if gate is None else gate)
-    (root / "NOTICE.md").write_text(NOTICE_TEXT, encoding="utf-8")
+    (root / "NOTICE.md").write_text(notice, encoding="utf-8")
     if not os.path.lexists(root / "site-src"):
         (root / "site-src").mkdir()
         (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
@@ -625,12 +658,14 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
         (version / name).write_bytes(data)
     names = sorted(path.relative_to(version).as_posix() for path in version.rglob("*") if path.is_file())
     sums = "".join(f"{digest((version / name).read_bytes())}  {name}\n" for name in names if name != "SHA256SUMS")
+    if sums_edit is not None:
+        sums = sums_edit(sums)
     (version / "SHA256SUMS").write_text(sums, encoding="utf-8")
     if source_link:
         (root / "1.2.1").symlink_to(version)
     command = [sys.executable, "-I", str(root / "tools" / COPY_TOOL.name), "--from",
                str(root / "1.2.1" if source_link else version),
-               "--sums-sha256", digest(sums.encode()), "--archive-sha256", "0" * 64]
+               "--sums-sha256", sums_sha256 or digest(sums.encode()), "--archive-sha256", "0" * 64]
     before = unmanaged(root, version)
     result = subprocess.run(command, capture_output=True, text=True)
     after = unmanaged(root, version)
@@ -642,7 +677,10 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
     return result
 
 
-PACKAGE = {**FILES, **DOCS, "tools/check_palette.py": TOOL, **{package_name(key): data for key, data in CARD.items()}}
+# A version also holds files the site never copies: the 6th script, matrix.js, and reference/.
+NOT_COPIED = {"matrix.js": b"/* matrix.js */\n", "reference/landing.html": b"<html></html>\n"}
+PACKAGE = {**FILES, **DOCS, **NOT_COPIED, "tools/check_palette.py": TOOL,
+           **{package_name(key): data for key, data in CARD.items()}}
 # Versions copy-baseline refuses (exit 1) before it replaces a served file: each changes PACKAGE in place.
 COPY_REFUSALS = [
     ("a version without the build tool", lambda package: package.pop("tools/check_palette.py")),
@@ -663,6 +701,16 @@ COPY_REFUSALS = [
     # The gate refuses this one too (exit 3), as it refuses a carriage return anywhere in the README.
     ("a README with CRLF only on its step 7 entry line",
         lambda package: package.update({"README.md": README.replace(b"exceptions.\n", b"exceptions.\r\n")})),
+]
+# SHA256SUMS faults copy-baseline refuses (exit 1) before it replaces a served file: each gives run_copy's arguments.
+COPY_SUMS_REFUSALS = [
+    ("a SHA256SUMS that does not hash to the digest given", {"sums_sha256": "1" * 64}),
+    ("a file that does not match its SHA256SUMS digest",
+        {"sums_edit": lambda sums: sums.replace(digest(FILES["baseline.css"]), digest(b"other"), 1)}),
+    ("a file that SHA256SUMS does not list",
+        {"sums_edit": lambda sums: sums.replace(f"{digest(FILES['baseline.css'])}  baseline.css\n", "", 1)}),
+    ("a file that SHA256SUMS lists and the folder lacks",
+        {"sums_edit": lambda sums: sums + f"{digest(b'extra')}  extra.css\n"}),
 ]
 
 
@@ -690,6 +738,14 @@ def link_served_parent(root: Path) -> None:
     (root / "site" / "assets").symlink_to(root / "outside")
 
 
+def folder_build_tool(root: Path) -> None:
+    (root / TOOL_KEY).mkdir(parents=True)
+
+
+def folder_site_json(root: Path) -> None:
+    (root / "site-src" / "site.json").mkdir(parents=True)
+
+
 def link_site_src(root: Path) -> None:
     # site-src/ is a link, so the output root would come from a site.json outside the tree; the gate follows it.
     (root / "outside" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
@@ -710,9 +766,11 @@ COPY_TREE_REFUSALS = [
     ("a link in place of .baseline/card-fonts/", link_card_fonts),
     ("a file in place of .baseline/card-fonts/", file_card_fonts),
     ("a link in place of .baseline/check_palette.py", link_build_tool),
+    ("a folder in place of .baseline/check_palette.py", folder_build_tool),
     ("a link in place of site/assets/, above the served copy folder", link_served_parent),
     ("a link in place of site-src/", link_site_src),
     ("a link in place of site-src/site.json", link_site_json),
+    ("a folder in place of site-src/site.json", folder_site_json),
 ]
 
 
@@ -813,12 +871,21 @@ def source_holding_repository(scratch: Path) -> tuple[Path, Path]:
     return scratch / "1.2.1" / "repo", scratch / "1.2.1"
 
 
+def source_through_link(scratch: Path) -> tuple[Path, Path]:
+    # A link above the --from folder leads into the served copy folder, so only the folders' device and inode, not
+    # the path given, show that the version folder is inside it.
+    (scratch / "via").symlink_to(scratch / "site" / "assets" / "baseline")
+    return scratch, scratch / "via" / "1.2.1"
+
+
 # --from folders copy-baseline refuses (exit 1) before its first write, since the copy would delete or change each
 # one: each layout gives the repository root and the version folder, and the message names both.
 COPY_SOURCE_REFUSALS = [
     ("a --from folder inside the served copy folder", source_in_served_folder, "is inside site/assets/baseline"),
     ("a --from folder inside .baseline/card-fonts/", source_in_card_fonts, "is inside .baseline/card-fonts"),
     ("a --from folder that holds the repository", source_holding_repository, "holds site/assets/baseline"),
+    ("a --from folder reached through a link into the served copy folder", source_through_link,
+        "is inside site/assets/baseline"),
 ]
 
 
@@ -899,6 +966,147 @@ def alias_problems() -> list[str]:
     return problems
 
 
+# Code appended to the gate's source, which copy-baseline runs in its own process when it loads the gate, before it
+# reads the version. FAIL_ON_MKDIR makes every later Path.mkdir() raise an error that is not an OSError, as a deeply
+# nested path does; copy-baseline's first mkdir() comes after it has cleared the served copy folder.
+FAIL_ON_MKDIR = b"""
+import pathlib as _pathlib
+
+
+def _fail(self, *args, **kwargs):
+    raise RecursionError("maximum recursion depth exceeded (injected)")
+
+
+_pathlib.Path.mkdir = _fail
+"""
+# FAIL_ON_LOAD raises such an error while the gate loads, before any write.
+FAIL_ON_LOAD = b"\nraise LookupError('injected')\n"
+# COUNT_OPENS counts each open() of a path under the --from folder and prints the counts when the run ends.
+COUNT_OPENS = b"""
+import atexit as _atexit
+import io as _io
+import os as _os
+import sys as _sys
+
+_version = _os.path.realpath(_sys.argv[_sys.argv.index("--from") + 1])
+_opened = {}
+_open = _io.open
+
+
+def _counting_open(file, *args, **kwargs):
+    if isinstance(file, (str, bytes, _os.PathLike)):
+        path = _os.path.realpath(_os.fsdecode(file))
+        if path.startswith(_version + _os.sep):
+            _opened[path] = _opened.get(path, 0) + 1
+    return _open(file, *args, **kwargs)
+
+
+_io.open = _counting_open
+_atexit.register(lambda: [print(f"opened {count} {path}", file=_sys.__stderr__) for path, count in _opened.items()])
+"""
+
+
+def failure_problems() -> list[str]:
+    """Any failure ends copy-baseline with its documented code and its own 1 line, never a traceback: an error that is
+    not an OSError, after the first change, exits 3 saying that the copy and the pin may be incomplete; one before any
+    write exits 3 without saying so; a wrong command line exits 2 (argparse); a --from folder that does not exist
+    exits 3. The 2 runs with an injected error also check that the served files are cleared or kept to match."""
+    problems = []
+    for name, injected, incomplete in (("an error that is not an OSError after the first change", FAIL_ON_MKDIR, True),
+                                       ("an error that is not an OSError before any write", FAIL_ON_LOAD, False)):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            served = root / "site" / "assets" / "baseline" / "served-before.css"
+            served.parent.mkdir(parents=True)
+            served.write_bytes(b"a { color: red; }\n")
+            result = run_copy(root, dict(PACKAGE), GATE.read_bytes() + injected)
+            lines = result.stderr.splitlines()
+            if (result.returncode != 3 or len(lines) != 1 or not lines[0].startswith("copy-baseline: stopped by")
+                    or lines[0].endswith("; the copy and the pin may be incomplete") != incomplete
+                    or served.is_file() == incomplete):
+                problems.append(f"copy-baseline: {name} exits {result.returncode} with "
+                                f"{result.stderr.strip()[-300:]!r}; expected 3 with its own 1 line, "
+                                + ("saying that the copy and the pin may be incomplete" if incomplete
+                                   else "the served files kept"))
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        (root / "tools").mkdir()
+        shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
+        shutil.copyfile(GATE, root / "tools" / GATE.name)
+        tool = [sys.executable, "-I", str(root / "tools" / COPY_TOOL.name)]
+        result = subprocess.run(tool, capture_output=True, text=True)
+        left = sorted(path.relative_to(root).as_posix() for path in root.rglob("*"))
+        if result.returncode != 2 or "--from" not in result.stderr or left != ["tools", *sorted(
+                f"tools/{name}" for name in (COPY_TOOL.name, GATE.name))]:
+            problems.append(f"copy-baseline: no options exits {result.returncode}, leaving {left}; expected 2, "
+                            f"argparse naming --from, and nothing written: {result.stderr.strip()[-200:]!r}")
+        result = subprocess.run(tool + ["--from", str(root / "1.2.1"), "--sums-sha256", "0" * 64,
+                                        "--archive-sha256", "0" * 64], capture_output=True, text=True)
+        lines = result.stderr.splitlines()
+        if result.returncode != 3 or len(lines) != 1 or "1.2.1 could not be read" not in lines[0]:
+            problems.append(f"copy-baseline: a --from folder that does not exist exits {result.returncode}; "
+                            f"expected 3 with its own 1 line: {result.stderr.strip()[-200:]!r}")
+    return problems
+
+
+def read_once_problems() -> list[str]:
+    """copy-baseline opens each file in the version folder exactly once, SHA256SUMS and the README included, so the
+    bytes it checks are the bytes it writes."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        result = run_copy(root, dict(PACKAGE), GATE.read_bytes() + COUNT_OPENS)
+        counts = {}
+        for line in result.stderr.splitlines():
+            if line.startswith("opened "):
+                count, path = line[len("opened "):].split(" ", 1)
+                counts[os.path.relpath(path, os.path.realpath(root / "1.2.1"))] = int(count)
+        expected = {name: 1 for name in (*PACKAGE, "SHA256SUMS")}
+        if result.returncode != 0 or counts != expected:
+            wrong = {name: counts.get(name, 0) for name in sorted(expected.keys() | counts.keys())
+                     if counts.get(name, 0) != expected.get(name, 0)}
+            return [f"copy-baseline: exit {result.returncode}, files in the version folder not opened exactly once: "
+                    f"{wrong}"]
+    return []
+
+
+def planted_cache_problems() -> list[str]:
+    """copy-baseline never runs byte code cached for the gate: an unchecked hash-based cache file under
+    tools/__pycache__/, which the normal loader runs without comparing it with the source, makes a gate whose check()
+    refuses every tree, and the copy still passes the real gate."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        planted = root / "planted" / GATE.name
+        planted.parent.mkdir()
+        planted.write_bytes(GATE.read_bytes() + b"\n\ndef check(root):\n    return ['planted byte code ran']\n")
+        cache = Path(importlib.util.cache_from_source(str(root / "tools" / GATE.name)))
+        cache.parent.mkdir(parents=True)
+        py_compile.compile(str(planted), cfile=str(cache), doraise=True,
+                           invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+        result = run_copy(root, dict(PACKAGE))
+        if result.returncode != 0 or "planted" in result.stderr:
+            return [f"copy-baseline: a planted cache file for the gate: exit {result.returncode}; expected 0, the "
+                    f"cache file not run: {result.stderr.strip()[-200:]!r}"]
+    return []
+
+
+def gate_unreadable_problems() -> list[str]:
+    """A tree that the gate's check cannot read after the copy makes copy-baseline exit 3, naming the gate. A folder
+    under site/ that the user cannot list stands in for it."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        locked = root / "site" / "locked"
+        locked.mkdir(parents=True)
+        os.chmod(locked, 0)
+        try:
+            result = run_copy(root, dict(PACKAGE))
+        finally:
+            os.chmod(locked, 0o755)
+        if result.returncode != 3 or "could not check the tree" not in result.stderr:
+            return [f"copy-baseline: a tree the gate cannot read exits {result.returncode}; expected 3, saying that "
+                    f"the gate could not check the tree: {result.stderr.strip()[-200:]!r}"]
+    return []
+
+
 def copy_problems() -> list[str]:
     """copy-baseline pins and copies the build tools, counts them, copies the documents unpinned, and checks for each
     and for the README's version and NOTICE entry before replacing a file."""
@@ -922,6 +1130,35 @@ def copy_problems() -> list[str]:
                            or name in pin for name, data in DOCS.items())):
             problems.append(f"copy-baseline: the documents are not copied to .baseline/ unpinned "
                             f"(exit {result.returncode})")
+        served = sorted(path.relative_to(root / "site" / "assets" / "baseline").as_posix()
+                        for path in (root / "site" / "assets" / "baseline").rglob("*") if path.is_file())
+        if served != sorted(FILES):
+            problems.append(f"copy-baseline: the served copy folder holds {served}; expected the runtime and "
+                            f"licence files only, without {sorted(NOT_COPIED)} or tools/")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        (root / "site-src").mkdir()
+        (root / "site-src" / "site.json").write_text(json.dumps({"base": "/draft/"}), encoding="utf-8")
+        result = run_copy(root, dict(PACKAGE))
+        if result.returncode != 0 or (copied(root) / "baseline.css").read_bytes() != FILES["baseline.css"]:
+            problems.append(f"copy-baseline: with the base path /draft/, exit {result.returncode}; expected 0 and the "
+                            f"copy under site/draft/assets/baseline/: {result.stderr.strip()[-200:]!r}")
+    for name, arguments in [*COPY_SUMS_REFUSALS,
+                            ("a NOTICE.md entry naming the previous version",
+                             {"notice": NOTICE_TEXT.replace("baseline 1.2.1", "baseline 1.2.0")})]:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            served = root / "site" / "assets" / "baseline" / "served-before.css"
+            served.parent.mkdir(parents=True)
+            served.write_bytes(b"a { color: red; }\n")
+            result = run_copy(root, dict(PACKAGE), **arguments)
+            # The NOTICE.md entry is compared by the gate's check after the copy; the others are refused before it.
+            before_write = "notice" not in arguments
+            if (result.returncode != 1 or served.is_file() != before_write
+                    or (not before_write and "NOTICE.md" not in result.stderr)):
+                problems.append(f"copy-baseline: {name} exits {result.returncode}; expected 1, "
+                                + ("the served files kept" if before_write else "naming NOTICE.md")
+                                + f": {result.stderr.strip()[-200:]!r}")
     for name, change in COPY_REFUSALS:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
@@ -964,12 +1201,16 @@ def pin_header_problems() -> list[str]:
 
 def main() -> int:
     failures: list[str] = (pin_header_problems() + copy_problems() + copy_tree_problems() + copy_gate_problems()
-                           + python_floor_problems() + copy_source_problems() + alias_problems())
-    ran = 11 + len(COPY_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
-    # As root, file permissions do not stop a write, so the write failure cannot be stood in for.
+                           + python_floor_problems() + copy_source_problems() + alias_problems()
+                           + failure_problems() + read_once_problems() + planted_cache_problems())
+    # The 4 cases of failure_problems(), read_once_problems(), planted_cache_problems(), and in copy_problems() the
+    # base path /draft/ and the NOTICE.md entry naming the previous version.
+    ran = 11 + 4 + 1 + 1 + 2
+    ran += len(COPY_REFUSALS) + len(COPY_SUMS_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
+    # As root, file permissions neither stop a write nor a listing, so neither failure can be stood in for.
     if hasattr(os, "geteuid") and os.geteuid() != 0:
-        failures += write_failure_problems()
-        ran += 1
+        failures += write_failure_problems() + gate_unreadable_problems()
+        ran += 2
     # Every copy-baseline run above, refused or not, leaves each file outside the paths it manages as it was.
     failures += [f"{change}, outside the paths it manages" for change in OUTSIDE_CHANGES]
     ran += 1

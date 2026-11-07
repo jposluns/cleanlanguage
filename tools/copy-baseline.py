@@ -2,10 +2,10 @@
 """Copy the runtime files of a verified baseline version into the site and write the pin.
 
 The baseline is the shared site template, published as immutable versions at
-https://posluns.ca/baseline/<version>/. This tool never fetches anything. It
-reads an unpacked version folder that the operator has already downloaded as
-the archive and verified against https://posluns.ca/baseline/SHA256SUMS, and
-refuses to copy unless:
+https://posluns.ca/baseline/<version>/. This tool imports no network module
+and fetches nothing. It reads an unpacked version folder that the operator has
+already downloaded as the archive and verified against
+https://posluns.ca/baseline/SHA256SUMS, and refuses to copy unless:
 
 1. ``SHA256SUMS`` in that folder hashes to the digest given on the command line
    (the value published in https://posluns.dev/hashes.txt),
@@ -48,35 +48,42 @@ build tools' folders under ``.baseline/`` such as ``card-fonts/``, and the
 files it writes in ``.baseline/``, with any missing folder above them created.
 It writes each file as a new file beside its target and renames it over the
 target, so it never writes into an existing file: another hard link to a
-target keeps its content, and a link at a target is replaced, never followed.
-It reads each file it copies once and checks those bytes against their
-``SHA256SUMS`` digest before it writes them. It compiles the gate it loads from
-source without reading or writing byte code, so before its first change to a
-managed path it writes nothing, not even under ``tools/__pycache__/``. A run
-stopped by the system between creating a new file and renaming it leaves that
-file, named ``.<name>.<random>.tmp``, beside its target. Its checks run once,
-before the first change, so they do not cover a process that changes the tree
-while this tool runs.
+target keeps its content. It reads each file in the version folder once,
+checks those bytes against their ``SHA256SUMS`` digest, and writes the same
+bytes, so the file it writes is the file it checked. It compiles the gate it
+loads from source without reading or writing byte code, so a cache file under
+``tools/__pycache__/`` is never run, and before its first change to a managed
+path it writes nothing, not even there.
 
 Before its first write it refuses (exit 1) a link, or a file
 in place of a folder, at a folder it clears or writes into or at any folder
 above one under the repository root, and a link or a folder in place of a file
-it writes outside the folders it clears: it never writes through a link, and
-``tools/check-baseline-pin.py`` refuses each of these too. Before its first
-write it also refuses (exit 1) a link, or an entry of the wrong kind, at
-``site-src/`` or ``site-src/site.json``, from which it reads the output root:
-the gate refuses a ``site-src/site.json`` that is a link (exit 3), and the
-gate follows a linked ``site-src/`` folder, so this tool refuses that one
-because it would read the output root from wherever the link leads. It
-refuses (exit 1) a ``--from`` folder that is itself a link, before it reads
-the version: the gate never reads that folder, so it would not refuse one,
-but this tool would read the version from wherever the link leads while
-taking the version number from the link's own name. Before its first write it
-also refuses (exit 1) a ``--from`` folder that is, is inside, or holds a folder
-it clears or writes into or a file it writes, compared by device and inode
-rather than by name: it would delete or change its own input before copying
-it. It copies
-``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
+it writes outside the folders it clears, so it never writes through a link.
+Before its first write it also refuses (exit 1) a link, or an entry of the
+wrong kind, at ``site-src/`` or ``site-src/site.json``, from which it reads
+the output root, since it would read the output root from wherever the link
+leads. It refuses (exit 1) a ``--from`` folder that is itself a link, before
+it reads the version, since it would read the version from wherever the link
+leads while taking the version number from the link's own name. Before its
+first write it also refuses (exit 1) a ``--from`` folder that is, is inside,
+or holds a folder it clears or writes into or a file it writes, since it would
+delete or change its own input before copying it. It compares the ``--from``
+folder and each folder above it with each of those paths, and the ``--from``
+folder with each folder above each path, by device and inode rather than by
+name, so a link above the ``--from`` folder cannot hide an overlap.
+
+The tool has 4 limits. A folder mounted below a folder this tool clears, or
+below the ``--from`` folder, is not compared, so a bind mount of the
+``--from`` folder inside the served copy folder is not caught, and clearing
+that folder would delete the files in the mount; keep mounts out of these
+folders. The checks run once, before the first change, so they do not cover a
+process that changes the tree while this tool runs. A run stopped by the
+system between creating a new file and renaming it leaves that file, named
+``.<name>.<random>.tmp``, beside its target. An interrupt (Ctrl-C) ends the
+run with Python's own traceback rather than exit 3, and after the first change
+the copy and the pin may then be incomplete.
+
+It copies ``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
 ``.baseline/pin.toml`` in the README's format: a ``version`` key and a
 ``[files]`` table of path to SHA-256, the paths under ``assets/baseline/``
 relative to the output root and the build tools' keys under ``.baseline/``
@@ -115,13 +122,15 @@ Exit codes:
      folder or file it writes, or site-src/ or site-src/site.json, is a link or
      of the wrong kind; or, after the copy and the pin are written,
      tools/check-baseline-pin.py finds a problem in the tree, which it names
+  2  the command line is wrong, such as a missing option; argparse names it
+     and nothing is read or written
   3  an input could not be read, or Python is older than 3.11; or any failure
      after the first change to a managed path and before the pin is written,
-     such as a file that cannot be read or written or a digest that no longer
-     matches, with a message that says that the copy and the pin may be
-     incomplete; or, after the copy and the pin are written,
-     tools/check-baseline-pin.py could not read the tree or found it
-     malformed, which it names
+     whatever raised it (an interrupt aside), with a message that says that
+     the copy and the pin may be incomplete; or, after the copy and the pin
+     are written, tools/check-baseline-pin.py could not read the tree or found
+     it malformed, which it names; or any other unexpected error, named by its
+     type, in place of a traceback
 """
 
 from __future__ import annotations
@@ -173,20 +182,24 @@ def die(code: int, message: str) -> None:
     raise SystemExit(code)
 
 
-def sha256(path: Path) -> str:
+def read(path: Path) -> bytes:
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        return path.read_bytes()
     except OSError as error:
         die(3, f"{path} could not be read: {error}")
-    return ""
+    return b""
+
+
+def sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
 
 
 def write_new(target: Path, data: bytes) -> None:
     """Write data to a new file beside target, then rename it over target. The rename replaces the folder entry, not
-    the file it named, so a write never lands in an existing file: another hard link to target, or whatever a link
-    at target leads to, keeps its content."""
+    the file it named, so a write never lands in an existing file and another hard link to target keeps its
+    content."""
     temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.tmp")
-    # O_EXCL refuses an existing entry, a link included, so the new file is always a fresh one.
+    # O_EXCL makes open() fail on an existing entry, so the new file is never one that is already linked elsewhere.
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
         with os.fdopen(descriptor, "wb") as stream:
@@ -198,24 +211,12 @@ def write_new(target: Path, data: bytes) -> None:
         raise
 
 
-def install(source: Path, target: Path, expected: str, name: str) -> None:
-    """Write source's bytes to target as a new file, after checking them against the digest that SHA256SUMS lists.
-    The bytes are read once, so the file checked is the file written."""
-    try:
-        data = source.read_bytes()
-    except OSError as error:
-        die(3, f"{source} could not be read: {error}")
-    if hashlib.sha256(data).hexdigest() != expected:
-        die(1, f"{name} does not match its SHA256SUMS digest")
-    write_new(target, data)
-
-
 def load_gate():
     """tools/check-baseline-pin.py as a module, for its TOOLS, notice_entry(), NOTICE_STEP, ENTRY_PREFIX, and the
     check() and Unreadable with which this tool checks the tree it wrote. The gate is compiled from its source and
     no cached byte code is read or written, so loading it writes nothing, not even under tools/__pycache__/, and a
-    stale or planted cache file is never run. The gate's tomllib guard exits on Python older than 3.11; its message
-    is dropped and this tool reports the floor in its own words."""
+    stale or planted cache file there is never run, as the normal loader would run one. The gate's tomllib guard
+    exits on Python older than 3.11; its message is dropped and this tool reports the floor in its own words."""
     try:
         spec = importlib.util.spec_from_file_location("check_baseline_pin", GATE)
         module = importlib.util.module_from_spec(spec)
@@ -303,9 +304,11 @@ def identity(path: Path) -> tuple[int, int] | None:
 
 
 def check_source_apart(source: Path, target: Path) -> None:
-    """Exit 1 if the --from folder is target, is inside it, or holds it. Folders are compared by device and inode
-    rather than by name, so a case-insensitive file system, a link above the --from folder or a bind mount cannot
-    hide an overlap."""
+    """Exit 1 if the --from folder is target, is inside it, or holds it. The --from folder and each folder above it
+    are compared with target, and the --from folder with each folder above target, by device and inode rather than
+    by name, so a link above the --from folder cannot hide an overlap. Folders below target or below the --from
+    folder are not compared, so a folder mounted there can: a bind mount of the --from folder inside a folder this
+    tool clears is not caught."""
     shown = target.relative_to(REPO_ROOT).as_posix()
     target_id = identity(target)
     if target_id is not None:
@@ -345,12 +348,20 @@ def main() -> int:
     if stat.S_ISLNK(source_mode):
         die(1, f"{source} is a link; give the unpacked version folder itself")
 
-    sums_path = source / "SHA256SUMS"
-    if sha256(sums_path) != args.sums_sha256:
+    # The gate's TOOLS, so that the pin written here is never one the gate refuses for a missing build tool. It is
+    # loaded before any file of the version is read, so that an old Python is reported first, and so that code that
+    # tools/test-baseline-pin.py appends to the gate sees every read of the version.
+    gate = load_gate()
+    tools = gate.TOOLS
+
+    # Each file in the version is read once, and the bytes checked are the bytes written, so a file that changes
+    # while this tool runs cannot be written unchecked.
+    sums_data = read(source / "SHA256SUMS")
+    if sha256(sums_data) != args.sums_sha256:
         die(1, "SHA256SUMS does not hash to the published digest")
     try:
-        sums_text = sums_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as error:
+        sums_text = sums_data.decode("utf-8")
+    except UnicodeError as error:
         die(3, f"SHA256SUMS could not be read: {error}")
 
     listed: dict[str, str] = {}
@@ -368,21 +379,24 @@ def main() -> int:
         missing = sorted(set(listed) - set(present))
         extra = sorted(set(present) - set(listed))
         die(1, f"the folder does not match SHA256SUMS: missing {missing}, unlisted {extra}")
-    for name, digest in listed.items():
-        if sha256(source / name) != digest:
-            die(1, f"{name} does not match its SHA256SUMS digest")
-    # The gate's TOOLS, so that the pin written here is never one the gate refuses for a missing build tool.
-    gate = load_gate()
-    tools = gate.TOOLS
     for tool_source in tools.values():
         if tool_source not in listed:
             die(1, f"SHA256SUMS does not list {tool_source}")
     for name in DOCUMENTS:
         if name not in listed:
             die(1, f"SHA256SUMS does not list the document {name}")
+    chosen = sorted(name for name in listed if wanted(name))
+    kept = {*chosen, *tools.values(), *DOCUMENTS}
+    contents: dict[str, bytes] = {}
+    for name, digest in listed.items():
+        data = read(source / name)
+        if sha256(data) != digest:
+            die(1, f"{name} does not match its SHA256SUMS digest")
+        if name in kept:
+            contents[name] = data
     try:
-        readme = (source / "README.md").read_bytes().decode("utf-8")
-    except (OSError, UnicodeError) as error:
+        readme = contents["README.md"].decode("utf-8")
+    except UnicodeError as error:
         die(3, f"README.md could not be read: {error}")
     heading = README_HEADING.match(readme)
     if heading is None or heading.group(1) != version:
@@ -392,7 +406,6 @@ def main() -> int:
                f"that opens with its 1 quoted line, the entry, starting {gate.ENTRY_PREFIX!r} and holding "
                "<version> once, followed by a blank line or the step's end, and holds no '<blockquote'")
 
-    chosen = sorted(name for name in listed if wanted(name))
     # The output root comes from site-src/site.json, so neither it nor its folder may lead elsewhere.
     check_target(REPO_ROOT / "site-src" / "site.json", folder=False, action="read through")
     dest = output_root() / PREFIX
@@ -418,16 +431,16 @@ def main() -> int:
     for name in chosen:
         target = dest / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        install(source / name, target, listed[name], name)
+        write_new(target, contents[name])
 
     PIN_DIR.mkdir(exist_ok=True)
     for key, tool_source in tools.items():
         target = REPO_ROOT / key
         target.parent.mkdir(parents=True, exist_ok=True)
-        install(source / tool_source, target, listed[tool_source], tool_source)
-    install(sums_path, PIN_DIR / "SHA256SUMS", args.sums_sha256, "SHA256SUMS")
+        write_new(target, contents[tool_source])
+    write_new(PIN_DIR / "SHA256SUMS", sums_data)
     for name in DOCUMENTS:
-        install(source / name, PIN_DIR / name, listed[name], name)
+        write_new(PIN_DIR / name, contents[name])
     lines = [
         "# Baseline pin, in the format of the baseline README (\"Adoption in a repository\", step 3).",
         "# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths under",
@@ -468,3 +481,8 @@ if __name__ == "__main__":
         # A file that cannot be read or written ends the run with the documented code, not a traceback; once copying
         # has begun, die() adds that the copy and the pin may be incomplete, since the gate's check has not run.
         die(3, f"a file could not be read or written: {error}")
+    except Exception as error:
+        # Any other error, such as a RecursionError from a deeply nested path, also ends the run with exit 3 and no
+        # traceback, so that a failure after the first change is never reported without saying that the copy and the
+        # pin may be incomplete. An interrupt or a SystemExit is not an Exception and passes through.
+        die(3, f"stopped by an unexpected {type(error).__name__}: {error}")
