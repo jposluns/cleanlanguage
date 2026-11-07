@@ -192,7 +192,7 @@ VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 BASE = re.compile(r"/[a-z0-9-]+/")
 
 
-# True from just before the first change to a managed path until the pin is written: a failure in that span leaves a
+# True from just before the first change to a managed path until the pin is written: a failure in that span may leave a
 # partial copy, whatever raised it, so die() reports it as such.
 copying = False
 
@@ -392,7 +392,7 @@ def main() -> int:
 
     # The gate's TOOLS, so that the pin written here is never one the gate refuses for a missing build tool. It is
     # loaded before any file of the version is read, so that an old Python is reported first, and so that code that
-    # tools/test-baseline-pin.py appends to the gate sees every read of the version.
+    # tools/test-baseline-pin.py appends to the gate runs before the first read of the version.
     gate = load_gate()
     tools = gate.TOOLS
 
@@ -499,8 +499,9 @@ def main() -> int:
     lines += [f'"{key}" = "{listed[tool_source]}"' for key, tool_source in tools.items()]
     write_new(PIN_DIR / "pin.toml", ("\n".join(lines) + "\n").encode("utf-8"))
     copying = False
-    # The checks before the first write cover only the paths written and read here; the gate checks the whole tree,
-    # so success is reported only for a tree the gate passes.
+    # The checks before the first write cover only the paths written and read here; the gate's check also covers
+    # paths this tool does not touch, such as a link elsewhere under site/ and the NOTICE.md entry, so success is
+    # reported only for a tree the gate passes.
     try:
         problems = gate.check(REPO_ROOT)
     except gate.Unreadable as error:

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Tests for tools/check-baseline-pin.py: each check fails on a deliberate fault.
+"""Tests for tools/check-baseline-pin.py and tools/copy-baseline.py.
 
-Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
-with the version's README and specification under ``.baseline/`` and a root
-``NOTICE.md``, applies 1 fault, runs the gate on that tree as a separate
-process and asserts its exit code, and for some cases a line of its output.
-The last case runs the gate on this repository. The copy-baseline cases run
+Each gate case but the last builds a small pinned tree in a temporary folder
+(under $TMPDIR), with the version's README and specification under
+``.baseline/`` and a root ``NOTICE.md``, applies 1 fault, or none for the
+clean tree, runs the gate on that tree as a separate process and asserts its
+exit code, and for some cases a line of its output. The last case runs the
+gate on this repository. The copy-baseline cases run
 ``tools/copy-baseline.py`` on a small version folder and assert:
 
 - what it copies and pins: the runtime and licence files to the served copy
@@ -14,8 +15,9 @@ The last case runs the gate on this repository. The copy-baseline cases run
   the card builder with its fonts, copied, pinned and counted; the README and
   the specification copied to ``.baseline/`` unpinned; and the pin header;
 - what it refuses (exit 1) before any served file is replaced, each case
-  asserting the message of the refusal it names, which no other refusal prints
-  for the same input, so that a case fails when that refusal alone is removed:
+  asserting the message of the refusal it names, which the other checks that
+  can refuse the same file in 1 run do not print, so that a case fails when
+  that refusal alone is removed:
   a SHA256SUMS that does not hash to the digest given; a file that does not
   match its digest, that SHA256SUMS does not list, or that it lists and the
   folder lacks; a SHA256SUMS line with text after its file name, or that names
@@ -79,14 +81,16 @@ The last case runs the gate on this repository. The copy-baseline cases run
 - and that no copy-baseline run in these cases, refused or not, changes, adds
   or removes a file or link outside the paths the tool manages or under its
   ``--from`` folder, comparing each one's path, inode, size and SHA-256, or
-  a link's target, before and after the run; and that every run that ends
-  before its first write, refused or stopped, changes nothing at all under
-  the test's repository root or its ``--from`` folder, managed paths
-  included, comparing each folder's and each file's mode and modification
-  time as well. A run ends before its first write when it does not say that
-  it wrote the copy and the pin or that they may be incomplete, as the tool's
-  exit codes give, so the comparison holds for every refusal, and for
-  ``--help``, without a case having to ask for it. Every run goes through
+  a link's target, before and after the run; and that no run among them that
+  ends before its first write, refused or stopped, changes, adds or removes a
+  folder, file or link under the test's repository root or its ``--from``
+  folder, managed paths included, comparing each folder's and each file's
+  mode and modification time as well. Neither comparison covers anything
+  else, such as ownership or access time. A run ends before its first write
+  when it does not say that it wrote the copy and the pin or that they may be
+  incomplete, as the tool's exit codes give, so the second comparison is made
+  after every refused run in these cases, and after ``--help``, without a
+  case having to ask for it. Every run goes through
   ``copy_run()``, which makes both comparisons and stops a run still going
   after ``COPY_TIMEOUT`` seconds, so that a run that blocks, such as on a
   FIFO, fails its case instead of hanging the suite, and a further case reads this
@@ -1152,7 +1156,8 @@ def source_holding_repository(scratch: Path) -> tuple[Path, Path]:
 def source_through_link(scratch: Path) -> tuple[Path, Path]:
     # A link above the --from folder leads into the served copy folder, so the path given does not show that the
     # version folder is inside it. The tool resolves the --from folder before it compares, so this case passes
-    # whether the folders are compared by device and inode or by resolved name; only a bind mount would separate them.
+    # whether the folders are compared by device and inode or by resolved name; only 2 paths to 1 folder that resolve()
+    # does not merge, such as a bind mount, would separate them.
     (scratch / "via").symlink_to(scratch / "site" / "assets" / "baseline")
     return scratch, scratch / "via" / "1.2.1"
 
@@ -1392,7 +1397,7 @@ def whole_value_problems() -> list[str]:
 
 # SWAP_OPEN, appended to the gate's source, sends the tool's os.open() of the version's SHA256SUMS to the path given,
 # after the tool's lstat has found a regular file there: it stands in for an entry replaced between that check and the
-# open, a race no test can time, and changes nothing in the tree.
+# open, a race no case here can time, and changes nothing in the tree.
 SWAP_OPEN = """
 import os as _os
 
@@ -1749,15 +1754,16 @@ def main() -> int:
     ran = 11 + 7 + 1 + 1 + 2
     ran += (len(COPY_REFUSALS) + len(COPY_SUMS_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
             + len(WHOLE_VALUE_REFUSALS) + len(SUMS_LINE_REFUSALS) + len(READ_REFUSALS) + len(INPUT_REFUSALS))
-    # As root, file permissions neither stop a write, a listing nor a search, so none of these failures can be stood
-    # in for.
+    # As root, file permissions neither stop a write, a listing nor a search, so they cannot stand in for these
+    # failures.
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         failures += write_failure_problems() + gate_unreadable_problems() + permission_refusal_problems()
         ran += 2 + 2
-    # Every copy-baseline run above, refused or not, leaves each file outside the paths it manages as it was, and
-    # every run that ends before its first write leaves everything as it was, managed paths included. Each run goes
-    # through copy_run(), which records any change, and invocation_problems() fails if any other code could run the
-    # tool, so the first 2 checks cover every run.
+    # Every copy-baseline run above, refused or not, must leave each file and link outside the paths it manages as
+    # tree_state() records it, and every run that ends before its first write must leave everything that tree_state()
+    # records as it was, managed paths included. Each run goes through copy_run(), which records each such change, and
+    # invocation_problems() fails if any other code refers to the tool's path, names its file outside a docstring or,
+    # apart from run_gate(), starts a process, so the first 2 checks cover every run that does not avoid that reading.
     failures += [f"{change}, outside the paths it manages" for change in OUTSIDE_CHANGES]
     failures += [f"{change}; a run that ends before its first write changes nothing" for change in REFUSED_CHANGES]
     failures += invocation_problems()
