@@ -11,8 +11,9 @@ the marker, each continued after a blank line by a line indented by 2 spaces",
 the 4 cases whose names start "an ordered item", the 3 cases whose names
 start "the skill bullet under", and the case named "a link title in the skill
 bullet, with the same link in the dash bullet", each make 2 edits, one in
-each file; each other case makes 1 change, which edits, rewrites or removes a
-file. The cases that expect exit 0,
+each file; the case whose name starts "the skill bullet last in its section"
+makes 3, 2 in SKILL.md and 1 in the checklist; each other case makes 1
+change, which edits, rewrites or removes a file. The cases that expect exit 0,
 apart from the committed tree, make edits that keep the 2 files consistent;
 the cases that expect exit 1 or 3 apply a fault. An exit 1 case also asserts
 that the output says the bullet differs and names no item
@@ -78,6 +79,13 @@ HTML = 'starts with "<" after 0 to 3 spaces'
 LEAD_IN = "Do not mechanically delete:\n"
 OTHER_BULLET = "- throat-clearing before the substantive point;\n"
 CHECKLIST_HEADING = "## Mechanics\n"
+# The heading after the carve-out section, which ends the section.
+NEXT_HEADING = "## Match the context\n"
+# A line that only item 5 refuses, for its "&", so it pins where each span starts and ends: refused on the first
+# and last line of a span, and read as text just outside it.
+EDGE = "x & y\n"
+# How the gate names the checklist span, by the 2 edges it read between.
+CHECKLIST_SPAN = "the lines between the heading above the dash bullet and "
 # Lines the gate reads as plain text or as a bullet of plain text in the carve-out section; lines it refuses there
 # by how they start; and lines it refuses there by a character, with the first such character.
 PLAIN_LINES = ["-x", "1.x", "1234567890. x", ".x", "- -x", "AZ az 09", "x (y): 'z'; `w`, v."]
@@ -135,6 +143,19 @@ def prepend(relative: str, new: str):
         path = root / relative
         path.write_text(new + path.read_text(encoding="utf-8"), encoding="utf-8")
     return apply
+
+
+def append(relative: str, new: str):
+    def apply(root: Path) -> None:
+        path = root / relative
+        path.write_text(path.read_text(encoding="utf-8") + new, encoding="utf-8")
+    return apply
+
+
+def past_end(relative: str) -> str:
+    """The gate's "<file>, line <n>: " for the first line after the committed file's last line, which ends in LF."""
+    number = (REPO_ROOT / relative).read_text(encoding="utf-8").count("\n") + 1
+    return f"{relative}, line {number}: "
 
 
 def at(relative: str, old: str, below: int = 0) -> str:
@@ -212,6 +233,36 @@ CASES = [
     ("a character outside the list in a checklist line under the heading",
         edit(CHECKLIST, CHECKLIST_HEADING, CHECKLIST_HEADING + "\nSee [the rules].\n"), 3,
         [at(CHECKLIST, CHECKLIST_HEADING, 2) + character("[")]),
+    # The span edges. The case "the line 'x & y' under the carve-out heading, refused for '&'" puts the line on the
+    # first line of the carve-out section after its heading.
+    ("x & y directly above the carve-out heading", edit(SKILL, HEADING, EDGE + HEADING), 0, []),
+    ("x & y on the last line of the carve-out section", edit(SKILL, NEXT_HEADING, EDGE + NEXT_HEADING), 3,
+        [at(SKILL, NEXT_HEADING) + character("&")]),
+    ("x & y directly under the heading after the carve-out section", edit(SKILL, NEXT_HEADING, NEXT_HEADING + EDGE),
+        0, []),
+    # The bullet moves from its place to just above the next heading, with the "2." line under it, so the "2." line
+    # takes the number the next heading has in the committed file.
+    ("the skill bullet last in its section, 2. or code samples; under it, the same words in the dash bullet",
+        together(edit(SKILL, SKILL_LINE + "\n", ""),
+                 edit(SKILL, "\n" + NEXT_HEADING, "\n" + SKILL_LINE + "\n2. or code samples;\n" + NEXT_HEADING),
+                 change_dash_line(lambda line: line.rstrip("\n.") + "; 2. or code samples.\n")),
+        3, [at(SKILL, NEXT_HEADING) + UNREAD_LINE]),
+    ("x & y directly under the checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, CHECKLIST_HEADING + EDGE), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING, 1) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    ("x & y directly above the checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, EDGE + CHECKLIST_HEADING), 0, []),
+    ("x & y as the last line of the checklist", append(CHECKLIST, EDGE), 3,
+        [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    ("x & y as the last line of the checklist, with no LF after it", append(CHECKLIST, EDGE.rstrip("\n")), 3,
+        [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    ("x & y directly above a heading added after the dash bullet", append(CHECKLIST, EDGE + "## More\n"), 3,
+        [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the next heading;"]),
+    ("x & y directly under a heading added after the dash bullet", append(CHECKLIST, "## More\n" + EDGE), 0, []),
+    ("x & y on line 1 of a checklist with no heading above the dash bullet",
+        lambda root: (root / CHECKLIST).write_text(EDGE + "\n" + dash_line(root), encoding="utf-8"), 3,
+        [f"{CHECKLIST}, line 1: " + character("&")
+         + "the lines between the start of the file and the end of the file;"]),
     *[(f"the skill bullet under {marks!r}, with the same words in the dash bullet",
        together(edit(SKILL, SKILL_LINE, marks + "\ncode samples, " + SKILL_LINE[2:]),
                 checklist_lists(ITEMS, KEEP + marks[2:] + " code samples, ")),

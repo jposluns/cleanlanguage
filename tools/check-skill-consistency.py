@@ -84,16 +84,18 @@ either file left out, split into blocks (headings, bullets and paragraphs):
    with a closing run of "#" after a space, followed by nothing but spaces,
    which is not part of its text, so "## <section> ##" is the same heading;
    "### <section>" is not, and neither is "## <section>##".
-3. That section, which runs to the next heading of level 1 or 2, holds only
-   the lines item 5 accepts, and exactly one bullet that lists "quoted
+3. That section, which runs from its heading up to the next heading of level
+   1 or 2, or to the end of the file where there is none, holds only the
+   lines item 5 accepts, and exactly one bullet that lists "quoted
    language" as one of its items, in any place. That phrase is a hand-kept
    anchor: if SKILL.md loses it, this check exits 3 rather than passing. Items
    are found by splitting at each comma, then at each " or " and " and ", with
    a leading "or" or "and" dropped. An empty item in that bullet is malformed.
 4. The checklist holds exactly one block that mentions a dash, and that block
-   is a bullet. The lines between the heading line above that block and the
-   next heading line, or the start or end of the file where there is none,
-   hold only the lines item 5 accepts.
+   is a bullet. The lines after the heading line above that block, or from
+   line 1 where there is none, up to the next heading line, or to the end of
+   the file where there is none, hold only the lines item 5 accepts. A
+   refusal there names the 2 edges, each a heading line or an end of the file.
 5. In the two spans items 3 and 4 name, the check accepts only these lines:
    - a blank line, empty or holding only spaces;
    - in SKILL.md, the section's own heading line, as item 2 finds it;
@@ -129,7 +131,8 @@ only a list marker, such as "2.", "*" or "+", is refused as an empty list item
 when the marker is at the start of the line, as an indented list marker after
 1 to 3 spaces, and, after 4 or more spaces, only in the two spans item 5
 covers; a lone "-" under a line that is not blank is refused as a setext
-underline. The generated copies of the checklist need no check here:
+underline after any number of spaces, in the spans or outside them. The
+generated copies of the checklist need no check here:
 tools/build-portable-text.py --check and tools/build-site.py --check compare
 them with this source.
 
@@ -453,10 +456,14 @@ def dash_bullet(text: str) -> str:
                          f"found {len(dashes)} ({kinds})")
     start = dashes[0][2]
     headings = [number for kind, words, number in found if kind == "heading"]
-    first = max([number for number in headings if number < start], default=0) + 1
-    last = min([number for number in headings if number > start], default=len(text.split("\n")) + 1)
-    read_lines(CHECKLIST, text, first, last, "the lines between the headings around the dash bullet",
-               own_heading=False)
+    above = [number for number in headings if number < start]
+    below = [number for number in headings if number > start]
+    first = max(above, default=0) + 1
+    last = min(below, default=len(text.split("\n")) + 1)
+    # Either edge can be a heading line or an end of the file, so the message names the 2 edges it read between.
+    span = (f"the lines between {'the heading above the dash bullet' if above else 'the start of the file'} "
+            f"and {'the next heading' if below else 'the end of the file'}")
+    read_lines(CHECKLIST, text, first, last, span, own_heading=False)
     return dashes[0][1]
 
 
