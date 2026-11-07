@@ -29,15 +29,24 @@ fd0d5e1f7d41fed1 palettes.css: [data-scheme="dark"].site-aiqt
 38af7dc4cceae588 palettes.css: @media (prefers-color-scheme: dark) { .site-grclibrary:not([data-scheme="light"])
 13a53eeb4918c870 palettes.css: [data-scheme="light"].site-grclibrary
 c945c3c707b8e237 palettes.css: [data-scheme="dark"].site-grclibrary
-6733f2b603f4c83c palettes.css: :root, [data-scheme="light"]
-855961d4a9fa2175 palettes.css: @media (prefers-color-scheme: dark) { :root:not([data-scheme="light"])
-617f66e676e4dfac palettes.css: [data-scheme="dark"]
+1c7449981a5746ca palettes.css: .site-vendorreplies
+fcaf91fbcb6c554f palettes.css: @media (prefers-color-scheme: dark) { .site-vendorreplies:not([data-scheme="light"])
+03cb5be0613839d4 palettes.css: [data-scheme="light"].site-vendorreplies
+f6e6de3b858e8c06 palettes.css: [data-scheme="dark"].site-vendorreplies
+c2f47b7838c1dc7b palettes.css: :root, [data-scheme="light"]
+7354332f6920a98c palettes.css: @media (prefers-color-scheme: dark) { :root:not([data-scheme="light"])
+cc5635f586a9b818 palettes.css: [data-scheme="dark"]
 421b6e0380604cef palettes.css: :root
-42415eaab0f59299 baseline.css: :root
+058dde9c82cb897c baseline.css: :where(:root)
 cd5bedf1629c046e baseline.css: :root
-64d1002932bf5822 baseline.css: :root
-566f27f6652974a7 baseline.css: @media (prefers-color-scheme: dark) { :root:not([data-scheme="light"])
-c00a9c9ce5f05fc3 baseline.css: :root[data-scheme="dark"]
+2f7b3be6aba62ebf baseline.css: :root
+bf51cdff196e9cbd baseline.css: @media (prefers-color-scheme: dark) { :where(:root:not([data-scheme="light"]))
+c90d49f4c242516c baseline.css: :where(:root[data-scheme="dark"])
+fc897164b3d9c46f baseline.css: :where(:root)
+e94c5e297dc69b11 baseline.css: @media (prefers-color-scheme: dark) { :where(:root:not([data-scheme="light"]))
+257c6a9a401c82fc baseline.css: @media (prefers-color-scheme: dark) { :where(:root:not([data-scheme="light"]))
+f7039a697ae682a9 baseline.css: :where(:root[data-scheme="dark"])
+3b082cb94c546630 baseline.css: :where(:root[data-scheme="dark"])
 6d71f16bf7601c76 baseline.css: *, *::before, *::after
 ffc891a76463ad52 baseline.css: [hidden]
 8074bbab74480652 baseline.css: :root
@@ -53,9 +62,9 @@ af86e7c1d5626fba baseline.css: :focus-visible
 d735d49e38ff9e1e baseline.css: .lbl a
 d5e91e0cdc525a1b baseline.css: .lbl a:hover
 1ef15fdf2dcdf622 baseline.css: .wrap
-2c90ff7e816f7e7a baseline.css: .nav a
-849e3e4b9c7e0b04 baseline.css: .nav a:hover
-fdd02f6c215bf633 baseline.css: .nav a[aria-current="page"]
+24bfac803cca2cce baseline.css: .nav a
+9aea9cb2cd9003af baseline.css: .nav a:hover
+b519fce1b02e87b8 baseline.css: .nav a[aria-current="page"]
 eba674b6dd34ffd8 baseline.css: .scheme svg
 7be0f3fd120270db baseline.css: .hero .lbl
 828d02d1a136e0d3 baseline.css: .hero-art img
@@ -73,9 +82,13 @@ a15f8d01e1126c08 baseline.css: .region.narrow > div
 a41b776f8cf8ba12 baseline.css: .plan.described li
 c115e7371d1b676f baseline.css: .plan.described li a, .plan.described li .n
 90b863d1c9dc61f1 baseline.css: .doc
-23d675c06d2df388 baseline.css: :is(.doc, .doc > section, .doc > article) > :is(p, h1, h2, h3, ul, ol.num, dl.record:not(.cols), blockquote, .callout, .download, details, .pair, .search)
+3d49d5b2dd607061 baseline.css: :is(.doc, .doc > section, .doc > article) > :is(p, h1, h2, h3, ul, ol.num, dl.record:not(.cols), blockquote, .callout, .download, details, .pair, .search)
+239efb00e7bd4153 baseline.css: .measure-full
+8fcb95dcbb479600 baseline.css: .measure-wide
+2eb998dfe7ff5013 baseline.css: .measure-narrow
+098a35348e89cccd baseline.css: .measure-read
 cacafe0985415e93 baseline.css: .doc :is(p, li, dt, dd, h1, h2, h3, h4, blockquote, figcaption, .callout)
-0fb72cb0aca371b1 baseline.css: :is(.doc, .doc > section, .doc > article) > .steps
+b497a34ab15ce4bc baseline.css: :is(.doc, .doc > section, .doc > article) > .steps
 0b7a90f6c6df5599 baseline.css: :is(.doc, .doc > section, .doc > article) > *
 6c9f01160fcce152 baseline.css: :is(.doc, .doc > section, .doc > article) > .lbl
 8eb615dcc72c75ac baseline.css: .doc section, .doc article
@@ -109,11 +122,11 @@ d5dbb3d6432d9a48 baseline.css: .site-aiqt .rail
 b15e7ebf874b181e baseline.css: .rail .lbl
 1b8e85a4fa186700 baseline.css: .rail ol, .rail ul
 b5a1b6528ca38323 baseline.css: .rail li
-738b9cf2a7495d17 baseline.css: .rail li a
+5257070e94475c93 baseline.css: .rail li a
 fafc053f605717c4 baseline.css: .rail ol li a::before
 a37dedc2a7cdf812 baseline.css: .rail ul li a
-05a795b69f4b1b07 baseline.css: .rail li a:hover
-356b9c2059845138 baseline.css: .rail li a[aria-current="location"], .rail li a[aria-current="true"]
+1ae8b24dfb2d5611 baseline.css: .rail li a:hover
+f9068cee6793a631 baseline.css: .rail li a[aria-current="location"], .rail li a[aria-current="true"]
 30ef88eedef69663 baseline.css: .rail > .lbl, .rail > ol, .rail > ul
 2ce7496eef096ea3 baseline.css: :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > *, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .wide, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .next
 8e7d689e5c14e1e8 baseline.css: :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl.sec, :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl.blk
@@ -128,21 +141,21 @@ a5147acae22d70b3 baseline.css: .lrail > nav
 0a4e4b8744935d00 baseline.css: .lrail .lbl
 95532691a84e7b94 baseline.css: .lrail ul
 312d18bfb5a403ba baseline.css: .lrail li
-81c17a525d1f4bef baseline.css: .lrail li a, .lrail li button
-d8a6ab467860f420 baseline.css: .lrail li a:hover, .lrail li button:hover
-d30e912d985b717d baseline.css: .lrail li [aria-current="true"], .lrail li [aria-pressed="true"]
+2364b6db3e524b68 baseline.css: .lrail li a, .lrail li button
+a8bc47c9214e814d baseline.css: .lrail li a:hover, .lrail li button:hover
+72c3b7815f429fb5 baseline.css: .lrail li [aria-current="true"], .lrail li [aria-pressed="true"]
 79ce8b368e7f10ac baseline.css: .callout
 944eb8ef0054c8e8 baseline.css: .callout p
 0054c2e562da89b7 baseline.css: .callout p:last-child, .callout ul:last-child, .callout ol:last-child
 7974208121cd2b64 baseline.css: pre, .code
 9db7c17aaa2a8d0f baseline.css: code
 cd37e4ecbaf3abde baseline.css: pre code
-8e3604163c436904 baseline.css: .copy, .btn
-640e2d0ec44877e2 baseline.css: .copy:hover, .btn:hover
+ca629de8e38c0fb8 baseline.css: .copy, .btn
+4d5726440e9fc32d baseline.css: .copy:hover, .btn:hover
 e11e433767db5750 baseline.css: .btn.inline
-3a97217da1eb2129 baseline.css: .btn.inline:hover
+04a15887573e495a baseline.css: .btn.inline:hover
 4bcc73dd2563cff0 baseline.css: table
-1196c3d12ebae402 baseline.css: th
+f5acaa033e3724cf baseline.css: th
 b330d8e85fb2f554 baseline.css: td
 573074b16f45602d baseline.css: td code
 55e89c80b5e6593d baseline.css: td.id code
@@ -200,25 +213,29 @@ fc26d80eb2d861bc baseline.css: dl.record dd:last-child
 2eea60ef6e7ec0a0 baseline.css: dl.record.cols div
 630489353369d840 baseline.css: .pair > div
 d624c94f3fc9a4db baseline.css: .pair > div p
+0b04c49a169ae4b9 baseline.css: .pair pre
 d8c729fea2a87238 baseline.css: .pair .lbl
 ff74526e9ca26a9b baseline.css: .pair .after .lbl
+d5e43eeb8d7c56cc baseline.css: .pair-stack > div > pre
+2618245d4ee596dd baseline.css: .pair .msg p
+31f142328055ef4d baseline.css: .pair .msg p:last-child
 285bdc05fae908bb baseline.css: .download .file a
 e6ada9207faaf67e baseline.css: .download pre
-9f3092b0be881956 baseline.css: .picker a
-d2267b05394c9a37 baseline.css: .picker a:hover
-ed15373a1edde513 baseline.css: .picker a[aria-current="true"]
+3109ad26ebca07a8 baseline.css: .picker a
+04c8271266fac922 baseline.css: .picker a:hover
+c657fad1b6826d59 baseline.css: .picker a[aria-current="true"]
 743c011702575a96 baseline.css: .verified
 67361946001aa3ca baseline.css: .search label
-740a8f8ac708cab8 baseline.css: .search input
-856f01358205bebc baseline.css: .search input::placeholder
-5a9623ef0915e8f4 baseline.css: .chips a
-bda5ac44646ba739 baseline.css: .chips a:hover
-132f3ce1c5036055 baseline.css: .chips button
-dad2b9e7c06a4993 baseline.css: .chips button:hover
-1c8a93382992f99f baseline.css: .chips [aria-pressed="true"], .chips [aria-current="true"]
+572619c4572cdee3 baseline.css: .search input
+a34ec8852ce3f166 baseline.css: .search input::placeholder
+9fd84ff7375bb715 baseline.css: .chips a
+9a45022fb01aae42 baseline.css: .chips a:hover
+c3d2d1e8670947af baseline.css: .chips button
+ba7f6ab2821b6321 baseline.css: .chips button:hover
+abb4393ed761f7b5 baseline.css: .chips [aria-pressed="true"], .chips [aria-current="true"]
 228968e12a76246a baseline.css: .plan li[hidden]
-4d0a9ed48873b5ce baseline.css: .chips a[aria-disabled="true"], .chips button[aria-disabled="true"]
-82c5e4d762505d98 baseline.css: .chips a[aria-disabled="true"]:hover, .chips button[aria-disabled="true"]:hover
+bd2e0877c40558fe baseline.css: .chips a[aria-disabled="true"], .chips button[aria-disabled="true"]
+d1ae5fd3a43ba22e baseline.css: .chips a[aria-disabled="true"]:hover, .chips button[aria-disabled="true"]:hover
 1c3a2270efb84bea baseline.css: .figure svg
 4b26bd0de7aecb28 baseline.css: .figure figcaption
 fc1d5fed1ca9b348 baseline.css: .srcview pre
@@ -228,12 +245,28 @@ a7c952dc16a9ba86 baseline.css: .srcview .view li
 dca71c518844d415 baseline.css: .srcview .lbl
 13e6e5d055c7fb73 baseline.css: .region .about a
 ae75e0b09b7954bb baseline.css: .region .about a:hover
+e9bdcaab8182a6dd baseline.css: .band-dark h2, .band-dark h3
+a169a8e7dde85b1a baseline.css: .band-dark .lbl, .band-dark .meta
+cd58d7b87ef7b32e baseline.css: .band-dark a
+d6161e0732d65b3f baseline.css: .band-dark a:focus-visible
+3ccde7d2eea5690c baseline.css: .band > .wrap > :first-child, .band .doc > :first-child
+fbb19953d109b121 baseline.css: .boxes > li
+6cb4464515c581e0 baseline.css: .boxes > li > :first-child
+93b2e97999ffa069 baseline.css: .boxes > li > :last-child
+8ee09592ad31e2bc baseline.css: .boxes h3
+db1688c503cd993f baseline.css: .boxes-numbered > li
+3dc18c16a24fca32 baseline.css: .boxes-numbered > li::before
+74e30c65fb9fdc97 baseline.css: :where(:root)
+20f40459b8797e12 baseline.css: .banner picture, .banner img
+3844404fe10e17d0 baseline.css: .banner img
+e54d2323506b4466 baseline.css: .banner-text h1
+e3f74ef06b25cae3 baseline.css: .banner-fill .banner-text h1
+6c9af2970b3d61cb baseline.css: @media (max-width: 52rem) { .banner-fill .banner-text h1
 c4f00320346cc6b6 baseline.css: .family .card img
 0f75ed2367601b0f baseline.css: .family .tail .card img
-b3f1f95fa6d99852 baseline.css: @container footer (max-width: 1399px) { .family .cards .card img
-192c46a9ffaed70a baseline.css: @container footer (max-width: 1399px) { .family .tail .card img
-f11e30b0fc62b359 baseline.css: @container footer (max-width: 1039px) { .family .cards .card img
-8921e9994b461da7 baseline.css: @container footer (max-width: 1039px) { .family .tail .card img
+6808362c1ee10e16 baseline.css: @container footer (width > 1159px) { .family .tail .card img
+fe75df4f91273eed baseline.css: @container footer (max-width: 1159px) { .family .cards .card img
+45d067659820c576 baseline.css: @container footer (max-width: 1159px) { .family .tail .card img
 c7762cefefc3b7c1 baseline.css: @container footer (max-width: 599px) { .family .tail .card img
 7dfc4921763377df baseline.css: .control div
 37c60f2a9c3d5bb9 baseline.css: .control dt

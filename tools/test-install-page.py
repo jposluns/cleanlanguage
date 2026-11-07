@@ -48,9 +48,9 @@ and its has_visible_text() text of only U+034F, as check 4 says; and unless
 its P_PARENTS, IMPLIED_ENDS, TABLE_PARTS and SVG_SHAPES hold exactly what
 this test states and its parse(), run in this process on fragments, reads no
 misnested end tag where a fragment leaves out an end tag that its IMPLIED_ENDS
-holds in a parent a browser opens, and 1 where a browser keeps open an element
-that the parser closes, where a table part sits outside the parents of its
-TABLE_PARTS, where a table start tag ends the table around it, where a
+holds in a parent that counts as opened, and 1 where a browser keeps open an
+element that the parser closes, where a table part sits outside the parents of
+its TABLE_PARTS, where a table start tag ends the table around it, where a
 self-closing tag in an svg is not 1 of SVG_SHAPES directly in it, or where the
 parser keeps any element but an li directly in an li open around a sibling
 (check 8). On a family
@@ -1478,7 +1478,7 @@ RESIDUALS = [
 # that comparison names it: a pinned rule by its file name and preludes, a rule the pin does not hold by its text.
 BASELINE = STYLESHEETS[2]
 INLINE_RULE = ".btn.inline { position: static; display: inline-block; text-decoration: none; margin: 0 0.6rem 0.6rem 0; }"
-HOVER_RULE = ".btn.inline:hover { color: var(--text); }"
+HOVER_RULE = ".btn.inline:hover { color: var(--button-hover-fg); }"
 WIDER_RULE = INLINE_RULE.replace("static", "absolute")
 WRAP_RULE = ".wrap { margin: 0; padding: 0 var(--pad); }"
 # A class name, a ] and a comma in a string count for no selector, and a quote after an even run of backslashes ends
@@ -2049,12 +2049,13 @@ def end_tag_problems() -> list[str]:
     """The gate's P_PARENTS, IMPLIED_ENDS, TABLE_PARTS and SVG_SHAPES hold exactly what this states, so widening or
     narrowing any of them fails. Its parse(), run in this process on fragments, reads no misnested end tag (check 8)
     where a page leaves out an end tag that the HTML standard lets it omit where no more content follows in the parent
-    element, for each such element and each parent at whose end tag a browser closes it too, inside the table that
-    opens a table part; where a page leaves out an li's end tag before a sibling li; where a table start tag sits in a
-    cell or a caption or after a table has ended; and for a self-closing svg, or circle or path directly in an svg. It reads 1
+    element, for each such element and each parent at whose end tag a browser closes it too, inside the table in
+    which a table part counts as opened; where a page leaves out an li's end tag before a sibling li; where a table
+    start tag sits in a cell or a caption or after a table has ended; and for a self-closing svg, or circle or path
+    directly in an svg. It reads 1
     where a browser keeps open an element that the parser closes (a p in a span, a b or an a, and a div around an open
     table cell, whose end tag a browser ignores), where that parent is a table part outside the parents of TABLE_PARTS,
-    which a browser ignores or opens elsewhere, where a table start tag ends the table around it, where a self-closing
+    which does not count as opened there, where a table start tag ends the table around it, where a self-closing
     tag in an svg is anything else or is not directly in it, and where the parser keeps any other element whose end tag
     a page omits before a sibling open around that sibling, as the gate's docstring states."""
     p_parents = ["address", "article", "aside", "blockquote", "caption", "dd", "details", "dialog", "div", "dt", "fieldset",
@@ -2065,7 +2066,7 @@ def end_tag_problems() -> list[str]:
     table_parts = {"caption": ["table"], "tbody": ["table"], "tfoot": ["table"], "thead": ["table"],
                    "tr": ["table", "tbody", "tfoot", "thead"], "td": ["tr"], "th": ["tr"]}
     svg_shapes = ["circle", "path"]
-    # What opens each table part in a browser, before the part itself.
+    # What the parser must hold, before the part itself, for each table part to count as opened.
     opening = {"caption": "<table>", "tbody": "<table>", "tfoot": "<table>", "thead": "<table>", "tr": "<table>",
                "td": "<table><tr>", "th": "<table><tr>"}
     omitted = [f"{opening.get(parent, '')}<{parent}><{child}>x</{parent}>"
@@ -2084,7 +2085,7 @@ def end_tag_problems() -> list[str]:
                  # A table start tag that ends the table around it, in a row or in a div in the table.
                  "<table><tr><table></table><td><p>x</td>", "<table><div><table></table><td><p>x</td>",
                  "<table><tr><table></table></table>",
-                 # A self-closing tag in an svg that a browser does not close there, or that is not directly in the svg.
+                 # A self-closing tag in an svg that is not 1 of SVG_SHAPES, or 1 whose parent is not the svg.
                  '<span class="vh"><svg><div/></svg></span>', "<svg><p/></svg>", "<svg><rect/></svg>",
                  "<svg><b><path/></b></svg>", "<div><path/></div>",
                  # An end tag omitted before a sibling, other than an li directly in an li.

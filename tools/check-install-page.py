@@ -40,9 +40,8 @@ What it verifies
    ``script`` or ``title``, or 1 whose content a browser renders only as
    fallback or in a control: ``audio``, ``canvas``, ``meter``, ``object``,
    ``progress``, ``select`` or ``video``; a ``dialog`` without ``open``; or a
-   ``details`` without ``open``, which hides all its content except its first
-   ``summary`` child, as the HTML standard's rendering rules do with no
-   stylesheet); the 5 links
+   ``details`` without ``open``, which the gate reads as hiding all its
+   content except its first ``summary`` child); the 5 links
    have 1 ``p`` as their parent, as the parser reads it (see below), and sit in
    the order Claude, ChatGPT, Gemini, Copilot, other AI systems, before the
    ``get`` id. That ``p`` sits in the opening of the page's content, which is
@@ -360,35 +359,42 @@ What it verifies
    end tag closes every element opened inside its own, where a browser can
    ignore it, keep 1 of those open or reopen 1 (see below). An ``html``,
    ``head`` or body element, which a browser does not open again for a later
-   start tag, does not count as open inside. A self-closing ``<svg/>``, and a
-   self-closing ``circle`` or ``path`` directly in an ``svg`` (``SVG_SHAPES``,
-   the elements that the committed pages put there), close at once, as in a
-   browser, so what follows ``<svg/>`` is not in an ``svg``
-   (``<span class="vh"><svg/><div/></span>`` fails). Any other self-closing
-   tag leaves its element open, in an ``svg`` too: there a browser moves a
-   ``div`` or a ``p`` out of the ``svg`` and keeps it open
-   (``<span class="vh"><svg><div/></svg></span>`` fails), and closes another
-   foreign element such as ``rect``, so there the gate refuses more, though
-   check 5 and the page tag pin refuse that ``svg`` and that ``rect`` anyway.
+   start tag, does not count as open inside. The parser reads a self-closing
+   ``<svg/>``, and a self-closing ``circle`` or ``path`` whose parent, as the
+   parser holds it, is an ``svg`` (``SVG_SHAPES``, the elements that the
+   committed pages put there), as closed at once, so what follows ``<svg/>``
+   is not in an ``svg`` (``<span class="vh"><svg/><div/></span>`` fails). It
+   reads only that parent: an HTML element such as a ``span`` ends no ``svg``
+   here, so a ``<path/>`` after a ``span`` in an ``svg`` reads as closed too;
+   check 5 refuses every ``svg`` but the 2 of the exact light and dark switch,
+   so such a page fails anyway. The parser keeps any other self-closing tag's
+   element open, in an ``svg`` too, so
+   ``<span class="vh"><svg><div/></svg></span>`` and ``<svg><rect/></svg>``
+   fail, though check 5 and the page tag pin refuse that ``svg`` and that
+   ``rect`` anyway.
    Nor does an element count whose end tag the HTML standard lets a page omit
    where no more content follows in its parent, when that parent, as the
    parser holds it, is 1 at whose end tag a browser closes it too
    (``IMPLIED_ENDS``: an ``li``, ``dd``, ``p``, ``rt``, ``rp``, ``optgroup``,
    ``option``, ``tbody``, ``tfoot``, ``tr``, ``td`` or ``th`` in such a parent,
-   so not a ``p`` in a ``span``, whose end tag a browser then ignores) and a
-   browser has opened it. A browser opens a table part (``TABLE_PARTS``: a
-   ``caption``, ``tbody``, ``tfoot``, ``thead``, ``tr``, ``td`` or ``th``) only
-   in a parent that ``TABLE_PARTS`` names and that it has itself opened: it
-   ignores the start tag outside a table, so
-   ``<span class="vh"><td><p>x</td></span>`` and its ``th``, ``caption`` and
-   ``tr`` forms fail. It reads a ``table`` start tag in a table, outside a cell
-   or a caption, as that table's end, so nothing the parser holds from that
-   table on counts as opened, and
+   so not a ``p`` in a ``span``, whose end tag a browser then ignores) and
+   that parent counts as opened. Every element counts as opened but a table
+   part (``TABLE_PARTS``: a ``caption``, ``tbody``, ``tfoot``, ``thead``,
+   ``tr``, ``td`` or ``th``), which counts only where its parent, as the
+   parser holds it, is 1 that ``TABLE_PARTS`` names for it and itself counts
+   as opened. So ``<span class="vh"><td><p>x</td></span>`` and its ``th``,
+   ``caption`` and ``tr`` forms fail wherever they sit, in a ``template`` too,
+   which check 5 refuses anyway. At a ``table`` start tag whose nearest
+   enclosing ``caption``, ``table``, ``td`` or ``th``, as the parser holds
+   them, is a ``table``, nothing the parser holds from that table on counts as
+   opened; the search reads through every other element, a ``template``
+   included, so
    ``<span class="vh"><table><tr><table></table><td><p>x</td></tr></table></span>``
-   fails. A table part in any other parent holds what counts, so a cell
-   directly in a ``table``, which a browser wraps in a row, refuses more. So a
-   one-cell table without ``</td>`` passes, though ``tools/build-site.py``
-   refuses that omission in a page it generates. Of the end tags that a page
+   fails. A table part in any other parent holds what counts, so a ``p`` left
+   open in a cell directly in a ``table`` fails at the cell's end tag, while
+   ``<table><tr><td>x</table>``, a one-cell table without ``</td>``, passes,
+   though ``tools/build-site.py`` refuses that omission in a page it
+   generates. Of the end tags that a page
    omits before a sibling, ``IMPLIED_ENDS`` holds only that of an ``li``
    directly in an ``li``, which a browser closes at the second's start tag, so
    ``<ul><li>a<li>b</ul>`` passes, though ``tools/build-site.py`` refuses it
@@ -656,7 +662,7 @@ Python versions
 
 Checks 1 to 6 read the markup with ``html.parser`` and rest on how it reads raw
 text and comments on Python 3.14: which end tags close a raw-text element (on
-3.14, as in a browser, ``</ script>`` does not close a ``script``), whether
+3.14, ``</ script>`` does not close a ``script``), whether
 ``title`` holds markup, and whether ``--!>`` ends a comment. The gate is tested
 on 3.14, so on any other (major, minor) version, 3.9 or later, it exits 3
 before it reads a file (``SUPPORTED_PYTHONS`` below). Python 3.6 and older
@@ -772,7 +778,7 @@ HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscrip
 HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 # Check 8: each element whose end tag the HTML standard lets a page omit where no more content follows in its parent
 # element, with the parents at whose end tag a browser closes it too, so that such a parent's end tag with it left open
-# inside is not refused where a browser has opened that parent (TABLE_PARTS). A p in a span is not among them: a browser
+# inside is not refused where that parent counts as opened (TABLE_PARTS). A p in a span is not among them: a browser
 # ignores that </span> and keeps the span open. An li in an li is: a browser closes the first at the second's start tag,
 # so the 2 are siblings there, and the list's end tag closes both.
 P_PARENTS = (
@@ -784,15 +790,17 @@ IMPLIED_ENDS = {
     "optgroup": ("select",), "option": ("datalist", "optgroup", "select"), "tbody": ("table",), "tfoot": ("table",),
     "tr": ("table", "tbody", "tfoot", "thead"), "td": ("tr",), "th": ("tr",),
 }
-# Check 8: each table part, with the parents in which a browser opens it. Outside a table a browser ignores its start
-# tag, and inside 1 it closes or opens other parts, so IMPLIED_ENDS holds nothing in a part outside these parents.
+# Check 8: each table part, with the parents in which the parser counts it as opened, where that parent counts as
+# opened too. Anywhere else, in a template too, the part does not count as opened, so IMPLIED_ENDS holds nothing in it
+# and the gate refuses an end tag that closes it with an element left open inside.
 TABLE_PARTS = {
     "caption": ("table",), "tbody": ("table",), "tfoot": ("table",), "thead": ("table",),
     "tr": ("table", "tbody", "tfoot", "thead"), "td": ("tr",), "th": ("tr",),
 }
-# Check 8: the elements that the committed pages put directly in an svg. A browser keeps them there as foreign elements
-# and honours the slash of a self-closing tag on them, so "/>" closes each. It moves a div or a p out of the svg instead,
-# and keeps it open.
+# Check 8: the elements that the committed pages put directly in an svg. The parser reads "/>" on 1 of them as closing
+# it when its parent, as the parser holds it, is an svg; it reads no HTML element as ending an svg, so a <path/> after a
+# span in an svg reads as closed too (check 5 refuses every svg but the 2 of the exact switch). It keeps any other
+# self-closing tag's element open, a div or a p in an svg included.
 SVG_SHAPES = ("circle", "path")
 # HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
 ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
@@ -1059,7 +1067,7 @@ HEAD_TAG_TEXT = re.compile(r"<(?:meta|link|base)\b[^>]*>", re.I)
 
 
 def class_names(attrs: dict[str, str]) -> list[str]:
-    """The class names of an element, split on ASCII whitespace only, as a browser splits them."""
+    """The class names of an element, split on ASCII whitespace only (ASCII_WHITESPACE)."""
     return [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
 
 
@@ -1127,12 +1135,14 @@ class PageParser(HTMLParser):
             attrs.setdefault(k.lower(), v if v is not None else "")
         self.order += 1
         classes = class_names(attrs)
-        # A heading start tag closes a heading that is the current node, as a browser does: <h1><h2>x leaves the h1 empty.
+        # The parser closes a heading that is the current node at a heading start tag: <h1><h2>x leaves the h1 empty.
         if tag in HEADINGS and self.stack and self.stack[-1]["tag"] in HEADINGS:
             del self.stack[-1]
         parent = self.stack[-1] if self.stack else None
-        # A browser reads a table start tag in a table, outside a cell or a caption, as that table's end, so what the
-        # parser still holds from that table on is not open there (check 8).
+        # At a table start tag whose nearest enclosing caption, table, td or th, as the parser holds them, is a table,
+        # that table and everything the parser holds inside it stop counting as opened (check 8). The search reads
+        # through every other element, a template included, so there it marks the outer table too; check 5 refuses a
+        # template anyway.
         if tag == "table":
             holder = next((index for index in range(len(self.stack) - 1, -1, -1)
                            if self.stack[index]["tag"] in ("caption", "table", "td", "th")), None)
@@ -1240,8 +1250,8 @@ class PageParser(HTMLParser):
         # what follows, as <div hidden> does. A void element never goes on the stack, so it needs no end tag.
         in_svg = bool(self.stack) and self.stack[-1]["tag"] == "svg"
         self.handle_starttag(tag, attrs_list)
-        # A browser honours the slash in foreign content, so it closes <svg/> at once, and what follows is not in it, and
-        # so too a shape directly in an svg (SVG_SHAPES). It moves a div or a p out of the svg and keeps it open.
+        # The parser closes <svg/> at once, so what follows is not in it, and so too a shape (SVG_SHAPES) whose parent,
+        # as it holds it, is an svg; any other self-closing tag's element, a div or a p in an svg included, stays open.
         if tag == "svg" or (in_svg and tag in SVG_SHAPES):
             self.stack.pop()
 
@@ -1250,15 +1260,15 @@ class PageParser(HTMLParser):
         if tag == "br":
             self.handle_starttag("br", [])
             return
-        # Any heading end tag closes the innermost open heading, as in a browser: </h2> closes an open h1.
+        # The parser closes the innermost open heading at any heading end tag: </h2> closes an open h1.
         names = HEADINGS if tag in HEADINGS else (tag,)
         for i in range(len(self.stack) - 1, -1, -1):
             if self.stack[i]["tag"] in names:
                 # Here an end tag closes every element opened inside its own; a browser can instead ignore it, keep
                 # 1 of those open or reopen 1 later, so check 8 refuses such an end tag, as tools/build-site.py does. A
                 # browser opens no second html, head or body element, so those this parser opens do not count, nor
-                # does an element whose end tag a page may omit where its parent, as the parser holds it, ends here
-                # and a browser, having opened that parent, then closes it too (IMPLIED_ENDS and TABLE_PARTS).
+                # does an element whose end tag a page may omit where its parent, as the parser holds it, ends here,
+                # is 1 that IMPLIED_ENDS names for it and counts as opened (TABLE_PARTS).
                 inside = [frame["tag"] for parent, frame in zip(self.stack[i:], self.stack[i + 1:])
                           if frame["tag"] not in ("html", "head", "body")
                           and not (parent["opened"] and parent["tag"] in IMPLIED_ENDS.get(frame["tag"], ()))]
