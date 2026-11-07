@@ -192,9 +192,10 @@ class Verdicts(unittest.TestCase):
         self.assert_fails(added("- A record that holds " + quoted + " is a legacy record."), BARE)
 
     def test_a_bare_attended_after_line_250_fails(self):
-        # The other bare-word cases add their line before the DECISIONS bullet, near line 240, so a
-        # check that read only the start of the file would still fail them. This case adds its line
-        # at the end, after blank lines that place it at line 301 or later.
+        # The other bare-word cases add their line just before the DECISIONS bullet, so whether a
+        # check that read only the start of the file reaches that line depends on where the bullet
+        # is. This case adds its line at the end, after blank lines that place it after line 300
+        # whatever line the bullet is on, beyond any likely read limit of such a check.
         text = committed()
         self.assertTrue(text.endswith("\n"))
         count = text.count("\n")

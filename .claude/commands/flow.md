@@ -32,7 +32,9 @@ All backlog and session state lives in the machine-local durable store at `/opt/
 (orchestrators-group-readable; pool workers CANNOT read it, see below):
 - `TODO.md`: the backlog, whose ORDER is the selection order. `DONE.md`: the closed-work ledger.
 - `open-findings.md`: findings (a non-terminal row blocks new work). `pending-decisions.md`: open
-  decisions with pre-drafted option blocks.
+  decisions with pre-drafted option blocks, each decision that the session could not ask because an
+  AskUserQuestion guard denied it, and a record of each decision-timeout switch (see the MODE bullet
+  below).
 - `session-handoff.md`: the resume handoff. `session-state.md`: the concurrency LEASE
   (Active-session / Status / Last-heartbeat-UTC), acquired at entry, refreshed at merges and on cadence,
   released by /handoff.
@@ -243,8 +245,8 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   safe/conservative direction only); it switches this session's question policy, timer and routing,
   and never writes the mode record. The session records each such switch, with its time and the
   decision whose timer ran out, in its pending-decisions record,
-  `/opt/cleanlanguage/private/pending-decisions.md` (Records-first, above); the store's list above
-  names no separate notes file. The switch holds for the session until the record is written
+  `/opt/cleanlanguage/private/pending-decisions.md` (Records-first, above). The switch holds for the
+  session until the record is written
   again: any new write ends it, including one that repeats the stored mode, such as the operator
   running `orchmod aa` again (`orchmod` is the operator's front end for `orch-set-mode`), because
   `orch-set-mode` stamps a fresh `set_at` on every write. The session sees that write, as it sees
