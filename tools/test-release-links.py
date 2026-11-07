@@ -822,6 +822,15 @@ class VersionParseTest(unittest.TestCase):
         self.assertNotIn("names the file", out)
 
 
+def exclude_draft_home(root: Path) -> None:
+    """Exclude the draft's home page from the sitemap under ``root``, as the draft branch does: tools/build-site.py
+    refuses to build a staged draft without that exclusion."""
+    path = root / "tools/sitemap-config.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["exclude"] = [entry for entry in data["exclude"] if entry != "draft/index.html"] + ["draft/index.html"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
 class WriterTest(unittest.TestCase):
     """set-release-links.py regenerates the pages it owns, restamps them and keeps every redirect."""
 
@@ -889,6 +898,7 @@ class WriterTest(unittest.TestCase):
         text = site_json.read_text(encoding="utf-8")
         self.assertEqual(text.count('"base": "/",'), 1)
         site_json.write_text(text.replace('"base": "/",', '"base": "/draft/",'), encoding="utf-8")
+        exclude_draft_home(self.root)
         planned = self.plan()
         for name in ("site/_redirects", "site-src/release.json", "site-src/site.json", "site/draft/verify/index.html"):
             self.assertIn(name, planned)
@@ -1146,11 +1156,14 @@ class WholePageTest(unittest.TestCase):
                   "1 step.")
         readme = (WriterTest.REPO / ".baseline/README.md").read_text(encoding="utf-8")
         self.assertIn("### Staging at `/draft/` and promotion\n", readme)
-        self.assertIn("\n5. Promotion, after the owner's approval only. In 1 pull request: ", readme)
+        self.assertIn("\n5. Promotion, after the owner's approval only. In 1 pull request from the `draft` branch to the "
+                      "production branch: ", readme)
         for checksum, state in ((ZEROS, "holds the zero placeholder"), (SUM, "holds a published checksum")):
             with self.subTest(state):
                 site_json = self.root / "site-src/site.json"
                 original = site_json.read_text(encoding="utf-8")
+                sitemap_config = self.root / "tools/sitemap-config.json"
+                original_sitemap = sitemap_config.read_text(encoding="utf-8")
                 page = self.publish(checksum)
                 wrong = outside(page, "<p>If the values differ, install the file anyway.</p>")
                 self.page.write_text(wrong, encoding="utf-8")
@@ -1164,6 +1177,7 @@ class WholePageTest(unittest.TestCase):
                 config["base"] = "/draft/"
                 next(entry for entry in config["pages"] if entry["id"] == "install")["nav_label"] = "Install it"
                 site_json.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+                exclude_draft_home(self.root)
                 with contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(self.generator.main(["--root", str(self.root)]), 0)
                 self.assertEqual(self.page.read_text(encoding="utf-8"), page)
@@ -1178,6 +1192,7 @@ class WholePageTest(unittest.TestCase):
                     self.assertIn(remedy, output)
                     self.assertNotIn("; run tools/build-site.py", output)
                 site_json.write_text(original, encoding="utf-8")
+                sitemap_config.write_text(original_sitemap, encoding="utf-8")
                 self.page.write_text(page, encoding="utf-8")
 
     def test_a_staged_draft_gets_no_draft_advice_for_another_failure(self):
@@ -1189,6 +1204,7 @@ class WholePageTest(unittest.TestCase):
         text = site_json.read_text(encoding="utf-8")
         self.assertEqual(text.count('"base": "/",'), 1)
         site_json.write_text(text.replace('"base": "/",', '"base": "/draft/",'), encoding="utf-8")
+        exclude_draft_home(self.root)
         code, output = self.gate_run()
         self.assertEqual(code, 0, output)
         written = redirects.read_text(encoding="utf-8")

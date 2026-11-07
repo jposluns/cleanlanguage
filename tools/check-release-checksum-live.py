@@ -20,15 +20,21 @@ Behaviour:
     While ``site-src/release.json`` holds the zero placeholder of a version
     bump, the page shows no checksum and says that it appears once the
     version is published; the version is read from that note and the site
-    checksum is taken as the placeholder, so a published release whose zip
-    and ``.sha256`` the gate can download and read, with a well-formed
-    manifest that the zip hashes to, fails as drift (exit 1, unless another
-    of its checks fails with a higher code); otherwise the comparison cannot
-    run and reports no drift (exit 2, unless another of its checks exits 3).
-    Without the note, the version is read from the first sentence that names
-    the published checksum's version and the checksum from the first
-    checksum element. The gate is whole-page equality: the page must equal,
-    byte for byte, the page that ``tools/build-site.py`` renders at base /
+    checksum is taken as the placeholder. When that version has a published
+    release whose zip and ``.sha256`` the gate can download and read, with a
+    well-formed manifest that the zip hashes to, the page fails as drift
+    (exit 1, unless another of its checks fails with a higher code). When
+    the release is published but the gate cannot download or read those
+    assets, the manifest is malformed or the zip does not hash to it, or
+    when the release status cannot be read or is neither 200 nor 404, the
+    comparison cannot run and reports no drift (exit 2, unless another of
+    its checks exits 3). With no published release (status 404), the page
+    is held to the rules for an unpublished release below, which pass only
+    in the pre-tag window. Without the note, the version is read from the
+    first sentence that names the published checksum's version and the
+    checksum from the first checksum element. The gate is whole-page
+    equality: the page must equal, byte for byte, the page that
+    ``tools/build-site.py`` renders at base /
     from the committed sources for that version, its tag and that checksum or
     the placeholder (rendered_verify_page, verify_page), whatever version
     SKILL.md names, as ``tools/check-release-links.py`` requires of the same
@@ -143,7 +149,11 @@ Behaviour:
     pre-tag window by repository state alone.
   - If the release exists, downloads the version-named zip and its ``.sha256``,
     proves the release is self-consistent (the zip hashes to its own manifest),
-    and requires the site's displayed checksum to equal that published digest.
+    and requires the site's displayed checksum, or the placeholder while the
+    page carries the note, to equal that published digest: a difference is
+    drift (exit 1). A download or read that fails, a malformed manifest or a
+    zip that does not hash to it stops only this comparison (exit 2), and
+    the release-date check below still runs.
   - Separately, and whatever version the site names, checks the release for
     the version SKILL.md names on its own terms (item 26, G4): it probes that
     release; on 200 it requires the SKILL.md ``Released:`` line to name the UTC
@@ -167,22 +177,28 @@ Behaviour:
 Requires the ``gh`` CLI and, in CI, ``GH_TOKEN`` with ``contents: read``.
 
 Exit codes:
-  0  the site checksum matches the published release, or the site is
-     ahead of an unpublished release in the pre-tag window (it names the
-     current skill version and carries the not-yet-published note, the tag
-     does not exist yet, and the SKILL.md Released line is
-     well formed, and present above the undated baseline)
-  1  drift or inconsistency: the release is published but the site shows a
-     different checksum or says that the checksum is not yet published, or
-     the site names an unreleased version that is not the current skill
-     version, or it shows a checksum as published while the release and its
-     tag do not exist, or the SKILL.md Released date disagrees with
+  0  every check that ran passed: the site checksum matches the published
+     release and the release-date check of the version SKILL.md names
+     passes, or the site is ahead of an unpublished release in the pre-tag
+     window (it names the current skill version and carries the
+     not-yet-published note, the tag does not exist yet, and the SKILL.md
+     Released line is well formed, and present above the undated baseline)
+  1  drift or inconsistency: the release is published, the gate can
+     download and read its zip and ``.sha256``, the manifest is well formed
+     and the zip hashes to it, and the site shows a different checksum or
+     says that the checksum is not yet published, or the site names an
+     unreleased version that is not the current skill version, or it shows
+     a checksum as published while the release and its tag do not exist,
+     or the SKILL.md Released date disagrees with
      the published release, or the Released line is missing above the undated
      baseline (also in the pre-tag window)
-  2  could not verify (gh or network error, the published release is malformed,
-     its ``published_at`` is unreadable or malformed, its ``immutable`` field is
-     not exactly true, the release SKILL.md names returns a status other than
-     200 or 404, or the tag exists with no published release)
+  2  could not verify: a gh or network error; a status other than 200 or 404
+     for the release the site names, for the release SKILL.md names, or for
+     a tag the gate reads; a tag that exists with no published release; a
+     published release whose zip or ``.sha256`` the gate cannot download or
+     read, whose manifest is malformed, or whose zip does not hash to its
+     manifest; or a published release whose ``published_at`` is unreadable
+     or malformed or whose ``immutable`` field is not exactly true
   3  a required file could not be read, the verify page is not the page the
      generator writes for the state it shows, or the generator could not
      render its download block or the page (see Behaviour), the SKILL.md
@@ -1302,8 +1318,9 @@ def check_site_checksum(load_code: int = 0) -> int:
     pending = PENDING_VERSION.search(verify)
     if pending is not None:
         # The not-yet-published state: the site holds the zero placeholder, so a
-        # published release whose assets published_digest can read and check
-        # makes it drift below.
+        # published release whose zip and .sha256 published_digest can download
+        # and read, with a well-formed manifest that the zip hashes to, makes it
+        # drift below.
         version = pending.group(1)
         site_sum = PLACEHOLDER
     else:

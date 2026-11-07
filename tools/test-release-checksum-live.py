@@ -12,7 +12,8 @@ unverifiable, and the published-release comparison and the transient-error
 handling are preserved. The page a version bump builds from the zero
 placeholder, which says that the checksum appears once the version is
 published, passes in the pre-tag window and fails as drift once the release is
-published and its assets can be read and checked; a page in neither state
+published and the gate can download and read its zip and .sha256, with a
+well-formed manifest that the zip hashes to; a page in neither state
 exits 3, with 1 case for each part of the
 rule that holds the page to the download block tools/build-site.py renders for
 it, including markup that a browser shows the same way, comments and hidden
@@ -143,6 +144,15 @@ def copy_generator_inputs(root: Path) -> None:
             shutil.copytree(source, target)
         else:
             shutil.copyfile(source, target)
+
+
+def exclude_draft_home(root: Path) -> None:
+    """Exclude the draft's home page from the sitemap under ``root``, as the draft branch does: tools/build-site.py
+    refuses to build a staged draft without that exclusion."""
+    path = root / "tools/sitemap-config.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["exclude"] = [entry for entry in data["exclude"] if entry != "draft/index.html"] + ["draft/index.html"]
+    path.write_text(json.dumps(data), encoding="utf-8")
 
 
 def render_with(generator: Path, root: Path, version: str, checksum: str) -> bytes:
@@ -4946,8 +4956,8 @@ class WholePageTest(unittest.TestCase):
     release (release status 404) reaches the inconsistency report, and every page form reported in review
     (DISCOVERY round 4, findings 1, 2, 4 and 6), made on the page alone, in either state, exits 3 before any
     release is read. A page for another version that has a published release reaches the checksum step
-    instead, which compares only when the gate can download and check that release's zip and .sha256; these
-    tests do not run it."""
+    instead, which compares only when the gate can download and read that release's zip and .sha256, with a
+    well-formed manifest that the zip hashes to; these tests do not run it."""
 
     NAMES = ("REPO_ROOT", "VERIFY_PAGE", "SKILL", "REDIRECTS", "GENERATOR", "release_status", "tag_status", "gh",
              "release_published_at", "release_immutable")
@@ -5098,6 +5108,8 @@ class WholePageTest(unittest.TestCase):
                   "1 step")
         site_json = self.root / "site-src/site.json"
         original = site_json.read_text(encoding="utf-8")
+        sitemap_config = self.root / "tools/sitemap-config.json"
+        original_sitemap = sitemap_config.read_text(encoding="utf-8")
         for checksum, state in (("0" * 64, "placeholder"), (self.SUM, "published")):
             with self.subTest(state):
                 page = self.publish(checksum)
@@ -5113,6 +5125,7 @@ class WholePageTest(unittest.TestCase):
                 config["base"] = "/draft/"
                 next(entry for entry in config["pages"] if entry["id"] == "install")["nav_label"] = "Install it"
                 site_json.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+                exclude_draft_home(self.root)
                 with contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(self.generator.main(["--root", str(self.root)]), 0)
                 self.assertEqual(self.page.read_text(encoding="utf-8"), page)
@@ -5126,6 +5139,7 @@ class WholePageTest(unittest.TestCase):
                     self.assertIn(remedy, output)
                     self.assertNotIn("run tools/build-site.py", output)
                 site_json.write_text(original, encoding="utf-8")
+                sitemap_config.write_text(original_sitemap, encoding="utf-8")
                 self.page.write_text(page, encoding="utf-8")
 
 
