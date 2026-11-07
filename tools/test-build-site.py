@@ -1116,13 +1116,22 @@ def check_family_pages(failures: list[str]) -> int:
 
 
 VENDORREPLIES_LOGO = "assets/baseline/logos/vendorreplies.png"
+# The seventh footer card of template specification 7.19 (baseline 1.11.0), byte for byte as the footer of the 1.11.1
+# package's reference/landing.html gives it, apart from the logo path: ../logos/ there, /assets/baseline/logos/ here.
+# It is written out here, not read from the generator's SEVENTH_CARD, so that a change to any byte of that card fails.
+REFERENCE_CARD = (
+    '<li class="slice slice-vr"><a class="card" href="https://vendorreplies.ai/" target="_blank" rel="noopener noreferrer">'
+    '<img src="/assets/baseline/logos/vendorreplies.png" alt=""><span class="cname">VendorReplies<span class="tld">.ai</span></span>'
+    '<span class="vh"> (opens in a new tab)</span></a></li>'
+)
 
 
 def check_footer(failures: list[str]) -> int:
     """The footer holds the 6 rotated cards and the seventh card of specification 7.19 (baseline 1.11.0).
 
     This guards a partial adoption: a copy of baseline 1.11.0 or later without the generator's seventh card passes
-    every other gate while the footer silently keeps 6 cards.
+    every other gate while the footer silently keeps 6 cards. On every generated page, the card list holds 7 cards and
+    ends with REFERENCE_CARD, byte for byte, and no other slice-vr card.
     """
     with tempfile.TemporaryDirectory() as scratch:
         root = make_root(Path(scratch))
@@ -1144,8 +1153,17 @@ def check_footer(failures: list[str]) -> int:
             failures.append(f"footer: the home page holds {len(slices)} cards, expected 7")
         if not slices or slices[0][0] != "slice-4" or 'aria-current="page"' not in slices[0][1]:
             failures.append("footer: the first card is not slice-4 with aria-current=\"page\"")
-        if not slices or slices[-1][0] != "slice-vr" or f'<img src="/{VENDORREPLIES_LOGO}" alt="">' not in slices[-1][1]:
-            failures.append(f"footer: the last card is not slice-vr with the image /{VENDORREPLIES_LOGO}")
+        pages = sorted(path.relative_to(out).as_posix() for path in out.rglob("*.html"))
+        wrong = []
+        for page in pages:
+            text = (out / page).read_text(encoding="utf-8")
+            lists = re.findall(r'<ul class="cards rainbow" aria-label="[^"]*">(.*?)</ul>', text, re.S)
+            if (len(lists) != 1 or lists[0].count('<li class="slice ') != 7 or not lists[0].endswith(REFERENCE_CARD)
+                    or text.count('<li class="slice slice-vr">') != 1):
+                wrong.append(page)
+        if "index.html" not in pages or wrong:
+            failures.append(f"footer: {len(wrong)} of {len(pages)} generated pages do not end a card list of 7 with the "
+                            f"seventh card of specification 7.19, byte for byte: {', '.join(wrong) or 'no home page'}")
         pinned = tomllib.loads((root / ".baseline/pin.toml").read_text(encoding="utf-8")).get("files", {})
         if VENDORREPLIES_LOGO not in pinned:
             failures.append(f"footer: {VENDORREPLIES_LOGO} is not pinned in .baseline/pin.toml")
