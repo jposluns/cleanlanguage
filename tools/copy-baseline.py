@@ -114,15 +114,20 @@ Usage:
         --sums-sha256 <sha256 of SHA256SUMS> --archive-sha256 <sha256 of the archive>
 
 Exit codes:
-  0  copied and pinned, and tools/check-baseline-pin.py passes the tree
-  1  before the first write: a digest did not match, the folder is not a
+  0  copied and pinned, and tools/check-baseline-pin.py passes the tree; or
+     --help, for which argparse prints its help and nothing is read or written
+  1  before anything is read: the --from folder's name is not a version
+     number, or a --sums-sha256 or --archive-sha256 value is not 64 lower-case
+     hexadecimal digits;
+     before the first write: a digest did not match, the folder is not a
      complete version, its README lacks the folder's version heading or the
      step 7 NOTICE entry, or holds a carriage return; the --from folder is a
      link, or is, is inside, or holds a folder or file it clears or writes; a
      folder or file it writes, or site-src/ or site-src/site.json, is a link or
      of the wrong kind; or, after the copy and the pin are written,
      tools/check-baseline-pin.py finds a problem in the tree, which it names
-  2  the command line is wrong, such as a missing option; argparse names it
+  2  argparse refuses the command line, such as a missing or unknown option;
+     argparse prints its usage and error lines, not this tool's own 1 line,
      and nothing is read or written
   3  an input could not be read, or Python is older than 3.11; or any failure
      after the first change to a managed path and before the pin is written,

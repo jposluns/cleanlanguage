@@ -33,14 +33,19 @@ The last case runs the gate on this repository. The copy-baseline cases run
   ``NOTICE.md`` entry naming the previous version, makes it exit 1 naming the
   gate's problem; and, when not run as root, a folder under ``site/`` that
   cannot be listed makes it exit 3 saying that the gate could not check it;
-- how it fails, with its own 1 line and never a traceback: on Python older
+- how it fails with its own 1 line and never a traceback: on Python older
   than 3.11, stood in for by a gate whose tomllib import fails, it exits 3
   before any served file is replaced; an error that is not an OSError, raised
   by code appended to the gate, exits 3 before any write, or, after the first
-  change, exits 3 saying that the copy and the pin may be incomplete; no
-  options exits 2 with nothing written; a ``--from`` folder that does not
-  exist exits 3; and, when not run as root, a read-only ``.baseline/`` exits 3
-  saying that the copy and the pin may be incomplete;
+  change, exits 3 saying that the copy and the pin may be incomplete; a
+  ``--from`` folder whose name is not a version number, and a
+  ``--sums-sha256`` that is not 64 lower-case hexadecimal digits, each exit 1;
+  a ``--from`` folder that does not exist exits 3; and, when not run as root,
+  a read-only ``.baseline/`` exits 3 saying that the copy and the pin may be
+  incomplete;
+- what argparse handles, with argparse's own output rather than the tool's 1
+  line: no options exits 2 with argparse's usage and error lines, and
+  ``--help`` exits 0 with its help, each with nothing written;
 - that it opens each file in the version folder exactly once, counted by code
   appended to the gate;
 - that a hard link from outside the paths it manages to each file it writes in
@@ -51,13 +56,25 @@ The last case runs the gate on this repository. The copy-baseline cases run
 - and that no copy-baseline run in these cases, refused or not, changes, adds
   or removes a file or link outside the paths the tool manages or under its
   ``--from`` folder, comparing each one's path, inode, size and SHA-256, or
-  a link's target, before and after the run.
+  a link's target, before and after the run. Every run goes through
+  ``copy_run()``, which makes that comparison, and a further case reads this
+  file's source and fails if any other code refers to the tool's path, names
+  its file outside a docstring, or starts a process, apart from
+  ``run_gate()``, which runs the gate. A run written to avoid that reading,
+  such as one that assembles the file name from pieces, is not detected.
+
+The tool compares the ``--from`` folder with the paths it writes by device and
+inode. No case here tells that apart from a comparison of resolved names: both
+catch a link, and only 2 paths to 1 folder that ``resolve()`` does not merge,
+such as a bind mount, would separate them, which needs privileges these tests
+do not assume.
 
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -610,13 +627,13 @@ def managed_folders(root: Path) -> tuple[str, ...]:
 OUTSIDE_CHANGES: list[str] = []
 
 
-def unmanaged(root: Path, version: Path) -> dict[str, tuple]:
+def unmanaged(root: Path, version: Path | None) -> dict[str, tuple]:
     """Every file and link under root outside the paths copy-baseline manages, and every one under the --from folder
-    wherever it is, by path, with its inode, size and SHA-256, or a link's target. Links are recorded, never
-    followed."""
+    wherever it is, when there is one, by path, with its inode, size and SHA-256, or a link's target. Links are
+    recorded, never followed."""
     found: dict[str, tuple] = {}
     managed = managed_folders(root)
-    for top, everything in ((root, False), (version, True)):
+    for top, everything in ((root, False), *(((version, True),) if version is not None else ())):
         for folder, folders, files in os.walk(top):
             for name in folders + files:
                 path = Path(folder) / name
@@ -631,6 +648,37 @@ def unmanaged(root: Path, version: Path) -> dict[str, tuple]:
     return found
 
 
+def install_copy_tool(root: Path) -> Path:
+    """Copy tools/copy-baseline.py into root's tools/, where it takes root as the repository root, and return the
+    copy's path. run_copy() installs it before it writes the version folder's SHA256SUMS, since that folder may hold
+    root."""
+    (root / "tools").mkdir(exist_ok=True)
+    shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
+    return root / "tools" / COPY_TOOL.name
+
+
+def copy_run(root: Path, arguments: list[str], version: Path | None = None) -> subprocess.CompletedProcess:
+    """Install tools/copy-baseline.py in root and run it there with arguments. This is the only code in this file
+    that runs the tool, as invocation_problems() checks, so the comparison here covers every run: whatever the
+    outcome, any file or link outside the paths the tool manages, or under the version folder when one is given,
+    that differs after the run from before it is recorded in OUTSIDE_CHANGES."""
+    tool = install_copy_tool(root)
+    before = unmanaged(root, version)
+    result = subprocess.run([sys.executable, "-I", str(tool), *arguments], capture_output=True, text=True)
+    after = unmanaged(root, version)
+    changed = sorted((before.keys() ^ after.keys()) | {path for path in before.keys() & after.keys()
+                                                      if before[path] != after[path]})
+    if changed:
+        OUTSIDE_CHANGES.append(f"copy-baseline (exit {result.returncode}) changed "
+                               f"{[os.path.relpath(path, root) for path in changed]}")
+    return result
+
+
+def installed(root: Path, result: subprocess.CompletedProcess) -> str:
+    """The path, relative to root, of the copy of the tool that copy_run() ran."""
+    return Path(result.args[2]).relative_to(root).as_posix()
+
+
 def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
              source_link: bool = False, version: Path | None = None, notice: str = NOTICE_TEXT,
              sums_edit=None, sums_sha256: str | None = None) -> subprocess.CompletedProcess:
@@ -641,11 +689,9 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
     source_link, 1.2.1 is a link to the version folder. With version, the version folder is made there instead, and
     its SHA256SUMS lists every file in it, so that a version folder that holds the repository still matches its
     sums. sums_edit, when given, changes the SHA256SUMS text before it is written and hashed, and sums_sha256, when
-    given, replaces its digest on the command line. Whatever the outcome, any file outside the paths the tool
-    manages, or under the version folder, that differs after the run from before it is recorded in
-    OUTSIDE_CHANGES."""
-    (root / "tools").mkdir(exist_ok=True)
-    shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
+    given, replaces its digest on the command line. copy_run() runs the tool and records any change outside the
+    paths it manages or under the version folder."""
+    install_copy_tool(root)
     (root / "tools" / GATE.name).write_bytes(GATE.read_bytes() if gate is None else gate)
     (root / "NOTICE.md").write_text(notice, encoding="utf-8")
     if not os.path.lexists(root / "site-src"):
@@ -663,18 +709,9 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
     (version / "SHA256SUMS").write_text(sums, encoding="utf-8")
     if source_link:
         (root / "1.2.1").symlink_to(version)
-    command = [sys.executable, "-I", str(root / "tools" / COPY_TOOL.name), "--from",
-               str(root / "1.2.1" if source_link else version),
-               "--sums-sha256", sums_sha256 or digest(sums.encode()), "--archive-sha256", "0" * 64]
-    before = unmanaged(root, version)
-    result = subprocess.run(command, capture_output=True, text=True)
-    after = unmanaged(root, version)
-    changed = sorted((before.keys() ^ after.keys()) | {path for path in before.keys() & after.keys()
-                                                      if before[path] != after[path]})
-    if changed:
-        OUTSIDE_CHANGES.append(f"copy-baseline (exit {result.returncode}) changed "
-                               f"{[os.path.relpath(path, root) for path in changed]}")
-    return result
+    arguments = ["--from", str(root / "1.2.1" if source_link else version),
+                 "--sums-sha256", sums_sha256 or digest(sums.encode()), "--archive-sha256", "0" * 64]
+    return copy_run(root, arguments, version)
 
 
 # A version also holds files the site never copies: the 6th script, matrix.js, and reference/.
@@ -872,8 +909,9 @@ def source_holding_repository(scratch: Path) -> tuple[Path, Path]:
 
 
 def source_through_link(scratch: Path) -> tuple[Path, Path]:
-    # A link above the --from folder leads into the served copy folder, so only the folders' device and inode, not
-    # the path given, show that the version folder is inside it.
+    # A link above the --from folder leads into the served copy folder, so the path given does not show that the
+    # version folder is inside it. The tool resolves the --from folder before it compares, so this case passes
+    # whether the folders are compared by device and inode or by resolved name; only a bind mount would separate them.
     (scratch / "via").symlink_to(scratch / "site" / "assets" / "baseline")
     return scratch, scratch / "via" / "1.2.1"
 
@@ -1007,10 +1045,13 @@ _atexit.register(lambda: [print(f"opened {count} {path}", file=_sys.__stderr__) 
 
 
 def failure_problems() -> list[str]:
-    """Any failure ends copy-baseline with its documented code and its own 1 line, never a traceback: an error that is
-    not an OSError, after the first change, exits 3 saying that the copy and the pin may be incomplete; one before any
-    write exits 3 without saying so; a wrong command line exits 2 (argparse); a --from folder that does not exist
-    exits 3. The 2 runs with an injected error also check that the served files are cleared or kept to match."""
+    """Each failure below ends copy-baseline with its documented code and its own 1 line, never a traceback: an error
+    that is not an OSError, after the first change, exits 3 saying that the copy and the pin may be incomplete; one
+    before any write exits 3 without saying so; a --from folder whose name is not a version number, or a
+    --sums-sha256 that is not 64 lower-case hexadecimal digits, exits 1; a --from folder that does not exist exits 3.
+    The 2 runs with an injected error also check that the served files are cleared or kept to match. A command line
+    that argparse refuses, and --help, end with argparse's own output instead: no options exits 2 with its usage and
+    error lines, and --help exits 0 with its help, each with nothing written."""
     problems = []
     for name, injected, incomplete in (("an error that is not an OSError after the first change", FAIL_ON_MKDIR, True),
                                        ("an error that is not an OSError before any write", FAIL_ON_LOAD, False)):
@@ -1028,24 +1069,41 @@ def failure_problems() -> list[str]:
                                 f"{result.stderr.strip()[-300:]!r}; expected 3 with its own 1 line, "
                                 + ("saying that the copy and the pin may be incomplete" if incomplete
                                    else "the served files kept"))
-    with tempfile.TemporaryDirectory() as scratch:
-        root = Path(scratch)
-        (root / "tools").mkdir()
-        shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
-        shutil.copyfile(GATE, root / "tools" / GATE.name)
-        tool = [sys.executable, "-I", str(root / "tools" / COPY_TOOL.name)]
-        result = subprocess.run(tool, capture_output=True, text=True)
-        left = sorted(path.relative_to(root).as_posix() for path in root.rglob("*"))
-        if result.returncode != 2 or "--from" not in result.stderr or left != ["tools", *sorted(
-                f"tools/{name}" for name in (COPY_TOOL.name, GATE.name))]:
-            problems.append(f"copy-baseline: no options exits {result.returncode}, leaving {left}; expected 2, "
-                            f"argparse naming --from, and nothing written: {result.stderr.strip()[-200:]!r}")
-        result = subprocess.run(tool + ["--from", str(root / "1.2.1"), "--sums-sha256", "0" * 64,
-                                        "--archive-sha256", "0" * 64], capture_output=True, text=True)
-        lines = result.stderr.splitlines()
-        if result.returncode != 3 or len(lines) != 1 or "1.2.1 could not be read" not in lines[0]:
-            problems.append(f"copy-baseline: a --from folder that does not exist exits {result.returncode}; "
-                            f"expected 3 with its own 1 line: {result.stderr.strip()[-200:]!r}")
+    # Command lines that argparse handles: each gives the arguments, the expected exit code, whether argparse writes to
+    # stderr (an error) or stdout (the help), and a line argparse's output must hold.
+    for name, arguments, expected, to_stderr, needle in (
+            ("no options", [], 2, True, "error: the following arguments are required: --from"),
+            ("--help", ["--help"], 0, False, "  --from SOURCE")):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            (root / "tools").mkdir()
+            shutil.copyfile(GATE, root / "tools" / GATE.name)
+            result = copy_run(root, arguments)
+            left = sorted(path.relative_to(root).as_posix() for path in root.rglob("*"))
+            output = result.stderr if to_stderr else result.stdout
+            if (result.returncode != expected or not output.startswith("usage: ") or needle not in output
+                    or left != sorted(["tools", f"tools/{GATE.name}", installed(root, result)])):
+                problems.append(f"copy-baseline: {name} exits {result.returncode}, leaving {left}; expected "
+                                f"{expected}, argparse's usage and {needle!r}, and nothing written: "
+                                f"{output.strip()[-200:]!r}")
+    # Failures the tool reports in its own 1 line: each gives the --from folder's name, the --sums-sha256 value, the
+    # expected exit code, and what the line must say.
+    for name, folder, sums_sha256, expected, needle in (
+            ("a --from folder that does not exist", "1.2.1", "0" * 64, 3, "1.2.1 could not be read"),
+            ("a --from folder whose name is not a version number", "latest", "0" * 64, 1,
+             "the folder name 'latest' is not a version number"),
+            ("a --sums-sha256 that is not 64 lower-case hexadecimal digits", "1.2.1", "0" * 63, 1,
+             "--sums-sha256 is not a 64 character lower-case SHA-256")):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            (root / "tools").mkdir()
+            shutil.copyfile(GATE, root / "tools" / GATE.name)
+            arguments = ["--from", str(root / folder), "--sums-sha256", sums_sha256, "--archive-sha256", "0" * 64]
+            result = copy_run(root, arguments, root / folder)
+            lines = result.stderr.splitlines()
+            if result.returncode != expected or len(lines) != 1 or needle not in lines[0]:
+                problems.append(f"copy-baseline: {name} exits {result.returncode}; expected {expected} with its own "
+                                f"1 line saying {needle!r}: {result.stderr.strip()[-200:]!r}")
     return problems
 
 
@@ -1199,21 +1257,87 @@ def pin_header_problems() -> list[str]:
     return problems
 
 
+# The functions in this file that may start a process: run_gate() runs the gate, and copy_run() runs copy-baseline.
+PROCESS_RUNNERS = {"run_gate", "copy_run"}
+# The names that lead to the tool's path, each with the only functions that may use it.
+TOOL_PATH_USERS = {"COPY_TOOL": {"install_copy_tool"}, "install_copy_tool": {"run_copy", "copy_run"}}
+# The name prefixes of the os functions that start a process or replace this one, and the modules that start one.
+OS_LAUNCHERS = ("system", "popen", "exec", "spawn", "posix_spawn", "fork")
+LAUNCHER_MODULES = {"subprocess", "os", "runpy", "multiprocessing", "pty", "asyncio", "concurrent"}
+
+
+def invocation_problems() -> list[str]:
+    """copy_run() is the only code in this file that runs copy-baseline, so its comparison before and after each run
+    covers every run. This reads the file's own source: each name in TOOL_PATH_USERS is used only in the functions
+    it lists; no string outside a docstring and COPY_TOOL's own assignment holds the tool's file name; only
+    copy_run() and run_gate() use subprocess, and copy_run() uses it once; and no code uses an os function that
+    starts a process, imports one of LAUNCHER_MODULES other than subprocess and os, imports either of those under
+    another name, or imports from any of them. A run written to avoid this reading, such as one that assembles the
+    file name from pieces, is not detected."""
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                docstrings.add(id(first.value))
+    assignment = next(statement for statement in tree.body if isinstance(statement, ast.Assign)
+                      and [getattr(target, "id", None) for target in statement.targets] == ["COPY_TOOL"])
+    file_name = next(node.value for node in ast.walk(assignment)
+                     if isinstance(node, ast.Constant) and str(node.value).endswith(".py"))
+    problems = []
+    runs_in_copy_run = 0
+    for statement in tree.body:
+        function = statement.name if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)) else None
+        for node in ast.walk(statement):
+            where = f"line {getattr(node, 'lineno', '?')}"
+            if (isinstance(node, ast.Name) and node.id in TOOL_PATH_USERS and isinstance(node.ctx, ast.Load)
+                    and function not in TOOL_PATH_USERS[node.id]):
+                problems.append(f"{where} uses {node.id} outside {sorted(TOOL_PATH_USERS[node.id])}")
+            elif (isinstance(node, ast.Constant) and isinstance(node.value, str) and file_name in node.value
+                    and id(node) not in docstrings and statement is not assignment):
+                problems.append(f"{where} names {file_name} outside a docstring")
+            elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                if node.value.id == "subprocess" and node.attr != "CompletedProcess":
+                    if function not in PROCESS_RUNNERS:
+                        problems.append(f"{where} uses subprocess.{node.attr} outside {sorted(PROCESS_RUNNERS)}")
+                    elif function == "copy_run":
+                        runs_in_copy_run += 1
+                elif node.value.id == "os" and node.attr.startswith(OS_LAUNCHERS):
+                    problems.append(f"{where} uses os.{node.attr}, which starts a process")
+            elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] in LAUNCHER_MODULES:
+                problems.append(f"{where} imports from {node.module}")
+            elif isinstance(node, ast.Import):
+                # subprocess and os are imported by name only, so that each use reads as subprocess.x or os.x above.
+                for alias in node.names:
+                    top = alias.name.split(".")[0]
+                    if top in LAUNCHER_MODULES and (alias.asname or top not in {"subprocess", "os"}):
+                        problems.append(f"{where} imports {alias.name}" + (f" as {alias.asname}" if alias.asname
+                                                                           else ""))
+    if runs_in_copy_run != 1:
+        problems.append(f"copy_run() uses subprocess {runs_in_copy_run} times; expected once")
+    return [f"the copy-baseline runs: {problem}, so a run could bypass copy_run()'s comparison"
+            for problem in problems]
+
+
 def main() -> int:
     failures: list[str] = (pin_header_problems() + copy_problems() + copy_tree_problems() + copy_gate_problems()
                            + python_floor_problems() + copy_source_problems() + alias_problems()
                            + failure_problems() + read_once_problems() + planted_cache_problems())
-    # The 4 cases of failure_problems(), read_once_problems(), planted_cache_problems(), and in copy_problems() the
+    # The 7 cases of failure_problems(), read_once_problems(), planted_cache_problems(), and in copy_problems() the
     # base path /draft/ and the NOTICE.md entry naming the previous version.
-    ran = 11 + 4 + 1 + 1 + 2
+    ran = 11 + 7 + 1 + 1 + 2
     ran += len(COPY_REFUSALS) + len(COPY_SUMS_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
     # As root, file permissions neither stop a write nor a listing, so neither failure can be stood in for.
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         failures += write_failure_problems() + gate_unreadable_problems()
         ran += 2
-    # Every copy-baseline run above, refused or not, leaves each file outside the paths it manages as it was.
+    # Every copy-baseline run above, refused or not, leaves each file outside the paths it manages as it was. Each run
+    # goes through copy_run(), which records any change, and invocation_problems() fails if any other code could run
+    # the tool, so the first check covers every run.
     failures += [f"{change}, outside the paths it manages" for change in OUTSIDE_CHANGES]
-    ran += 1
+    failures += invocation_problems()
+    ran += 2
     for name, fault, expected, *needles in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
