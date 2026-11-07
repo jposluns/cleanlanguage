@@ -5,7 +5,7 @@ Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
 with the version's README and specification under ``.baseline/`` and a root
 ``NOTICE.md``, applies 1 fault, runs the gate on that tree as a separate
 process and asserts its exit code, and for some cases a line of its output.
-The last case runs the gate on this repository. The first 19 cases run
+The last case runs the gate on this repository. The first 24 cases run
 ``tools/copy-baseline.py`` on a small version folder and assert that the pin
 header it writes, and the committed one, give each key's base; that it copies
 and pins the build tools, the palette gate and the card builder with its
@@ -16,11 +16,16 @@ or whose README names another version, lacks its step 7 NOTICE entry, holds a se
 quoted paragraph in step 7 or has CRLF line ends, on every line or on the
 entry line only, exits 1 before any served file is replaced; that a link or a
 file in place of ``.baseline/card-fonts/``, a link in place of
-``.baseline/check_palette.py``, or a link above the served copy folder makes
-it exit 1 before any write, leaving what the link leads to unchanged; that it
-removes a stray file and folder from ``.baseline/card-fonts/``; and that on
-Python older than 3.11, stood in for by a gate whose tomllib import fails, it
-exits 3 with its own message before any served file is replaced.
+``.baseline/check_palette.py``, a link above the served copy folder, or a link
+in place of ``site-src/`` or ``site-src/site.json`` makes it exit 1 before any
+write, leaving what the link leads to unchanged; that it removes a stray file
+and folder from ``.baseline/card-fonts/``; that it ends by running the gate on
+the tree it wrote, so a clean copy exits 0 and says that the gate passes it,
+and a link elsewhere under ``site/`` makes it exit 1 naming the gate's
+problem; that a ``--from`` folder that is a link makes it exit 1 before any
+write; and that on Python older than 3.11, stood in for by a gate whose
+tomllib import fails, it exits 3 with its own message before any served file
+is replaced.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
@@ -554,19 +559,27 @@ CASES = [
 ]
 
 
-def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None) -> subprocess.CompletedProcess:
+def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
+             source_link: bool = False) -> subprocess.CompletedProcess:
     """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS, with the
-    gate (or the given gate source) beside it, from which it loads notice_entry()."""
+    gate (or the given gate source) beside it, from which it loads notice_entry() and check(), and a NOTICE.md that
+    carries the 1.2.1 entry, so that the gate's check at the end passes a clean copy. A site-src/ that the caller
+    has already made, as a folder or a link, is kept. With source_link, 1.2.1 is a link to the version folder."""
     (root / "tools").mkdir()
     shutil.copyfile(COPY_TOOL, root / "tools" / COPY_TOOL.name)
     (root / "tools" / GATE.name).write_bytes(GATE.read_bytes() if gate is None else gate)
-    (root / "site-src").mkdir()
-    (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
+    (root / "NOTICE.md").write_text(NOTICE_TEXT, encoding="utf-8")
+    if not os.path.lexists(root / "site-src"):
+        (root / "site-src").mkdir()
+        (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
+    version = root / "version-elsewhere" / "1.2.1" if source_link else root / "1.2.1"
     for name, data in package.items():
-        (root / "1.2.1" / name).parent.mkdir(parents=True, exist_ok=True)
-        (root / "1.2.1" / name).write_bytes(data)
+        (version / name).parent.mkdir(parents=True, exist_ok=True)
+        (version / name).write_bytes(data)
     sums = "".join(f"{digest(data)}  {name}\n" for name, data in sorted(package.items()))
-    (root / "1.2.1" / "SHA256SUMS").write_text(sums, encoding="utf-8")
+    (version / "SHA256SUMS").write_text(sums, encoding="utf-8")
+    if source_link:
+        (root / "1.2.1").symlink_to(version)
     command = [sys.executable, "-I", str(root / "tools" / COPY_TOOL.name), "--from", str(root / "1.2.1"),
                "--sums-sha256", digest(sums.encode()), "--archive-sha256", "0" * 64]
     return subprocess.run(command, capture_output=True, text=True)
@@ -620,13 +633,29 @@ def link_served_parent(root: Path) -> None:
     (root / "site" / "assets").symlink_to(root / "outside")
 
 
-# Trees copy-baseline refuses (exit 1) before its first write: each makes a folder it writes into, or a file it writes,
-# a link or of the wrong kind. The folder outside/ must be unchanged after the run.
+def link_site_src(root: Path) -> None:
+    # site-src/ is a link, so the output root would come from a site.json outside the tree; the gate follows it.
+    (root / "outside" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
+    (root / "site-src").symlink_to(root / "outside")
+
+
+def link_site_json(root: Path) -> None:
+    # site-src/site.json is a link, which the gate refuses (exit 3).
+    (root / "outside" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
+    (root / "site-src").mkdir()
+    (root / "site-src" / "site.json").symlink_to(root / "outside" / "site.json")
+
+
+# Trees copy-baseline refuses (exit 1) before its first write: each makes a folder it writes into, a file it writes,
+# or the site-src/site.json it reads the output root from, a link or of the wrong kind. The folder outside/ must be
+# unchanged after the run.
 COPY_TREE_REFUSALS = [
     ("a link in place of .baseline/card-fonts/", link_card_fonts),
     ("a file in place of .baseline/card-fonts/", file_card_fonts),
     ("a link in place of .baseline/check_palette.py", link_build_tool),
     ("a link in place of site/assets/, above the served copy folder", link_served_parent),
+    ("a link in place of site-src/", link_site_src),
+    ("a link in place of site-src/site.json", link_site_json),
 ]
 
 
@@ -662,6 +691,39 @@ def copy_tree_problems() -> list[str]:
         if result.returncode != 0 or left != sorted(key for key in CARD if key.startswith(".baseline/card-fonts/")):
             problems.append(f"copy-baseline: a stray file and folder in .baseline/card-fonts/: exit "
                             f"{result.returncode}, the folder holds {left}; expected 0 and only the pinned fonts")
+    return problems
+
+
+def copy_gate_problems() -> list[str]:
+    """copy-baseline reports success only on a tree the gate passes: a clean copy exits 0 and says that the gate
+    passes it, a link elsewhere under site/, which no check before the first write covers, makes it exit 1 naming
+    the gate's problem, and a --from folder that is a link is refused before any write."""
+    problems = []
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        result = run_copy(root, dict(PACKAGE))
+        if (result.returncode != 0 or "check-baseline-pin.py passes the tree" not in result.stdout
+                or run(root) != 0):
+            problems.append(f"copy-baseline: a clean copy exits {result.returncode} with {result.stdout.strip()!r}; "
+                            "expected 0, saying that the gate passes the tree, and the gate passing it")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        (root / "outside").mkdir()
+        (root / "site").mkdir()
+        (root / "site" / "elsewhere").symlink_to(root / "outside")
+        result = run_copy(root, dict(PACKAGE))
+        if result.returncode != 1 or "site/elsewhere is a link" not in result.stderr:
+            problems.append(f"copy-baseline: a link elsewhere under site/ exits {result.returncode}; expected 1, "
+                            f"naming the gate's problem: {result.stderr.strip()[:200]!r}")
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        served = root / "site" / "assets" / "baseline" / "served-before.css"
+        served.parent.mkdir(parents=True)
+        served.write_bytes(b"a { color: red; }\n")
+        result = run_copy(root, dict(PACKAGE), source_link=True)
+        if result.returncode != 1 or not served.is_file() or (root / ".baseline").exists():
+            problems.append(f"copy-baseline: a --from folder that is a link exits {result.returncode}; expected 1 "
+                            f"before any write: {result.stderr.strip()[:200]!r}")
     return problems
 
 
@@ -751,8 +813,9 @@ def pin_header_problems() -> list[str]:
 
 
 def main() -> int:
-    failures: list[str] = pin_header_problems() + copy_problems() + copy_tree_problems() + python_floor_problems()
-    ran = 6 + len(COPY_REFUSALS) + len(COPY_TREE_REFUSALS)
+    failures: list[str] = (pin_header_problems() + copy_problems() + copy_tree_problems() + copy_gate_problems()
+                           + python_floor_problems())
+    ran = 9 + len(COPY_REFUSALS) + len(COPY_TREE_REFUSALS)
     for name, fault, expected, *needles in CASES:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)

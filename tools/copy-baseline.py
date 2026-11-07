@@ -45,7 +45,16 @@ outlives a copy. Before its first write it refuses (exit 1) a link, or a file
 in place of a folder, at a folder it clears or writes into or at any folder
 above one under the repository root, and a link or a folder in place of a file
 it writes outside the folders it clears: it never writes through a link, and
-``tools/check-baseline-pin.py`` refuses each of these too. It copies
+``tools/check-baseline-pin.py`` refuses each of these too. Before its first
+write it also refuses (exit 1) a link, or an entry of the wrong kind, at
+``site-src/`` or ``site-src/site.json``, from which it reads the output root:
+the gate refuses a ``site-src/site.json`` that is a link (exit 3), and the
+gate follows a linked ``site-src/`` folder, so this tool refuses that one
+because it would read the output root from wherever the link leads. It
+refuses (exit 1) a ``--from`` folder that is itself a link, before it reads
+the version: the gate never reads that folder, so it would not refuse one,
+but this tool would read the version from wherever the link leads while
+taking the version number from the link's own name. It copies
 ``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
 ``.baseline/pin.toml`` in the README's format: a ``version`` key and a
 ``[files]`` table of path to SHA-256, the paths under ``assets/baseline/``
@@ -61,6 +70,15 @@ the README's version against the pin's and its NOTICE entry against
 the copy.
 ``tools/check-baseline-pin.py`` checks the copy offline on every pull request.
 
+It ends by running that gate's own ``check()``, in process, on the repository
+it wrote, and reports success only when the gate passes. Otherwise it exits
+with the gate's code and names the gate's problems; the copy and the pin are
+written by then. The checks before the first write cover only the paths this
+tool writes and reads, so this last check is what catches the rest of the
+tree, such as a link elsewhere under ``site/``. Since the gate compares
+``NOTICE.md``'s ``## Site template`` entry with the pin's version, update that
+entry to the new version before the copy, or the copy exits 1 naming it.
+
 It needs Python 3.11 or later, since the gate it loads imports ``tomllib``.
 
 Usage:
@@ -68,12 +86,16 @@ Usage:
         --sums-sha256 <sha256 of SHA256SUMS> --archive-sha256 <sha256 of the archive>
 
 Exit codes:
-  0  copied and pinned
+  0  copied and pinned, and tools/check-baseline-pin.py passes the tree
   1  a digest did not match, the folder is not a complete version, its README
      lacks the folder's version heading or the step 7 NOTICE entry, or holds a
-     carriage return, or a folder or file it writes is a link or of the wrong
-     kind
-  3  an input could not be read, or Python is older than 3.11
+     carriage return, the --from folder is a link, or a folder or file it
+     writes, or site-src/ or site-src/site.json, is a link or of the wrong
+     kind; or, after the copy, tools/check-baseline-pin.py finds a problem in
+     the tree, which it names
+  3  an input could not be read, or Python is older than 3.11; or, after the
+     copy, tools/check-baseline-pin.py could not read the tree or found it
+     malformed, which it names
 """
 
 from __future__ import annotations
@@ -122,7 +144,8 @@ def sha256(path: Path) -> str:
 
 
 def load_gate():
-    """tools/check-baseline-pin.py as a module, for its TOOLS, notice_entry(), NOTICE_STEP and ENTRY_PREFIX. The
+    """tools/check-baseline-pin.py as a module, for its TOOLS, notice_entry(), NOTICE_STEP, ENTRY_PREFIX, and the
+    check() and Unreadable with which this tool checks the tree it wrote. The
     gate's tomllib guard exits on Python older than 3.11; its message is dropped and this tool reports the floor in its
     own words."""
     try:
@@ -176,10 +199,10 @@ def list_files(root: Path) -> list[str]:
     return sorted(found)
 
 
-def check_target(path: Path, folder: bool) -> None:
+def check_target(path: Path, folder: bool, action: str = "write through") -> None:
     """Exit 1 unless path, and each folder above it under the repository root, is absent or a folder and never a link,
-    or, when path is a file this tool writes, unless it is absent or a regular file. Writing through a link would
-    change what it leads to, and the gate refuses the result."""
+    or, when path is a file this tool writes or reads, unless it is absent or a regular file. Writing through a link
+    would change what it leads to, and reading through one would take an input from wherever it leads."""
     parts = path.relative_to(REPO_ROOT).parts
     for depth in range(1, len(parts) + 1):
         current = REPO_ROOT.joinpath(*parts[:depth])
@@ -191,7 +214,7 @@ def check_target(path: Path, folder: bool) -> None:
         except OSError as error:
             die(3, f"{shown} could not be read: {error}")
         if stat.S_ISLNK(mode):
-            die(1, f"{shown} is a link; refusing to write through it")
+            die(1, f"{shown} is a link; refusing to {action} it")
         if depth == len(parts) and not folder:
             if not stat.S_ISREG(mode):
                 die(1, f"{shown} is not a regular file")
@@ -213,6 +236,14 @@ def main() -> int:
     for value, label in ((args.sums_sha256, "--sums-sha256"), (args.archive_sha256, "--archive-sha256")):
         if not HEX64.match(value):
             die(1, f"{label} is not a 64 character lower-case SHA-256")
+    # A linked version folder would be read from wherever the link leads, while the version number comes from the
+    # link's own name.
+    try:
+        source_mode = os.lstat(source).st_mode
+    except OSError as error:
+        die(3, f"{source} could not be read: {error}")
+    if stat.S_ISLNK(source_mode):
+        die(1, f"{source} is a link; give the unpacked version folder itself")
 
     sums_path = source / "SHA256SUMS"
     if sha256(sums_path) != args.sums_sha256:
@@ -262,6 +293,8 @@ def main() -> int:
                "<version> once, followed by a blank line or the step's end, and holds no '<blockquote'")
 
     chosen = sorted(name for name in listed if wanted(name))
+    # The output root comes from site-src/site.json, so neither it nor its folder may lead elsewhere.
+    check_target(REPO_ROOT / "site-src" / "site.json", folder=False, action="read through")
     dest = output_root() / PREFIX
     # The build tools' own folders under .baseline/, such as card-fonts/, are rebuilt like the served copy folder, so
     # that the gate finds no stray file there. Every folder cleared or written into, and every file written beside
@@ -311,9 +344,20 @@ def main() -> int:
     lines += [f'"{PREFIX}{name}" = "{listed[name]}"' for name in chosen]
     lines += [f'"{key}" = "{listed[tool_source]}"' for key, tool_source in tools.items()]
     (PIN_DIR / "pin.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # The checks before the first write cover only the paths written and read here; the gate checks the whole tree,
+    # so success is reported only for a tree the gate passes.
+    try:
+        problems = gate.check(REPO_ROOT)
+    except gate.Unreadable as error:
+        die(3, f"wrote the copy and the pin, but {GATE.name} could not check the tree: {error}")
+    if problems:
+        print(f"copy-baseline: wrote the copy and the pin, but {GATE.name} refuses the tree:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
     print(f"copied {len(chosen) + len(tools)} files of baseline {version} ({len(chosen)} to {PREFIX} and "
           f"{len(tools)} build tool files to .baseline/) and wrote .baseline/pin.toml; copied the documents "
-          f"{' and '.join(DOCUMENTS)} to .baseline/, not pinned")
+          f"{' and '.join(DOCUMENTS)} to .baseline/, not pinned; {GATE.name} passes the tree")
     return 0
 
 
