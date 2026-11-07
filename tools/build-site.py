@@ -193,8 +193,8 @@ then with it deleted too; those 2 are each read again as a
 browser with scripting off shows the page (``scripting_off()``), with the
 content of each ``noscript`` kept, its hiding rules applying, since a
 ``noscript`` paragraph holding ``About``, a hidden span, then ``this
-project`` built with exit 0 without those readings; the label counts in any
-reading), a
+project`` would build with exit 0 without those readings; the label counts
+in any reading), a
 landing page whose text carries it other than once, from inside the About
 block, in each reading, and any other page whose text carries it; and a
 release version that disagrees with SKILL.md. The page source grammar leaves
@@ -385,7 +385,7 @@ its counts of ``<svg`` and ``scheme.js``; and its search for
 ``SOURCE_ELEMENTS`` admits only the elements the committed sources use, which
 keeps out ``select`` and ``input``: under legacy select parsing, a browser
 ends an open ``select`` at a nested ``select`` or an ``input`` and places what
-follows outside it, where the parser reads it as still inside, which moved
+follows outside it, where the parser reads it as still inside, which can move
 the value paragraph out of the summary of a closed details. The list settles
 which elements a source may carry; the tree rules below settle where. An
 element is added only after a review of its parsing rules and of those rules.
@@ -395,8 +395,9 @@ use (``alt``, ``aria-hidden``, ``aria-label``, ``class``, ``data-copy``,
 ``hidden``, ``href``, ``id``, ``rel``, ``src``, ``tabindex``, ``target`` and
 ``type``; no ``details`` carries any). What a browser does with an attribute
 is open-ended: in a ``details`` name group it closes all but 1 open member,
-so a value paragraph inside a later open member was hidden while every rule
-passed. The rules model ``hidden``, ``aria-hidden`` and ``class`` (as
+so a value paragraph inside a later open member is hidden, while every other
+rule reads that member as open and would pass it. The rules model
+``hidden``, ``aria-hidden`` and ``class`` (as
 ``tools/check-install-page.py`` reads hiding, stylesheet rules apart, as
 above); by the HTML Standard's rules, the others admitted neither hide nor
 move an element; only ``data-copy`` makes a loaded script show an element:
@@ -405,10 +406,10 @@ element and, on a copy, replaces its content with plain text, so
 ``placement_pin()`` holds it to the committed copy button (below). An
 attribute is added only after a review of what it makes a browser do.
 ``open`` stays out (accepted residual, refused, not modelled): the rules read
-a details with ``open`` as opened only, where a reader can close it, so once
-``open`` was admitted, a label that shows only on closing and a value
-paragraph in its folded content each built with exit 0 in a probe that
-admitted it, and an ordinary ``<details open>`` is refused.
+a details with ``open`` as opened only, where a reader can close it, so if
+``open`` were admitted, a label that shows only on closing and a value
+paragraph in its folded content would each build with exit 0, and an
+ordinary ``<details open>`` is refused.
 
 ``SOURCE_CLASSES`` admits only the class names the committed sources use, as
 ``with_about()`` reads them, and in the landing page's value region only
@@ -417,9 +418,10 @@ rule can hide or move an element by a class it names, which the rules do not
 read apart from the hiding reader's bare single classes: a ``div.figure`` and
 a ``div.stack`` around the value paragraph (the descendant selector
 ``.figure .stack`` sets ``display: none``), or ``copy`` on it (the
-single-class selector ``.copy`` sets ``position: absolute``), built with exit
-0, and so did a ``span.sun`` that hid a character splitting the label in a
-``p.lbl.scheme`` (the descendant selector ``.scheme .sun``). Both pins are
+single-class selector ``.copy`` sets ``position: absolute``), pass every rule
+checked before these 2 pins, as does a ``span.sun`` that hides a character
+splitting the label in a ``p.lbl.scheme`` (the descendant selector
+``.scheme .sun``). Both pins are
 checked after the other source rules, and name where the start tag starts. A
 class name is added only after a review of what each stylesheet rule that
 names it does. In the value region each of the 3 also has 1 place, after

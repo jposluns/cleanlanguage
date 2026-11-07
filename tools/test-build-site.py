@@ -870,8 +870,8 @@ PAGE_MATH_RULE = "a <math> start tag in the page"
 GRAMMAR_RULE = "a page source holds only markup on which Python's parser and a browser read the same tokens"
 # A start tag outside the generator's SOURCE_ELEMENTS, such as select or input, at which a browser ends an open select
 # and places what follows outside it; and a noscript inside a noscript, which a browser with scripting on ends at the
-# inner one's end tag. Each moved the value paragraph out of the first summary of a closed details as a browser reads
-# it, while the parser read it inside.
+# inner one's end tag. Each can move the value paragraph out of the first summary of a closed details as a browser
+# reads it, while the parser reads it inside.
 ELEMENT_RULE = "a page source carries only the elements of SOURCE_ELEMENTS"
 NOSCRIPT_RULE = "a <noscript> start tag inside a noscript"
 # An attribute name outside the generator's SOURCE_ATTRIBUTES, such as name, at which a browser closes all but 1 open
@@ -1110,7 +1110,7 @@ SOURCE_REFUSALS = [
         root, HOME, VALUE, '<script type="application/json"><!--<script></script>' + VALUE), GRAMMAR_RULE),
     # A browser, with scripting on, ends the outer noscript at the inner end tag, so </summary> closes the summary and
     # the value paragraph becomes a hidden child of the closed details; under legacy select parsing, a nested select
-    # or an input ends the select, with the same effect. The parser read the paragraph inside the first summary.
+    # or an input ends the select, with the same effect. The parser reads the paragraph inside the first summary.
     ("the value paragraph after a noscript inside a noscript in a summary", wrap_value(
         "<details><summary><noscript><summary><noscript></noscript></summary></noscript>", "</summary></details>"),
         NOSCRIPT_RULE),
@@ -1132,7 +1132,8 @@ SOURCE_REFUSALS = [
         "<details><p><summary>x</summary></p><summary>", "</summary></details>"), SUMMARY_RULE),
     ("the value paragraph after a summary inside a table in a closed details", wrap_value(
         "<details><table><summary>x</summary></table><summary>", "</summary></details>"), SUMMARY_RULE),
-    # The reported form carries an open attribute, which SOURCE_ATTRIBUTES now refuses first; without it, the li rule.
+    # This form carries an open attribute, which SOURCE_ATTRIBUTES refuses first; the next case, without it, reaches
+    # the li rule.
     ("the value paragraph after an li inside an li in a summary", wrap_value(
         "<details><summary><div><details open><summary><li><div><li></li></div></li></summary>",
         "</details></div></summary></details>"), ATTRIBUTE_RULE),
@@ -1924,9 +1925,9 @@ def check_inner_about_rows(failures: list[str]) -> int:
     interrupted by a soft hyphen, a zero-width joiner or a character of LABEL_IGNORED (format characters and
     default-ignorable code points), or split by a hidden element inside a noscript, where only the readings with
     scripting off show it (the generator's scripting_off() and the helper's labels()), the generator by its own rule
-    (row 144, for which the paragraph case here flipped from passing); in an attribute value (one that holds >
-    included), a comment or lower-case prose, the label passes both. A page is not held to the page source grammar,
-    so > in a value can reach this reading."""
+    (row 144; without those readings, the noscript paragraph case here would pass); in an attribute value (one that
+    holds > included), a comment or lower-case prose, the label passes both. A page is not held to the page source
+    grammar, so > in a value can reach this reading."""
     generator = load_module(GENERATOR)
     config = json.loads((REPO_ROOT / "site-src/site.json").read_text(encoding="utf-8"))
     page = next(entry for entry in config["pages"] if entry["id"] == "license")
@@ -2112,9 +2113,9 @@ def check_about_block(failures: list[str]) -> int:
             [(block, block + f'<p class="lbl file"><span class="tag">{MIXED_LABEL}</span></p>')], label_rule),
         ("the label in mixed case in a p.lbl.file after the block",
             [(block, block + f'<p class="lbl file">{MIXED_LABEL}</p>')], None),
-        # The value paragraph holds no element but an a with only href, and no character outside its list. A details
-        # in it is refused by the pin (and in a page source by the tree rules first), so whether a browser shows the
-        # first summary of a closed one there no longer arises.
+        # The value paragraph holds no element but an a with only href or an em with no attribute, and no character
+        # outside its list. A details in it is refused by the pin (and in a page source by the tree rules first), so
+        # whether a browser shows the first summary of a closed one there does not arise.
         ("the value paragraph's content in a hidden span", [(VALUE, VALUE + "<span hidden>"), (end, end_in("</span>"))],
             value_rule),
         ("the value paragraph's content in an aria-hidden span",
