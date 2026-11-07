@@ -133,12 +133,15 @@ at the file's path, including a device node, which the guard opens before it che
 file, and the read of a regular file can each block, and each is bounded only by the hook's
 10-second timeout, and the tests do not show what Claude Code does with the call when that timeout
 expires; the guard's fail-closed handler covers only its argument parse, payload read and decision,
-so if the hook process cannot start, such as when `python3` is not on the hook shell's `PATH` (exit
-127), is killed by a signal, or fails while it writes its verdict, it ends without a complete
-verdict and with a status other than 0 or 2, which Claude Code's hook contract treats as a
-non-blocking error, so the question would go through, as the contract says and the tests do not
-observe; and `orch_ask_guard` continues to log a fail-open audit event on every question until the
-upstream fix is re-vendored.
+so before that handler runs the outcome depends on how the hook process ends: when `python3 -I`
+cannot open the script, for example because the file is missing, it exits 2, which Claude Code's
+hook contract treats as blocking for PreToolUse, so every AskUserQuestion call would be blocked, in
+any mode, without the record-and-continue instruction, and if the hook process cannot start, such
+as when `python3` is not on the hook shell's `PATH` (exit 127), is killed by a signal, or fails
+while it writes its verdict, it ends without a complete verdict and with a status other than 0 or
+2, which the contract treats as a non-blocking error, so the question would go through; both
+outcomes are what the contract says, not something the tests observe; and `orch_ask_guard`
+continues to log a fail-open audit event on every question until the upstream fix is re-vendored.
 
 One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
 empties, so cross-repository writes deny), but the scope-gated guards do not react to it

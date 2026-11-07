@@ -27,6 +27,7 @@ import errno
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -307,6 +308,66 @@ class AskModeGuard(unittest.TestCase):
         with self.subTest(mode="unattended"):
             self.write_mode(UNATTENDED_LINE, path=real_dir / "operating-mode")
             self.assert_denies(self.run_guard(), "is unattended")
+
+    def test_fifo_at_the_host_directory_denies(self):
+        # lstat finds the FIFO, so the host directory is present, and the open below it fails with
+        # ENOTDIR; a check that read a host directory that is not a directory as absent would allow.
+        self.host_dir.rmdir()
+        os.mkfifo(self.host_dir)
+        self.assert_denies(self.run_guard(),
+                           "is unreadable: {}".format(os.strerror(errno.ENOTDIR)))
+
+    def test_socket_at_the_host_directory_denies(self):
+        # As for the FIFO: lstat finds the socket, and the open below it fails with ENOTDIR.
+        self.host_dir.rmdir()
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            listener.bind(str(self.host_dir))
+            result = self.run_guard()
+        finally:
+            listener.close()
+        self.assert_denies(result, "is unreadable: {}".format(os.strerror(errno.ENOTDIR)))
+
+    def test_device_at_the_host_directory_denies(self):
+        # Only root can create a device node, so the case puts the mode file below /dev/null, a
+        # character device every Linux host has: lstat finds it, and the open fails with ENOTDIR.
+        device = Path("/dev/null")
+        if not stat.S_ISCHR(device.lstat().st_mode):
+            self.skipTest("/dev/null is not a character device on this host")
+        mode_file = device / "operating-mode"
+        self.assert_denies(self.run_guard(mode_file=mode_file),
+                           "{} is unreadable: {}".format(mode_file, os.strerror(errno.ENOTDIR)))
+
+    def test_symlink_to_a_file_at_the_host_directory_denies(self):
+        # lstat does not follow the link, so the host directory is present; the open follows it to
+        # an attended-autonomous file and fails with ENOTDIR, so that file never decides.
+        target = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self._tmp / "real-file")
+        self.host_dir.rmdir()
+        self.host_dir.symlink_to(target)
+        self.assert_denies(self.run_guard(),
+                           "is unreadable: {}".format(os.strerror(errno.ENOTDIR)))
+
+    def test_symlink_loop_above_the_host_directory_denies(self):
+        # Here lstat itself meets the loop and fails with ELOOP, which is not absence, so it must
+        # deny rather than read as an absent directory.
+        loop = self._tmp / "loop"
+        loop.symlink_to(loop)
+        result = self.run_guard(mode_file=loop / "orch-operator" / "operating-mode")
+        self.assert_denies(result, "cannot be checked: {}".format(os.strerror(errno.ELOOP)))
+
+    def test_host_directory_that_cannot_be_searched_denies(self):
+        # lstat of the directory succeeds, since its parent can be searched, and the open of the
+        # mode file inside it fails with EACCES, which must deny even over an attended-autonomous
+        # record.
+        if os.geteuid() == 0:
+            self.skipTest("root searches a mode 600 directory, so this case needs a uid other than 0")
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
+        os.chmod(self.host_dir, 0o600)
+        try:
+            result = self.run_guard()
+        finally:
+            os.chmod(self.host_dir, 0o700)
+        self.assert_denies(result, "is unreadable: {}".format(os.strerror(errno.EACCES)))
 
     def test_missing_file_with_directory_present_denies(self):
         self.assert_denies(self.run_guard(), "is missing")

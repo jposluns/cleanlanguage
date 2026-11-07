@@ -72,12 +72,16 @@ which the guard opens before it checks for a regular file, and the read of a reg
 block, such as on a stalled network filesystem or in a device driver, and each is bounded only by
 the hook's 10-second timeout, and the tests do not show what Claude Code does with the call when
 that timeout expires; the fail-closed handler in main() covers only the argument parse, the payload
-read and the decision, so if the hook process cannot start, such as when python3 is not on the
-hook shell's PATH (exit 127), is killed by a signal, or fails while it writes its verdict, it ends
-without a complete verdict and with a status other than 0 or 2, which Claude Code's hook contract
-treats as a non-blocking error, so the question would go through; that is what the contract says,
-not something the tests observe; and the vendored orch_ask_guard continues to log a fail-open audit
-event on every question until the upstream fix is re-vendored.
+read and the decision, so before main() runs the outcome depends on how the hook process ends: when
+python3 -I cannot open the script, for example because the file is missing, it exits 2, which
+Claude Code's hook contract treats as blocking for PreToolUse, so every AskUserQuestion call would
+be blocked, in any mode, without the record-and-continue instruction, and if the hook process
+cannot start, such as when python3 is not on the hook shell's PATH (exit 127), is killed by a
+signal, or fails while it writes its verdict, it ends without a complete verdict and with a status
+other than 0 or 2, which the contract treats as a non-blocking error, so the question would go
+through; both outcomes are what the contract says, not something the tests observe; and the
+vendored orch_ask_guard continues to log a fail-open audit event on every question until the
+upstream fix is re-vendored.
 """
 import errno
 import json
