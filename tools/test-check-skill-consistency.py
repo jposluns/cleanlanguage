@@ -82,7 +82,8 @@ CHECKLIST_HEADING = "## Mechanics\n"
 # The heading after the carve-out section, which ends the section.
 NEXT_HEADING = "## Match the context\n"
 # A line that only item 5 refuses, for its "&", so it pins where each span starts and ends: refused on the first
-# and last line of a span, and read as text just outside it.
+# line of the checklist span, on the first line under the SKILL.md section's own heading line, which item 5 accepts
+# without reading its characters, and on the last line of each span, and read as text just outside each span.
 EDGE = "x & y\n"
 # How the gate names the checklist span, by the 2 edges it read between.
 CHECKLIST_SPAN = "the lines between the heading above the dash bullet and "
