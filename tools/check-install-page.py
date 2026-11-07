@@ -37,7 +37,7 @@ What it verifies
    in ``HIDING_CLASSES``: ``vh``, the template's visually-hidden class,
    ``visually-hidden``, ``only-dark`` or ``skip``, each matched as a whole class
    name; an element in ``HIDING_ELEMENTS``: ``datalist``, ``noscript``, ``rp``,
-   ``script`` or ``title``, or 1 whose content a browser renders only as
+   ``script`` or ``title``, or 1 whose content a browser may render only as
    fallback or in a control: ``audio``, ``canvas``, ``meter``, ``object``,
    ``progress``, ``select`` or ``video``; a ``dialog`` without ``open``; or a
    ``details`` without ``open``, which the gate reads as hiding all its
@@ -72,9 +72,9 @@ What it verifies
    family links, or the text above them, in another order, and a browser can
    reopen a formatting element that an end tag closed out of order, with its
    attributes, around later text (``<span hidden><b dir="rtl"></span>`` in a
-   family link reopens the ``b`` around the later links). No ``html`` or
+   family link can reopen the ``b`` around the later links). No ``html`` or
    ``body`` start tag anywhere on the page carries ``dir``, because a browser
-   adds its attributes to the page's own element. The pin of elements and
+   may add its attributes to the page's own element. The pin of elements and
    text reads every element and text there, shown or hidden, and nothing
    inside ``header.mast``, whose markup the generator's validator pins (see
    below), or after the button row. Because a browser can move into the body,
@@ -100,7 +100,7 @@ What it verifies
    that holds the family's name in ``FAMILY_NAMES`` (in that text, compared
    without regard to case, with U+0000 and the characters of ``ZERO_WIDTH``
    other than U+00A0 deleted, and each ``br`` not hidden, ``</br>`` included,
-   which a browser reads as ``<br>``, and each run of whitespace, U+00A0
+   which a browser may read as ``<br>``, and each run of whitespace, U+00A0
    included, read as 1 space) and no bidi control in that text
    (``BIDI_CONTROLS``: U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to
    U+2069, which can show the letters in another order), and no element that
@@ -128,7 +128,7 @@ What it verifies
    structured-data block, no ``on*`` attribute, no ``javascript:`` URL, no
    ``<style>`` element or ``style`` attribute, no script from another origin,
    and none of the elements that check 7 of that gate refuses because the
-   parser reads them differently from a browser; and, by that same check 7,
+   parser can read them differently from a browser; and, by that same check 7,
    exactly 1 element with ``data-scheme-toggle``, the light and dark switch of
    template specification 7.33, in its place.
 6. Versioned asset tokens and loads on each of the 6 pages: ``fonts.css``,
@@ -153,9 +153,9 @@ What it verifies
    1.6.0), before the head ends where HTML5 ends it: at the first text other
    than whitespace, start tag other than those HTML5 allows in a head
    (``HEAD_TAGS``), or ``</body>``, ``</html>`` or ``</br>``. A self-closing tag
-   leaves an element that is neither void nor in ``<svg>`` open, as in a
-   browser; in ``<svg>`` this reading closes it, also where a browser moves it
-   out of the ``svg`` and keeps it open (check 5 refuses such an ``svg``). The
+   leaves an element that is neither void nor in ``<svg>`` open, as a
+   browser may; in ``<svg>`` this reading closes it, also where a browser may move it
+   out of the ``svg`` and keep it open (check 5 refuses such an ``svg``). The
    reading fails closed where it does not model HTML5: such a
    start tag inside a ``<template>`` or ``<noscript>`` in the head ends the
    head, and a self-closing tag in ``<math>`` leaves its element open. Every
@@ -189,7 +189,7 @@ What it verifies
    inside a comment loads nothing, and a ``<script>`` or stylesheet written in
    another spelling (letter case, a character reference, attribute order or
    spacing) is still counted. Any tag that carries an attribute twice fails: a
-   browser reads the first value, and the load reading would take the last. Every
+   browser may read the first value, and the load reading would take the last. Every
    ``<script>`` start tag with a ``src`` that a text match finds, a tag in a
    comment included, is ``scheme.js`` in its exact form or 1 of
    ``ALLOWED_SCRIPTS`` with a ``?v=X.Y.Z`` token and ``defer``.
@@ -202,8 +202,8 @@ What it verifies
    sets, or other than ``/draft/*`` detaches, ``Content-Security-Policy``; a
    ``/draft/*`` rule appears only while a new
    version is staged, and ``tools/check-headers.py`` check 5 holds it to its
-   exact lines. The policy allows ``'unsafe-inline'``, so a browser does not
-   block inline code on these pages. The site's own pages must not use it
+   exact lines. The policy allows ``'unsafe-inline'``, so it lets a browser run
+   inline code on these pages. The site's own pages must not use it
    (template specification, section 5), and check 5 and
    ``tools/check-inline-code.py`` enforce that rule. No rule sets a ``Link``
    header, which a browser can read as a stylesheet load that check 6 and the
@@ -317,7 +317,7 @@ What it verifies
    the pages. Each of them is also of a tag that the committed pages give an
    element there (``TAG_PIN``), so any other tag fails, with or without a
    class or an attribute: a ``marquee`` around a checked element, which a
-   browser scrolls in and out of view, a ``font`` or a ``details`` around a
+   browser can scroll in and out of view, a ``font`` or a ``details`` around a
    family page's ``h1``, and a ``span``, a ``br``, a ``div`` or a ``bdi``
    inside a family link or a family page's ``h1``.
    ``tools/test-install-page.py`` fails unless ``TAG_PIN`` holds exactly the
@@ -339,7 +339,7 @@ What it verifies
    unless ``PAGE_TAGS`` holds exactly the tags the committed pages use. A
    correct new tag (an ``em`` in a step, say) fails until ``PAGE_TAGS``
    changes with the pages. No ``html`` or ``body`` start tag other than the
-   first of each on the page carries any attribute, because a browser adds its
+   first of each on the page carries any attribute, because a browser may add its
    attributes to the page's own element, an ancestor of every checked element,
    so a later ``<body class="fresh">`` fails. Nor does any ``html`` or ``body``
    start tag that is not, as the parser holds it open, an ancestor of every
@@ -349,7 +349,7 @@ What it verifies
    ``</main>`` on a page whose opening ``html`` start tag was removed (check 6
    refuses that page too, because its head is then not ``html > head``). Each
    page begins with exactly ``<!doctype html>`` on its own line, as
-   ``tools/build-site.py`` writes it: without it a browser renders the page in
+   ``tools/build-site.py`` writes it: without it a browser may render the page in
    quirks mode, where a class selector matches a class name without regard to
    case, while this check and the rule pin compare class names with regard to
    case (``.DOC { display: none; }`` would hide ``div.doc``). No end tag on
@@ -358,7 +358,7 @@ What it verifies
    self-closing tag in an ``svg``, which it reads as closed: here such an
    end tag closes every element opened inside its own, where a browser can
    ignore it, keep 1 of those open or reopen 1 (see below). An ``html``,
-   ``head`` or body element, which a browser does not open again for a later
+   ``head`` or body element, which a browser might not open again for a later
    start tag, does not count as open inside. The parser reads a self-closing
    ``<svg/>``, and a self-closing ``circle`` or ``path`` whose parent, as the
    parser holds it, is an ``svg`` (``SVG_SHAPES``, the elements that the
@@ -374,10 +374,10 @@ What it verifies
    ``rect`` anyway.
    Nor does an element count whose end tag the HTML standard lets a page omit
    where no more content follows in its parent, when that parent, as the
-   parser holds it, is 1 at whose end tag a browser closes it too
+   parser holds it, is 1 at whose end tag a browser may close it too
    (``IMPLIED_ENDS``: an ``li``, ``dd``, ``p``, ``rt``, ``rp``, ``optgroup``,
    ``option``, ``tbody``, ``tfoot``, ``tr``, ``td`` or ``th`` in such a parent,
-   so not a ``p`` in a ``span``, whose end tag a browser then ignores) and
+   so not a ``p`` in a ``span``, whose end tag a browser may then ignore) and
    that parent counts as opened. Every element counts as opened but a table
    part (``TABLE_PARTS``: a ``caption``, ``tbody``, ``tfoot``, ``thead``,
    ``tr``, ``td`` or ``th``), which counts only where its parent, as the
@@ -396,10 +396,10 @@ What it verifies
    though ``tools/build-site.py`` refuses that omission in a page it
    generates. Of the end tags that a page
    omits before a sibling, ``IMPLIED_ENDS`` holds only that of an ``li``
-   directly in an ``li``, which a browser closes at the second's start tag, so
+   directly in an ``li``, which a browser may close at the second's start tag, so
    ``<ul><li>a<li>b</ul>`` passes, though ``tools/build-site.py`` refuses it
    too, while ``<span class="vh"><li>a<li>b</span>``, after which a browser
-   keeps the ``span`` open, fails, and in a step list that omission fails the
+   may keep the ``span`` open, fails, and in a step list that omission fails the
    tag pin, which allows no ``li`` in a step. Every other such omission still
    counts, because the parser keeps the first element open around the next, so
    ``<ul><li><p>a<li>b</ul>``, ``<div><p>a<p>b</div>``, ``<dl><dd>a<dd>b</dl>``
@@ -416,7 +416,7 @@ What it verifies
    ``og:title``, ``og:description``, ``og:url``,
    ``article:published_time``, ``article:modified_time``, ``twitter:title``
    and ``twitter:description``, and the ``href`` of the canonical link), which
-   a browser reads as metadata only and which change with each page and
+   the gate treats as metadata only and which change with each page and
    release, and the ``href`` of a stylesheet, which check 6 holds to its exact
    form. So a ``meta`` with ``http-equiv`` in any value fails: ``refresh``,
    which can send the reader away from the page, before a family page's
@@ -425,7 +425,7 @@ What it verifies
    that carry a ``title``; these pages have none to select, because check 6
    holds each stylesheet to an exact form without one, so it fails only as
    an ``http-equiv`` that no committed page carries. So do a ``base``, whose
-   ``href`` a browser already ignores here, because ``site/_headers`` sets
+   ``href`` a browser may already ignore here, because ``site/_headers`` sets
    ``base-uri 'none'`` in the shared policy, but whose ``target`` that
    policy does not restrict, and can open every link elsewhere; a
    ``viewport`` or ``charset`` with another value, a ``color-scheme``
@@ -489,9 +489,9 @@ whitespace only, as HTML splits them (``class="btn&nbsp;inline"`` is 1 class,
 not ``btn`` and ``inline``). A script or stylesheet inside ``<noscript>``,
 ``<template>``, ``<plaintext>``, a raw-text element or one of ``HIDING_ELEMENTS``
 (``INERT_ELEMENTS`` of ``tools/check-inline-code.py``, whose content a
-browser with scripting on does not render as page elements or, for ``audio``,
+browser with scripting on might not render as page elements or, for ``audio``,
 ``canvas``, ``datalist``, ``meter``, ``object``, ``progress``, ``rp``,
-``select`` and ``video``, renders only as fallback, only in its control or not
+``select`` and ``video``, may render only as fallback, only in its control or not
 at all) is not in ``html > head``, so check 6 never counts it as placed there
 or as the load of ``copy.js``; nor do checks 3 and 4 count an id or a link
 inside one. What guarantees the committed pages is the
@@ -511,28 +511,28 @@ closed ``<body data-preset></body>`` in ``div.doc``), which check 8 refuses
 when it carries an attribute; a change in flight (PR 225) is to make the
 generator refuse ``html``, ``head`` and ``body`` start tags in a page source.
 An ancestor in checks 1 and 4 is an
-element that the parser holds open, and the gate follows a browser in these
-ways where the two differ: ``/>`` on an element that is not void
+element that the parser holds open, and the gate assumes a browser's reading in these
+ways where the two can differ: ``/>`` on an element that is not void
 does not close it, so ``<div hidden/>`` hides what follows; of 2 attributes with
 the same name, the first counts; a heading start tag closes a heading that is
 the current node, and any heading end tag closes the innermost open heading;
 text after an ``a`` start tag is not in a link opened before it (a browser
-keeps that link open when the later one sits in a table cell or caption, an
+may keep that link open when the later one sits in a table cell or caption, an
 ``object``, a ``marquee`` or an ``applet`` inside it, so there the gate
 refuses more);
 and a hiding ``html`` or ``body`` start tag anywhere hides the whole page,
-because a browser adds its attributes to the page's own element, and so does
-a ``frameset`` start tag, because a browser that honours one drops the whole
-body (it ignores one after the body start tag, so there the gate refuses
+because a browser may add its attributes to the page's own element, and so does
+a ``frameset`` start tag, because a browser that honours one may drop the whole
+body (it may ignore one after the body start tag, so there the gate refuses
 more). Where
-``html.parser`` keeps open an element that a browser closes by an implied end
-tag (a ``p`` before a ``div``, say), the gate sees more ancestors than a
+``html.parser`` keeps open an element that a browser may close by an implied end
+tag (a ``p`` before a ``div``, say), the gate can see more ancestors than a
 browser. A hiding one makes it refuse more. Check 1 refuses any element
 directly in the paragraph of family links, and check 8 any element inside a
 family link (``TAG_PIN``), so neither ``<div></div>`` between 2 family links,
 nor ``<p><h2>Pick</h2><a class="btn inline"``, nor
 ``<a class="btn inline" id="claude" href="/install/claude/"><div>Claude</div></a>``,
-in which a browser closes the ``p`` at the ``div``, passes.
+in which a browser may close the ``p`` at the ``div``, passes.
 
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
@@ -545,10 +545,10 @@ below). Of the elements the HTML standard hides
 with no stylesheet, it does not list those that cannot hold a checked element
 or its text: the void elements (``area``, ``base``, ``basefont``, ``link``,
 ``meta``, ``param``, and ``input`` with ``type=hidden``) and ``head`` (a
-browser moves body content out of it); check 5 refuses ``style``,
+browser may move body content out of it); check 5 refuses ``style``,
 ``template``, ``noembed`` and ``noframes`` anywhere on the 6 pages. Check 5
 also refuses ``iframe``, ``svg`` (other than the 2 in the exact light and dark
-switch) and ``math``, which hold text a browser does
+switch) and ``math``, which hold text a browser might
 not render (an iframe's raw text; an SVG ``title``, ``desc`` or ``metadata``,
 the content of ``defs`` or ``symbol``, and SVG text outside a ``text``
 element; a MathML ``annotation`` or ``annotation-xml``). It does
@@ -627,7 +627,7 @@ Braille pattern blank), whitespace and U+0000 has no visible text. The gate
 reads every other character as visible, so a heading, the "Pick your AI"
 label, a family link label, a ``p.verified``, a step, or a link back to the
 downloads or the test made only of a character outside them that a browser
-or a font shows as nothing passes the visible-text check, which all 6 share;
+or a font may show as nothing passes the visible-text check, which all 6 share;
 a family link label made only of one fails the check of its name. A ``dir`` on any element fails check
 8 (``PAGE_ATTRIBUTES``), and a ``bdo`` or a ``bdi`` anywhere on the 6 pages
 fails its page tag pin (``PAGE_TAGS``), as it does its tag pin (``TAG_PIN``)
@@ -637,22 +637,22 @@ ancestor, such as ``main { direction: rtl; }``, fails the rule pin of
 ``tools/test-install-page.py`` unless a reviewer pins it. An end tag closes
 here the open element it names and every element opened inside it, and
 check 8 refuses an end tag that closes an element other than the innermost,
-so these browser repairs, which can hide markup that the gate reads as
-visible, now fail: an end tag a browser ignores because its element is not
-in scope (``</div>`` inside a table cell, which leaves a hiding ``div``
+so these possible browser repairs, which can hide markup that the gate reads as
+visible, now fail: an end tag a browser may ignore because its element is not
+in scope (``</div>`` inside a table cell, which can leave a hiding ``div``
 outside the table open) or, for an element outside the HTML standard's
 special category, because a special element such as ``div`` is open inside
-it (``<span class="vh"><div></span>``, after which a browser keeps the
-``span`` open); an end tag whose element a browser has already closed by
+it (``<span class="vh"><div></span>``, after which a browser may keep the
+``span`` open); an end tag whose element a browser may already have closed by
 an implied end tag (``<p><div class="vh"></p>``, after which a browser
-keeps the ``div`` open); and an end tag that closes a formatting element
+may keep the ``div`` open); and an end tag that closes a formatting element
 (``a``, ``b``, ``big``, ``code``, ``em``, ``font``, ``i``, ``nobr``, ``s``,
 ``small``, ``strike``, ``strong``, ``tt`` or ``u``) out of order, which a
-browser reopens with its attributes (``<p><a class="vh">x</p>``, after which
-a browser hides the text of a later heading). The gate does not model the
-other browser repairs, among them an implied end tag (see above; check 8
+browser may reopen with its attributes (``<p><a class="vh">x</p>``, after which
+a browser can hide the text of a later heading). The gate does not model the
+other possible browser repairs, among them an implied end tag (see above; check 8
 reads 1 only where ``IMPLIED_ENDS`` holds it) and a
-formatting element that a browser reopens after an implied end tag closed
+formatting element that a browser may reopen after an implied end tag closed
 it. The
 inline-code checks, and the load reading of check 6, share the residual that
 ``tools/check-inline-code.py`` states: ``html.parser`` is not a browser's parser.
@@ -736,9 +736,9 @@ SCHEME_TAG = re.compile(r'<script data-cfasync="false" src="/assets/baseline/sch
 DEFERRED_TAG = re.compile(r'<script src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+" defer></script>')
 # Every stylesheet loads in exactly this form, 1 of the 3 that the rule pin of tools/test-install-page.py reads.
 SHEET_TAG = re.compile(r'<link rel="stylesheet" href="/assets/baseline/(fonts|palettes|baseline)\.css\?v=[0-9]+\.[0-9]+\.[0-9]+">')
-# Each page begins with exactly this, as tools/build-site.py writes it: the doctype that keeps a browser in standards
-# mode, where class selectors match class names with regard to case, as the class pin and the rule pin read them
-# (check 8).
+# Each page begins with exactly this, as tools/build-site.py writes it: the doctype that can keep a browser in
+# standards mode, where class selectors match class names with regard to case, as the class pin and the rule pin read
+# them (check 8).
 DOCTYPE = "<!doctype html>\n"
 DRAFT_PATTERN = "/draft/*"
 # The (major, minor) Python versions the gate is tested on; main() refuses every other version, 3.9 or later,
@@ -768,7 +768,7 @@ INSTALL_HEADERS = {
 # A first path segment that matches only itself in a URL pattern: letters, digits, ".", "_", "~" and "-" (check 7).
 LITERAL_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
 BASELINE_ASSET = r'/assets/baseline/{name}\?v=[0-9]+\.[0-9]+\.[0-9]+"'
-# The elements a browser never keeps open, whether or not the start tag ends in "/>".
+# The elements the gate never keeps open, with or without "/>" on the start tag, as a browser may close each at once.
 VOID = {
     "area", "base", "basefont", "bgsound", "br", "col", "embed", "frame", "hr", "img", "input", "keygen", "link", "meta",
     "param", "source", "track", "wbr",
@@ -777,10 +777,10 @@ VOID = {
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 # Check 8: each element whose end tag the HTML standard lets a page omit where no more content follows in its parent
-# element, with the parents at whose end tag a browser closes it too, so that such a parent's end tag with it left open
-# inside is not refused where that parent counts as opened (TABLE_PARTS). A p in a span is not among them: a browser
-# ignores that </span> and keeps the span open. An li in an li is: a browser closes the first at the second's start tag,
-# so the 2 are siblings there, and the list's end tag closes both.
+# element, with the parents at whose end tag a browser may close it too, so that such a parent's end tag with it left
+# open inside is not refused where that parent counts as opened (TABLE_PARTS). A p in a span is not among them: a
+# browser may ignore that </span> and keep the span open. An li in an li is: a browser may close the first at the
+# second's start tag, so the gate reads the 2 as siblings there, and the list's end tag as closing both.
 P_PARENTS = (
     "address", "article", "aside", "blockquote", "caption", "dd", "details", "dialog", "div", "dt", "fieldset",
     "figcaption", "figure", "footer", "form", "header", "hgroup", "li", "main", "nav", "section", "td", "th",
@@ -808,7 +808,7 @@ ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # non-joiner and joiner (U+200B to U+200D), the zero-width no-break space or byte order mark (U+FEFF), the no-break
 # space (U+00A0), the word joiner (U+2060), the soft hyphen (U+00AD), and the bidi formatting characters: the marks
 # (U+200E, U+200F and U+061C), the embeddings, overrides and their pop (U+202A to U+202E), and the isolates and
-# their pop (U+2066 to U+2069). has_visible_text also drops U+0000, which a browser ignores in body text. A family
+# their pop (U+2066 to U+2069). has_visible_text also drops U+0000, which a browser may ignore in body text. A family
 # page's h1 may hold none of the bidi formatting characters (BIDI_CONTROLS) in its visible text: name_text deletes
 # them, and they can show the letters of the name in another order (<h1>Chat&#x202E;GPT&#x202C;</h1> shows ChatTPG).
 BIDI_CONTROLS = "\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
@@ -876,8 +876,8 @@ def inline_code(where: str, text: str) -> list[str]:
 
 
 def inert_elements() -> tuple[str, ...]:
-    """The elements whose content a browser with scripting on does not render as page elements (noscript, template,
-    plaintext, the raw-text and RCDATA elements) or renders only as fallback, only in its control or not at all (the
+    """The elements whose content a browser with scripting on might not render as page elements (noscript, template,
+    plaintext, the raw-text and RCDATA elements) or may render only as fallback, only in its control or not at all (the
     other elements of HIDING_ELEMENTS), as tools/check-inline-code.py names them for check 7."""
     return load_tool("check-inline-code.py").INERT_ELEMENTS
 
@@ -894,9 +894,9 @@ HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
 # The HTML standard's rendering rules hide these with no stylesheet: display: none on datalist, rp, script and
 # title, and on noscript when scripting is on. The parser here reads each as an element that can hold the checked
 # markup or, for script and title, its text (check 5 allows a structured-data block in a script), so
-# each hides itself and everything inside it. A browser renders the content of audio, canvas (with scripting on),
+# each hides itself and everything inside it. A browser may render the content of audio, canvas (with scripting on),
 # meter, object (when it loads), progress and video only as fallback, and that of select only in its control, so
-# they hide here too, which refuses more than a browser hides. Its other hidden elements cannot hold that markup
+# they hide here too, which can refuse more than a browser may hide. Its other hidden elements cannot hold that markup
 # (the docstring names them); a popover attribute, a dialog without open and a details without open are tested in
 # is_hiding_element and PageParser.
 HIDING_ELEMENTS = (
@@ -1023,8 +1023,8 @@ SERVER_ENTRIES = (
 # element carries, with its value, is the element's key in HEAD_PIN (head_key).
 KEY_ATTRIBUTES = ("charset", "http-equiv", "name", "property", "rel")
 # Check 9: each meta, link and base element that the 6 committed pages carry, by its key, with every attribute it
-# carries and that attribute's value; None where the value is free: the page's own text, address and dates, which a
-# browser reads as metadata only, and the address of a stylesheet, which check 6 holds to its exact form. Every meta,
+# carries and that attribute's value; None where the value is free: the page's own text, address and dates, which the
+# gate treats as metadata only, and the address of a stylesheet, which check 6 holds to its exact form. Every meta,
 # link and base element on the 6 pages must carry exactly the attributes of its key's entry, with those values, so
 # http-equiv in any value, a base, and any other meta or link fail. tools/test-install-page.py fails unless this holds
 # exactly what the committed pages carry, with exactly the values that its FREE_HEAD_VALUES leaves free.
@@ -1118,10 +1118,10 @@ class PageParser(HTMLParser):
         self.elements: list[dict] = []
         self.texts: list[tuple[int, int]] = []
         self.page_hidden = False
-        # Whether any html or body start tag carries dir: a browser adds it to the page's own element (reorderers).
+        # Whether any html or body start tag carries dir: a browser may add it to the page's own element (reorderers).
         self.page_dir = False
         # The html and body start tags read so far, and each but the first of each that carries an attribute, which
-        # a browser adds to the page's own element, an ancestor of every checked element (check 8).
+        # a browser may add to the page's own element, an ancestor of every checked element (check 8).
         self.page_tags: Counter = Counter()
         self.later_attrs: list[str] = []
         # Each end tag that closes an open element other than the innermost, with the elements it would close inside
@@ -1129,7 +1129,7 @@ class PageParser(HTMLParser):
         self.misnested: list[str] = []
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
-        # A browser keeps the first of 2 attributes with the same name, so <p class="vh" class="x"> hides.
+        # A browser may keep the first of 2 attributes with the same name, so here <p class="vh" class="x"> hides.
         attrs: dict[str, str] = {}
         for k, v in attrs_list:
             attrs.setdefault(k.lower(), v if v is not None else "")
@@ -1150,9 +1150,9 @@ class PageParser(HTMLParser):
                 for frame in self.stack[holder:]:
                     frame["opened"] = False
         hiding = is_hiding_element(tag, attrs) or any(frame["hiding"] for frame in self.stack)
-        # A browser adds the attributes of a later html or body start tag to the page's own html or body element,
-        # so a hiding one hides the whole page, the markup before it included. A browser that honours a frameset
-        # start tag drops the whole body, so a frameset start tag anywhere hides the whole page too.
+        # A browser may add the attributes of a later html or body start tag to the page's own html or body element,
+        # so a hiding one can hide the whole page, the markup before it included. A browser that honours a frameset
+        # start tag may drop the whole body, so a frameset start tag anywhere hides the whole page here too.
         if (tag in ("html", "body") and is_hiding_element(tag, attrs)) or tag == "frameset":
             self.page_hidden = True
         if tag in ("html", "body") and "dir" in attrs:
@@ -1167,8 +1167,8 @@ class PageParser(HTMLParser):
                 parent["summary"] = True
             else:
                 hiding = True
-        # An id or a link inside an element of INERT_ELEMENTS does not count: a browser with scripting on does not
-        # render that element's content as page elements, or renders it only as fallback, only in its control or
+        # An id or a link inside an element of INERT_ELEMENTS does not count: a browser with scripting on might not
+        # render that element's content as page elements, or may render it only as fallback, only in its control or
         # not at all.
         inert = any(frame["tag"] in inert_elements() for frame in self.stack)
         if "id" in attrs:
@@ -1181,7 +1181,7 @@ class PageParser(HTMLParser):
                 self.retired.append(f"<{tag} {name}>")
         anchor = None
         if tag == "a":
-            # A browser closes an open link when another starts, so later text is not in it; text stops counting for it.
+            # A browser may close an open link when another starts, so later text stops counting for it.
             for frame in self.stack:
                 frame["a"] = None
             if not inert:
@@ -1246,8 +1246,8 @@ class PageParser(HTMLParser):
             )
 
     def handle_startendtag(self, tag: str, attrs_list) -> None:
-        # A browser ignores the "/" of "/>" on an element that is not void, so <div hidden/> stays open and hides
-        # what follows, as <div hidden> does. A void element never goes on the stack, so it needs no end tag.
+        # A browser may ignore the "/" of "/>" on an element that is not void, so here <div hidden/> stays open and
+        # hides what follows, as <div hidden> does. A void element never goes on the stack, so it needs no end tag.
         in_svg = bool(self.stack) and self.stack[-1]["tag"] == "svg"
         self.handle_starttag(tag, attrs_list)
         # The parser closes <svg/> at once, so what follows is not in it, and so too a shape (SVG_SHAPES) whose parent,
@@ -1256,7 +1256,7 @@ class PageParser(HTMLParser):
             self.stack.pop()
 
     def handle_endtag(self, tag: str) -> None:
-        # A browser reads </br> as <br>, so in the h1 it breaks the line too.
+        # A browser may read </br> as <br>, so the gate reads it as a br, which in the h1 breaks the line too.
         if tag == "br":
             self.handle_starttag("br", [])
             return
@@ -1266,7 +1266,7 @@ class PageParser(HTMLParser):
             if self.stack[i]["tag"] in names:
                 # Here an end tag closes every element opened inside its own; a browser can instead ignore it, keep
                 # 1 of those open or reopen 1 later, so check 8 refuses such an end tag, as tools/build-site.py does. A
-                # browser opens no second html, head or body element, so those this parser opens do not count, nor
+                # browser might open no second html, head or body element, so those this parser opens do not count, nor
                 # does an element whose end tag a page may omit where its parent, as the parser holds it, ends here,
                 # is 1 that IMPLIED_ENDS names for it and counts as opened (TABLE_PARTS).
                 inside = [frame["tag"] for parent, frame in zip(self.stack[i:], self.stack[i + 1:])
@@ -1328,7 +1328,7 @@ class LoadScan(HTMLParser):
         line, column = self.getpos()
         element = (self.lines[line - 1] + column, attrs, self.get_starttag_text() or "")
         if len(attrs) != len(attrs_list):
-            # A browser reads the first of 2 attributes with the same name, and these dicts the last.
+            # A browser may read the first of 2 attributes with the same name, and these dicts read the last.
             self.repeats.append(element[2])
         if tag in ("head", "body"):
             self.heads += 1
@@ -1346,7 +1346,8 @@ class LoadScan(HTMLParser):
             self.sheets.append(element)
 
     def handle_startendtag(self, tag: str, attrs_list) -> None:
-        # A browser honours the slash only in <svg> (foreign content); any other element that is not void stays open.
+        # A browser may honour the slash only in <svg> (foreign content); here any other element that is not void
+        # stays open.
         foreign = tag == "svg" or "svg" in self.stack
         self.handle_starttag(tag, attrs_list)
         if tag not in VOID and foreign:
@@ -1389,7 +1390,7 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
         if count > 1:
             problems.append(f'{where}: the id "{dup_id}" appears {count} times.')
     problems += inline_code(where, text)
-    # Without the doctype a browser matches class names without regard to case, so .DOC would match div.doc.
+    # Without the doctype a browser may match class names without regard to case, so .DOC could match div.doc.
     if not text.startswith(DOCTYPE):
         problems.append(f"{where}: the page does not begin with <!doctype html> on its own line, as tools/build-site.py "
                         "writes it; without it a browser matches class names without regard to case, which the rule "
@@ -1454,7 +1455,7 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
         if not SHEET_TAG.fullmatch(tag):
             problems.append(f"{where}: {tag} is not 1 of fonts.css, palettes.css and baseline.css from /assets/baseline/ "
                             "with a ?v=X.Y.Z token, the only stylesheets that the rule pin reads.")
-    # Check 8: a browser adds the attributes of a later html or body start tag to the page's own element.
+    # Check 8: a browser may add the attributes of a later html or body start tag to the page's own element.
     for tag in parser.later_attrs:
         problems.append(f"{where}: a later html or body start tag carries attributes ({tag}), which a browser adds to "
                         "the page's own element, around every checked element.")
@@ -1476,7 +1477,7 @@ def pinned_files() -> frozenset[str]:
 def load_path(target: str) -> str | None:
     """Check 6: the path of a load target from the site's root, without its leading "/", its query or its fragment;
     None unless that path starts with "/" and each of its segments is LITERAL_SEGMENT and neither "." nor "..", so a
-    target that a browser resolves elsewhere (/assets/../images/a.png, assets/a.svg or //host/a.svg) has none."""
+    target that a browser may resolve elsewhere (/assets/../images/a.png, assets/a.svg or //host/a.svg) has none."""
     path = re.split(r"[?#]", target, maxsplit=1)[0]
     segments = path.split("/")
     if segments[0] or not all(LITERAL_SEGMENT.fullmatch(name) and name not in (".", "..") for name in segments[1:]):
@@ -1518,8 +1519,8 @@ def reorderers(where: str, parser: PageParser, last: dict, what: str) -> list[st
     """Checks 1 and 4: each element that starts before the element last ends (last, its ancestors, everything in it
     and every element before it, shown or hidden) that is a bdo or carries dir, and any html or body start tag with
     dir, anywhere. Each can show the text of last, or the text before it, in another order: a dir on an ancestor
-    reorders what it holds, and a browser can reopen a formatting element that an end tag closed out of order, with
-    its attributes, inside a later element (after <p><b dir="rtl"></p> the b is open again in the h1)."""
+    can reorder what it holds, and a browser can reopen a formatting element that an end tag closed out of order, with
+    its attributes, inside a later element (after <p><b dir="rtl"></p> the b can be open again in the h1)."""
     inside = {last["order"]}
     for element in parser.elements:
         if element["parent"] in inside:
@@ -1686,7 +1687,7 @@ def server_entry_problems() -> list[str]:
 
 def page_tag_problems(where: str, parser: PageParser, kinds: list[tuple[str, dict]]) -> list[str]:
     """Check 8: each html or body start tag with an attribute that is not, as the parser holds it open, an ancestor of
-    every checked element. A browser adds its attributes to the page's own html or body element, around every checked
+    every checked element. A browser may add its attributes to the page's own html or body element, around every checked
     element, while the class pin reads only the ancestors the parser holds open; so a first body start tag that comes
     late, after a page whose opening body was removed, cannot carry an attribute past it."""
     shared: set[int] | None = None
@@ -1707,8 +1708,8 @@ def outside_problems(where: str, parser: PageParser) -> list[str]:
     pin, which reads only what the body holds, does not read: an element, other than html, outside every element; an
     element directly in such an html other than its head and body; an element at any depth in that head outside
     HEAD_TAGS; and text other than whitespace outside every element, directly in that html or that head, or in an
-    element in that head other than title, script or style. Each is refused, shown or hidden; a browser moves an
-    element of HEAD_TAGS between the head and the body back into the head, so there this refuses more."""
+    element in that head other than title, script or style. Each is refused, shown or hidden; a browser may move an
+    element of HEAD_TAGS between the head and the body back into the head, so there this can refuse more."""
     html = {element["order"] for element in parser.elements if element["parent"] is None and element["tag"] == "html"}
     head = {element["order"] for element in parser.elements if element["parent"] in html and element["tag"] == "head"}
     raw: set[int] = set()

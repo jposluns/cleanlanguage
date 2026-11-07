@@ -10,7 +10,7 @@ pass for a refusal. 1 more check asserts that the gate's docstring names
 exactly the scripts in ``ALLOWED_SCRIPTS``. Exit 0 when every case passes; 1
 otherwise, naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
-hides or empties what the gate checks; it must exit 0, and the gate's docstring
+may hide or empty what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code
 unnoticed.
 
@@ -48,7 +48,7 @@ and its has_visible_text() text of only U+034F, as check 4 says; and unless
 its P_PARENTS, IMPLIED_ENDS, TABLE_PARTS and SVG_SHAPES hold exactly what
 this test states and its parse(), run in this process on fragments, reads no
 misnested end tag where a fragment leaves out an end tag that its IMPLIED_ENDS
-holds in a parent that counts as opened, and 1 where a browser keeps open an
+holds in a parent that counts as opened, and 1 where a browser may keep open an
 element that the parser closes, where a table part sits outside the parents of
 its TABLE_PARTS, where a table start tag ends the table around it, where a
 self-closing tag in an svg is not 1 of SVG_SHAPES directly in it, or where the
@@ -186,7 +186,7 @@ REDIRECTS = "site/_redirects"
 FILES = [PAGE, CLAUDE, CHATGPT, GEMINI, COPILOT, OTHER, HEADERS, REDIRECTS, "tools/check-headers.py",
          "tools/check-inline-code.py", "tools/check-baseline-pin.py", ".baseline/pin.toml"]
 # The meta and link elements, by the gate's head_key(), whose attribute here the gate's HEAD_PIN leaves free (None):
-# the page's own text, address and dates, which a browser reads as metadata only and which change with each page and
+# the page's own text, address and dates, which the gate treats as metadata only and which change with each page and
 # release, and the address of a stylesheet, which check 6 holds to its exact form. Any other value is pinned.
 FREE_HEAD_VALUES = {
     ("meta", "name", "description"): "content",
@@ -324,7 +324,7 @@ HIDING_ATTRIBUTE = "hidden"
 # Stylesheets for sheet_problems() with CASE_CLASSES and the pin of CASE_RULES in place of the gate's CLASS_PIN and
 # RULE_PIN: an h1 that may carry the class x, and a pin of the 3 rules of CASE_SHEET (the second and third set the custom property
 # the first uses, and 1 it uses). Each case gives the words that 1 of its problems holds, or "" for none; a brace in a
-# string or a comment opens or closes no block in a browser, so only a misreading makes a pinned rule appear there.
+# string or a comment opens or closes no block as CSS reads it, so only a misreading makes a pinned rule appear there.
 CASE_CLASSES = {"h1": {"x"}}
 CASE_SHEET = 'h1 { margin: 0 var(--pad); font-family: "a  b", serif; } .y { --pad: var(--q); } .z { --q: 1rem; }'
 CASE_RULES = (("the case: h1", 'the case: h1 { margin: 0 var(--pad); font-family: "a  b", serif; }'),
@@ -655,7 +655,7 @@ CASES = [
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", ">Cla&#x202E;ude<")),
         (1, "the claude family link's label holds a bidi")),
     # No element that starts before the button row ends, shown or hidden, may be a bdo or carry dir, in any value:
-    # a dir on the row or an ancestor can show the buttons in another order, and a browser reopens a formatting
+    # a dir on the row or an ancestor can show the buttons in another order, and a browser may reopen a formatting
     # element that an end tag closed out of order, with its dir, around the later links.
     ("a family link beside a bdo in a hidden span",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><span>Claude</span><span hidden><bdo>x</bdo></span><")),
@@ -680,16 +680,16 @@ CASES = [
         (1, ROW_DIR)),
     ("a b with dir closed out of order in a hidden span in a family link",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", '>Claude<span hidden><b dir="rtl"></span><')), (1, ROW_DIR)),
-    # A browser adds the attributes of a later html or body start tag to the page's own element.
+    # A browser may add the attributes of a later html or body start tag to the page's own element.
     ("a later body start tag with a dir attribute", edit(PAGE, "</main>", '</main><body dir="rtl">'), (1, PAGE_DIR)),
-    # The class pin reads the page's own html and body; a browser adds a later tag's attributes to them, so a later
+    # The class pin reads the page's own html and body; a browser may add a later tag's attributes to them, so a later
     # html or body start tag may carry none.
     ("a later body start tag with a class", edit(PAGE, "</main>", '</main><body class="fresh">'), (1, LATER_TAG)),
     ("a later html start tag with a class on a family page", edit(CLAUDE, "</main>", '</main><html class="fresh">'),
         (1, LATER_TAG)),
     ("a later body start tag with no attribute", edit(PAGE, "</main>", "</main><body>"), 0),
     # Nor may an html or body start tag that is not an ancestor of every checked element, as the parser holds it open,
-    # carry any, the first of each included: on a page whose opening body is gone, a browser opens the body itself.
+    # carry any, the first of each included: on a page whose opening body is gone, a browser may open the body itself.
     ("a family page whose opening body is gone, with a later body start tag with data-preset",
         both(edit(CHATGPT, "<body>\n", ""), edit(CHATGPT, "</main>", "</main><body data-preset>")), (1, NOT_ANCESTOR)),
     ("a family page whose opening body is gone, with a later body start tag with a class",
@@ -702,7 +702,7 @@ CASES = [
         both(edit(PAGE, HTML, ""), edit(PAGE, "</main>", '</main><html class="fresh">')), (1, NOT_ANCESTOR)),
     ("a family page whose opening html is gone, with a later html start tag with a class",
         both(edit(GEMINI, HTML, ""), edit(GEMINI, "</main>", '</main><html class="fresh">')), (1, NOT_ANCESTOR)),
-    # Without the doctype a browser matches class names without regard to case; the class pin and the rule pin do not.
+    # Without the doctype a browser may match class names without regard to case; the class pin and the rule pin do not.
     ("the install page without its doctype", edit(PAGE, DOCTYPE, ""), (1, NO_DOCTYPE)),
     ("a family page without its doctype", edit(CHATGPT, DOCTYPE, ""), (1, NO_DOCTYPE)),
     ("the pick label emptied", edit(PAGE, PICK, PICK.replace(">Pick your AI<", "><")),
@@ -715,7 +715,7 @@ CASES = [
     ("bare text above the h1", edit(PAGE, HERO, "Note.\n" + HERO), (1, "text sits directly in the body")),
     ("bare text in main before div.wrap", edit(PAGE, MAIN, MAIN + "Note.\n"), (1, "text sits directly in the body")),
     ("bare text in the body before main", edit(PAGE, "<main", "Note.\n<main"), (1, "text sits directly in the body")),
-    # A browser moves into the body, above its first element, what sits between the head and the body, and what
+    # A browser may move into the body, above its first element, what sits between the head and the body, and what
     # follows a start tag a head may not hold; the pin reads only the body's elements, so these are refused apart.
     ("a paragraph between the head and the body", edit(PAGE, "</head>\n<body>", "</head>\n<p>Note.</p>\n<body>"),
         (1, "sit outside the head and the body, or in the head")),
@@ -774,11 +774,11 @@ CASES = [
     ("a family link whose label follows a later link", edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><a></a>Claude<")), 1),
     ("a family link whose only label is a structured-data script", edit(PAGE, CLAUDE_LINK,
         CLAUDE_LINK.replace(">Claude<", '><script type="application/ld+json">"Claude"</script><')), 1),
-    # A browser renders the content of each only as fallback or in a control, so it hides here.
+    # A browser may render the content of each only as fallback or in a control, so it hides here.
     *[(f"a family link whose only label is in {tag}",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", f"><{tag}>Claude</{tag}><")), 1)
         for tag in ("audio", "canvas", "meter", "object", "progress", "select", "video")],
-    # Check 5 refuses each of these, whose text a browser does not render.
+    # Check 5 refuses each of these, whose text a browser might not render.
     ("a family link whose only label is in a style element",
         edit(PAGE, CLAUDE_LINK, CLAUDE_LINK.replace(">Claude<", "><style>Claude</style><")), 1),
     ("a family link whose only label is in an SVG desc",
@@ -801,7 +801,7 @@ CASES = [
     ("the pick id removed", edit(PAGE, 'id="pick"', 'id="pick-gone"'), 1),
     ("the technical id removed", edit(PAGE, '<h2 id="technical">', "<h2>"), 1),
     ("a duplicate id on the install page", edit(PAGE, '<h2 id="spelling">', '<h2 id="spelling"><span id="test"></span>'), 1),
-    # A browser with scripting on renders no markup inside noscript, so neither an id nor a link there is present.
+    # A browser with scripting on may render no markup inside noscript, so neither an id nor a link there counts.
     ("the test id only inside a noscript", both(
         edit(PAGE, '<h2 id="test">', "<h2>"), edit(PAGE, "</main>", '<noscript><span id="test"></span></noscript></main>')), 1),
     ("a duplicate id on a family page", edit(CHATGPT, '<p class="verified">', '<p class="verified" id="main-content">'), 1),
@@ -971,7 +971,7 @@ CASES = [
         edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>Chat\u034fGPT</h1>"), 1),
     ("a family page heading joining its family's name across a hidden br",
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI<br hidden>systems</h1>"), 1),
-    # A browser reads </br> as <br>.
+    # The gate reads </br> as <br>, as a browser may.
     ("a family page heading naming its family across </br>",
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI</br>systems</h1>"), (1, "a br inside the <h1> is a br, " + TAG_GIVEN)),
     ("a family page heading joining its family's name across </br> in a hidden span",
@@ -1054,7 +1054,8 @@ CASES = [
         (1, "a details around a step list carries the attribute 'open', " + GIVEN)),
     ("a family page step list with data-popover", edit(OTHER, STEPS, '<ol class="steps" data-popover="auto">'),
         (1, "a step list carries the attribute 'data-popover', " + GIVEN)),
-    # A browser ignores "/>" on an element that is not void, so each of these stays open and hides what follows.
+    # The gate ignores "/>" on an element that is not void, as a browser may, so each of these stays open and hides
+    # what follows.
     ("the button row after <div hidden/>", edit(PAGE, ROW, "<div hidden/>" + ROW), 1),
     ('the button row after <div class="vh"/>', edit(PAGE, ROW, '<div class="vh"/>' + ROW), 1),
     ("the button row after <details/>", edit(PAGE, ROW, "<details/>" + ROW), 1),
@@ -1150,8 +1151,8 @@ CASES = [
     ("baseline.css without its version token on a family page", edit(CHATGPT, "baseline.css?v=", "baseline.css?x="), 1),
     ("copy.js not loaded", edit(PAGE, "copy.js?v=", "copy-gone.js?v="), 1),
     ("copy.js not loaded on a family page", edit(OTHER, "copy.js?v=", "copy-gone.js?v="), 1),
-    # A script inside noscript never runs: a browser with scripting on reads it as text, and one with scripting off
-    # runs no script.
+    # The gate does not count a script inside noscript as a load: a browser with scripting on may read it as text,
+    # and one with scripting off runs no script.
     ("copy.js loaded only inside a body noscript",
         both(edit(PAGE, COPY + "\n", ""), edit(PAGE, "<body>\n", "<body>\n<noscript>" + COPY + "</noscript>\n")), 1),
     ("copy.js loaded only inside a noscript on a family page",
@@ -1342,25 +1343,25 @@ CASES = [
     ("a root requirements.txt", create("requirements.txt", "x==1.0\n"), (1, "requirements.txt " + SERVER_ENTRY)),
     ("a root Pipfile", create("Pipfile", '[packages]\nx = "*"\n'), (1, "Pipfile " + SERVER_ENTRY)),
     ("a root Gemfile", create("Gemfile", 'source "https://rubygems.org"\n'), (1, "Gemfile " + SERVER_ENTRY)),
-    # No end tag may close an element other than the innermost: a browser keeps the span open after the first, and the
-    # div after the second, so each hid the step list after it in a browser and passed the gate, named residuals before.
+    # No end tag may close an element other than the innermost: a browser may keep the span open after the first, and
+    # the div after the second, so each can hide the step list after it; each passed the gate, named residuals before.
     ("a family page step list after <span class=\"vh\"><div></span>",
         edit(OTHER, STEPS, '<span class="vh"><div></span>' + STEPS), (1, "</span> closes <span> with <div> " + MISNESTED)),
     ("a family page step list after <p><div class=\"vh\"></p>", edit(OTHER, STEPS, '<p><div class="vh"></p>' + STEPS),
         (1, "</p> closes <p> with <div> " + MISNESTED)),
-    # A browser closes <svg/> at once, so the div after it is not in an svg, and keeps the span open past </span>.
+    # A browser may close <svg/> at once, so the div after it is not in an svg, and keep the span open past </span>.
     ("a family page step list after <span class=\"vh\"><svg/><div/></span>",
         edit(OTHER, STEPS, '<span class="vh"><svg/><div/></span>' + STEPS),
         (1, "</span> closes <span> with <div> " + MISNESTED)),
     # The HTML standard lets a page omit the end tag of a td where no more content follows in its tr, and a browser
-    # closes the cell at </tr>, so a valid one-cell table without </td> passes (IMPLIED_ENDS).
+    # may close the cell at </tr>, so a valid one-cell table without </td> passes (IMPLIED_ENDS).
     ("a family page with a one-cell table without </td>", edit(CHATGPT, "</main>", "<table><tr><td>Cell</tr></table></main>"),
         0),
     # The same omissions in each table part in its right parent pass (TABLE_PARTS).
     ("a family page with a table of p elements left open in each part", edit(CHATGPT, "</main>",
         "<table><caption><p>x</caption><thead><tr><th><p>y</tr></thead><tbody><tr><td><p>z</tr></tbody></table></main>"), 0),
-    # A browser ignores the start tag of a table part outside a table, so it opens each p in the span, ignores </span>
-    # with the p open, and the step list after it sits in the hiding span (TABLE_PARTS).
+    # A browser may ignore the start tag of a table part outside a table, so it may open each p in the span and ignore
+    # </span> with the p open, and the step list after it can sit in the hiding span (TABLE_PARTS).
     ("a family page step list after <span class=\"vh\"><td><p>x</td></span>",
         edit(OTHER, STEPS, '<span class="vh"><td><p>x</td></span>' + STEPS), (1, "</td> closes <td> with <p> " + MISNESTED)),
     ("a family page step list after <span class=\"vh\"><th><p>x</th></span>",
@@ -1373,23 +1374,24 @@ CASES = [
     ("a family page step list after <span class=\"vh\"><thead><tr><td><p>x</thead></span>",
         edit(OTHER, STEPS, '<span class="vh"><thead><tr><td><p>x</thead></span>' + STEPS),
         (1, "</thead> closes <thead> with <tr> " + MISNESTED)),
-    # A browser reads a table start tag in a table, outside a cell or a caption, as that table's end, so the later cell
-    # is ignored and the p in it keeps the hiding span open past </span>, as above; the same with a div in the table.
+    # A browser may read a table start tag in a table, outside a cell or a caption, as that table's end, so the later
+    # cell can be ignored and the p in it can keep the hiding span open past </span>, as above; the same with a div in
+    # the table.
     ("a family page step list after a table start tag in a table row, in a hiding span",
         edit(OTHER, STEPS, '<span class="vh"><table><tr><table></table><td><p>x</td></tr></table></span>' + STEPS),
         (1, "</td> closes <td> with <p> " + MISNESTED)),
     ("a family page step list after a table start tag in a div in a table, in a hiding span",
         edit(OTHER, STEPS, '<span class="vh"><table><div><table></table><td><p>x</td></table></span>' + STEPS),
         (1, "</td> closes <td> with <p> " + MISNESTED)),
-    # A browser closes the first li at the second's start tag, so a list that omits the first's end tag passes, while
-    # around a span it keeps the span open past </span>, and in a step list the tag pin allows no li in a step.
+    # A browser may close the first li at the second's start tag, so a list that omits the first's end tag passes, while
+    # around a span it may keep the span open past </span>, and in a step list the tag pin allows no li in a step.
     ("a family page with <ul><li>a<li>b</ul>", edit(CHATGPT, "</main>", "<ul><li>a<li>b</ul></main>"), 0),
     ("a family page step list after <span class=\"vh\"><li>a<li>b</span>",
         edit(OTHER, STEPS, '<span class="vh"><li>a<li>b</span>' + STEPS), (1, "</span> closes <span> with <li> " + MISNESTED)),
     ("a family page step list that omits a step's </li>", edit(OTHER, STEPS, '<ol class="steps"><li>a<li>b</ol>' + STEPS),
         (1, TAG_GIVEN)),
-    # A browser moves a div or a p out of an svg and keeps it open, though its tag closes itself, so it keeps the span
-    # open past </span>. Check 5 refuses that svg too; these show check 8's own refusal.
+    # A browser may move a div or a p out of an svg and keep it open, though its tag closes itself, so it may keep the
+    # span open past </span>. Check 5 refuses that svg too; these show check 8's own refusal.
     ("a family page step list after <span class=\"vh\"><svg><div/></svg></span>",
         edit(OTHER, STEPS, '<span class="vh"><svg><div/></svg></span>' + STEPS), (1, "</svg> closes <svg> with <div> " + MISNESTED)),
     ("a family page step list after <span class=\"vh\"><svg><p/></svg></span>",
@@ -2049,15 +2051,15 @@ def end_tag_problems() -> list[str]:
     """The gate's P_PARENTS, IMPLIED_ENDS, TABLE_PARTS and SVG_SHAPES hold exactly what this states, so widening or
     narrowing any of them fails. Its parse(), run in this process on fragments, reads no misnested end tag (check 8)
     where a page leaves out an end tag that the HTML standard lets it omit where no more content follows in the parent
-    element, for each such element and each parent at whose end tag a browser closes it too, inside the table in
+    element, for each such element and each parent at whose end tag a browser may close it too, inside the table in
     which a table part counts as opened; where a page leaves out an li's end tag before a sibling li; where a table
     start tag sits in a cell or a caption or after a table has ended; and for a self-closing svg, or circle or path
     directly in an svg. It reads 1
-    where a browser keeps open an element that the parser closes (a p in a span, a b or an a, and a div around an open
-    table cell, whose end tag a browser ignores), where that parent is a table part outside the parents of TABLE_PARTS,
-    which does not count as opened there, where a table start tag ends the table around it, where a self-closing
-    tag in an svg is anything else or is not directly in it, and where the parser keeps any other element whose end tag
-    a page omits before a sibling open around that sibling, as the gate's docstring states."""
+    where a browser may keep open an element that the parser closes (a p in a span, a b or an a, and a div around an
+    open table cell, whose end tag a browser may ignore), where that parent is a table part outside the parents of
+    TABLE_PARTS, which does not count as opened there, where a table start tag ends the table around it, where a
+    self-closing tag in an svg is anything else or is not directly in it, and where the parser keeps any other element
+    whose end tag a page omits before a sibling open around that sibling, as the gate's docstring states."""
     p_parents = ["address", "article", "aside", "blockquote", "caption", "dd", "details", "dialog", "div", "dt", "fieldset",
                  "figcaption", "figure", "footer", "form", "header", "hgroup", "li", "main", "nav", "section", "td", "th"]
     implied = {"li": ["li", "menu", "ol", "ul"], "dd": ["div", "dl"], "p": p_parents, "rt": ["ruby"], "rp": ["ruby"],
