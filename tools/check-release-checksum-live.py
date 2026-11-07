@@ -120,31 +120,29 @@ Behaviour:
     conditional. The site is ahead of the release in the one state this gate
     passes only when it names the current skill version (``Version:`` in
     ``cleanlanguage/skills/cleanlanguage/SKILL.md``), the page carries the
-    not-yet-published note, and the tag ``vX`` does not exist yet, which is
-    the pre-tag window the release runbook creates. In that window the
-    SKILL.md ``Released:`` line is
-    still checked, with no further network call: a malformed line exits 3, and
-    a line missing above the undated baseline fails. Before the tag, no
-    checksum for the version is published, so a page that shows a well-formed
-    checksum as published there (the previous version's digest or a locally
-    built one passed to ``tools/set-release-links.py``) is an inconsistency
-    and fails, the Released line still checked and the more severe code
-    winning. ``tools/build-site.py`` refuses a checksum close to the zero
-    placeholder (56 or more of its 64 digits 0), such as a mistyped
-    placeholder, so a page that shows one is not the render and is refused
-    before any release is read. A different
-    version with no release is a real
-    inconsistency and fails. An existing tag with no published release is a
-    deleted or unfinished release and reads as unverifiable, as does a release
-    or tag status that cannot be read; on each such path the SKILL.md
+    not-yet-published note, and the tag ``vX`` does not exist yet, which is the
+    pre-tag window the release runbook creates. In that window the SKILL.md
+    ``Released:`` line is still checked, with no further network call: a
+    malformed line exits 3, and a line missing above the undated baseline
+    fails. Before the tag, no checksum for the version is published, so a page
+    that shows a well-formed checksum as published there (the previous
+    version's digest or a locally built one passed to
+    ``tools/set-release-links.py``) is an inconsistency and fails, the Released
+    line still checked and the more severe code winning.
+    ``tools/build-site.py`` refuses a checksum close to the zero placeholder
+    (56 or more of its 64 digits 0), such as a mistyped placeholder, so a page
+    that shows one is not the render and is refused before any release is read.
+    A different version with no release is a real inconsistency and fails. An
+    existing tag with no published release is a deleted or unfinished release
+    and reads as unverifiable, as does a release or tag status that cannot be
+    read or is neither 200 nor 404; on each such path the SKILL.md
     ``Released:`` line is still checked with no further network call, and the
     more severe code wins. When the release status of the version the site
-    names cannot be read and SKILL.md names a different version, the
-    release-date check below probes the release SKILL.md names instead. One
-    broken state
-    stays invisible to this check: a bump that updated both the verify page and
-    SKILL.md but whose tag was never pushed is indistinguishable from the
-    pre-tag window by repository state alone.
+    names cannot be read, or is neither 200 nor 404, and SKILL.md names a
+    different version, the release-date check below probes the release SKILL.md
+    names instead. One broken state stays invisible to this check: a bump that
+    updated both the verify page and SKILL.md but whose tag was never pushed is
+    indistinguishable from the pre-tag window by repository state alone.
   - If the release exists, downloads the version-named zip and its ``.sha256``,
     proves the release is self-consistent (the zip hashes to its own manifest),
     and requires the site's displayed checksum, or the placeholder while the
@@ -161,8 +159,9 @@ Behaviour:
     exactly as the same-version path does, so only a confirmed absent tag
     means the release is not published yet and the date comparison is
     skipped (a line missing above the undated baseline still fails there, as
-    in the pre-tag window), while an existing tag, or a tag whose status cannot be read, cannot be
-    verified; any other release status cannot be verified. The line may be
+    in the pre-tag window), while an existing tag, or a tag whose status
+    cannot be read or is neither 200 nor 404, cannot be verified; any other
+    release status cannot be verified. The line may be
     absent only when that version is at or below the undated baseline
     declared in ``tools/skill-release-date.py``; the line and that rule are
     read first, and then no network call is made for the date check at all.
@@ -891,8 +890,10 @@ def report_missing_released_line(current: str, situation: str) -> None:
 def offline_release_line_code(situation: str) -> int:
     """Check the SKILL.md Released line with no network call, on a path where
     the release state is already known (the pre-tag window, or a tag with no
-    release) or cannot be read; ``situation`` states that state. A malformed
-    line is never hidden behind a could-not-verify result.
+    release) or cannot be verified (a release or tag status that cannot be
+    read, or a tag status that is neither 200 nor 404); ``situation`` states
+    that state. A malformed line is never hidden behind a could-not-verify
+    result.
     Returns 0, 1 when the line is missing above the undated baseline, or the
     code (2 or 3) the check stopped with, after its own report."""
     try:
