@@ -513,7 +513,8 @@ generator refuse ``html``, ``head`` and ``body`` start tags in a page source.
 An ancestor in checks 1 and 4 is an
 element that the parser holds open, and the gate assumes a browser's reading in these
 ways where the two can differ: ``/>`` on an element that is not void
-does not close it, so ``<div hidden/>`` hides what follows; of 2 attributes with
+does not close it, but for an ``svg`` and, directly in an ``svg``, a
+``circle`` or ``path`` (check 8), so ``<div hidden/>`` hides what follows; of 2 attributes with
 the same name, the first counts; a heading start tag closes a heading that is
 the current node, and any heading end tag closes the innermost open heading;
 text after an ``a`` start tag is not in a link opened before it (a browser
@@ -780,7 +781,8 @@ HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 # element, with the parents at whose end tag a browser may close it too, so that such a parent's end tag with it left
 # open inside is not refused where that parent counts as opened (TABLE_PARTS). A p in a span is not among them: a
 # browser may ignore that </span> and keep the span open. An li in an li is: a browser may close the first at the
-# second's start tag, so the gate reads the 2 as siblings there, and the list's end tag as closing both.
+# second's start tag, while the parser holds the second inside the first, so the class, attribute and tag pins read
+# the first as an ancestor of the second, and the list's end tag closes both and is not refused.
 P_PARENTS = (
     "address", "article", "aside", "blockquote", "caption", "dd", "details", "dialog", "div", "dt", "fieldset",
     "figcaption", "figure", "footer", "form", "header", "hgroup", "li", "main", "nav", "section", "td", "th",
@@ -1161,7 +1163,7 @@ class PageParser(HTMLParser):
             self.page_tags[tag] += 1
             if self.page_tags[tag] > 1 and attrs:
                 self.later_attrs.append(f"<{tag} {' '.join(attrs)}>")
-        # A details without open renders only its first summary child; the rest of its content is hidden.
+        # The gate reads a details without open as hiding all its content but its first summary child (check 1).
         if parent and parent["closed"]:
             if tag == "summary" and not parent["summary"]:
                 parent["summary"] = True
@@ -1220,7 +1222,8 @@ class PageParser(HTMLParser):
             for record in (open_h1, open_a, self.elements[-1], *(frame["element"] for frame in self.stack)):
                 if record is not None:
                     record["bidi"] = True
-        # A br that no element hides breaks the line, so in the h1 it reads as a space between the words around it.
+        # The gate reads a br that no element hides as a line break, so in the h1 it reads as a space between the
+        # words around it.
         if tag == "br" and not hiding:
             open_h1 = next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
             if open_h1 is not None:
@@ -1256,7 +1259,7 @@ class PageParser(HTMLParser):
             self.stack.pop()
 
     def handle_endtag(self, tag: str) -> None:
-        # A browser may read </br> as <br>, so the gate reads it as a br, which in the h1 breaks the line too.
+        # A browser may read </br> as <br>, so the gate reads it as a br, which in the h1 reads as a space too.
         if tag == "br":
             self.handle_starttag("br", [])
             return
@@ -1280,9 +1283,9 @@ class PageParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         # Text counts for the h1, the innermost open link and every open step (so a step whose text is in a nested step
         # list has text too) only when no element around it hides it: a hiding element (by itself or an ancestor) or
-        # a details without open, whose text outside its first summary is hidden. The h1 also keeps that text, to be
-        # searched for its family's name, and the innermost open link and every open element keep it, to be searched
-        # for a bidi control.
+        # a details without open, whose text outside its first summary the gate reads as hidden. The h1 also keeps
+        # that text, to be searched for its family's name, and the innermost open link and every open element keep
+        # it, to be searched for a bidi control.
         heading = next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
         anchor = next((frame["a"] for frame in reversed(self.stack) if frame["a"] is not None), None)
         items = [frame["li"] for frame in self.stack if frame["li"] is not None]
@@ -1346,8 +1349,9 @@ class LoadScan(HTMLParser):
             self.sheets.append(element)
 
     def handle_startendtag(self, tag: str, attrs_list) -> None:
-        # A browser may honour the slash only in <svg> (foreign content); here any other element that is not void
-        # stays open.
+        # A browser may honour the slash in foreign content, in <svg> or <math>; here it closes an svg and every
+        # element in an svg, and any other element that is not void stays open, in <math> too, where this reading
+        # fails closed (check 6).
         foreign = tag == "svg" or "svg" in self.stack
         self.handle_starttag(tag, attrs_list)
         if tag not in VOID and foreign:

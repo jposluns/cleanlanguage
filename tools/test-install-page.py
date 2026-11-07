@@ -1054,8 +1054,8 @@ CASES = [
         (1, "a details around a step list carries the attribute 'open', " + GIVEN)),
     ("a family page step list with data-popover", edit(OTHER, STEPS, '<ol class="steps" data-popover="auto">'),
         (1, "a step list carries the attribute 'data-popover', " + GIVEN)),
-    # The gate ignores "/>" on an element that is not void, as a browser may, so each of these stays open and hides
-    # what follows.
+    # The gate ignores "/>" on an element that is not void, as a browser may, but for an svg and a shape in an svg
+    # (SVG_SHAPES), so each of these stays open and hides what follows.
     ("the button row after <div hidden/>", edit(PAGE, ROW, "<div hidden/>" + ROW), 1),
     ('the button row after <div class="vh"/>', edit(PAGE, ROW, '<div class="vh"/>' + ROW), 1),
     ("the button row after <details/>", edit(PAGE, ROW, "<details/>" + ROW), 1),
@@ -1375,12 +1375,14 @@ CASES = [
         edit(OTHER, STEPS, '<span class="vh"><thead><tr><td><p>x</thead></span>' + STEPS),
         (1, "</thead> closes <thead> with <tr> " + MISNESTED)),
     # A browser may read a table start tag in a table, outside a cell or a caption, as that table's end, so the later
-    # cell can be ignored and the p in it can keep the hiding span open past </span>, as above; the same with a div in
-    # the table.
+    # cell can be ignored and the p in it can keep the hiding span open past </span>, as above. In a row, the gate
+    # refuses that cell only by its rule for a table start tag in a table. The second case puts the cell in a div in
+    # the table, after such a start tag: a td whose parent is a div never counts as opened (TABLE_PARTS), so the gate
+    # refuses it with or without that start tag.
     ("a family page step list after a table start tag in a table row, in a hiding span",
         edit(OTHER, STEPS, '<span class="vh"><table><tr><table></table><td><p>x</td></tr></table></span>' + STEPS),
         (1, "</td> closes <td> with <p> " + MISNESTED)),
-    ("a family page step list after a table start tag in a div in a table, in a hiding span",
+    ("a family page step list after a cell in a div in a table, in a hiding span",
         edit(OTHER, STEPS, '<span class="vh"><table><div><table></table><td><p>x</td></table></span>' + STEPS),
         (1, "</td> closes <td> with <p> " + MISNESTED)),
     # A browser may close the first li at the second's start tag, so a list that omits the first's end tag passes, while
@@ -2084,7 +2086,10 @@ def end_tag_problems() -> list[str]:
                    if part in parents],
                  "<table><td><p>x</td>", "<table><caption><td><p>x</td>", "<table><tr><div><td><p>x</td>",
                  '<span class="vh"><td><p>x</td></span>', '<span class="vh"><caption><p>x</caption></span>',
-                 # A table start tag that ends the table around it, in a row or in a div in the table.
+                 # A table start tag that ends the table around it, in a row: nothing from that table on counts as
+                 # opened, so the later cell, or the row at the outer table's end tag, is left open (the first and
+                 # third). The second puts the cell in a div in the table, after such a start tag; a td whose parent is
+                 # a div never counts as opened (TABLE_PARTS), so it reads as misnested with or without that start tag.
                  "<table><tr><table></table><td><p>x</td>", "<table><div><table></table><td><p>x</td>",
                  "<table><tr><table></table></table>",
                  # A self-closing tag in an svg that is not 1 of SVG_SHAPES, or 1 whose parent is not the svg.
