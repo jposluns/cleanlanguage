@@ -121,8 +121,10 @@ nothing in this repository shows or tests whether such a file can disable or ove
 removing `/opt/orch-operator` disarms it; the guard trusts root's file, so root controls the
 decision, and it does not check the directory that holds the file; the file holds one mode for the
 whole host, so an attended session is blocked while the host says unattended; the 4096-byte bound
-limits size, not time, so a slow open or read of the file is bounded only by the hook's 10-second
-timeout, and the tests do not show what Claude Code does with the call when that timeout expires;
+limits size, not time: the `lstat` of `/opt/orch-operator`, the open of whatever is at the file's
+path, including a device node, which the guard opens before it checks for a regular file, and the
+read of a regular file can each block, and each is bounded only by the hook's 10-second timeout,
+and the tests do not show what Claude Code does with the call when that timeout expires;
 and `orch_ask_guard` continues to log a fail-open audit event on every question until the upstream
 fix is re-vendored.
 

@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """Behaviour tests for .claude/hooks/ask_mode_guard.py, the repository AskUserQuestion guard.
 
-Each case sets up a mode file, or its absence, under a temporary directory, runs the guard as a
-subprocess with python3 -I, passes that path through the test-only --mode-file argument, since CI
-has no /opt/orch-operator, and asserts the exit code and the verdict the guard prints. The files a case
-creates belong to the uid running the tests, so every case passes that uid through the test-only
---expect-owner-uid argument, except the cases that test the owner check itself. A missing guard
-fails every behaviour case rather than skipping it, so an absent file cannot read as a green run.
-Every deny must carry the complete record-and-continue instruction, and one case checks that the
-vendored orch_ask_guard words that instruction the same way. Because the behaviour cases bypass the
-guard's production mode file, one case loads the guard without running it and checks the mode file
-and owner uid it uses when it receives no argument. The last case reads only .claude/settings.json
-and checks every hook under every event and matcher: the guard must appear exactly once, as the
-AskUserQuestion entry, with neither test-only argument.
+Each behaviour case sets up a mode file, or its absence, under a temporary directory, runs the guard
+in a subprocess with python3 -I, passes that path through the test-only --mode-file argument, since
+CI has no /opt/orch-operator, and asserts the exit code and the verdict the guard prints. Most cases
+run the guard as a script; 2 cases load it as a module in that subprocess and inject a fault before
+they call its main function: a read that fails after the open, and a file renamed over the mode
+file's path after the open. The files a case creates belong to the uid running the tests, so every
+case passes that uid through the test-only --expect-owner-uid argument, except the cases that test
+the owner check itself. A missing guard fails every behaviour case rather than skipping it, so an
+absent file cannot read as a green run. Every deny must carry the complete record-and-continue
+instruction, and one case checks that the vendored orch_ask_guard words that instruction the same
+way. Because the behaviour cases bypass the guard's production mode file, one case loads the guard
+without running it and checks the mode file and owner uid it uses when it receives no argument. One
+case reads only .claude/settings.json and checks every hook, under every event and matcher, whose
+definition names ask_mode_guard: exactly one must, as the AskUserQuestion entry, with neither
+test-only argument.
 
 Usage: python3 -I tools/test-ask-mode-guard.py
 """
 import ast
+import errno
 import json
 import os
 import shutil
@@ -60,7 +64,36 @@ DEFAULTS_PROBE = (
     "print(json.dumps({'parse_args': [mode_file, owner], 'MODE_FILE': guard.MODE_FILE,\n"
     "                  'EXPECTED_OWNER_UID': guard.EXPECTED_OWNER_UID}))\n")
 
-# The shape of the host record: a JSON object whose "mode" decides, with members the guard ignores.
+# The start of each fault probe: load the guard as a module from sys.argv[1], which does not run main.
+LOAD_GUARD = (
+    "import errno, importlib.util, os, sys\n"
+    "spec = importlib.util.spec_from_file_location('ask_mode_guard', sys.argv[1])\n"
+    "guard = importlib.util.module_from_spec(spec)\n"
+    "spec.loader.exec_module(guard)\n")
+
+# Makes every os.read raise EIO, then runs main on the remaining arguments. The suite has no way to
+# make a read of a regular temporary file fail once its open has succeeded, so the probe injects the
+# error. main reads the payload through sys.stdin.buffer, not os.read, so only the guard's read of
+# the mode file meets the fault.
+READ_ERROR_PROBE = LOAD_GUARD + (
+    "def failing_read(fd, length):\n"
+    "    raise OSError(errno.EIO, os.strerror(errno.EIO))\n"
+    "os.read = failing_read\n"
+    "sys.exit(guard.main(sys.argv[2:]))\n")
+
+# Wraps os.open so that, once the mode file is open, the file at sys.argv[2] is renamed over its path,
+# then runs main on the remaining arguments. The checks that follow judge the opened file only if they
+# use the open descriptor rather than the path.
+SWAP_AFTER_OPEN_PROBE = LOAD_GUARD + (
+    "real_open = os.open\n"
+    "def open_then_swap(path, flags, *rest):\n"
+    "    fd = real_open(path, flags, *rest)\n"
+    "    os.rename(sys.argv[2], path)\n"
+    "    return fd\n"
+    "os.open = open_then_swap\n"
+    "sys.exit(guard.main(sys.argv[3:]))\n")
+
+# The shape of the host record: a JSON object whose "mode" decides, with members whose values do not.
 UNATTENDED_LINE = ('{"mode": "unattended", "phase": "dispatch", "set_by": "orch-operator", '
                    '"set_at": "2026-11-07T00:00:00Z"}\n')
 ATTENDED_LINE = UNATTENDED_LINE.replace('"unattended"', '"attended"')
@@ -97,6 +130,13 @@ class AskModeGuard(unittest.TestCase):
         args += list(extra)
         return subprocess.run(args, input=json.dumps(payload) if stdin is None else stdin,
                               capture_output=True, text=True, timeout=30)
+
+    def run_probe(self, probe, probe_args=()):
+        """Run a fault probe on the guard for the AskUserQuestion payload, with probe_args, then
+        --mode-file and --expect-owner-uid; -B keeps the import from writing bytecode."""
+        args = [sys.executable, "-I", "-B", "-c", probe, str(GUARD)] + list(probe_args)
+        args += ["--mode-file", str(self.mode_file), "--expect-owner-uid", str(os.geteuid())]
+        return subprocess.run(args, input=json.dumps(ASK), capture_output=True, text=True, timeout=30)
 
     def assert_allows_silently(self, result):
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -135,6 +175,19 @@ class AskModeGuard(unittest.TestCase):
         self.write_mode(UNATTENDED_LINE)
         payload = dict(ASK, tool_name="Bash", tool_input={"command": "true"})
         self.assert_allows_silently(self.run_guard(payload))
+
+    def test_members_other_than_mode_do_not_decide(self):
+        # With content that passes the whole-content checks, other members, their values, or their
+        # absence leave an attended record allowed and an unattended record denied.
+        for name, members in (("mode alone", {}),
+                              ("other values", {"phase": "maintenance", "set_by": None, "set_at": 0}),
+                              ("a nested mode", {"extra": {"mode": "unattended"}})):
+            with self.subTest(record=name, mode="attended"):
+                self.write_mode(json.dumps(dict({"mode": "attended"}, **members)) + "\n")
+                self.assert_allows_silently(self.run_guard())
+            with self.subTest(record=name, mode="unattended"):
+                self.write_mode(json.dumps(dict({"mode": "unattended"}, **members)) + "\n")
+                self.assert_denies(self.run_guard(), "is unattended")
 
     # --- where the file is, and what it is -----------------------------------------------------------
     def test_absent_host_directory_allows_with_a_note(self):
@@ -181,6 +234,13 @@ class AskModeGuard(unittest.TestCase):
         self.write_mode(ATTENDED_LINE, mode=0o000)
         self.assert_denies(self.run_guard(), "unreadable")
 
+    def test_read_error_after_open_denies(self):
+        # The file opens and passes its checks, then the read fails: that must deny, naming the
+        # error, rather than read as an attended record.
+        self.write_mode(ATTENDED_LINE)
+        self.assert_denies(self.run_probe(READ_ERROR_PROBE),
+                           "is unreadable: {}".format(os.strerror(errno.EIO)))
+
     # --- who owns the file and who can write it ------------------------------------------------------
     def test_owner_other_than_expected_denies(self):
         self.write_mode(ATTENDED_LINE)
@@ -203,6 +263,15 @@ class AskModeGuard(unittest.TestCase):
     def test_other_writable_file_denies(self):
         self.write_mode(ATTENDED_LINE, mode=0o646)
         self.assert_denies(self.run_guard(), "writable by others")
+
+    def test_checks_judge_the_opened_file_not_its_path(self):
+        # The opened file is group-writable; the file renamed over its path once it is open is not.
+        # The guard denies only if its checks use the open descriptor.
+        self.write_mode(ATTENDED_LINE, mode=0o664)
+        replacement = self.write_mode(ATTENDED_LINE, path=self.host_dir / "replacement")
+        result = self.run_probe(SWAP_AFTER_OPEN_PROBE, [str(replacement)])
+        self.assertFalse(replacement.exists(), "the probe did not rename the replacement")
+        self.assert_denies(result, "writable by group")
 
     # --- what the file holds -------------------------------------------------------------------------
     def test_unparseable_content_denies(self):
@@ -278,8 +347,9 @@ class AskModeGuard(unittest.TestCase):
 
 class ProductionDefaults(unittest.TestCase):
     def test_defaults_name_the_host_file_and_root(self):
-        # Every behaviour case passes --mode-file, so only this case fails when the file or owner
-        # the registered guard uses, with no argument, changes.
+        # Every behaviour case passes --mode-file, so only this case fails when the mode file the
+        # registered guard uses with no argument changes. A change to the owner uid it expects with
+        # no argument fails this case and test_default_expects_root_owner.
         result = subprocess.run([sys.executable, "-I", "-B", "-c", DEFAULTS_PROBE, str(GUARD)],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -305,8 +375,9 @@ class VendoredWording(unittest.TestCase):
 class Registration(unittest.TestCase):
     def test_settings_register_the_guard_once_without_test_arguments(self):
         settings = json.loads(SETTINGS.read_text(encoding="utf-8"))
-        # Every hook under every event and matcher, so a second registration of the guard under
-        # another matcher or event, or with a test-only argument, is counted too.
+        # Every hook under every event and matcher whose definition names the guard, so a second
+        # registration of it under another matcher or event, or with a test-only argument, is
+        # counted too.
         found = [(event, entry.get("matcher"), hook)
                  for event, entries in settings.get("hooks", {}).items()
                  for entry in entries

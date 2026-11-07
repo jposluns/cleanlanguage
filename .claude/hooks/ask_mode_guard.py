@@ -35,9 +35,10 @@ Decisions, in the order the guard makes them:
 - any other exception the guard raises at any of these steps, before it prints its verdict: deny,
   since a denied question cannot wedge a session.
 
-The phase, set_by and set_at members do not affect the decision. The guard writes no file; it only
-prints its verdict. The deny output has the shape the vendored hooks use: permissionDecision deny on
-exit 0.
+Members other than "mode", such as phase, set_by and set_at, affect the decision only through the
+checks on the whole content: size, strict UTF-8, one JSON object, and no duplicate key. The guard
+writes no file; it only prints its verdict. The deny output has the shape the vendored hooks use:
+permissionDecision deny on exit 0.
 
 Test-only arguments: --mode-file PATH reads PATH instead, and the directory that holds PATH takes the
 place of /opt/orch-operator for the absent-directory rule; --expect-owner-uid UID expects that owner
@@ -53,8 +54,10 @@ can disable or override this hook; removing /opt/orch-operator disarms it; the g
 file: it checks that uid 0 owns /opt/orch-operator/operating-mode and that neither its group nor
 others can write it, so root controls the decision, and it does not check the directory that holds
 the file; the file holds one mode for the whole host, so an attended session is blocked while the
-host says unattended; the 4096-byte bound limits size, not time, so a slow open or read of a
-regular file, such as one on a stalled network filesystem, is bounded only by the hook's 10-second
+host says unattended; the 4096-byte bound limits size, not time: the lstat of /opt/orch-operator,
+the open of whatever is at the mode file's path, including a device node, which the guard opens
+before it checks for a regular file, and the read of a regular file can each block, such as on a
+stalled network filesystem or in a device driver, and each is bounded only by the hook's 10-second
 timeout, and the tests do not show what Claude Code does with the call when that timeout expires;
 and the vendored orch_ask_guard continues to log a fail-open audit event on every question until
 the upstream fix is re-vendored.
@@ -87,7 +90,7 @@ class Unusable(Exception):
 
 
 def deny(reason, banner):
-    """A PreToolUse deny, honoured on exit 0."""
+    """A PreToolUse deny, in the shape the vendored hooks print on exit 0."""
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                    "permissionDecision": "deny",
                                    "permissionDecisionReason": reason},
