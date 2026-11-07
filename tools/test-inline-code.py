@@ -43,7 +43,7 @@ INSTALL = "site/install/index.html"
 INSTRUCTIONS = "site/instructions/index.html"
 LICENSE = "site/license/index.html"
 VERIFY = "site/verify/index.html"
-HOLDING = "site/draft/index.html"
+NOT_FOUND = "site/404.html"
 FAVICON = "site/assets/baseline/logos/cleanlanguage-favicon.svg"
 DEMO = "site/demo/index.html"
 IMG = '<img src="x" onerror="alert(1)">'
@@ -185,7 +185,7 @@ CASES = [
         before_main_end(INSTRUCTIONS, '<script type="application/x-javascript">alert(1)</script>'), 1),
     ("I6: an inline script on the home page", before_main_end(HOME, "<script>alert(1)</script>"), 1),
     ("I7: an event handler on the licence page", edit(LICENSE, "<h1>", '<h1 onclick="alert(1)">'), 1),
-    ("an inline script on the draft holding page", before_main_end(HOLDING, "<script>alert(1)</script>"), 1),
+    ("an inline script on the 404 page", before_main_end(NOT_FOUND, "<script>alert(1)</script>"), 1),
     ("an upper-case SCRIPT tag", before_main_end(INSTALL, "<SCRIPT>alert(1)</SCRIPT>"), 1),
     ("a module script", before_main_end(INSTALL, '<script type="module">alert(1)</script>'), 1),
     ("a script whose first type is not a data block",
@@ -206,7 +206,7 @@ CASES = [
         before_main_end(HOME, '<script type="application/ld+json">{"x": "<script>"}</script>'), 1),
     ("a structured-data block in mixed case and spaces",
         before_main_end(INSTALL, '<script type=" Application/LD+JSON ">{}</script>'), 0),
-    ("a structured-data block on the draft holding page", before_main_end(HOLDING, JSON_LD), 0),
+    ("a structured-data block on the 404 page", before_main_end(NOT_FOUND, JSON_LD), 0),
     ("an external script with no text", before_main_end(INSTALL, '<script src="/js/x.js" defer></script>'), 0),
     ("the word javascript in a text link", before_main_end(INSTALL, '<a href="/javascript-notes/">javascript:</a>'), 0),
     ("N1: an img in an svg title", before_main_end(HOME, f"<svg><title>{IMG}</title></svg>"), 1),
@@ -322,8 +322,8 @@ CASES = [
     ("a relative script path on a page", before_main_end(LICENSE, '<script src="js/x.js"></script>'), 1),
     ("a script from another origin inside noscript on a page",
         before_main_end(DEMO, '<noscript><script src="https://example.com/x.js"></script></noscript>'), 1),
-    ("a script from another origin on the draft holding page",
-        before_main_end(HOLDING, '<script src="https://example.com/x.js"></script>'), 1),
+    ("a script from another origin on the 404 page",
+        before_main_end(NOT_FOUND, '<script src="https://example.com/x.js"></script>'), 1),
     ("N4: an inline script in a .htm page", write_text("site/extra/index.htm", "<p>x</p><script>alert(1)</script>"), 1),
     ("a page that is not UTF-8", write_bytes(LICENSE, b"<p>\xff</p>"), 3),
     ("no HTML page under site/", remove_pages, 3),

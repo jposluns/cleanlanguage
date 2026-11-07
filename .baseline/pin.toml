@@ -2,15 +2,15 @@
 # Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths under
 # assets/baseline/ are relative to the site's output root (site/draft/ while staged, site/ after
 # promotion), and .baseline/check_palette.py is relative to the repository root, outside site/.
-# Source: https://posluns.ca/baseline/baseline-1.8.0.tar.gz, archive sha256 958a148bf896a4274dc294f230d792e035835eae7d4f8844f8bbcda6ab843197;
-# SHA256SUMS sha256 e365054b9fd156413cc1581561e43157b587a064bc2e74386faee770ab2ba1ef, copied to .baseline/SHA256SUMS.
+# Source: https://posluns.ca/baseline/baseline-1.11.1.tar.gz, archive sha256 d5d660be6bb16bd115319e34846c792ab09bb22058a9ab8059392a8a56f40175;
+# SHA256SUMS sha256 c9607abe5bfe29cf4ebe36ec9822b93271db438d2aeff0f83a38b669cbef5574, copied to .baseline/SHA256SUMS.
 # Never edit a copied file; a new version arrives as a new copy and a new pin.
-version = "1.8.0"
+version = "1.11.1"
 
 [files]
 "assets/baseline/LICENSE" = "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499"
-"assets/baseline/NOTICE.md" = "deeffb1a277a0b1f591feea15ecc10fbf4fc916cf0db07885625a288cc6e3b1e"
-"assets/baseline/baseline.css" = "37746ee8d36d4efb9abb21ad025294687b5ef0c3fb415d5c76b39dbc8a05bc16"
+"assets/baseline/NOTICE.md" = "a84715f2a3d6ee761ca2cbd8a8656fa204f45b6f0df120dfb3ae557eef472dc8"
+"assets/baseline/baseline.css" = "fbc97a3cbcda9bf0df3a914485720d008fdefe702592fab4bb2b12ce4661c3be"
 "assets/baseline/copy.js" = "9bf99b50471889b768c795af5a4f84f526cecf7622a1f1265ca3d088b31339a4"
 "assets/baseline/fonts.css" = "a309a8ff4026a67fb5d10dea2c02e5b9ea2c1b32d4b18d7892015e038397396a"
 "assets/baseline/fonts/dancing-script-LICENSE.txt" = "c02c0002d3bbd41a16933c162888c400469c7029f1362ca9d60d5ed20ea7d157"
@@ -54,14 +54,15 @@ version = "1.8.0"
 "assets/baseline/logos/secureconfig-mono.svg" = "5fd490079642b41ab12863bc1692e5481a737cc4f8f764319dd31f13a2037b86"
 "assets/baseline/logos/secureconfig-touch.png" = "5897da9f6f9a556358584faee1d33b210a96de56b7ef6177d32a5bd940f0c0c7"
 "assets/baseline/logos/secureconfig.svg" = "a74c1604acb4032e763afe0cf0a9ed9b4e5f4bdb76790d24a3de16a48eda5c1b"
+"assets/baseline/logos/vendorreplies.png" = "24c965ca0568376ea505b80aee61faf03428acb968cbca8f364236feb9cf990e"
 "assets/baseline/marks/NOTICE.md" = "b39a747fb9f73ec9373bd2329060af372e14185fcdc7f91fa67ea2cda3b6dd20"
 "assets/baseline/marks/github-invertocat-black.svg" = "693d7abe6f899646cc2e96856723b45e95f71885a54910b2749f6decdf7e1ee1"
 "assets/baseline/marks/github-invertocat-white.svg" = "ccd84c89b1056345608fc3489357f8acc7397e49a3cdc2d418b6c8016911d47b"
 "assets/baseline/marks/linkedin-in-bug.png" = "3c0149f26168b5fe0f43e68664abe40341a6443b3cd435d18a73e12f64f8b600"
 "assets/baseline/marks/orcid-id.svg" = "195be086656233fc1a0089086d9190d28dc6abce39c2290612d1893233e1f166"
-"assets/baseline/palettes.css" = "c8230746e395dd247d6f3fde32a4b5b12296e658bca7be1830487fc5d80aff5c"
+"assets/baseline/palettes.css" = "9a83e8a2f690b36a9dd40913d0cda90e9b824860effa1c49dd2cff1a263fe01f"
 "assets/baseline/rail.js" = "36535faf2df8637e694ff2a57af982b9c67c9f410f80d4dfceb193c4f2d601ca"
 "assets/baseline/scheme.js" = "39d035d986f53c987cbe92516b9a5fd499af5c7fcdda701ea896c63c45ef1634"
 "assets/baseline/search.js" = "ff39a504d988c51510be466b2ad7e5eb2edf8299eead35b4070a20ac768359bb"
 "assets/baseline/select.js" = "2c4e1f1a2cc00c49dc013fd421b16c14cdc89eb873fc57f7768be90604d4bf90"
-".baseline/check_palette.py" = "419109967bdfe1ccb58e478158fd6e01775d24abb114fceb4f4f2917540e7677"
+".baseline/check_palette.py" = "fd6a41d816e25076cb54cabb50d04d959fdb5072fee3b937d9be89a186d8c8c1"
