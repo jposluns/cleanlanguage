@@ -5,7 +5,8 @@ Each build case copies the generator's inputs into a temporary folder (under
 $TMPDIR), leaves the copy as it is or changes it (a refused case with a
 fault the generator must refuse, a passing case with a valid change it must
 accept), runs the generator there as a separate process and asserts its
-exit code, and for the passing cases, what the output contains. A further
+exit code; some passing cases, such as the clean, staged and promotion
+builds, also check what the output contains. A further
 case runs a copy of this file, without the install gate, as a separate
 process. The others run in this process: they call the
 generator's functions, loaded as a module (such as ``validate()``,
@@ -2954,7 +2955,7 @@ def check_staged_build(failures: list[str]) -> int:
             failures += [f"staged build: {problem}" for problem in about_problems(page, text, "/draft/")]
             for value in re.findall(r'(?:href|src)="(/[^"]*)"', text):
                 if not value.startswith("/draft/") and not value.startswith("/downloads/"):
-                    failures.append(f"staged build: {page} links {value} outside /draft/")
+                    failures.append(f"staged build: {page} links {value} outside /draft/ and /downloads/")
     return 1
 
 
