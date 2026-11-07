@@ -60,6 +60,11 @@ RECORD_AND_CONTINUE = (
     "outward-facing), record it and HOLD that item; the hold never licenses acting without the "
     "answer.")
 
+# The whole warning for a legacy "attended" record, so a change to its wording fails.
+LEGACY_WARNING = ('Repository guard: {} holds the legacy mode "attended", read as '
+                  'attended-autonomous; AskUserQuestion allowed. The operator runs `orchmod aa` '
+                  'to rewrite the record as attended-autonomous.')
+
 # Loads the guard as a module, which does not run main, and prints what parse_args returns for no
 # argument together with the two constants behind it. The -B flag keeps the import from writing
 # bytecode under .claude/hooks.
@@ -109,8 +114,9 @@ SWAP_PROBE = LOAD_GUARD + (
 
 # The shape of the host record: a JSON object whose "mode" decides, with members whose values do not.
 # The host's only writer, orch-set-mode, run through orchmod, writes exactly 2 values:
-# "attended-autonomous" (orchmod aa) and "unattended" (orchmod ua). "attended" is not one of them,
-# so its record is kept to show that the guard denies it as an unknown mode.
+# "attended-autonomous" (orchmod aa) and "unattended" (orchmod ua). "attended" is not one of them:
+# it is the legacy value, whose record shows that the guard reads it as attended-autonomous with
+# 1 warning.
 UNATTENDED_LINE = ('{"mode": "unattended", "phase": "dispatch", "set_by": "orch-operator", '
                    '"set_at": "2026-11-07T00:00:00Z"}\n')
 ATTENDED_AUTONOMOUS_LINE = UNATTENDED_LINE.replace('"unattended"', '"attended-autonomous"')
@@ -197,6 +203,13 @@ class AskModeGuard(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "", result.stdout)
 
+    def assert_allows_with_legacy_warning(self, result):
+        """An allow with no permissionDecision whose only output is 1 line: the legacy warning."""
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 1, result.stdout)
+        self.assertEqual(json.loads(result.stdout),
+                         {"systemMessage": LEGACY_WARNING.format(self.mode_file)})
+
     def assert_denies(self, result, cause):
         """A PreToolUse deny on exit 0 whose reason and banner both name cause."""
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -212,7 +225,7 @@ class AskModeGuard(unittest.TestCase):
         self.assertIn(RECORD_AND_CONTINUE, specific["permissionDecisionReason"])
         return specific["permissionDecisionReason"]
 
-    # --- what a valid record decides: the writer's 2 values, "attended", and other tools ----------
+    # --- what a valid record decides: the writer's 2 values, the legacy "attended", and other tools
     def test_unattended_record_denies(self):
         self.write_mode(UNATTENDED_LINE)
         reason = self.assert_denies(self.run_guard(), "unattended")
@@ -228,10 +241,11 @@ class AskModeGuard(unittest.TestCase):
         self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         self.assert_allows_silently(self.run_guard())
 
-    def test_attended_record_denies_as_unknown(self):
-        # The writer never writes "attended", so a record that holds it did not come from orchmod.
+    def test_legacy_attended_record_allows_with_one_warning(self):
+        # The writer does not write "attended", the legacy value; the guard reads it as
+        # attended-autonomous, never as unattended, and prints the whole warning.
         self.write_mode(ATTENDED_LINE)
-        self.assert_denies(self.run_guard(), "unknown mode 'attended'")
+        self.assert_allows_with_legacy_warning(self.run_guard())
 
     def test_other_tool_allows_silently_even_when_unattended(self):
         self.write_mode(UNATTENDED_LINE)
@@ -240,7 +254,8 @@ class AskModeGuard(unittest.TestCase):
 
     def test_members_other_than_mode_do_not_decide(self):
         # With content that passes the whole-content checks, other members, their values, or their
-        # absence leave an attended-autonomous record allowed and an unattended record denied.
+        # absence leave an attended-autonomous record allowed, an unattended record denied, and a
+        # legacy attended record allowed with the warning.
         for name, members in (("mode alone", {}),
                               ("other values", {"phase": "maintenance", "set_by": None, "set_at": 0}),
                               ("a nested mode", {"extra": {"mode": "unattended"}})):
@@ -250,6 +265,9 @@ class AskModeGuard(unittest.TestCase):
             with self.subTest(record=name, mode="unattended"):
                 self.write_mode(json.dumps(dict({"mode": "unattended"}, **members)) + "\n")
                 self.assert_denies(self.run_guard(), "is unattended")
+            with self.subTest(record=name, mode="attended"):
+                self.write_mode(json.dumps(dict({"mode": "attended"}, **members)) + "\n")
+                self.assert_allows_with_legacy_warning(self.run_guard())
 
     # --- where the file is, and what it is -----------------------------------------------------------
     def test_absent_host_directory_allows_with_a_note(self):
@@ -552,9 +570,11 @@ class AskModeGuard(unittest.TestCase):
                 self.assert_denies(self.run_guard(), "not one JSON document")
 
     def test_unknown_mode_values_deny(self):
-        # Case and spacing variants of the writer's 2 values, a near miss, and other strings.
+        # Case and spacing variants of the writer's 2 values and the legacy value, a near miss, and
+        # other strings.
         for value in ("Unattended", "ATTENDED-AUTONOMOUS", "attended-autonomous ",
-                      "attended_autonomous", "maintenance", ""):
+                      "attended_autonomous", "Attended", "ATTENDED", " attended", "attended ",
+                      "maintenance", ""):
             with self.subTest(mode=value):
                 self.write_mode(json.dumps({"mode": value}) + "\n")
                 self.assert_denies(self.run_guard(), "unknown mode")

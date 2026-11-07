@@ -103,15 +103,19 @@ member holds one mode for the whole host. The guard takes its values from the fi
 the host's `orch-set-mode`, which the operator runs through `orchmod` and which accepts exactly
 `"attended-autonomous"` (`orchmod aa`) and `"unattended"` (`orchmod ua`); a change to that list is
 a change to this guard. It allows a question when `"mode"` is exactly `"attended-autonomous"`,
-and in one other case: when `/opt/orch-operator` itself is absent, it allows the question with a
-one-line note, so contributor machines and hosts without the orchestrator stay usable. It denies,
+and in 2 other cases: when `"mode"` is exactly `"attended"`, a legacy value that the writer does
+not write, it reads the record as `"attended-autonomous"`, never as `"unattended"`, and allows the
+question with a one-line warning that names the file and `"attended-autonomous"`; and when
+`/opt/orch-operator` itself is absent, it allows the question with a one-line note, so contributor
+machines and hosts without the orchestrator stay usable. It denies,
 naming the cause, when the hook payload has no string `tool_name`; when `lstat` on
 `/opt/orch-operator`, which does not follow a symlink there, fails for any other reason, such
 as a path component that is a regular file; when the file is missing while `/opt/orch-operator`
 exists, unreadable, a symlink, on a path that holds a symlink loop or too many symlinks, not a
 regular file, not owned by uid 0, writable by its group or by others, over 4096 bytes, not strict
 UTF-8, not one JSON object, or holding a duplicate key; when `"mode"` is absent, not a string,
-`"unattended"`, or any other value, including `"attended"`, which the writer never writes; and when
+`"unattended"`, or any other value, including a case or spacing variant of `"attended-autonomous"`,
+`"attended"`, or `"unattended"`; and when
 the guard raises an exception before it prints its verdict. The `"unattended"` deny names the
 remedy: the operator runs `orchmod aa`, since the file is root-owned and `orch-set-mode` writes it.
 Every deny reason carries the record-and-continue instruction that `orch_ask_guard` gives, but
@@ -144,8 +148,13 @@ any mode, without the record-and-continue instruction, and if the hook process c
 as when `python3` is not on the hook shell's `PATH` (exit 127), is killed by a signal, or fails
 while it writes its verdict, it ends without a complete verdict and with a status other than 0 or
 2, which the contract treats as a non-blocking error, so the question would go through; both
-outcomes are what the contract says, not something the tests observe; and `orch_ask_guard`
-continues to log a fail-open audit event on every question until the upstream fix is re-vendored.
+outcomes are what the contract says, not something the tests observe; a legacy `"attended"`
+record allows every question and warns on each one, because the guard keeps no session state, and
+the record is root-owned and writable by neither its group nor others, so neither the guard nor a
+session without root can rewrite it: the warning repeats until the operator runs `orchmod aa`, and
+the tests check only the warning the guard prints, not whether Claude Code shows it to the user or
+to the model; and `orch_ask_guard` continues to log a fail-open audit event on every question until
+the upstream fix is re-vendored.
 
 One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
 empties, so cross-repository writes deny), but the scope-gated guards do not react to it

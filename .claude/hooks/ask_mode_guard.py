@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deny AskUserQuestion while the host operating-mode file does not say attended-autonomous.
+"""Deny AskUserQuestion unless the host operating-mode file says attended-autonomous or "attended".
 
 Claude Code runs this script as a PreToolUse hook that .claude/settings.json registers for
 AskUserQuestion. It reads the hook payload from stdin and, for an AskUserQuestion call, reads
@@ -7,8 +7,10 @@ AskUserQuestion. It reads the hook payload from stdin and, for an AskUserQuestio
 host. The only writer of that file is the host's /usr/local/bin/orch-set-mode, which the operator
 runs through orchmod: `orchmod aa` writes "attended-autonomous" and `orchmod ua` writes
 "unattended", and orch-set-mode refuses every other value. This guard takes its 2 values from that
-list, so a change to the writer's list is a change to this guard. Only the exact value
-"attended-autonomous" lets the question through, with one exception: where lstat reports
+list, so a change to the writer's list is a change to this guard. It also reads one legacy value
+that the writer does not write, "attended": this repository's rule reads it as attended-autonomous
+with a one-line warning, never as unattended. Only the exact values "attended-autonomous", silently,
+and "attended", with that warning, let the question through, with one exception: where lstat reports
 /opt/orch-operator itself absent, the host declares no operating-mode, so the guard allows the
 question with a one-line note. Every other state denies and names its cause, because a
 blocking question in an unattended session stalls the run until someone notices, while a wrongly
@@ -41,9 +43,11 @@ Decisions, in the order the guard makes them:
 - content over 4096 bytes, not strict UTF-8, not one JSON object (NaN, Infinity and -Infinity
   included, since JSON has no such values), holding a duplicate key, or with a "mode" that is
   absent or not a string: deny;
-- "mode" exactly "attended-autonomous": allow, silently; "unattended": deny, naming `orchmod aa` as
-  the operator's way to let questions through; any other value, including "attended", which the
-  writer never writes, and a case variant: deny, as an unknown mode;
+- "mode" exactly "attended-autonomous": allow, silently; exactly "attended", the legacy value that
+  the writer does not write: allow, read as attended-autonomous and never as unattended, with a
+  one-line systemMessage naming the mode file and attended-autonomous and no permissionDecision;
+  "unattended": deny, naming `orchmod aa` as the operator's way to let questions through; any other
+  value, including a case or spacing variant of these 3: deny, as an unknown mode;
 - any other exception the guard raises at any of these steps, before it prints its verdict: deny,
   since a denied question cannot wedge a session.
 
@@ -79,9 +83,13 @@ be blocked, in any mode, without the record-and-continue instruction, and if the
 cannot start, such as when python3 is not on the hook shell's PATH (exit 127), is killed by a
 signal, or fails while it writes its verdict, it ends without a complete verdict and with a status
 other than 0 or 2, which the contract treats as a non-blocking error, so the question would go
-through; both outcomes are what the contract says, not something the tests observe; and the
-vendored orch_ask_guard continues to log a fail-open audit event on every question until the
-upstream fix is re-vendored.
+through; both outcomes are what the contract says, not something the tests observe; a legacy
+"attended" record allows every question and warns on each one, because the guard keeps no session
+state, and the record is root-owned and writable by neither its group nor others, so neither the
+guard nor a session without root can rewrite it: the warning repeats until the operator runs
+`orchmod aa`, and the tests check only the warning the guard prints, not whether Claude Code shows
+it to the user or to the model; and the vendored orch_ask_guard continues to log a fail-open audit
+event on every question until the upstream fix is re-vendored.
 """
 import errno
 import json
@@ -97,6 +105,9 @@ TOOL = "AskUserQuestion"
 # since no sanctioned path could write them.
 ATTENDED_AUTONOMOUS = "attended-autonomous"
 UNATTENDED = "unattended"
+# The legacy value, which orch-set-mode does not write. This repository's rule reads a record that
+# holds it as attended-autonomous with 1 warning, never as unattended.
+LEGACY_ATTENDED = "attended"
 
 # The record-and-continue instruction, worded as the vendored orch_ask_guard words it, so an agent
 # meets one instruction whichever guard denies first.
@@ -128,6 +139,16 @@ def deny_unattended(mode_file):
                 "operating-mode to attended-autonomous; then re-issue.".format(
                     mode_file, RECORD_AND_CONTINUE),
                 "Repository guard: denied a blocking question; the host operating-mode is unattended.")
+
+
+def allow_legacy_attended(mode_file):
+    """An allow with no permissionDecision, as for an absent host directory, and 1 warning that
+    names the record, the legacy value and the value it reads as."""
+    return {"systemMessage": "Repository guard: {} holds the legacy mode \"{}\", read as {}; "
+                             "AskUserQuestion allowed. The operator runs `orchmod aa` to "
+                             "rewrite the record as {}.".format(
+                                 mode_file, LEGACY_ATTENDED, ATTENDED_AUTONOMOUS,
+                                 ATTENDED_AUTONOMOUS)}
 
 
 def deny_cause(cause):
@@ -244,6 +265,8 @@ def decide(payload, mode_file, expect_uid):
         return deny_cause(str(exc))
     if mode == ATTENDED_AUTONOMOUS:
         return None
+    if mode == LEGACY_ATTENDED:
+        return allow_legacy_attended(mode_file)
     if mode == UNATTENDED:
         return deny_unattended(mode_file)
     return deny_cause("unknown mode {!r} in {}".format(mode[:64], mode_file))
