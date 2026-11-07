@@ -23,7 +23,11 @@ What it verifies
    ``.baseline/card-fonts/``; and whose every value is a lower-case SHA-256.
    The version, each key and each value are matched whole, as are the base
    path in ``site-src/site.json`` and each ``SHA256SUMS`` line, so a value
-   that ends in a newline is malformed. Any other key, such as
+   that ends in a newline is malformed. Only a newline ends a ``SHA256SUMS``
+   line, and the last line must end in one, so a line that ends in a
+   carriage return (CRLF) or in another character that ``str.splitlines()``
+   takes as a line end, such as U+2028, is malformed, and so is a last line
+   without its newline. Any other key, such as
    ``.baseline/site-card.toml``, is malformed: the card's data file and
    illustration are the site's own, not the version's.
    A malformed pin is a failure, never a pass: exit 3, or exit 1 when a
@@ -98,6 +102,12 @@ What it verifies
 Every folder is listed with ``os.scandir``, so a folder or file that cannot be
 read fails closed (exit 3) rather than reading as empty.
 
+Each problem and each error it prints is 1 line, whatever the file names in
+it: a character that is not printable, such as a newline, a carriage return
+or an escape, is written as Python writes it in a string literal (``\\n``,
+``\\r``, ``\\x1b``). A backslash is printed as it is, so a printed ``\\n`` can
+also stand for a backslash followed by ``n``.
+
 What it does not verify
 -----------------------
 
@@ -112,14 +122,19 @@ learn the new form.
 Exit codes:
   0  every copied file matches the pin
   1  a file drifted, is missing, is extra, or disagrees with SHA256SUMS; a
+     file of the runtime and licence set or a build tool is not pinned; a
+     file or link under site/ has a pinned build tool's file name; a
      checked folder is a link or not a folder, or a link is under site/ or
      .baseline/card-fonts/; the pin's version is not the README's; or
      NOTICE.md's Site template entry
      is not the one the README prescribes, or NOTICE.md has another line that
      reads as its heading, or a comment opener or code fence line anywhere
-  3  the pin or a file could not be read, the pin is malformed, or the README
+  3  the pin or a file could not be read, or a file it reads whole is not a
+     regular file or not UTF-8; a folder could not be listed; the pin, a
+     SHA256SUMS line, or site-src/site.json or its base path is malformed;
+     the copy folder under the output root is missing; the README
      lacks its version heading or a step 7 NOTICE entry in the form item 7
-     gives, or holds a carriage return
+     gives, or holds a carriage return; or Python is older than 3.11
 """
 
 from __future__ import annotations
@@ -192,8 +207,19 @@ REQUIRED = [
 HEX64 = re.compile(r"[0-9a-f]{64}")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 REL_PATH = re.compile(r"[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*")
-SUM_LINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9._/-]+)")
+SUM_LINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9._/-]+)\n")
 BASE = re.compile(r"/[a-z0-9-]+/")
+# Each line of a text with its "\n", and a last line without one as it is, so that SUM_LINE refuses it. Only "\n" ends
+# a line here: str.splitlines() also ends one at a carriage return and at other characters, such as U+2028, so a
+# SHA256SUMS with CRLF line ends would pass although each of its lines holds more than the digest and the name.
+LINE = re.compile(r"[^\n]*\n|[^\n]+")
+
+
+def one_line(text: str) -> str:
+    """text with each character that is not printable written as Python writes it in a string literal, such as \\n
+    for a newline, so that a file name or other outside text in a message can neither end its line nor send the
+    terminal a control sequence."""
+    return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in text)
 
 
 class Unreadable(Exception):
@@ -385,7 +411,7 @@ def check(root: Path) -> list[str]:
         sums_text = read_bytes(root / SUMS).decode("utf-8")
     except UnicodeError as error:
         raise Unreadable(f"{SUMS} is not UTF-8: {error}") from error
-    for number, line in enumerate(sums_text.splitlines(), start=1):
+    for number, line in enumerate(LINE.findall(sums_text), start=1):
         match = SUM_LINE.fullmatch(line)
         if match is None:
             raise Unreadable(f"{SUMS} line {number} is malformed")
@@ -452,12 +478,12 @@ def main(argv: list[str]) -> int:
     try:
         problems = check(root)
     except Unreadable as error:
-        print(f"check-baseline-pin: {error}", file=sys.stderr)
+        print(f"check-baseline-pin: {one_line(str(error))}", file=sys.stderr)
         return 3
     if problems:
         print("Baseline pin problems found:")
         for problem in problems:
-            print(f"  - {problem}")
+            print(f"  - {one_line(problem)}")
         return 1
     version, files = load_pin(root)
     print(f"All {len(files)} copied files of baseline {version} match the pin and the version's SHA256SUMS, and no file is unpinned; "

@@ -5,9 +5,12 @@ Each gate case but the last builds a small pinned tree in a temporary folder
 (under $TMPDIR), with the version's README and specification under
 ``.baseline/`` and a root ``NOTICE.md``, applies 1 fault, or none for the
 clean tree, runs the gate on that tree as a separate process and asserts its
-exit code, and for some cases a line of its output. The last case runs the
-gate on this repository. The copy-baseline cases run
-``tools/copy-baseline.py`` on a small version folder and assert:
+exit code, and for some cases a line of its output. A further gate case
+runs it on a tree whose root's name holds a newline and without
+``SHA256SUMS``, and asserts that its error is 1 line with the newline
+written as ``\\n``. The last case runs the gate on this repository. The
+copy-baseline cases run ``tools/copy-baseline.py`` on a small version folder
+and assert:
 
 - what it copies and pins: the runtime and licence files to the served copy
   folder, under site/ or, with the base path /draft/, under site/draft/, and
@@ -22,9 +25,10 @@ gate on this repository. The copy-baseline cases run
   match its digest, that SHA256SUMS does not list, or that it lists and the
   folder lacks; a SHA256SUMS line with text after its file name, or that names
   a file twice, by an absolute path or above the folder, each named with its
-  line number; a FIFO, or a link that leads to a FIFO, in place of SHA256SUMS
-  or of the gate, each refused by the check made before the open, and a link
-  in place of a file in the version folder;
+  line number; a SHA256SUMS with CRLF line ends, with U+2028 in place of a
+  line end, or whose last line has no newline; a FIFO, or a link that leads
+  to a FIFO, in place of SHA256SUMS or of the gate, each refused by the check
+  made before the open, and a link in place of a file in the version folder;
   a version without the palette gate, the card builder, the README or the
   specification; a README that names another version, lacks its step 7 NOTICE
   entry, holds a second quoted paragraph in step 7 or has CRLF line ends, on
@@ -64,6 +68,11 @@ gate on this repository. The copy-baseline cases run
   write, on a version that is otherwise valid; a ``--from`` folder that does
   not exist exits 3; and, when not run as root, a read-only ``.baseline/``
   exits 3 saying that the copy and the pin may be incomplete;
+- that a path that holds a newline leaves each message 1 line, with the
+  newline written as ``\\n``: a ``--from`` folder that does not exist, under
+  a folder whose name holds one (exit 3); a link in the version folder whose
+  name holds one (exit 1); and a link under ``site/`` whose name holds one,
+  which the gate names after the copy (exit 1);
 - what argparse handles, with argparse's own output rather than the tool's 1
   line: no options exits 2 with argparse's usage and error lines, and
   ``--help`` exits 0 with its help, each with nothing written;
@@ -415,6 +424,33 @@ def fault_sums_line_malformed(root: Path) -> None:
         stream.write(f"{digest(b'extra')}  extra.css extra\n")
 
 
+def edit_sums(root: Path, change) -> None:
+    path = root / ".baseline" / "SHA256SUMS"
+    path.write_bytes(change(path.read_bytes().decode("utf-8")).encode("utf-8"))
+
+
+def fault_sums_crlf(root: Path) -> None:
+    edit_sums(root, lambda sums: sums.replace("\n", "\r\n"))
+
+
+def fault_sums_line_separator(root: Path) -> None:
+    # U+2028 is 1 of the characters at which str.splitlines() also ends a line.
+    edit_sums(root, lambda sums: sums.replace("\n", chr(0x2028), 1))
+
+
+def fault_sums_no_final_newline(root: Path) -> None:
+    edit_sums(root, lambda sums: sums[:-1])
+
+
+def fault_served_link_newline(root: Path) -> None:
+    (root / "site" / "a\nb").symlink_to(root / "NOTICE.md")
+
+
+# The lines of the SHA256SUMS that build() writes: the copied files, reference/landing.html, the palette gate, the card
+# files and the documents.
+SUMS_LINES = len(FILES) + 2 + len(CARD) + len(DOCS)
+
+
 def fault_missing_pin(root: Path) -> None:
     (root / ".baseline" / "pin.toml").unlink()
 
@@ -614,6 +650,8 @@ CASES = [
     ("a link in place of the copy folder", fault_copy_folder_link, 1, "site/draft/assets/baseline is a link"),
     ("a link in place of the site/ folder", fault_site_link, 1, "site is a link, not a folder"),
     ("a link in place of the .baseline/ folder", fault_pin_folder_link, 1, ".baseline is a link, not a folder"),
+    # The problem names the link with its newline written as \n, so it stays 1 line.
+    ("a link under site/ whose name holds a newline", fault_served_link_newline, 1, "  - site/a\\nb is a link;"),
     ("the pin moved to another version, NOTICE.md with it", fault_other_version, 1, "different versions"),
     ("the README not listed in SHA256SUMS", fault_readme_unlisted, 1, "SHA256SUMS does not list README.md"),
     ("the copied README edited", fault_readme_edited, 1),
@@ -662,6 +700,11 @@ CASES = [
     ("SHA256SUMS is missing", fault_missing_sums, 3),
     ("a SHA256SUMS line with text after its file name", fault_sums_line_malformed, 3,
         ".baseline/SHA256SUMS line ", " is malformed"),
+    ("a SHA256SUMS with CRLF line ends", fault_sums_crlf, 3, ".baseline/SHA256SUMS line 1 is malformed"),
+    ("a SHA256SUMS with U+2028 in place of its first line end", fault_sums_line_separator, 3,
+        ".baseline/SHA256SUMS line 1 is malformed"),
+    ("a SHA256SUMS whose last line has no newline", fault_sums_no_final_newline, 3,
+        f".baseline/SHA256SUMS line {SUMS_LINES} is malformed"),
     ("the copied README is missing", fault_readme_missing, 3),
     ("a README without its version heading", fault_readme_no_heading, 3),
     ("a README without its step 7 NOTICE entry", fault_readme_no_entry, 3),
@@ -901,6 +944,13 @@ COPY_SUMS_REFUSALS = [
     ("a file that SHA256SUMS lists and the folder lacks",
         {"sums_edit": lambda sums: sums + f"{digest(b'extra')}  extra.css\n"},
         "the folder does not match SHA256SUMS: missing ['extra.css'], unlisted []"),
+    # Only "\n" ends a SHA256SUMS line, and the last line must end in one.
+    ("a SHA256SUMS with CRLF line ends", {"sums_edit": lambda sums: sums.replace("\n", "\r\n")},
+        "SHA256SUMS line 1 is malformed"),
+    ("a SHA256SUMS with U+2028 in place of its first line end",
+        {"sums_edit": lambda sums: sums.replace("\n", chr(0x2028), 1)}, "SHA256SUMS line 1 is malformed"),
+    ("a SHA256SUMS whose last line has no newline", {"sums_edit": lambda sums: sums[:-1]},
+        f"SHA256SUMS line {len(PACKAGE)} is malformed"),
 ]
 # SHA256SUMS lines copy-baseline refuses (exit 1) before its first write, each added after the version's own lines:
 # each gives the line and what the tool's 1 line must say. A name outside the folder would also fail the comparison
@@ -1375,6 +1425,53 @@ def failure_problems() -> list[str]:
     return problems
 
 
+def newline_in_from_parent(root: Path) -> subprocess.CompletedProcess:
+    (root / "tools").mkdir()
+    shutil.copyfile(GATE, root / "tools" / GATE.name)
+    folder = root / "parent\n" / "1.2.1"
+    return copy_run(root, ["--from", str(folder), "--sums-sha256", "0" * 64, "--archive-sha256", "0" * 64], folder)
+
+
+def newline_in_version_link(root: Path) -> subprocess.CompletedProcess:
+    def link(root: Path, version: Path) -> None:
+        (version / "a\nb").symlink_to(version / "baseline.css")
+    return run_copy(root, dict(PACKAGE), before_run=link)
+
+
+def newline_in_served_link(root: Path) -> subprocess.CompletedProcess:
+    (root / "site").mkdir()
+    (root / "site" / "a\nb").symlink_to(root / "NOTICE.md")
+    return run_copy(root, dict(PACKAGE))
+
+
+# Runs in which a message names a path that holds a newline: each gives the run, the exit code, the lines on stderr,
+# and what the last of them must say, with the newline written as \n. The last run's line is 1 of the gate's problems,
+# after the line that introduces them.
+NEWLINE_PATHS = [
+    ("a --from folder that does not exist, under a folder whose name holds a newline", newline_in_from_parent, 3, 1,
+        "parent\\n/1.2.1 could not be read"),
+    ("a link in the version folder whose name holds a newline", newline_in_version_link, 1, 1,
+        "1.2.1/a\\nb is not a regular file or folder"),
+    ("a link under site/ whose name holds a newline, named by the gate after the copy", newline_in_served_link, 1, 2,
+        "  - site/a\\nb is a link;"),
+]
+
+
+def newline_path_problems() -> list[str]:
+    """copy-baseline prints each message of its own, and each of the gate's problems that it names, as 1 line when a
+    path in it holds a newline, for each run in NEWLINE_PATHS."""
+    problems = []
+    for name, make_run, expected, count, needle in NEWLINE_PATHS:
+        with tempfile.TemporaryDirectory() as scratch:
+            result = make_run(Path(scratch))
+            lines = result.stderr.splitlines()
+            if result.returncode != expected or len(lines) != count or needle not in lines[-1]:
+                problems.append(f"copy-baseline: {name} exits {result.returncode} with {len(lines)} lines; expected "
+                                f"{expected} with {count}, the last saying {needle!r}: "
+                                f"{result.stderr.strip()[-200:]!r}")
+    return problems
+
+
 def base_newline(root: Path) -> dict:
     (root / "site-src").mkdir()
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/draft/\n"}), encoding="utf-8")
@@ -1773,12 +1870,13 @@ def main() -> int:
                            + python_floor_problems() + copy_source_problems() + alias_problems()
                            + failure_problems() + whole_value_problems() + read_once_problems()
                            + planted_cache_problems() + sums_line_problems() + read_refusal_problems()
-                           + input_refusal_problems())
+                           + input_refusal_problems() + newline_path_problems())
     # The 7 cases of failure_problems(), read_once_problems(), planted_cache_problems(), and in copy_problems() the
     # base path /draft/ and the NOTICE.md entry naming the previous version.
     ran = 11 + 7 + 1 + 1 + 2
     ran += (len(COPY_REFUSALS) + len(COPY_SUMS_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
-            + len(WHOLE_VALUE_REFUSALS) + len(SUMS_LINE_REFUSALS) + len(READ_REFUSALS) + len(INPUT_REFUSALS))
+            + len(WHOLE_VALUE_REFUSALS) + len(SUMS_LINE_REFUSALS) + len(READ_REFUSALS) + len(INPUT_REFUSALS)
+            + len(NEWLINE_PATHS))
     # As root, file permissions neither stop a write, a listing nor a search, so they cannot stand in for these
     # failures.
     if hasattr(os, "geteuid") and os.geteuid() != 0:
@@ -1820,6 +1918,19 @@ def main() -> int:
             ran += 1
             if code != 3:
                 failures.append(f"an unlistable folder: exit {code}, expected 3")
+    # The gate's error names the path it could not read, under a root whose name holds a newline, in 1 line.
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch) / "a\nb"
+        root.mkdir()
+        build(root)
+        fault_missing_sums(root)
+        result = run_gate(root)
+        ran += 1
+        lines = result.stderr.splitlines()
+        if (result.returncode != 3 or len(lines) != 1
+                or "a\\nb/.baseline/SHA256SUMS could not be read" not in lines[0]):
+            failures.append(f"a missing SHA256SUMS under a root whose name holds a newline: exit {result.returncode} "
+                            f"with {result.stderr.strip()[:200]!r}; expected 3 with 1 line naming the path")
     code = run(REPO_ROOT)
     ran += 1
     if code != 0:

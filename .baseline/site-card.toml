@@ -8,7 +8,8 @@
 # decision of 2026-11-06.
 # logo and touch_bg are unset: without a logo the builder makes no touch icon, and the site keeps its pinned
 # touch icon. The tag texts are unset because their defaults give the title, description and alt in
-# scripts/card/TAGS.md, not the tags that site/index.html serves now.
+# scripts/card/TAGS.md. That alt is the one that site/index.html serves now; the title and description differ
+# from those that it serves now.
 site = "cleanlanguage"
 layout = "centre"
 name = "CleanLanguage"

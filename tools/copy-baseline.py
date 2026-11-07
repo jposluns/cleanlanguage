@@ -113,6 +113,11 @@ the README's version against the pin's and its NOTICE entry against
 the copy.
 ``tools/check-baseline-pin.py`` checks the copy offline on every pull request.
 
+It splits ``SHA256SUMS`` into lines at each newline only, and the last line
+must end in one, so a line that ends in a carriage return (CRLF) or in another
+character that ``str.splitlines()`` takes as a line end, such as U+2028, is
+malformed, and so is a last line without its newline.
+
 It ends by running that gate's own ``check()``, in process, on the repository
 it wrote, and reports success only when the gate passes. Otherwise it exits
 with the gate's code and names the gate's problems; the copy and the pin are
@@ -121,6 +126,14 @@ tool writes and reads, so this last check is what catches the rest of the
 tree, such as a link elsewhere under ``site/``. Since the gate compares
 ``NOTICE.md``'s ``## Site template`` entry with the pin's version, update that
 entry to the new version before the copy, or the copy exits 1 naming it.
+
+Each message of its own, and each of the gate's problems that it names, is 1
+line, whatever the paths and other outside text in it: a character that is
+not printable, such as a newline, a carriage return or an escape, is written
+as Python writes it in a string literal (``\\n``, ``\\r``, ``\\x1b``). A
+backslash is printed as it is, so a printed ``\\n`` can also stand for a
+backslash followed by ``n``. What argparse prints for a command line that it
+refuses is argparse's own output, which can repeat an option as given.
 
 It needs Python 3.11 or later, since the gate it loads imports ``tomllib``.
 
@@ -154,9 +167,15 @@ Exit codes:
      argparse prints its usage and error lines, not this tool's own 1 line,
      and it reads no input and writes nothing in the repository or the --from
      folder
-  3  an input could not be read, or Python is older than 3.11; or, before the
-     first write, the base path in site-src/site.json is readable but is not
-     / or a single folder such as /draft/, matched whole; or any failure
+  3  an input could not be read, the gate tools/check-baseline-pin.py does not
+     compile, or Python is older than 3.11; or, before the first write,
+     site-src/site.json holds no readable base path, or the base path is not
+     / or a single folder such as /draft/, matched whole; or, before the
+     first write, a folder or file it clears or writes, or a folder above
+     one, could not be examined (lstat failed for a reason other than its
+     absence), or the --from folder, a folder above it, or a path it clears
+     or writes, or a folder above one, could not be compared by device and
+     inode; or any failure
      after the first change to a managed path and before the pin is written,
      whatever raised it (an interrupt aside), with a message that says that
      the copy and the pin may be incomplete; or, after the copy and the pin
@@ -200,8 +219,13 @@ TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js"
 FOLDERS = ("fonts/", "logos/", "marks/")
 # Each value these validate is matched whole with fullmatch(): "$" also matches before a final newline, so match()
 # would accept a value that ends in one.
-SUM_LINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9._/-]+)")
+SUM_LINE = re.compile(r"([0-9a-f]{64})  ([A-Za-z0-9._/-]+)\n")
 HEX64 = re.compile(r"[0-9a-f]{64}")
+# Each line of a text with its "\n", and a last line without one as it is, so that SUM_LINE refuses it. Only "\n" ends
+# a line here, as in the gate: str.splitlines() also ends one at a carriage return and at other characters, such as
+# U+2028, so a SHA256SUMS with CRLF line ends would pass although each of its lines holds more than the digest and the
+# name.
+LINE = re.compile(r"[^\n]*\n|[^\n]+")
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 BASE = re.compile(r"/[a-z0-9-]+/")
 
@@ -211,11 +235,18 @@ BASE = re.compile(r"/[a-z0-9-]+/")
 copying = False
 
 
+def one_line(text: str) -> str:
+    """text with each character that is not printable written as Python writes it in a string literal, such as \\n
+    for a newline, so that a path or other outside text in a message can neither end its line nor send the terminal a
+    control sequence. The gate has the same function, but this tool can fail before it loads the gate."""
+    return "".join(c if c.isprintable() else c.encode("unicode_escape").decode("ascii") for c in text)
+
+
 def die(code: int, message: str) -> None:
     if copying:
         code = 3
         message = f"{message}; the copy and the pin may be incomplete"
-    print(f"copy-baseline: {message}", file=sys.stderr)
+    print(f"copy-baseline: {one_line(message)}", file=sys.stderr)
     raise SystemExit(code)
 
 
@@ -424,7 +455,7 @@ def main() -> int:
         die(3, f"SHA256SUMS could not be read: {error}")
 
     listed: dict[str, str] = {}
-    for number, line in enumerate(sums_text.splitlines(), start=1):
+    for number, line in enumerate(LINE.findall(sums_text), start=1):
         match = SUM_LINE.fullmatch(line)
         if match is None:
             die(1, f"SHA256SUMS line {number} is malformed: {line!r}")
@@ -527,7 +558,7 @@ def main() -> int:
     if problems:
         print(f"copy-baseline: wrote the copy and the pin, but {GATE.name} refuses the tree:", file=sys.stderr)
         for problem in problems:
-            print(f"  - {problem}", file=sys.stderr)
+            print(f"  - {one_line(problem)}", file=sys.stderr)
         return 1
     print(f"copied {len(chosen) + len(tools)} files of baseline {version} ({len(chosen)} to {PREFIX} and "
           f"{len(tools)} build tool files to .baseline/) and wrote .baseline/pin.toml; copied the documents "
