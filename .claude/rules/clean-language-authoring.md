@@ -29,16 +29,13 @@ These are settled decisions about this repository and this website. Each exists
 to stop a later editor correcting something deliberate. Treat a change to any of
 them as a change to the standard, not as a defect fix.
 
-**Dash specimens on the landing page are mention, not use.** `site/index.html`
-quotes the em dash and the en dash as the characters the standard removes. The
-house ban forbids writing with those marks; it does not forbid naming them. Do
-not strip the specimens.
-
 **The name collision with the coaching technique is accepted.** "Clean Language"
 is also the name of an established questioning technique. Page titles and meta
 descriptions carry no "AI writing" disambiguation, with one exception already in
-place: the checklist page title, "Clean Language - AI writing quality assurance".
-Do not add disambiguation elsewhere.
+place: the checklist page title,
+"AI writing quality assurance | CleanLanguage.ai". Do not add disambiguation
+elsewhere. A meta description that names AI writing as its subject, as the
+home and patterns descriptions do, is not disambiguation.
 
 **Condensed site renderings of the skill are intentional.** The website presents
 the standard more briefly than `cleanlanguage/skills/cleanlanguage/SKILL.md` does. Brevity against the

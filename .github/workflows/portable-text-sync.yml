@@ -1,6 +1,6 @@
 name: Portable text sync
 
-# Two related checks on the portable instructions text.
+# Three related checks on the portable instructions text.
 #
 # The first flags when the packaged skill changes without the portable text at
 # the size-labelled portable renderings (generated cleanlanguage.md and its
@@ -13,6 +13,13 @@ name: Portable text sync
 # text statically because the site's own pages must not use inline code; the
 # security policy allows inline scripts, so a browser would not block one, and
 # site-hardening.yml checks every page for inline code as well.
+#
+# The third checks that the dash bullet of the quality checklist, one of the
+# references that text carries, reads exactly as the check builds it: a fixed
+# opening sentence, then "Keep a dash only in" and the list in one bullet of
+# SKILL.md, the bullet in Preserve legitimate language that lists quoted
+# language. It reads no other carve-out SKILL.md states. See
+# tools/check-skill-consistency.py for what else it does not prove.
 #
 # This workflow carries no paths filter on purpose, so it runs on every pull
 # request and every push to main (row 119). The steps read files across the
@@ -65,6 +72,14 @@ jobs:
       - name: Check the portable text is reconciled with the skill
         shell: bash
         run: tools/check-portable-text-sync.sh
+
+      - name: Test the skill consistency gate
+        shell: bash
+        run: python3 -I tools/test-check-skill-consistency.py
+
+      - name: Check that the checklist dash bullet matches the skill carve-out bullet
+        shell: bash
+        run: python3 -I tools/check-skill-consistency.py
 
       - name: Run the instructions page gate tests
         shell: bash

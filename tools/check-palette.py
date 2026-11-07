@@ -22,13 +22,15 @@ What it verifies
    with a lower-case SHA-256, and that file is a regular file that hashes to
    it, so a tampered copy never runs. ``tools/check-baseline-pin.py`` checks
    the same digest against the version's ``SHA256SUMS``.
-2. No file named ``site-palette.css`` exists under the output root. The owner
-   has not asked for site-owned palette colours (template specification,
-   "Site-owned palette colours"), so such a file is drift, and the command
-   above runs without ``--site-palette``.
+2. No file named ``site-palette.css`` exists under the output root. This site
+   sets no palette colours of its own, the maintainer's default (template
+   specification, "Site-owned palette colours"), so such a file is drift, and
+   the command above runs without ``--site-palette``.
 3. The pinned gate passes, read from its own exit status: 0 when every
    contrast check passes, 1 on any failure or on input it cannot read, and 2
-   on a usage error. The wrapper exits with that status.
+   on a usage error. The wrapper exits with that status. From baseline 1.9.1
+   the gate also reads the ``baseline.css`` beside ``palettes.css``, where the
+   family and component tokens are declared.
 
 What it does not verify
 -----------------------
@@ -145,7 +147,7 @@ def main() -> int:
         return 3
     if strays:
         for path in strays:
-            print(f"check-palette: {path.relative_to(root)} exists, but the owner has not asked for site-owned palette colours.")
+            print(f"check-palette: {path.relative_to(root)} exists, but this site sets no palette colours of its own.")
         return 1
     command = [sys.executable, "-I", TOOL, "--site", SITE, "--palettes", (out / "assets/baseline/palettes.css").as_posix()]
     code = subprocess.run(command, cwd=root).returncode

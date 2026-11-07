@@ -15,13 +15,16 @@ site/draft/: a contrast failure in the copy there, with site/ clean, exits 1;
 a clean copy there, with the palettes under site/ removed, exits 0; and a
 site-palette.css under site/draft/assets/, beside a clean copy there and the
 clean palettes under site/, exits 1. An invalid base, a missing base, a JSON
-list and invalid JSON each exit 3.
+list and invalid JSON each exit 3. The pinned gate also reads the baseline.css
+beside the palettes, so the copies carry it, and a missing baseline.css or one
+lacking a component token exits 1.
 Exit 0 when every case passes; 1 otherwise, naming each failing case.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -33,10 +36,13 @@ WRAPPER = REPO_ROOT / "tools" / "check-palette.py"
 TOOL = ".baseline/check_palette.py"
 PIN = ".baseline/pin.toml"
 PALETTES = "site/assets/baseline/palettes.css"
+# From baseline 1.9.1 the pinned gate also reads the baseline.css beside the palettes it is given.
+BASELINE_CSS = "site/assets/baseline/baseline.css"
 SITE_JSON = "site-src/site.json"
-FILES = [TOOL, PIN, PALETTES, SITE_JSON]
-# The palettes of the output root at base /draft/.
+FILES = [TOOL, PIN, PALETTES, BASELINE_CSS, SITE_JSON]
+# The palettes of the output root at base /draft/, and the baseline.css beside them.
 DRAFT_PALETTES = "site/draft/assets/baseline/palettes.css"
+DRAFT_BASELINE_CSS = "site/draft/assets/baseline/baseline.css"
 MISSING = object()
 
 
@@ -115,10 +121,25 @@ def write_site_json(text: str):
 def copy_palettes_to_draft(root: Path) -> None:
     (root / DRAFT_PALETTES).parent.mkdir(parents=True)
     shutil.copyfile(root / PALETTES, root / DRAFT_PALETTES)
+    shutil.copyfile(root / BASELINE_CSS, root / DRAFT_BASELINE_CSS)
 
 
 def remove_site_palettes(root: Path) -> None:
     (root / PALETTES).unlink()
+
+
+def remove_baseline_css(root: Path) -> None:
+    (root / BASELINE_CSS).unlink()
+
+
+def drop_component_token(root: Path) -> None:
+    """Remove the one declaration of the component token --th-rule from baseline.css."""
+    path = root / BASELINE_CSS
+    text = path.read_text(encoding="utf-8")
+    found = re.findall(r" ?--th-rule: [^;]*;", text)
+    if len(found) != 1:
+        raise AssertionError(f"{BASELINE_CSS} does not declare --th-rule exactly once")
+    path.write_text(text.replace(found[0], "", 1), encoding="utf-8")
 
 
 def both(*faults):
@@ -135,6 +156,8 @@ CASES = [
     ("the pinned gate deleted", delete_tool, 3),
     ("dark --text-muted set to the dark --bg", dark_text_muted_on_bg, 1),
     ("a site-palette.css under site/assets/", plant_site_palette, 1),
+    ("baseline.css missing beside the palettes", remove_baseline_css, 1),
+    ("baseline.css lacking a component token", drop_component_token, 1),
     ("base / with a contrast failure only under site/draft/", both(
         set_base("/"), copy_palettes_to_draft, lambda root: dark_text_muted_on_bg(root, DRAFT_PALETTES)), 0),
     ("base /draft/ with a contrast failure only under site/draft/", both(
