@@ -19,12 +19,18 @@ Decisions, in the order the guard makes them:
 
 - an argument it does not know or cannot parse, or a hook payload that is not a JSON object: deny,
   whatever the tool, because the guard reads both before it looks at the tool;
+- a payload object whose "tool_name" is missing, null, or not a string: deny, as a malformed
+  payload, since it names no tool that the guard could let through;
 - a tool other than AskUserQuestion: allow, silently;
 - lstat reporting /opt/orch-operator itself absent: allow, with a one-line systemMessage, so that
   contributor machines and hosts without the orchestrator stay usable;
 - lstat on /opt/orch-operator failing for any other reason, such as a parent directory the guard
-  cannot search: deny;
-- the mode file missing, unreadable, a symlink (opened with O_NOFOLLOW), or not a regular file: deny;
+  cannot search or a path component that is a regular file (ENOTDIR): deny;
+- the mode file missing, unreadable, a symlink (opened with O_NOFOLLOW), or not a regular file: deny.
+  lstat does not follow a symlink at /opt/orch-operator itself, so a dangling symlink there counts
+  as present and leaves the mode file missing; a symlink loop there makes the open fail as a
+  symlink; a regular file there makes the mode file unreadable (ENOTDIR); and a symlink to a
+  directory is followed, so the file in that directory is judged as the mode file;
 - the opened file not owned by uid 0, or writable by its group or by others (fstat on the open
   descriptor): deny;
 - content over 4096 bytes, not strict UTF-8, not one JSON object (NaN, Infinity and -Infinity
@@ -193,7 +199,12 @@ def read_mode(mode_file, expect_uid):
 
 def decide(payload, mode_file, expect_uid):
     """The verdict object to print, or None for a silent allow."""
-    if payload.get("tool_name") != TOOL:
+    tool = payload.get("tool_name")
+    if not isinstance(tool, str):
+        # A payload that names no tool is as malformed as one that is not an object, so it fails
+        # closed too, rather than reading as some other tool.
+        return deny_cause("malformed hook payload: no string \"tool_name\"")
+    if tool != TOOL:
         return None
     host_dir = os.path.dirname(os.path.abspath(mode_file))
     try:

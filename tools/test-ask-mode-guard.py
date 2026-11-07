@@ -212,6 +212,47 @@ class AskModeGuard(unittest.TestCase):
             os.chmod(self._tmp, 0o700)
         self.assert_denies(result, "cannot be checked")
 
+    def test_path_component_that_is_a_file_denies(self):
+        # A regular file above the host directory makes lstat fail with ENOTDIR, which is not
+        # absence, so it must deny rather than read as an absent directory.
+        blocker = self.write_mode(ATTENDED_LINE, path=self._tmp / "blocker")
+        result = self.run_guard(mode_file=blocker / "orch-operator" / "operating-mode")
+        self.assert_denies(result, "cannot be checked: {}".format(os.strerror(errno.ENOTDIR)))
+
+    def test_regular_file_at_the_host_directory_denies(self):
+        # lstat finds the file, so the host directory is present, and the open below it fails.
+        self.host_dir.rmdir()
+        self.write_mode(ATTENDED_LINE, path=self.host_dir)
+        self.assert_denies(self.run_guard(),
+                           "is unreadable: {}".format(os.strerror(errno.ENOTDIR)))
+
+    def test_dangling_symlink_at_the_host_directory_denies(self):
+        # lstat does not follow the link, so the host directory is present and the mode file is
+        # missing; a check that followed it would read the directory as absent and allow.
+        self.host_dir.rmdir()
+        self.host_dir.symlink_to(self._tmp / "no-such-dir")
+        self.assert_denies(self.run_guard(), "is missing")
+
+    def test_symlink_loop_at_the_host_directory_denies(self):
+        # lstat does not follow the loop, so the open of the mode file meets it and fails.
+        self.host_dir.rmdir()
+        self.host_dir.symlink_to(self.host_dir)
+        self.assert_denies(self.run_guard(), "is a symlink")
+
+    def test_symlink_to_a_directory_at_the_host_directory_is_followed(self):
+        # The guard does not judge the directory that holds the mode file, so a host directory that
+        # is a symlink to a real directory decides by the file in that directory.
+        real_dir = self._tmp / "real-dir"
+        real_dir.mkdir()
+        self.host_dir.rmdir()
+        self.host_dir.symlink_to(real_dir)
+        with self.subTest(mode="attended"):
+            self.write_mode(ATTENDED_LINE, path=real_dir / "operating-mode")
+            self.assert_allows_silently(self.run_guard())
+        with self.subTest(mode="unattended"):
+            self.write_mode(UNATTENDED_LINE, path=real_dir / "operating-mode")
+            self.assert_denies(self.run_guard(), "is unattended")
+
     def test_missing_file_with_directory_present_denies(self):
         self.assert_denies(self.run_guard(), "is missing")
 
@@ -219,6 +260,11 @@ class AskModeGuard(unittest.TestCase):
         target = self.write_mode(ATTENDED_LINE, path=self._tmp / "real-mode")
         self.mode_file.symlink_to(target)
         self.assert_denies(self.run_guard(), "symlink")
+
+    def test_dangling_symlink_at_the_mode_file_denies(self):
+        # O_NOFOLLOW refuses the link itself, so a link to nothing is a symlink, not a missing file.
+        self.mode_file.symlink_to(self._tmp / "no-such-file")
+        self.assert_denies(self.run_guard(), "is a symlink")
 
     def test_fifo_denies_without_hanging(self):
         os.mkfifo(self.mode_file)
@@ -333,6 +379,19 @@ class AskModeGuard(unittest.TestCase):
                             ("a number", "1"), ("null", "null")):
             with self.subTest(payload=name):
                 self.assert_denies(self.run_guard(stdin=stdin), "guard internal error")
+
+    def test_payload_without_a_string_tool_name_denies(self):
+        # An object payload that names no tool is as malformed as one that is not an object, so it
+        # denies, even while the record says attended, rather than passing as some other tool.
+        self.write_mode(ATTENDED_LINE)
+        base = {key: value for key, value in ASK.items() if key != "tool_name"}
+        for name, payload in (("missing", base), ("null", dict(base, tool_name=None)),
+                              ("a number", dict(base, tool_name=1)),
+                              ("true", dict(base, tool_name=True)),
+                              ("a list", dict(base, tool_name=["AskUserQuestion"])),
+                              ("an object", dict(base, tool_name={"name": "AskUserQuestion"}))):
+            with self.subTest(tool_name=name):
+                self.assert_denies(self.run_guard(payload), "malformed hook payload")
 
     def test_bad_argument_denies_any_tool(self):
         # The guard reads its arguments before it looks at the tool, so a bad argument denies a Bash

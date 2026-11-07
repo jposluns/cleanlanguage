@@ -102,8 +102,10 @@ adds its own guard for AskUserQuestion. `.claude/hooks/ask_mode_guard.py`, regis
 member the orchestrator sets for the whole host. It allows a question when `"mode"` is exactly
 `"attended"`, and in one other case: when `/opt/orch-operator` itself is absent, it allows the
 question with a one-line note, so contributor machines and hosts without the orchestrator stay
-usable. It denies, naming the cause, when `lstat` on `/opt/orch-operator` fails for any other
-reason; when the file is missing while `/opt/orch-operator` exists, unreadable, a symlink, not a
+usable. It denies, naming the cause, when the hook payload has no string `tool_name`; when `lstat`
+on `/opt/orch-operator`, which does not follow a symlink there, fails for any other reason, such
+as a path component that is a regular file; when the file is missing while `/opt/orch-operator`
+exists, unreadable, a symlink, not a
 regular file, not owned by uid 0, writable by its group or by others, over 4096 bytes, not strict
 UTF-8, not one JSON object, or holding a duplicate key; when `"mode"` is absent, not a string,
 `"unattended"`, or any other value; and when the guard raises an exception before it prints its
