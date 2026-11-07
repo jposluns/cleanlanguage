@@ -69,6 +69,10 @@ jobs:
         shell: bash
         run: python3 -I tools/test-orch-stage2-hooks.py
 
+      - name: Run the repository AskUserQuestion guard tests
+        shell: bash
+        run: python3 -I tools/test-ask-mode-guard.py
+
       # Re-run the gate against the committed registry by its explicit path, so this step is RED both on
       # a malformed edit and (via the gate tests above, which assert the arming keys are present) on a
       # tree that lacks the stage-1 arming change.

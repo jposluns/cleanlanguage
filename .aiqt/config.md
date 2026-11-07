@@ -96,6 +96,29 @@ SessionStart and writes `resume-barrier.json` under `state_dir`, arming the barr
 it finds divergence; while a barrier is armed, `orch_resume_barrier` surfaces a one-time
 warning on a mutation outside the record surfaces and blocks nothing.
 
+The host's operating-mode file is JSON, which `orch_ask_guard` cannot read, so this repository
+adds its own guard for AskUserQuestion. `.claude/hooks/ask_mode_guard.py`, registered in
+`.claude/settings.json`, reads `/opt/orch-operator/operating-mode`, a JSON object whose `"mode"`
+member the orchestrator sets for the whole host, and allows a question only when `"mode"` is
+exactly `"attended"`. It denies, naming the cause, when the file is missing while
+`/opt/orch-operator` exists, unreadable, a symlink, not a regular file, not owned by uid 0,
+writable by its group or by others, over 4096 bytes, not strict UTF-8, not one JSON object, or
+holding a duplicate key; when `"mode"` is absent, not a string, `"unattended"`, or any other
+value; and when the guard itself fails. When `/opt/orch-operator` itself is absent, it allows the
+question with a one-line note, so contributor machines and hosts without the orchestrator stay
+usable. Its deny reason carries the record-and-continue instruction that `orch_ask_guard` gives,
+but it writes no `pending-asks.jsonl` row. `tools/test-ask-mode-guard.py`, run by the
+Orchestration registry workflow, tests it against temporary files. The guard stays as a second
+layer after an upstream fix lets a re-vendored `orch_ask_guard` read the JSON file, under the
+adopted defence-in-depth default. Residual: the guard covers only AskUserQuestion calls in
+sessions that load this checkout's `.claude/settings.json`; it does not cover other checkouts,
+other repositories, or non-Claude worker families; a session that can edit the guard or
+`.claude/settings.json` can disarm it, visibly in review; removing `/opt/orch-operator` disarms
+it; the guard trusts root's file, so root controls the decision, and it does not check the
+directory that holds the file; the file holds one mode for the whole host, so an attended session
+is blocked while the host says unattended; and `orch_ask_guard` continues to log a fail-open audit
+event on every question until the upstream fix is re-vendored.
+
 One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
 empties, so cross-repository writes deny), but the scope-gated guards do not react to it
 uniformly. `orch_stop_guard` fails open with a warning; `orch_dispatch_ledger` silently allows
