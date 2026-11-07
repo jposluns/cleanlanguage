@@ -297,10 +297,11 @@ fresh build that passed these refusals.
 Page source grammar
 -------------------
 
-The rules above read a page as Python's parser reads it, and that parser and a
-browser tokenize some markup differently (comment openers such as ``<!-->``, a
-CDATA section, a noscript element's text with scripting on, a script's escape
-states). So each page source, as ``with_about()`` reads it with its tokens and
+Rules above, such as the label rule and the switch's place, read a page as
+Python's parser reads it, and that parser and a browser tokenize some markup
+differently (comment openers such as ``<!-->``, a CDATA section, a noscript
+element's text with scripting on, a script's escape states). So each page
+source, as ``with_about()`` reads it with its tokens and
 rail written in, is held to a small grammar on which the two agree
 (``SOURCE_TOKEN``), and anything outside it is refused, wherever it sits:
 
@@ -354,19 +355,21 @@ end tag, so a later ``</summary>`` closed a summary the parser read as still
 open, and the value paragraph and the About block after it became hidden
 children of a closed details while every rule passed.
 
-The generator's own readers then read what the parser reads. Every rule that
-reads elements, attributes or text of a page source reads them from 1 parser
-class, ``PageScan``, with its self-closing and end-tag handling: the rules of
-``with_about()``, the class and placement pins, ``rail_pin()``, and
-``rail()``, whose entries are the ``h2`` elements with an ``id`` as
+The generator's own readers then read what the parser reads or read the markup
+itself. The rules that read a page source as parsed, such as the tree, label
+and value rules of ``with_about()``, the class and placement pins, the class
+rule of ``rail_pin()``, and ``rail()``, read its elements, attributes and text
+from 1 parser class, ``PageScan``, with its self-closing and end-tag handling;
+``rail()``'s entries are the ``h2`` elements with an ``id`` as
 ``PageScan`` reads them, their text without that of a ``span.num`` (a regex
 over the markup before DISCOVERY round 7, which dropped ``<h2 id = "try">``
 and ran an ``</h2 >`` heading's entry into the prose). ``validate()`` reads a
 page with ``PageScan`` too, and reads "what this is" in its text; it finds the
 end of the value region's end tag where the parser read that tag
-(``end_tag_end()``), as ``with_about()`` does. The other reads of markup are
-not parses, and each reads at least what the parser reads or only markup the
-generator writes: ``source_problem()`` is the grammar; ``bidi_control()`` and
+(``end_tag_end()``), as ``with_about()`` does. Other reads of markup are not
+parses, and each of the following reads at least what the parser reads or
+only markup the generator writes: ``source_problem()`` is the grammar, which
+reads start tag and attribute names itself; ``bidi_control()`` and
 the dash refusal read every character, with character references decoded by
 ``html.unescape()``; the count and replacement of ``<!--rail-->``, a comment
 token wherever the grammar admits the string; ``validate()``'s byte pins (the
@@ -1329,8 +1332,8 @@ def footer(config: dict, base: str) -> str:
 
 def rail(config: dict, page: dict, base: str, content: str) -> str:
     """The rail rail_pin() leaves room for at <!--rail-->: on a page with a list rail, 1 entry for each h2 with an id,
-    as PageScan reads the source (PageScan.headings), so the rail reads the tags, attributes and end tags that the
-    other rules read."""
+    as PageScan reads the source (PageScan.headings), so the rail reads the tags, attributes and end tags that other
+    rules read from PageScan, such as placement_pin() (module docstring, "Page source grammar")."""
     image = f'<img class="rail-logo" src="{base}assets/baseline/logos/{config["site_key"]}.svg" alt="{html.escape(config["logo_alt"])}">'
     if page.get("rail") != "list":
         return f'<div class="rail">{image}</div>'
@@ -2343,7 +2346,8 @@ def scripting_off(text: str) -> PageScan:
 
 def source_shape(content: str) -> PageScan:
     """content read by PageScan, for rail_pin() and rail(), which read a page source before with_about() does: the
-    same tokens, self-closing tags and end tags as every other rule reads."""
+    same tokens, self-closing tags and end tags as other rules read from PageScan, such as with_about()'s tree rules
+    (module docstring, "Page source grammar")."""
     shape = PageScan()
     shape.feed(content)
     shape.close()
