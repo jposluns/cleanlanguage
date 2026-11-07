@@ -29,7 +29,20 @@ either file left out, split into blocks (headings, bullets and paragraphs):
      mixes them, such as "_*_", is ordinary text;
    - a setext heading underline: a line that holds one run of "=" or one run
      of "-", with any number of spaces before and after it, under a line
-     that is not blank.
+     that is not blank;
+   - a heading, list or block quote marker indented by 1 to 3 spaces: 1 to 3
+     spaces, then "#" to "######", "-", "*" or "+", or 1 to 9 digits with "."
+     or ")", each followed by a space or the end of the line, or ">". A
+     renderer can read such a line as a marker; this check reads a marker
+     only at the start of the line, so it refuses the line rather than read
+     it as text or as part of an open bullet. This also refuses a sub-bullet
+     indented by 2 or 3 spaces;
+   - an empty list item line: "-", "*" or "+", or 1 to 9 digits with "." or
+     ")", at the start of the line, followed by nothing or only spaces. The
+     check would read it as an empty bullet or as bullet text, and what a
+     renderer makes of it depends on what comes before, so the file must
+     hold none. A lone "-" under a line that is not blank is refused as a
+     setext underline first.
    The one exception is the front matter at the top of SKILL.md: when line 1
    and a later line are exactly "---", line 1 and the first such later line
    are not refused as a thematic break or an underline. So a space and LF are
@@ -62,10 +75,10 @@ space or the end of the line. It runs on over each later line that starts with
 a space, across blank lines too, and over each other line until a blank line
 or a line that starts with one of: "#" to "######" followed by a space or the
 end of the line; "-", "*" or "+" followed by a space; "1." or "1)" followed by
-a space; or ">". So a line that is a lone "*" or "+", or that starts "2.",
-continues the bullet when no blank line comes before it; a lone "-" there is
-refused as a setext underline. The generated copies of the checklist need no
-check here:
+a space; or ">". So a line that starts "2." continues the bullet when no blank
+line comes before it; a lone "*" or "+" there is refused as an empty list
+item, and a lone "-" as a setext underline. The generated copies of the
+checklist need no check here:
 tools/build-portable-text.py --check and tools/build-site.py --check compare
 them with this source.
 
@@ -85,9 +98,11 @@ Residuals, named here because the check reads text by fixed rules:
   tab, makes the check exit 3 until the check is extended. Some refusals are
   wider than the Markdown they stand for: a run of three backticks or three
   tildes anywhere, such as in inline code; a refused whitespace character
-  anywhere, such as a U+00A0 that Markdown shows as text; and a run of "=" or
-  "-" under any line that is not blank, whether or not Markdown reads it as
-  an underline, also make it exit 3;
+  anywhere, such as a U+00A0 that Markdown shows as text; a run of "=" or "-"
+  under any line that is not blank, whether or not Markdown reads it as an
+  underline; a marker indented by 1 to 3 spaces, even where Markdown reads a
+  nested list item; and an empty list item line, even after a blank line,
+  where Markdown reads an empty item, also make it exit 3;
 - other Markdown that a rendered page does not show, such as the title of a
   link reference definition or raw HTML other than a comment, is read as text
   like the rest of the file, so a pointer sentence there is found although a
@@ -101,10 +116,15 @@ Residuals, named here because the check reads text by fixed rules:
   unseen, so the check stays fail-closed;
 - a checklist block that grants a carve-out without the word "dash" or
   "dashes" is not read;
-- the reader handles a small part of Markdown: a heading or list marker
-  indented by 1 to 3 spaces is read as text, a list item nested under a
-  bullet is read as part of it, and "<!--" written inside inline code is
+- the reader handles a small part of Markdown: a heading, list or block quote
+  marker indented by 1 to 3 spaces, and an empty list item line, are refused
+  rather than read; a list item indented by 4 or more spaces under an open
+  bullet is read as part of it; and "<!--" written inside inline code is
   refused like a comment;
+- after a blank line, a line indented by 1 space is read as part of the open
+  bullet, though a renderer starts a new paragraph there, below the bullet's
+  content indent, so an edit that adds the same words that way to both files
+  passes while the rendered pages differ. This gap is tracked separately;
 - the items an exit 1 report names come only from the one Keep clause, so a
   carve-out the bullet adds anywhere else, such as in another sentence or a
   sub-bullet, is named by no item line, and with no Keep clause or more than
@@ -153,6 +173,8 @@ COMMENT = "<!--"
 FENCE = re.compile(r"`{3}|~{3}")
 BREAK = re.compile(r" *([-*_])(?: *\1){2,} *$")
 UNDERLINE = re.compile(r" *(?:=+|-+) *$")
+INDENTED = re.compile(r" {1,3}(?:#{1,6}(?: |$)|[-*+](?: |$)|[0-9]{1,9}[.)](?: |$)|>)")
+EMPTY_ITEM = re.compile(r"(?:[-*+]|[0-9]{1,9}[.)]) *$")
 FRONT_MATTER = "---"
 HEADING = re.compile(r"#{1,6}(?: |$)")
 CLOSING = re.compile(r" #+ *$")
@@ -208,6 +230,13 @@ def plain_text(path: Path) -> str:
         if FENCE.search(line):
             raise Unreadable(f"{path}, line {number}: holds 3 backticks or 3 tildes in a row; this check reads "
                              "no fenced code blocks, so the file must hold none")
+        if INDENTED.match(line):
+            raise Unreadable(f"{path}, line {number}: is a heading, list or block quote marker indented by 1 to 3 "
+                             "spaces; this check reads a marker only at the start of the line, so the file must "
+                             "hold none")
+        if EMPTY_ITEM.match(line):
+            raise Unreadable(f"{path}, line {number}: is a list marker with nothing after it, an empty list item; "
+                             "this check reads no empty list items, so the file must hold none")
     return text
 
 
