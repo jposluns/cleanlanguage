@@ -272,9 +272,10 @@ HTML = re.compile(r" {0,3}<")
 # The characters a line of plain text may hold, apart from ASCII letters, digits and spaces: the ones the
 # committed spans use. Every other character, such as "*", "_", "#", ">", "<", "[" or "&", is refused on every
 # line of the spans but the SKILL.md section's own heading line, so emphasis, a thematic break of "*" or "_", a
-# heading, a block quote, HTML, a link and an entity are refused on those lines. Item 5 of the module docstring
-# accepts that heading line without reading its characters, because its text is the section name, not part of the
-# compared bullet.
+# heading, a block quote, HTML, a link written with "[" or "<" and an entity are refused on those lines. A bare
+# address such as www.example.com holds only accepted characters, so it is read as text there, whatever a renderer
+# makes of it. Item 5 of the module docstring accepts that heading line without reading its characters, because its
+# text is the section name, not part of the compared bullet.
 OTHER = "'(),-.:;`"
 NOT_ALLOWED = re.compile(r"[^A-Za-z0-9 '(),\-.:;`]")
 # What a line of plain text may not start with, among the characters above: a space, or a list marker.
