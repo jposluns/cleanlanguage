@@ -4,14 +4,15 @@
 Each behaviour case runs the guard in a subprocess with python3 -I, passes it a mode file path
 through the test-only --mode-file argument, since CI has no /opt/orch-operator, and asserts the exit
 code and the verdict the guard prints. Every behaviour case but one puts that path under a temporary
-directory and sets up what it leads to, or its absence; the device case uses a path below /dev/null,
-since only root can create a device node. Most cases
-run the guard as a script; 7 cases load it as a module in that subprocess and inject a fault before
-they call its main function: a read that fails after the open, and, for each of the type, owner and
-write checks, a rename just before the open and one just after it that changes what the mode file's
-path leads to. The files a case creates belong to the uid running the tests, so every case passes
-that uid through the test-only --expect-owner-uid argument, except the 2 cases that pass another uid
-or none to test the expected owner. The owner rename cases need a readable file that another uid
+directory and sets up what it leads to, or its absence, except that in the 2 owner rename cases it
+can lead to a file outside that directory, as described below; the device case uses a path below
+/dev/null, since only root can create a device node. Most cases run the guard as a script; 7 cases
+load it as a module in that subprocess and inject a fault before they call its main function: a
+read that fails after the open, and, for each of the type, owner and write checks, a rename just
+before the open and one just after it that changes what the mode file's path leads to. The files a
+case creates belong to the uid running the tests, so every case passes that uid through the
+test-only --expect-owner-uid argument, except the 2 cases that pass another uid or none to test the
+expected owner. The owner rename cases need a readable file that another uid
 owns: run as root, they create one and give it to uid 65534; otherwise they use the first suitable
 file among /etc/passwd, /etc/group, /etc/hosts and the Python interpreter, and skip when none is
 suitable. A missing guard fails every behaviour case rather than skipping it, so an absent file

@@ -116,10 +116,14 @@ the guard raises an exception before it prints its verdict. The `"unattended"` d
 remedy: the operator runs `orchmod aa`, since the file is root-owned and `orch-set-mode` writes it.
 Every deny reason carries the record-and-continue instruction that `orch_ask_guard` gives, but
 the guard writes no `pending-asks.jsonl` row. `tools/test-ask-mode-guard.py`, run by the
-Orchestration registry workflow, tests it against temporary files. The guard stays as a second
-layer after an upstream fix lets a re-vendored `orch_ask_guard` read the JSON file, under the
-adopted defence-in-depth default. Residual: the guard covers only AskUserQuestion calls in
-sessions that load this checkout's `.claude/settings.json`; it does not cover other checkouts,
+Orchestration registry workflow, tests it against files and directories that it creates under a
+temporary directory, with 2 exceptions: the device case puts the mode file below `/dev/null`,
+and the 2 owner rename cases have the guard open a readable file that another uid owns, the first
+suitable one among `/etc/passwd`, `/etc/group`, `/etc/hosts` and the Python interpreter, or, run
+as root, a file that they create and give to uid 65534. The guard stays as a second layer after
+an upstream fix lets a re-vendored `orch_ask_guard` read the JSON file, under the adopted
+defence-in-depth default. Residual: the guard covers only AskUserQuestion calls in sessions
+that load this checkout's `.claude/settings.json`; it does not cover other checkouts,
 other repositories, or non-Claude worker families; a session that can edit the guard or
 `.claude/settings.json` can disarm it, and the edit shows in review only once it is committed; a
 settings file that the repository does not track, such as `.claude/settings.local.json`, which
