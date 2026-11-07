@@ -7,6 +7,10 @@ Preserve legitimate language", and that section lists them in one bullet.
 checklist once named a narrower list than the skill (row 98), and nothing
 caught it. This check makes that drift fail (row 105).
 
+Where this docstring says what CommonMark reads, it gives the reading of
+markdown-it-py 3.0.0 with its commonmark preset, the one parser these
+statements were checked against; another renderer can read a line otherwise.
+
 What it verifies
 ----------------
 
@@ -25,8 +29,9 @@ either file left out, split into blocks (headings, bullets and paragraphs):
      so neither file holds an HTML comment or a fenced code block;
    - a thematic break: a line of 3 or more of one mark, "-", "*" or "_", with
      any number of spaces before, between and after them, such as "---" or
-     "* * *". The marks must be identical, as in CommonMark, so a line that
-     mixes them, such as "_*_", is ordinary text;
+     "* * *". The marks must be identical, so this check reads a line that
+     mixes them, such as "_*_", as text, and CommonMark reads it as a
+     paragraph, not a break;
    - a setext heading underline: a line that holds one run of "=" or one run
      of "-", with any number of spaces before and after it, under a line
      that is not blank;
@@ -38,6 +43,15 @@ either file left out, split into blocks (headings, bullets and paragraphs):
      it as text or as part of an open bullet. This also refuses a sub-bullet
      indented by 2 or 3 spaces, and a wrapped line that starts with a number
      and a full stop, such as "  404. as its status;";
+   - a heading or block quote marker indented by 4 or 5 spaces: 4 or 5
+     spaces, then "#" to "######" followed by a space or the end of the
+     line, or ">". Every bullet this check accepts has 1 space between its
+     marker and its text, so its text starts 2 columns in, and such a line
+     starts 2 or 3 columns into that text, where CommonMark reads a heading
+     or block quote inside the bullet. This check reads a line indented by
+     6 or more spaces as text, part of the open bullet or paragraph: such a
+     line starts 4 or more columns into a bullet's text, where CommonMark
+     reads text or, after a blank line, an indented code block;
    - an empty list item line: "-", "*" or "+", or 1 to 9 digits with "." or
      ")", at the start of the line, followed by nothing or only spaces. The
      check would read it as an empty bullet or as bullet text, and what
@@ -114,11 +128,12 @@ Residuals, named here because the check reads text by fixed rules:
   "-" under any line that is not blank, whether or not CommonMark reads it as
   an underline; a marker indented by 1 to 3 spaces, even where CommonMark
   reads a nested list item, or reads paragraph text, as in a wrapped line
-  "  404. as its status;", since an ordered list that interrupts a paragraph
-  must start at 1; an empty list item line, even after a blank line, where
-  CommonMark reads an empty item; and a bullet marker followed by 2 or more
-  spaces, even when no later line is indented less than the bullet's text,
-  also make it exit 3;
+  "  404. as its status;"; a heading or block quote marker indented by 4 or
+  5 spaces outside a bullet, where CommonMark reads paragraph text or an
+  indented code block; an empty list item line, even after a blank line,
+  where CommonMark reads an empty item; and a bullet marker followed by 2 or
+  more spaces, even when no later line is indented less than the bullet's
+  text, also make it exit 3;
 - other Markdown that a CommonMark rendering does not show as text, such as
   the title of a link reference definition or the markup of raw HTML other
   than a comment, is read as text like the rest of the file, so a pointer
@@ -133,10 +148,18 @@ Residuals, named here because the check reads text by fixed rules:
 - a checklist block that grants a carve-out without the word "dash" or
   "dashes" is not read;
 - the reader handles a small part of Markdown: a heading, list or block quote
-  marker indented by 1 to 3 spaces, an empty list item line, and a bullet
-  marker followed by 2 or more spaces are refused rather than read; a list
-  item indented by 4 or more spaces under an open bullet is read as part of
-  it; and "<!--" written inside inline code is refused like a comment;
+  marker indented by 1 to 3 spaces, a heading or block quote marker indented
+  by 4 or 5 spaces, an empty list item line, and a bullet marker followed by
+  2 or more spaces are refused rather than read; a list item indented by 4
+  or more spaces under an open bullet is read as part of it; and "<!--"
+  written inside inline code is refused like a comment;
+- a heading or block quote marker indented by 6 or more spaces is read as
+  text even under an ordered list item, whose text starts 3 or more columns
+  in, so 6 spaces under "1. text" or 7 under "10. text" put the marker fewer
+  than 4 columns into the item's text, where CommonMark reads a heading or
+  block quote inside the item. An ordered list item and such a heading added
+  above the carve-out bullet pass, while CommonMark reads a heading directly
+  above that bullet;
 - after a blank line, a line indented by 1 space is read as part of the open
   bullet, though CommonMark starts a new paragraph there, below the bullet's
   text, which starts 2 columns in, so an edit that adds the same words that
@@ -191,6 +214,7 @@ FENCE = re.compile(r"`{3}|~{3}")
 BREAK = re.compile(r" *([-*_])(?: *\1){2,} *$")
 UNDERLINE = re.compile(r" *(?:=+|-+) *$")
 INDENTED = re.compile(r" {1,3}(?:#{1,6}(?: |$)|[-*+](?: |$)|[0-9]{1,9}[.)](?: |$)|>)")
+NESTED = re.compile(r" {4,5}(?:#{1,6}(?: |$)|>)")
 EMPTY_ITEM = re.compile(r"(?:[-*+]|[0-9]{1,9}[.)]) *$")
 SPACED = re.compile(r"[-*+] {2}")
 FRONT_MATTER = "---"
@@ -252,6 +276,9 @@ def plain_text(path: Path) -> str:
             raise Unreadable(f"{path}, line {number}: is a heading, list or block quote marker indented by 1 to 3 "
                              "spaces; this check reads a marker only at the start of the line, so the file must "
                              "hold none")
+        if NESTED.match(line):
+            raise Unreadable(f"{path}, line {number}: is a heading or block quote marker indented by 4 or 5 spaces; "
+                             "this check reads a marker only at the start of the line, so the file must hold none")
         if EMPTY_ITEM.match(line):
             raise Unreadable(f"{path}, line {number}: is a list marker with nothing after it, an empty list item; "
                              "this check reads no empty list items, so the file must hold none")

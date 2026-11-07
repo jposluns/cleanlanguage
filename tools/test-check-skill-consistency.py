@@ -5,9 +5,11 @@ The first case runs the gate on this repository and changes nothing. Each case
 in CASES copies the gate and the 2 files it reads into a temporary repository
 (under $TMPDIR), applies the case's change, runs the gate there as a separate
 process and asserts its exit code and the fragments the case lists. The case
-named "the committed tree" changes nothing, and the case named "the skill list
-sorted, and the checklist with it" makes 2 edits; each other case makes 1
-change, which edits, rewrites or removes a file. The cases that expect exit 0,
+named "the committed tree" changes nothing, and the 2 cases named "the skill
+list sorted, and the checklist with it" and "both bullets with 3 spaces after
+the marker, each continued after a blank line by a line indented by 2 spaces"
+each make 2 edits, one in each file; each other case makes 1 change, which
+edits, rewrites or removes a file. The cases that expect exit 0,
 apart from the committed tree, make edits that keep the 2 files consistent;
 the cases that expect exit 1 or 3 apply a fault. An exit 1 case also asserts
 that the output says the bullet differs and names no item
@@ -65,6 +67,7 @@ NBSP = "holds U+00A0, whitespace other than a space"
 RULED = "is a thematic break or a setext heading underline"
 SPLIT = "Code samples may keep one too."
 INDENTED = "is a heading, list or block quote marker indented by 1 to 3 spaces"
+NESTED = "is a heading or block quote marker indented by 4 or 5 spaces"
 EMPTY_ITEM = "is a list marker with nothing after it, an empty list item"
 SPACED = "is a bullet marker followed by 2 or more spaces"
 
@@ -225,6 +228,33 @@ CASES = [
         [at(SKILL, SKILL_LINE, 1) + EMPTY_ITEM]),
     ("a lone 123456789) after the dash bullet", change_dash_line(lambda line: line + "123456789)\n" + SPLIT + "\n"),
         3, [at(CHECKLIST, KEEP, 1) + EMPTY_ITEM]),
+    ("a heading indented by 4 spaces above the skill bullet", edit(SKILL, SKILL_LINE, "    ## Moved\n" + SKILL_LINE),
+        3, [at(SKILL, SKILL_LINE) + NESTED]),
+    ("a level 6 heading indented by 4 spaces above the skill bullet",
+        edit(SKILL, SKILL_LINE, "    ###### Moved\n" + SKILL_LINE), 3, [at(SKILL, SKILL_LINE) + NESTED]),
+    ("a block quote marker indented by 5 spaces above the skill bullet",
+        edit(SKILL, SKILL_LINE, "     > Moved\n" + SKILL_LINE), 3, [at(SKILL, SKILL_LINE) + NESTED]),
+    ("a heading indented by 5 spaces under the dash bullet", change_dash_line(lambda line: line + "     ## Moved\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + NESTED]),
+    ("a # at the end of a line indented by 5 spaces under the dash bullet",
+        change_dash_line(lambda line: line + "     #\n" + SPLIT + "\n"), 3, [at(CHECKLIST, KEEP, 1) + NESTED]),
+    ("a block quote marker indented by 4 spaces under the dash bullet",
+        change_dash_line(lambda line: line + "    > " + EXTRA + "\n"), 3, [at(CHECKLIST, KEEP, 1) + NESTED]),
+    ("a heading and a block quote marker indented by 6 spaces, continuing the bullet above the skill bullet",
+        edit(SKILL, SKILL_LINE, "      ## Moved\n      > Moved\n" + SKILL_LINE), 0, []),
+    ("text that is not a marker, indented by 1 to 5 spaces, continuing the bullet above the skill bullet",
+        edit(SKILL, SKILL_LINE, " #x\n  ####### x\n  -x\n  1.x\n  1234567890. x\n  . x\n    #x\n     ####### x\n"
+             + SKILL_LINE), 0, []),
+    ("text that is not a list marker, at the start of a line continuing the bullet above the skill bullet",
+        edit(SKILL, SKILL_LINE, ")\n1234567890.\n" + SKILL_LINE), 0, []),
+    ("an empty * item indented by 4 spaces under the dash bullet", change_dash_line(lambda line: line + "    *\n"), 1,
+        []),
+    ("a sub-bullet indented by 4 spaces with 2 spaces after its marker, under the dash bullet",
+        change_dash_line(lambda line: line + "    -  " + EXTRA + "\n"), 1, []),
+    ("an empty 2. item followed by 2 spaces after the skill bullet",
+        edit(SKILL, SKILL_LINE, SKILL_LINE + "\n2.  \nor code samples;"), 3, [at(SKILL, SKILL_LINE, 1) + EMPTY_ITEM]),
+    ("a lone 10) after the skill bullet", edit(SKILL, SKILL_LINE, SKILL_LINE + "\n10)\nor code samples;"), 3,
+        [at(SKILL, SKILL_LINE, 1) + EMPTY_ITEM]),
     ("an indented YAML list item in the SKILL.md front matter",
         edit(SKILL, "meaning.\n---\n", "meaning.\nallowed-tools:\n  - Read\n---\n"), 3,
         [at(SKILL, "meaning.\n---\n", 2) + INDENTED]),
