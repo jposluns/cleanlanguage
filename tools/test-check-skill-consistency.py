@@ -152,6 +152,17 @@ def append(relative: str, new: str):
     return apply
 
 
+def cut(relative: str, old: str, new: str):
+    """Replace old, and everything after it in the file, with new."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        text = path.read_text(encoding="utf-8")
+        if old not in text:
+            raise AssertionError(f"{old!r} is not in {relative}")
+        path.write_text(text[:text.find(old)] + new, encoding="utf-8")
+    return apply
+
+
 def past_end(relative: str) -> str:
     """The gate's "<file>, line <n>: " for the first line after the committed file's last line, which ends in LF."""
     number = (REPO_ROOT / relative).read_text(encoding="utf-8").count("\n") + 1
@@ -240,6 +251,14 @@ CASES = [
         [at(SKILL, NEXT_HEADING) + character("&")]),
     ("x & y directly under the heading after the carve-out section", edit(SKILL, NEXT_HEADING, NEXT_HEADING + EDGE),
         0, []),
+    # With the carve-out section last in SKILL.md, the section ends at the end of the file, and no line lies past
+    # it: the section with no refused line pins a check that reads past the end, and x & y on its last line, with
+    # and without a final LF, pins a check that stops short of it.
+    ("the carve-out section last in SKILL.md", cut(SKILL, "\n" + NEXT_HEADING, ""), 0, []),
+    ("x & y as the last line of SKILL.md, with the carve-out section last", cut(SKILL, NEXT_HEADING, EDGE), 3,
+        [at(SKILL, NEXT_HEADING) + character("&")]),
+    ("x & y as the last line of SKILL.md, with the carve-out section last and no LF after it",
+        cut(SKILL, NEXT_HEADING, EDGE.rstrip("\n")), 3, [at(SKILL, NEXT_HEADING) + character("&")]),
     # The bullet moves from its place to just above the next heading, with the "2." line under it, so the "2." line
     # takes the number the next heading has in the committed file.
     ("the skill bullet last in its section, 2. or code samples; under it, the same words in the dash bullet",
@@ -262,6 +281,12 @@ CASES = [
     ("x & y on line 1 of a checklist with no heading above the dash bullet",
         lambda root: (root / CHECKLIST).write_text(EDGE + "\n" + dash_line(root), encoding="utf-8"), 3,
         [f"{CHECKLIST}, line 1: " + character("&")
+         + "the lines between the start of the file and the end of the file;"]),
+    # No line lies before line 1, and a check that starts at line 0 reads the last line first, by Python's negative
+    # indexing, so this case puts the line last, where such a check names line 0.
+    ("x & y as the last line, with no LF after it, of a checklist with no heading above the dash bullet",
+        lambda root: (root / CHECKLIST).write_text(dash_line(root) + "\n" + EDGE.rstrip("\n"), encoding="utf-8"), 3,
+        [f"{CHECKLIST}, line 3: " + character("&")
          + "the lines between the start of the file and the end of the file;"]),
     *[(f"the skill bullet under {marks!r}, with the same words in the dash bullet",
        together(edit(SKILL, SKILL_LINE, marks + "\ncode samples, " + SKILL_LINE[2:]),

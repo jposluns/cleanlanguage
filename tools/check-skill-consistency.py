@@ -7,9 +7,9 @@ Preserve legitimate language", and that section lists them in one bullet.
 checklist once named a narrower list than the skill (row 98), and nothing
 caught it. This check makes that drift fail (row 105).
 
-Where this docstring says what CommonMark reads, it gives the reading of
-markdown-it-py 3.0.0 with its commonmark preset; another renderer can read a
-line otherwise.
+The check runs no Markdown renderer. Where this docstring says what a
+renderer might make of a line, it gives the reason for a refusal, not a
+behaviour the check or its tests confirm.
 
 What it verifies
 ----------------
@@ -30,47 +30,48 @@ either file left out, split into blocks (headings, bullets and paragraphs):
    - a thematic break: a line of 3 or more of one mark, "-", "*" or "_", with
      any number of spaces before, between and after them, such as "---" or
      "* * *". The marks must be identical, so this check reads a line that
-     mixes them, such as "_*_", as text, and CommonMark reads it as a
-     paragraph, not a break;
+     mixes them, such as "_*_", as text;
    - a setext heading underline: a line that holds one run of "=" or one run
      of "-", with any number of spaces before and after it, under a line
      that is not blank;
    - a heading or block quote marker indented by 1 or more spaces: 1 or more
      spaces, then "#" to "######" followed by a space or the end of the
-     line, or ">". CommonMark can read such a line as a heading or block
-     quote at any indent: inside a list item, it does so when the line
-     starts fewer than 4 columns past the start of the item's text. Where
-     that text starts depends on how deeply the open list items are nested,
-     which this check does not track, and any fixed window of indents leaves
-     a deeper nesting open, so it refuses the line at any indent rather than
-     read it as text or as part of an open bullet;
+     line, or ">". The reason for the refusal: a renderer might read such a
+     line as a heading or block quote at an indent that depends on how
+     deeply the open list items are nested, which this check does not track,
+     and any fixed window of indents leaves a deeper nesting open, so the
+     check refuses the line at any indent rather than read it as text or as
+     part of an open bullet;
    - a list marker indented by 1 to 3 spaces: 1 to 3 spaces, then "-", "*"
      or "+", or 1 to 9 digits with "." or ")", each followed by a space or
-     the end of the line. CommonMark can read such a line as a list item;
-     this check reads a marker only at the start of the line, so it refuses
-     the line rather than read it as text or as part of an open bullet. This
+     the end of the line. The reason for the refusal: a renderer might read
+     such a line as a list item, and this check reads a marker only at the
+     start of the line, so it refuses the line rather than read it as text
+     or as part of an open bullet. This
      also refuses a sub-bullet indented by 2 or 3 spaces, and a wrapped line
      that starts with a number and a full stop, such as "  404. as its
      status;";
    - an empty list item line: "-", "*" or "+", or 1 to 9 digits with "." or
      ")", at the start of the line, followed by nothing or only spaces. The
-     check would read it as an empty bullet or as text, and what CommonMark
-     makes of it depends on what comes before, so the file must hold none.
+     check would read it as an empty bullet or as text. The reason for the
+     refusal: what a renderer might make of it depends on what comes before,
+     so the file must hold none.
      A lone "-" under a line that is not blank is refused as a setext
      underline first;
    - a bullet marker followed by 2 or more spaces: "-", "*" or "+" at the
      start of the line, then 2 or more spaces. After a blank line, this
      check reads each line indented by 1 space or more as part of the open
-     bullet, while CommonMark reads such a line as part of it only when the
-     line is indented at least as far as the bullet's text, which a second,
-     third or fourth space after the marker moves further in, so the file
-     must hold none. A line that holds only the marker and spaces is refused
-     first, as an empty list item or, for a "-" under a line that is not
-     blank, as a setext underline;
-   - a line that starts with "<" after 0 to 3 spaces. CommonMark can open an
-     HTML block at such a line, and some kinds, such as one opened by
-     "<script>" or "<pre>", run on past blank lines and headings until a
-     closing tag, so a block opened above a span could hold the span. A "<"
+     bullet. The reason for the refusal: a renderer might read such a line
+     as part of the bullet only when the line is indented at least as far as
+     the bullet's text, which a second, third or fourth space after the
+     marker moves further in, so the file must hold none. A line that holds
+     only the marker and spaces is refused first, as an empty list item or,
+     for a "-" under a line that is not blank, as a setext underline;
+   - a line that starts with "<" after 0 to 3 spaces. The reason for the
+     refusal: a renderer might open an HTML block at such a line, and might
+     run some kinds, such as one opened by "<script>" or "<pre>", on past
+     blank lines and headings until a closing tag, so a block opened above a
+     span could hold the span. A "<"
      later in a line is refused only in the two spans item 5 covers.
    The one exception is the front matter at the top of SKILL.md: when line 1
    and a later line are exactly "---", line 1 and the first such later line
@@ -80,9 +81,9 @@ either file left out, split into blocks (headings, bullets and paragraphs):
    are the only whitespace either file holds, and the only separators the
    check reads.
 2. SKILL.md holds exactly one sentence "the carve-outs in <section>.", and
-   exactly one heading "## <section>". As in CommonMark, the heading may end
-   with a closing run of "#" after a space, followed by nothing but spaces,
-   which is not part of its text, so "## <section> ##" is the same heading;
+   exactly one heading "## <section>". The heading may end with a closing
+   run of "#" after a space, followed by nothing but spaces, which the check
+   does not read as part of its text, so "## <section> ##" is the same heading;
    "### <section>" is not, and neither is "## <section>##".
 3. That section, which runs from its heading up to the next heading of level
    1 or 2, or to the end of the file where there is none, holds only the
@@ -125,12 +126,12 @@ a space, across blank lines too, and over each other line until a blank line
 or a line that starts with one of: "#" to "######" followed by a space or the
 end of the line; "-", "*" or "+" followed by a space; "1." or "1)" followed by
 a space; or ">". So a line such as "2. text" continues the bullet when no blank
-line comes before it, although CommonMark reads it as the start of an ordered
-list; item 5 refuses such a line in the two spans it covers. A line that holds
-only a list marker, such as "2.", "*" or "+", is refused as an empty list item
-when the marker is at the start of the line, as an indented list marker after
-1 to 3 spaces, and, after 4 or more spaces, only in the two spans item 5
-covers; a lone "-" under a line that is not blank is refused as a setext
+line comes before it; item 5 refuses such a line in the two spans it covers,
+because a renderer might read it as the start of an ordered list. A line that
+holds only a list marker, such as "2.", "*" or "+", is refused as an empty
+list item when the marker is at the start of the line, as an indented list
+marker after 1 to 3 spaces, and, after 4 or more spaces, only in the two spans
+item 5 covers; a lone "-" under a line that is not blank is refused as a setext
 underline after any number of spaces, in the spans or outside them. The
 generated copies of the checklist need no check here:
 tools/build-portable-text.py --check and tools/build-site.py --check compare
@@ -149,39 +150,35 @@ Residuals, named here because the check reads text by fixed rules:
   setext headings, carriage returns or whitespace other than a space and LF;
   it refuses them. A future edit that adds one to either file, such as a
   comment, a fence, a "---" rule between sections, a CRLF line ending or a
-  tab, makes the check exit 3 until the check is extended. Some refusals are
-  wider than the Markdown they stand for: a run of three backticks or three
-  tildes anywhere, such as in inline code; a refused whitespace character
-  anywhere, such as a U+00A0 that CommonMark shows as text; a run of "=" or
-  "-" under any line that is not blank, whether or not CommonMark reads it as
-  an underline; a heading or block quote marker indented by 1 or more
-  spaces, even where CommonMark reads paragraph text or an indented code
-  block, because the line starts 4 or more columns past the start of the
-  text of the innermost list item that holds it, or is indented by 4 or
-  more spaces with no list item holding it; a list marker indented by 1 to 3
-  spaces, even where CommonMark reads a nested list item, or reads paragraph
-  text, as in a wrapped line "  404. as its status;"; an empty list item
-  line, even after a blank line, where CommonMark reads an empty item, and
-  even directly under a line of a paragraph outside any list, where
-  CommonMark and this check both read a lone "2." or "*" as paragraph text;
-  a bullet marker followed by 2 or more spaces, even when no later line is
-  indented less than the bullet's text; and a line that starts with "<"
-  after 0 to 3 spaces, even where CommonMark reads inline HTML or an
-  autolink as text, also make it exit 3;
+  tab, makes the check exit 3 until the check is extended. Some refusals
+  match a form wherever it occurs, not only where it opens the construct the
+  refusal is for: a run of three backticks or three tildes anywhere, such as
+  in inline code; a refused whitespace character anywhere, such as U+00A0
+  inside a line of text; a run of "=" or "-" under any line that is not
+  blank; a heading or block quote marker indented by 1 or more spaces at any
+  indent, including where the line starts 4 or more columns past the start
+  of the text of the innermost list item that holds it, or is indented by 4
+  or more spaces with no list item holding it; a list marker indented by 1
+  to 3 spaces, including a sub-bullet indented by 2 or 3 spaces and a
+  wrapped line "  404. as its status;"; an empty list item line, even after
+  a blank line, and even directly under a line of a paragraph outside any
+  list; a bullet marker followed by 2 or more spaces, even when no later
+  line is indented less than the bullet's text; and a line that starts with
+  "<" after 0 to 3 spaces, including inline HTML or an autolink at the start
+  of a line, also make it exit 3;
 - item 5 is wider still: in its two spans it refuses every line it does not
-  list, even where CommonMark reads the same text, such as a line indented
-  by 1 or more spaces that continues a bullet or paragraph, a bullet marked
+  list, such as a line indented by 1 or more spaces that continues a bullet
+  or paragraph, a bullet marked
   "*" or "+", a heading of level 3 to 6 in the carve-out section, a bullet
   whose text starts with a list marker, such as "- - x", and any character
   outside its list, such as a non-ASCII letter, "*" for emphasis, "&" or
   "/". A future edit that adds such a line there makes the check exit 3
   until the edit is rewritten or the check is extended;
-- other Markdown that a CommonMark rendering does not show as text, such as
-  a link title, the title of a link reference definition or the markup of
-  raw HTML other than a comment, is read as text like the rest of the file
-  outside the two spans item 5 covers, so a pointer sentence there is found
-  although a reader of the rendering does not see it. In the spans, the
-  characters such Markdown needs are refused;
+- outside the two spans item 5 covers, a link title, the title of a link
+  reference definition and the markup of raw HTML other than a comment are
+  read as text like the rest of the file, so a pointer sentence there is
+  found whether or not a rendering shows it. In the spans, the characters
+  such Markdown needs are refused;
 - OPENING, the first sentence of the expected bullet, is a second hand-kept
   copy: rewording that sentence in the checklist fails until OPENING follows
   it;
@@ -196,11 +193,11 @@ Residuals, named here because the check reads text by fixed rules:
   spaces, an empty list item line, a bullet marker followed by 2 or more
   spaces and a line that starts with "<" after 0 to 3 spaces are refused
   rather than read, and "<!--" written inside inline code is refused like a
-  comment. Outside the two spans item 5 covers, the reader
-  still parts from CommonMark: it reads a list item indented by 4 or more
-  spaces under an open bullet, a line indented by 1 space after a blank line
-  under a bullet, and a line such as "2. text" directly under a bullet line
-  as part of that bullet. No compared text comes from those lines, but the
+  comment. Outside the two spans item 5 covers, the reader reads a list
+  item indented by 4 or more spaces under an open bullet, a line indented by
+  1 space after a blank line under a bullet, and a line such as "2. text"
+  directly under a bullet line as part of that bullet, whatever a renderer
+  makes of them. No compared text comes from those lines, but the
   pointer sentence and the checklist's mentions of a dash are found there;
 - the items an exit 1 report names come only from the one Keep clause, so a
   carve-out the bullet adds anywhere else, such as in another sentence, is
@@ -259,8 +256,8 @@ HEADING = re.compile(r"#{1,6}(?: |$)")
 CLOSING = re.compile(r" #+ *$")
 BULLET = re.compile(r"[-*+](?: +|$)")
 BLOCK = re.compile(r"#{1,6}(?: |$)|[-*+] |1[.)] |>")
-# Outside a list item or block quote, CommonMark opens an HTML block only at a line that starts with "<" after 0 to
-# 3 spaces; some kinds run on past blank lines and headings, so such a line outside the spans could hide them.
+# The reason for the refusal: a renderer might open an HTML block at a line that starts with "<" after 0 to 3
+# spaces, and might run some kinds on past blank lines and headings, so such a line outside the spans could hide them.
 HTML = re.compile(r" {0,3}<")
 # The characters a line of plain text may hold, apart from ASCII letters, digits and spaces: the ones the
 # committed spans use. Every other character, such as "*", "_", "#", ">", "<", "[" or "&", is refused, so
