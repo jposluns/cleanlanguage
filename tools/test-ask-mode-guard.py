@@ -170,7 +170,11 @@ class AskModeGuard(unittest.TestCase):
 
     def foreign_file(self):
         """A readable regular file that a uid other than the test's owns and that neither its group
-        nor others can write, so that only the owner check refuses it; skips the case without one."""
+        nor others can write, so that it passes the type and write checks and fails the owner check;
+        skips the case without one. Run as root, it is an attended-autonomous record, so only the
+        owner check refuses it. Run as another uid, it is a system file such as /etc/passwd or the
+        Python interpreter, not a mode record, so a check on its content can refuse it too; the
+        owner cases therefore require the owner cause."""
         if os.geteuid() == 0:
             foreign_dir = self._tmp / "foreign"
             foreign_dir.mkdir()
