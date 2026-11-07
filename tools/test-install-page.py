@@ -45,10 +45,15 @@ reads each of those as 1 of the files that tools/check-baseline-pin.py pins
 (check 6); and unless its parse() and name_text(), run in this process on
 fragments apart from the pins, read a br, a </br> and a hidden br in a heading,
 and its has_visible_text() text of only U+034F, as check 4 says; and unless
-its parse(), run in this process on fragments, reads no misnested end tag
-where a fragment leaves out an end tag that its IMPLIED_ENDS holds, and 1
-where a browser keeps open an element that the parser closes or where the
-parser keeps an li open around a sibling (check 8). On a family
+its P_PARENTS, IMPLIED_ENDS, TABLE_PARTS and SVG_SHAPES hold exactly what
+this test states and its parse(), run in this process on fragments, reads no
+misnested end tag where a fragment leaves out an end tag that its IMPLIED_ENDS
+holds in a parent a browser opens, and 1 where a browser keeps open an element
+that the parser closes, where a table part sits outside the parents of its
+TABLE_PARTS, where a table start tag ends the table around it, where a
+self-closing tag in an svg is not 1 of SVG_SHAPES directly in it, or where the
+parser keeps any element but an li directly in an li open around a sibling
+(check 8). On a family
 page the checks of CLASS_PIN, ATTRIBUTE_PIN and TAG_PIN read the checked
 elements through the gate's family_checked(), as the gate holds them, so of
 the links to #get and #test they read the required link back to each and,
@@ -63,13 +68,16 @@ file the gate, this test and that workflow read and each path of the gate's SERV
 negative pattern (1 that starts with !, which GitHub reads in order as
 excluding what the patterns before it include; this check reads no order, so
 it refuses every one) and no line that it cannot read (it reads only an item
-written - "PATTERN", with no backslash and nothing after the closing quote),
+written - "PATTERN" or - 'PATTERN', with no backslash or quote of that kind in
+it and nothing after the closing quote but spaces and a comment, so any other
+form fails, as does a list in any form it does not read as a list),
 and unless that check refuses the workflow with
 site/_redirects removed from 1 list or from both, with functions/** narrowed
 to functions/* in 1 list or in both, or with !functions/** after
 functions/** in 1 list or in both, double-quoted, single-quoted, escaped as
-\\x21functions/** or followed by a comment, and passes it with a blank line
-and a comment line after functions/** in both.
+\\x21functions/** or followed by a comment, refuses those other forms, and
+passes it with a blank line and a comment line after functions/** in both, or
+with an item single-quoted or followed by a comment.
 
 It also pins the stylesheets every install page loads (fonts.css,
 palettes.css and baseline.css under site/assets/baseline/): it fails unless
@@ -1348,6 +1356,44 @@ CASES = [
     # closes the cell at </tr>, so a valid one-cell table without </td> passes (IMPLIED_ENDS).
     ("a family page with a one-cell table without </td>", edit(CHATGPT, "</main>", "<table><tr><td>Cell</tr></table></main>"),
         0),
+    # The same omissions in each table part in its right parent pass (TABLE_PARTS).
+    ("a family page with a table of p elements left open in each part", edit(CHATGPT, "</main>",
+        "<table><caption><p>x</caption><thead><tr><th><p>y</tr></thead><tbody><tr><td><p>z</tr></tbody></table></main>"), 0),
+    # A browser ignores the start tag of a table part outside a table, so it opens each p in the span, ignores </span>
+    # with the p open, and the step list after it sits in the hiding span (TABLE_PARTS).
+    ("a family page step list after <span class=\"vh\"><td><p>x</td></span>",
+        edit(OTHER, STEPS, '<span class="vh"><td><p>x</td></span>' + STEPS), (1, "</td> closes <td> with <p> " + MISNESTED)),
+    ("a family page step list after <span class=\"vh\"><th><p>x</th></span>",
+        edit(OTHER, STEPS, '<span class="vh"><th><p>x</th></span>' + STEPS), (1, "</th> closes <th> with <p> " + MISNESTED)),
+    ("a family page step list after <span class=\"vh\"><caption><p>x</caption></span>",
+        edit(OTHER, STEPS, '<span class="vh"><caption><p>x</caption></span>' + STEPS),
+        (1, "</caption> closes <caption> with <p> " + MISNESTED)),
+    ("a family page step list after <span class=\"vh\"><tr><td><p>x</tr></span>",
+        edit(OTHER, STEPS, '<span class="vh"><tr><td><p>x</tr></span>' + STEPS), (1, "</tr> closes <tr> with <td> " + MISNESTED)),
+    ("a family page step list after <span class=\"vh\"><thead><tr><td><p>x</thead></span>",
+        edit(OTHER, STEPS, '<span class="vh"><thead><tr><td><p>x</thead></span>' + STEPS),
+        (1, "</thead> closes <thead> with <tr> " + MISNESTED)),
+    # A browser reads a table start tag in a table, outside a cell or a caption, as that table's end, so the later cell
+    # is ignored and the p in it keeps the hiding span open past </span>, as above; the same with a div in the table.
+    ("a family page step list after a table start tag in a table row, in a hiding span",
+        edit(OTHER, STEPS, '<span class="vh"><table><tr><table></table><td><p>x</td></tr></table></span>' + STEPS),
+        (1, "</td> closes <td> with <p> " + MISNESTED)),
+    ("a family page step list after a table start tag in a div in a table, in a hiding span",
+        edit(OTHER, STEPS, '<span class="vh"><table><div><table></table><td><p>x</td></table></span>' + STEPS),
+        (1, "</td> closes <td> with <p> " + MISNESTED)),
+    # A browser closes the first li at the second's start tag, so a list that omits the first's end tag passes, while
+    # around a span it keeps the span open past </span>, and in a step list the tag pin allows no li in a step.
+    ("a family page with <ul><li>a<li>b</ul>", edit(CHATGPT, "</main>", "<ul><li>a<li>b</ul></main>"), 0),
+    ("a family page step list after <span class=\"vh\"><li>a<li>b</span>",
+        edit(OTHER, STEPS, '<span class="vh"><li>a<li>b</span>' + STEPS), (1, "</span> closes <span> with <li> " + MISNESTED)),
+    ("a family page step list that omits a step's </li>", edit(OTHER, STEPS, '<ol class="steps"><li>a<li>b</ol>' + STEPS),
+        (1, TAG_GIVEN)),
+    # A browser moves a div or a p out of an svg and keeps it open, though its tag closes itself, so it keeps the span
+    # open past </span>. Check 5 refuses that svg too; these show check 8's own refusal.
+    ("a family page step list after <span class=\"vh\"><svg><div/></svg></span>",
+        edit(OTHER, STEPS, '<span class="vh"><svg><div/></svg></span>' + STEPS), (1, "</svg> closes <svg> with <div> " + MISNESTED)),
+    ("a family page step list after <span class=\"vh\"><svg><p/></svg></span>",
+        edit(OTHER, STEPS, '<span class="vh"><svg><p/></svg></span>' + STEPS), (1, "</svg> closes <svg> with <p> " + MISNESTED)),
     # Every src, and every href of a link other than the canonical link, on the 6 pages is 1 of the files
     # tools/check-baseline-pin.py pins, read as a path from the site's root with no . or .. segment.
     ("a family page illustration outside the baseline pin", edit(CHATGPT, '<p class="verified">',
@@ -2000,24 +2046,60 @@ def name_reading_problems() -> list[str]:
 
 
 def end_tag_problems() -> list[str]:
-    """The gate's parse(), run in this process on fragments, reads no misnested end tag (check 8) where a page leaves
-    out an end tag that the HTML standard lets it omit where no more content follows in the parent element, for each
-    such element and each parent at whose end tag a browser closes it too (the gate's IMPLIED_ENDS), and reads 1
-    where a browser keeps open an element that the parser closes (a p in a span, a b or an a, and a div around an
-    open table cell, whose end tag a browser ignores), and where the parser keeps an li whose end tag a page omits
-    before a sibling open around that sibling, as the gate's docstring states."""
-    omitted = [f"<{parent}><{child}>x</{parent}>" for child, parents in (
-        ("li", "menu ol ul"), ("dd", "div dl"), ("rt", "ruby"), ("rp", "ruby"), ("optgroup", "select"),
-        ("option", "datalist optgroup select"), ("tbody", "table"), ("tfoot", "table"), ("tr", "table tbody tfoot thead"),
-        ("td", "tr"), ("th", "tr"), ("p", "address article aside blockquote caption dd details dialog div dt fieldset "
-                                           "figcaption figure footer form header hgroup li main nav section td th"),
-    ) for parent in parents.split()]
+    """The gate's P_PARENTS, IMPLIED_ENDS, TABLE_PARTS and SVG_SHAPES hold exactly what this states, so widening or
+    narrowing any of them fails. Its parse(), run in this process on fragments, reads no misnested end tag (check 8)
+    where a page leaves out an end tag that the HTML standard lets it omit where no more content follows in the parent
+    element, for each such element and each parent at whose end tag a browser closes it too, inside the table that
+    opens a table part; where a page leaves out an li's end tag before a sibling li; where a table start tag sits in a
+    cell or a caption or after a table has ended; and for a self-closing svg, or circle or path directly in an svg. It reads 1
+    where a browser keeps open an element that the parser closes (a p in a span, a b or an a, and a div around an open
+    table cell, whose end tag a browser ignores), where that parent is a table part outside the parents of TABLE_PARTS,
+    which a browser ignores or opens elsewhere, where a table start tag ends the table around it, where a self-closing
+    tag in an svg is anything else or is not directly in it, and where the parser keeps any other element whose end tag
+    a page omits before a sibling open around that sibling, as the gate's docstring states."""
+    p_parents = ["address", "article", "aside", "blockquote", "caption", "dd", "details", "dialog", "div", "dt", "fieldset",
+                 "figcaption", "figure", "footer", "form", "header", "hgroup", "li", "main", "nav", "section", "td", "th"]
+    implied = {"li": ["li", "menu", "ol", "ul"], "dd": ["div", "dl"], "p": p_parents, "rt": ["ruby"], "rp": ["ruby"],
+               "optgroup": ["select"], "option": ["datalist", "optgroup", "select"], "tbody": ["table"], "tfoot": ["table"],
+               "tr": ["table", "tbody", "tfoot", "thead"], "td": ["tr"], "th": ["tr"]}
+    table_parts = {"caption": ["table"], "tbody": ["table"], "tfoot": ["table"], "thead": ["table"],
+                   "tr": ["table", "tbody", "tfoot", "thead"], "td": ["tr"], "th": ["tr"]}
+    svg_shapes = ["circle", "path"]
+    # What opens each table part in a browser, before the part itself.
+    opening = {"caption": "<table>", "tbody": "<table>", "tfoot": "<table>", "thead": "<table>", "tr": "<table>",
+               "td": "<table><tr>", "th": "<table><tr>"}
+    omitted = [f"{opening.get(parent, '')}<{parent}><{child}>x</{parent}>"
+               for child, parents in implied.items() for parent in parents]
+    omitted += ["<ul><li>a<li>b</ul>", "<ol><li>a<li>b<li>c</ol>", "<ul><li>a<li><p>b</ul>",
+                "<table><tr><td><table></table><p>x</td>", "<table><tr><th><table></table><p>x</th>",
+                "<table><caption><table></table><p>x</caption>", "<table></table><table><tr><td><p>x</td>",
+                "<svg><path/></svg>", "<svg><circle/><path/></svg>", '<span class="vh"><svg><path/></svg></span>',
+                "<span><svg/></span>"]
     misnested = ['<span class="vh"><p>x</span>', "<b><p>x</b>", "<a><p>x</a>", "<div><table><tr><td>x</div>",
-                 "<ul><li>a<li>b</ul>"]
+                 # A table part with no table around it, and each in a parent that TABLE_PARTS does not name.
+                 *[f"<{part}><{child}>x</{part}>" for part in opening for child, parents in implied.items()
+                   if part in parents],
+                 "<table><td><p>x</td>", "<table><caption><td><p>x</td>", "<table><tr><div><td><p>x</td>",
+                 '<span class="vh"><td><p>x</td></span>', '<span class="vh"><caption><p>x</caption></span>',
+                 # A table start tag that ends the table around it, in a row or in a div in the table.
+                 "<table><tr><table></table><td><p>x</td>", "<table><div><table></table><td><p>x</td>",
+                 "<table><tr><table></table></table>",
+                 # A self-closing tag in an svg that a browser does not close there, or that is not directly in the svg.
+                 '<span class="vh"><svg><div/></svg></span>', "<svg><p/></svg>", "<svg><rect/></svg>",
+                 "<svg><b><path/></b></svg>", "<div><path/></div>",
+                 # An end tag omitted before a sibling, other than an li directly in an li.
+                 '<span class="vh"><li>a<li>b</span>', "<ul><li><p>a<li>b</ul>", "<div><p>a<p>b</div>",
+                 "<dl><dd>a<dd>b</dl>", "<table><tr><td>a<td>b</table>"]
     try:
         gate = load_gate()
-        problems = [f"parse() reads {markup!r} as misnested: {gate.parse(markup).misnested}." for markup in omitted
-                    if gate.parse(markup).misnested]
+        problems = [f"{name} of tools/{GATE.name} holds {sorted(held)}, not {sorted(stated)}." for name, held, stated in (
+            ("P_PARENTS", gate.P_PARENTS, p_parents), ("SVG_SHAPES", gate.SVG_SHAPES, svg_shapes),
+            *[(f"IMPLIED_ENDS[{child!r}]", gate.IMPLIED_ENDS.get(child, ()), implied[child]) for child in implied],
+            *[(f"TABLE_PARTS[{part!r}]", gate.TABLE_PARTS.get(part, ()), table_parts[part]) for part in table_parts],
+            ("IMPLIED_ENDS", gate.IMPLIED_ENDS, implied), ("TABLE_PARTS", gate.TABLE_PARTS, table_parts),
+        ) if sorted(held) != sorted(stated)]
+        problems += [f"parse() reads {markup!r} as misnested: {gate.parse(markup).misnested}." for markup in omitted
+                     if gate.parse(markup).misnested]
         problems += [f"parse() reads {markup!r} with no misnested end tag." for markup in misnested
                      if not gate.parse(markup).misnested]
     except Exception as error:
@@ -2075,9 +2157,12 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
     reads each positive pattern as a match on its own, so it fails closed on every negative pattern, wherever it sits
     and whatever it matches. A path list is the lines after a line that is only paths:, up to the first line, blank
     lines and comment lines aside, that is not indented deeper than it. Of those lines, this reads only an item
-    written as - "PATTERN", with no backslash in the pattern and nothing after its closing quote, and refuses every
-    other line, so an item it cannot read (single-quoted, unquoted, escaped or followed by a comment), a negative
-    pattern among them, fails instead of going unread."""
+    written as - "PATTERN" or - 'PATTERN', with no backslash and no quote of that kind in the pattern and nothing after
+    its closing quote but spaces and a comment that spaces set off, and refuses every other line, so an item it cannot
+    read (unquoted, escaped, or with a doubled single quote), a negative pattern among them, fails instead of going
+    unread. It reads no other form of a list: a paths: line with anything else on it (a flow sequence, an anchor, an
+    alias or a comment), and items not indented deeper than paths:, hold no list here, so the workflow then has fewer
+    than 2 path lists, and that fails."""
     try:
         if text is None:
             text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
@@ -2096,15 +2181,16 @@ def workflow_path_problems(text: str | None = None) -> list[str]:
         elif indent is None or not line.strip() or line.strip().startswith("#"):
             continue
         elif depth > indent:
-            item = re.fullmatch(r' *- "([^"\\]+)"', line)
+            item = re.fullmatch(r""" *- (?:"([^"\\]+)"|'([^'\\]+)')(?: +#.*| *)""", line)
             if item:
-                lists[-1].append(item.group(1))
+                lists[-1].append(item.group(1) or item.group(2))
             else:
                 unread.append(line.strip())
         else:
             indent = None
     problems = [f"a path list of {WORKFLOW} holds {line!r}, which this test does not read: it reads only an item "
-                'written - "PATTERN", with no backslash and nothing after the closing quote.' for line in unread]
+                """written - "PATTERN" or - 'PATTERN', with no backslash or quote of that kind in it and nothing after the """
+                "closing quote but spaces and a comment." for line in unread]
     lists = [held for held in lists if held]
     if len(lists) != 2:
         return problems + [f"{WORKFLOW} has {len(lists)} path lists with entries, not 2 (pull_request and push)."]
@@ -2123,9 +2209,14 @@ def workflow_case_problems() -> list[str]:
     """workflow_path_problems() refuses the committed workflow with site/_redirects removed from 1 path list, or from
     both, with functions/** narrowed to functions/*, which covers no nested path, in 1 path list or in both, and with
     !functions/**, which GitHub reads as excluding what functions/** before it includes, after functions/** in 1 path
-    list or in both: double-quoted, single-quoted, written with the escape \\x21 for its !, or double-quoted and
-    followed by a comment. It finds no problem in the committed workflow with a blank line and a comment line after
-    functions/** in both path lists, which GitHub reads as it reads the committed 1."""
+    list or in both: double-quoted, single-quoted, written with the escape \\x21 for its !, or quoted either way and
+    followed by a comment. It refuses, in the first path list or in both, each other form of an item that it does not
+    read: an unquoted item, a comment with no space before it, a doubled single quote and a backslash in single quotes;
+    and each form of a list that it does not read: a flow sequence, an anchored list, a comment on the paths: line and
+    an indentless sequence, the last in both lists and the others in the first. It finds no problem in the committed
+    workflow with a blank line and a comment line after functions/** in both path lists, with a further functions/**
+    single-quoted, followed by a comment, or both, or with site/_redirects itself written so in both, which GitHub
+    reads as it reads the committed 1; and that last shows that it reads those items, since each list needs them."""
     text = (REPO_ROOT / WORKFLOW).read_text(encoding="utf-8")
     line = '      - "site/_redirects"\n'
     if text.count(line) != 2:
@@ -2141,16 +2232,35 @@ def workflow_case_problems() -> list[str]:
     for name, edited in (("in the first path list", text.replace(tree, narrow, 1)), ("in both", text.replace(tree, narrow))):
         if not workflow_path_problems(edited):
             problems.append(f"functions/** narrowed to functions/* {name}: workflow_path_problems() found no problem.")
-    for item in ('"!functions/**"', "'!functions/**'", '"\\x21functions/**"', '"!functions/**" # excluded'):
+    for item in ('"!functions/**"', "'!functions/**'", '"\\x21functions/**"', '"!functions/**" # excluded',
+                 "'!functions/**' # excluded", "functions/**", '"functions/**"#x', "'functions''**'",
+                 "'\\x21functions/**'"):
         excluded = tree + f"      - {item}\n"
         for name, edited in (("in the first path list", text.replace(tree, excluded, 1)),
                              ("in both", text.replace(tree, excluded))):
             if not workflow_path_problems(edited):
                 problems.append(f"- {item} after functions/** {name}: workflow_path_problems() found no problem.")
+    block = re.compile(r'( *)paths:\n(?: +- .*\n)+')
+    for name, edited in (("a flow sequence", block.sub(r'\1paths: ["functions/**"]\n', text, count=1)),
+                         ("an anchored list", text.replace("paths:\n", "paths: &list\n", 1)),
+                         ("a comment on the paths: line", text.replace("paths:\n", "paths: # note\n", 1)),
+                         ("an indentless sequence", re.sub(r'\n {6}- ', r'\n    - ', text))):
+        if not workflow_path_problems(edited):
+            problems.append(f"{name} in a path list: workflow_path_problems() found no problem.")
     spaced = workflow_path_problems(text.replace(tree, tree + "\n      # Pages Functions\n"))
     if spaced:
         problems.append(f"a blank line and a comment line after functions/** in both: workflow_path_problems() found "
                         f"{spaced}, though GitHub reads the lists as committed.")
+    for item in ("'functions/**'", '"functions/**" # again', "'functions/**' # again"):
+        found = workflow_path_problems(text.replace(tree, tree + f"      - {item}\n"))
+        if found:
+            problems.append(f"- {item} after functions/** in both: workflow_path_problems() found {found}, though GitHub "
+                            "reads it as the same pattern.")
+    for item in ("'site/_redirects'", '"site/_redirects" # headers', "'site/_redirects' # headers"):
+        found = workflow_path_problems(text.replace(line, f"      - {item}\n"))
+        if found:
+            problems.append(f"site/_redirects written {item} in both: workflow_path_problems() found {found}, though "
+                            "GitHub reads it as the committed item.")
     return problems
 
 
