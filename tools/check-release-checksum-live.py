@@ -22,13 +22,12 @@ Behaviour:
     version is published; the version is read from that note and the site
     checksum is taken as the placeholder. When that version has a published
     release whose zip and ``.sha256`` the gate can download and read, with a
-    well-formed manifest that the zip hashes to, the page fails as drift
-    (exit 1, unless another of its checks fails with a higher code). When
-    the release is published but the gate cannot download or read those
+    well-formed manifest that the zip hashes to, the page fails as drift.
+    When the release is published but the gate cannot download or read those
     assets, the manifest is malformed or the zip does not hash to it, or
     when the release status cannot be read or is neither 200 nor 404, the
-    comparison cannot run and reports no drift (exit 2, unless another of
-    its checks exits 3). With no published release (status 404), the page
+    comparison cannot run and reports no drift. Exit codes below gives the
+    code for each outcome. With no published release (status 404), the page
     is held to the rules for an unpublished release below, which pass only
     in the pre-tag window. Without the note, the version is read from the
     first sentence that names the published checksum's version and the
@@ -42,7 +41,7 @@ Behaviour:
     of the checked-out commit, not the deployed site, so the gate fetches no
     page of https://cleanlanguage.ai/, and a deploy that Cloudflare Pages has
     not finished cannot fail the push run of the commit it deploys. Any other
-    page exits 3, whatever it adds, removes or hides: a contradicting step,
+    page is refused, whatever it adds, removes or hides: a contradicting step,
     markup such as ``noscript``, ``select`` or a misnested ``details`` around
     or before the download block, an inline script, or a second checksum in
     any form, its groups joined by U+200B or by dots included. So does a page
@@ -53,13 +52,13 @@ Behaviour:
     than /, a draft is staged: ``tools/build-site.py`` writes only the draft,
     not the live pages, and the gate still renders this page at base / from
     the sources, the draft's changes included. So a correct live page that
-    the draft renders differently exits 3, and running
+    the draft renders differently is refused, and running
     ``tools/build-site.py`` cannot clear it; the report then says that a
     draft is staged and that promotion, after the owner approves it, is the
     remedy (staged_draft, draft_advice): the pull request of step 5 under
     "Staging at /draft/ and promotion" in ``.baseline/README.md``, of which
     ``tools/build-site.py --base / --promote`` is 1 step. Every page that is
-    not the render exits 3, whether or not a draft is staged. For a clearer
+    not the render is refused, whether or not a draft is staged. For a clearer
     report, the gate first
     applies the rule that ``tools/check-release-links.py`` also applies
     (download_block_problems), and reports the equality only for a page that
@@ -75,9 +74,10 @@ Behaviour:
     deeply for the rule's reader breaks the rule too, never an uncaught
     RecursionError. ``site/_redirects`` is a
     required file in either state. A page that is not the render or breaks the
-    rule, or shows the placeholder as the published checksum, exits 3 before
-    any release is read, as does a generator that cannot render the block or,
-    for any reason it refuses a build, the page. A page that passes is the
+    rule, or shows the placeholder as the published checksum, is refused
+    before any release is read, and the gate also stops there when the
+    generator cannot render the block or, for any reason it refuses a build,
+    the page. A page that passes is the
     render, so it shows the checksum it was read by in its checksum element,
     or the note for the zero placeholder; when the gate can download and
     read the published release's zip and ``.sha256``, with a well-formed
@@ -86,15 +86,13 @@ Behaviour:
   - The equality holds the page to the generator, not the generator to what
     it should write. A change to ``site-src/pages/verify.html``, to the
     generator code that renders the page, or to what its head loads, made in
-    the sources and regenerated, exits 3 above, before any release is read,
-    only when a required file cannot be read, the generator cannot render
-    the page or its download block, or the regenerated page carries neither
-    the not-yet-published note nor a checksum element and the sentence that
-    names its version (as when ``{{release.sum_block}}`` is deleted from
-    ``site-src/pages/verify.html``), shows a malformed or placeholder
-    checksum, breaks the rule above (download_block_problems), as a plain 64
-    digit hexadecimal value added before the next-page link does, or is not
-    the render for the version and checksum read from it. Any other such
+    the sources and regenerated, is refused above, before any release is
+    read, only when it fails one of the checks above, such as the check that
+    the page carries the not-yet-published note or a checksum element and the
+    sentence that names its version (which deleting ``{{release.sum_block}}``
+    from ``site-src/pages/verify.html`` fails) or the rule above
+    (download_block_problems), which a plain 64 digit hexadecimal value added
+    before the next-page link breaks. Any other such
     change passes these checks of the page, as a second checksum in the page
     source whose groups are joined by dots does, and as a zip file name for
     another version written in place of the current one does.
@@ -133,7 +131,7 @@ Behaviour:
     and fails, the Released line still checked and the more severe code
     winning. ``tools/build-site.py`` refuses a checksum close to the zero
     placeholder (56 or more of its 64 digits 0), such as a mistyped
-    placeholder, so a page that shows one is not the render and exits 3
+    placeholder, so a page that shows one is not the render and is refused
     before any release is read. A different
     version with no release is a real
     inconsistency and fails. An existing tag with no published release is a
@@ -151,9 +149,9 @@ Behaviour:
     proves the release is self-consistent (the zip hashes to its own manifest),
     and requires the site's displayed checksum, or the placeholder while the
     page carries the note, to equal that published digest: a difference is
-    drift (exit 1). A download or read that fails, a malformed manifest or a
-    zip that does not hash to it stops only this comparison (exit 2), and
-    the release-date check below still runs.
+    drift. A download or read that fails, a malformed manifest or a zip that
+    does not hash to it stops only this comparison, and the release-date
+    check below still runs.
   - Separately, and whatever version the site names, checks the release for
     the version SKILL.md names on its own terms (item 26, G4): it probes that
     release; on 200 it requires the SKILL.md ``Released:`` line to name the UTC
@@ -1273,7 +1271,7 @@ def staged_draft() -> str | None:
     renders the live verify page at base / from the sources, the draft's changes included, while tools/build-site.py
     writes only the draft, so this selects the report and never the verdict. None also when the file cannot be read
     or names no base as a string, so the report is as without a draft; the generator refuses a site.json it cannot
-    read (exit 3)."""
+    read, so the gate has already stopped at the render (rendered_verify_page)."""
     try:
         config = json.loads((REPO_ROOT / "site-src" / "site.json").read_text(encoding="utf-8", errors="strict"))
     except (OSError, UnicodeError, ValueError):
@@ -1353,7 +1351,7 @@ def check_site_checksum(load_code: int = 0) -> int:
     problems = download_block_problems(verify, block, redirects)
     # The gate: the whole page, byte for byte, as tools/build-site.py renders it from the committed sources for the
     # version and checksum read above. The rule above names the commonest faults more clearly, so a page that breaks
-    # it is reported by it alone; both exit 3.
+    # it is reported by it alone; both stop the gate in die() below.
     try:
         written = VERIFY_PAGE.read_bytes()
     except OSError as error:
@@ -1443,8 +1441,9 @@ def check_site_checksum(load_code: int = 0) -> int:
             # Before the tag, the only page that states nothing false is the note. A
             # checksum shown as published for a version with no release (the previous version's digest or a locally
             # built one passed to tools/set-release-links.py) fails, as does a page whose step 3 then rejects the
-            # download. A checksum close to the zero placeholder, such as a mistyped one, exits 3 above, as the
-            # generator refuses to render it. The Released line is still checked, and the more severe code wins.
+            # download. A checksum close to the zero placeholder, such as a mistyped one, never reaches this point:
+            # the generator refuses to render it, so the gate stops at the render above. The Released line is still
+            # checked, and the more severe code wins.
             print("Release checksum inconsistency found:")
             print(f"  - the verify page shows {site_sum} as the published checksum for version {version}")
             print(f"  - {situation}, so no checksum for {version} is published")

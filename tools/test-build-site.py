@@ -10,7 +10,9 @@ draft's home page from the sitemap, as a staging round on the ``draft`` branch
 would (template 1.11.0: the live site carries no ``/draft/``). The pin of the
 whole verify page (VERIFY_PAGE_PIN, SITE_CSS_PIN, check_verify_page_pin) and
 its tie to the committed release (check_committed_render) instead load the
-generator in this process and render that page alone; the pin's comment
+generator in this process and take that page from verify_page(), which runs
+the whole build() and writes nothing, so a fault that makes the generator
+refuse any page fails these cases too; the pin's comment
 names how to update it. Exit 0 when every case passes; 1 otherwise, naming
 each failing case.
 """
