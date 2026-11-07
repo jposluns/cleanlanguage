@@ -444,6 +444,7 @@ class WriterTest(unittest.TestCase):
     REPO = Path(__file__).resolve().parent.parent
     INPUTS = (
         "tools/build-site.py",
+        "tools/check-install-page.py",
         "site-src",
         "cleanlanguage/skills/cleanlanguage/SKILL.md",
         "cleanlanguage/skills/cleanlanguage/references",
