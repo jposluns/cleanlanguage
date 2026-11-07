@@ -11,7 +11,13 @@ are plain static pages, so they read the same with JavaScript blocked, failed,
 or switched off. This site no longer uses the template's install selector
 (``select.js``, template specification, section 7.12); the old link forms
 ``/install/?ai=<family>`` and ``/install/#<family>`` land on ``/install/``,
-where the family buttons sit at the top.
+where the family buttons sit near the top: the opening of the page's content
+is pinned as the page builds it, so in that content only the opening label,
+the hero's ``h1``, ``div.rail``, the meta line and the "Pick your AI" label
+sit above the buttons, with no other element or text, and no element or text
+sits outside the head and the body, or in the head where a head may not hold
+it, which a browser can move into the body above them, as the parser reads
+the markup (check 1; it does not model implied end tags).
 
 This is a TRIPWIRE for the common regressions in the STATIC MARKUP. It is
 deliberately NOT a CSS engine or a browser.
@@ -21,22 +27,64 @@ What it verifies
 
 1. On ``/install/``, each family has exactly 1 link, ``<a id=X href="/install/X/">``
    with the classes ``btn`` and ``inline`` and visible text (as check 4 defines
-   it), none with ``aria-current``, none hidden by itself or an ancestor
+   it) that is exactly the family's name in ``FAMILY_NAMES``, compared as
+   check 4 compares a heading's name (so another family's name, or its own
+   beside another's, fails),
+   none with ``aria-current``, none hidden by itself or an ancestor
    (``hidden`` in any value, ``until-found`` included; ``inert``;
    ``aria-hidden="true"`` in any case; ``popover`` in any value, even on an open
    ``dialog``, which the HTML standard displays; a class
    in ``HIDING_CLASSES``: ``vh``, the template's visually-hidden class,
    ``visually-hidden``, ``only-dark`` or ``skip``, each matched as a whole class
    name; an element in ``HIDING_ELEMENTS``: ``datalist``, ``noscript``, ``rp``,
-   ``script`` or ``title``, or 1 whose content a browser renders only as
+   ``script`` or ``title``, or 1 whose content a browser may render only as
    fallback or in a control: ``audio``, ``canvas``, ``meter``, ``object``,
    ``progress``, ``select`` or ``video``; a ``dialog`` without ``open``; or a
-   ``details`` without ``open``, which hides all its content except its first
-   ``summary`` child, as the HTML standard's rendering rules do with no
-   stylesheet); the 5 links
+   ``details`` without ``open``, which the gate reads as hiding all its
+   content except its first ``summary`` child); the 5 links
    have 1 ``p`` as their parent, as the parser reads it (see below), and sit in
    the order Claude, ChatGPT, Gemini, Copilot, other AI systems, before the
-   ``get`` id.
+   ``get`` id. That ``p`` sits in the opening of the page's content, which is
+   pinned as ``site-src/pages/install.html`` builds it (``BODY_OPENING``,
+   ``MAIN_OPENING`` and ``DOC_OPENING``, each element read as a tag and a
+   class it carries, whatever its other classes): the body's first 3 elements
+   are ``a.skip``, ``header.mast`` and ``main``; the first element in that
+   ``main`` is ``div.wrap``, and the first in that is ``div.doc``; and the
+   first 6 elements in that ``div.doc`` are, in order, the opening label
+   (``p.lbl``, "Install"), the hero's ``h1``, ``div.rail``, ``p.meta``, the
+   "Pick your AI" label (``p.lbl`` with the ``pick`` id) and that ``p``, with
+   or without the class ``first`` on the opening label, ``div.rail`` or
+   ``p.meta`` (check 8 refuses it on the other 3). Of those 6, the
+   first 5 hold no element, but ``div.rail``, which holds only 1 ``img``, and
+   that ``p`` holds no element but the 5 family links; no text other than
+   whitespace sits directly in that ``p``, or in the body, that ``main``,
+   ``div.wrap`` or ``div.doc`` before it. The ``h1`` and the
+   "Pick your AI" label are not hidden, by the rules above, and each has
+   visible text, as check 4 defines it. The visible text of the ``h1``, of
+   that label and of each family link holds no bidi control
+   (``BIDI_CONTROLS``, check 4), which can show the letters in another
+   order. No element that starts before that ``p`` ends, shown or hidden, is
+   a ``bdo`` or carries ``dir``, in any value: the ``h1``, that label, the
+   family links and what they hold, the rest of the pinned opening, its
+   ancestors (``html``, the body, that ``main``, ``div.wrap`` and
+   ``div.doc``), that ``p`` itself, the ``head``, and ``header.mast`` and
+   what it holds. A ``dir`` on that ``p`` or on an ancestor can show the
+   family links, or the text above them, in another order, and a browser can
+   reopen a formatting element that an end tag closed out of order, with its
+   attributes, around later text (``<span hidden><b dir="rtl"></span>`` in a
+   family link can reopen the ``b`` around the later links). No ``html`` or
+   ``body`` start tag anywhere on the page carries ``dir``, because a browser
+   may add its attributes to the page's own element. The pin of elements and
+   text reads every element and text there, shown or hidden, and nothing
+   inside ``header.mast``, whose markup the generator's validator pins (see
+   below), or after the button row. Because a browser can move into the body,
+   above its first element, what the pin of the body does not read, the page
+   holds, shown or hidden, no element outside every element but ``html``, no
+   element directly in that ``html`` but its ``head`` and body, no element at
+   any depth in that ``head`` outside those a head may hold (``HEAD_TAGS``,
+   check 6), and no text other than whitespace outside every element,
+   directly in that ``html`` or ``head``, or in an element in that ``head``
+   other than ``title``, ``script`` or ``style``.
 2. No element on any of the 6 pages carries the retired selector attributes
    ``data-picker``, ``data-family-link``, ``data-family-section``,
    ``data-picker-reset`` or ``data-picker-status``.
@@ -47,25 +95,57 @@ What it verifies
    below), and on every page no id is duplicated.
 4. Each family page exists (exit 3 if not) and has exactly 1 ``<h1>`` with
    visible text (a character other than whitespace, U+0000 and those in
-   ``ZERO_WIDTH``, in text that no element hides by the rules of check 1), at
-   least 1 ``p.verified`` and at least 1 ``ol.steps``, none of them hidden by
-   itself or an ancestor, and links, hidden or not, to ``/install/#get`` and
-   ``/install/#test`` outside every element of ``INERT_ELEMENTS``.
+   ``ZERO_WIDTH`` and ``INVISIBLE``, in text that no element hides by the
+   rules of check 1)
+   that holds the family's name in ``FAMILY_NAMES`` (in that text, compared
+   without regard to case, with U+0000 and the characters of ``ZERO_WIDTH``
+   other than U+00A0 deleted, and each ``br`` not hidden, ``</br>`` included,
+   which a browser may read as ``<br>``, and each run of whitespace, U+00A0
+   included, read as 1 space) and no bidi control in that text
+   (``BIDI_CONTROLS``: U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to
+   U+2069, which can show the letters in another order), and no element that
+   starts before it ends, shown or hidden, is a ``bdo`` or carries ``dir``,
+   which can do the same (``<bdo dir="rtl">GPT</bdo>`` may show "TPG"): it and
+   what it holds, its ancestors and every element before it on the page,
+   ``header.mast`` and the ``head`` included, for the reasons check 1 gives,
+   and no ``html`` or ``body`` start tag on the page carries ``dir``; at least 1
+   ``p.verified`` and at least 1 ``ol.steps``, none of them hidden by itself or
+   an ancestor, each ``p.verified`` with visible text,
+   each ``ol.steps`` with at least 1 ``li`` with visible text (text counts for
+   every step it sits in, so text in a list inside an ``li`` counts for it),
+   and, to each of ``/install/#get`` and ``/install/#test``, at least 1 link
+   outside every element of ``INERT_ELEMENTS``, not hidden by itself or an
+   ancestor, with visible text, and passing the pins of a link back (check
+   8); the first such link is the required link back. Check 8 holds only the
+   required link back to each, so further links to them, hidden or not, may
+   appear anywhere that the rules for any element there allow: in a step,
+   which the pins of a step hold, a further link to ``/install/#get`` with no
+   class passes. A page whose only links to 1 of them sit in steps fails,
+   because a step is not an ancestor that the pins of a link back allow.
 5. No inline code and no refused markup on any of the 6 pages, as checks 1 to
    10 of ``tools/check-inline-code.py`` define them for an HTML page, with that
    gate's own code: among them, no ``<script>`` without ``src`` other than a
    structured-data block, no ``on*`` attribute, no ``javascript:`` URL, no
    ``<style>`` element or ``style`` attribute, no script from another origin,
    and none of the elements that check 7 of that gate refuses because the
-   parser reads them differently from a browser; and, by that same check 7,
+   parser can read them differently from a browser; and, by that same check 7,
    exactly 1 element with ``data-scheme-toggle``, the light and dark switch of
    template specification 7.33, in its place.
 6. Versioned asset tokens and loads on each of the 6 pages: ``fonts.css``,
    ``palettes.css`` and ``baseline.css`` load as stylesheets, and ``copy.js``
    as a script with ``defer`` outside every element of ``INERT_ELEMENTS``,
-   from ``/assets/baseline/`` with ``?v=X.Y.Z``;
-   where the text names ``/assets/site.css``, or a stylesheet loads it, it loads
-   with ``?v=`` and 12 hexadecimal characters. ``scheme.js`` loads exactly once, as
+   from ``/assets/baseline/`` with ``?v=X.Y.Z``,
+   and no other stylesheet loads: every stylesheet the page loads, and every
+   ``<link>`` start tag naming ``stylesheet`` that a text match finds, a tag in
+   a comment included, is 1 of those 3 in exactly the form
+   ``<link rel="stylesheet" href="/assets/baseline/NAME?v=X.Y.Z">``, so, with
+   check 7's refusal of a ``Link`` header, the rule pin of
+   ``tools/test-install-page.py`` reads every stylesheet that the 6 pages'
+   markup or ``site/_headers`` loads; a header that Cloudflare adds outside
+   that file is not read. ``/assets/site.css``, which none of them loads, fails, so a
+   ``site-src/assets/site.css``, which ``tools/build-site.py`` adds to the head
+   of every page it builds, needs this check and that pin changed with it. ``scheme.js`` loads
+   exactly once, as
    exactly ``<script data-cfasync="false" src="/assets/baseline/scheme.js?v=X.Y.Z"></script>``,
    with no ``defer`` or ``async``, before the first stylesheet, and it and every
    stylesheet start inside ``<head>``, read as parsed elements: ``html > head``,
@@ -73,8 +153,10 @@ What it verifies
    1.6.0), before the head ends where HTML5 ends it: at the first text other
    than whitespace, start tag other than those HTML5 allows in a head
    (``HEAD_TAGS``), or ``</body>``, ``</html>`` or ``</br>``. A self-closing tag
-   leaves an element that is neither void nor in ``<svg>`` open, as in a
-   browser. The reading fails closed where it does not model HTML5: such a
+   leaves an element that is neither void nor in ``<svg>`` open, as a
+   browser may; in ``<svg>`` this reading closes it, also where a browser may move it
+   out of the ``svg`` and keep it open (check 5 refuses such an ``svg``). The
+   reading fails closed where it does not model HTML5: such a
    start tag inside a ``<template>`` or ``<noscript>`` in the head ends the
    head, and a self-closing tag in ``<math>`` leaves its element open. Every
    other ``<script>`` the page loads is 1 of the baseline scripts this site uses
@@ -82,11 +164,32 @@ What it verifies
    ``/assets/baseline/``, with the same token and ``defer``, as exactly
    ``<script src="/assets/baseline/NAME?v=X.Y.Z" defer></script>``;
    ``select.js`` is refused, and the baseline's ``matrix.js`` is left out, by
-   the owner's decision. Each load is read as the parsed element, so a tag
+   the owner's decision. Every ``src`` on the 6 pages is a path from the
+   site's root whose first segment is 1 of ``LOADED_SEGMENTS`` (``assets``,
+   in any letter case), the first segments of every file the committed pages
+   load, so check 7 refuses every header and redirect rule that can match
+   what they load (``src="/images/a.png"`` and ``src="logo.svg"`` fail).
+   Every ``src``, and every ``href`` of a ``link`` other than the canonical
+   link, is also 1 of the files under ``assets/baseline/`` that
+   ``tools/check-baseline-pin.py`` pins in ``.baseline/pin.toml``, read with
+   that gate's own ``load_pin()``, as a path from the site's root
+   (``load_path``): its query and fragment set aside, it starts with ``/``,
+   and each of its segments is made only of ASCII letters and digits, ``.``,
+   ``_``, ``~`` and ``-`` and is neither ``.`` nor ``..``. So a new
+   ``/assets/install-illustration.svg``, whose bytes no pin holds,
+   ``/assets/../images/cleanlanguage-card.png``, ``/assets/./baseline/...``
+   and ``/assets/%2e%2e/...`` fail; a correct new file outside the baseline
+   fails until this check changes with it. ``tools/test-install-page.py``
+   fails unless ``LOADED_SEGMENTS`` holds
+   exactly the first segments of every ``src``, every ``href`` of a ``link``
+   other than the canonical link, and every ``url()`` of the 3 stylesheets,
+   read from the stylesheet's address, and unless ``load_path`` reads each of
+   them as a pinned file; the gate itself does not read the stylesheets'
+   ``url()``. Each load is read as the parsed element, so a tag
    inside a comment loads nothing, and a ``<script>`` or stylesheet written in
    another spelling (letter case, a character reference, attribute order or
    spacing) is still counted. Any tag that carries an attribute twice fails: a
-   browser reads the first value, and the load reading would take the last. Every
+   browser may read the first value, and the load reading would take the last. Every
    ``<script>`` start tag with a ``src`` that a text match finds, a tag in a
    comment included, is ``scheme.js`` in its exact form or 1 of
    ``ALLOWED_SCRIPTS`` with a ``?v=X.Y.Z`` token and ``defer``.
@@ -99,10 +202,285 @@ What it verifies
    sets, or other than ``/draft/*`` detaches, ``Content-Security-Policy``; a
    ``/draft/*`` rule appears only while a new
    version is staged, and ``tools/check-headers.py`` check 5 holds it to its
-   exact lines. The policy allows ``'unsafe-inline'``, so a browser does not
-   block inline code on these pages. The site's own pages must not use it
+   exact lines. The policy allows ``'unsafe-inline'``, so it lets a browser run
+   inline code on these pages. The site's own pages must not use it
    (template specification, section 5), and check 5 and
-   ``tools/check-inline-code.py`` enforce that rule.
+   ``tools/check-inline-code.py`` enforce that rule. No rule sets a ``Link``
+   header, which a browser can read as a stylesheet load that check 6 and the
+   rule pin do not see; it refuses every ``Link`` header, one that only
+   preloads included, because it does not read the header's value. Under a
+   URL pattern that can match an install page or a file the pages load
+   (``reaches_page``, below), ``/*`` included, only the
+   headers and values that the committed file sets there may appear
+   (``INSTALL_HEADERS``: under ``/*``, ``X-Frame-Options``,
+   ``Permissions-Policy``, ``Cross-Origin-Opener-Policy`` and
+   ``Content-Security-Policy``, each with its committed value), so any other
+   header or value there fails, and so does any detach: a ``Refresh``
+   header, which can send the reader away from the page, a ``Link`` header,
+   and a ``Content-Disposition`` header, which can make a browser download
+   the page instead of showing it, among them; under ``/assets/*`` a
+   ``Content-Type: text/plain``, which can stop a browser applying the
+   stylesheets, fails too. ``tools/test-install-page.py``
+   fails unless ``INSTALL_HEADERS`` holds exactly what the committed file
+   sets under those patterns. The gate reads a pattern from its text alone,
+   not with Cloudflare Pages' matcher, and fails closed (``reaches_install``):
+   a pattern can match an install page unless the first segment of its path,
+   after any ``https://`` and host, is not empty, is made only of ASCII
+   letters and digits, ``.``, ``_``, ``~`` and ``-``, is neither ``.`` nor
+   ``..``, and is not ``install`` in any letter case. So ``/``, ``/*``,
+   ``/:page/*``, ``/install*``, ``/INSTALL/*``, ``/./install/*``,
+   ``https://host`` and ``https://host/install/*`` can, and
+   ``/downloads/cleanlanguage.md``, ``/images/cleanlanguage-card.png``,
+   ``/sitemap.xml`` and ``/draft/*`` cannot. ``reaches_page`` reads a
+   pattern the same way, and also as able to match a file the pages load
+   when the first segment of its path is 1 of ``LOADED_SEGMENTS`` (check 6)
+   in any letter case: ``/assets/*``, ``/ASSETS/baseline/copy.js`` and
+   ``https://host/assets/baseline/baseline.css`` can. ``site/_redirects`` is
+   read with it: no rule there may have a source, its first field, that
+   ``reaches_page`` reads as able to match an install page or a file the
+   pages load, whatever its
+   destination and status, because a redirect sends the reader away from the
+   page and a rewrite (status 200) serves other content at its address, and
+   the same holds for a stylesheet, a script, a font or an image; a
+   blank line, and a line whose first field starts with ``#``, is skipped. So
+   ``/install/* / 302``, ``/install/claude/ / 200``, ``/:page/* / 301``,
+   ``/* / 302``, ``/assets/baseline/baseline.css /assets/baseline/fonts.css
+   200`` and ``/assets/baseline/copy.js /assets/baseline/rail.js 302`` fail.
+   No committed source can match an install page or a file the pages load,
+   nor can any that ``redirects_body`` of ``tools/set-release-links.py``, the release
+   writer, writes. These residuals are accepted: a rule of either file that
+   reaches an install page or a file the pages load through any matching
+   behaviour of Pages beyond that
+   reading passes. ``tools/test-release-links.py`` pins ``site/_redirects`` to
+   the release writer's output, so a hand edit that adds such a rule fails that
+   test, but a change to the writer, with the file written again, does not. Nor
+   does the gate read a header that Cloudflare adds outside ``site/_headers``
+   (zone settings, Transform Rules and the Pages defaults), or a redirect, a
+   rewrite or a response that Cloudflare makes outside ``site/_redirects`` and
+   the repository (Bulk Redirects, Page Rules, Redirect Rules, other zone
+   settings, or a Worker on a route of the zone); check 10 refuses the server
+   entry points that the repository can hold.
+   A correct new header for every page, such as ``Cache-Control`` under
+   ``/*``, fails until ``INSTALL_HEADERS`` changes with the file, and so does
+   any header under ``/assets/*``.
+8. On the 6 pages, each checked element, each of its ancestors, as the parser
+   holds them open, and each element it holds carries only the classes that
+   the committed pages give an element of that tag there (``CLASS_PIN``): the
+   hero's ``h1``, the "Pick your AI" label, the paragraph of family links and
+   each family link on ``/install/``, and, on each family page, each ``h1``,
+   ``p.verified`` and ``ol.steps``, each step (an ``li`` whose nearest list is
+   an ``ol.steps``) and, for each of ``/install/#get`` and ``/install/#test``,
+   the required link back (check 4), not a further link to it, which the pins
+   of a checked element that holds it hold. A link back passes its pins only
+   as an ``a`` with no class, no attribute but ``href`` and no element
+   inside, whose ancestors are an ``html``, a body, a ``main``, ``div``
+   elements and ``p`` elements, each with only the classes and attributes
+   of ``PIN_ANCESTORS`` and ``PIN_ANCESTOR_ATTRS``, a ``div`` also the
+   class ``callout``, and a ``p`` none: as on the committed pages, a link in
+   a paragraph in ``div.doc``, or in a ``div.callout`` there, so the ChatGPT
+   page's link to ``/install/#get`` in its callout passes as its required
+   link back once the link in its prose is gone. ``div.next``, which holds
+   no paragraph link on the committed pages, is not allowed, and an
+   ``a.start`` that is the only link to 1 of them fails. An element of a tag that the
+   committed pages do not give a class there may carry none, so
+   ``<h1 class="fresh">`` on a family page, a ``<section class="fresh">``
+   around it, a ``<span class="fresh">`` in it and an ``ol.steps`` in a step
+   all fail, while a ``span`` without a class in a step passes.
+   ``tools/test-install-page.py`` fails unless ``CLASS_PIN`` holds exactly the
+   classes the committed pages give, and pins every stylesheet rule that can
+   match an element with those names and classes (see below). No checked
+   element, ancestor or element it holds carries an attribute that an
+   attribute selector of a pinned rule names (``RULE_ATTRIBUTES``), so ``data-preset`` on a family page's ``h1``,
+   which baseline.css hides in print (``@media print { ... [data-preset] {
+   display: none; } }``), fails; ``hidden`` is left out, because the gate
+   reads it as hiding the element that carries it and all it holds.
+   ``tools/test-install-page.py`` fails unless ``RULE_ATTRIBUTES`` holds
+   exactly the attributes, ``hidden`` aside, that the attribute selectors of
+   the rules it pins name. So a correct future baseline rule that names an
+   attribute that a committed checked element, ancestor or element it holds
+   carries (``class``, ``id``, ``href``, or ``lang`` on ``html``, say) makes
+   this check refuse the committed pages. To land such a rule, read it and
+   confirm that it hides, clips, zeroes the opacity of and moves no checked
+   element, as for any change to the rule pin, then exempt that attribute in
+   ``tools/test-install-page.py``, beside ``hidden`` (``HIDING_ATTRIBUTE``),
+   name the exemption here, and review both with the new pin in the same pull
+   request. Each of them also carries only the attributes that the committed
+   pages give an element of that tag there (``ATTRIBUTE_PIN``), so any other
+   attribute fails, whatever element carries it: a presentation attribute,
+   which can colour, size or move a checked element with no stylesheet change
+   (``<font color="#f6f4e7">``, the light background colour, around a family
+   page's ``h1``, ``bgcolor`` on the body or ``align`` on the "Pick your AI"
+   label), and ``hidden``, ``open``, ``dir`` and ``title`` among them.
+   ``tools/test-install-page.py`` fails unless ``ATTRIBUTE_PIN`` holds exactly
+   the attributes the committed pages give. A correct new attribute there (a
+   ``title`` on a family link, say) fails until ``ATTRIBUTE_PIN`` changes with
+   the pages. Each of them is also of a tag that the committed pages give an
+   element there (``TAG_PIN``), so any other tag fails, with or without a
+   class or an attribute: a ``marquee`` around a checked element, which a
+   browser can scroll in and out of view, a ``font`` or a ``details`` around a
+   family page's ``h1``, and a ``span``, a ``br``, a ``div`` or a ``bdi``
+   inside a family link or a family page's ``h1``.
+   ``tools/test-install-page.py`` fails unless ``TAG_PIN`` holds exactly the
+   tags the committed pages give. A correct new tag there (a ``br`` in a
+   family page's ``h1``, say) fails until ``TAG_PIN`` changes with the pages.
+   Every element on the 6 pages, checked or not, shown or hidden, carries only
+   attributes that the committed pages give an element of its tag somewhere
+   on them (``PAGE_ATTRIBUTES``), so a presentation attribute that sizes a box
+   outside the checked scope with no stylesheet change (``height`` on the
+   rail's ``img``) fails, and so do ``dir`` on any element and ``hidden`` on
+   any element but a ``button``. ``tools/test-install-page.py`` fails unless
+   ``PAGE_ATTRIBUTES`` holds exactly what the committed pages give. A correct
+   new attribute (a ``width`` on an ``img``, say) fails until
+   ``PAGE_ATTRIBUTES`` changes with the pages. Every element on the 6 pages,
+   checked or not, shown or hidden, is also of a tag that the committed pages
+   use somewhere on them (``PAGE_TAGS``), so a ``marquee``, a ``bdo``, with
+   or without ``dir``, a ``bdi``, a ``br`` (``</br>`` included) or a
+   ``section`` anywhere on them fails. ``tools/test-install-page.py`` fails
+   unless ``PAGE_TAGS`` holds exactly the tags the committed pages use. A
+   correct new tag (an ``em`` in a step, say) fails until ``PAGE_TAGS``
+   changes with the pages. No ``html`` or ``body`` start tag other than the
+   first of each on the page carries any attribute, because a browser may add its
+   attributes to the page's own element, an ancestor of every checked element,
+   so a later ``<body class="fresh">`` fails. Nor does any ``html`` or ``body``
+   start tag that is not, as the parser holds it open, an ancestor of every
+   checked element, for the same reason: on a page whose opening ``<body>``
+   was removed, a first ``<body data-preset>`` or ``<body class="fresh">``
+   after ``</main>`` fails, and so does ``<html class="fresh">`` after
+   ``</main>`` on a page whose opening ``html`` start tag was removed (check 6
+   refuses that page too, because its head is then not ``html > head``). Each
+   page begins with exactly ``<!doctype html>`` on its own line, as
+   ``tools/build-site.py`` writes it: without it a browser may render the page in
+   quirks mode, where a class selector matches a class name without regard to
+   case, while this check and the rule pin compare class names with regard to
+   case (``.DOC { display: none; }`` would hide ``div.doc``). No end tag on
+   the 6 pages closes an open element other than the innermost, as the
+   parser holds them, as ``tools/build-site.py`` refuses it too, but for a
+   self-closing tag in an ``svg``, which it reads as closed: here such an
+   end tag closes every element opened inside its own, where a browser can
+   ignore it, keep 1 of those open or reopen 1 (see below). An ``html``,
+   ``head`` or body element, which a browser might not open again for a later
+   start tag, does not count as open inside. The parser reads a self-closing
+   ``<svg/>``, and a self-closing ``circle`` or ``path`` whose parent, as the
+   parser holds it, is an ``svg`` (``SVG_SHAPES``, the elements that the
+   committed pages put there), as closed at once, so what follows ``<svg/>``
+   is not in an ``svg`` (``<span class="vh"><svg/><div/></span>`` fails). It
+   reads only that parent: an HTML element such as a ``span`` ends no ``svg``
+   here, so a ``<path/>`` after a ``span`` in an ``svg`` reads as closed too;
+   check 5 refuses every ``svg`` but the 2 of the exact light and dark switch,
+   so such a page fails anyway. The parser keeps any other self-closing tag's
+   element open, in an ``svg`` too, so
+   ``<span class="vh"><svg><div/></svg></span>`` and ``<svg><rect/></svg>``
+   fail, though check 5 and the page tag pin refuse that ``svg`` and that
+   ``rect`` anyway.
+   Nor does an element count whose end tag the HTML standard lets a page omit
+   where no more content follows in its parent, when that parent, as the
+   parser holds it, is 1 at whose end tag a browser may close it too
+   (``IMPLIED_ENDS``: an ``li``, ``dd``, ``p``, ``rt``, ``rp``, ``optgroup``,
+   ``option``, ``tbody``, ``tfoot``, ``tr``, ``td`` or ``th`` in such a parent,
+   so not a ``p`` in a ``span``, whose end tag a browser may then ignore) and
+   that parent counts as opened. Every element counts as opened but a table
+   part (``TABLE_PARTS``: a ``caption``, ``tbody``, ``tfoot``, ``thead``,
+   ``tr``, ``td`` or ``th``), which counts only where its parent, as the
+   parser holds it, is 1 that ``TABLE_PARTS`` names for it and itself counts
+   as opened. So ``<span class="vh"><td><p>x</td></span>`` and its ``th``,
+   ``caption`` and ``tr`` forms fail wherever they sit, in a ``template`` too,
+   which check 5 refuses anyway. At a ``table`` start tag whose nearest
+   enclosing ``caption``, ``table``, ``td`` or ``th``, as the parser holds
+   them, is a ``table``, nothing the parser holds from that table on counts as
+   opened; the search reads through every other element, a ``template``
+   included, so
+   ``<span class="vh"><table><tr><table></table><td><p>x</td></tr></table></span>``
+   fails. A table part in any other parent holds what counts, so a ``p`` left
+   open in a cell directly in a ``table`` fails at the cell's end tag, while
+   ``<table><tr><td>x</table>``, a one-cell table without ``</td>``, passes,
+   though ``tools/build-site.py`` refuses that omission in a page it
+   generates. Of the end tags that a page
+   omits before a sibling, ``IMPLIED_ENDS`` holds only that of an ``li``
+   directly in an ``li``, which a browser may close at the second's start tag, so
+   ``<ul><li>a<li>b</ul>`` passes, though ``tools/build-site.py`` refuses it
+   too, while ``<span class="vh"><li>a<li>b</span>``, after which a browser
+   may keep the ``span`` open, fails, and in a step list that omission fails the
+   tag pin, which allows no ``li`` in a step. Every other such omission still
+   counts, because the parser keeps the first element open around the next, so
+   ``<ul><li><p>a<li>b</ul>``, ``<div><p>a<p>b</div>``, ``<dl><dd>a<dd>b</dl>``
+   and ``<table><tr><td>a<td>b</table>`` fail, though each is valid HTML.
+9. On the 6 pages, every ``meta``, ``link`` and ``base`` element, at any
+   depth, shown or hidden, and every ``meta``, ``link`` and ``base`` start tag
+   that a text match finds, a tag in a comment included, is 1 that the
+   committed pages carry, with its attributes and values (``HEAD_PIN``). Its
+   key is its tag and the first of ``KEY_ATTRIBUTES`` (``charset``,
+   ``http-equiv``, ``name``, ``property`` and ``rel``) that it carries, with
+   that attribute's value, and it carries exactly the attributes of that key's
+   entry, each with the value the entry gives. The entries leave free only the
+   page's own text, address and dates (the ``content`` of the description,
+   ``og:title``, ``og:description``, ``og:url``,
+   ``article:published_time``, ``article:modified_time``, ``twitter:title``
+   and ``twitter:description``, and the ``href`` of the canonical link), which
+   the gate treats as metadata only and which change with each page and
+   release, and the ``href`` of a stylesheet, which check 6 holds to its exact
+   form. So a ``meta`` with ``http-equiv`` in any value fails: ``refresh``,
+   which can send the reader away from the page, before a family page's
+   ``h1`` or in a ``noscript``, ``content-security-policy``, which can block
+   the stylesheets, and ``default-style``, which selects among stylesheets
+   that carry a ``title``; these pages have none to select, because check 6
+   holds each stylesheet to an exact form without one, so it fails only as
+   an ``http-equiv`` that no committed page carries. So do a ``base``, whose
+   ``href`` a browser may already ignore here, because ``site/_headers`` sets
+   ``base-uri 'none'`` in the shared policy, but whose ``target`` that
+   policy does not restrict, and can open every link elsewhere; a
+   ``viewport`` or ``charset`` with another value, a ``color-scheme``
+   meta and a ``link`` of another kind. ``tools/test-install-page.py`` fails
+   unless ``HEAD_PIN`` holds exactly what the committed pages carry, with
+   exactly the values that its ``FREE_HEAD_VALUES`` leaves free. A correct new
+   or changed ``meta`` or ``link`` on these pages (a ``theme-color`` meta, say,
+   or another ``og:image``) fails until ``HEAD_PIN`` changes with the pages.
+10. No server entry point that Cloudflare Pages runs, no Wrangler
+    configuration file that it reads, and none of the root files named
+    below that its build image can read before the build command exists
+    (``SERVER_ENTRIES``), as a file, a directory or a link: ``functions`` at
+    the repository root, where Pages reads Pages Functions (a
+    ``functions/_middleware.js`` can answer any request to the site),
+    ``site/_worker.js``, a Worker that Pages runs in place of serving the
+    files, and ``wrangler.toml``, ``wrangler.json`` and ``wrangler.jsonc`` at
+    the repository root, which Pages can read as the project's configuration
+    (its build output directory among them), and ``package.json`` at the
+    repository root, whose dependencies the build image can install before
+    the build command, running its install scripts, which can write under
+    ``site/`` (an inference about the build image, not verified here; the
+    refusal is cheap), and, by the same unverified inference,
+    ``runtime.txt`` at the repository root, from which the build image can
+    choose its Python (``site/README.md``), and ``requirements.txt``,
+    ``Pipfile`` and ``Gemfile`` there, from which it can install
+    dependencies before the build command. Each of the first 6 can redirect,
+    rewrite or replace an install page or a file the pages load, or change
+    what Pages serves, each of the last 4 can change what the build image
+    runs before the build command, and no check here reads what any of them
+    does; ``tools/build-site.py --check`` refuses none of those at the
+    repository root, which sit outside ``site/``, nor a ``site/_worker.js``
+    listed in ``static_files``. None exists at this commit. A correct future
+    Function, Worker, Wrangler configuration or 1 of those root files fails
+    until this check changes with it.
+    These residuals are accepted: a Pages project whose root
+    directory, a dashboard setting, is not the repository root reads
+    ``functions`` and a Wrangler configuration from that directory, which the
+    gate does not read; the build image reads other files at the repository
+    root before the build command, which this check does not refuse:
+    ``.python-version``, which is committed and chooses its Python
+    (``site/README.md``), and any other file by which it chooses a tool's
+    version or installs dependencies, beyond those refused above (which files
+    those are is not verified here); nor does
+    it read a zone feature that can change the HTML in transit (Email Address
+    Obfuscation, Rocket Loader or the automatic Web Analytics script, say), or
+    whether Pages serves a file other than the 6 pages at an install page URL
+    (``tools/build-site.py --check`` refuses any file under ``site/`` that is
+    neither generated nor listed in ``static_files``), or
+    ``tools/pages-build.sh``, the Pages build command, which this gate does
+    not run: ``tools/test-pages-build.py`` pins its committed bytes to a
+    recorded sha256 (``SCRIPT_SHA256``), so a command added to it, such as 1
+    that writes under ``site/`` after the gates, fails that test until a
+    reviewer records the new digest; ``.github/workflows/pages-build.yml``
+    runs that test on every pull request and every push to ``main``, but the
+    Pages build does not, so the pin holds only where that workflow runs.
 
 It reads the markup with ``html.parser``. Its readers are not a full HTML5 tree
 builder: they model the open elements as tags nest, void elements, the head's
@@ -111,50 +489,67 @@ whitespace only, as HTML splits them (``class="btn&nbsp;inline"`` is 1 class,
 not ``btn`` and ``inline``). A script or stylesheet inside ``<noscript>``,
 ``<template>``, ``<plaintext>``, a raw-text element or one of ``HIDING_ELEMENTS``
 (``INERT_ELEMENTS`` of ``tools/check-inline-code.py``, whose content a
-browser with scripting on does not render as page elements or, for ``audio``,
+browser with scripting on might not render as page elements or, for ``audio``,
 ``canvas``, ``datalist``, ``meter``, ``object``, ``progress``, ``rp``,
-``select`` and ``video``, renders only as fallback, only in its control or not
+``select`` and ``video``, may render only as fallback, only in its control or not
 at all) is not in ``html > head``, so check 6 never counts it as placed there
 or as the load of ``copy.js``; nor do checks 3 and 4 count an id or a link
 inside one. What guarantees the committed pages is the
 generator: ``tools/build-site.py --check``, a deploy gate, compares them byte
 for byte with a fresh build, and the generator's validator holds each page's
-``header.mast`` block to its pinned markup. An ancestor in checks 1 and 4 is an
-element that the parser holds open, and the gate follows a browser in these
-ways where the two differ: ``/>`` on an element that is not void
-does not close it, so ``<div hidden/>`` hides what follows; of 2 attributes with
+``header.mast`` block to its pinned markup. The generator, not a page source,
+writes each page's shell: ``head()`` writes the doctype and the ``html`` and
+``head`` start tags, and ``build()`` the ``<body>`` line before the skip
+link, while a page source in ``site-src/pages`` fills only ``div.wrap`` in
+``main``. So a page whose doctype or opening ``<body>`` is gone can reach the
+committed site only through a change to the generator's template or code, a
+reviewed change to a tool; and check 8 refuses a page without the doctype,
+and an ``html`` or ``body`` start tag with an attribute that is not an
+ancestor of every checked element. At this commit the generator
+still builds a page source that holds an ``html`` or ``body`` start tag (a
+closed ``<body data-preset></body>`` in ``div.doc``), which check 8 refuses
+when it carries an attribute; a change in flight (PR 225) is to make the
+generator refuse ``html``, ``head`` and ``body`` start tags in a page source.
+An ancestor in checks 1 and 4 is an
+element that the parser holds open, and the gate assumes a browser's reading in these
+ways where the two can differ: ``/>`` on an element that is not void
+does not close it, but for an ``svg`` and, directly in an ``svg``, a
+``circle`` or ``path`` (check 8), so ``<div hidden/>`` hides what follows; of 2 attributes with
 the same name, the first counts; a heading start tag closes a heading that is
 the current node, and any heading end tag closes the innermost open heading;
 text after an ``a`` start tag is not in a link opened before it (a browser
-keeps that link open when the later one sits in a table cell or caption, an
+may keep that link open when the later one sits in a table cell or caption, an
 ``object``, a ``marquee`` or an ``applet`` inside it, so there the gate
 refuses more);
 and a hiding ``html`` or ``body`` start tag anywhere hides the whole page,
-because a browser adds its attributes to the page's own element, and so does
-a ``frameset`` start tag, because a browser that honours one drops the whole
-body (it ignores one after the body start tag, so there the gate refuses
+because a browser may add its attributes to the page's own element, and so does
+a ``frameset`` start tag, because a browser that honours one may drop the whole
+body (it may ignore one after the body start tag, so there the gate refuses
 more). Where
-``html.parser`` keeps open an element that a browser closes by an implied end
-tag (a ``p`` before a ``div``, say), the gate sees more ancestors than a
-browser. A hiding one makes it refuse more, but the paragraph check 1 asks for
-can be one a browser has closed (``<div></div>`` between 2 family links leaves
-the later links outside it), and the end tag of such an element closes here
-what a browser keeps open (see below).
+``html.parser`` keeps open an element that a browser may close by an implied end
+tag (a ``p`` before a ``div``, say), the gate can see more ancestors than a
+browser. A hiding one makes it refuse more. Check 1 refuses any element
+directly in the paragraph of family links, and check 8 any element inside a
+family link (``TAG_PIN``), so neither ``<div></div>`` between 2 family links,
+nor ``<p><h2>Pick</h2><a class="btn inline"``, nor
+``<a class="btn inline" id="claude" href="/install/claude/"><div>Claude</div></a>``,
+in which a browser may close the ``p`` at the ``div``, passes.
 
 What it does NOT verify (the reviewer's and cross-family QA's job)
 -----------------------------------------------------------------
 
-It does not apply any stylesheet or run any script. It does NOT detect a
-stylesheet rule that hides a link or a step list, a custom CLASS outside
-``HIDING_CLASSES`` that hides, clips, zeroes opacity or positions off-screen,
-a DESCENDANT wipe, or hiding by id. Of the elements the HTML standard hides
+It does not apply any stylesheet or run any script, and it does NOT judge
+whether a stylesheet rule hides, clips, zeroes the opacity of or moves a
+checked element: check 8 and the rule pin of ``tools/test-install-page.py``
+keep the rules that can reach one to those a reviewer has pinned (see
+below). Of the elements the HTML standard hides
 with no stylesheet, it does not list those that cannot hold a checked element
 or its text: the void elements (``area``, ``base``, ``basefont``, ``link``,
 ``meta``, ``param``, and ``input`` with ``type=hidden``) and ``head`` (a
-browser moves body content out of it); check 5 refuses ``style``,
+browser may move body content out of it); check 5 refuses ``style``,
 ``template``, ``noembed`` and ``noframes`` anywhere on the 6 pages. Check 5
 also refuses ``iframe``, ``svg`` (other than the 2 in the exact light and dark
-switch) and ``math``, which hold text a browser does
+switch) and ``math``, which hold text a browser might
 not render (an iframe's raw text; an SVG ``title``, ``desc`` or ``metadata``,
 the content of ``defs`` or ``symbol``, and SVG text outside a ``text``
 element; a MathML ``annotation`` or ``annotation-xml``). It does
@@ -162,39 +557,104 @@ not model a script that opens a popover, a dialog or a ``details``, or a
 browser's find-in-page that reveals ``hidden=until-found`` content.
 Among the descendant wipes, baseline.css hides, each at some widths,
 ``.figure .stack``, ``.figure .wide``, ``.family .cards .cname``, and
-``.family .sig .pre`` and ``.family .sig .post``; those classes hide only in
-that context, so they are not in ``HIDING_CLASSES`` and the gate passes an
-element that carries one of them there. ``tools/test-install-page.py`` fails
-when fonts.css, palettes.css or baseline.css hides a bare single class (a
-selector such as ``.only-dark``) that is not in ``HIDING_CLASSES`` or its
-exempt list. It counts a rule as hiding only when the rule sets
-``display: none``, ``visibility: hidden`` or ``collapse``, ``clip: rect(``,
-or ``absolute`` or ``fixed`` positioning with a negative ``top`` or ``left``.
-It reads no other property, so a class hidden by ``clip-path``, by
-``height: 0`` with ``overflow: hidden``, or by ``opacity`` passes it, and it
-reads no compound, descendant or attribute selector. Of text it reads only
-whether the heading and each family link have visible text, so a wrong family
-link label (another family's, say), an empty ``p.verified``, an empty
-``ol.steps`` and an empty link back to the downloads or the test pass; it checks
-that a step list is present, not its steps or their wording. Those are visible
-regressions a browser check, a reviewer, or the tri-family QA catches. A heading
-or family link label made only
-of an invisible character that is not whitespace, U+0000 or in ``ZERO_WIDTH``
-(such as U+034F, U+115F, U+180E, U+2061 to U+2064, U+3164, a variation
-selector or a tag character) passes the visible-text check. An end tag closes
-here the open element it names and every element opened inside it; the gate
-does not model the browser repairs that can hide markup it reads as visible,
-among them: an end tag a browser ignores because its element is not in scope
-(``</div>`` inside a table cell leaves a hiding ``div`` outside the table open)
-or, for an element outside the HTML standard's special category, because a
-special element such as ``div`` is open inside it (after
-``<span hidden><div></span>`` the ``span`` stays open); an end tag whose
-element a browser has already closed by an implied end tag (after
-``<p><div hidden></p>`` the ``div`` stays open); and a formatting element
+``.family .sig .pre`` and ``.family .sig .post``; none of those classes is in
+``CLASS_PIN``, so no checked element, ancestor or element it holds may carry
+one. ``tools/test-install-page.py`` pins, verbatim after normalizing only CSS
+whitespace and comments, every rule of fonts.css, palettes.css and
+baseline.css whose selector can match an element with the names and classes
+of ``CLASS_PIN`` (any element may carry no class), read by the last compound
+selector of each selector and conservatively: an attribute selector, an id, a
+pseudo-class, ``:has()``, ``:is()`` and ``:not()`` among them, and a
+pseudo-element count as matching, inside an at-rule or not. It also pins
+every keyframe and ``@font-face`` rule, and every rule that sets a custom
+property that a pinned rule names in ``var()``, compared with regard to case.
+A change to the 3 stylesheets that adds, changes, moves or removes such a rule
+fails that test, naming the rule, until a reviewer updates the pin as its
+docstring says, and ``tools/check-baseline-pin.py`` hash-pins the 3 files. So
+a rule for a new class, such as ``.fresh { padding: 0 var(--PAD); }``, cannot
+reach a checked element, which may not carry that class, and a new or changed
+rule for a pinned name or class, such as ``.btn { writing-mode:
+vertical-rl; }``, fails the rule pin. These residuals are accepted: what a
+pinned rule does is what a reviewer accepted when it was pinned, and neither
+the gate nor the test judges it (the negative top margin of ``.verified``, or
+a colour that matches what is behind the text in some scheme, say); a pinned
+rule that a checked element comes to match by something that neither the
+class pin nor ``RULE_ATTRIBUTES`` holds: an id, its place among its siblings,
+or the class or an attribute of a sibling or an earlier element (a pinned
+rule whose selector ends in ``.lbl + h1`` can match an ``h1`` right after an
+element with the class ``lbl``); the font files and images that a pinned rule
+names, which the test does not read, so a font whose glyphs show nothing
+passes it (``tools/check-baseline-pin.py`` hash-pins every file under
+``site/assets/baseline/`` to ``.baseline/pin.toml``, so only a change of
+the baseline pin can bring one); and a box that is neither a checked element, an ancestor nor an
+element it holds (a sibling or an earlier element, say), which can cover a
+checked element (positioned, or given an outline or a shadow) or move it by
+its own size or place in the flow (``.fresh { margin-bottom: 300vh; }`` on
+``p.meta`` moves the "Pick your AI" label and the family links 3 screen
+heights down): neither pin reaches it, so a rule for its class need not be
+pinned, and only the whole-file pin of ``tools/check-baseline-pin.py``
+refuses that change to a stylesheet. Check 8 reads the names of the
+attributes of such a box (``PAGE_ATTRIBUTES``) and its tag (``PAGE_TAGS``),
+but not the values of its attributes or its classes, so another value of an
+attribute that the committed pages give its tag passes, and so does a further
+class (see ``p.meta`` above); a ``marquee`` around ``Scope``'s label now
+fails ``PAGE_TAGS``. Check 5 allows only the 2 ``svg`` elements of the exact
+light and dark switch, so a larger ``width`` on 1 of them fails. The test reads
+comments and strings as CSS does, a backslash in a string escaping the
+character after it, so a brace in either delimits no rule, and a bracket, a
+comma or a class name in a string counts for no selector. It refuses a
+stylesheet with what it does not model, such as a backslash outside a
+string, a line break in a string, a comment, or a run of adjacent comments,
+between 2 characters of names in a selector, a brace inside brackets, a rule
+inside a rule or an unlisted
+at-rule. Of text it reads only whether the headings, the
+"Pick your AI" label, each family link, each ``p.verified``, each step list's
+steps and the required links back to the downloads and the test have visible
+text, whether text sits above
+the family links or directly in their paragraph, whether the visible text of
+the hero's ``h1``, a family page's ``h1``, the "Pick your AI" label or a
+family link holds a bidi control, whether a family page heading's visible
+text holds its family's name, and whether each family link's visible text is
+its family's name, so a ``p.verified`` with the wrong date passes, as does a
+heading that names another family beside its own; it checks that a step list has at
+least 1 step with visible text, not its steps or their wording, which
+``tools/build-site.py --check`` ties to ``site-src/pages``. Those are visible
+regressions a browser check, a reviewer, or the tri-family QA catches. Text
+made only of characters of ``ZERO_WIDTH`` and ``INVISIBLE`` (the rest of
+Unicode's Default_Ignorable_Code_Point set, U+034F, the Hangul fillers U+115F,
+U+1160, U+3164 and U+FFA0, the Mongolian free variation selectors, the
+variation selectors and the tag characters among them, and U+2800, the
+Braille pattern blank), whitespace and U+0000 has no visible text. The gate
+reads every other character as visible, so a heading, the "Pick your AI"
+label, a family link label, a ``p.verified``, a step, or a link back to the
+downloads or the test made only of a character outside them that a browser
+or a font may show as nothing passes the visible-text check, which all 6 share;
+a family link label made only of one fails the check of its name. A ``dir`` on any element fails check
+8 (``PAGE_ATTRIBUTES``), and a ``bdo`` or a ``bdi`` anywhere on the 6 pages
+fails its page tag pin (``PAGE_TAGS``), as it does its tag pin (``TAG_PIN``)
+in a checked element. The gate applies no stylesheet; a
+rule that sets ``direction`` or ``unicode-bidi`` on a checked element or an
+ancestor, such as ``main { direction: rtl; }``, fails the rule pin of
+``tools/test-install-page.py`` unless a reviewer pins it. An end tag closes
+here the open element it names and every element opened inside it, and
+check 8 refuses an end tag that closes an element other than the innermost,
+so these possible browser repairs, which can hide markup that the gate reads as
+visible, now fail: an end tag a browser may ignore because its element is not
+in scope (``</div>`` inside a table cell, which can leave a hiding ``div``
+outside the table open) or, for an element outside the HTML standard's
+special category, because a special element such as ``div`` is open inside
+it (``<span class="vh"><div></span>``, after which a browser may keep the
+``span`` open); an end tag whose element a browser may already have closed by
+an implied end tag (``<p><div class="vh"></p>``, after which a browser
+may keep the ``div`` open); and an end tag that closes a formatting element
 (``a``, ``b``, ``big``, ``code``, ``em``, ``font``, ``i``, ``nobr``, ``s``,
-``small``, ``strike``, ``strong``, ``tt`` or ``u``) that a browser reopens with
-its attributes after an end tag closed it out of order, so after
-``<p><b hidden>x</p>`` a link is hidden in a browser and visible here. The
+``small``, ``strike``, ``strong``, ``tt`` or ``u``) out of order, which a
+browser may reopen with its attributes (``<p><a class="vh">x</p>``, after which
+a browser can hide the text of a later heading). The gate does not model the
+other possible browser repairs, among them an implied end tag (see above; check 8
+reads 1 only where ``IMPLIED_ENDS`` holds it) and a
+formatting element that a browser may reopen after an implied end tag closed
+it. The
 inline-code checks, and the load reading of check 6, share the residual that
 ``tools/check-inline-code.py`` states: ``html.parser`` is not a browser's parser.
 
@@ -203,7 +663,7 @@ Python versions
 
 Checks 1 to 6 read the markup with ``html.parser`` and rest on how it reads raw
 text and comments on Python 3.14: which end tags close a raw-text element (on
-3.14, as in a browser, ``</ script>`` does not close a ``script``), whether
+3.14, ``</ script>`` does not close a ``script``), whether
 ``title`` holds markup, and whether ``--!>`` ends a comment. The gate is tested
 on 3.14, so on any other (major, minor) version, 3.9 or later, it exits 3
 before it reads a file (``SUPPORTED_PYTHONS`` below). Python 3.6 and older
@@ -238,9 +698,11 @@ which runs the gate without the suite.
 
 Exit codes:
   0  every check above passes
-  1  a family link, family page, id, retired attribute, inline code, asset token, or header discipline regressed
-  3  a file could not be read, a gate it reuses is missing, or the Python version is 3.9 or later and
-     either not 3.14 or not one that tools/check-inline-code.py supports
+  1  a family link, family page, id, retired attribute, inline code, asset token, stylesheet, load path, pinned load,
+     class pin, pinned attribute, attribute pin, tag pin, page attribute pin, page tag pin, html or body attribute,
+     doctype, end tag order, header, redirect, meta, link or base discipline, or server entry point regressed
+  3  a file could not be read, the baseline pin is malformed, a gate it reuses is missing, or the Python version is
+     3.9 or later and either not 3.14 or not one that tools/check-inline-code.py supports
 """
 
 from __future__ import annotations
@@ -252,15 +714,20 @@ import sys
 from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import unquote
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PAGE = REPO_ROOT / "site" / "install" / "index.html"
 HEADERS = REPO_ROOT / "site" / "_headers"
+REDIRECTS = REPO_ROOT / "site" / "_redirects"
 WHERE = "site/install/index.html"
 
 FAMILIES = ["claude", "chatgpt", "gemini", "copilot", "other-ai"]
 FAMILY_PAGES = {fam: REPO_ROOT / "site" / "install" / fam / "index.html" for fam in FAMILIES}
+# The name each family page's h1 must hold in its visible text, both read by name_text: without regard to case, with
+# U+0000 and the characters of ZERO_WIDTH other than U+00A0 deleted, and with each run of whitespace, U+00A0 included,
+# read as 1 space; in the h1, each br that no element hides also reads as 1 space (PageParser). On /install/, each
+# family link's visible text, read by name_text, is exactly its family's name (check 1).
+FAMILY_NAMES = {"claude": "Claude", "chatgpt": "ChatGPT", "gemini": "Gemini", "copilot": "Copilot", "other-ai": "Other AI systems"}
 TEMPLATE_IDS = ["pick", "get", "test", "how-to-use", "spelling", "assurance", "technical"]
 RETIRED_ATTRS = ("data-picker", "data-family-link", "data-family-section", "data-picker-reset", "data-picker-status")
 ALLOWED_SCRIPTS = ("copy.js", "search.js", "rail.js")
@@ -268,7 +735,12 @@ ALLOWED_SCRIPTS = ("copy.js", "search.js", "rail.js")
 SCHEME_TAG = re.compile(r'<script data-cfasync="false" src="/assets/baseline/scheme\.js\?v=[0-9]+\.[0-9]+\.[0-9]+"></script>')
 # Every other script loads in exactly this form.
 DEFERRED_TAG = re.compile(r'<script src="/assets/baseline/([a-z]+\.js)\?v=[0-9]+\.[0-9]+\.[0-9]+" defer></script>')
-SITE_SHEET = re.compile(r'<link rel="stylesheet" href="/assets/site\.css\?v=[0-9a-f]{12}">')
+# Every stylesheet loads in exactly this form, 1 of the 3 that the rule pin of tools/test-install-page.py reads.
+SHEET_TAG = re.compile(r'<link rel="stylesheet" href="/assets/baseline/(fonts|palettes|baseline)\.css\?v=[0-9]+\.[0-9]+\.[0-9]+">')
+# Each page begins with exactly this, as tools/build-site.py writes it: the doctype that can keep a browser in
+# standards mode, where class selectors match class names with regard to case, as the class pin and the rule pin read
+# them (check 8).
+DOCTYPE = "<!doctype html>\n"
 DRAFT_PATTERN = "/draft/*"
 # The (major, minor) Python versions the gate is tested on; main() refuses every other version, 3.9 or later,
 # with exit 3 before it reads a file. A listed version does not cover each of its patch releases (see Python versions).
@@ -280,8 +752,24 @@ SHARED_CSP = (
     "style-src 'self'; font-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
     "frame-ancestors 'none'"
 )
+# The headers, by name in lower case, and the values that the committed site/_headers sets under each URL pattern
+# that can match an install page or a file the pages load (check 7, reaches_page). Under such a pattern any other
+# header, another value or a detach fails. tools/test-install-page.py fails unless this holds exactly what the
+# committed file sets there.
+INSTALL_HEADERS = {
+    "/*": (
+        ("x-frame-options", "DENY"),
+        ("permissions-policy", "accelerometer=(), autoplay=(), bluetooth=(), browsing-topics=(), camera=(), "
+            "display-capture=(), fullscreen=(), geolocation=(), gyroscope=(), hid=(), magnetometer=(), microphone=(), "
+            "midi=(), payment=(), serial=(), usb=()"),
+        ("cross-origin-opener-policy", "same-origin"),
+        ("content-security-policy", SHARED_CSP),
+    ),
+}
+# A first path segment that matches only itself in a URL pattern: letters, digits, ".", "_", "~" and "-" (check 7).
+LITERAL_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
 BASELINE_ASSET = r'/assets/baseline/{name}\?v=[0-9]+\.[0-9]+\.[0-9]+"'
-# The elements a browser never keeps open, whether or not the start tag ends in "/>".
+# The elements the gate never keeps open, with or without "/>" on the start tag, as a browser may close each at once.
 VOID = {
     "area", "base", "basefont", "bgsound", "br", "col", "embed", "frame", "hr", "img", "input", "keygen", "link", "meta",
     "param", "source", "track", "wbr",
@@ -289,15 +777,69 @@ VOID = {
 # The start tags HTML5 allows in a head; any other start tag ends it, as text other than whitespace does.
 HEAD_TAGS = {"base", "basefont", "bgsound", "link", "meta", "noframes", "noscript", "script", "style", "template", "title"}
 HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
+# Check 8: each element whose end tag the HTML standard lets a page omit where no more content follows in its parent
+# element, with the parents at whose end tag a browser may close it too, so that such a parent's end tag with it left
+# open inside is not refused where that parent counts as opened (TABLE_PARTS). A p in a span is not among them: a
+# browser may ignore that </span> and keep the span open. An li in an li is: a browser may close the first at the
+# second's start tag, while the parser holds the second inside the first, so the class, attribute and tag pins read
+# the first as an ancestor of the second, and the list's end tag closes both and is not refused.
+P_PARENTS = (
+    "address", "article", "aside", "blockquote", "caption", "dd", "details", "dialog", "div", "dt", "fieldset",
+    "figcaption", "figure", "footer", "form", "header", "hgroup", "li", "main", "nav", "section", "td", "th",
+)
+IMPLIED_ENDS = {
+    "li": ("li", "menu", "ol", "ul"), "dd": ("div", "dl"), "p": P_PARENTS, "rt": ("ruby",), "rp": ("ruby",),
+    "optgroup": ("select",), "option": ("datalist", "optgroup", "select"), "tbody": ("table",), "tfoot": ("table",),
+    "tr": ("table", "tbody", "tfoot", "thead"), "td": ("tr",), "th": ("tr",),
+}
+# Check 8: each table part, with the parents in which the parser counts it as opened, where that parent counts as
+# opened too. Anywhere else, in a template too, the part does not count as opened, so IMPLIED_ENDS holds nothing in it
+# and the gate refuses an end tag that closes it with an element left open inside.
+TABLE_PARTS = {
+    "caption": ("table",), "tbody": ("table",), "tfoot": ("table",), "thead": ("table",),
+    "tr": ("table", "tbody", "tfoot", "thead"), "td": ("tr",), "th": ("tr",),
+}
+# Check 8: the elements that the committed pages put directly in an svg. The parser reads "/>" on 1 of them as closing
+# it when its parent, as the parser holds it, is an svg; it reads no HTML element as ending an svg, so a <path/> after a
+# span in an svg reads as closed too (check 5 refuses every svg but the 2 of the exact switch). It keeps any other
+# self-closing tag's element open, a div or a p in an svg included.
+SVG_SHAPES = ("circle", "path")
 # HTML separates class names by ASCII whitespace only; str.split() also splits on U+00A0 and other spaces.
 ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # Invisible characters a heading might be reduced to, besides the whitespace str.strip removes: the zero-width space,
 # non-joiner and joiner (U+200B to U+200D), the zero-width no-break space or byte order mark (U+FEFF), the no-break
 # space (U+00A0), the word joiner (U+2060), the soft hyphen (U+00AD), and the bidi formatting characters: the marks
 # (U+200E, U+200F and U+061C), the embeddings, overrides and their pop (U+202A to U+202E), and the isolates and
-# their pop (U+2066 to U+2069). has_visible_text also drops U+0000, which a browser ignores in body text.
-ZERO_WIDTH = (
-    "\u200b\u200c\u200d\ufeff\u00a0\u2060\u00ad\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+# their pop (U+2066 to U+2069). has_visible_text also drops U+0000, which a browser may ignore in body text. A family
+# page's h1 may hold none of the bidi formatting characters (BIDI_CONTROLS) in its visible text: name_text deletes
+# them, and they can show the letters of the name in another order (<h1>Chat&#x202E;GPT&#x202C;</h1> may show ChatTPG).
+BIDI_CONTROLS = "\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+ZERO_WIDTH = "\u200b\u200c\u200d\ufeff\u00a0\u2060\u00ad" + BIDI_CONTROLS
+# Characters that may show nothing, which has_visible_text also reads as invisible, and name_text keeps, so a heading of
+# Chat, U+034F and GPT names no family: Unicode 18.0's Default_Ignorable_Code_Point set, other than the characters of
+# ZERO_WIDTH, and the Braille pattern blank (U+2800), which is not in that set but may show nothing. Its 12 kinds: the
+# combining grapheme joiner (U+034F); the Hangul fillers (U+115F, U+1160, U+3164 and U+FFA0); the Khmer inherent vowels
+# (U+17B4 and U+17B5); the Mongolian free variation selectors and vowel separator (U+180B to U+180F); the invisible
+# operators (U+2061 to U+2064); the deprecated format characters (U+206A to U+206F); the variation selectors (U+FE00
+# to U+FE0F and U+E0100 to U+E01EF); the shorthand format controls (U+1BCA0 to U+1BCA3); the musical symbol format
+# controls (U+1D173 to U+1D17A); the tag characters (U+E0000 to U+E007F); the code points that Unicode reserves as
+# default ignorable (U+2065, U+FFF0 to U+FFF8, U+E0080 to U+E00FF and U+E01F0 to U+E0FFF); and the Braille pattern blank.
+INVISIBLE = "".join(chr(code) for first, last in (
+    (0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F),
+    (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x2800, 0x2800), (0x3164, 0x3164), (0xFE00, 0xFE0F),
+    (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF),
+) for code in range(first, last + 1) if chr(code) not in ZERO_WIDTH)
+# The characters has_visible_text deletes before it looks for a visible one, as a table for str.translate.
+UNSEEN = dict.fromkeys(map(ord, ZERO_WIDTH + INVISIBLE + "\0"))
+# The opening of /install/'s content, as site-src/pages/install.html builds it (check 1): the body's first elements
+# and the first elements of main > div.wrap > div.doc, each a tag and a class it carries (None: any), the "pick" label
+# with its id. Each element of DOC_OPENING holds exactly the elements named in its last item: the button row, only
+# the 5 family links (opening_problems also refuses text other than whitespace directly in the row).
+BODY_OPENING = (("a", "skip"), ("header", "mast"), ("main", None))
+MAIN_OPENING = (("div", "wrap"), ("div", "doc"))
+DOC_OPENING = (
+    ("p", "lbl", None, ()), ("h1", None, None, ()), ("div", "rail", None, ("img",)), ("p", "meta", None, ()),
+    ("p", "lbl", "pick", ()), ("p", None, None, ("a",) * len(FAMILIES)),
 )
 
 INLINE_RULE = (
@@ -336,8 +878,8 @@ def inline_code(where: str, text: str) -> list[str]:
 
 
 def inert_elements() -> tuple[str, ...]:
-    """The elements whose content a browser with scripting on does not render as page elements (noscript, template,
-    plaintext, the raw-text and RCDATA elements) or renders only as fallback, only in its control or not at all (the
+    """The elements whose content a browser with scripting on might not render as page elements (noscript, template,
+    plaintext, the raw-text and RCDATA elements) or may render only as fallback, only in its control or not at all (the
     other elements of HIDING_ELEMENTS), as tools/check-inline-code.py names them for check 7."""
     return load_tool("check-inline-code.py").INERT_ELEMENTS
 
@@ -349,23 +891,185 @@ def inert_elements() -> tuple[str, ...]:
 # which it shows again only on an img in the dark scheme, and skip (".skip { position: absolute; left: 1rem;
 # top: -4rem; ... }"), off-screen until it has focus. Classes it hides only as a descendant (.figure .stack,
 # .figure .wide, .family .cards .cname, .family .sig .pre and .post) are not listed; the docstring names them.
-# tools/test-install-page.py fails when a stylesheet the pages load hides a bare single class not listed here.
+# No checked element, ancestor or element it holds may carry any of these: none is in CLASS_PIN (check 8).
 HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
 # The HTML standard's rendering rules hide these with no stylesheet: display: none on datalist, rp, script and
 # title, and on noscript when scripting is on. The parser here reads each as an element that can hold the checked
 # markup or, for script and title, its text (check 5 allows a structured-data block in a script), so
-# each hides itself and everything inside it. A browser renders the content of audio, canvas (with scripting on),
+# each hides itself and everything inside it. A browser may render the content of audio, canvas (with scripting on),
 # meter, object (when it loads), progress and video only as fallback, and that of select only in its control, so
-# they hide here too, which refuses more than a browser hides. Its other hidden elements cannot hold that markup
+# they hide here too, which can refuse more than a browser may hide. Its other hidden elements cannot hold that markup
 # (the docstring names them); a popover attribute, a dialog without open and a details without open are tested in
 # is_hiding_element and PageParser.
 HIDING_ELEMENTS = (
     "datalist", "noscript", "rp", "script", "title", "audio", "canvas", "meter", "object", "progress", "select", "video"
 )
+# Check 8: for each kind of checked element, the classes the 6 committed pages give, by tag, that element (the first
+# map), each of its ancestors (the second) and each element it holds (the third); any other tag there carries no class
+# on those pages, so it may carry none. tools/test-install-page.py fails unless these are exactly the sets the
+# committed pages give, and pins every stylesheet rule that can match an element with these names and classes. A link
+# back's div may also carry callout: the committed pages put a link with no class in a paragraph in a div.callout
+# (tools/test-install-page.py reads each such link, paragraph_links).
+PIN_ANCESTORS = {"html": ("site-cleanlanguage",), "div": ("doc", "wrap")}
+CLASS_PIN = {
+    "the hero's h1": ({}, PIN_ANCESTORS, {}),
+    'the "pick" label': ({"p": ("blk", "lbl")}, PIN_ANCESTORS, {}),
+    "the paragraph of family links": ({}, PIN_ANCESTORS, {"a": ("btn", "inline")}),
+    "a family link": ({"a": ("btn", "inline")}, PIN_ANCESTORS, {}),
+    "the <h1>": ({}, PIN_ANCESTORS, {}),
+    "a verified line": ({"p": ("verified",)}, PIN_ANCESTORS, {}),
+    "a step list": ({"ol": ("steps",)}, PIN_ANCESTORS, {}),
+    "a step": ({}, {**PIN_ANCESTORS, "ol": ("steps",)}, {}),
+    "a link back": ({}, {**PIN_ANCESTORS, "div": ("callout", "doc", "wrap")}, {}),
+}
+# Check 8: the attributes that an attribute selector of a rule the rule pin holds names, hidden aside, which the gate
+# reads as hiding; no checked element, ancestor or element it holds may carry one. tools/test-install-page.py fails
+# unless these are exactly the attributes the pinned rules name, so a pinned rule that names an attribute the committed
+# pages give 1 of those elements (href, say) makes the gate refuse them; check 8 in the docstring gives the procedure.
+RULE_ATTRIBUTES = (
+    "aria-current", "aria-disabled", "aria-pressed", "data-col-toggles", "data-grp", "data-heat", "data-preset",
+    "data-scheme",
+)
+# Check 8: for each kind of checked element, the attributes the 6 committed pages give, by tag, that element (the first
+# map), each of its ancestors (the second) and each element it holds (the third); any other tag there carries no
+# attribute on those pages, so it may carry none. A presentation attribute (color, bgcolor, align, width) or any other
+# attribute there fails, whatever the element. tools/test-install-page.py fails unless these are exactly the sets the
+# committed pages give.
+PIN_ANCESTOR_ATTRS = {"html": ("class", "lang"), "main": ("id",), "div": ("class",)}
+ATTRIBUTE_PIN = {
+    "the hero's h1": ({}, PIN_ANCESTOR_ATTRS, {}),
+    'the "pick" label': ({"p": ("class", "id")}, PIN_ANCESTOR_ATTRS, {}),
+    "the paragraph of family links": ({}, PIN_ANCESTOR_ATTRS, {"a": ("class", "href", "id")}),
+    "a family link": ({"a": ("class", "href", "id")}, PIN_ANCESTOR_ATTRS, {}),
+    "the <h1>": ({}, PIN_ANCESTOR_ATTRS, {}),
+    "a verified line": ({"p": ("class",)}, PIN_ANCESTOR_ATTRS, {}),
+    "a step list": ({"ol": ("class",)}, PIN_ANCESTOR_ATTRS, {"a": ("href",)}),
+    "a step": ({}, {**PIN_ANCESTOR_ATTRS, "ol": ("class",)}, {"a": ("href",)}),
+    "a link back": ({"a": ("href",)}, PIN_ANCESTOR_ATTRS, {}),
+}
+# Check 8: for each kind of checked element, the tags the 6 committed pages give that element (the first tuple), each of
+# its ancestors (the second) and each element it holds (the third). Any other tag there fails, with or without a class
+# or an attribute, so a marquee around a checked element fails. tools/test-install-page.py fails unless these are
+# exactly the tags the committed pages give.
+PIN_ANCESTOR_TAGS = ("body", "div", "html", "main")
+TAG_PIN = {
+    "the hero's h1": (("h1",), PIN_ANCESTOR_TAGS, ()),
+    'the "pick" label': (("p",), PIN_ANCESTOR_TAGS, ()),
+    "the paragraph of family links": (("p",), PIN_ANCESTOR_TAGS, ("a",)),
+    "a family link": (("a",), (*PIN_ANCESTOR_TAGS, "p"), ()),
+    "the <h1>": (("h1",), PIN_ANCESTOR_TAGS, ()),
+    "a verified line": (("p",), PIN_ANCESTOR_TAGS, ()),
+    "a step list": (("ol",), PIN_ANCESTOR_TAGS, ("a", "code", "li", "span", "strong")),
+    "a step": (("li",), (*PIN_ANCESTOR_TAGS, "ol"), ("a", "code", "span", "strong")),
+    "a link back": (("a",), (*PIN_ANCESTOR_TAGS, "p"), ()),
+}
+# Check 8: the attributes that the 6 committed pages give an element of each tag, anywhere on them, checked or not; a
+# tag not listed carries none there, so it may carry none. Any other attribute on any element of the 6 pages fails, so a
+# presentation attribute that sizes a box outside the checked scope (height on the rail's img) fails, and so do dir and
+# hidden on any element but those listed. tools/test-install-page.py fails unless this is exactly what the committed
+# pages give.
+PAGE_ATTRIBUTES = {
+    "a": ("aria-current", "aria-label", "class", "href", "id", "rel", "target"),
+    "button": ("aria-pressed", "class", "data-copy", "data-scheme-toggle", "hidden", "type"),
+    "caption": ("class",),
+    "circle": ("cx", "cy", "r"),
+    "div": ("class", "tabindex"),
+    "footer": ("class",),
+    "h2": ("id",),
+    "header": ("class",),
+    "html": ("class", "lang"),
+    "img": ("alt", "class", "src"),
+    "li": ("class",),
+    "link": ("href", "rel", "type"),
+    "main": ("id",),
+    "meta": ("charset", "content", "name", "property"),
+    "nav": ("aria-label", "class"),
+    "ol": ("class",),
+    "p": ("aria-live", "class", "id", "role"),
+    "path": ("d",),
+    "pre": ("class", "id"),
+    "script": ("data-cfasync", "defer", "src", "type"),
+    "span": ("aria-hidden", "class"),
+    "svg": (
+        "aria-hidden", "class", "fill", "focusable", "height", "stroke", "stroke-linecap", "stroke-linejoin",
+        "stroke-width", "viewbox", "width",
+    ),
+    "ul": ("aria-label", "class"),
+}
+# Check 8: the tags of every element of the 6 committed pages, checked or not; an element of any other tag there fails,
+# shown or hidden, so a marquee, a bdo or a bdi anywhere on them fails. tools/test-install-page.py fails unless this is
+# exactly what the committed pages give.
+PAGE_TAGS = (
+    "a", "body", "button", "caption", "circle", "code", "details", "div", "footer", "h1", "h2", "head", "header", "html",
+    "img", "li", "link", "main", "meta", "nav", "ol", "p", "path", "pre", "script", "span", "strong", "summary", "svg",
+    "table", "tbody", "td", "th", "thead", "title", "tr", "ul",
+)
+# Checks 6 and 7: the first path segment of every file the 6 committed pages load (each src, each href of a link other
+# than the canonical link, and each url() of the 3 stylesheets, read from the stylesheet's address). Every src on the 6
+# pages must be a path under 1 of them (check 6), and no rule of site/_headers or site/_redirects may have a pattern or a
+# source that can match a path under 1 of them (check 7, reaches_page), so neither file can change, redirect or replace
+# what the pages load. tools/test-install-page.py fails unless this is exactly what the committed tree loads.
+LOADED_SEGMENTS = ("assets",)
+# Check 10: the server entry points that Cloudflare Pages runs when they are present, and that can redirect, rewrite or
+# replace any response: a Pages Function directory at the repository root, and a Worker in the output directory, as a
+# file or a directory; and the Wrangler configuration files that Pages reads at the repository root as the project's
+# configuration, which can change what it serves; and a root package.json, whose install scripts the build image can
+# run before the build command, and the root files from which it can choose its Python (runtime.txt) or install
+# dependencies (requirements.txt, Pipfile and Gemfile) before the build command (an inference, not verified). None
+# exists at this commit; the gate refuses each.
+SERVER_ENTRIES = (
+    "functions", "site/_worker.js", "wrangler.toml", "wrangler.json", "wrangler.jsonc", "package.json", "runtime.txt",
+    "requirements.txt", "Pipfile", "Gemfile",
+)
+# Check 9: the attributes that name what a meta, link or base element is, in this order; the first of them that an
+# element carries, with its value, is the element's key in HEAD_PIN (head_key).
+KEY_ATTRIBUTES = ("charset", "http-equiv", "name", "property", "rel")
+# Check 9: each meta, link and base element that the 6 committed pages carry, by its key, with every attribute it
+# carries and that attribute's value; None where the value is free: the page's own text, address and dates, which the
+# gate treats as metadata only, and the address of a stylesheet, which check 6 holds to its exact form. Every meta,
+# link and base element on the 6 pages must carry exactly the attributes of its key's entry, with those values, so
+# http-equiv in any value, a base, and any other meta or link fail. tools/test-install-page.py fails unless this holds
+# exactly what the committed pages carry, with exactly the values that its FREE_HEAD_VALUES leaves free.
+HEAD_PIN = {
+    ("meta", "charset", "utf-8"): {"charset": "utf-8"},
+    ("meta", "name", "viewport"): {"name": "viewport", "content": "width=device-width, initial-scale=1"},
+    ("meta", "name", "description"): {"name": "description", "content": None},
+    ("meta", "name", "author"): {"name": "author", "content": "Jeff Posluns"},
+    ("link", "rel", "canonical"): {"rel": "canonical", "href": None},
+    ("meta", "property", "og:type"): {"property": "og:type", "content": "website"},
+    ("meta", "property", "og:title"): {"property": "og:title", "content": None},
+    ("meta", "property", "og:description"): {"property": "og:description", "content": None},
+    ("meta", "property", "og:url"): {"property": "og:url", "content": None},
+    ("meta", "property", "og:site_name"): {"property": "og:site_name", "content": "CleanLanguage.ai"},
+    ("meta", "property", "og:image"): {
+        "property": "og:image", "content": "https://cleanlanguage.ai/images/cleanlanguage-card.png"},
+    ("meta", "property", "og:image:alt"): {
+        "property": "og:image:alt",
+        "content": "CleanLanguage.ai: Precise, direct, natural AI writing. A skill you install once, anywhere."},
+    ("meta", "property", "article:published_time"): {"property": "article:published_time", "content": None},
+    ("meta", "property", "article:modified_time"): {"property": "article:modified_time", "content": None},
+    ("meta", "property", "article:author"): {
+        "property": "article:author", "content": "https://linkedin.com/in/jposluns"},
+    ("meta", "name", "twitter:card"): {"name": "twitter:card", "content": "summary_large_image"},
+    ("meta", "name", "twitter:title"): {"name": "twitter:title", "content": None},
+    ("meta", "name", "twitter:description"): {"name": "twitter:description", "content": None},
+    ("meta", "name", "twitter:image"): {
+        "name": "twitter:image", "content": "https://cleanlanguage.ai/images/cleanlanguage-card.png"},
+    ("meta", "name", "twitter:image:alt"): {
+        "name": "twitter:image:alt",
+        "content": "CleanLanguage.ai: Precise, direct, natural AI writing. A skill you install once, anywhere."},
+    ("link", "rel", "icon"): {
+        "rel": "icon", "href": "/assets/baseline/logos/cleanlanguage-favicon.svg", "type": "image/svg+xml"},
+    ("link", "rel", "apple-touch-icon"): {
+        "rel": "apple-touch-icon", "href": "/assets/baseline/logos/cleanlanguage-touch.png"},
+    ("link", "rel", "stylesheet"): {"rel": "stylesheet", "href": None},
+}
+# Check 9: a meta, link or base start tag, as a text match finds it, a tag in a comment or in text included.
+HEAD_TAG_TEXT = re.compile(r"<(?:meta|link|base)\b[^>]*>", re.I)
 
 
 def class_names(attrs: dict[str, str]) -> list[str]:
-    """The class names of an element, split on ASCII whitespace only, as a browser splits them."""
+    """The class names of an element, split on ASCII whitespace only (ASCII_WHITESPACE)."""
     return [name for name in ASCII_WHITESPACE.split(attrs.get("class", "")) if name]
 
 
@@ -383,7 +1087,14 @@ def is_hiding_element(tag: str, attrs: dict[str, str]) -> bool:
 
 
 def has_visible_text(data: str) -> bool:
-    return bool(data.translate({ord(c): None for c in ZERO_WIDTH + "\0"}).strip())
+    return bool(data.translate(UNSEEN).strip())
+
+
+def name_text(data: str) -> str:
+    """The text as a reader sees it, to find a family's name in: U+0000 and the characters of ZERO_WIDTH deleted,
+    except the no-break space, which str.split reads as whitespace, each run of whitespace read as 1 space, and the
+    case folded."""
+    return " ".join(data.translate({ord(c): None for c in ZERO_WIDTH.replace("\u00a0", "") + "\0"}).split()).casefold()
 
 
 class PageParser(HTMLParser):
@@ -403,34 +1114,63 @@ class PageParser(HTMLParser):
         self.hrefs: list[str] = []
         self.h1: list[dict] = []
         self.verified: list[bool] = []
-        self.steps: list[bool] = []
+        self.steps: list[dict] = []
+        # Each element, in the order of self.order, with the order of the element the parser holds open around it,
+        # for the pin of /install/'s opening (check 1).
+        self.elements: list[dict] = []
+        self.texts: list[tuple[int, int]] = []
         self.page_hidden = False
+        # Whether any html or body start tag carries dir: a browser may add it to the page's own element (reorderers).
+        self.page_dir = False
+        # The html and body start tags read so far, and each but the first of each that carries an attribute, which
+        # a browser may add to the page's own element, an ancestor of every checked element (check 8).
+        self.page_tags: Counter = Counter()
+        self.later_attrs: list[str] = []
+        # Each end tag that closes an open element other than the innermost, with the elements it would close inside
+        # it, which a browser can keep open, reopen or close differently (check 8), unless IMPLIED_ENDS holds each.
+        self.misnested: list[str] = []
 
     def handle_starttag(self, tag: str, attrs_list) -> None:
-        # A browser keeps the first of 2 attributes with the same name, so <p class="vh" class="x"> hides.
+        # A browser may keep the first of 2 attributes with the same name, so here <p class="vh" class="x"> hides.
         attrs: dict[str, str] = {}
         for k, v in attrs_list:
             attrs.setdefault(k.lower(), v if v is not None else "")
         self.order += 1
         classes = class_names(attrs)
-        # A heading start tag closes a heading that is the current node, as a browser does: <h1><h2>x leaves the h1 empty.
+        # The parser closes a heading that is the current node at a heading start tag: <h1><h2>x leaves the h1 empty.
         if tag in HEADINGS and self.stack and self.stack[-1]["tag"] in HEADINGS:
             del self.stack[-1]
         parent = self.stack[-1] if self.stack else None
+        # At a table start tag whose nearest enclosing caption, table, td or th, as the parser holds them, is a table,
+        # that table and everything the parser holds inside it stop counting as opened (check 8). The search reads
+        # through every other element, a template included, so there it marks the outer table too; check 5 refuses a
+        # template anyway.
+        if tag == "table":
+            holder = next((index for index in range(len(self.stack) - 1, -1, -1)
+                           if self.stack[index]["tag"] in ("caption", "table", "td", "th")), None)
+            if holder is not None and self.stack[holder]["tag"] == "table":
+                for frame in self.stack[holder:]:
+                    frame["opened"] = False
         hiding = is_hiding_element(tag, attrs) or any(frame["hiding"] for frame in self.stack)
-        # A browser adds the attributes of a later html or body start tag to the page's own html or body element,
-        # so a hiding one hides the whole page, the markup before it included. A browser that honours a frameset
-        # start tag drops the whole body, so a frameset start tag anywhere hides the whole page too.
+        # A browser may add the attributes of a later html or body start tag to the page's own html or body element,
+        # so a hiding one can hide the whole page, the markup before it included. A browser that honours a frameset
+        # start tag may drop the whole body, so a frameset start tag anywhere hides the whole page here too.
         if (tag in ("html", "body") and is_hiding_element(tag, attrs)) or tag == "frameset":
             self.page_hidden = True
-        # A details without open renders only its first summary child; the rest of its content is hidden.
+        if tag in ("html", "body") and "dir" in attrs:
+            self.page_dir = True
+        if tag in ("html", "body"):
+            self.page_tags[tag] += 1
+            if self.page_tags[tag] > 1 and attrs:
+                self.later_attrs.append(f"<{tag} {' '.join(attrs)}>")
+        # The gate reads a details without open as hiding all its content but its first summary child (check 1).
         if parent and parent["closed"]:
             if tag == "summary" and not parent["summary"]:
                 parent["summary"] = True
             else:
                 hiding = True
-        # An id or a link inside an element of INERT_ELEMENTS does not count: a browser with scripting on does not
-        # render that element's content as page elements, or renders it only as fallback, only in its control or
+        # An id or a link inside an element of INERT_ELEMENTS does not count: a browser with scripting on might not
+        # render that element's content as page elements, or may render it only as fallback, only in its control or
         # not at all.
         inert = any(frame["tag"] in inert_elements() for frame in self.stack)
         if "id" in attrs:
@@ -443,7 +1183,7 @@ class PageParser(HTMLParser):
                 self.retired.append(f"<{tag} {name}>")
         anchor = None
         if tag == "a":
-            # A browser closes an open link when another starts, so later text is not in it; text stops counting for it.
+            # A browser may close an open link when another starts, so later text stops counting for it.
             for frame in self.stack:
                 frame["a"] = None
             if not inert:
@@ -457,44 +1197,110 @@ class PageParser(HTMLParser):
                 "order": self.order,
                 "parent": (parent["tag"], parent["order"]) if parent else None,
                 "text": False,
+                "chars": "",
+                "bidi": False,
+                "inert": inert,
             }
             self.anchors.append(anchor)
+        # "dir" records a bdo element or a dir attribute on the element itself, shown or hidden (reorderers), "attrs"
+        # the names of its attributes (check 8), and "values" its attributes with their values (check 9).
+        self.elements.append(
+            {"tag": tag, "classes": classes, "id": attrs.get("id"), "hidden": hiding, "order": self.order,
+             "parent": parent["order"] if parent else None, "text": False, "chars": "", "bidi": False,
+             "dir": tag == "bdo" or "dir" in attrs, "attrs": tuple(attrs), "values": attrs}
+        )
         heading = None
         if tag == "h1":
-            heading = {"hidden": hiding, "text": False}
+            heading = {"hidden": hiding, "text": False, "chars": "", "order": self.order, "bidi": False}
             self.h1.append(heading)
+        # A bdo element or a dir attribute that no element hides can show the letters of the element that carries
+        # it, or holds it, in another order (<bdo dir="rtl">GPT</bdo> may show TPG), so the open h1, the innermost open
+        # link, the element itself and each element the parser holds open around it record it.
+        if (tag == "bdo" or "dir" in attrs) and not hiding:
+            open_h1 = heading or next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
+            open_a = anchor or next((frame["a"] for frame in reversed(self.stack) if frame["a"] is not None), None)
+            for record in (open_h1, open_a, self.elements[-1], *(frame["element"] for frame in self.stack)):
+                if record is not None:
+                    record["bidi"] = True
+        # The gate reads a br that no element hides as a line break, so in the h1 it reads as a space between the
+        # words around it.
+        if tag == "br" and not hiding:
+            open_h1 = next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
+            if open_h1 is not None:
+                open_h1["chars"] += " "
         if tag == "p" and "verified" in classes:
             self.verified.append(hiding)
+        steps = None
         if tag == "ol" and "steps" in classes:
-            self.steps.append(hiding)
+            steps = {"hidden": hiding, "text": False}
+            self.steps.append(steps)
+        # An li counts as a step of the step list that is its nearest open list, and an li of any other list counts
+        # for none. Text counts for every open step (handle_data), so text in a list inside a step counts for it.
+        item = None
+        if tag == "li":
+            item = next((frame["steps"] for frame in reversed(self.stack) if frame["tag"] in ("ol", "ul")), None)
         if tag not in VOID:
             closed = tag == "details" and "open" not in attrs
             self.stack.append(
                 {"tag": tag, "hiding": hiding, "order": self.order, "closed": closed, "summary": False, "h1": heading,
-                 "a": anchor}
+                 "a": anchor, "steps": steps, "li": item, "element": self.elements[-1],
+                 "opened": tag not in TABLE_PARTS or (parent is not None and parent["opened"]
+                                                      and parent["tag"] in TABLE_PARTS[tag])}
             )
 
     def handle_startendtag(self, tag: str, attrs_list) -> None:
-        # A browser ignores the "/" of "/>" on an element that is not void, so <div hidden/> stays open and hides
-        # what follows, as <div hidden> does. A void element never goes on the stack, so it needs no end tag.
+        # A browser may ignore the "/" of "/>" on an element that is not void, so here <div hidden/> stays open and
+        # hides what follows, as <div hidden> does. A void element never goes on the stack, so it needs no end tag.
+        in_svg = bool(self.stack) and self.stack[-1]["tag"] == "svg"
         self.handle_starttag(tag, attrs_list)
+        # The parser closes <svg/> at once, so what follows is not in it, and so too a shape (SVG_SHAPES) whose parent,
+        # as it holds it, is an svg; any other self-closing tag's element, a div or a p in an svg included, stays open.
+        if tag == "svg" or (in_svg and tag in SVG_SHAPES):
+            self.stack.pop()
 
     def handle_endtag(self, tag: str) -> None:
-        # Any heading end tag closes the innermost open heading, as in a browser: </h2> closes an open h1.
+        # A browser may read </br> as <br>, so the gate reads it as a br, which in the h1 reads as a space too.
+        if tag == "br":
+            self.handle_starttag("br", [])
+            return
+        # The parser closes the innermost open heading at any heading end tag: </h2> closes an open h1.
         names = HEADINGS if tag in HEADINGS else (tag,)
         for i in range(len(self.stack) - 1, -1, -1):
             if self.stack[i]["tag"] in names:
+                # Here an end tag closes every element opened inside its own; a browser can instead ignore it, keep
+                # 1 of those open or reopen 1 later, so check 8 refuses such an end tag, as tools/build-site.py does. A
+                # browser might open no second html, head or body element, so those this parser opens do not count, nor
+                # does an element whose end tag a page may omit where its parent, as the parser holds it, ends here,
+                # is 1 that IMPLIED_ENDS names for it and counts as opened (TABLE_PARTS).
+                inside = [frame["tag"] for parent, frame in zip(self.stack[i:], self.stack[i + 1:])
+                          if frame["tag"] not in ("html", "head", "body")
+                          and not (parent["opened"] and parent["tag"] in IMPLIED_ENDS.get(frame["tag"], ()))]
+                if inside:
+                    self.misnested.append(f"</{tag}> closes <{self.stack[i]['tag']}> with <{inside[0]}> open inside it")
                 del self.stack[i:]
                 break
 
     def handle_data(self, data: str) -> None:
-        # Text counts for the h1 or the innermost open link only when no element around it hides it: a hiding
-        # element (by itself or an ancestor) or a details without open, whose text outside its first summary is hidden.
+        # Text counts for the h1, the innermost open link and every open step (so a step whose text is in a nested step
+        # list has text too) only when no element around it hides it: a hiding element (by itself or an ancestor) or
+        # a details without open, whose text outside its first summary the gate reads as hidden. The h1 also keeps
+        # that text, to be searched for its family's name, and the innermost open link and every open element keep
+        # it, to be searched for a bidi control.
         heading = next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
         anchor = next((frame["a"] for frame in reversed(self.stack) if frame["a"] is not None), None)
+        items = [frame["li"] for frame in self.stack if frame["li"] is not None]
         hidden = bool(self.stack) and (self.stack[-1]["hiding"] or self.stack[-1]["closed"])
+        if not hidden:
+            for record in (heading, anchor, *(frame["element"] for frame in self.stack)):
+                if record is not None:
+                    record["chars"] += data
+        # Text other than whitespace that sits directly in an element, or outside every element (None), shown or
+        # hidden, with the order of the last start tag before it, for the pin of /install/'s opening; and visible text
+        # counts for every open element.
+        if data.strip(" \t\n\f\r"):
+            self.texts.append((self.stack[-1]["order"] if self.stack else None, self.order))
         if not hidden and has_visible_text(data):
-            for record in (heading, anchor):
+            for record in (heading, anchor, *items, *(frame["element"] for frame in self.stack)):
                 if record is not None:
                     record["text"] = True
 
@@ -525,7 +1331,7 @@ class LoadScan(HTMLParser):
         line, column = self.getpos()
         element = (self.lines[line - 1] + column, attrs, self.get_starttag_text() or "")
         if len(attrs) != len(attrs_list):
-            # A browser reads the first of 2 attributes with the same name, and these dicts the last.
+            # A browser may read the first of 2 attributes with the same name, and these dicts read the last.
             self.repeats.append(element[2])
         if tag in ("head", "body"):
             self.heads += 1
@@ -543,7 +1349,9 @@ class LoadScan(HTMLParser):
             self.sheets.append(element)
 
     def handle_startendtag(self, tag: str, attrs_list) -> None:
-        # A browser honours the slash only in <svg> (foreign content); any other element that is not void stays open.
+        # A browser may honour the slash in foreign content, in <svg> or <math>; here it closes an svg and every
+        # element in an svg, and any other element that is not void stays open, in <math> too, where this reading
+        # fails closed (check 6).
         foreign = tag == "svg" or "svg" in self.stack
         self.handle_starttag(tag, attrs_list)
         if tag not in VOID and foreign:
@@ -569,15 +1377,16 @@ def parse(text: str) -> PageParser:
     parser.feed(text)
     parser.close()
     if parser.page_hidden:
-        for record in parser.anchors + parser.h1:
+        for record in parser.anchors + parser.h1 + parser.steps + parser.elements:
             record["hidden"] = True
         parser.verified = [True for _ in parser.verified]
-        parser.steps = [True for _ in parser.steps]
     return parser
 
 
 def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
-    """Checks 2, 3 (duplicates), 5 and 6, which hold on all 6 pages."""
+    """Checks 2, 3 (duplicates), 5 and 6, and check 8's refusals of a page without the doctype, of an end tag that
+    closes an element other than the innermost and of a later html or body start tag with attributes, which hold on all
+    6 pages."""
     problems: list[str] = []
     for carrier in parser.retired:
         problems.append(f"{where}: the retired selector attribute appears on {carrier}; this site no longer uses select.js.")
@@ -585,6 +1394,15 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
         if count > 1:
             problems.append(f'{where}: the id "{dup_id}" appears {count} times.')
     problems += inline_code(where, text)
+    # Without the doctype a browser may match class names without regard to case, so .DOC could match div.doc.
+    if not text.startswith(DOCTYPE):
+        problems.append(f"{where}: the page does not begin with <!doctype html> on its own line, as tools/build-site.py "
+                        "writes it; without it a browser matches class names without regard to case, which the rule "
+                        "pin does not.")
+    for closure in parser.misnested:
+        problems.append(f"{where}: {closure}; a browser can keep that element open, reopen it or ignore the end tag, "
+                        "so what it hides is not what this gate reads, and tools/build-site.py refuses it too, unless "
+                        "a self-closing tag in an svg opened that element.")
     loads = LoadScan(text)
     loads.feed(text)
     loads.close()
@@ -633,10 +1451,356 @@ def common_checks(where: str, text: str, parser: PageParser) -> list[str]:
         problems.append(f"{where}: scheme.js does not load before the first stylesheet.")
     elif scheme_tags[0] in loads.outside_head or any(at in loads.outside_head for at, _, _ in loads.sheets):
         problems.append(f"{where}: scheme.js or a stylesheet does not load inside <head>.")
-    site_sheets = [at for at, attrs, _ in loads.sheets if "site.css" in unquote(attrs.get("href", ""))]
-    if ("/assets/site.css" in text or site_sheets) and not (site_sheets and all(SITE_SHEET.match(text, at) for at in site_sheets)):
-        problems.append(f"{where}: site.css is not loaded with a ?v= content token.")
+    # Every stylesheet is 1 of the 3 the rule pin reads; the text match also finds a tag in a comment or in text.
+    sheet_tags = [tag for _, _, tag in loads.sheets]
+    sheet_tags += [match.group(0) for match in re.finditer(r"<link\b[^>]*>", text, re.I)
+                   if "stylesheet" in match.group(0).lower()]
+    for tag in dict.fromkeys(sheet_tags):
+        if not SHEET_TAG.fullmatch(tag):
+            problems.append(f"{where}: {tag} is not 1 of fonts.css, palettes.css and baseline.css from /assets/baseline/ "
+                            "with a ?v=X.Y.Z token, the only stylesheets that the rule pin reads.")
+    # Check 8: a browser may add the attributes of a later html or body start tag to the page's own element.
+    for tag in parser.later_attrs:
+        problems.append(f"{where}: a later html or body start tag carries attributes ({tag}), which a browser adds to "
+                        "the page's own element, around every checked element.")
+    return problems + page_attribute_problems(where, parser) + head_problems(where, text, parser)
+
+
+@functools.cache
+def pinned_files() -> frozenset[str]:
+    """Check 6: the paths under assets/baseline/ that tools/check-baseline-pin.py pins in .baseline/pin.toml, from the
+    site's root without its leading "/", read with that gate's own load_pin()."""
+    tool = load_tool("check-baseline-pin.py")
+    try:
+        _, files = tool.load_pin(REPO_ROOT)
+    except tool.Unreadable as error:
+        die(f"tools/check-baseline-pin.py could not read the baseline pin: {error}")
+    return frozenset(path for path in files if path.startswith(tool.PREFIX))
+
+
+def load_path(target: str) -> str | None:
+    """Check 6: the path of a load target from the site's root, without its leading "/", its query or its fragment;
+    None unless that path starts with "/" and each of its segments is LITERAL_SEGMENT and neither "." nor "..", so a
+    target that a browser may resolve elsewhere (/assets/../images/a.png, assets/a.svg or //host/a.svg) has none."""
+    path = re.split(r"[?#]", target, maxsplit=1)[0]
+    segments = path.split("/")
+    if segments[0] or not all(LITERAL_SEGMENT.fullmatch(name) and name not in (".", "..") for name in segments[1:]):
+        return None
+    return path[1:]
+
+
+def page_attribute_problems(where: str, parser: PageParser) -> list[str]:
+    """Check 8: each element of the page, checked or not, of a tag outside PAGE_TAGS, and each attribute that 1 carries
+    outside PAGE_ATTRIBUTES; and check 6: each src that is not a path under 1 of LOADED_SEGMENTS, and each src and each
+    href of a link other than the canonical link whose load_path is not 1 of pinned_files."""
+    problems: dict[str, None] = {}
+    for element in parser.elements:
+        tag = ("an " if element["tag"][:1] in "aeiou" else "a ") + element["tag"]
+        if element["tag"] not in PAGE_TAGS:
+            problems[f"{where}: the page holds {tag}, a tag that the committed pages do not use (PAGE_TAGS); a browser "
+                     "can hide, scroll, reorder or move what it holds by it."] = None
+        targets = [element["values"].get("src")]
+        if element["tag"] == "link" and element["values"].get("rel") != "canonical":
+            targets.append(element["values"].get("href"))
+        for target in targets:
+            if target is not None and load_path(target) not in pinned_files():
+                problems[f"{where}: {tag} loads {target!r}, which is not 1 of the files tools/check-baseline-pin.py "
+                         "pins, read as a path from the site's root with no . or .. segment (load_path); no check here "
+                         "reads what another file holds."] = None
+        for name in element["attrs"]:
+            if name not in PAGE_ATTRIBUTES.get(element["tag"], ()):
+                problems[f"{where}: {tag} carries the attribute {name!r}, which the committed pages give no "
+                         f"{element['tag']} (PAGE_ATTRIBUTES); a browser can hide, size or move it or what is near it "
+                         "by it."] = None
+        src = element["values"].get("src")
+        if src is not None and (not src.startswith("/") or path_segment(src).lower() not in LOADED_SEGMENTS):
+            problems[f"{where}: {tag} loads {src!r}, which is not under /{'/, /'.join(LOADED_SEGMENTS)}/ "
+                     "(LOADED_SEGMENTS), where check 7 refuses every header and redirect rule."] = None
+    return list(problems)
+
+
+def reorderers(where: str, parser: PageParser, last: dict, what: str) -> list[str]:
+    """Checks 1 and 4: each element that starts before the element last ends (last, its ancestors, everything in it
+    and every element before it, shown or hidden) that is a bdo or carries dir, and any html or body start tag with
+    dir, anywhere. Each can show the text of last, or the text before it, in another order: a dir on an ancestor
+    can reorder what it holds, and a browser can reopen a formatting element that an end tag closed out of order, with
+    its attributes, inside a later element (after <p><b dir="rtl"></p> the b can be open again in the h1)."""
+    inside = {last["order"]}
+    for element in parser.elements:
+        if element["parent"] in inside:
+            inside.add(element["order"])
+    names = ", ".join(".".join([element["tag"], *element["classes"]]) for element in parser.elements
+                      if element["dir"] and element["order"] <= max(inside))
+    problems: list[str] = []
+    if names:
+        problems.append(f"{where}: an element that starts before {what} ends is a bdo or carries dir ({names}); either "
+                        f"can show {what}, or the text above it, in another order.")
+    if parser.page_dir:
+        problems.append(f"{where}: an html or body start tag carries dir, which a browser adds to the page's own "
+                        "element; it can show the page's text in another order.")
     return problems
+
+
+def install_kinds(parser: PageParser) -> list[tuple[str, dict]]:
+    """Check 8: the checked elements of /install/, each with its kind in CLASS_PIN: the first h1 (the hero's), the
+    element with the "pick" id, each family link and each element that holds 1."""
+    by_order = {element["order"]: element for element in parser.elements}
+    links = [anchor for anchor in parser.anchors if anchor["id"] in FAMILIES]
+    kinds = [("the hero's h1", element) for element in parser.elements if element["tag"] == "h1"][:1]
+    kinds += [('the "pick" label', element) for element in parser.elements if element["id"] == "pick"][:1]
+    rows = dict.fromkeys(link["parent"][1] for link in links if link["parent"])
+    kinds += [("the paragraph of family links", by_order[order]) for order in rows]
+    return kinds + [("a family link", by_order[link["order"]]) for link in links]
+
+
+def family_kinds(parser: PageParser) -> list[tuple[str, dict]]:
+    """Check 8: the checked elements of a family page, each with its kind in CLASS_PIN: each h1, p.verified and
+    ol.steps, each li whose nearest open list is an ol.steps, and each link to /install/#get or /install/#test outside
+    every element of INERT_ELEMENTS, of which check_family_page checks, for each target, only the required link back:
+    the first such link that is not hidden, has visible text and passes the pins."""
+    by_order = {element["order"]: element for element in parser.elements}
+    kinds: list[tuple[str, dict]] = []
+    for element in parser.elements:
+        if element["tag"] == "h1":
+            kinds.append(("the <h1>", element))
+        elif element["tag"] == "p" and "verified" in element["classes"]:
+            kinds.append(("a verified line", element))
+        elif element["tag"] == "ol" and "steps" in element["classes"]:
+            kinds.append(("a step list", element))
+        elif element["tag"] == "li":
+            parent = element["parent"]
+            while parent is not None and by_order[parent]["tag"] not in ("ol", "ul"):
+                parent = by_order[parent]["parent"]
+            if parent is not None and by_order[parent]["tag"] == "ol" and "steps" in by_order[parent]["classes"]:
+                kinds.append(("a step", element))
+    return kinds + [("a link back", by_order[anchor["order"]]) for anchor in parser.anchors
+                    if anchor["href"] in ("/install/#get", "/install/#test") and not anchor["inert"]]
+
+
+def pin_positions(parser: PageParser, element: dict) -> list[tuple[int, dict]]:
+    """Check 8: element (0), each of its ancestors, as the parser holds them open (1), and each element it holds (2)."""
+    by_order = {other["order"]: other for other in parser.elements}
+    positions = [(0, element)]
+    parent = element["parent"]
+    while parent is not None:
+        positions.append((1, by_order[parent]))
+        parent = by_order[parent]["parent"]
+    inside = {element["order"]}
+    for other in parser.elements:
+        if other["parent"] in inside:
+            inside.add(other["order"])
+            positions.append((2, other))
+    return positions
+
+
+def class_pin_problems(where: str, parser: PageParser, kinds: list[tuple[str, dict]]) -> list[str]:
+    """Check 8: each tag of a checked element, an ancestor or an element it holds outside TAG_PIN, each class that 1
+    of them carries outside CLASS_PIN, each attribute of RULE_ATTRIBUTES that 1 of them carries, and each other
+    attribute that 1 of them carries outside ATTRIBUTE_PIN."""
+    problems: dict[str, None] = {}
+    for kind, element in kinds:
+        for position, other in pin_positions(parser, element):
+            allowed = CLASS_PIN[kind][position].get(other["tag"], ())
+            given = ATTRIBUTE_PIN[kind][position].get(other["tag"], ())
+            tag = ("an " if other["tag"][:1] in "aeiou" else "a ") + other["tag"]
+            what = (kind, f"{tag} around {kind}", f"{tag} inside {kind}")[position]
+            if other["tag"] not in TAG_PIN[kind][position]:
+                problems[f"{where}: {what} is {tag}, a tag that the committed pages do not give an element there "
+                         f"(TAG_PIN); a browser can hide, scroll or move {kind} by it."] = None
+            for name in other["classes"]:
+                if name not in allowed:
+                    problems[f"{where}: {what} carries the class {name!r}, which the committed pages do not give "
+                             f"{tag} there (CLASS_PIN); a stylesheet rule for it can hide or move {kind}."] = None
+            for name in other["attrs"]:
+                if name in RULE_ATTRIBUTES:
+                    problems[f"{where}: {what} carries the attribute {name!r}, which a pinned stylesheet rule names "
+                             f"(RULE_ATTRIBUTES); that rule can hide or move {kind}."] = None
+                elif name not in given:
+                    problems[f"{where}: {what} carries the attribute {name!r}, which the committed pages do not give "
+                             f"{tag} there (ATTRIBUTE_PIN); a browser can hide, colour or move {kind} by it."] = None
+    return list(problems)
+
+
+def head_key(tag: str, values: dict[str, str]) -> tuple[str, str | None, str | None]:
+    """Check 9: the key of a meta, link or base element in HEAD_PIN: its tag, and the first of KEY_ATTRIBUTES that it
+    carries, with that attribute's value (None and None if it carries none)."""
+    name = next((name for name in KEY_ATTRIBUTES if name in values), None)
+    return (tag, name, values[name] if name else None)
+
+
+class TagReader(HTMLParser):
+    """Check 9: the start tags of a fragment, each with its attributes, the first of 2 with the same name counting."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tags: list[tuple[str, dict[str, str]]] = []
+
+    def handle_starttag(self, tag: str, attrs_list) -> None:
+        attrs: dict[str, str] = {}
+        for k, v in attrs_list:
+            attrs.setdefault(k.lower(), v if v is not None else "")
+        self.tags.append((tag, attrs))
+
+    def handle_startendtag(self, tag: str, attrs_list) -> None:
+        self.handle_starttag(tag, attrs_list)
+
+
+def head_problems(where: str, text: str, parser: PageParser) -> list[str]:
+    """Check 9: each meta, link and base element on the page, at any depth, shown or hidden, and each meta, link and
+    base start tag that a text match finds, a tag in a comment or in text included, that does not carry exactly the
+    attributes of its key's entry in HEAD_PIN, with the values that entry gives."""
+    tags = [(element["tag"], element["values"]) for element in parser.elements
+            if element["tag"] in ("meta", "link", "base")]
+    for match in HEAD_TAG_TEXT.finditer(text):
+        reader = TagReader()
+        reader.feed(match.group(0))
+        reader.close()
+        tags += reader.tags
+    problems: dict[str, None] = {}
+    for tag, values in tags:
+        pinned = HEAD_PIN.get(head_key(tag, values))
+        if pinned is None or set(values) != set(pinned) or any(
+                value is not None and values[name] != value for name, value in pinned.items()):
+            shown = "".join(f' {name}="{value}"' for name, value in values.items())
+            problems[f"{where}: <{tag}{shown}> is not 1 of the meta, link and base elements that the committed pages "
+                     "carry, with their attributes and values (HEAD_PIN); another can send the reader away from the "
+                     "page, replace its content or hide it."] = None
+    return list(problems)
+
+
+def redirect_problems(redirects: str) -> list[str]:
+    """Check 7: each rule of site/_redirects whose source can match an install page or a file the pages load, read
+    with reaches_page."""
+    problems: list[str] = []
+    for number, line in enumerate(redirects.splitlines(), 1):
+        fields = line.split()
+        if fields and not fields[0].startswith("#") and reaches_page(fields[0]):
+            problems.append(f"site/_redirects line {number} has the source {fields[0]}, which can match an install "
+                            "page or a file the install pages load; a rule there can send the reader away from the "
+                            "page or serve other content.")
+    return problems
+
+
+def server_entry_problems() -> list[str]:
+    """Check 10: each of SERVER_ENTRIES that exists, as a file, a directory or a link."""
+    return [f"{name} exists; Cloudflare Pages runs it, or reads it as the project's configuration or, by an inference "
+            "not verified here, before the build command, and it can change what Pages serves at an install page or "
+            "for a file the pages load, which no check here reads."
+            for name in SERVER_ENTRIES if (REPO_ROOT / name).exists() or (REPO_ROOT / name).is_symlink()]
+
+
+def page_tag_problems(where: str, parser: PageParser, kinds: list[tuple[str, dict]]) -> list[str]:
+    """Check 8: each html or body start tag with an attribute that is not, as the parser holds it open, an ancestor of
+    every checked element. A browser may add its attributes to the page's own html or body element, around every checked
+    element, while the class pin reads only the ancestors the parser holds open; so a first body start tag that comes
+    late, after a page whose opening body was removed, cannot carry an attribute past it."""
+    shared: set[int] | None = None
+    for _, element in kinds:
+        chain = {other["order"] for position, other in pin_positions(parser, element) if position == 1}
+        shared = chain if shared is None else shared & chain
+    tags = [f"<{element['tag']} {' '.join(element['attrs'])}>" for element in parser.elements
+            if element["tag"] in ("html", "body") and element["attrs"] and element["order"] not in (shared or set())]
+    if tags:
+        return [f"{where}: an html or body start tag that is not an ancestor of every checked element carries "
+                f"attributes ({', '.join(tags)}), which a browser adds to the page's own element, around every checked "
+                "element."]
+    return []
+
+
+def outside_problems(where: str, parser: PageParser) -> list[str]:
+    """Check 1: each element or text that a browser can move into the body, above its first element, and that the
+    pin, which reads only what the body holds, does not read: an element, other than html, outside every element; an
+    element directly in such an html other than its head and body; an element at any depth in that head outside
+    HEAD_TAGS; and text other than whitespace outside every element, directly in that html or that head, or in an
+    element in that head other than title, script or style. Each is refused, shown or hidden; a browser may move an
+    element of HEAD_TAGS between the head and the body back into the head, so there this can refuse more."""
+    html = {element["order"] for element in parser.elements if element["parent"] is None and element["tag"] == "html"}
+    head = {element["order"] for element in parser.elements if element["parent"] in html and element["tag"] == "head"}
+    raw: set[int] = set()
+    names = []
+    for element in parser.elements:
+        if element["parent"] in head:
+            head.add(element["order"])
+            if element["tag"] in ("title", "script", "style"):
+                raw.add(element["order"])
+            if element["tag"] not in HEAD_TAGS:
+                names.append(element["tag"])
+        elif (element["parent"] is None and element["tag"] != "html") or (
+                element["parent"] in html and element["tag"] not in ("head", "body")):
+            names.append(element["tag"])
+    problems: list[str] = []
+    if names:
+        problems.append(f"{where}: the elements {names} sit outside the head and the body, or in the head, which may "
+                        "not hold them; a browser can move them into the body, above the family links.")
+    if any(parent is None or parent in html or (parent in head and parent not in raw) for parent, _ in parser.texts):
+        problems.append(f"{where}: text other than whitespace sits outside the head and the body, or in the head; a "
+                        "browser can move it into the body, above the family links.")
+    return problems
+
+
+def opening_problems(where: str, parser: PageParser, found: list[dict]) -> list[str]:
+    """Check 1's pin of the opening of /install/'s content: BODY_OPENING, then MAIN_OPENING, then DOC_OPENING, whose
+    last element is the paragraph of the family links found, with the hero's h1 and the "pick" label shown and the h1
+    with visible text. Every element counts, shown or hidden, so only the page's own opening passes."""
+    children: dict = {}
+    for element in parser.elements:
+        children.setdefault(element["parent"], []).append(element)
+    body = next((element for element in parser.elements if element["tag"] == "body"), None)
+    # The body's first elements, then the first element in main and the first in div.wrap, then div.doc's first ones.
+    path = children.get(body["order"], [])[:len(BODY_OPENING)] if body else []
+    for _ in MAIN_OPENING:
+        path += children.get(path[-1]["order"], [])[:1] if path else []
+    doc = children.get(path[-1]["order"], [])[:len(DOC_OPENING)] if path else []
+    pinned = BODY_OPENING + MAIN_OPENING + tuple((tag, name) for tag, name, _, _ in DOC_OPENING)
+    if len(path + doc) != len(pinned) or any(
+            element["tag"] != tag or (name is not None and name not in element["classes"])
+            for element, (tag, name) in zip(path + doc, pinned)):
+        return [
+            f"{where}: the opening of the page's content is not a.skip, header.mast and main, then div.wrap and "
+            "div.doc inside it, and, first in that div.doc, the opening label (p.lbl), the h1, div.rail, p.meta, the "
+            "pick label (p.lbl) and the paragraph of family links; the family links sit at the top."
+        ]
+    problems: list[str] = []
+    for element, (_, _, gid, inside) in zip(doc, DOC_OPENING):
+        held = tuple(child["tag"] for child in children.get(element["order"], []))
+        if gid is not None and element["id"] != gid:
+            problems.append(f'{where}: the label before the family links does not carry the "{gid}" id.')
+        if held != inside:
+            problems.append(
+                f"{where}: the {element['tag']} at the opening of div.doc holds the elements {list(held)}, not "
+                f"{list(inside)}; the family links sit at the top."
+            )
+    if any(link["parent"] != ("p", doc[-1]["order"]) for link in found):
+        problems.append(f"{where}: the paragraph after the pick label does not hold the family links.")
+    # Text directly in the body, main, div.wrap or div.doc before the button row starts sits above the buttons too.
+    holders = {body["order"], *(element["order"] for element in path[len(BODY_OPENING) - 1:])}
+    if any(parent in holders and before < doc[-1]["order"] for parent, before in parser.texts):
+        problems.append(
+            f"{where}: text sits directly in the body, main, div.wrap or div.doc before the family links; the family "
+            "links sit at the top."
+        )
+    # The button row holds the family links and the whitespace between them, and nothing else.
+    if any(parent == doc[-1]["order"] for parent, _ in parser.texts):
+        problems.append(f"{where}: text other than whitespace sits directly in the paragraph of family links; it "
+                        "holds only the family links.")
+    hero = next((record for record in parser.h1 if record["order"] == doc[1]["order"]), None)
+    if hero is None or hero["hidden"] or not hero["text"]:
+        problems.append(f"{where}: the hero's h1 reads as hidden or has no text that reads as visible.")
+    else:
+        if any(char in BIDI_CONTROLS for char in hero["chars"]):
+            problems.append(f"{where}: the hero's h1 holds a bidi control, which can show its letters in another "
+                            "order.")
+        if hero["bidi"]:
+            problems.append(f"{where}: the hero's h1 holds a bdo element or a dir attribute, which can show its "
+                            "letters in another order.")
+    if doc[4]["hidden"]:
+        problems.append(f'{where}: the "pick" label reads as hidden in the static markup.')
+    elif not doc[4]["text"]:
+        problems.append(f'{where}: the "pick" label has no text that reads as visible.')
+    elif any(char in BIDI_CONTROLS for char in doc[4]["chars"]) or doc[4]["bidi"]:
+        problems.append(f'{where}: the "pick" label holds a bidi control, a bdo element or a dir attribute, which can '
+                        "show its letters in another order.")
+    return problems + reorderers(where, parser, doc[-1], "the paragraph of family links")
 
 
 def check_install_page(text: str) -> list[str]:
@@ -663,6 +1827,12 @@ def check_install_page(text: str) -> list[str]:
             problems.append(f"{where}: the {fam} family link reads as hidden in the static markup.")
         if not link["text"]:
             problems.append(f"{where}: the {fam} family link has no text that reads as visible.")
+        elif name_text(link["chars"]) != name_text(FAMILY_NAMES[fam]):
+            problems.append(f'{where}: the {fam} family link\'s visible label is not "{FAMILY_NAMES[fam]}", its '
+                            "family's name in FAMILY_NAMES.")
+        if any(char in BIDI_CONTROLS for char in link["chars"]) or link["bidi"]:
+            problems.append(f"{where}: the {fam} family link's label holds a bidi control, a bdo element or a dir "
+                            "attribute, which can show its letters in another order.")
         if get_at is not None and link["order"] > get_at:
             problems.append(f'{where}: the {fam} family link comes after the "get" id; the family links sit at the top.')
     if len(found) == len(FAMILIES):
@@ -671,6 +1841,11 @@ def check_install_page(text: str) -> list[str]:
             problems.append(f"{where}: the family links do not have 1 paragraph as their parent.")
         if [link["order"] for link in found] != sorted(link["order"] for link in found):
             problems.append(f"{where}: the family links are not in the order {', '.join(FAMILIES)}.")
+    if not parser.h1:
+        problems.append(f"{where}: the page has no h1, so nothing marks the hero; the family links sit at the top.")
+    problems += opening_problems(where, parser, found) + outside_problems(where, parser)
+    kinds = install_kinds(parser)
+    problems += class_pin_problems(where, parser, kinds) + page_tag_problems(where, parser, kinds)
     for gid in TEMPLATE_IDS + FAMILIES:
         if gid not in parser.id_live:
             problems.append(
@@ -691,22 +1866,83 @@ def check_family_page(fam: str, text: str) -> list[str]:
             problems.append(f"{where}: the <h1> has no text that reads as visible.")
         if parser.h1[0]["hidden"]:
             problems.append(f"{where}: the <h1> reads as hidden in the static markup.")
+        if name_text(FAMILY_NAMES[fam]) not in name_text(parser.h1[0]["chars"]):
+            problems.append(f'{where}: the <h1> does not name "{FAMILY_NAMES[fam]}" in text that reads as visible.')
+        if any(char in BIDI_CONTROLS for char in parser.h1[0]["chars"]):
+            problems.append(f"{where}: the <h1> holds a bidi control, which can show its letters in another order.")
+        if parser.h1[0]["bidi"]:
+            problems.append(f"{where}: the <h1> holds a bdo element or a dir attribute, which can show its letters in "
+                            "another order.")
+        heading = next(element for element in parser.elements if element["order"] == parser.h1[0]["order"])
+        problems += reorderers(where, parser, heading, "the <h1>")
     if not parser.verified:
         problems.append(f'{where}: no <p class="verified"> line says when the steps were last verified.')
     elif any(parser.verified):
         problems.append(f"{where}: a verified line reads as hidden in the static markup.")
+    elif any(not element["text"] for element in parser.elements if element["tag"] == "p"
+             and "verified" in element["classes"]):
+        problems.append(f"{where}: a verified line has no text that reads as visible.")
     if not parser.steps:
         problems.append(f'{where}: no <ol class="steps"> setup steps.')
-    elif any(parser.steps):
+    elif any(steps["hidden"] for steps in parser.steps):
         problems.append(f"{where}: a step list reads as hidden in the static markup.")
+    if any(not steps["hidden"] and not steps["text"] for steps in parser.steps):
+        problems.append(f"{where}: a step list has no step (li) with text that reads as visible.")
+    kinds, held = family_checked(where, parser)
+    return problems + held + page_tag_problems(where, parser, kinds)
+
+
+def family_checked(where: str, parser: PageParser) -> tuple[list[tuple[str, dict]], list[str]]:
+    """Checks 4 and 8: the checked elements of a family page that the pins hold, each with its kind in CLASS_PIN, and
+    the problems of the pins and of the links back. Check 8 holds every checked element but the links back; of those
+    it holds, for each target, the required link back, the first that is not hidden, has visible text and passes the
+    pins, and leaves the rest to the pins of any checked element that holds them (a step, say).
+    tools/test-install-page.py reads the family pages through this, so its inventories of the pins have this scope."""
+    kinds = [(kind, element) for kind, element in family_kinds(parser) if kind != "a link back"]
+    problems = class_pin_problems(where, parser, kinds)
+    anchors = {anchor["order"]: anchor for anchor in parser.anchors}
     for target in ("/install/#get", "/install/#test"):
+        shown = [("a link back", element) for kind, element in family_kinds(parser) if kind == "a link back"
+                 and anchors[element["order"]]["href"] == target and not anchors[element["order"]]["hidden"]
+                 and anchors[element["order"]]["text"]]
+        found = [class_pin_problems(where, parser, [back]) for back in shown]
         if target not in parser.hrefs:
             problems.append(f"{where}: no link to {target} outside every element of INERT_ELEMENTS.")
-    return problems
+        elif not shown:
+            problems.append(f"{where}: every link to {target} reads as hidden or has no text that reads as visible.")
+        elif [] in found:
+            kinds.append(shown[found.index([])])
+        else:
+            problems.append(f"{where}: no link to {target} that reads as shown, with visible text, passes the pins of "
+                            "a link back; each such link fails them:")
+            problems += dict.fromkeys(problem for held in found for problem in held)
+    return kinds, problems
+
+
+def path_segment(pattern: str) -> str:
+    """The first segment of the path of a URL pattern, after any https:// and host ("" if the path is empty)."""
+    path = re.sub(r"^https://[^/]*", "", pattern)
+    return path.split("/")[1] if path.startswith("/") else ""
+
+
+def reaches_install(pattern: str) -> bool:
+    """Whether a URL pattern of site/_headers can match an install page (check 7), read from its text alone and
+    failing closed: it can, unless the first segment of its path, after any https:// and host, is LITERAL_SEGMENT,
+    neither "." nor "..", and not "install" in any letter case."""
+    first = path_segment(pattern)
+    return not LITERAL_SEGMENT.fullmatch(first) or first in (".", "..") or first.lower() == "install"
+
+
+def reaches_page(pattern: str) -> bool:
+    """Whether a URL pattern of site/_headers or a source of site/_redirects can match an install page or a file the
+    pages load (check 7): reaches_install, or a first segment of its path that is 1 of LOADED_SEGMENTS in any letter
+    case."""
+    return reaches_install(pattern) or path_segment(pattern).lower() in LOADED_SEGMENTS
 
 
 def check_headers(headers: str) -> list[str]:
-    """Check 7: the site-wide policy, read with the parser of tools/check-headers.py."""
+    """Check 7: the site-wide policy and the headers that can reach an install page, read with the parser of
+    tools/check-headers.py."""
     problems: list[str] = []
     entries = load_tool("check-headers.py").parse(headers)
     site_csp = [
@@ -725,7 +1961,12 @@ def check_headers(headers: str) -> list[str]:
             f"the shared policy: {site_csp[0][2]!r}"
         )
     for number, pattern, kind, name, _ in entries:
-        if name.lower() == "x-content-security-policy":
+        if name.lower() == "link" and kind == "set":
+            problems.append(
+                f"site/_headers line {number} sets a Link header under {pattern}, which can load a stylesheet that "
+                "the rule pin does not read; no rule may set one."
+            )
+        elif name.lower() == "x-content-security-policy":
             problems.append(
                 f"site/_headers line {number} names X-Content-Security-Policy under {pattern}; "
                 "only Content-Security-Policy carries the policy."
@@ -740,6 +1981,14 @@ def check_headers(headers: str) -> list[str]:
                 f"site/_headers line {number} sets a Content-Security-Policy for {pattern}; only /* and "
                 f"{DRAFT_PATTERN} may set one."
             )
+    # A detach has no value, so it never matches an entry of INSTALL_HEADERS and always fails here.
+    for number, pattern, kind, name, value in entries:
+        if reaches_page(pattern) and (name.lower(), value) not in INSTALL_HEADERS.get(pattern, ()):
+            problems.append(
+                f"site/_headers line {number} {'sets' if kind == 'set' else 'detaches'} {name} under {pattern}, which "
+                "can match an install page or a file the install pages load; there only the headers and values of "
+                "INSTALL_HEADERS may appear."
+            )
     return problems
 
 
@@ -748,20 +1997,21 @@ def main() -> int:
         supported = ", ".join(f"{major}.{minor}" for major, minor in SUPPORTED_PYTHONS)
         die(f"runs only on Python {supported}, the version it is tested on; "
             f"this is Python {sys.version_info[0]}.{sys.version_info[1]}")
-    for path in (PAGE, *FAMILY_PAGES.values(), HEADERS):
+    for path in (PAGE, *FAMILY_PAGES.values(), HEADERS, REDIRECTS):
         if not path.is_file():
             die(f"{path.relative_to(REPO_ROOT)} does not exist")
     try:
         page_text = PAGE.read_text(encoding="utf-8")
         family_texts = {fam: path.read_text(encoding="utf-8") for fam, path in FAMILY_PAGES.items()}
         headers = HEADERS.read_text(encoding="utf-8")
+        redirects = REDIRECTS.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         die(f"a file could not be read: {error}")
 
     problems = check_install_page(page_text)
     for fam in FAMILIES:
         problems += check_family_page(fam, family_texts[fam])
-    problems += check_headers(headers)
+    problems += check_headers(headers) + redirect_problems(redirects) + server_entry_problems()
 
     if problems:
         print("Install page problems found:")
@@ -770,14 +2020,37 @@ def main() -> int:
         return 1
 
     print(
-        "The install page links all five family pages in order with buttons before the get id, each with text "
-        "read as visible and none of them read as hidden, and keeps its ids; each family page has 1 h1 with text "
-        "read as visible, a verified line and a step list, none of them read as hidden, and links, hidden or not, "
-        "back to the downloads and the test; ids "
-        "are unique, no retired selector attribute remains, the six pages pass the inline-code checks, the "
-        "light and dark switch included, load the baseline's versioned stylesheets and copy.js, load scheme.js "
+        "The install page links all five family pages in order before the get id, with the opening of its content "
+        "as pinned, nothing outside its head and body or out of place in its head, the buttons right after the pick "
+        "label and that label after the hero's h1, the button row "
+        "holding only the family links, no element that starts before that row ends a bdo or with dir, the h1 and "
+        "that label with text read as visible, neither read as hidden "
+        "and neither with a bidi control, bdo or dir, each link with its family's name as the text read as visible "
+        "and no bidi control, bdo "
+        "or dir, none of them read as hidden, and keeps its ids; each family "
+        "page has 1 h1 that names its family in text read as visible with no bidi control, bdo or dir, and no "
+        "element that starts before it ends a bdo or with dir, a verified "
+        "line with text read as visible and a step list, each step "
+        "list with a step read as visible, none of them read as hidden, and a link with text read as visible back "
+        "to the downloads and to the test that passes the pins of a link back; ids "
+        "are unique, every checked element, its ancestors and what it holds are of the tags and carry only the classes "
+        "and attributes the committed pages give them there and no attribute that a pinned stylesheet rule names, "
+        "every element on the six pages is of a tag the committed pages use and carries only attributes the committed "
+        "pages give its tag, every src is under the loaded segments, every src and every link href but the "
+        "canonical one is a file the baseline pin holds, every meta, link and "
+        "base element on the six pages is one the committed pages carry, with its attributes and values, no html or "
+        "body start tag on "
+        "the six pages carries dir, and none carries an attribute unless it is the first of each and an ancestor of "
+        "every checked element, each page begins with the doctype, no end tag closes an element other than the "
+        "innermost open one but 1 whose end tag the page may omit there, no retired selector attribute "
+        "remains, the six pages pass the inline-code checks, the "
+        "light and dark switch included, load the baseline's versioned stylesheets and no other, and copy.js, load scheme.js "
         "once in the head before the stylesheets, and load no other script but the allowed baseline scripts, and "
-        "the /* rule of site/_headers carries exactly the shared policy."
+        "the /* rule of site/_headers carries exactly the shared policy, no rule there sets a Link header, and no "
+        "rule that can match an install page or a file the pages load sets or detaches any header but those of "
+        "INSTALL_HEADERS, with their values, no rule of site/_redirects has a source that can match an install page "
+        "or a file the pages load, and no Pages Function, site/_worker.js, Wrangler configuration or root "
+        "package.json, runtime.txt, requirements.txt, Pipfile or Gemfile exists."
     )
     return 0
 
