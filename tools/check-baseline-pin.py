@@ -5,7 +5,7 @@
 version into ``<output root>/assets/baseline/`` and records each file's SHA-256
 in ``.baseline/pin.toml``, in the baseline README's format: a ``version`` key
 and a ``[files]`` table of path to digest, the paths under ``assets/baseline/``
-relative to the output root and the build tool's key relative to the repository
+relative to the output root and the build tools' keys relative to the repository
 root. The output root follows the base path in ``site-src/site.json``
 (``site/draft/`` while staged, ``site/`` after promotion). The copied files are
 never edited. This gate makes an edit, a replacement, a deletion or an addition
@@ -17,28 +17,37 @@ What it verifies
 
 1. ``.baseline/pin.toml`` parses as TOML and holds exactly ``version`` (X.Y.Z)
    and a non-empty ``[files]`` table whose every key is a relative path under
-   ``assets/baseline/``, or exactly the build tool key
-   ``.baseline/check_palette.py`` (``TOOLS``), and whose every value is a
-   lower-case SHA-256. Any other key is malformed. A malformed pin is a
-   failure (exit 3), never a pass.
+   ``assets/baseline/``, or exactly 1 of the build tool keys (``TOOLS``):
+   ``.baseline/check_palette.py``, the card builder
+   ``.baseline/build_card.js``, and its 3 Inter fonts and their licence in
+   ``.baseline/card-fonts/``; and whose every value is a lower-case SHA-256.
+   Any other key, such as ``.baseline/site-card.toml``, is malformed: the
+   card's data file and illustration are the site's own, not the version's.
+   A malformed pin is a failure (exit 3), never a pass.
 2. Each pinned file appears in the version's ``SHA256SUMS`` (kept as
    ``.baseline/SHA256SUMS``) under its name within the package, with the same
    digest, so the pin cannot name a file or a digest the published version
-   does not have. The build tool's name within the package is
-   ``tools/check_palette.py``.
+   does not have. A build tool's name within the package is its key with
+   ``.baseline/`` replaced by ``tools/``, such as ``tools/check_palette.py``.
 3. Each pinned file exists under the output root as a regular file, not a
-   link, and hashes to its pinned digest. The build tool is checked the same
-   way at its path from the repository root, ``.baseline/check_palette.py``.
-4. No file under ``<output root>/assets/baseline/`` is missing from the pin,
-   and no file named ``check_palette.py`` exists anywhere under ``site/``: the
-   build tool is pinned but never served.
+   link, and hashes to its pinned digest. The build tools are checked the
+   same way at their paths from the repository root, such as
+   ``.baseline/check_palette.py``.
+4. No file under ``<output root>/assets/baseline/`` or under
+   ``.baseline/card-fonts/`` is missing from the pin, and no file named as a
+   build tool (``check_palette.py``, ``build_card.js``, or a file name in
+   ``.baseline/card-fonts/``) exists anywhere under ``site/``: the build tools
+   are pinned but never served. ``.baseline/card-fonts/``, when present, must
+   be a folder, not a link. The card builder reads its fonts from that folder
+   by fixed names, so an unpinned file there is not read today; the folder is
+   checked so that it holds only what the pin lists.
 5. The pin holds these files of the README's runtime and licence set
    (``REQUIRED``): the 3 stylesheets, 5 of the README's 6 scripts (this site
    leaves out ``matrix.js``, by the owner's decision), ``LICENSE``,
    ``NOTICE.md`` and
-   ``marks/NOTICE.md``, and the build tool key ``.baseline/check_palette.py``,
-   so a copy that drops one, such as ``rail.js``, fails even when the files
-   present match.
+   ``marks/NOTICE.md``, and every build tool key in ``TOOLS``, so a copy that
+   drops one, such as ``rail.js`` or ``.baseline/build_card.js``, fails even
+   when the files present match.
 6. The pin's version is the version that ``SHA256SUMS`` belongs to:
    ``SHA256SUMS`` lines carry no version, so the gate reads it from the
    version's own README, copied unserved to ``.baseline/README.md``, which
@@ -143,8 +152,18 @@ SECTION_END = re.compile(r"^ {0,3}#{1,2}(?:[ \t]|$)")
 COMMENT = "<!--"
 FENCE = re.compile(r"^ {0,3}(?:`{3}|~{3})")
 PREFIX = "assets/baseline/"
-# The pinned build tool: its key in the pin, from the repository root, and its name in SHA256SUMS.
-TOOLS = {".baseline/check_palette.py": "tools/check_palette.py"}
+# The pinned build tools, never served: each key in the pin, from the repository root, and its name in SHA256SUMS.
+# tools/copy-baseline.py copies and pins exactly these. The card builder reads its fonts from card-fonts/ beside itself.
+TOOLS = {
+    ".baseline/check_palette.py": "tools/check_palette.py",
+    ".baseline/build_card.js": "tools/build_card.js",
+    ".baseline/card-fonts/Inter-Bold.otf": "tools/card-fonts/Inter-Bold.otf",
+    ".baseline/card-fonts/Inter-ExtraBold.otf": "tools/card-fonts/Inter-ExtraBold.otf",
+    ".baseline/card-fonts/Inter-Regular.otf": "tools/card-fonts/Inter-Regular.otf",
+    ".baseline/card-fonts/inter-LICENSE.txt": "tools/card-fonts/inter-LICENSE.txt",
+}
+# The card builder's font folder, which must hold only pinned files (item 4).
+CARD_FONTS = Path(".baseline/card-fonts")
 REQUIRED = [
     PREFIX + name
     for name in ("baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js",
@@ -362,6 +381,21 @@ def check(root: Path) -> list[str]:
     for name in list_tree(copied):
         if PREFIX + name not in files:
             problems.append(f"{shown}/{PREFIX}{name} is not in the pin.")
+
+    # A missing font folder is already reported above, as each pinned font missing.
+    fonts = CARD_FONTS.as_posix()
+    try:
+        fonts_mode = os.lstat(root / CARD_FONTS).st_mode
+    except FileNotFoundError:
+        fonts_mode = None
+    except OSError as error:
+        raise Unreadable(f"{fonts} could not be read: {error}") from error
+    if fonts_mode is not None and not stat.S_ISDIR(fonts_mode):
+        problems.append(f"{fonts} is not a folder (a link or a file).")
+    elif fonts_mode is not None:
+        for name in list_tree(root / CARD_FONTS):
+            if f"{fonts}/{name}" not in files:
+                problems.append(f"{fonts}/{name} is not in the pin.")
 
     served = root / "site"
     tool_names = {Path(key).name for key in TOOLS}

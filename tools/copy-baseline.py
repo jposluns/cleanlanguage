@@ -11,8 +11,11 @@ refuses to copy unless:
    (the value published in https://posluns.dev/hashes.txt),
 2. every file listed in ``SHA256SUMS`` exists and hashes to its listed digest,
    and no file in the folder is missing from it, and
-3. ``SHA256SUMS`` lists the build tool ``tools/check_palette.py``, so the served
-   files are never replaced by a version that lacks it, and
+3. ``SHA256SUMS`` lists every build tool that ``tools/check-baseline-pin.py``
+   pins (its ``TOOLS``): ``tools/check_palette.py``, the card builder
+   ``tools/build_card.js``, and its 3 Inter fonts and their licence in
+   ``tools/card-fonts/``, so the served files are never replaced by a version
+   that lacks one, and
 4. ``SHA256SUMS`` lists the documents ``README.md`` and ``SPECIFICATION.md``,
    the README's first line names the folder's version (``# Baseline X.Y.Z: ``),
    and its "Adoption in a repository" step 7 carries exactly 1 NOTICE entry, 1
@@ -30,15 +33,21 @@ from 1.6.0; this site leaves out ``matrix.js``, by the owner's decision), the
 logos, the marks with ``marks/NOTICE.md``, ``LICENSE`` and ``NOTICE.md``
 (never ``reference/`` or ``tools/``), byte for byte
 into ``<output root>/assets/baseline/``, where the output root follows the base
-path in ``site-src/site.json`` (``site/draft/`` while staged). It copies the
-pinned build tool ``tools/check_palette.py`` (from 1.6.0) to
-``.baseline/check_palette.py``, which is pinned but never served, and it copies
+path in ``site-src/site.json`` (``site/draft/`` while staged). It copies each
+build tool in the gate's ``TOOLS`` from ``tools/`` in the version to the same
+path under ``.baseline/``, pinned but never served: ``tools/check_palette.py``
+(from 1.6.0) to ``.baseline/check_palette.py``, and the card builder
+``tools/build_card.js`` with its ``tools/card-fonts/`` files to
+``.baseline/build_card.js`` and ``.baseline/card-fonts/``, since the builder
+reads its fonts from beside itself. It copies
 ``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
 ``.baseline/pin.toml`` in the README's format: a ``version`` key and a
 ``[files]`` table of path to SHA-256, the paths under ``assets/baseline/``
-relative to the output root and the build tool's ``.baseline/check_palette.py``
-relative to the repository root. It also copies the documents ``README.md`` and
-``SPECIFICATION.md`` to ``.baseline/``, like ``SHA256SUMS`` never served and
+relative to the output root and the build tools' keys under ``.baseline/``
+relative to the repository root. The pin is written from scratch with the
+gate's ``TOOLS``, so the 2 tools cannot disagree on the build tools. It also
+copies the documents ``README.md`` and ``SPECIFICATION.md`` to ``.baseline/``,
+like ``SHA256SUMS`` never served and
 not pinned (the maintainer ruled on 2026-11-04 to keep these 2 unserved copies):
 ``tools/check-baseline-pin.py`` checks each against its ``SHA256SUMS`` digest,
 the README's version against the pin's and its NOTICE entry against
@@ -78,12 +87,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PIN_DIR = REPO_ROOT / ".baseline"
 PREFIX = "assets/baseline/"
-TOOL_SOURCE = "tools/check_palette.py"
-TOOL_NAME = "check_palette.py"
 # The documents copied to .baseline/, never served and not pinned; tools/check-baseline-pin.py checks each.
 DOCUMENTS = ("README.md", "SPECIFICATION.md")
 README_HEADING = re.compile(r"^# Baseline ([0-9]+\.[0-9]+\.[0-9]+): ")
-# The gate whose notice_entry() reads the README's "Adoption in a repository" step 7 for both tools.
+# The gate whose TOOLS names the build tools to copy and pin, and whose notice_entry() reads the README's "Adoption in
+# a repository" step 7 for both tools.
 GATE = Path(__file__).resolve().parent / "check-baseline-pin.py"
 
 TOP_FILES = {"baseline.css", "palettes.css", "fonts.css", "copy.js", "select.js", "search.js", "rail.js", "scheme.js", "LICENSE", "NOTICE.md"}
@@ -107,9 +115,9 @@ def sha256(path: Path) -> str:
 
 
 def load_gate():
-    """tools/check-baseline-pin.py as a module, for its notice_entry(), NOTICE_STEP and ENTRY_PREFIX. The gate's
-    tomllib guard exits on Python older than 3.11; its message is dropped and this tool reports the floor in its own
-    words."""
+    """tools/check-baseline-pin.py as a module, for its TOOLS, notice_entry(), NOTICE_STEP and ENTRY_PREFIX. The
+    gate's tomllib guard exits on Python older than 3.11; its message is dropped and this tool reports the floor in its
+    own words."""
     try:
         spec = importlib.util.spec_from_file_location("check_baseline_pin", GATE)
         module = importlib.util.module_from_spec(spec)
@@ -202,9 +210,12 @@ def main() -> int:
     for name, digest in listed.items():
         if sha256(source / name) != digest:
             die(1, f"{name} does not match its SHA256SUMS digest")
-    tool_digest = listed.get(TOOL_SOURCE)
-    if tool_digest is None:
-        die(1, f"SHA256SUMS does not list {TOOL_SOURCE}")
+    # The gate's TOOLS, so that the pin written here is never one the gate refuses for a missing build tool.
+    gate = load_gate()
+    tools = gate.TOOLS
+    for tool_source in tools.values():
+        if tool_source not in listed:
+            die(1, f"SHA256SUMS does not list {tool_source}")
     for name in DOCUMENTS:
         if name not in listed:
             die(1, f"SHA256SUMS does not list the document {name}")
@@ -215,7 +226,6 @@ def main() -> int:
     heading = README_HEADING.match(readme)
     if heading is None or heading.group(1) != version:
         die(1, f"README.md does not start with the heading '# Baseline {version}: ', the folder's version")
-    gate = load_gate()
     if gate.notice_entry(readme) is None:
         die(1, f"README.md holds a carriage return or has no step 7 {gate.NOTICE_STEP[len('7. '):]!r} "
                f"that opens with its 1 quoted line, the entry, starting {gate.ENTRY_PREFIX!r} and holding "
@@ -232,12 +242,15 @@ def main() -> int:
         if sha256(target) != listed[name]:
             die(1, f"the copy of {name} does not match its digest")
 
-    if sha256(source / TOOL_SOURCE) != tool_digest:
-        die(1, f"{TOOL_SOURCE} does not match its SHA256SUMS digest")
     PIN_DIR.mkdir(exist_ok=True)
-    shutil.copyfile(source / TOOL_SOURCE, PIN_DIR / TOOL_NAME)
-    if sha256(PIN_DIR / TOOL_NAME) != tool_digest:
-        die(1, f"the copy of {TOOL_SOURCE} does not match its digest")
+    for key, tool_source in tools.items():
+        if sha256(source / tool_source) != listed[tool_source]:
+            die(1, f"{tool_source} does not match its SHA256SUMS digest")
+        target = REPO_ROOT / key
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source / tool_source, target)
+        if sha256(target) != listed[tool_source]:
+            die(1, f"the copy of {tool_source} does not match its digest")
     shutil.copyfile(sums_path, PIN_DIR / "SHA256SUMS")
     for name in DOCUMENTS:
         shutil.copyfile(source / name, PIN_DIR / name)
@@ -247,7 +260,7 @@ def main() -> int:
         "# Baseline pin, in the format of the baseline README (\"Adoption in a repository\", step 3).",
         "# Written by tools/copy-baseline.py and checked by tools/check-baseline-pin.py; the paths under",
         "# assets/baseline/ are relative to the site's output root (site/draft/ while staged, site/ after",
-        f"# promotion), and .baseline/{TOOL_NAME} is relative to the repository root, outside site/.",
+        "# promotion), and each build tool's key under .baseline/ is relative to the repository root, outside site/.",
         f"# Source: https://posluns.ca/baseline/baseline-{version}.tar.gz, archive sha256 {args.archive_sha256};",
         f"# SHA256SUMS sha256 {args.sums_sha256}, copied to .baseline/SHA256SUMS.",
         "# Never edit a copied file; a new version arrives as a new copy and a new pin.",
@@ -256,10 +269,11 @@ def main() -> int:
         "[files]",
     ]
     lines += [f'"{PREFIX}{name}" = "{listed[name]}"' for name in chosen]
-    lines += [f'".baseline/{TOOL_NAME}" = "{tool_digest}"']
+    lines += [f'"{key}" = "{listed[tool_source]}"' for key, tool_source in tools.items()]
     (PIN_DIR / "pin.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"copied {len(chosen) + 1} files of baseline {version} ({len(chosen)} to {PREFIX} and .baseline/{TOOL_NAME}) "
-          f"and wrote .baseline/pin.toml; copied the documents {' and '.join(DOCUMENTS)} to .baseline/, not pinned")
+    print(f"copied {len(chosen) + len(tools)} files of baseline {version} ({len(chosen)} to {PREFIX} and "
+          f"{len(tools)} build tool files to .baseline/) and wrote .baseline/pin.toml; copied the documents "
+          f"{' and '.join(DOCUMENTS)} to .baseline/, not pinned")
     return 0
 
 

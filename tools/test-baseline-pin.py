@@ -5,13 +5,14 @@ Each case builds a small pinned tree in a temporary folder (under $TMPDIR),
 with the version's README and specification under ``.baseline/`` and a root
 ``NOTICE.md``, applies 1 fault, runs the gate on that tree as a separate
 process and asserts its exit code, and for some cases a line of its output.
-The last case runs the gate on this repository. The first 13 cases run
+The last case runs the gate on this repository. The first 14 cases run
 ``tools/copy-baseline.py`` on a small version folder and assert that the pin
 header it writes, and the committed one, give each key's base; that it copies
-and pins the build tool and counts it among the copied files; that it copies
-the README and the specification to ``.baseline/`` without pinning them; that
-a version without the build tool, the README or the specification, or whose
-README names another version, lacks its step 7 NOTICE entry, holds a second
+and pins the build tools, the palette gate and the card builder with its
+fonts, and counts them among the copied files; that it copies the README and
+the specification to ``.baseline/`` without pinning them; that a version
+without the palette gate, the card builder, the README or the specification,
+or whose README names another version, lacks its step 7 NOTICE entry, holds a second
 quoted paragraph in step 7 or has CRLF line ends, on every line or on the
 entry line only, exits 1 before any served file is replaced; and that on
 Python older than 3.11, stood in for by a gate whose tomllib import fails, it
@@ -43,6 +44,14 @@ for _name in ("palettes.css", "fonts.css", "copy.js", "select.js", "search.js", 
 # The pinned build tool, kept at .baseline/check_palette.py and never served.
 TOOL = b"# check_palette.py\n"
 TOOL_KEY = ".baseline/check_palette.py"
+# The card builder and its fonts, pinned at .baseline/ beside the palette gate and never served; each key's name in
+# SHA256SUMS is the key with .baseline/ replaced by tools/.
+CARD_KEY = ".baseline/build_card.js"
+CARD_FONT_KEY = ".baseline/card-fonts/Inter-Bold.otf"
+CARD = {CARD_KEY: b"// build_card.js\n", CARD_FONT_KEY: b"OTTO Inter-Bold",
+        ".baseline/card-fonts/Inter-ExtraBold.otf": b"OTTO Inter-ExtraBold",
+        ".baseline/card-fonts/Inter-Regular.otf": b"OTTO Inter-Regular",
+        ".baseline/card-fonts/inter-LICENSE.txt": b"SIL Open Font License 1.1\n"}
 # The version's documents, copied to .baseline/ and not pinned: the README's heading names the version, and its
 # step 7 prescribes the NOTICE entry; NOTICE_TEXT carries that entry for 1.2.1.
 README = (b"# Baseline 1.2.1: x\n\n7. Add this entry to the repository's NOTICE:\n\n"
@@ -56,6 +65,10 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def package_name(key: str) -> str:
+    return "tools/" + key[len(".baseline/"):]
+
+
 def copied(root: Path) -> Path:
     return root / "site" / "draft" / "assets" / "baseline"
 
@@ -67,16 +80,21 @@ def build(root: Path) -> None:
     sums = "".join(f"{digest(data)}  {name}\n" for name, data in sorted(FILES.items()))
     sums += f"{digest(b'unpinned')}  reference/landing.html\n"
     sums += f"{digest(TOOL)}  tools/check_palette.py\n"
+    sums += "".join(f"{digest(data)}  {package_name(key)}\n" for key, data in CARD.items())
     sums += "".join(f"{digest(data)}  {name}\n" for name, data in DOCS.items())
     (root / ".baseline").mkdir()
     (root / ".baseline" / "SHA256SUMS").write_text(sums, encoding="utf-8")
     (root / TOOL_KEY).write_bytes(TOOL)
+    for key, data in CARD.items():
+        (root / key).parent.mkdir(parents=True, exist_ok=True)
+        (root / key).write_bytes(data)
     for name, data in DOCS.items():
         (root / ".baseline" / name).write_bytes(data)
     (root / "NOTICE.md").write_text(NOTICE_TEXT, encoding="utf-8")
     lines = ["# comment", 'version = "1.2.1"', "", "[files]"]
     lines += [f'"assets/baseline/{name}" = "{digest(data)}"' for name, data in sorted(FILES.items())]
     lines += [f'"{TOOL_KEY}" = "{digest(TOOL)}"']
+    lines += [f'"{key}" = "{digest(data)}"' for key, data in CARD.items()]
     (root / ".baseline" / "pin.toml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     (root / "site-src").mkdir()
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/draft/"}), encoding="utf-8")
@@ -200,6 +218,44 @@ def fault_tool_served(root: Path) -> None:
 def fault_other_baseline_key(root: Path) -> None:
     edit_pin(root, f'"{TOOL_KEY}" = "{digest(TOOL)}"\n',
              f'"{TOOL_KEY}" = "{digest(TOOL)}"\n".baseline/other.py" = "{digest(TOOL)}"\n')
+
+
+def fault_card_builder_edited(root: Path) -> None:
+    (root / CARD_KEY).write_bytes(CARD[CARD_KEY] + b"// edited\n")
+
+
+def fault_card_font_deleted(root: Path) -> None:
+    (root / CARD_FONT_KEY).unlink()
+
+
+def fault_card_builder_unpinned(root: Path) -> None:
+    edit_pin(root, f'"{CARD_KEY}" = "{digest(CARD[CARD_KEY])}"\n', "")
+
+
+def fault_card_builder_digest_not_published(root: Path) -> None:
+    new = CARD[CARD_KEY] + b"// other\n"
+    (root / CARD_KEY).write_bytes(new)
+    edit_pin(root, digest(CARD[CARD_KEY]), digest(new))
+
+
+def fault_card_font_served(root: Path) -> None:
+    (root / "site" / "Inter-Bold.otf").write_bytes(CARD[CARD_FONT_KEY])
+
+
+def fault_card_font_unpinned(root: Path) -> None:
+    (root / ".baseline" / "card-fonts" / "Inter-Thin.otf").write_bytes(b"OTTO Inter-Thin")
+
+
+def fault_card_fonts_link(root: Path) -> None:
+    # The same files in a folder elsewhere, reached through a link, so each pinned font still hashes to its digest.
+    fonts = root / ".baseline" / "card-fonts"
+    shutil.move(fonts, root / "fonts-elsewhere")
+    fonts.symlink_to(root / "fonts-elsewhere")
+
+
+def fault_card_data_pinned(root: Path) -> None:
+    edit_pin(root, f'"{CARD_KEY}" = "{digest(CARD[CARD_KEY])}"\n',
+             f'"{CARD_KEY}" = "{digest(CARD[CARD_KEY])}"\n".baseline/site-card.toml" = "{digest(TOOL)}"\n')
 
 
 def fault_promoted_base(root: Path) -> None:
@@ -387,6 +443,16 @@ CASES = [
     ("the build tool's pin entry removed", fault_tool_unpinned, 1),
     ("the build tool pinned with a digest the published sums do not list", fault_tool_digest_not_published, 1),
     ("a check_palette.py under the served site/ tree", fault_tool_served, 1),
+    ("the pinned card builder edited", fault_card_builder_edited, 1, "differs from its pinned digest"),
+    ("a pinned card font deleted", fault_card_font_deleted, 1, f"{CARD_FONT_KEY} is pinned but missing"),
+    ("the card builder's pin entry removed", fault_card_builder_unpinned, 1, f"{CARD_KEY} is part of"),
+    ("the card builder pinned with a digest the published sums do not list", fault_card_builder_digest_not_published,
+        1, f"{CARD_KEY} is pinned with a digest"),
+    ("an Inter-Bold.otf under the served site/ tree", fault_card_font_served, 1, "site/Inter-Bold.otf is a pinned"),
+    ("an unpinned file in .baseline/card-fonts/", fault_card_font_unpinned, 1,
+        ".baseline/card-fonts/Inter-Thin.otf is not in the pin"),
+    ("a link in place of the .baseline/card-fonts/ folder", fault_card_fonts_link, 1,
+        ".baseline/card-fonts is not a folder"),
     ("the pin moved to another version, NOTICE.md with it", fault_other_version, 1, "different versions"),
     ("the README not listed in SHA256SUMS", fault_readme_unlisted, 1, "SHA256SUMS does not list README.md"),
     ("the copied README edited", fault_readme_edited, 1),
@@ -425,6 +491,7 @@ CASES = [
     ("a malformed digest", fault_malformed_digest, 3),
     ("a path outside assets/baseline/", fault_path_outside, 3),
     ("an unknown .baseline/ key", fault_other_baseline_key, 3),
+    ("the card's data file .baseline/site-card.toml pinned", fault_card_data_pinned, 3),
     ("the base path moved to / with the files still under draft/", fault_promoted_base, 3),
     ("the pin is missing", fault_missing_pin, 3),
     ("SHA256SUMS is missing", fault_missing_sums, 3),
@@ -462,10 +529,11 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None) -
     return subprocess.run(command, capture_output=True, text=True)
 
 
-PACKAGE = {**FILES, **DOCS, "tools/check_palette.py": TOOL}
+PACKAGE = {**FILES, **DOCS, "tools/check_palette.py": TOOL, **{package_name(key): data for key, data in CARD.items()}}
 # Versions copy-baseline refuses (exit 1) before it replaces a served file: each changes PACKAGE in place.
 COPY_REFUSALS = [
     ("a version without the build tool", lambda package: package.pop("tools/check_palette.py")),
+    ("a version without the card builder", lambda package: package.pop(package_name(CARD_KEY))),
     ("a version without README.md", lambda package: package.pop("README.md")),
     ("a version without SPECIFICATION.md", lambda package: package.pop("SPECIFICATION.md")),
     ("a README whose heading names another version",
@@ -508,7 +576,7 @@ def python_floor_problems() -> list[str]:
 
 
 def copy_problems() -> list[str]:
-    """copy-baseline pins and copies the build tool, counts it, copies the documents unpinned, and checks for each
+    """copy-baseline pins and copies the build tools, counts them, copies the documents unpinned, and checks for each
     and for the README's version and NOTICE entry before replacing a file."""
     problems = []
     with tempfile.TemporaryDirectory() as scratch:
@@ -518,8 +586,12 @@ def copy_problems() -> list[str]:
         if f'"{TOOL_KEY}" = "{digest(TOOL)}"\n' not in pin or (root / TOOL_KEY).read_bytes() != TOOL:
             problems.append(f"copy-baseline: the build tool is not copied to {TOOL_KEY} and pinned "
                             f"(exit {result.returncode})")
-        if f"copied {len(FILES) + 1} files " not in result.stdout:
-            problems.append(f"copy-baseline: the count of copied files leaves out the build tool: "
+        for key, data in CARD.items():
+            if f'"{key}" = "{digest(data)}"\n' not in pin or (root / key).read_bytes() != data:
+                problems.append(f"copy-baseline: {package_name(key)} is not copied to {key} and pinned "
+                                f"(exit {result.returncode})")
+        if f"copied {len(FILES) + 1 + len(CARD)} files " not in result.stdout:
+            problems.append(f"copy-baseline: the count of copied files leaves out a build tool: "
                             f"{result.stdout.strip()!r}")
         documents = root / ".baseline"
         if (not pin or any(not (documents / name).is_file() or (documents / name).read_bytes() != data
@@ -560,7 +632,7 @@ def pin_header_problems() -> list[str]:
     if header(written) != header(committed):
         problems.append("the pin header: the committed .baseline/pin.toml header is not copy-baseline's")
     for statement in ("assets/baseline/ are relative to the site's output root",
-                      f"{TOOL_KEY} is relative to the repository root"):
+                      "each build tool's key under .baseline/ is relative to the repository root"):
         if statement not in header(written).replace("# ", ""):
             problems.append(f"the pin header does not say {statement!r}")
     return problems

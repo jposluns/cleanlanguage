@@ -1,0 +1,19 @@
+# site-card.toml: the data file of .baseline/build_card.js (baseline 1.11.1) for cleanlanguage.ai, kept beside
+# .baseline/pin.toml and not pinned, since it is the site's own input, not a file of the baseline.
+# Strings are in double quotes; paths are relative to this file. Change the copy, the colours and the
+# illustration only on the owner's instruction.
+# The copy, the colours and the illustration are those of the current card, scripts/card/card.html with its
+# illustration.svg, and the name and TLD match site-src/site.json. The centred layout keeps the whole card inside
+# the area Microsoft Teams shows when it crops the image; it is the maintainer's decision of 2026-11-06.
+# logo and touch_bg are unset: without a logo the builder makes no touch icon, and the site keeps its pinned
+# touch icon. The tag texts are unset because their defaults give the current card's title, description and alt.
+site = "cleanlanguage"
+layout = "centre"
+name = "CleanLanguage"
+tld = ".ai"
+line1 = "Precise, direct, natural AI writing."
+line2 = "A skill you install once, anywhere."
+sub = "Free writing rules, installed as a skill in any AI assistant or development environment."
+art = "card-illustration.svg"
+word_colour = "#6ee7b7"
+background = "radial-gradient(900px 620px at 1040px 560px,rgba(52,211,153,.5),rgba(52,211,153,0) 60%),radial-gradient(760px 540px at 120px 60px,rgba(20,92,59,.95),rgba(20,92,59,0) 62%),#07140e"
