@@ -32,9 +32,10 @@ Decisions, in the order the guard makes them:
   cannot search or a path component that is a regular file (ENOTDIR): deny;
 - the mode file missing, unreadable, a symlink (opened with O_NOFOLLOW), or not a regular file: deny.
   lstat does not follow a symlink at /opt/orch-operator itself, so a dangling symlink there counts
-  as present and leaves the mode file missing; a symlink loop there makes the open fail as a
-  symlink; a regular file there makes the mode file unreadable (ENOTDIR); and a symlink to a
-  directory is followed, so the file in that directory is judged as the mode file;
+  as present and leaves the mode file missing; a symlink loop there makes the open fail with
+  ELOOP, as a symlink at the mode file does, so that deny names both causes; a regular file there
+  makes the mode file unreadable (ENOTDIR); and a symlink to a directory is followed, so the file
+  in that directory is judged as the mode file;
 - the opened file not owned by uid 0, or writable by its group or by others (fstat on the open
   descriptor): deny;
 - content over 4096 bytes, not strict UTF-8, not one JSON object (NaN, Infinity and -Infinity
@@ -70,8 +71,13 @@ blocked while the host says unattended; the 4096-byte bound limits size, not tim
 which the guard opens before it checks for a regular file, and the read of a regular file can each
 block, such as on a stalled network filesystem or in a device driver, and each is bounded only by
 the hook's 10-second timeout, and the tests do not show what Claude Code does with the call when
-that timeout expires; and the vendored orch_ask_guard continues to log a fail-open audit event on
-every question until the upstream fix is re-vendored.
+that timeout expires; the fail-closed handler in main() covers only the argument parse, the payload
+read and the decision, so if the hook process cannot start, such as when python3 is not on the
+hook shell's PATH (exit 127), is killed by a signal, or fails while it writes its verdict, it ends
+without a complete verdict and with a status other than 0 or 2, which Claude Code's hook contract
+treats as a non-blocking error, so the question would go through; that is what the contract says,
+not something the tests observe; and the vendored orch_ask_guard continues to log a fail-open audit
+event on every question until the upstream fix is re-vendored.
 """
 import errno
 import json
@@ -165,7 +171,10 @@ def read_mode(mode_file, expect_uid):
         fd = os.open(mode_file, flags)
     except OSError as exc:
         if exc.errno == errno.ELOOP:
-            raise Unusable("{} is a symlink".format(mode_file)) from None
+            # ELOOP means either a symlink at the file itself, refused by O_NOFOLLOW, or a loop
+            # or too many symlinks in a directory above it, so the cause names both.
+            raise Unusable("{} is a symlink, or its path holds a symlink loop or too many "
+                           "symlinks".format(mode_file)) from None
         if exc.errno == errno.ENOENT:
             raise Unusable("{} is missing".format(mode_file)) from None
         raise Unusable("{} is unreadable: {}".format(mode_file, exc.strerror)) from None

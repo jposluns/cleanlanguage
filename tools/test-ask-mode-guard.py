@@ -114,6 +114,10 @@ ATTENDED_LINE = UNATTENDED_LINE.replace('"unattended"', '"attended"')
 ASK = {"tool_name": "AskUserQuestion", "session_id": "s1", "tool_use_id": "tu1",
        "tool_input": {"questions": [{"question": "Which option?"}]}}
 
+# The open fails with ELOOP both for a symlink at the mode file and for a loop in a directory above
+# it, so every case that reaches that error requires the cause that is true of both.
+SYMLINK_CAUSE = "is a symlink, or its path holds a symlink loop or too many symlinks"
+
 
 class AskModeGuard(unittest.TestCase):
     def setUp(self):
@@ -284,10 +288,11 @@ class AskModeGuard(unittest.TestCase):
         self.assert_denies(self.run_guard(), "is missing")
 
     def test_symlink_loop_at_the_host_directory_denies(self):
-        # lstat does not follow the loop, so the open of the mode file meets it and fails.
+        # lstat does not follow the loop, so the open of the mode file meets it and fails. The mode
+        # file is not itself a symlink, so a deny that said only that would be untrue here.
         self.host_dir.rmdir()
         self.host_dir.symlink_to(self.host_dir)
-        self.assert_denies(self.run_guard(), "is a symlink")
+        self.assert_denies(self.run_guard(), SYMLINK_CAUSE)
 
     def test_symlink_to_a_directory_at_the_host_directory_is_followed(self):
         # The guard does not judge the directory that holds the mode file, so a host directory that
@@ -309,12 +314,12 @@ class AskModeGuard(unittest.TestCase):
     def test_symlink_to_attended_autonomous_file_denies(self):
         target = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self._tmp / "real-mode")
         self.mode_file.symlink_to(target)
-        self.assert_denies(self.run_guard(), "symlink")
+        self.assert_denies(self.run_guard(), SYMLINK_CAUSE)
 
     def test_dangling_symlink_at_the_mode_file_denies(self):
         # O_NOFOLLOW refuses the link itself, so a link to nothing is a symlink, not a missing file.
         self.mode_file.symlink_to(self._tmp / "no-such-file")
-        self.assert_denies(self.run_guard(), "is a symlink")
+        self.assert_denies(self.run_guard(), SYMLINK_CAUSE)
 
     def test_fifo_denies_without_hanging(self):
         os.mkfifo(self.mode_file)
