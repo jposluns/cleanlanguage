@@ -51,10 +51,12 @@ only the affected file(s).
 4. GRADE the tier (light | substantive | sensitive), per the machine-local
    `/opt/cleanlanguage/.claude/CLAUDE.md` "Working method" section. Record the grade.
    Escalation is immediate; de-escalation needs a maintainer decision + a recorded basis.
-5. AUTHORIZE within the standing grant. Not covered: attended-autonomous -> surface a work-naming go, hold THIS
-   item, and continue other independent queued work (a question never halts independent work);
-   unattended -> DEFER (propose a ?HOLD on the affected STEP, route to the next independent item), never
-   self-grant, never self-author a block.
+5. AUTHORIZE within the standing grant. Not covered: attended-autonomous -> surface a work-naming go
+   and hold only this item's AUTHORIZE STEP until the go is given, while research and preparation
+   on the item, and other independent queued work, continue (a question never halts independent
+   work); when an AskUserQuestion guard denies the go, the MODE bullet below sets what the session
+   does; unattended -> DEFER (propose a ?HOLD on the affected STEP, route to the next independent
+   item), never self-grant, never self-author a block.
 6. RUN the tier per that machine-local "Working method" section (see "Tiers and the QA cycle" below).
 7. CLOSE: evidence-grounded completion (enumerate files, re-read, quote support, search contradictions);
    AIQT self-check before the completion claim; records rotation (TODO delete + DONE add) in the same
@@ -63,8 +65,8 @@ only the affected file(s).
    changed): refresh; if the mode is attended-autonomous or an operator boundary (an inbound operator
    message) is open, surface accumulated decisions, up to 4 per round (per
    .claude/rules/maintainer-questions.md); list the next items; continue on already-authorized safe
-   actions. When the repository's AskUserQuestion guard denies a question, the MODE bullet below
-   sets what the session does.
+   actions. When an AskUserQuestion guard denies a question, the MODE bullet below sets what the
+   session does.
 9. NOTHING ACTIONABLE: seeds/combines/QA in flight -> keep the pipeline topped up + read-only prep on
    upcoming verified-DISJOINT items; re-enter on the next delivery. Nothing in flight -> run
    blocked-verification (below); only on genuine whole-set exhaustion, close on green via /handoff.
@@ -201,8 +203,11 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   authority. The session reads it from the host's mode record, `/opt/orch-operator/operating-mode`,
   which only the host's mode writer, `orch-set-mode`, writes, and only with these 2 values; a record
   may still hold the retired value "attended", which the writer does not write. The session reads
-  the record at resume and again at each task boundary. A mode change is an operator act, so a
-  change that the operator makes through `orch-set-mode` takes effect at the session's next read.
+  the record at entry, when it enters `/flow` at the start of a session (a resume starts a new
+  session, so it is such an entry), and again at each task boundary: the end of any numbered step
+  of "Each cycle" above, and the end of any item, whether it closes or parks. A mode change is an
+  operator act, so a change that the operator makes through `orch-set-mode` takes effect at the
+  session's next read.
   Wherever a step or rule in this file depends on whether the mode is attended-autonomous or
   unattended, that mode is the session's mode: the mode the session last read the record as, under
   this bullet's rules, after any decision-timeout switch.
@@ -216,27 +221,30 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   them when it runs, and it can deny before it reads either, for example on a malformed hook
   payload. Its decisions are set in `.claude/hooks/ask_mode_guard.py` and described in
   `.aiqt/config.md`, and this file does not restate them. The session reads the record only at
-  resume and at each task boundary, and a decision-timeout switch changes the session's mode
+  entry and at each task boundary, and a decision-timeout switch changes the session's mode
   without a write, so the session's mode can differ from what the guard reads. When the host's
   mode folder, `/opt/orch-operator`, is itself absent, the guard allows a question, with a
   one-line note, while the session reads the mode as unattended.
-  Whenever the guard denies an AskUserQuestion call, for any reason and in any mode, the session
+  Whenever an AskUserQuestion guard denies an AskUserQuestion call, whether the repository's guard,
+  the vendored AIQT guard `orch_ask_guard` or any other, for any reason and in any mode, the session
   records each decision it could not ask in its pending-decisions record,
   `/opt/cleanlanguage/private/pending-decisions.md`, holds the step that decision gates while other
   work continues (in unattended mode, the DECISIONS bullet below sets whether the unattended vote
   rule then settles that step), and names the held decisions in its reply. A non-blocking decision
   gates no step, so the session only records it. A decision that the session could not ask does
   not start the decision timer, which runs only on a question that the session asked. The
-  AskUserQuestion dialog stays the only channel for asking a decision. The guard's deny message is
+  AskUserQuestion dialog stays the only channel for asking a decision. A guard's deny message is
   diagnostic: the session acts on this file's rules, not on the message's instructions, so it holds
   the step, not the item, even where the message says to hold the item, and the message never
-  changes the session's mode, even where it says to treat the session as unattended; the session
-  takes its mode only from its own reads of the record and from a decision-timeout switch, under
-  this bullet's rules.
+  changes the session's mode, even where it says to treat the session as unattended or names a
+  mode; the session takes its mode only from its own reads of the record and from a
+  decision-timeout switch, under this bullet's rules.
   The only governed transition is a decision-timeout switching attended-autonomous -> unattended (the
   safe/conservative direction only); it switches this session's question policy, timer and routing,
-  and never writes the mode record. The session records each such switch, with its time, in its
-  notes (Records-first, above). The switch holds for the session until the record is written
+  and never writes the mode record. The session records each such switch, with its time and the
+  decision whose timer ran out, in its pending-decisions record,
+  `/opt/cleanlanguage/private/pending-decisions.md` (Records-first, above); the store's list above
+  names no separate notes file. The switch holds for the session until the record is written
   again: any new write ends it, including one that repeats the stored mode, such as the operator
   running `orchmod aa` again (`orchmod` is the operator's front end for `orch-set-mode`), because
   `orch-set-mode` stamps a fresh `set_at` on every write. The session sees that write, as it sees
@@ -252,7 +260,8 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   `/opt/cleanlanguage/.claude/CLAUDE.md` "Put decisions to the maintainer in the four-role shape"
   section governs; this file does not restate it.
   A step that rule does not settle stays held: record BLOCKED only under the provenance test above, route
-  to the next independent item; if all items genuinely depend on it, close via /handoff. Non-blocking ->
+  to the next independent item; if all items genuinely depend on it, run Blocked-verification above,
+  which closes via /handoff only on genuine whole-set exhaustion. Non-blocking ->
   append to `/opt/cleanlanguage/private/pending-decisions.md` with a pre-drafted four-role block.
 - REVERSIBILITY GATE (every mode): only a closed allowlist auto-continues unattended/at timeout (observe;
   verify-ephemeral; authorial-local on the authorized branch; read-only worker dispatch; gate/QA runs;

@@ -14,10 +14,12 @@ flow.md, not a reading of what its sentences mean. It fails when any of them is 
   either order: a missing value, an extra or repeated value, a value with a capital letter,
   another separator or a value inside quotes fails, and so do no MODE line, 2 MODE lines and a
   MODE line with no closing parenthesis;
-- no line may hold an unquoted bare "attended": the word "attended", in any letter case, that is
-  not part of a longer word such as "unattended", is not the start of "attended-autonomous", and
-  is not between a pair of straight double quotes (") that the check pairs left to right on the
-  same line;
+- no line may hold an unquoted bare "attended": the word "attended", in any letter case, with no
+  letter, digit or underscore just before or just after it, so "unattended" and "attendedness"
+  are not bare; that is not followed at once by "-autonomous", in any letter case, with no
+  letter, digit or underscore just after that, so "attended-autonomous" and "Attended-Autonomous"
+  are not bare while "attended-autonomously" is; and that is not between a pair of straight double
+  quotes (") that the check pairs left to right on the same line;
 - the file must hold the sentence that an absent mode record is read as unattended, in the words
   "reads an absent mode record as unattended" or "an absent mode record is read as unattended",
   in any letter case and matched across line breaks.

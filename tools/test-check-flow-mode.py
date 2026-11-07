@@ -14,10 +14,12 @@ value, uses a comma as the separator or puts its values inside double quotes, wh
 is renamed so that none is left, when a second MODE line is added, closed or with no closing
 parenthesis, when the MODE line loses its closing parenthesis, when a line holds an unquoted bare
 "attended" in lower case, with a capital letter or inside typographic quotes, when such a line
-comes after line 250, and when the absent-record sentence is removed. It passes with the
-MODE values in the other order, with a quoted "attended", with a longer word that holds
-"attended", and with the absent-record sentence in its second wording, in capital letters, or
-wrapped across a line break. A path that does not exist, text
+comes after line 250, when a line holds a longer word that starts with "attended-autonomous",
+such as "attended-autonomously", and when the absent-record sentence is removed. It passes with
+the MODE values in the other order, with a quoted "attended", with a longer word that holds
+"attended", with "Attended-Autonomous" in capital letters outside the MODE line, and with the
+absent-record sentence in its second wording, in capital letters, or wrapped across a line
+break. A path that does not exist, text
 that is not UTF-8 and 2 arguments each give exit status 1.
 
 The residual cases hold the limits that the check's docstring states: a third value named outside
@@ -210,6 +212,14 @@ class Verdicts(unittest.TestCase):
 
     def test_a_longer_word_that_holds_attended_passes(self):
         self.assert_passes(added("- The record has no attendedness field."))
+
+    def test_a_word_that_extends_attended_autonomous_fails(self):
+        # Only the whole word "attended-autonomous" is exempt, so a longer word that starts with it
+        # still holds a bare "attended".
+        self.assert_fails(added("- The session runs attended-autonomously."), BARE)
+
+    def test_attended_autonomous_in_capital_letters_passes(self):
+        self.assert_passes(added("- Attended-Autonomous is one of the writer's 2 values."))
 
     def test_the_absent_rule_in_its_second_wording_passes(self):
         self.assert_passes(changed("The session " + ABSENT_WORDS,
