@@ -339,8 +339,15 @@ class AskModeGuard(unittest.TestCase):
     def test_device_at_the_host_directory_denies(self):
         # Only root can create a device node, so the case puts the mode file below /dev/null, a
         # character device every Linux host has: lstat finds it, and the open fails with ENOTDIR.
+        # Where lstat cannot examine /dev/null, as where the environment does not provide it, the
+        # case cannot set up the state it tests, so it skips, naming the error; it also skips where
+        # /dev/null is not a character device, and it runs wherever /dev/null is one.
         device = Path("/dev/null")
-        if not stat.S_ISCHR(device.lstat().st_mode):
+        try:
+            device_mode = device.lstat().st_mode
+        except OSError as error:
+            self.skipTest("cannot examine /dev/null: {}".format(error))
+        if not stat.S_ISCHR(device_mode):
             self.skipTest("/dev/null is not a character device on this host")
         mode_file = device / "operating-mode"
         self.assert_denies(self.run_guard(mode_file=mode_file),
