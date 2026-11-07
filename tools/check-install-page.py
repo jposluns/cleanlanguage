@@ -555,9 +555,10 @@ the content of ``defs`` or ``symbol``, and SVG text outside a ``text``
 element; a MathML ``annotation`` or ``annotation-xml``). It does
 not model a script that opens a popover, a dialog or a ``details``, or a
 browser's find-in-page that reveals ``hidden=until-found`` content.
-Among the descendant wipes, baseline.css hides, each at some widths,
-``.figure .stack``, ``.figure .wide``, ``.family .cards .cname``, and
-``.family .sig .pre`` and ``.family .sig .post``; none of those classes is in
+Among the descendant wipes, baseline.css declares, each at some widths,
+``display: none`` for ``.figure .stack``, ``.figure .wide``, and
+``.family .sig .pre`` and ``.family .sig .post``, and a 1-pixel clip like
+that of ``.vh`` for ``.family .cards .cname``; none of those classes is in
 ``CLASS_PIN``, so no checked element, ancestor or element it holds may carry
 one. ``tools/test-install-page.py`` pins, verbatim after normalizing only CSS
 whitespace and comments, every rule of fonts.css, palettes.css and
@@ -590,9 +591,11 @@ the baseline pin can bring one); and a box that is neither a checked element, an
 element it holds (a sibling or an earlier element, say), which can cover a
 checked element (positioned, or given an outline or a shadow) or move it by
 its own size or place in the flow (``.fresh { margin-bottom: 300vh; }`` on
-``p.meta`` moves the "Pick your AI" label and the family links 3 screen
-heights down): neither pin reaches it, so a rule for its class need not be
-pinned, and only the whole-file pin of ``tools/check-baseline-pin.py``
+``p.meta`` loses to ``.doc .meta { ... margin: 0 0 1.6rem; ... }`` in
+baseline.css, which is more specific, but ``.doc .meta.fresh {
+margin-bottom: 300vh; }`` outweighs that rule and may move the "Pick your AI"
+label and the family links 3 screen heights down): neither pin reaches it, so
+a rule for its class need not be pinned, and only the whole-file pin of ``tools/check-baseline-pin.py``
 refuses that change to a stylesheet. Check 8 reads the names of the
 attributes of such a box (``PAGE_ATTRIBUTES``) and its tag (``PAGE_TAGS``),
 but not the values of its attributes or its classes, so another value of an
@@ -618,8 +621,8 @@ text holds its family's name, and whether each family link's visible text is
 its family's name, so a ``p.verified`` with the wrong date passes, as does a
 heading that names another family beside its own; it checks that a step list has at
 least 1 step with visible text, not its steps or their wording, which
-``tools/build-site.py --check`` ties to ``site-src/pages``. Those are visible
-regressions a browser check, a reviewer, or the tri-family QA catches. Text
+``tools/build-site.py --check`` ties to ``site-src/pages``. Those are content
+regressions that a browser check, a reviewer, or the tri-family QA catches. Text
 made only of characters of ``ZERO_WIDTH`` and ``INVISIBLE`` (the rest of
 Unicode's Default_Ignorable_Code_Point set, U+034F, the Hangul fillers U+115F,
 U+1160, U+3164 and U+FFA0, the Mongolian free variation selectors, the
@@ -888,9 +891,10 @@ def inert_elements() -> tuple[str, ...]:
 # visually-hidden is kept although no stylesheet here defines it: an author who adds it means to hide
 # the element, and this gate cannot see whether a later stylesheet defines it, so it fails closed.
 # baseline.css also hides 2 classes on any element: only-dark ("img.only-dark, .only-dark { display: none; }"),
-# which it shows again only on an img in the dark scheme, and skip (".skip { position: absolute; left: 1rem;
-# top: -4rem; ... }"), off-screen until it has focus. Classes it hides only as a descendant (.figure .stack,
-# .figure .wide, .family .cards .cname, .family .sig .pre and .post) are not listed; the docstring names them.
+# which it sets to display: block again only on an img in the dark scheme, and skip (".skip { position: absolute;
+# left: 1rem; top: -4rem; ... }"), off-screen until it has focus. Classes that its rules give display: none, or a
+# 1-pixel clip, only as a descendant (.figure .stack, .figure .wide, .family .cards .cname, .family .sig .pre and
+# .post) are not listed; the docstring names them.
 # No checked element, ancestor or element it holds may carry any of these: none is in CLASS_PIN (check 8).
 HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
 # The HTML standard's rendering rules hide these with no stylesheet: display: none on datalist, rp, script and
@@ -1091,9 +1095,10 @@ def has_visible_text(data: str) -> bool:
 
 
 def name_text(data: str) -> str:
-    """The text as a reader sees it, to find a family's name in: U+0000 and the characters of ZERO_WIDTH deleted,
-    except the no-break space, which str.split reads as whitespace, each run of whitespace read as 1 space, and the
-    case folded."""
+    """A comparison string to find a family's name in: U+0000 and the characters of ZERO_WIDTH deleted, except the
+    no-break space, which str.split reads as whitespace, each run of whitespace read as 1 space, and the case folded.
+    The letters stay in their stored order: deleting a bidi control does not apply the order it may give them, and
+    the characters of INVISIBLE are kept."""
     return " ".join(data.translate({ord(c): None for c in ZERO_WIDTH.replace("\u00a0", "") + "\0"}).split()).casefold()
 
 

@@ -733,8 +733,8 @@ CASES = [
         (1, "text other than whitespace sits outside the head and the body")),
     ("a blank line between the pick label and the button row", edit(PAGE, PICK, PICK + "\n \n"), 0),
     ("bare text right after the button row", edit(PAGE, ROW_END, ROW_END + "Note."), 0),
-    # A browser may add a later body start tag's attributes to the page's own body element, so the gate reads a
-    # hiding one as hiding the h1 and the label whose text the parser has already read as visible.
+    # A browser may add the attributes of a later html or body start tag to the page's own element, so the gate reads
+    # a hiding one as hiding the h1 and the label whose text the parser has already read as visible.
     ("the hero's h1 hidden by a later body start tag", edit(PAGE, "</main>", "</main><body hidden>"),
         (1, "the hero's h1 reads as hidden")),
     ("the pick label hidden by a later html start tag", edit(PAGE, "</main>", '</main><html class="vh">'),
@@ -868,8 +868,8 @@ CASES = [
     # allow: with the ChatGPT page's link to #get in its prose gone, the 1 in its callout is its required link back.
     ("a family page whose link back to #get sits in a callout",
         edit(CHATGPT, '<a href="/install/#get">Get Clean Language</a>.</p>', "Get Clean Language.</p>"), 0),
-    # Nor may any of them carry an attribute that a pinned rule names (the gate's RULE_ATTRIBUTES): baseline.css hides
-    # [data-preset] and [data-col-toggles] in print.
+    # Nor may any of them carry an attribute that a pinned rule names (the gate's RULE_ATTRIBUTES): the print rules of
+    # baseline.css set display: none for [data-preset] and [data-col-toggles].
     ("a family page heading with data-preset", edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1 data-preset>ChatGPT</h1>"),
         (1, "the <h1> carries the attribute 'data-preset', " + RULE_NAMED)),
     ("div.doc with data-col-toggles", edit(PAGE, '<div class="doc">', '<div class="doc" data-col-toggles>'),
