@@ -4945,8 +4945,9 @@ class WholePageTest(unittest.TestCase):
     the render for the version and checksum it shows, a page rendered for another version that has no published
     release (release status 404) reaches the inconsistency report, and every page form reported in review
     (DISCOVERY round 4, findings 1, 2, 4 and 6), made on the page alone, in either state, exits 3 before any
-    release is read. A page for another version that has a published release reaches the checksum comparison
-    instead, which these tests do not run."""
+    release is read. A page for another version that has a published release reaches the checksum step
+    instead, which compares only when the gate can download and check that release's zip and .sha256; these
+    tests do not run it."""
 
     NAMES = ("REPO_ROOT", "VERIFY_PAGE", "SKILL", "REDIRECTS", "GENERATOR", "release_status", "tag_status", "gh",
              "release_published_at", "release_immutable")
