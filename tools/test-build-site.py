@@ -896,23 +896,22 @@ LABEL_IGNORED = ("\u2061", "\u2063", "\u180e", "\U000e0020", "\u034f", "\ufe0f")
 VALUE = '<p class="value">'
 VALUE_REGION = '<div class="region" id="what-it-fixes">'
 VALUE_END = "outside its aim.</p></div></div>"
-# The value paragraph holds markup or text outside its pin (since row 145, round 5): it may hold no element but an a
+# The value paragraph holds markup or text outside its pin (row 145): it may hold no element but an a
 # with no attribute but href or an em with no attribute, and no character but those of VALUE_SPACES (the ordinary
 # space, U+0009, U+000A, U+000D and U+00A0) and VALUE_CATEGORIES (letters, decimal digits, punctuation, and currency
 # and math symbols, apart from the generator's own lists), with at least 1 letter.
 VALUE_PIN_RULE = "the value paragraph holds markup or text outside its pin"
 VALUE_CATEGORIES = {"Lu", "Ll", "Lt", "Nd", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Sc", "Sm"}
 VALUE_SPACES = " \t\n\r\u00a0"
-# Since DISCOVERY round 8 the pin also admits these visible signs by name: the copyright, registered and trade mark
-# signs, the degree sign, and the vulgar fractions one quarter, one half and three quarters; since VERIFY round 8.1
-# also the service mark, the superscript digits and every other character named VULGAR FRACTION.
+# The pin also admits these visible signs by name: the copyright, registered, trade mark and service mark signs, the
+# degree sign, the superscript digits, and every character named VULGAR FRACTION.
 VALUE_SIGNS = ("\u00a9\u00ae\u2122\u2120\u00b0\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079"
                "\u00bc\u00bd\u00be\u2150\u2151\u2152\u2153\u2154\u2155\u2156\u2157\u2158\u2159\u215a\u215b\u215c"
                "\u215d\u215e\u2189")
-# Since VERIFY round 8.1: a page source carries no hidden=until-found, and no text in a details before its summary.
+# A page source carries no hidden=until-found, and no text in a details before its summary.
 UNTIL_FOUND_RULE = "a browser shows the content of an element with hidden=until-found"
 SUMMARY_ORDER_RULE = "a browser shows a details' summary before the rest of its content"
-# A table's children in the order a browser shows them (since DISCOVERY round 8), and at most 1 hero on a page.
+# A table's children in the order a browser shows them, and at most 1 hero on a page.
 TABLE_ORDER_RULE = "a browser shows a table's caption first and its thead before its tbody"
 HEROES_RULE = "a page source carries at most 1 hero"
 LOGO = "{{base}}assets/baseline/logos/cleanlanguage.svg"
@@ -921,14 +920,14 @@ LOGO = "{{base}}assets/baseline/logos/cleanlanguage.svg"
 # character, each refused by its own message.
 CLASS_PIN_RULE = "a page source carries only the class names of SOURCE_CLASSES"
 REGION_CLASS_RULE = "there a page source carries only the class names of VALUE_REGION_CLASSES"
-# The value paragraph's region holds other than its committed children (since DISCOVERY round 6): a p.lbl with text
+# The value paragraph's region holds other than its committed children: a p.lbl with text
 # that shows, then the div that holds the p.value, and no text; .region shows its first child in its label column.
 # The source cases match the part of the message that only with_about() writes (it names where the region starts),
 # since validate() refuses the same built page; validate()'s cases match the reason both give.
 REGION_CHILDREN_RULE = "the value paragraph's region at line"
 REGION_PIN_RULE = "so it holds only a p.lbl with text that shows, then the div that holds the p.value"
 REGION_LABEL = '<p class="lbl">What it gives you</p>'
-# A class name of VALUE_REGION_CLASSES away from its 1 place in the value region (since DISCOVERY round 7): region only
+# A class name of VALUE_REGION_CLASSES away from its 1 place in the value region: region only
 # on the region, lbl only on its label and value only on the p.value, since .region sets display: grid.
 REGION_PLACE_RULE = "is away from its place in the value paragraph's region"
 # A class of the generator's PLACED_CLASSES, which a stylesheet rule uses to place an element out of its source order,
@@ -1052,7 +1051,7 @@ SOURCE_REFUSALS = [
     ("no p.value", lambda root: edit(root, HOME, VALUE, '<p class="lead">'), VALUE_RULE),
     ("the value paragraph inside noscript", wrap_value("<noscript>", "</noscript>"), VALUE_RULE),
     ("the value paragraph inside canvas", wrap_value("<canvas>", "</canvas>"), ELEMENT_RULE),
-    # Since VERIFY round 8.1 the until-found rule refuses these before the value paragraph rule reads them as hidden.
+    # The until-found rule refuses these before the value paragraph rule reads them as hidden.
     ("the value paragraph inside a div with hidden=until-found", wrap_value('<div hidden="until-found">', "</div>"),
         UNTIL_FOUND_RULE),
     ("the value paragraph with a hidden attribute", lambda root: edit(root, HOME, VALUE, '<p class="value" hidden>'),
@@ -1124,9 +1123,9 @@ SOURCE_REFUSALS = [
         "<details><summary><select><summary><input></summary></select>", "</summary></details>"), ELEMENT_RULE),
     ("an input in a page source", inject('<p><input type="text"></p>'), ELEMENT_RULE),
     ("a select in upper case in a page source", inject("<SELECT></SELECT>"), ELEMENT_RULE),
-    # Each built with exit 0 at a5ab13a: a browser reads the earlier summary, moved out of the p or the table, as the
-    # closed details' first summary; and, in the third, ends the outer li and the div at the inner li, so that
-    # </div> ends the div around the open details and </summary> ends the outer summary, before the paragraph.
+    # In each, a browser reads the earlier summary, moved out of the p or the table, as the closed details' first
+    # summary; and, in the third, ends the outer li and the div at the inner li, so that </div> ends the div around
+    # the open details and </summary> ends the outer summary, before the paragraph.
     ("the value paragraph after a summary inside a p in a closed details", wrap_value(
         "<details><p><summary>x</summary></p><summary>", "</summary></details>"), SUMMARY_RULE),
     ("the value paragraph after a summary inside a table in a closed details", wrap_value(
@@ -1155,17 +1154,17 @@ SOURCE_REFUSALS = [
     ("text directly inside a tr", inject("<table><tbody><tr>x<td>y</td></tr></tbody></table>"), TABLE_TEXT_RULE),
     ("the value paragraph inside a dialog with open", wrap_value("<dialog open>", "</dialog>"), ELEMENT_RULE),
     ("the value paragraph inside a details with open", wrap_value("<details open>", "</details>"), ATTRIBUTE_RULE),
-    # Built with exit 0 at e8ca241: a browser closes all but 1 open details of a name group, here the later one, so
-    # the value paragraph inside it is hidden, where the parser reads both as open.
+    # A browser closes all but 1 open details of a name group, here the later one, so the value paragraph inside it
+    # is hidden, where the parser reads both as open.
     ("the value paragraph in the second of 2 open details of 1 name group", wrap_value(
         '<details name="g" open><summary>x</summary></details><details name="g" open><summary>y</summary>',
         "</details>"), ATTRIBUTE_RULE),
     ("a name attribute in upper case on a details", inject('<details NAME="g"><summary>x</summary></details>'),
         "a NAME attribute on a <details> start tag"),
     ("a title attribute", inject('<p title="x">y</p>'), ATTRIBUTE_RULE),
-    # Built with exit 0 at e8ca241: a browser's adoption agency moves the About block out of the a around the value
-    # region, and its label into a new a, where the parser reads the block inside the a. The value paragraph's own
-    # link is written as text, so no a starts inside the a.
+    # A browser's adoption agency moves the About block out of the a around the value region, and its label into a
+    # new a, where the parser reads the block inside the a. The value paragraph's own link is written as text, so no
+    # a starts inside the a.
     ("an a around the value region", lambda root: (
         edit(root, HOME, '<a href="{{base}}license/">free to use under CC BY-SA 4.0</a>',
              "free to use under CC BY-SA 4.0"),
@@ -1209,9 +1208,9 @@ SOURCE_REFUSALS = [
     ("the label in a paragraph in home.html", after_value(f"<p>{LABEL}</p>"), LABEL_RULE),
     ("a label region without the about class in home.html",
         after_value(f'<div class="region"><p class="lbl">{LABEL}</p></div>'), LABEL_RULE),
-    # Built with exit 0 at 1f8e98b: the stylesheets show the text of a p.lbl and a th in upper case, so where an
-    # uppercase rule applies (uppercase_here()), the label counts in any letter case; that includes an uppercase rule
-    # inside an element a reset rule (such as .lbl.file) sets back to none.
+    # The stylesheets show the text of a p.lbl and a th in upper case, so where an uppercase rule applies
+    # (uppercase_here()), the label counts in any letter case; that includes an uppercase rule inside an element a
+    # reset rule (such as .lbl.file) sets back to none.
     ("the label in mixed case in a p.lbl after the value region in home.html",
         after_value(f'<p class="lbl">{MIXED_LABEL}</p>'), LABEL_RULE),
     ("the label in mixed case in a p.lbl", inject(f'<p class="lbl">{MIXED_LABEL}</p>'), LABEL_RULE),
@@ -1228,8 +1227,8 @@ SOURCE_REFUSALS = [
     ("the label in mixed case in a span.lbl inside a table.matrix tbody th", inject(
         f'<table class="matrix"><caption>c</caption><tbody><tr><th><span class="lbl">{MIXED_LABEL}</span></th></tr>'
         "</tbody></table>"), LABEL_RULE),
-    # Built with exit 0 at 875b35f: a hidden element inside the label, which a browser does not show, split it; and
-    # U+2800 between its words, which a browser shows as a blank, kept it from counting.
+    # The label counts when split by a hidden element, which a browser does not show, or by U+2800 between its words,
+    # which a browser shows as a blank.
     ("the label in mixed case split by a hidden span inside a p.lbl after the value region in home.html",
         after_value('<p class="lbl">About <span hidden>x</span>This Project</p>'), LABEL_RULE),
     ("the label split by a hidden span in prose", inject("<p>About <span hidden>x</span>this project</p>"), LABEL_RULE),
@@ -1237,8 +1236,8 @@ SOURCE_REFUSALS = [
         inject('<p>About <span aria-hidden="true">x</span>this project</p>'), LABEL_RULE),
     ("the label split by a noscript in prose", inject("<p>About <noscript>x</noscript>this project</p>"), LABEL_RULE),
     ("the label with U+2800 between its words", inject("<p>About&#x2800;this project</p>"), LABEL_RULE),
-    # Built with exit 0 at 1f8e98b (the hidden and invisible forms) or 875b35f (U+2800): the value paragraph showed
-    # nothing. The pin refuses any element in it but an a with only href, and any character outside its list.
+    # Hidden content, invisible characters or U+2800 can leave the value paragraph showing nothing, so the pin refuses
+    # any element in it but an a with only href or an em with no attribute, and any character outside its list.
     ("the value paragraph's whole content in a hidden span", wrap_value_content("<span hidden>", "</span>"),
         VALUE_PIN_RULE),
     ("the value paragraph's whole content in an aria-hidden span",
@@ -1255,10 +1254,9 @@ SOURCE_REFUSALS = [
     ("a class attribute on the value paragraph's link", lambda root: edit(
         root, HOME, '<a href="{{base}}license/">free', '<a href="{{base}}license/" class="x">free'), VALUE_PIN_RULE),
     ("a value paragraph of digits only", value_content("2026"), VALUE_PIN_RULE),
-    # The pin admits an em with no attribute, whitespace a browser shows as a space, and currency and math symbols
-    # (since round 6), but no other element, no So outside VALUE_SIGNS (So holds U+2800; the signs since DISCOVERY
-    # round 8), no Lo (which holds the Hangul fillers) and no
-    # other whitespace.
+    # The pin admits an em with no attribute, whitespace a browser shows as a space, and currency and math symbols,
+    # but no other element, no So outside VALUE_SIGNS (So holds U+2800), no Lo (which holds the Hangul fillers) and
+    # no other whitespace.
     ("an em with a class in the value paragraph", value_content('Rules <em class="lbl">apply</em>'), VALUE_PIN_RULE),
     ("a strong in the value paragraph", value_content("Rules <strong>apply</strong>"), VALUE_PIN_RULE),
     ("a black star (So, outside VALUE_SIGNS) in the value paragraph", value_content("Rules &#x2605; 2026"),
@@ -1266,24 +1264,24 @@ SOURCE_REFUSALS = [
     ("2 CJK ideographs (Lo) in the value paragraph", value_content("Rules \u89c4\u5219"), VALUE_PIN_RULE),
     ("a value paragraph of only whitespace", value_content(" \n\t&nbsp; "), VALUE_PIN_RULE),
     ("U+000C in the value paragraph", value_content("Rules\x0capply"), VALUE_PIN_RULE),
-    # Since round 5.1 the pin reads the text after NFC, which composes a letter and a combining mark that has a
+    # The pin reads the text after NFC, which composes a letter and a combining mark that has a
     # precomposed form; a mark with none, and an invisible mark such as U+034F or a variation selector, stay refused.
     ("q and U+0301 in the value paragraph", value_content("Rules q\u0301"), VALUE_PIN_RULE),
     ("e and U+034F in the value paragraph", value_content("Cafe\u034f rules"), VALUE_PIN_RULE),
     ("e and U+FE0F in the value paragraph", value_content("Cafe\ufe0f rules"), VALUE_PIN_RULE),
     ("U+0301 alone in the value paragraph", value_content("Rules \u0301"), VALUE_PIN_RULE),
-    # Built with exit 0 at 06de967: U+202E shows the text after it reversed, so a browser shows this p.lbl as the label
-    # in upper case, where the label rule read the text in its stored order. A page source carries no bidi formatting
-    # character, as written or as a character reference, wherever it sits.
+    # U+202E shows the text after it reversed, so a browser shows this p.lbl as the label in upper case, where the
+    # label rule reads the text in its stored order. A page source carries no bidi formatting character, as written or
+    # as a character reference, wherever it sits.
     ("the label reversed by U+202E in a p.lbl after the value region in home.html",
         after_value('<p class="lbl">&#x202E;tcejorp siht tuobA</p>'), BIDI_RULE),
     ("U+200F as &rlm; in prose", inject("<p>x&rlm;y</p>"), BIDI_RULE),
     ("U+2067 in an alt attribute value",
         inject('<p><img src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="x\u2067y"></p>'), BIDI_RULE),
 ] + [(f"U+{ord(character):04X} in prose", inject(f"<p>x{character}y</p>"), BIDI_RULE) for character in BIDI] + [
-    # Built with exit 0 at 06de967: a stylesheet rule hides or moves an element by a class that a descendant or
-    # compound selector names (.figure .stack and .scheme .sun set display: none, .copy and .btn position: absolute),
-    # which the rules do not read. The value region carries only region, lbl and value; a page source only the class
+    # A stylesheet rule hides or moves an element by a class that a descendant or compound selector names
+    # (.figure .stack and .scheme .sun set display: none, .copy and .btn position: absolute), which the rules do not
+    # read. The value region carries only region, lbl and value; a page source only the class
     # names of SOURCE_CLASSES.
     ("the value paragraph inside a div.figure and a div.stack",
         wrap_value('<div class="figure"><div class="stack">', "</div></div>"), REGION_CLASS_RULE),
@@ -1301,11 +1299,11 @@ SOURCE_REFUSALS = [
     ("the label split by a span.sun inside a div.scheme in prose",
         inject('<div class="scheme"><p>About <span class="sun">x</span>this project</p></div>'), CLASS_PIN_RULE),
     ("a class name of SOURCE_CLASSES in upper case", inject('<p class="LBL">x</p>'), CLASS_PIN_RULE),
-    # Built with exit 0 at c22c9dd (round 5.1): .copy and .btn set position: absolute, so a browser shows the label
-    # that an element with either splits; and at 1000 px and below the grid areas of .entries a show a span.t before
-    # a span.d written ahead of it. Each class that places an element out of its source order is pinned to the
-    # element, companion classes, attributes and parent the committed sources use it with (PLACED_CLASSES), and the
-    # children of each grid placed by area to their committed order (PLACED_CHILDREN).
+    # .copy and .btn set position: absolute, so a browser shows the label that an element with either splits; and at
+    # 1000 px and below the grid areas of .entries a show a span.t before a span.d written ahead of it. Each class
+    # that places an element out of its source order is pinned to the element, companion classes, attributes and
+    # parent the committed sources use it with (PLACED_CLASSES), and the children of each grid placed by area to their
+    # committed order (PLACED_CHILDREN).
     ("the label in mixed case split by a span.btn in a p.lbl after the value region in home.html",
         after_value('<p class="lbl">About <span class="btn">x</span>This Project</p>'), PLACED_RULE),
     ("the label split by a span.copy in prose", inject('<p>About <span class="copy">x</span>this project</p>'),
@@ -1357,8 +1355,8 @@ SOURCE_REFUSALS = [
         inject('<p><img class="rail-logo" src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="x"></p>'),
         RAIL_RULE),
     ("a second <!--rail--> in a page source", inject("<!--rail-->"), RAILS_RULE),
-    # Built with exit 0 at 06de967: a browser shows an img's alt text in its place when the image does not load, in
-    # upper case under .lbl; the label rule reads it as text.
+    # A browser shows an img's alt text in its place when the image does not load, in upper case under .lbl; the label
+    # rule reads it as text.
     ("the label as an img's alt text in a p.lbl after the value region in home.html",
         after_value('<p class="lbl"><img src="{{base}}instructions/" alt="About this project"></p>'), LABEL_RULE),
     ("the label in mixed case as an img's alt text in a p.lbl", inject(
@@ -1367,8 +1365,8 @@ SOURCE_REFUSALS = [
     ("the label split by an img's alt text in prose",
         inject('<p>About <img src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="this"> project</p>'),
         LABEL_RULE),
-    # Built with exit 0 at 06de967: Latin small capitals and fullwidth Latin letters, which show as the label's
-    # letters; the label rule reads text after NFKD, with each Latin small capital as its capital letter.
+    # Latin small capitals and fullwidth Latin letters show as the label's letters; the label rule reads text after
+    # NFKD, with each Latin small capital as its capital letter.
     ("the label in Latin small capitals", inject(
         "<p>\u1d00\u0299\u1d0f\u1d1c\u1d1b \u1d1b\u029c\u026a\ua731 \u1d18\u0280\u1d0f\u1d0a\u1d07\u1d04\u1d1b</p>"),
         LABEL_RULE),
@@ -1377,9 +1375,9 @@ SOURCE_REFUSALS = [
         LABEL_RULE),
     ("the label in mixed case in fullwidth Latin letters in a p.lbl after the value region in home.html",
         after_value('<p class="lbl">\uff21bout \uff34his \uff30roject</p>'), LABEL_RULE),
-    # Built with exit 0 at b7da6c7 (DISCOVERY round 6): above 1000 px .region shows its first child in its label
-    # column, so with the value region's label removed, moved, repeated or hidden, or its div closed before the
-    # p.value, a browser shows the value paragraph there. The region holds exactly its committed children.
+    # Above 1000 px .region shows its first child in its label column, so with the value region's label removed,
+    # moved, repeated or hidden, or its div closed before the p.value, a browser shows the value paragraph there. The
+    # region holds exactly its committed children.
     ("the value region without its label", lambda root: edit(root, HOME, REGION_LABEL, ""), REGION_CHILDREN_RULE),
     ("the value region's label after its div", lambda root: (
         edit(root, HOME, REGION_LABEL, ""),
@@ -1405,8 +1403,8 @@ SOURCE_REFUSALS = [
     # The vh class on the value region's label, which only the region's class pin refused, with no case before.
     ("the vh class on the value region's label", lambda root: edit(
         root, HOME, REGION_LABEL, '<p class="lbl vh">What it gives you</p>'), REGION_CLASS_RULE),
-    # Built with exit 0 at b7da6c7: aria-hidden="true" hides an element from assistive technology only, so a browser
-    # shows this p.lbl as the label in upper case; the text that shows now keeps such an element.
+    # aria-hidden="true" hides an element from assistive technology only, so a browser shows this p.lbl as the label
+    # in upper case; the text that shows keeps such an element.
     ("the label split by an aria-hidden span and a vh span in a p.lbl after the value region in home.html",
         after_value('<p class="lbl"><span aria-hidden="true">About this</span><span class="vh">Read more</span> '
                     "project</p>"), LABEL_RULE),
@@ -1418,7 +1416,7 @@ SOURCE_REFUSALS = [
     ("the label split by an aria-hidden img's alt text in prose", inject(
         '<p>About <img src="{{base}}assets/baseline/logos/cleanlanguage.svg" alt="x" aria-hidden="true">this project'
         "</p>"), LABEL_RULE),
-    # Since DISCOVERY round 6 the grammar admits ASCII whitespace around an attribute's = and before an end tag's >;
+    # The grammar admits ASCII whitespace around an attribute's = and before an end tag's >;
     # the attribute list still reads each name.
     ("a title attribute with spaces around its =", inject('<p title = "x">y</p >'), ATTRIBUTE_RULE),
     # A browser drops only the line feed that is the next token after a pre start tag: a second one, or one after a
@@ -1429,13 +1427,13 @@ SOURCE_REFUSALS = [
     ("a button.copy with hidden after a comment and a line feed in a pre.hascopy",
         inject('<pre class="hascopy"><!--x-->\n<button class="copy" type="button" hidden>Copy</button>text</pre>'),
         PLACED_RULE),
-    # Built with exit 0 at 9134d0b (DISCOVERY round 7): the placement pins' own parser closed a self-closing ol, so
-    # the link lost its ol.entries, where a browser and PageScan keep the ol open; the pins now read PageScan.
+    # A browser keeps the ol open after a self-closing ol start tag, so the link stays in its ol.entries; the placement
+    # pins read PageScan, which keeps it open too.
     ("the label in an ol.entries link after a self-closing ol start tag, its span.d before its span.t", inject(
         '<ol class="entries"/><li><a href="{{base}}install/"><span class="d">project</span>'
         '<span class="t">About this</span></a></li></ol>'), ORDER_RULE),
-    # Built with exit 0 at 9134d0b: region, lbl or value away from its place in the value region, where .region
-    # lays out the value paragraph as a grid.
+    # The region, lbl or value class away from its place in the value region, where .region lays out the value
+    # paragraph as a grid.
     ("the value paragraph with the region class", lambda root: edit(root, HOME, VALUE, '<p class="value region">'),
         REGION_PLACE_RULE),
     ("the value paragraph with the region class and its content in an em", lambda root: (
@@ -1448,22 +1446,21 @@ SOURCE_REFUSALS = [
     ("a span.value in the value region's label", lambda root: edit(
         root, HOME, REGION_LABEL, '<p class="lbl"><span class="value">What</span> it gives you</p>'),
         REGION_PLACE_RULE),
-    # Built with exit 0 at 9134d0b: at 600 px and below the hero image sits beside the kicker, before the statement,
-    # so a label split between the kicker and site.json's logo_alt shows as the label; the label rule now also reads
-    # the hero in that order.
+    # At 600 px and below the hero image sits beside the kicker, before the statement, so a label split between the
+    # kicker and site.json's logo_alt shows as the label; the label rule also reads the hero in that order.
     ("the label split between the hero's kicker and logo_alt in home.html", lambda root: (
         edit(root, HOME, HERO_KICKER, '<p class="lbl gold">About this</p>'),
         edit(root, HOME, HERO_ALT, 'alt="PROJECT"'),
         edit(root, "site-src/site.json", f'"logo_alt": "{HERO_ALT[5:-1]}"', '"logo_alt": "PROJECT"')), LABEL_RULE),
-    # Built with exit 0 at 386d98c: with no kicker, at 600 px and below the hero image still sits before the
-    # statement, which the label rule read before the image's alt text.
+    # With no kicker, at 600 px and below the hero image still sits before the statement, so the label rule reads the
+    # image's alt text before the statement.
     ("the label split between logo_alt and the statement of a hero with no kicker in home.html", lambda root: (
         edit(root, HOME, HERO_KICKER + HERO_STATEMENT, '<h1 class="statement">project</h1>'),
         edit(root, HOME, HERO_ALT, 'alt="About this"'),
         edit(root, "site-src/site.json", f'"logo_alt": "{HERO_ALT[5:-1]}"', '"logo_alt": "About this"')), LABEL_RULE),
-    # Built with exit 0 at 4887fe1 (DISCOVERY round 8): the value region's label as an img alone, whose alt text a
-    # browser shows only when it does not load; and an img's alt text splitting the label, which a browser shows
-    # without it when the image loads. The region's label holds text, and each alt text is read kept and left out.
+    # The value region's label as an img alone, whose alt text a browser shows only when it does not load; and an
+    # img's alt text splitting the label, which a browser shows without it when the image loads. The region's label
+    # holds text, and each alt text is read kept and left out.
     ("the value region's label as an img with its text as alt text", lambda root: edit(
         root, HOME, REGION_LABEL, f'<p class="lbl"><img src="{LOGO}" alt="What it gives you"></p>'),
         REGION_CHILDREN_RULE),
@@ -1471,8 +1468,8 @@ SOURCE_REFUSALS = [
         after_value(f'<p class="lbl">About <img src="{LOGO}" alt="x">this project</p>'), LABEL_RULE),
     ("the label from 1 img's alt text, split by another's, in prose", inject(
         f'<p>About <img src="{LOGO}" alt="this"> <img src="{LOGO}" alt="x"> project</p>'), LABEL_RULE),
-    # Built with exit 0 at 4887fe1: a browser shows a table's caption first and its thead before its tbody, so text in
-    # a caption or thead after a tbody joined the body's text in another order than the source's.
+    # A browser shows a table's caption first and its thead before its tbody, so text in a caption or thead after a
+    # tbody joins the body's text in another order than the source's.
     ("the label split between a caption after a tbody and that tbody", inject(
         "<table><tbody><tr><td>project</td></tr></tbody><caption>About this</caption></table>"), TABLE_ORDER_RULE),
     ("a thead after a tbody", inject(
@@ -1484,52 +1481,51 @@ SOURCE_REFUSALS = [
     ("2 captions in a table", inject("<table><caption>c</caption><caption>d</caption></table>"), TABLE_ORDER_RULE),
     ("2 theads in a table", inject(
         "<table><thead><tr><th>h</th></tr></thead><thead><tr><th>i</th></tr></thead></table>"), TABLE_ORDER_RULE),
-    # Built with exit 0 at 4887fe1: a label inside a closed details, which shows once a reader opens it; the label
-    # rule reads a details as opened (since VERIFY round 8.1, both closed and opened).
+    # A label inside a closed details, which shows once a reader opens it; the label rule reads a details both closed
+    # and opened.
     ("the label split by a hidden span in a p.lbl in a closed details", inject(
         '<details><summary>x</summary><p class="lbl">About<span hidden>y</span>this project</p></details>'),
         LABEL_RULE),
     ("the label split by a hidden span directly in a closed details",
         inject("<details>About <span hidden>y</span>this project</details>"), LABEL_RULE),
-    # Built with exit 0 at 4887fe1: a second hero, whose narrow-width order the label rule did not read.
+    # A second hero, whose narrow-width order the label rule does not read: it reads that order for 1 hero only.
     ("a second hero in home.html", lambda root: edit(
         root, HOME, "</section>", '</section><section class="hero" aria-label="x"><div class="hero-text">'
         '<p class="lbl">About this</p><p class="intro">x</p></div><div class="hero-art">'
         f"<img src=\"{LOGO}\" {HERO_ALT}></div></section>"), HEROES_RULE),
-    # Built with exit 0 at 1b389b5 and exit 1 at 4887fe1 (VERIFY round 8.1): a closed details shows its summary and
-    # not the rest, so the label reads across it. The label rule reads each details both closed and opened.
+    # A closed details shows its summary and not the rest, so the label reads across it. The label rule reads each
+    # details both closed and opened.
     ("the label across a closed details whose body is a paragraph", inject(
         "<details><summary>About this</summary><p>More information</p></details><p>project</p>"), LABEL_RULE),
     ("the label across a closed details whose body is text", inject(
         "<details><summary>About this</summary>More information</details><p>project</p>"), LABEL_RULE),
-    # Built with exit 0 at 4887fe1 and at 1b389b5: the label shows with an opened details around a closed one.
+    # The label shows with an opened details around a closed one.
     ("the label across a closed details inside an opened one", inject(
         "<details><summary>x</summary><p>About this</p><details><summary></summary><p>z</p></details></details>"
         "<p>project</p>"), LABEL_RULE),
-    # Built with exit 0 at 1b389b5 and exit 1 at 4887fe1: the value region's label as folded text alone, which shows
-    # only once a reader opens the details.
+    # The value region's label as folded text alone, which shows only once a reader opens the details.
     ("the value region's label folded in a closed details in a button", lambda root: edit(
         root, HOME, REGION_LABEL, '<p class="lbl"><button type="button"><details><summary></summary>'
         "<p>What it gives you</p></details></button></p>"), REGION_CHILDREN_RULE),
-    # Built with exit 0 at 4887fe1 and at 1b389b5: find-in-page shows the content of hidden=until-found.
+    # Find-in-page shows the content of hidden=until-found.
     ("the label split by a hidden span in a p with hidden=until-found",
         inject('<p hidden="until-found">About <span hidden>y</span>this project</p>'), UNTIL_FOUND_RULE),
     ("hidden=Until-Found in mixed case", inject('<p hidden="Until-Found">x</p>'), UNTIL_FOUND_RULE),
     ("hidden=until-found with a character reference", inject('<p hidden="until&#45;found">x</p>'), UNTIL_FOUND_RULE),
-    # Built with exit 0 at 4887fe1 and at 1b389b5: a browser shows a details' summary first, so this shows the label.
+    # A browser shows a details' summary first, so this shows the label.
     ("the label from a summary after text in its details",
         inject("<details>this project<summary>About</summary></details>"), SUMMARY_ORDER_RULE),
-    ("a summary after text in a details (a source pass until VERIFY round 8.1)",
+    ("a summary after text in a details",
         inject("<details>x <summary>y</summary><p>z</p></details>"), SUMMARY_ORDER_RULE),
-    # Refused before and since VERIFY round 8.1: each choice of the alt text carries 1 label, and the count is 1.
+    # Each choice of the alt text carries 1 label, and the count is 1.
     ("the label with and without an alt text that carries it in upper case",
         inject(f'<p>About this<img src="{LOGO}" alt="ABOUT THIS PROJECT">project</p>'), LABEL_RULE),
-    # Refused before and since VERIFY round 8.1: characters of No outside VALUE_SIGNS.
+    # Characters of No outside VALUE_SIGNS are refused.
     ("a fraction numerator one (U+215F, No) in the value paragraph", value_content("Rules &#x215F;3"),
         VALUE_PIN_RULE),
     ("a subscript two (U+2082, No) in the value paragraph", value_content("Rules H&#x2082;O"), VALUE_PIN_RULE),
-    # Built with exit 0 at 77823df (DISCOVERY round 9): copy.js shows every button with data-copy, whatever its
-    # classes, and replaces its content with plain text on a copy, so data-copy sits only on the copy button.
+    # copy.js shows every button with data-copy, whatever its classes, and replaces its content with plain text on a
+    # copy, so data-copy sits only on the copy button.
     ("a hidden unclassed button with data-copy holding the label split by a hidden span", after_value(
         '<button type="button" data-copy="what-it-fixes" hidden>About <span hidden>x</span>this project</button>'),
         DATA_COPY_RULE),
@@ -1553,16 +1549,16 @@ SOURCE_REFUSALS = [
     ("a button.copy with data-copy holding Copy and a hidden span", inject(
         '<pre id="c1" class="hascopy"><button class="copy" type="button" data-copy="c1" hidden>Copy<span hidden>x'
         "</span></button>x</pre>"), DATA_COPY_RULE),
-    # Built with exit 0 at 77823df (DISCOVERY round 9): a browser with scripting off shows a noscript's content, so
-    # the label rule also reads the text that shows with scripting off, hiding inside the noscript applying.
+    # A browser with scripting off shows a noscript's content, so the label rule also reads the text that shows with
+    # scripting off, hiding inside the noscript applying.
     ("the label split by a hidden span in a noscript paragraph",
         inject("<noscript><p>About <span hidden>x</span>this project</p></noscript>"), LABEL_RULE),
     ("the label split by a hidden span in a noscript p.lbl",
         inject('<noscript><p class="lbl">About <span hidden>x</span>this project</p></noscript>'), LABEL_RULE),
     ("the label across a hidden span and a noscript paragraph",
         inject("<p>About <span hidden>x</span></p><noscript><p>this project</p></noscript>"), LABEL_RULE),
-    # Refused at 77823df and since (DISCOVERY round 9, an accepted residual): open stays outside SOURCE_ATTRIBUTES,
-    # since the rules read a details with open as opened only, where a reader can close it.
+    # An accepted residual: open stays outside SOURCE_ATTRIBUTES, since the rules read a details with open as opened
+    # only, where a reader can close it.
     ("an ordinary open details outside the value region",
         inject("<details open><summary>Help</summary><p>More information</p></details>"), ATTRIBUTE_RULE),
 ] + [(f"the label with U+{ord(character):04X}", inject(f"<p>About th{character}is project</p>"), LABEL_RULE)
@@ -1585,8 +1581,7 @@ SOURCE_PASSES = [
     ("a noscript around a plain paragraph", inject("<noscript><p>x</p></noscript>")),
     ("a noscript after a noscript", inject("<noscript><p>x</p></noscript><noscript><p>y</p></noscript>")),
     # Inside the page source tree rules: a div in a button in a p, a list in an li, and a table whose parts hold only
-    # their own children, with whitespace between them. (Text before a details' first summary passed here until
-    # VERIFY round 8.1; SOURCE_REFUSALS now refuses it.)
+    # their own children, with whitespace between them. SOURCE_REFUSALS refuses text before a details' first summary.
     ("a div inside a button inside a p", inject('<p><button type="button"><div>x</div></button></p>')),
     ("a list inside an li", inject("<ul><li>x<ul><li>y</li></ul></li></ul>")),
     ("a table with a caption, a thead and a tbody", inject(
@@ -1597,12 +1592,12 @@ SOURCE_PASSES = [
     ("the label in mixed case in a link outside .chips and .picker",
         inject(f'<p><a href="{{{{base}}}}install/">{MIXED_LABEL}</a></p>')),
     # A reset rule of higher specificity sets text-transform back to none, so the label in mixed case does not count.
-    # A page source carries no matrix, org, reg-cap or count class (SOURCE_CLASSES, since round 6), so the other 3
+    # A page source carries no matrix, org, reg-cap or count class (SOURCE_CLASSES), so the other 3
     # reset rules are checked through validate() and the helper (check_about_block(), RESET_PASSES).
     ("the label in mixed case in a p.lbl.file", inject(f'<p class="lbl file">{MIXED_LABEL}</p>')),
     ("a value paragraph of 1 word", value_content("Rules")),
     ("a value paragraph of only its link", value_content('<a href="{{base}}license/">Licence</a>')),
-    # Since round 6: a line break and a tab, which a browser collapses to a space, a no-break space, currency and math
+    # A line break and a tab, which a browser collapses to a space, a no-break space, currency and math
     # symbols, and an em with no attribute.
     ("a value paragraph with a line break and a tab", value_content("Rules\n\tapply")),
     ("a value paragraph with a no-break space", value_content("Rules&nbsp;apply")),
@@ -1614,7 +1609,7 @@ SOURCE_PASSES = [
     ("the label in an attribute value", inject(f'<p aria-label="{LABEL}">x</p>')),
     ("an attribute of SOURCE_ATTRIBUTES in upper case", inject('<p CLASS="lead" ARIA-LABEL="x">y</p>')),
     ("the label in a comment in home.html", after_value(f"<!-- {LABEL} -->")),
-    # Since round 5.1: each class of PLACED_CLASSES where the committed sources use it, and a value paragraph with a
+    # Each class of PLACED_CLASSES where the committed sources use it, and a value paragraph with a
     # combining accent after a letter that NFC composes (e and U+0301 read as U+00E9), as a precomposed letter does.
     ("an a.btn.inline in a p", inject('<p><a class="btn inline" href="{{base}}install/">Install</a></p>')),
     ("a button.copy with hidden, first in a pre.hascopy",
@@ -1628,10 +1623,9 @@ SOURCE_PASSES = [
     ("a span.n in an li", inject('<ol class="clauses"><li><span class="n">1</span><p>x</p></li></ol>')),
     ("a value paragraph with e and U+0301", value_content("Cafe\u0301 rules")),
     ("a value paragraph with U+00E9", value_content("Caf\u00e9 rules")),
-    # Since DISCOVERY round 6: ASCII whitespace around an attribute's = and before an end tag's >, which a browser and
-    # the parser read alike (refused at b7da6c7), with the attribute list reading each name and not the value's words;
-    # a line feed directly after a pre start tag, which a browser drops; and an aria-hidden label in the value region,
-    # which a browser shows.
+    # ASCII whitespace around an attribute's = and before an end tag's >, which a browser and the parser read alike,
+    # with the attribute list reading each name and not the value's words; a line feed directly after a pre start tag,
+    # which a browser drops; and an aria-hidden label in the value region, which a browser shows.
     ("the value paragraph's start tag with spaces around its = and its end tag with a space", lambda root: (
         edit(root, HOME, VALUE, '<p class = "value">'),
         edit(root, HOME, VALUE_END, VALUE_END.replace("</p>", "</p >", 1)))),
@@ -1641,26 +1635,26 @@ SOURCE_PASSES = [
         inject('<pre class="hascopy">\n<button class="copy" type="button" hidden>Copy</button>text</pre>')),
     ("an aria-hidden label in the value region", lambda root: edit(
         root, HOME, REGION_LABEL, '<p class="lbl" aria-hidden="true">What it gives you</p>')),
-    # Since DISCOVERY round 7 (exit 1 at 9134d0b): the About block goes where the parser read the value region's end
-    # tag end, which the grammar admits with ASCII whitespace before its >, and validate() reads it there too.
+    # The About block goes where the value region's end tag ends as the parser reads it, with ASCII whitespace before
+    # its >, which the grammar admits; validate() reads it there too.
     ("the value region's end tag with a space before its >",
         lambda root: edit(root, HOME, VALUE_END, VALUE_END[:-1] + " >")),
     ("the value region's end tag with a line feed before its >",
         lambda root: edit(root, HOME, VALUE_END, VALUE_END[:-1] + "\n>")),
-    # Since VERIFY round 7.1: that end tag in upper case, which the grammar admits (check_about_block() holds the
+    # That end tag in upper case, which the grammar admits (check_about_block() holds the
     # test's About helper to it).
     ("the value region's end tag in upper case",
         lambda root: edit(root, HOME, VALUE_END, VALUE_END[:-6] + "</DIV>")),
-    # Since VERIFY round 7.1 (exit 1 at 386d98c for the second): with no kicker, the label rule places the hero image's
-    # alt text where the hero's text starts, before the statement, as the grid does at 600 px and below.
+    # With no kicker, the label rule places the hero image's alt text where the hero's text starts, before the
+    # statement, as the grid does at 600 px and below.
     ("a hero with no kicker", lambda root: edit(root, HOME, HERO_KICKER, "")),
     ("a hero with no kicker, its statement About this and logo_alt project", lambda root: (
         edit(root, HOME, HERO_KICKER + HERO_STATEMENT, '<h1 class="statement">About this</h1>'),
         edit(root, HOME, HERO_ALT, 'alt="project"'),
         edit(root, "site-src/site.json", f'"logo_alt": "{HERO_ALT[5:-1]}"', '"logo_alt": "project"'))),
-    # Since DISCOVERY round 8 (exit 1 at 4887fe1): each sign of VALUE_SIGNS in the value paragraph, as written and as a
-    # character reference; and, inside the new pins, a table with 2 tbody elements after its caption and thead, and
-    # an img beside the text of the value region's label.
+    # Each sign of VALUE_SIGNS in the value paragraph, as written and as a character reference; and, inside the table
+    # order and region children pins, a table with 2 tbody elements after its caption and thead, and an img beside
+    # the text of the value region's label.
     ("a value paragraph with the signs of VALUE_SIGNS", value_content(f"Rules{VALUE_SIGNS} 2026")),
     ("a value paragraph with the signs of VALUE_SIGNS as character references",
         value_content("Rules&trade; &copy; &reg; 20&deg;, &frac14; &frac12; &frac34;")),
@@ -1669,16 +1663,16 @@ SOURCE_PASSES = [
         "<tbody><tr><td>e</td></tr></tbody></table>")),
     ("an img beside the text of the value region's label", lambda root: edit(
         root, HOME, REGION_LABEL, f'<p class="lbl"><img src="{LOGO}" alt="x">What it gives you</p>')),
-    # Since VERIFY round 8.1 (exit 1 at 4887fe1 and at 1b389b5): the service mark, superscript digits and vulgar
-    # fractions added to VALUE_SIGNS, as character references; and, inside the new rules, whitespace in a details
-    # before its summary and the value region's label beside a closed details.
+    # The service mark, the superscript digits and further vulgar fractions of VALUE_SIGNS, as character references;
+    # and, inside the summary order and region children rules, whitespace in a details before its summary and the
+    # value region's label beside a closed details.
     ("a value paragraph with the added signs of VALUE_SIGNS as character references",
         value_content("Rules&#x2120; x&sup2; y&sup1; &#x2070; &frac13; &frac23; &frac18; &#x2189;")),
     ("whitespace in a details before its summary", inject("<details>\n <summary>x</summary>y</details>")),
     ("the value region's label beside a closed details", lambda root: edit(
         root, HOME, REGION_LABEL, '<p class="lbl">What it gives you<button type="button"><details><summary>'
         "</summary><p>x</p></details></button></p>")),
-    # Since DISCOVERY round 9: the copy button as the committed sources write it, its data-copy naming its pre.
+    # The copy button as the committed sources write it, its data-copy naming its pre.
     ("a button.copy with data-copy naming its pre.hascopy", inject(
         '<pre id="c1" class="hascopy"><button class="copy" type="button" data-copy="c1" hidden>Copy</button>x</pre>')),
 ]
@@ -1699,10 +1693,10 @@ RESET_PASSES = [
 
 
 def check_rail_reader(failures: list[str]) -> int:
-    """The rail reads each h2 with an id as the generator's parser does (since DISCOVERY round 7; at 9134d0b a regex
-    needed exactly id=" and </h2>, so the first 2 cases dropped an entry or ran one into the prose with exit 0): with
-    spaces around an h2's =, a space before its end tag's >, or its id attribute in upper case after a class, the
-    demo page builds with the rail that its committed source gives."""
+    """The rail reads each h2 with an id as the generator's parser does, not as a regex that needs exactly id=" and
+    </h2>, which would drop an entry or run one into the prose: with spaces around an h2's =, a space before its end
+    tag's >, or its id attribute in upper case after a class, the demo page builds with the rail that its committed
+    source gives."""
     cases = [
         ("spaces around an h2's =", '<h2 id="try">', '<h2 id = "try">'),
         ("a space before an h2's end tag's >", "Watch it work</h2>", "Watch it work</h2 >"),
@@ -1979,7 +1973,7 @@ def check_inner_about_rows(failures: list[str]) -> int:
 
 
 def check_label_count(failures: list[str]) -> int:
-    """The generator's label_count(), called directly (since VERIFY round 8.1): it counts the labels of 1 choice of
+    """The generator's label_count(), called directly: it counts the labels of 1 choice of
     its optional groups together, each group read left out and shown, a group inside another shown only with it. The
     keys stand for where a details or an img starts."""
     details, inner, img = (1, 0), (2, 0), (3, 0)
@@ -2003,7 +1997,7 @@ def check_label_count(failures: list[str]) -> int:
 
 def check_value_signs(failures: list[str]) -> int:
     """VALUE_SIGNS, the generator's and the test's copy alike, holds only visible signs of So and No that NFC leaves
-    as they are, none whitespace or a Default_Ignorable_Code_Point (since VERIFY round 8.1)."""
+    as they are, none whitespace or a Default_Ignorable_Code_Point."""
     if LOADED.VALUE_SIGNS != VALUE_SIGNS:
         failures.append("the generator's VALUE_SIGNS differs from the test's copy")
     for sign in VALUE_SIGNS:
@@ -2135,7 +2129,7 @@ def check_about_block(failures: list[str]) -> int:
         ("one word of the value paragraph outside a hidden span",
             [(VALUE, VALUE + "Rules <span hidden>"), (end, end_in("</span>"))], value_rule),
         ("a value paragraph of 1 word", [(VALUE + content, VALUE + "Rules")], None),
-        # Since round 6: whitespace a browser shows as a space, currency and math symbols and an em with no attribute
+        # Whitespace a browser shows as a space, currency and math symbols and an em with no attribute
         # pass; an em with an attribute and So outside VALUE_SIGNS do not. An img's alt text, Latin small capitals
         # and fullwidth Latin letters carry the label.
         ("a value paragraph with whitespace, symbols and an em",
@@ -2143,9 +2137,8 @@ def check_about_block(failures: list[str]) -> int:
         ("an em with a class in the value paragraph", [(VALUE + content, VALUE + 'Rules <em class="x">tax</em>')],
             value_rule),
         ("a black star in the value paragraph", [(VALUE + content, VALUE + "Rules &#x2605; 2026")], value_rule),
-        # Since DISCOVERY round 8: the signs of VALUE_SIGNS pass; an img alone is no label text in the value region;
-        # an img's alt text is read kept and left out; and a closed details is read as opened for the label (since
-        # VERIFY round 8.1, both closed and opened).
+        # The signs of VALUE_SIGNS pass; an img alone is no label text in the value region; an img's alt text is read
+        # kept and left out; and a closed details is read both closed and opened for the label.
         ("the signs of VALUE_SIGNS in the value paragraph",
             [(VALUE + content, VALUE + "Rules &copy; &reg; &trade; 20&deg; &frac14; &frac12; &frac34;")], None),
         ("the value region's label as an img with its text as alt text",
@@ -2156,7 +2149,7 @@ def check_about_block(failures: list[str]) -> int:
         ("a second label split by a hidden span in a p.lbl in a closed details after the block",
             [(block, block + '<details><summary>x</summary><p class="lbl">About<span hidden>y</span>this project</p>'
                              "</details>")], label_rule),
-        # Since VERIFY round 8.1: a closed details is read closed and opened for the label, its folded content is no
+        # A closed details is read closed and opened for the label, its folded content is no
         # text that shows of the value region's label, and the added signs of VALUE_SIGNS pass.
         ("a second label across a closed details after the block",
             [(block, block + "<details><summary>About this</summary><p>More information</p></details><p>project</p>")],
@@ -2166,7 +2159,7 @@ def check_about_block(failures: list[str]) -> int:
                             "</details></button></p>")], region_rule),
         ("the added signs of VALUE_SIGNS in the value paragraph",
             [(VALUE + content, VALUE + "Rules&#x2120; x&sup2; &frac13; &frac23; &#x2189;")], None),
-        # Since round 5.1 the pin reads the text after NFC: e and U+0301 pass; e and U+034F do not.
+        # The pin reads the text after NFC: e and U+0301 pass; e and U+034F do not.
         ("a value paragraph with e and U+0301", [(VALUE + content, VALUE + "Cafe\u0301 rules")], None),
         ("a value paragraph with e and U+034F", [(VALUE + content, VALUE + "Cafe\u034f rules")], value_rule),
         ("a second label as an img's alt text in a p.lbl after the block",
@@ -2176,7 +2169,7 @@ def check_about_block(failures: list[str]) -> int:
                               "\u1d04\u1d1b</p>")], label_rule),
         ("a second label in fullwidth Latin letters after the block",
             [(block, block + "<p>\uff21bout this \uff50roject</p>")], label_rule),
-        # Since DISCOVERY round 6: the value region holds exactly a p.lbl with text that shows, then the div that
+        # The value region holds exactly a p.lbl with text that shows, then the div that
         # holds the p.value, and no text; aria-hidden="true" alone hides nothing that a browser shows.
         ("the value region without its label", [(REGION_LABEL, "")], region_rule),
         ("the value region's label after its div", [(REGION_LABEL, ""), (VALUE_END, VALUE_END.replace(
@@ -2202,11 +2195,11 @@ def check_about_block(failures: list[str]) -> int:
             (VALUE_END, VALUE_END.replace("</p></div></div>", "</p></p><div></div></div>"))], region_rule),
         ("an aria-hidden label in the value region",
             [(REGION_LABEL, '<p class="lbl" aria-hidden="true">What it gives you</p>')], None),
-        # Since DISCOVERY round 7: the block starts where the region's end tag ends as the parser reads that tag,
+        # The block starts where the region's end tag ends as the parser reads that tag,
         # which may hold ASCII whitespace before its >.
         ("the value region's end tag with a space before its >", [("</div>" + block, "</div >" + block)], None),
         ("the value region's end tag with a line feed before its >", [("</div>" + block, "</div\n>" + block)], None),
-        # Since VERIFY round 7.1: the helper reads that end tag's name in any ASCII letter case, as the grammar does.
+        # The helper reads that end tag's name in any ASCII letter case, as the grammar does.
         ("the value region's end tag in upper case", [("</div>" + block, "</DIV>" + block)], None),
         ("a second label split by an aria-hidden span and a vh span in a p.lbl after the block",
             [(block, block + '<p class="lbl"><span aria-hidden="true">About this</span><span class="vh">Read more'
@@ -2214,9 +2207,8 @@ def check_about_block(failures: list[str]) -> int:
         ("a second label split by an aria-hidden img's alt text after the block",
             [(block, block + '<p>About <img src="/instructions/" alt="x" aria-hidden="true">this project</p>')],
             label_rule),
-        # Since DISCOVERY round 9 (at 77823df the generator refused the first and the helper passed it; both passed
-        # the second): the helper reads the hero's narrow-width order, and both read the text that shows with
-        # scripting off.
+        # The helper reads the hero's narrow-width order, as the generator does, and both read the text that shows
+        # with scripting off.
         ("a second label from the hero kicker About this and its image's alt text PROJECT",
             [(HERO_KICKER, '<p class="lbl gold">About this</p>'), (HERO_ALT, 'alt="PROJECT"')], label_rule),
         ("a second label split by a hidden span in a noscript paragraph after the block",
@@ -2291,7 +2283,7 @@ def check_uppercase_selectors(failures: list[str]) -> int:
         # A CSS escape spells text-transform here; a browser reads it as that property.
         ("an escaped property name", listed, resets, sheets + [".added { text\\2d transform: uppercase }"],
             "a property name with an escape, 'text\\\\2d transform', in '.added', " + unread),
-        # Since round 5.1: small capitals show the label in capital letters, which the label rule does not read, so a
+        # Small capitals show the label in capital letters, which the label rule does not read, so a
         # caps value, or a value that cannot be read, of a property that can set them fails, in any rule or at-rule.
         ("a small-caps rule", listed, resets, sheets + [".added { font-variant: Small-Caps }"],
             f"font-variant: small-caps in '.added', {unread}"),
@@ -2599,7 +2591,7 @@ def check_page_rules(failures: list[str]) -> int:
         ("a bare svg outside the switch", "license", "/", "<svg></svg>", "an inline <svg> other than the light and dark"),
         ("U+202E as a character reference", "license", "/", "<p>&#x202E;x</p>", PAGE_BIDI_RULE),
         ("U+2067 as written", "license", "/", "<p>x\u2067y</p>", PAGE_BIDI_RULE),
-        # Since DISCOVERY round 7 the dash refusal reads character references too, and "what this is" is read in the
+        # The dash refusal reads character references too, and "what this is" is read in the
         # text the parser reads, character references decoded.
         ("an em dash as a character reference", "license", "/", "<p>x &mdash; y</p>", "an en or em dash"),
         ("an en dash as a numeric character reference", "license", "/", "<p>1&#8211;2</p>", "an en or em dash"),
