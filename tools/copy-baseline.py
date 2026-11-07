@@ -59,6 +59,11 @@ Before its first write it refuses (exit 1) a link, or a file
 in place of a folder, at a folder it clears or writes into or at any folder
 above one under the repository root, and a link or a folder in place of a file
 it writes outside the folders it clears, so it never writes through a link.
+Before it opens a file it reads, the gate ``tools/check-baseline-pin.py``,
+``site-src/site.json``, ``SHA256SUMS`` or a file in the version folder, it
+refuses (exit 1) one that is a link or not a regular file, such as a FIFO,
+since it would read the input from wherever a link leads or wait on a FIFO
+without end; it opens each without following a link or waiting on a FIFO.
 Before its first write it also refuses (exit 1) a link, or an entry of the
 wrong kind, at ``site-src/`` or ``site-src/site.json``, from which it reads
 the output root, since it would read the output root from wherever the link
@@ -120,8 +125,10 @@ Exit codes:
      number, or a --sums-sha256 or --archive-sha256 value is not 64 lower-case
      hexadecimal digits, each matched as the whole value, so that a value
      with a trailing newline is refused;
-     before the first write: SHA256SUMS or a file in the folder did not match
-     its digest; a SHA256SUMS line is malformed, or names a file twice or
+     before the first write: a file it reads (tools/check-baseline-pin.py,
+     site-src/site.json, SHA256SUMS or a file in the folder) is a link or not
+     a regular file, such as a FIFO; SHA256SUMS or a file in the folder did
+     not match its digest; a SHA256SUMS line is malformed, or names a file twice or
      outside the folder; the folder lacks a file that SHA256SUMS lists, holds
      a file that it does not list, or holds an entry that is neither a
      regular file nor a folder, such as a link; SHA256SUMS does not list a
@@ -135,7 +142,9 @@ Exit codes:
   2  argparse refuses the command line, such as a missing or unknown option;
      argparse prints its usage and error lines, not this tool's own 1 line,
      and nothing is read or written
-  3  an input could not be read, or Python is older than 3.11; or any failure
+  3  an input could not be read, or Python is older than 3.11; or, before the
+     first write, the base path in site-src/site.json is readable but is not
+     / or a single folder such as /draft/, matched whole; or any failure
      after the first change to a managed path and before the pin is written,
      whatever raised it (an interrupt aside), with a message that says that
      the copy and the pin may be incomplete; or, after the copy and the pin
@@ -197,8 +206,24 @@ def die(code: int, message: str) -> None:
 
 
 def read(path: Path) -> bytes:
+    """The bytes of path, a file this tool reads, which is refused (exit 1) before it is opened unless lstat finds a
+    regular file. A link would take the input from wherever it leads, and opening a FIFO would wait for a writer that
+    may never come. The open adds O_NOFOLLOW and O_NONBLOCK, and the opened file is checked again, so that an entry
+    replaced by a link or a FIFO after the first check is neither followed nor waited on."""
     try:
-        return path.read_bytes()
+        mode = os.lstat(path).st_mode
+    except OSError as error:
+        die(3, f"{path} could not be read: {error}")
+    if stat.S_ISLNK(mode):
+        die(1, f"{path} is a link; refusing to read through it")
+    if not stat.S_ISREG(mode):
+        die(1, f"{path} is not a regular file")
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        with os.fdopen(descriptor, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                die(1, f"{path} is not a regular file")
+            return stream.read()
     except OSError as error:
         die(3, f"{path} could not be read: {error}")
     return b""
@@ -231,10 +256,12 @@ def load_gate():
     no cached byte code is read or written, so loading it writes nothing, not even under tools/__pycache__/, and a
     stale or planted cache file there is never run, as the normal loader would run one. The gate's tomllib guard
     exits on Python older than 3.11; its message is dropped and this tool reports the floor in its own words."""
+    # Read outside the try below, whose SystemExit handler would report a refusal by read() as an old Python.
+    source = read(GATE)
     try:
         spec = importlib.util.spec_from_file_location("check_baseline_pin", GATE)
         module = importlib.util.module_from_spec(spec)
-        code = compile(GATE.read_bytes(), str(GATE), "exec", dont_inherit=True)
+        code = compile(source, str(GATE), "exec", dont_inherit=True)
         with contextlib.redirect_stderr(io.StringIO()):
             exec(code, module.__dict__)
     except (OSError, SyntaxError) as error:
@@ -250,8 +277,8 @@ def wanted(name: str) -> bool:
 
 def output_root() -> Path:
     try:
-        base = json.loads((REPO_ROOT / "site-src" / "site.json").read_text(encoding="utf-8"))["base"]
-    except (OSError, ValueError, KeyError, TypeError) as error:
+        base = json.loads(read(REPO_ROOT / "site-src" / "site.json").decode("utf-8"))["base"]
+    except (ValueError, KeyError, TypeError) as error:
         die(3, f"site-src/site.json has no readable base: {error}")
     if base == "/":
         return REPO_ROOT / "site"

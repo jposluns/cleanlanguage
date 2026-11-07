@@ -16,6 +16,10 @@ The last case runs the gate on this repository. The copy-baseline cases run
 - what it refuses (exit 1) before any served file is replaced: a SHA256SUMS
   that does not hash to the digest given; a file that does not match its
   digest, that SHA256SUMS does not list, or that it lists and the folder lacks;
+  a SHA256SUMS line with text after its file name, or that names a file twice,
+  by an absolute path or above the folder, each named with its line number; a
+  FIFO, or a link that leads to a FIFO, in place of SHA256SUMS or of the gate,
+  and a link in place of a file in the version folder;
   a version without the palette gate, the card builder, the README or the
   specification; a README that names another version, lacks its step 7 NOTICE
   entry, holds a second quoted paragraph in step 7 or has CRLF line ends, on
@@ -67,11 +71,13 @@ The last case runs the gate on this repository. The copy-baseline cases run
   before its first write, refused or stopped, changes nothing at all under
   the test's repository root or its ``--from`` folder, managed paths
   included, comparing each folder's and each file's mode and modification
-  time as well. A run ends before its first write when it does not exit 0
-  and does not say that it wrote the copy and the pin or that they may be
-  incomplete, as the tool's exit codes give, so the comparison holds for
-  every refusal without a case having to ask for it. Every run goes through
-  ``copy_run()``, which makes both comparisons, and a further case reads this
+  time as well. A run ends before its first write when it does not say that
+  it wrote the copy and the pin or that they may be incomplete, as the tool's
+  exit codes give, so the comparison holds for every refusal, and for
+  ``--help``, without a case having to ask for it. Every run goes through
+  ``copy_run()``, which makes both comparisons and stops a run still going
+  after ``COPY_TIMEOUT`` seconds, so that a run that blocks, such as on a
+  FIFO, fails its case instead of hanging the suite, and a further case reads this
   file's source and fails if any other code refers to the tool's path, names
   its file outside a docstring, or starts a process, apart from
   ``run_gate()``, which runs the gate. A run written to avoid that reading,
@@ -383,6 +389,11 @@ def fault_promoted_base(root: Path) -> None:
     (root / "site-src" / "site.json").write_text(json.dumps({"base": "/"}), encoding="utf-8")
 
 
+def fault_sums_line_malformed(root: Path) -> None:
+    with (root / ".baseline" / "SHA256SUMS").open("a", encoding="utf-8") as stream:
+        stream.write(f"{digest(b'extra')}  extra.css extra\n")
+
+
 def fault_missing_pin(root: Path) -> None:
     (root / ".baseline" / "pin.toml").unlink()
 
@@ -628,6 +639,8 @@ CASES = [
     ("the base path moved to / with the files still under draft/", fault_promoted_base, 3),
     ("the pin is missing", fault_missing_pin, 3),
     ("SHA256SUMS is missing", fault_missing_sums, 3),
+    ("a SHA256SUMS line with text after its file name", fault_sums_line_malformed, 3,
+        ".baseline/SHA256SUMS line ", " is malformed"),
     ("the copied README is missing", fault_readme_missing, 3),
     ("a README without its version heading", fault_readme_no_heading, 3),
     ("a README without its step 7 NOTICE entry", fault_readme_no_entry, 3),
@@ -667,9 +680,15 @@ OUTSIDE_CHANGES: list[str] = []
 # Each copy-baseline run that ended before its first write, by the tool's own account, in which anything under the
 # test's root or the --from folder changed, appeared or went away, managed paths included.
 REFUSED_CHANGES: list[str] = []
-# What the tool says on stderr when it ends after its first write: the gate's check after the copy, or a failure once
-# copying has begun. Any other run that does not exit 0 has, by the tool's exit-code contract, ended before it.
-AFTER_WRITE = ("wrote the copy and the pin", "the copy and the pin may be incomplete")
+# What the tool says when it ends after its first write: on stderr, the gate's check after the copy, or a failure once
+# copying has begun; on stdout, a clean copy. Any other run, --help among them, has by the tool's exit-code contract
+# ended before it.
+AFTER_WRITE = ("wrote the copy and the pin", "the copy and the pin may be incomplete", "wrote .baseline/pin.toml")
+# The seconds a copy-baseline run may take: a run that blocks, such as on a FIFO it opens, fails its case instead of
+# hanging the suite. A run here takes well under 1 second.
+COPY_TIMEOUT = 30
+# The exit code that copy_run() reports for a run stopped at COPY_TIMEOUT, which the tool never returns.
+TIMED_OUT = -1
 
 
 def tree_state(root: Path, version: Path | None) -> dict[str, tuple]:
@@ -728,19 +747,24 @@ def copy_run(root: Path, arguments: list[str], version: Path | None = None) -> s
     """Install tools/copy-baseline.py in root and run it there with arguments. This is the only code in this file
     that runs the tool, as invocation_problems() checks, so the comparisons here cover every run. Whatever the
     outcome, any file or link outside the paths the tool manages, or under the version folder when one is given,
-    that differs after the run from before it is recorded in OUTSIDE_CHANGES. A run that does not exit 0 and does
-    not say that it wrote the copy or that the copy may be incomplete (AFTER_WRITE) has ended before its first write,
-    so any folder, file or link under root or the version folder that differs after it, managed paths included, is
-    recorded in REFUSED_CHANGES: every refusal changes nothing, whichever case makes it."""
+    that differs after the run from before it is recorded in OUTSIDE_CHANGES. A run that does not say that it wrote
+    the copy or that the copy may be incomplete (AFTER_WRITE) has ended before its first write, --help included, so
+    any folder, file or link under root or the version folder that differs after it, managed paths included, is
+    recorded in REFUSED_CHANGES: every refusal changes nothing, whichever case makes it. A run still going after
+    COPY_TIMEOUT seconds is stopped and reported with the exit code TIMED_OUT."""
     tool = install_copy_tool(root)
     before = tree_state(root, version)
-    result = subprocess.run([sys.executable, "-I", str(tool), *arguments], capture_output=True, text=True)
+    command = [sys.executable, "-I", str(tool), *arguments]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=COPY_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        result = subprocess.CompletedProcess(command, TIMED_OUT, "", f"stopped after {COPY_TIMEOUT} seconds")
     after = tree_state(root, version)
     changed = differences(unmanaged(before, root, version), unmanaged(after, root, version))
     if changed:
         OUTSIDE_CHANGES.append(f"copy-baseline (exit {result.returncode}) changed "
                                f"{[os.path.relpath(path, root) for path in changed]}")
-    if result.returncode != 0 and not any(marker in result.stderr for marker in AFTER_WRITE):
+    if not any(marker in result.stdout + result.stderr for marker in AFTER_WRITE):
         changed = differences(before, after)
         if changed:
             REFUSED_CHANGES.append(f"copy-baseline (exit {result.returncode}, before its first write) changed "
@@ -756,7 +780,7 @@ def installed(root: Path, result: subprocess.CompletedProcess) -> str:
 def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
              source_link: bool = False, version: Path | None = None, notice: str = NOTICE_TEXT,
              sums_edit=None, sums_sha256: str | None = None,
-             newline_after: str | None = None) -> subprocess.CompletedProcess:
+             newline_after: str | None = None, before_run=None) -> subprocess.CompletedProcess:
     """Run tools/copy-baseline.py in root on a version folder 1.2.1 that holds package and its SHA256SUMS, with the
     gate (or the given gate source) beside it, from which it loads notice_entry() and check(), and a NOTICE.md that
     carries the 1.2.1 entry (or the given notice), so that the gate's check at the end passes a clean copy. A
@@ -765,8 +789,10 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
     its SHA256SUMS lists every file in it, so that a version folder that holds the repository still matches its
     sums. sums_edit, when given, changes the SHA256SUMS text before it is written and hashed, and sums_sha256, when
     given, replaces its digest on the command line. newline_after, when given, names the option whose value on the
-    command line gains a trailing newline. copy_run() runs the tool and records any change outside the paths it
-    manages or under the version folder, and any change at all from a run that ends before its first write."""
+    command line gains a trailing newline. before_run, when given, is called with root and the version folder once
+    the tree and SHA256SUMS are written, just before the run. copy_run() runs the tool and records any change outside
+    the paths it manages or under the version folder, and any change at all from a run that ends before its first
+    write."""
     install_copy_tool(root)
     (root / "tools" / GATE.name).write_bytes(GATE.read_bytes() if gate is None else gate)
     (root / "NOTICE.md").write_text(notice, encoding="utf-8")
@@ -789,6 +815,8 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
                  "--sums-sha256", sums_sha256 or digest(sums.encode()), "--archive-sha256", "0" * 64]
     if newline_after is not None:
         arguments[arguments.index(newline_after) + 1] += "\n"
+    if before_run is not None:
+        before_run(root, version)
     return copy_run(root, arguments, version)
 
 
@@ -827,6 +855,101 @@ COPY_SUMS_REFUSALS = [
     ("a file that SHA256SUMS lists and the folder lacks",
         {"sums_edit": lambda sums: sums + f"{digest(b'extra')}  extra.css\n"}),
 ]
+# SHA256SUMS lines copy-baseline refuses (exit 1) before its first write, each added after the version's own lines:
+# each gives the line and what the tool's 1 line must say. A name outside the folder would also fail the comparison
+# with the folder that follows, with another message, so each case checks the message of its own refusal.
+SUMS_LINE_REFUSALS = [
+    ("a SHA256SUMS line with text after its file name", f"{digest(b'extra')}  extra.css extra\n", "is malformed"),
+    ("a SHA256SUMS line that names a file twice", f"{digest(FILES['baseline.css'])}  baseline.css\n",
+        "names 'baseline.css' twice or outside the folder"),
+    ("a SHA256SUMS line that names a file by an absolute path", f"{digest(b'extra')}  /extra.css\n",
+        "names '/extra.css' twice or outside the folder"),
+    ("a SHA256SUMS line that names a file above the folder", f"{digest(b'extra')}  ../extra.css\n",
+        "names '../extra.css' twice or outside the folder"),
+]
+
+
+def sums_line_problems() -> list[str]:
+    """copy-baseline refuses each line in SUMS_LINE_REFUSALS, naming its line number, with its own 1 line before its
+    first write, and copy_run() checks that nothing under the root changed."""
+    problems = []
+    for name, line, needle in SUMS_LINE_REFUSALS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            result = run_copy(root, dict(PACKAGE), sums_edit=lambda sums: sums + line)
+            lines = result.stderr.splitlines()
+            said = f"SHA256SUMS line {len(PACKAGE) + 1} {needle}"
+            if result.returncode != 1 or len(lines) != 1 or said not in lines[0]:
+                problems.append(f"copy-baseline: {name} exits {result.returncode}; expected 1 with its own 1 line "
+                                f"saying {said!r}: {result.stderr.strip()[-200:]!r}")
+    return problems
+
+
+def fifo_in_place(path: Path) -> None:
+    path.unlink()
+    os.mkfifo(path)
+
+
+def link_in_place(path: Path, target: Path) -> None:
+    path.unlink()
+    path.symlink_to(target)
+
+
+def fifo_sums(root: Path, version: Path) -> None:
+    fifo_in_place(version / "SHA256SUMS")
+
+
+def link_sums(root: Path, version: Path) -> None:
+    os.mkfifo(root / "outside" / "SHA256SUMS")
+    link_in_place(version / "SHA256SUMS", root / "outside" / "SHA256SUMS")
+
+
+def fifo_gate(root: Path, version: Path) -> None:
+    fifo_in_place(root / "tools" / GATE.name)
+
+
+def link_gate(root: Path, version: Path) -> None:
+    os.mkfifo(root / "outside" / GATE.name)
+    link_in_place(root / "tools" / GATE.name, root / "outside" / GATE.name)
+
+
+def link_version_file(root: Path, version: Path) -> None:
+    shutil.copyfile(version / "baseline.css", root / "outside" / "baseline.css")
+    link_in_place(version / "baseline.css", root / "outside" / "baseline.css")
+
+
+# Files copy-baseline reads that it refuses (exit 1) before its first write, each made a FIFO or a link once the tree
+# and SHA256SUMS are written: each gives what the tool's 1 line must say. Each link to the gate or to SHA256SUMS leads
+# to a FIFO outside the version folder, so a tool that opens either through the link, or opens a FIFO, waits for a
+# writer and is stopped at COPY_TIMEOUT, failing the case.
+READ_REFUSALS = [
+    ("a FIFO in place of SHA256SUMS", fifo_sums, "1.2.1/SHA256SUMS is not a regular file"),
+    ("a link in place of SHA256SUMS, leading to a FIFO", link_sums, "1.2.1/SHA256SUMS is a link"),
+    ("a FIFO in place of the gate", fifo_gate, f"tools/{GATE.name} is not a regular file"),
+    ("a link in place of the gate, leading to a FIFO", link_gate, f"tools/{GATE.name} is a link"),
+    ("a link in place of a file in the version folder", link_version_file,
+        "1.2.1/baseline.css is not a regular file or folder"),
+]
+
+
+def read_refusal_problems() -> list[str]:
+    """copy-baseline refuses each file in READ_REFUSALS with its own 1 line before it opens it, and leaves the served
+    files as they were; copy_run() checks that nothing under the root changed, the FIFO and the link's target
+    included."""
+    problems = []
+    for name, prepare, needle in READ_REFUSALS:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            (root / "outside").mkdir()
+            served = root / "site" / "assets" / "baseline" / "served-before.css"
+            served.parent.mkdir(parents=True)
+            served.write_bytes(b"a { color: red; }\n")
+            result = run_copy(root, dict(PACKAGE), before_run=prepare)
+            lines = result.stderr.splitlines()
+            if result.returncode != 1 or len(lines) != 1 or needle not in lines[0] or not served.is_file():
+                problems.append(f"copy-baseline: {name} exits {result.returncode}; expected 1 with its own 1 line "
+                                f"saying {needle!r}, the served files kept: {result.stderr.strip()[-200:]!r}")
+    return problems
 
 
 def link_card_fonts(root: Path) -> None:
@@ -1417,7 +1540,8 @@ def invocation_problems() -> list[str]:
                     and id(node) not in docstrings and statement is not assignment):
                 problems.append(f"{where} names {file_name} outside a docstring")
             elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-                if node.value.id == "subprocess" and node.attr != "CompletedProcess":
+                # A result type and an exception class, neither of which starts a process.
+                if node.value.id == "subprocess" and node.attr not in {"CompletedProcess", "TimeoutExpired"}:
                     if function not in PROCESS_RUNNERS:
                         problems.append(f"{where} uses subprocess.{node.attr} outside {sorted(PROCESS_RUNNERS)}")
                     elif function == "copy_run":
@@ -1443,12 +1567,12 @@ def main() -> int:
     failures: list[str] = (pin_header_problems() + copy_problems() + copy_tree_problems() + copy_gate_problems()
                            + python_floor_problems() + copy_source_problems() + alias_problems()
                            + failure_problems() + whole_value_problems() + read_once_problems()
-                           + planted_cache_problems())
+                           + planted_cache_problems() + sums_line_problems() + read_refusal_problems())
     # The 7 cases of failure_problems(), read_once_problems(), planted_cache_problems(), and in copy_problems() the
     # base path /draft/ and the NOTICE.md entry naming the previous version.
     ran = 11 + 7 + 1 + 1 + 2
     ran += (len(COPY_REFUSALS) + len(COPY_SUMS_REFUSALS) + len(COPY_TREE_REFUSALS) + len(COPY_SOURCE_REFUSALS)
-            + len(WHOLE_VALUE_REFUSALS))
+            + len(WHOLE_VALUE_REFUSALS) + len(SUMS_LINE_REFUSALS) + len(READ_REFUSALS))
     # As root, file permissions neither stop a write nor a listing, so neither failure can be stood in for.
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         failures += write_failure_problems() + gate_unreadable_problems()
@@ -1458,7 +1582,7 @@ def main() -> int:
     # through copy_run(), which records any change, and invocation_problems() fails if any other code could run the
     # tool, so the first 2 checks cover every run.
     failures += [f"{change}, outside the paths it manages" for change in OUTSIDE_CHANGES]
-    failures += [f"{change}; a refusal changes nothing" for change in REFUSED_CHANGES]
+    failures += [f"{change}; a run that ends before its first write changes nothing" for change in REFUSED_CHANGES]
     failures += invocation_problems()
     ran += 3
     for name, fault, expected, *needles in CASES:
@@ -1471,8 +1595,9 @@ def main() -> int:
             ran += 1
             if result.returncode != expected:
                 failures.append(f"{name}: exit {result.returncode}, expected {expected}")
-            elif any(needle not in result.stdout for needle in needles):
-                failures.append(f"{name}: the output does not say {needles}: {result.stdout.strip()[:200]!r}")
+            elif any(needle not in result.stdout + result.stderr for needle in needles):
+                failures.append(f"{name}: the output does not say {needles}: "
+                                f"{(result.stdout + result.stderr).strip()[:200]!r}")
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch)
