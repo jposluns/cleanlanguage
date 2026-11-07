@@ -71,8 +71,9 @@ either file left out, split into blocks (headings, bullets and paragraphs):
      refusal: a renderer might open an HTML block at such a line, and might
      run some kinds, such as one opened by "<script>" or "<pre>", on past
      blank lines and headings until a closing tag, so a block opened above a
-     span could hold the span. A "<"
-     later in a line is refused only in the two spans item 5 covers.
+     span could hold the span. A "<" later in a line is refused only in
+     the two spans item 5 covers, unless it starts "<!--", which is
+     refused anywhere.
    The one exception is the front matter at the top of SKILL.md: when line 1
    and a later line are exactly "---", line 1 and the first such later line
    are not refused as a thematic break or an underline. Every other refusal
@@ -178,7 +179,8 @@ Residuals, named here because the check reads text by fixed rules:
   reference definition and the markup of raw HTML later in a line, other
   than a comment, are read as text like the rest of the file, so a pointer
   sentence there is found whether or not a rendering shows it. In the spans,
-  the characters such Markdown needs are refused;
+  each of them needs a character item 5 refuses: "[" for a link title or the
+  title of a link reference definition, and "<" for raw HTML;
 - OPENING, the first sentence of the expected bullet, is a second hand-kept
   copy: rewording that sentence in the checklist fails until OPENING follows
   it;
