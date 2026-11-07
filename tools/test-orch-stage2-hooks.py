@@ -812,6 +812,24 @@ class T09AskGuard(Stage2Harness):
         events = self.read_jsonl("guard-events.jsonl")
         self.assertEqual((events[-1]["kind"], events[-1]["decision"]), ("ask-guard", "fail-open"))
 
+    def test_json_mode_record_reads_as_absent_today(self):
+        # The host operating-mode file is one JSON line, and the vendored reader matches only an
+        # Operating-mode text line, so a declared JSON record reads as absent: allow plus a fail-open
+        # event, even when it says unattended (aiqt_hooks.py:7555, 7763-7776, 8737-8740). The
+        # repository guard .claude/hooks/ask_mode_guard.py denies in its place. This case goes red
+        # once a re-vendored hook reads the JSON record, and the re-vendor then flips it to assert
+        # the deny.
+        self.write_registry(self.stage2())
+        Path(self._p("operating-mode.md")).write_text(
+            '{"mode": "unattended", "phase": "dispatch", "set_by": "orch-operator", '
+            '"set_at": "2026-11-07T00:00:00Z"}\n', encoding="utf-8")
+        r = self._ask()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+        self.assertIsNone(self.read_jsonl("pending-asks.jsonl"))
+        events = self.read_jsonl("guard-events.jsonl")
+        self.assertEqual((events[-1]["kind"], events[-1]["decision"]), ("ask-guard", "fail-open"))
+
 
 # =====================================================================================================
 # T10. Scope by mode record when the lease is stale (aiqt_hooks.py:7779-7817)
