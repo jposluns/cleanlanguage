@@ -86,7 +86,8 @@ gate on this repository. The copy-baseline cases run
   folder, file or link under the test's repository root or its ``--from``
   folder, managed paths included, comparing each folder's and each file's
   mode and modification time as well. Neither comparison covers anything
-  else, such as ownership or access time. A run ends before its first write
+  else, such as ownership, access time or what is in a folder that the test
+  cannot list. A run ends before its first write
   when it does not say that it wrote the copy and the pin or that they may be
   incomplete, as the tool's exit codes give, so the second comparison is made
   after every refused run in these cases, and after ``--help``, without a
@@ -708,10 +709,12 @@ TIMED_OUT = -1
 
 
 def tree_state(root: Path, version: Path | None) -> dict[str, tuple]:
-    """root itself and every folder, file and link under it, and the same under the --from folder wherever it is,
-    when there is one, by path: a folder's mode and modification time, which a name created, renamed or removed in it
-    changes; a file's inode, size, SHA-256, mode and modification time; a link's target. Links are recorded, never
-    followed."""
+    """root itself and each folder, file and link that os.walk() lists under it, and the same under the --from folder
+    wherever it is, when there is one, by path: a folder's mode and modification time, which a name created, renamed
+    or removed in it changes; a file's inode, size, SHA-256, mode and modification time; a link's target; and any
+    other entry's mode, such as a FIFO's. os.walk() passes over a folder that it cannot list, so nothing in one is
+    recorded, as in the case whose --from folder can be searched but not listed. A link under root or the --from
+    folder is recorded, never followed."""
     found: dict[str, tuple] = {}
     for top in (root, *((version,) if version is not None else ())):
         for folder, folders, files in os.walk(top):
@@ -760,14 +763,20 @@ def install_copy_tool(root: Path) -> Path:
 
 
 def copy_run(root: Path, arguments: list[str], version: Path | None = None) -> subprocess.CompletedProcess:
-    """Install tools/copy-baseline.py in root and run it there with arguments. This is the only code in this file
-    that runs the tool, as invocation_problems() checks, so the comparisons here cover every run. Whatever the
-    outcome, any file or link outside the paths the tool manages, or under the version folder when one is given,
-    that differs after the run from before it is recorded in OUTSIDE_CHANGES. A run that does not say that it wrote
-    the copy or that the copy may be incomplete (AFTER_WRITE) has ended before its first write, --help included, so
-    any folder, file or link under root or the version folder that differs after it, managed paths included, is
-    recorded in REFUSED_CHANGES: every refusal changes nothing, whichever case makes it. A run still going after
-    COPY_TIMEOUT seconds is stopped and reported with the exit code TIMED_OUT."""
+    """Install tools/copy-baseline.py in root and run it there with arguments. invocation_problems() reads this
+    file's source and fails if any other code here refers to the tool's path, names its file outside a docstring or,
+    apart from run_gate(), starts a process, so the comparisons here cover every run in this file that does not avoid
+    that reading. Whatever the outcome, each difference that unmanaged() keeps between the tree_state() records made
+    before and after the run, outside the paths the tool manages or under the version folder when one is given, is
+    recorded in OUTSIDE_CHANGES: an entry added or removed, a file's inode, size or SHA-256, a link's target, or
+    another entry's mode. A run that does not say that it wrote the copy and the pin or that they may be incomplete
+    (AFTER_WRITE) has ended before its first write, as the tool's exit codes give, --help included, so each
+    difference between those records under root or the version folder, managed paths included, is recorded in
+    REFUSED_CHANGES: an entry added or removed, a folder's mode or modification time, a file's inode, size, SHA-256,
+    mode or modification time, a link's target, or another entry's mode. Either kind of change fails the test,
+    whichever case makes the run; neither comparison covers anything else, such as ownership, access time or what is
+    in a folder that tree_state() cannot list. A run still going after COPY_TIMEOUT seconds is stopped and reported
+    with the exit code TIMED_OUT."""
     tool = install_copy_tool(root)
     before = tree_state(root, version)
     command = [sys.executable, "-I", str(tool), *arguments]
@@ -806,9 +815,9 @@ def run_copy(root: Path, package: dict[str, bytes], gate: bytes | None = None,
     sums. sums_edit, when given, changes the SHA256SUMS text before it is written and hashed, and sums_sha256, when
     given, replaces its digest on the command line. newline_after, when given, names the option whose value on the
     command line gains a trailing newline. before_run, when given, is called with root and the version folder once
-    the tree and SHA256SUMS are written, just before the run. copy_run() runs the tool and records any change outside
-    the paths it manages or under the version folder, and any change at all from a run that ends before its first
-    write."""
+    the tree and SHA256SUMS are written, just before the run. copy_run() runs the tool and records each change that
+    its comparisons find: outside the paths the tool manages or under the version folder after any run, and anywhere
+    that tree_state() records after a run that ends before its first write."""
     install_copy_tool(root)
     (root / "tools" / GATE.name).write_bytes(GATE.read_bytes() if gate is None else gate)
     (root / "NOTICE.md").write_text(notice, encoding="utf-8")
@@ -900,7 +909,7 @@ SUMS_LINE_REFUSALS = [
 
 def sums_line_problems() -> list[str]:
     """copy-baseline refuses each line in SUMS_LINE_REFUSALS, naming its line number, with its own 1 line before its
-    first write, and copy_run() checks that nothing under the root changed."""
+    first write, and copy_run() checks that nothing that tree_state() records under the root changed."""
     problems = []
     for name, line, needle in SUMS_LINE_REFUSALS:
         with tempfile.TemporaryDirectory() as scratch:
@@ -967,8 +976,8 @@ READ_REFUSALS = [
 
 def read_refusal_problems() -> list[str]:
     """copy-baseline refuses each file in READ_REFUSALS with its own 1 line before it opens it, and leaves the served
-    files as they were; copy_run() checks that nothing under the root changed, the FIFO and the link's target
-    included."""
+    files as they were; copy_run() checks that nothing that tree_state() records under the root changed, the FIFO
+    and the link's target included."""
     problems = []
     for name, prepare, needle in READ_REFUSALS:
         with tempfile.TemporaryDirectory() as scratch:
@@ -1175,7 +1184,8 @@ COPY_SOURCE_REFUSALS = [
 
 def copy_source_problems() -> list[str]:
     """copy-baseline refuses each --from folder in COPY_SOURCE_REFUSALS before it writes, naming the folder and the
-    path it overlaps, and leaves the served files as they were; run_copy checks every file in the version folder."""
+    path it overlaps, and leaves the served files as they were; copy_run() checks that nothing that tree_state()
+    records in the version folder changed."""
     problems = []
     for name, layout, needle in COPY_SOURCE_REFUSALS:
         with tempfile.TemporaryDirectory() as scratch:
@@ -1376,9 +1386,9 @@ WHOLE_VALUE_REFUSALS = [
 
 def whole_value_problems() -> list[str]:
     """copy-baseline refuses each value in WHOLE_VALUE_REFUSALS with its own 1 line before its first write, and
-    copy_run() checks that nothing under the root changed. The line must start with the refusal's message: the gate
-    refuses the same base path in the same words after a copy, so a tool that copied and let the gate refuse it would
-    otherwise pass."""
+    copy_run() checks that nothing that tree_state() records under the root changed. The line must start with the
+    refusal's message: the gate refuses the same base path in the same words after a copy, so a tool that copied and
+    let the gate refuse it would otherwise pass."""
     problems = []
     for name, arguments, expected, needle in WHOLE_VALUE_REFUSALS:
         with tempfile.TemporaryDirectory() as scratch:
@@ -1478,7 +1488,7 @@ INPUT_REFUSALS = [
 
 def input_refusal_problems() -> list[str]:
     """copy-baseline refuses each input in INPUT_REFUSALS with its own 1 line before its first write, and copy_run()
-    checks that nothing under the root changed."""
+    checks that nothing that tree_state() records under the root changed."""
     problems = []
     for name, arguments, expected, needle in INPUT_REFUSALS:
         with tempfile.TemporaryDirectory() as scratch:
@@ -1689,13 +1699,15 @@ LAUNCHER_MODULES = {"subprocess", "os", "runpy", "multiprocessing", "pty", "asyn
 
 
 def invocation_problems() -> list[str]:
-    """copy_run() is the only code in this file that runs copy-baseline, so its comparison before and after each run
-    covers every run. This reads the file's own source: each name in TOOL_PATH_USERS is used only in the functions
-    it lists; no string outside a docstring and COPY_TOOL's own assignment holds the tool's file name; only
-    copy_run() and run_gate() use subprocess, and copy_run() uses it once; and no code uses an os function that
-    starts a process, imports one of LAUNCHER_MODULES other than subprocess and os, imports either of those under
-    another name, or imports from any of them. A run written to avoid this reading, such as one that assembles the
-    file name from pieces, is not detected."""
+    """The problems found by reading this file's own source for code other than copy_run() that could run
+    copy-baseline; with none, copy_run()'s comparisons before and after each run cover every run in this file that
+    does not avoid this reading. It checks that each name in TOOL_PATH_USERS is used only in the functions it lists;
+    that no string outside a docstring and COPY_TOOL's own assignment holds the tool's file name; that only
+    copy_run() and run_gate() use a name from subprocess other than CompletedProcess and TimeoutExpired, and
+    copy_run() uses one once; and that no code uses an os function whose name starts with one of OS_LAUNCHERS,
+    imports one of LAUNCHER_MODULES other than subprocess and os, imports either of those under another name, or
+    imports from any of them. A run written to avoid this reading, such as one that assembles the file name from
+    pieces, is not detected."""
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
     docstrings = set()
     for node in ast.walk(tree):
@@ -1765,7 +1777,8 @@ def main() -> int:
     # invocation_problems() fails if any other code refers to the tool's path, names its file outside a docstring or,
     # apart from run_gate(), starts a process, so the first 2 checks cover every run that does not avoid that reading.
     failures += [f"{change}, outside the paths it manages" for change in OUTSIDE_CHANGES]
-    failures += [f"{change}; a run that ends before its first write changes nothing" for change in REFUSED_CHANGES]
+    failures += [f"{change}; a run that ends before its first write must not add, remove or change anything that "
+                 "tree_state() records" for change in REFUSED_CHANGES]
     failures += invocation_problems()
     ran += 3
     for name, fault, expected, *needles in CASES:

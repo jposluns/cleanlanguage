@@ -261,8 +261,8 @@ def folder_problems(root: Path) -> list[str]:
 
 
 def list_tree(directory: Path) -> tuple[list[str], list[str]]:
-    """The files and, apart, the links under directory, each relative to it. A link is listed, never followed, so
-    that the caller can refuse it: a linked folder would otherwise hide the files it leads to."""
+    """The files and, apart, the links under directory, each relative to it. A link under directory is listed, never
+    followed, so that the caller can refuse it: a linked folder would otherwise hide the files it leads to."""
     found: list[str] = []
     links: list[str] = []
     stack = [directory]

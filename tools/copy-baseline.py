@@ -253,10 +253,11 @@ def write_new(target: Path, data: bytes) -> None:
 
 def load_gate():
     """tools/check-baseline-pin.py as a module, for its TOOLS, notice_entry(), NOTICE_STEP, ENTRY_PREFIX, and the
-    check() and Unreadable with which this tool checks the tree it wrote. The gate is compiled from its source and
-    no cached byte code is read or written, so loading it writes nothing, not even under tools/__pycache__/, and a
-    stale or planted cache file there is never run, as the normal loader would run one. The gate's tomllib guard
-    exits on Python older than 3.11; its message is dropped and this tool reports the floor in its own words."""
+    check() and Unreadable with which this tool checks the tree it wrote. The gate is compiled from its source, so
+    no cached byte code for it is read, and sys.dont_write_bytecode keeps any from being written: loading it writes
+    nothing, not even under tools/__pycache__/, and a stale or planted cache file there is never run, as the normal
+    loader would run one. The gate's tomllib guard exits on Python older than 3.11; its message is dropped and this
+    tool reports the floor in its own words."""
     # Read outside the try below, whose SystemExit handler would report a refusal by read() as an old Python.
     source = read(GATE)
     try:
