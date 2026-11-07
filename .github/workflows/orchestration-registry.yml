@@ -17,16 +17,16 @@ name: Orchestration registry
 # stating its reason (tools/test-no-qa-labels.py). A further step runs a literal regression check
 # of the /flow command's mode text, since a session follows /flow when it reads the host's mode
 # record (tools/check-flow-mode.py). It fails when the file does not hold exactly 1 line starting
-# "- MODE (", when that line is not closed on the same line or names other than the 2 values that
-# the host's mode writer writes, when any line holds a bare "attended" outside the text between
-# straight double quotes that the check pairs left to right on that line, or when the sentence
-# that an absent mode record is read as unattended is missing. It reads words, not meaning: a mode
-# value outside the MODE line is not checked; only the bare "attended" test skips quoted text; a
-# line that closes a quotation wrapped from the line above pairs that closing quote with the next
-# opening quote, so a bare "attended" between them passes; a sentence that contradicts the absent
-# rule passes, so does that sentence negated or inside a quotation that rejects it; and the absent
-# rule stated in other words fails. The step after it runs a case for each of those verdicts
-# (tools/test-check-flow-mode.py).
+# "- MODE (", when that line is not closed on the same line or does not name exactly the 2 values
+# that the host's mode writer writes, each once and in lower case, when any line holds a bare
+# "attended" outside the text between straight double quotes that the check pairs left to right
+# on that line, or when the sentence that an absent mode record is read as unattended is missing.
+# It reads words, not meaning: a mode value outside the MODE line is not checked; only the bare
+# "attended" test skips quoted text; a line that closes a quotation wrapped from the line above
+# pairs that closing quote with the next opening quote, so a bare "attended" between them passes;
+# a sentence that contradicts the absent rule passes, so does that sentence negated or inside a
+# quotation that rejects it; and the absent rule stated in other words fails. The step after it
+# runs a case for each of those verdicts (tools/test-check-flow-mode.py).
 #
 # Every Python launch runs isolated (-I), as every hook launch in hooks.json does, so a file
 # beside a script cannot shadow a standard library import and no PYTHON* environment variable

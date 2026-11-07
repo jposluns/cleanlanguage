@@ -10,9 +10,10 @@ flow.md, not a reading of what its sentences mean. It fails when any of them is 
 
 - exactly 1 line is a MODE line, a line whose first characters are "- MODE (", closed or not; that
   line closes its parenthesis on the same line, and the text between the parentheses names
-  exactly attended-autonomous and unattended, separated by "|", in either order: a missing value,
-  an extra value, another separator or a value inside quotes fails, and so do no MODE line, 2 MODE
-  lines and a MODE line with no closing parenthesis;
+  exactly attended-autonomous and unattended, each once and in lower case, separated by "|", in
+  either order: a missing value, an extra or repeated value, a value with a capital letter,
+  another separator or a value inside quotes fails, and so do no MODE line, 2 MODE lines and a
+  MODE line with no closing parenthesis;
 - no line may hold an unquoted bare "attended": the word "attended", in any letter case, that is
   not part of a longer word such as "unattended", is not the start of "attended-autonomous", and
   is not between a pair of straight double quotes (") that the check pairs left to right on the

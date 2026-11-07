@@ -9,11 +9,12 @@ The verdict cases are these. The committed .claude/commands/flow.md passes on st
 a path argument and as the default path. The mode text of main's flow.md at ee6be48 fails with 9
 findings; the case copies the lines of that flow.md that the check reports, so it needs no git
 history and runs in a shallow checkout. The committed flow.md with 1 change each fails when its
-MODE line names a third value, drops either value, uses a comma as the separator or puts its
-values inside double quotes, when the MODE line is renamed so that none is left, when a second
-MODE line is added, closed or with no closing parenthesis, when the MODE line loses its closing
-parenthesis, when a line holds an unquoted bare "attended" in lower case, with a capital letter
-or inside typographic quotes, and when the absent-record sentence is removed. It passes with the
+MODE line names a third value, repeats a value, names a value with capital letters, drops either
+value, uses a comma as the separator or puts its values inside double quotes, when the MODE line
+is renamed so that none is left, when a second MODE line is added, closed or with no closing
+parenthesis, when the MODE line loses its closing parenthesis, when a line holds an unquoted bare
+"attended" in lower case, with a capital letter or inside typographic quotes, when such a line
+comes after line 250, and when the absent-record sentence is removed. It passes with the
 MODE values in the other order, with a quoted "attended", with a longer word that holds
 "attended", and with the absent-record sentence in its second wording, in capital letters, or
 wrapped across a line break. A path that does not exist, text
@@ -138,6 +139,13 @@ class Verdicts(unittest.TestCase):
         self.assert_fails(changed(MODE_LINE, "- MODE (attended-autonomous | unattended | supervised)"),
                           WRONG_MODES)
 
+    def test_a_repeated_value_on_the_mode_line_fails(self):
+        self.assert_fails(changed(MODE_LINE, "- MODE (attended-autonomous | unattended | unattended)"),
+                          WRONG_MODES)
+
+    def test_a_capitalized_value_on_the_mode_line_fails(self):
+        self.assert_fails(changed(MODE_LINE, "- MODE (Attended-Autonomous | unattended)"), WRONG_MODES)
+
     def test_a_dropped_value_on_the_mode_line_fails(self):
         for line in ("- MODE (unattended)", "- MODE (attended-autonomous)"):
             with self.subTest(line=line):
@@ -180,6 +188,19 @@ class Verdicts(unittest.TestCase):
     def test_attended_in_typographic_quotes_fails(self):
         quoted = chr(0x201C) + "attended" + chr(0x201D)
         self.assert_fails(added("- A record that holds " + quoted + " is a legacy record."), BARE)
+
+    def test_a_bare_attended_after_line_250_fails(self):
+        # The other bare-word cases add their line before the DECISIONS bullet, near line 240, so a
+        # check that read only the start of the file would still fail them. This case adds its line
+        # at the end, after blank lines that place it at line 301 or later.
+        text = committed()
+        self.assertTrue(text.endswith("\n"))
+        count = text.count("\n")
+        padding = "\n" * max(0, 300 - count)
+        number = count + len(padding) + 1
+        status, output = verdict(text + padding + "- Absent = attended (conservative).\n")
+        self.assertEqual(status, 1, output)
+        self.assertIn("-:{}: {}".format(number, BARE), output)
 
     def test_the_absent_record_sentence_removed_fails(self):
         self.assert_fails(changed(ABSENT_WORDS, "reads the mode record"), NO_ABSENT)
