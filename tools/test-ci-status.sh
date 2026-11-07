@@ -44,7 +44,8 @@
 # the elapsed time, and the paginate case serves page 2 only to a --paginate
 # call. The later sections, the workflow shape check, the commit sha and
 # repository contract, the wrapper path resolution, and the output, signal,
-# pipe, import, lost-status and final-reap cases, each say what they assert.
+# pipe, import, lost-status, final-reap and closed-window cases, each say what
+# they assert.
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -2411,6 +2412,67 @@ sys.exit(mod.run())' "${here}/ci-status.py" "$C1" "$flag" "$tmp/own" > "$tmp/out
 run_final_reap_view_case "gh repo view exiting 0 just before the kill at the deadline is accepted, then exits 3" \
   --wait
 run_final_reap_view_case "gh repo view exiting 0 just before the kill without --wait is accepted, then exits 3" -
+
+# run_closed_window_case NAME: the gate runs in process in wait mode with the
+# wall clock it reads (time.time) replaced by a fixed one. Its sleeps and the
+# monotonic clock that bounds each gh call stay real, so the case, not the
+# host's speed, fixes when the window closes; only the first gh call must return
+# within its 10-second bound. The first check-runs call serves a pending
+# reading, a successful unsettled one. When main calls read_checks again, after
+# the top-of-loop guard has found time left, the fixed clock is moved to the
+# deadline, so read_checks finds the window closed before the read and raises
+# WindowClosed without running gh. After that reading this is the wait timing
+# out: the case must exit 2 with the cut-off line, here giving the reason that
+# the window closed before the read, then the still-unsettled line on standard
+# error, no read-failure line, and exactly one check-runs call. The zero-timeout
+# cases and the run_final_reap_view_case cases reach the same raise with no
+# successful reading before it, so they exit 3.
+run_closed_window_case() {
+  local name="$1"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_IN_PROGRESS" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in
+  *check-runs*) echo read >> "$tmp/reads"; cat "$tmp/def.json" ;;
+  *"repo view"*) printf "owner/name";; *) printf "";;
+esac
+GH
+  chmod +x "$bin/gh"
+  local got=0
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, sys, time, types
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+now = [1000.0]
+mod.time = types.SimpleNamespace(time=lambda: now[0], sleep=time.sleep, monotonic=time.monotonic)
+real_read_checks = mod.read_checks
+calls = []
+def read_checks(repo, full_sha, deadline):
+    calls.append(deadline)
+    if len(calls) == 2:
+        now[0] = deadline  # after the top-of-loop guard, before the read
+    return real_read_checks(repo, full_sha, deadline)
+mod.read_checks = read_checks
+sys.argv = [path, "--repo", "owner/name", "--wait", "--timeout", "10", "--interval", "1", sys.argv[2]]
+sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || got=$?
+  local why=""
+  [ "$got" -eq 2 ] || why="$why exit"
+  grep -q -x -F -- "ci-status: waiting, 10 seconds left" "$tmp/out" || why="$why pending"
+  grep -q -x -F -- "ci-status: the wait window cut off the last read (the wait window closed before the read)" \
+    "$tmp/err" || why="$why message"
+  grep -q -x -F -- "ci-status: still unsettled after 10 seconds; giving up" "$tmp/err" || why="$why timeout"
+  grep -q -F -- "check read failed" "$tmp/err"
+  case $? in 1) ;; *) why="$why absent" ;; esac
+  [ "$(grep -c "" "$tmp/reads" 2>/dev/null)" = 1 ] || why="$why reads"
+  if [ -z "$why" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want 2;%s)\n" "$name" "$got" "$why"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_closed_window_case "pending reading then the window closing before the next read -> not green, timed out"
 
 # A skipped case is not verified, so any skip makes the suite incomplete and
 # nonzero; the final line then names the count.
