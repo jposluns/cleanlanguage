@@ -251,6 +251,12 @@ CASES = [
         [at(SKILL, NEXT_HEADING) + character("&")]),
     ("x & y directly under the heading after the carve-out section", edit(SKILL, NEXT_HEADING, NEXT_HEADING + EDGE),
         0, []),
+    # A level 1 heading ends the section as a level 2 heading does, so these 2 cases pin that edge apart from the
+    # level 2 heading after it.
+    ("x & y directly above a level 1 heading added after the carve-out section",
+        edit(SKILL, NEXT_HEADING, EDGE + "# More\n" + NEXT_HEADING), 3, [at(SKILL, NEXT_HEADING) + character("&")]),
+    ("x & y directly under a level 1 heading added after the carve-out section",
+        edit(SKILL, NEXT_HEADING, "# More\n" + EDGE + NEXT_HEADING), 0, []),
     # With the carve-out section last in SKILL.md, the section ends at the end of the file, and no line lies past
     # it: the section with no refused line pins a check that reads past the end, and x & y on its last line, with
     # and without a final LF, pins a check that stops short of it.
