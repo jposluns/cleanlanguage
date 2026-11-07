@@ -733,7 +733,8 @@ CASES = [
         (1, "text other than whitespace sits outside the head and the body")),
     ("a blank line between the pick label and the button row", edit(PAGE, PICK, PICK + "\n \n"), 0),
     ("bare text right after the button row", edit(PAGE, ROW_END, ROW_END + "Note."), 0),
-    # A hiding body start tag hides the h1 and the label whose text the parser has already read as visible.
+    # A browser may add a later body start tag's attributes to the page's own body element, so the gate reads a
+    # hiding one as hiding the h1 and the label whose text the parser has already read as visible.
     ("the hero's h1 hidden by a later body start tag", edit(PAGE, "</main>", "</main><body hidden>"),
         (1, "the hero's h1 reads as hidden")),
     ("the pick label hidden by a later html start tag", edit(PAGE, "</main>", '</main><html class="vh">'),
@@ -976,7 +977,7 @@ CASES = [
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI</br>systems</h1>"), (1, "a br inside the <h1> is a br, " + TAG_GIVEN)),
     ("a family page heading joining its family's name across </br> in a hidden span",
         edit(OTHER, "<h1>Other AI systems</h1>", "<h1>Other AI<span hidden></br></span>systems</h1>"), 1),
-    # A bidi control can show the name's letters in another order: Chat, U+202E, GPT and U+202C show "ChatTPG".
+    # A bidi control can show the name's letters in another order: Chat, U+202E, GPT and U+202C may show "ChatTPG".
     ("a family page heading whose name a right-to-left override reorders",
         edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>Chat&#x202E;GPT&#x202C;</h1>"), (1, "holds a bidi control")),
     *[(f"a family page heading naming its family beside U+{code:04X}",
@@ -985,7 +986,7 @@ CASES = [
     ("a family page heading naming its family beside a bidi control in a hidden span",
         edit(CHATGPT, "<h1>ChatGPT</h1>", "<h1>ChatGPT<span hidden>" + chr(0x202E) + "</span></h1>"),
         (1, "a span inside the <h1> carries the attribute 'hidden', " + GIVEN)),
-    # A bdo or a dir attribute can reorder the letters too: <bdo dir="rtl">GPT</bdo> shows "TPG".
+    # A bdo or a dir attribute can reorder the letters too: <bdo dir="rtl">GPT</bdo> may show "TPG".
     ("a family page heading whose name a bdo reverses in part",
         edit(CHATGPT, "<h1>ChatGPT</h1>", '<h1>Chat<bdo dir="rtl">GPT</bdo></h1>'), (1, "holds a bdo element or a dir")),
     ("a family page heading whose name a bdo reverses whole",
@@ -1054,8 +1055,8 @@ CASES = [
         (1, "a details around a step list carries the attribute 'open', " + GIVEN)),
     ("a family page step list with data-popover", edit(OTHER, STEPS, '<ol class="steps" data-popover="auto">'),
         (1, "a step list carries the attribute 'data-popover', " + GIVEN)),
-    # The gate ignores "/>" on an element that is not void, as a browser may, but for an svg and a shape in an svg
-    # (SVG_SHAPES), so each of these stays open and hides what follows.
+    # The gate ignores "/>" on an element that is not void, as a browser may, but for an svg and a shape (SVG_SHAPES)
+    # directly in an svg, so each of these stays open and hides what follows.
     ("the button row after <div hidden/>", edit(PAGE, ROW, "<div hidden/>" + ROW), 1),
     ('the button row after <div class="vh"/>', edit(PAGE, ROW, '<div class="vh"/>' + ROW), 1),
     ("the button row after <details/>", edit(PAGE, ROW, "<details/>" + ROW), 1),
@@ -1226,7 +1227,7 @@ CASES = [
     ("site.css with its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">\n</head>'),
         (1, OTHER_SHEET)),
     ("another baseline stylesheet on a family page", edit(GEMINI, "</head>",
-        '<link rel="stylesheet" href="/assets/baseline/print.css?v=1.8.0">\n</head>'), (1, OTHER_SHEET)),
+        '<link rel="stylesheet" href="/assets/baseline/print.css?v=1.11.1">\n</head>'), (1, OTHER_SHEET)),
     ("a baseline stylesheet with a media attribute", edit(PAGE, LATER, LATER.replace('">', '" media="all">')),
         (1, OTHER_SHEET)),
     # As for scripts, the text match also finds a tag that the parser reads as a comment or as text.
@@ -2039,7 +2040,7 @@ def name_reading_problems() -> list[str]:
                      if gate.has_visible_text(text)]
         # load_path() reads a load target as a path from the site's root, refusing a . or .. segment even where the
         # path it names is pinned, so its refusal does not rest on the pin alone.
-        paths = (("/assets/baseline/copy.js?v=1.8.0", "assets/baseline/copy.js"), ("/assets/./baseline/copy.js", None),
+        paths = (("/assets/baseline/copy.js?v=1.11.1", "assets/baseline/copy.js"), ("/assets/./baseline/copy.js", None),
                  ("/assets/baseline/../baseline/copy.js", None), ("assets/baseline/copy.js", None),
                  ("//host/assets/baseline/copy.js", None), ("/assets/%2e%2e/images/a.png", None))
         problems += [f"load_path() reads {target!r} as {gate.load_path(target)!r}, not {path!r}."
@@ -2087,9 +2088,10 @@ def end_tag_problems() -> list[str]:
                  "<table><td><p>x</td>", "<table><caption><td><p>x</td>", "<table><tr><div><td><p>x</td>",
                  '<span class="vh"><td><p>x</td></span>', '<span class="vh"><caption><p>x</caption></span>',
                  # A table start tag that ends the table around it, in a row: nothing from that table on counts as
-                 # opened, so the later cell, or the row at the outer table's end tag, is left open (the first and
-                 # third). The second puts the cell in a div in the table, after such a start tag; a td whose parent is
-                 # a div never counts as opened (TABLE_PARTS), so it reads as misnested with or without that start tag.
+                 # opened, so the gate refuses the cell's end tag with the p still open in the first, and the outer
+                 # table's end tag with the row still open in the third. The second puts the cell in a div in the
+                 # table, after such a start tag; a td whose parent is a div never counts as opened (TABLE_PARTS), so
+                 # it reads as misnested with or without that start tag.
                  "<table><tr><table></table><td><p>x</td>", "<table><div><table></table><td><p>x</td>",
                  "<table><tr><table></table></table>",
                  # A self-closing tag in an svg that is not 1 of SVG_SHAPES, or 1 whose parent is not the svg.

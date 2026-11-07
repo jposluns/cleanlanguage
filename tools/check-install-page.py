@@ -105,7 +105,7 @@ What it verifies
    (``BIDI_CONTROLS``: U+061C, U+200E, U+200F, U+202A to U+202E and U+2066 to
    U+2069, which can show the letters in another order), and no element that
    starts before it ends, shown or hidden, is a ``bdo`` or carries ``dir``,
-   which can do the same (``<bdo dir="rtl">GPT</bdo>`` shows "TPG"): it and
+   which can do the same (``<bdo dir="rtl">GPT</bdo>`` may show "TPG"): it and
    what it holds, its ancestors and every element before it on the page,
    ``header.mast`` and the ``head`` included, for the reasons check 1 gives,
    and no ``html`` or ``body`` start tag on the page carries ``dir``; at least 1
@@ -812,12 +812,12 @@ ASCII_WHITESPACE = re.compile(r"[ \t\n\f\r]+")
 # (U+200E, U+200F and U+061C), the embeddings, overrides and their pop (U+202A to U+202E), and the isolates and
 # their pop (U+2066 to U+2069). has_visible_text also drops U+0000, which a browser may ignore in body text. A family
 # page's h1 may hold none of the bidi formatting characters (BIDI_CONTROLS) in its visible text: name_text deletes
-# them, and they can show the letters of the name in another order (<h1>Chat&#x202E;GPT&#x202C;</h1> shows ChatTPG).
+# them, and they can show the letters of the name in another order (<h1>Chat&#x202E;GPT&#x202C;</h1> may show ChatTPG).
 BIDI_CONTROLS = "\u200e\u200f\u061c\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
 ZERO_WIDTH = "\u200b\u200c\u200d\ufeff\u00a0\u2060\u00ad" + BIDI_CONTROLS
-# Characters that show nothing, which has_visible_text also reads as invisible, and name_text keeps, so a heading of
+# Characters that may show nothing, which has_visible_text also reads as invisible, and name_text keeps, so a heading of
 # Chat, U+034F and GPT names no family: Unicode 18.0's Default_Ignorable_Code_Point set, other than the characters of
-# ZERO_WIDTH, and the Braille pattern blank (U+2800), which is not in that set but shows nothing. Its 12 kinds: the
+# ZERO_WIDTH, and the Braille pattern blank (U+2800), which is not in that set but may show nothing. Its 12 kinds: the
 # combining grapheme joiner (U+034F); the Hangul fillers (U+115F, U+1160, U+3164 and U+FFA0); the Khmer inherent vowels
 # (U+17B4 and U+17B5); the Mongolian free variation selectors and vowel separator (U+180B to U+180F); the invisible
 # operators (U+2061 to U+2064); the deprecated format characters (U+206A to U+206F); the variation selectors (U+FE00
@@ -1214,7 +1214,7 @@ class PageParser(HTMLParser):
             heading = {"hidden": hiding, "text": False, "chars": "", "order": self.order, "bidi": False}
             self.h1.append(heading)
         # A bdo element or a dir attribute that no element hides can show the letters of the element that carries
-        # it, or holds it, in another order (<bdo dir="rtl">GPT</bdo> shows TPG), so the open h1, the innermost open
+        # it, or holds it, in another order (<bdo dir="rtl">GPT</bdo> may show TPG), so the open h1, the innermost open
         # link, the element itself and each element the parser holds open around it record it.
         if (tag == "bdo" or "dir" in attrs) and not hiding:
             open_h1 = heading or next((frame["h1"] for frame in reversed(self.stack) if frame["h1"] is not None), None)
