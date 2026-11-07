@@ -63,9 +63,8 @@ only the affected file(s).
    changed): refresh; if the mode is attended-autonomous or an operator boundary (an inbound operator
    message) is open, surface accumulated decisions, up to 4 per round (per
    .claude/rules/maintainer-questions.md); list the next items; continue on already-authorized safe
-   actions. Whenever the repository's AskUserQuestion guard denies AskUserQuestion at an operator
-   boundary, whatever the reason, the session surfaces those decisions as text in its reply, in the
-   four-role shape, and says that the guard denied AskUserQuestion.
+   actions. When the repository's AskUserQuestion guard denies a question, the MODE bullet below
+   sets what the session does.
 9. NOTHING ACTIONABLE: seeds/combines/QA in flight -> keep the pipeline topped up + read-only prep on
    upcoming verified-DISJOINT items; re-enter on the next delivery. Nothing in flight -> run
    blocked-verification (below); only on genuine whole-set exhaustion, close on green via /handoff.
@@ -204,23 +203,32 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   may still hold the retired value "attended", which the writer does not write. The session reads
   the record at resume and again at each task boundary. A mode change is an operator act, so a
   change that the operator makes through `orch-set-mode` takes effect at the session's next read.
-  Wherever this file keys on "the mode", it means the session's mode: the value the session last
-  read, after any decision-timeout switch.
+  Wherever a step or rule in this file depends on whether the mode is attended-autonomous or
+  unattended, that mode is the session's mode: the mode the session last read the record as, under
+  this bullet's rules, after any decision-timeout switch.
   "attended" is retired as a selectable mode (lab_infra rule FLEET-05): the session reads a legacy
   stored "attended" as attended-autonomous, never as unattended, and gives 1 warning about it in its
   own output, once per session. The session reads an absent mode record as unattended
   (conservative), and alerts lab_infra through `inbox-send lab_infra` to clarify the mode, once per
   session.
-  The repository's AskUserQuestion guard checks the host's mode folder and record afresh on every
-  AskUserQuestion call and decides from what it finds there, never from the session's mode;
-  its decisions are set in `.claude/hooks/ask_mode_guard.py` and described in `.aiqt/config.md`,
-  and this file does not restate them. The session reads the record only at resume and at each task
-  boundary, and a decision-timeout switch changes the session's mode without a write, so the
-  session's mode can differ from what the guard reads. When the host's mode folder,
-  `/opt/orch-operator`, is itself absent, the guard allows a question, with a one-line note, while
-  the session reads the mode as unattended. Whenever the guard denies AskUserQuestion at an
-  operator boundary, whatever the reason, cycle step 8 surfaces the accumulated decisions as text
-  in the session's reply, in the four-role shape.
+  The repository's AskUserQuestion guard never decides from the session's mode: apart from its
+  checks of the hook payload, it decides from the host's mode folder and record as it finds
+  them when it runs, and it can deny before it reads either, for example on a malformed hook
+  payload. Its decisions are set in `.claude/hooks/ask_mode_guard.py` and described in
+  `.aiqt/config.md`, and this file does not restate them. The session reads the record only at
+  resume and at each task boundary, and a decision-timeout switch changes the session's mode
+  without a write, so the session's mode can differ from what the guard reads. When the host's
+  mode folder, `/opt/orch-operator`, is itself absent, the guard allows a question, with a
+  one-line note, while the session reads the mode as unattended.
+  Whenever the guard denies an AskUserQuestion call, for any reason and in any mode, the session
+  records each decision it could not ask in its pending-decisions record,
+  `/opt/cleanlanguage/private/pending-decisions.md`, holds the step that decision gates while other
+  work continues (in unattended mode, the DECISIONS bullet below sets whether the unattended vote
+  rule then settles that step), and names the held decisions in its reply. The AskUserQuestion
+  dialog stays the only channel for asking a decision. The guard's deny message never changes the
+  session's mode, even where it says to treat the session as unattended; the session takes its
+  mode only from its own reads of the record and from a decision-timeout switch, under this
+  bullet's rules.
   The only governed transition is a decision-timeout switching attended-autonomous -> unattended (the
   safe/conservative direction only); it switches this session's question policy, timer and routing,
   and never writes the mode record. The switch holds for the session until the record is written

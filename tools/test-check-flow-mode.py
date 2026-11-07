@@ -24,8 +24,9 @@ the MODE line passes, an indented line that starts "- MODE (" after its indent i
 passes, a retired default inside straight double quotes passes, a sentence that contradicts the
 absent rule passes, the matched absent-rule sentence negated passes, the absent-rule sentence
 inside a quotation that rejects it passes, the absent rule in other words fails, an ordinary
-English use of "attended" fails, and a quoted "attended" whose quotes wrap across a line break
-fails.
+English use of "attended" fails, a quoted "attended" whose quotes wrap across a line break
+fails, and a bare "attended" passes on a line that closes a quotation wrapped from the line above
+when it stands between that closing quote and the next opening quote.
 
 Usage: python3 -I tools/test-check-flow-mode.py
 Exit 0 when every case passes; 1 otherwise.
@@ -247,6 +248,14 @@ class Residual(unittest.TestCase):
         status, output = verdict(added("- A record that holds \"the retired\n  attended\" value."))
         self.assertEqual(status, 1, output)
         self.assertIn(BARE, output)
+
+    def test_a_bare_attended_after_a_wrapped_closing_quote_passes(self):
+        # The check pairs straight quotes left to right on each line, so the closing quote of the
+        # quotation opened on the line above pairs with the opening quote of "for now", and the
+        # bare "attended" between them is skipped.
+        status, output = verdict(added("- A legacy record is read \"as attended-autonomous, never as\n"
+                                       "  unattended\" though Absent = attended \"for now\"."))
+        self.assertEqual(status, 0, output)
 
     def test_the_absent_rule_in_other_words_fails(self):
         status, output = verdict(changed(ABSENT_WORDS, "treats a missing mode record as unattended"))

@@ -15,7 +15,8 @@ flow.md, not a reading of what its sentences mean. It fails when any of them is 
   lines and a MODE line with no closing parenthesis;
 - no line may hold an unquoted bare "attended": the word "attended", in any letter case, that is
   not part of a longer word such as "unattended", is not the start of "attended-autonomous", and
-  is not inside a pair of straight double quotes (") on one line;
+  is not between a pair of straight double quotes (") that the check pairs left to right on the
+  same line;
 - the file must hold the sentence that an absent mode record is read as unattended, in the words
   "reads an absent mode record as unattended" or "an absent mode record is read as unattended",
   in any letter case and matched across line breaks.
@@ -29,18 +30,24 @@ UTF-8, and when more than 1 argument is given.
 Residual: the check reads text literally. A mode value other than the 2 is checked only on the
 MODE line, so a third value named on any other line passes, and a line that holds "- MODE ("
 after any other character, such as an indented one, is not a MODE line and is not checked. Only
-the bare "attended" test skips quoted text, and only text inside a pair of straight double quotes
-on one line, so a retired default written inside such quotes passes, while "attended" inside
-typographic quotes (U+201C and U+201D) fails. The MODE line and absent-rule tests read quoted
+the bare "attended" test skips quoted text, and only text between straight double quotes that it
+pairs left to right on one line, so a retired default written inside such quotes passes, while
+"attended" inside typographic quotes (U+201C and U+201D) fails. Straight double quotes do not show
+which one opens a quotation and which one closes it, so this pairing can differ from the author's
+quotations when a quotation wraps across a line break. A quoted phrase that wraps is not skipped,
+so it can fail the check falsely. A bare "attended" can also pass: a line that closes a quotation
+opened on the line above pairs that closing quote with the next opening quote on the line, so a
+bare "attended" between them is skipped, as in the line 'unattended" though Absent = attended
+"for now".'. No pairing rule for straight quotes recovers every author's quotations, so the check
+keeps this simple rule and states this limit. The MODE line and absent-rule tests read quoted
 text as any other text, so the absent-rule sentence inside a quotation that rejects it passes.
-Any ordinary use of the English word "attended" outside straight double quotes, such as "the call
-was attended", fails the check, so such a sentence must be reworded or quote the word. The check
-cannot tell whether a sentence states the rule it matches or only mentions those words. So a
-sentence elsewhere that contradicts the absent rule passes while the matched words stay; the
+Any ordinary use of the English word "attended" outside the text that the check skips, such as
+"the call was attended", fails the check, so such a sentence must be reworded or quote the word.
+The check cannot tell whether a sentence states the rule it matches or only mentions those words.
+So a sentence elsewhere that contradicts the absent rule passes while the matched words stay; the
 matched sentence itself can be negated and still pass, as in "The session never reads an absent
 mode record as unattended; it reads it as attended-autonomous"; and a correct statement of the
-absent rule in other words fails. A quoted phrase that wraps across a line break is not skipped,
-so it can fail the check falsely. tools/test-check-flow-mode.py holds a case for each verdict
+absent rule in other words fails. tools/test-check-flow-mode.py holds a case for each verdict
 named in this docstring.
 """
 import re
@@ -84,7 +91,9 @@ def findings(text, name):
                 name, " | ".join(named), " | ".join(WRITER_VALUES)))
     for number, line in enumerate(lines, 1):
         # flow.md names the retired value inside straight double quotes, so this test alone skips
-        # such quoted text and reports only an unquoted "attended", whatever the sentence means.
+        # text between straight double quotes paired left to right on the line and reports every
+        # other bare "attended", whatever the sentence means. The docstring states where that
+        # pairing differs from the author's quotations.
         if BARE_ATTENDED.search(QUOTED.sub("", line)):
             found.append("{}:{}: unquoted bare \"attended\": {}".format(
                 name, number, line.strip()))
