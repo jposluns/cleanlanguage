@@ -4,15 +4,16 @@
 .claude/commands/flow.md tells an orchestrator session how to read the host's mode record. The
 only writer of that record, orch-set-mode, writes exactly 2 values, attended-autonomous and
 unattended, and .claude/hooks/ask_mode_guard.py takes the same 2. A session that follows a /flow
-that names another value, or that reads a missing record as attended, can put a blocking question
-to a host that nobody attends. This check is a literal regression check of 3 things in flow.md,
-not a reading of what its sentences mean. It fails when any of them is missing:
+that names another value, or that reads a missing record as "attended", can put a blocking
+question to a host that nobody attends. This check is a literal regression check of 3 things in
+flow.md, not a reading of what its sentences mean. It fails when any of them is missing:
 
-- its MODE line, the line that starts "- MODE (", must name exactly attended-autonomous and
-  unattended, separated by "|";
-- no line may hold an unquoted bare "attended": a whole word "attended", in any letter case,
-  that is neither part of "unattended" nor the start of "attended-autonomous", outside a pair of
-  double quotes on one line;
+- exactly 1 line is a MODE line, a line that starts "- MODE (", and it names exactly
+  attended-autonomous and unattended, separated by "|", in either order: a missing value, an
+  extra value or another separator fails, and so do no MODE line and 2 MODE lines;
+- no line may hold an unquoted bare "attended": the word "attended", in any letter case, that is
+  not part of a longer word such as "unattended", is not the start of "attended-autonomous", and
+  is not inside a pair of double quotes on one line;
 - the file must hold the sentence that an absent mode record is read as unattended, in the words
   "reads an absent mode record as unattended" or "an absent mode record is read as unattended",
   in any letter case and matched across line breaks.
@@ -20,18 +21,21 @@ not a reading of what its sentences mean. It fails when any of them is missing:
 Usage: python3 -I tools/check-flow-mode.py [PATH]
 PATH defaults to .claude/commands/flow.md in this checkout; "-" reads the text from standard input,
 so a copy from another commit can be checked through git show.
-Exit status: 0 when every check passes, 1 on any finding or when the text cannot be read.
+Exit status: 0 when every check passes, 1 on any finding, when the text cannot be read or is not
+UTF-8, and when more than 1 argument is given.
 
 Residual: the check reads text literally. A mode value other than the 2 is checked only on the
 MODE line, so a third value named on any other line passes. Any text inside a pair of double
 quotes on one line is skipped, so a bare value or a retired default written inside quotes passes.
 Any ordinary use of the English word "attended" outside double quotes, such as "the call was
 attended", fails the check, so such a sentence must be reworded or quote the word. The check
-cannot tell whether a sentence states the rule it matches or only mentions those words, so a
-sentence elsewhere that contradicts the absent rule passes while the matched words stay, and a
-correct statement of the absent rule in other words fails. A quoted phrase that wraps across a
-line break is not skipped, so it can fail the check falsely. tools/test-check-flow-mode.py pins
-the verdicts on these cases.
+cannot tell whether a sentence states the rule it matches or only mentions those words. So a
+sentence elsewhere that contradicts the absent rule passes while the matched words stay; the
+matched sentence itself can be negated and still pass, as in "The session never reads an absent
+mode record as unattended; it reads it as attended-autonomous"; and a correct statement of the
+absent rule in other words fails. A quoted phrase that wraps across a line break is not skipped,
+so it can fail the check falsely. tools/test-check-flow-mode.py holds a case for each verdict
+named in this docstring.
 """
 import re
 import sys

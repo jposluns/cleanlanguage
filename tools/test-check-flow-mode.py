@@ -1,25 +1,34 @@
 #!/usr/bin/env python3
 """Tests for tools/check-flow-mode.py: its verdict on the flow.md texts it must pass or fail.
 
-Each case runs the check as a separate process, isolated (-I), with the text on standard input,
-and asserts its exit status, 0 for a pass and 1 for a failure, and the report line that names the
-reason. The cases are the committed .claude/commands/flow.md, which passes; the mode text of
-main's flow.md at ee6be48, which fails; and the committed flow.md with 1 change each: a third
-value on the MODE line, an unquoted bare "attended" and the absent-record sentence removed, which
-fail, and a quoted "attended", which passes. The main case copies the lines of that flow.md that
-the check reports, so it needs no git history and runs in a shallow checkout.
+Each case runs the check as a separate process, isolated (-I), and asserts its exit status, 0 for
+a pass and 1 for a failure, and for a failure the report line that names the reason. Most cases
+give the check the text on standard input.
 
-The residual cases pin the limits that the check's docstring states, so a change to what the
-check reads fails here until that docstring and these cases change with it: a third value named
-outside the MODE line passes, a retired default inside double quotes passes, a sentence that
-contradicts the absent rule passes, the absent rule in other words fails, and an ordinary English
-use of "attended" fails.
+The verdict cases are these. The committed .claude/commands/flow.md passes on standard input, as
+a path argument and as the default path. The mode text of main's flow.md at ee6be48 fails with 9
+findings; the case copies the lines of that flow.md that the check reports, so it needs no git
+history and runs in a shallow checkout. The committed flow.md with 1 change each fails when its
+MODE line names a third value, drops either value or uses a comma as the separator, when the MODE
+line is renamed so that none is left, when a second MODE line is added, when a line holds an
+unquoted bare "attended" in lower case or with a capital letter, and when the absent-record
+sentence is removed. It passes with the MODE values in the other order, with a quoted "attended",
+with a longer word that holds "attended", and with the absent-record sentence in its second
+wording, in capital letters, or wrapped across a line break. A path that does not exist, text
+that is not UTF-8 and 2 arguments each give exit status 1.
+
+The residual cases hold the limits that the check's docstring states: a third value named outside
+the MODE line passes, a retired default inside double quotes passes, a sentence that contradicts
+the absent rule passes, the matched absent-rule sentence negated passes, the absent rule in other
+words fails, an ordinary English use of "attended" fails, and a quoted "attended" whose quotes
+wrap across a line break fails.
 
 Usage: python3 -I tools/test-check-flow-mode.py
 Exit 0 when every case passes; 1 otherwise.
 """
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -55,11 +64,16 @@ BARE = "unquoted bare \"attended\""
 NO_ABSENT = "no statement that an absent mode record is read as unattended"
 
 
-def verdict(text):
-    """The exit status of the check run on text, and its output."""
-    run = subprocess.run([sys.executable, "-I", str(CHECK), "-"], input=text.encode("utf-8"),
+def run_check(args, data=b""):
+    """The exit status of the check run with args and data on standard input, and its output."""
+    run = subprocess.run([sys.executable, "-I", str(CHECK)] + args, input=data,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60, check=False)
     return run.returncode, run.stdout.decode("utf-8", "replace")
+
+
+def verdict(text):
+    """The exit status of the check run on text, and its output."""
+    return run_check(["-"], text.encode("utf-8"))
 
 
 def committed():
@@ -91,8 +105,19 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(status, 1, output)
         self.assertIn(reason, output)
 
+    def assert_status_one(self, status, output, reason):
+        self.assertEqual(status, 1, output)
+        self.assertIn(reason, output)
+
     def test_the_committed_flow_passes(self):
         self.assert_passes(committed())
+
+    def test_the_committed_flow_passes_by_path_and_by_default(self):
+        for args in ([str(FLOW)], []):
+            with self.subTest(args=args):
+                status, output = run_check(args)
+                self.assertEqual(status, 0, output)
+                self.assertTrue(output.startswith("OK: "), output)
 
     def test_the_mode_text_of_main_fails(self):
         status, output = verdict(MAIN_MODE_TEXT)
@@ -107,14 +132,63 @@ class Verdicts(unittest.TestCase):
         self.assert_fails(changed(MODE_LINE, "- MODE (attended-autonomous | unattended | supervised)"),
                           WRONG_MODES)
 
+    def test_a_dropped_value_on_the_mode_line_fails(self):
+        for line in ("- MODE (unattended)", "- MODE (attended-autonomous)"):
+            with self.subTest(line=line):
+                self.assert_fails(changed(MODE_LINE, line), WRONG_MODES)
+
+    def test_another_separator_on_the_mode_line_fails(self):
+        self.assert_fails(changed(MODE_LINE, "- MODE (attended-autonomous, unattended)"),
+                          WRONG_MODES)
+
+    def test_the_mode_values_in_the_other_order_pass(self):
+        self.assert_passes(changed(MODE_LINE, "- MODE (unattended | attended-autonomous)"))
+
+    def test_no_mode_line_fails(self):
+        self.assert_fails(changed(MODE_LINE, "- Mode (attended-autonomous | unattended)"),
+                          "expected 1 MODE line starting \"- MODE (\", found 0")
+
+    def test_a_second_mode_line_fails(self):
+        self.assert_fails(added(MODE_LINE + " is repeated."),
+                          "expected 1 MODE line starting \"- MODE (\", found 2")
+
     def test_an_unquoted_bare_attended_fails(self):
         self.assert_fails(added("- Absent = attended (conservative)."), BARE)
+
+    def test_a_capitalized_bare_attended_fails(self):
+        self.assert_fails(added("- Attended is the default."), BARE)
 
     def test_the_absent_record_sentence_removed_fails(self):
         self.assert_fails(changed(ABSENT_WORDS, "reads the mode record"), NO_ABSENT)
 
     def test_a_quoted_attended_passes(self):
         self.assert_passes(added("- A record that holds \"attended\" is a legacy record."))
+
+    def test_a_longer_word_that_holds_attended_passes(self):
+        self.assert_passes(added("- The record has no attendedness field."))
+
+    def test_the_absent_rule_in_its_second_wording_passes(self):
+        self.assert_passes(changed("The session " + ABSENT_WORDS,
+                                   "An absent mode record is read as unattended"))
+
+    def test_the_absent_rule_in_capital_letters_passes(self):
+        self.assert_passes(changed(ABSENT_WORDS, ABSENT_WORDS.upper()))
+
+    def test_the_absent_rule_wrapped_across_a_line_break_passes(self):
+        self.assert_passes(changed(ABSENT_WORDS, "reads an absent mode\n  record as unattended"))
+
+    def test_a_path_that_does_not_exist_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            status, output = run_check([str(Path(folder) / "missing.md")])
+        self.assert_status_one(status, output, "cannot be read")
+
+    def test_text_that_is_not_utf8_fails(self):
+        status, output = run_check(["-"], committed().encode("utf-8") + b"\xff\n")
+        self.assert_status_one(status, output, "cannot be read")
+
+    def test_two_arguments_fail(self):
+        status, output = run_check([str(FLOW), str(FLOW)])
+        self.assert_status_one(status, output, "usage:")
 
 
 class Residual(unittest.TestCase):
@@ -129,6 +203,17 @@ class Residual(unittest.TestCase):
     def test_a_sentence_that_contradicts_the_absent_rule_passes(self):
         status, output = verdict(added("- A session reads a missing record as attended-autonomous."))
         self.assertEqual(status, 0, output)
+
+    def test_the_matched_absent_sentence_negated_passes(self):
+        status, output = verdict(changed(
+            "The session " + ABSENT_WORDS,
+            "The session never " + ABSENT_WORDS + "; it reads it as attended-autonomous"))
+        self.assertEqual(status, 0, output)
+
+    def test_a_quoted_attended_wrapped_across_a_line_break_fails(self):
+        status, output = verdict(added("- A record that holds \"the retired\n  attended\" value."))
+        self.assertEqual(status, 1, output)
+        self.assertIn(BARE, output)
 
     def test_the_absent_rule_in_other_words_fails(self):
         status, output = verdict(changed(ABSENT_WORDS, "treats a missing mode record as unattended"))
