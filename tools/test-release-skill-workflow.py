@@ -929,10 +929,10 @@ VERIFY_BY_DISPATCH = ("To verify the published release, first check that .github
 # verifying dispatch only for a tag carrying that step, and for any other tag
 # forbid a dispatch at it and name a read-only check. The readback refusals
 # (REMEDY_UNREADABLE) run at the tag commit, which carries this workflow.
-# The one advice for such a tag, declared once in the job env,
-# printed by both sites and repeated in the description. It names the
-# authority, the release step of the workflow at that tag, and no procedure:
-# no command, file or path.
+# OLDER_TAG_ADVICE is the one advice for such a tag, declared once in the
+# job env, printed by both sites and repeated in the description. It names
+# the authority, the release step of the workflow at that tag, and no
+# procedure: no command, file or path.
 OLDER_TAG_ADVICE = ("A tag without the step " + PUBLISH + " carries an older workflow that can"
                     " republish a published release, so never dispatch this workflow at such a tag, or repeat"
                     " any of its runs, with or without the force input; its step texts that advise a republish"
@@ -1710,7 +1710,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         echoes = [line for line in WORKFLOW_TEXT.splitlines() if "echo " in line]
         remedies = [line for line in echoes if "corrective" in line or "new version" in line]
         # The two tag-gone lines print TAG_GONE_ADVICE from
-        # the job env, so they leave this count; the job env values are
+        # the job env, so this count excludes them; the job env values are
         # pinned by test_the_older_tag_advice_and_the_tag_gone_text_each_have_one_source.
         self.assertEqual(len(remedies), 9, remedies)
         for value in (job_env()["OLDER_TAG_ADVICE"], job_env()["TAG_GONE_ADVICE"],
@@ -1802,11 +1802,13 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # verifying dispatch first, and a corrective new version only if that
         # verification fails or the tag is gone.
         self.assertNotIn("the remedy for a published release is a corrective new version", description)
-        # The description ends with the shared advice and then
-        # one sentence naming the two remaining cases, so no condition is
-        # stated twice.
-        # The advice names two remedies, so the closing
-        # sentence names its remedy rather than pointing back at one.
+        # The description ends with the shared advice, then one sentence
+        # naming the 2 remaining cases (so no condition is stated twice),
+        # then the superseded-release advice; the endswith assertion below
+        # checks all 3, in that order.
+        # The sentence after the advice (last): the advice names 2
+        # remedies, so this sentence names its own remedy rather than
+        # pointing back at one.
         last = ("A corrective new version is also the remedy if the dispatch at the tag fails its"
                 " verification, or if the tag is no longer on origin.")
         # Row 88: the shared superseded-release note closes the description.
@@ -1827,8 +1829,8 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # description names this input for that case. The behavioural
         # pair is test_force_still_moves_the_tag_of_an_unpublished_release
         # and test_moved_tag_of_an_unpublished_release_needs_the_force_input.
-        # A re-run executes the workflow at the run commit, so
-        # the re-run advice is limited to a commit carrying the publish step,
+        # Re-run advice: a re-run executes the workflow at the run commit,
+        # so the advice is limited to a commit carrying the publish step,
         # consistent with the ban on repeating the runs of an older tag.
         self.assertIn("To finish a run that failed before it published, re-run it only if its commit carries"
                       " the step " + PUBLISH + ", and otherwise dispatch this workflow again from main with the"
@@ -2453,7 +2455,9 @@ class MutationTest(unittest.TestCase):
             self.assertTrue(any(fragment in problem for problem in problems), (fragment, problems))
 
     def test_blank_line_before_an_env_override_is_caught(self):
-        # Valid YAML that a reader working line by line stops at.
+        # Valid YAML with a blank line before an env override: a reader
+        # working line by line stops at the blank line and misses the
+        # override.
         wf = self.mutated(FORCE_LINE, FORCE_LINE + "\n          RELEASE_DATED: \"0\"\n")
         self.assertEqual(wf.step_env(PUBLISH)["RELEASE_DATED"], "0")
         self.assertNamed(
