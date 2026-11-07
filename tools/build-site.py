@@ -27,7 +27,15 @@ Sources
 - ``site-src/release.json``: the release version, tag and checksum, written by
   ``tools/set-release-links.py``. Every version string the pages show comes
   from here, and the build refuses to run if it disagrees with the ``Version:``
-  line of ``cleanlanguage/skills/cleanlanguage/SKILL.md``.
+  line of ``cleanlanguage/skills/cleanlanguage/SKILL.md``. While its checksum
+  is the zero placeholder of a version bump, the verify page shows no checksum
+  and says that it appears once that version is published, and to compare the
+  checksum of the downloaded file with it then (``sum_tokens()``).
+  ``verify_download_block()`` renders the verify page's download block alone,
+  which ``tools/check-release-links.py`` and
+  ``tools/check-release-checksum-live.py`` require on the page, and
+  ``verify_page()`` renders the whole verify page, which both gates require
+  the committed page to equal and ``tools/test-build-site.py`` pins.
 - ``site-src/pages/<page>.html``: the hand-written content of each page, with
   ``{{token}}`` placeholders.
 - ``site-src/assets/site.css``, optional: only the measured per-site constants
@@ -254,6 +262,19 @@ SEVENTH_CARD = (
     '<img src="{logos}/vendorreplies.png" alt=""><span class="cname">VendorReplies<span class="tld">.ai</span></span>'
     + NEW_TAB + "</a></li>"
 )
+# The checksum a version bump writes into site-src/release.json until the post-release flip sets the published one.
+PLACEHOLDER_CHECKSUM = "0" * 64
+# A checksum other than the placeholder with at least this many 0 digits of its 64 is close to the placeholder, such as a
+# mistyped one, and load_release() refuses it (near_placeholder()); a real SHA-256 has that many with a probability of
+# about 10^-58. tools/set-release-links.py and tools/check-release-links.py apply the same rule.
+NEAR_PLACEHOLDER_ZEROS = 56
+# The verify page's download block in its source: steps 1 to 3, from the step 1 label to the end of the step 3 token
+# (verify_download_block()).
+VERIFY_SOURCE = SRC / "pages" / "verify.html"
+DOWNLOAD_START = '<p class="lbl blk">Step 1</p>\n'
+DOWNLOAD_END = "{{release.sum_compare}}"
+# The verify page among the outputs of the / build (verify_page()).
+VERIFY_OUTPUT = "verify/index.html"
 
 
 class BuildError(Exception):
@@ -300,8 +321,9 @@ def skill_version(root: Path) -> str:
     raise Unreadable("SKILL.md has no Version: line")
 
 
-def load_release(root: Path, override: dict | None = None) -> dict:
-    """Release values from site-src/release.json, or from ``override`` (the release writer's new values)."""
+def load_release(root: Path, override: dict | None = None, any_version: bool = False) -> dict:
+    """Release values from site-src/release.json, or from ``override`` (the release writer's new values). With
+    ``any_version`` (verify_page() for given values only), the version need not be the SKILL.md version."""
     release = override if override is not None else read_json(root, SRC / "release.json")
     version, tag, checksum = release.get("version"), release.get("tag"), release.get("checksum")
     if not isinstance(version, str) or not re.match(r"^[0-9]+\.[0-9]+\.[0-9]+$", version):
@@ -310,12 +332,33 @@ def load_release(root: Path, override: dict | None = None) -> dict:
         raise BuildError(f"site-src/release.json tag {tag!r} is not v{version}")
     if not isinstance(checksum, str) or not HEX64.match(checksum):
         raise BuildError("site-src/release.json checksum is not a 64 character lower-case SHA-256")
-    expected = skill_version(root)
+    if near_placeholder(checksum):
+        # The report names release.json only for a checksum read from it, not for one given in ``override``, such as
+        # the checksum tools/check-release-checksum-live.py reads from the verify page.
+        source = "site-src/release.json checksum" if override is None else "the checksum"
+        raise BuildError(
+            f"{source} {checksum} is not the zero placeholder but has {checksum.count('0')} of "
+            "its 64 digits 0, such as a mistyped placeholder; run tools/set-release-links.py with the zero placeholder "
+            "until the release is published, and with the published release checksum after that"
+        )
+    expected = version if any_version else skill_version(root)
     if version != expected:
         raise BuildError(
             f"site-src/release.json names version {version}, but SKILL.md says {expected}; "
             "run tools/set-release-links.py for the release, never edit one without the other"
         )
+    return release_tokens(version, tag, checksum)
+
+
+def near_placeholder(checksum: str) -> bool:
+    """Whether ``checksum`` is not the zero placeholder but has NEAR_PLACEHOLDER_ZEROS or more of its digits 0, such as
+    a mistyped placeholder, which load_release() refuses."""
+    return checksum != PLACEHOLDER_CHECKSUM and checksum.count("0") >= NEAR_PLACEHOLDER_ZEROS
+
+
+def release_tokens(version: str, tag: str, checksum: str) -> dict:
+    """The release.* tokens of these release values, which load_release() gives every page and
+    verify_download_block() the verify page's download block."""
     zip_name = f"cleanlanguage-{version}.zip"
     zip_url = f"https://github.com/{REPO_SLUG}/releases/download/{tag}/{zip_name}"
     return {
@@ -325,7 +368,67 @@ def load_release(root: Path, override: dict | None = None) -> dict:
         "release.zip_name": zip_name,
         "release.zip_url": zip_url,
         "release.sum_url": f"{zip_url}.sha256",
+        **sum_tokens(version, checksum, f"{zip_url}.sha256"),
     }
+
+
+def sum_tokens(version: str, checksum: str, sum_url: str) -> dict:
+    """The verify page's checksum wording in each state of release.json, which tools/check-release-links.py and
+    tools/check-release-checksum-live.py read: the published checksum, its file and the step that compares them;
+    or, while the checksum is the zero placeholder, a note that it appears once the version is published and that
+    tells the reader to compare the checksum of the file with it then, with no value called the published checksum,
+    no link to the checksum file and no step that rejects the download."""
+    if checksum == PLACEHOLDER_CHECKSUM:
+        return {
+            "release.sum_lead": "",
+            "release.sum_block": f'<p class="lbl size">zip, version {version}</p>'
+                                 f"<p>The checksum for version {version} appears here once that version is published; "
+                                 "compare the checksum of your file with it then.</p>",
+            "release.sum_compare": "",
+        }
+    return {
+        "release.sum_lead": " The published checksum is shown under the link.",
+        "release.sum_block": (
+            f'<p class="lbl size">zip, version {version}, SHA-256</p><p>The published checksum for version {version} is:</p>'
+            f'<code class="sum" id="published-checksum">{checksum}</code><p>The same value is in the '
+            f"{external(sum_url, 'published checksum file')}, if you would rather compare files than read.</p>"
+        ),
+        "release.sum_compare": (
+            '<p class="lbl blk">Step 3</p>\n'
+            "<p>Compare the value your computer prints with the published checksum shown in step 1. Letter case does "
+            "not matter: PowerShell prints the hash in upper case, while the published value is lower case, so compare "
+            "the letters and digits and ignore the case. A match means your copy matches the published release.</p>\n"
+            "<p>If the two differ, delete the file, download it again, and check once more. If the values still differ "
+            "after a fresh download, do not install the file and "
+            f"{external('https://github.com/jposluns/cleanlanguage/issues', 'report it on GitHub')}.</p>\n"
+        ),
+    }
+
+
+def verify_download_block(root: Path, version: str, tag: str, checksum: str) -> str:
+    """The verify page's download block, byte for byte as build() writes it for these release values: steps 1 to 3
+    of site-src/pages/verify.html, from DOWNLOAD_START to the end of DOWNLOAD_END, with the release.* tokens
+    replaced. tools/check-release-links.py and tools/check-release-checksum-live.py render it here and require it
+    on the verify page exactly once."""
+    source = read_text(root, VERIFY_SOURCE)
+    start, end = source.find(DOWNLOAD_START), source.find(DOWNLOAD_END)
+    if source.count(DOWNLOAD_START) != 1 or source.count(DOWNLOAD_END) != 1 or end < start:
+        raise Unreadable(f"{VERIFY_SOURCE} does not hold the download block once, from its step 1 label to {DOWNLOAD_END}")
+    return substitute(source[start:end + len(DOWNLOAD_END)], release_tokens(version, tag, checksum), str(VERIFY_SOURCE))
+
+
+def verify_page(root: Path, release: dict | None = None, date: str | None = None) -> bytes:
+    """The whole verify page, byte for byte as build() writes site/verify/index.html at base / from the sources under
+    ``root`` and their site-src/release.json, or, given ``release`` (its version, tag and checksum), for those values,
+    whatever version SKILL.md names; ``date`` replaces every page's modified date, as --date does.
+    tools/check-release-links.py requires the committed page to equal the render for release.json, and
+    tools/check-release-checksum-live.py the render for the version and checksum it reads from the page;
+    tools/test-build-site.py pins the render for a stand-in release in each state (VERIFY_PAGE_PIN). The render
+    writes nothing, so tools/sitemap-config.json is checked against the base site-src/site.json names, not base /:
+    on a branch that stages a draft, the draft's exclusion is the one its committed site/ needs. Raises BuildError
+    or Unreadable when build() does, for any page."""
+    _, outputs, _ = build(root, "/", date, release, any_version=release is not None, configured_exclusion=True)
+    return outputs[VERIFY_OUTPUT]
 
 
 # Markdown subset for the skill's reference files ------------------------------
@@ -1186,11 +1289,16 @@ def build(
     date: str | None = None,
     release: dict | None = None,
     config: dict | None = None,
+    any_version: bool = False,
+    configured_exclusion: bool = False,
 ) -> tuple[Path, dict[str, bytes], dict]:
     """Render every output file in memory.
 
     ``release`` replaces site-src/release.json and ``config`` replaces site-src/site.json when
-    given (the release writer's new values, before it writes them).
+    given (the release writer's new values, before it writes them). ``any_version`` lets the
+    release name a version other than SKILL.md's (verify_page() for given values only).
+    ``configured_exclusion`` checks tools/sitemap-config.json against the base the site.json
+    names instead of ``base`` (verify_page() only, which renders at base / and writes nothing).
     """
     if config is None:
         config = read_json(root, SRC / "site.json")
@@ -1209,9 +1317,15 @@ def build(
             raise Unreadable(f"site-src/site.json page {page.get('id')!r} modified {modified!r} is not YYYY-MM-DD")
     if date is not None and not DATE.match(date):
         raise BuildError(f"--date {date!r} is not YYYY-MM-DD")
-    check_sitemap_exclusion(root, base, pages)
+    exclusion_base = base
+    if configured_exclusion:
+        exclusion_base = config.get("base")
+        if not isinstance(exclusion_base, str):
+            raise Unreadable("site-src/site.json has no base")
+        out_dir_for(exclusion_base)
+    check_sitemap_exclusion(root, exclusion_base, pages)
     statics = static_files(config) if out == Path("site") else []
-    release = load_release(root, release)
+    release = load_release(root, release, any_version)
     baseline_version, pinned = load_pin(root)
     config["pinned"] = pinned
     asset_tokens = {"baseline": baseline_version}
