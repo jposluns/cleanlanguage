@@ -54,7 +54,11 @@ because it would read the output root from wherever the link leads. It
 refuses (exit 1) a ``--from`` folder that is itself a link, before it reads
 the version: the gate never reads that folder, so it would not refuse one,
 but this tool would read the version from wherever the link leads while
-taking the version number from the link's own name. It copies
+taking the version number from the link's own name. Before its first write it
+also refuses (exit 1) a ``--from`` folder that is, is inside, or holds a folder
+it clears or writes into or a file it writes, compared by device and inode
+rather than by name: it would delete or change its own input before copying
+it. It copies
 ``SHA256SUMS`` to ``.baseline/SHA256SUMS`` (not published) and writes
 ``.baseline/pin.toml`` in the README's format: a ``version`` key and a
 ``[files]`` table of path to SHA-256, the paths under ``assets/baseline/``
@@ -89,13 +93,15 @@ Exit codes:
   0  copied and pinned, and tools/check-baseline-pin.py passes the tree
   1  a digest did not match, the folder is not a complete version, its README
      lacks the folder's version heading or the step 7 NOTICE entry, or holds a
-     carriage return, the --from folder is a link, or a folder or file it
-     writes, or site-src/ or site-src/site.json, is a link or of the wrong
-     kind; or, after the copy, tools/check-baseline-pin.py finds a problem in
-     the tree, which it names
-  3  an input could not be read, or Python is older than 3.11; or, after the
-     copy, tools/check-baseline-pin.py could not read the tree or found it
-     malformed, which it names
+     carriage return; the --from folder is a link, or is, is inside, or holds a
+     folder or file it clears or writes; a folder or file it writes, or
+     site-src/ or site-src/site.json, is a link or of the wrong kind; or,
+     after the copy, tools/check-baseline-pin.py finds a problem in the tree,
+     which it names
+  3  an input could not be read, or Python is older than 3.11; or a file could
+     not be read or written during the copy, which may then be incomplete; or,
+     after the copy, tools/check-baseline-pin.py could not read the tree or
+     found it malformed, which it names
 """
 
 from __future__ import annotations
@@ -222,6 +228,37 @@ def check_target(path: Path, folder: bool, action: str = "write through") -> Non
             die(1, f"{shown} is not a folder")
 
 
+def identity(path: Path) -> tuple[int, int] | None:
+    """The device and inode of path, or None when it is absent."""
+    try:
+        status = os.stat(path)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        die(3, f"{path} could not be read: {error}")
+    return status.st_dev, status.st_ino
+
+
+def check_source_apart(source: Path, target: Path) -> None:
+    """Exit 1 if the --from folder is target, is inside it, or holds it. Folders are compared by device and inode
+    rather than by name, so a case-insensitive file system, a link above the --from folder or a bind mount cannot
+    hide an overlap."""
+    shown = target.relative_to(REPO_ROOT).as_posix()
+    target_id = identity(target)
+    if target_id is not None:
+        resolved = source.resolve()
+        for folder in (resolved, *resolved.parents):
+            if identity(folder) == target_id:
+                relation = "is" if folder == resolved else "is inside"
+                die(1, f"the --from folder {source} {relation} {shown}, which this tool clears or writes; "
+                       "unpack the version outside the repository's copy and pin folders")
+    source_id = identity(source)
+    for folder in (target, *target.parents):
+        if identity(folder) == source_id:
+            die(1, f"the --from folder {source} holds {shown}, which this tool clears or writes; "
+                   "unpack the version outside the repository")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Copy and pin a verified baseline version.")
     parser.add_argument("--from", dest="source", required=True, help="unpacked version folder")
@@ -302,9 +339,14 @@ def main() -> int:
     tool_folders = sorted({(REPO_ROOT / key).parent for key in tools} - {PIN_DIR})
     for folder in (dest, PIN_DIR, *tool_folders):
         check_target(folder, folder=True)
-    for path in ([REPO_ROOT / key for key in tools if (REPO_ROOT / key).parent == PIN_DIR]
-                 + [PIN_DIR / name for name in ("SHA256SUMS", "pin.toml", *DOCUMENTS)]):
+    written_files = ([REPO_ROOT / key for key in tools if (REPO_ROOT / key).parent == PIN_DIR]
+                     + [PIN_DIR / name for name in ("SHA256SUMS", "pin.toml", *DOCUMENTS)])
+    for path in written_files:
         check_target(path, folder=False)
+    # A version folder inside a folder cleared below would be deleted before it is copied, and one that holds a
+    # folder or file written below would be changed by the copy, so the copy would remove or alter its own input.
+    for target in (dest, *tool_folders, PIN_DIR, *written_files):
+        check_source_apart(source, target)
     for folder in (dest, *tool_folders):
         if folder.exists():
             shutil.rmtree(folder)
@@ -362,4 +404,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except OSError as error:
+        # A file that cannot be read or written once copying has begun ends the run with the documented code, not a
+        # traceback, and says that the copy may be incomplete, since the gate's check at the end has not run.
+        die(3, f"a file could not be read or written, so the copy and the pin may be incomplete: {error}")
