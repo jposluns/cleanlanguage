@@ -175,10 +175,10 @@ Residuals, named here because the check reads text by fixed rules:
   "/". A future edit that adds such a line there makes the check exit 3
   until the edit is rewritten or the check is extended;
 - outside the two spans item 5 covers, a link title, the title of a link
-  reference definition and the markup of raw HTML other than a comment are
-  read as text like the rest of the file, so a pointer sentence there is
-  found whether or not a rendering shows it. In the spans, the characters
-  such Markdown needs are refused;
+  reference definition and the markup of raw HTML later in a line, other
+  than a comment, are read as text like the rest of the file, so a pointer
+  sentence there is found whether or not a rendering shows it. In the spans,
+  the characters such Markdown needs are refused;
 - OPENING, the first sentence of the expected bullet, is a second hand-kept
   copy: rewording that sentence in the checklist fails until OPENING follows
   it;

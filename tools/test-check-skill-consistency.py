@@ -284,6 +284,16 @@ CASES = [
     ("x & y directly above a heading added after the dash bullet", append(CHECKLIST, EDGE + "## More\n"), 3,
         [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the next heading;"]),
     ("x & y directly under a heading added after the dash bullet", append(CHECKLIST, "## More\n" + EDGE), 0, []),
+    # A heading of any level ends the checklist span, so these 4 cases pin that edge at levels 3 and 1, apart from
+    # the level 2 heading in the 2 cases above them.
+    ("x & y directly above a level 3 heading added after the dash bullet", append(CHECKLIST, EDGE + "### More\n"), 3,
+        [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the next heading;"]),
+    ("x & y directly under a level 3 heading added after the dash bullet", append(CHECKLIST, "### More\n" + EDGE), 0,
+        []),
+    ("x & y directly above a level 1 heading added after the dash bullet", append(CHECKLIST, EDGE + "# More\n"), 3,
+        [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the next heading;"]),
+    ("x & y directly under a level 1 heading added after the dash bullet", append(CHECKLIST, "# More\n" + EDGE), 0,
+        []),
     ("x & y on line 1 of a checklist with no heading above the dash bullet",
         lambda root: (root / CHECKLIST).write_text(EDGE + "\n" + dash_line(root), encoding="utf-8"), 3,
         [f"{CHECKLIST}, line 1: " + character("&")
