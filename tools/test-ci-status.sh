@@ -31,18 +31,21 @@
 # range-checked.
 #
 # Each reading case puts a fake gh on PATH serving check-runs from a per-call
-# "plan" (tokens g/a/t/f: default payload, alternate payload, third payload,
-# or a failed call), runs ci-status and asserts its exit code. Many cases also
+# "plan" (tokens g/a/t/f/s: default payload, alternate payload, third payload,
+# a failed call, or a call that hangs until ci-status ends it at the wait
+# deadline), runs ci-status and asserts its exit code. Many cases also
 # assert a fixed string on standard error (CASE_NEEDLE and run_err_case), such
 # as the required check named as missing, the malformed field, or a line of the
 # report; some assert a fixed string on standard output (CASE_OUT); some assert
-# that a fixed string is absent from standard error (CASE_ABSENT); and some assert
+# that a fixed string is absent from standard error (CASE_ABSENT); some assert
+# how many check-runs calls the fake gh served (CASE_READS); and some assert
 # that the only gh call made is the paginated check-runs read of the commit
 # (CASE_ONLY_CALLS and run_log_case). The timed cases also bound
 # the elapsed time, and the paginate case serves page 2 only to a --paginate
 # call. The later sections, the workflow shape check, the commit sha and
 # repository contract, the wrapper path resolution, and the output, signal,
-# pipe, import and lost-status cases, each say what they assert.
+# pipe, import, lost-status, final-reap and closed-window cases, each say what
+# they assert.
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -137,7 +140,9 @@ NONARRAY='{"check_runs":{"only":{"status":"completed","conclusion":"success","na
 
 # run_case NAME DEFAULT ALT PLAN WANT [EXTRA ci-status ARGS...]
 # The commit read is CASE_SHA when it is set, else the zero sha. When CASE_NEEDLE
-# is set, standard error must contain it as a fixed string. When CASE_ONLY_CALLS
+# is set, standard error must contain each of its lines as a fixed string. When
+# CASE_READS is set, the fake gh must have served exactly that many check-runs
+# calls. When CASE_ONLY_CALLS
 # is set, every gh call must be exactly the paginated check-runs read of that
 # commit. The fake gh logs every call and answers a commit-status route with a
 # green body, so a tool that consulted commit statuses would see a pass there.
@@ -172,6 +177,7 @@ case "\$*" in
     fi
     case "\$tok" in
       f) printf 'simulated check-runs read failure\n' >&2; exit 1 ;;
+      s) exec sleep 60 ;;
       a) cat "$tmp/alt.json" ;;
       t) cat "$tmp/third.json" ;;
       *) cat "$tmp/def.json" ;;
@@ -187,8 +193,14 @@ GH
     --repo owner/name --interval 1 "$@" >"$tmp/out" 2>"$tmp/err"
   local got=$? why=""
   if [ "$got" -ne "$want" ]; then why="$why exit"; fi
-  if [ -n "${CASE_NEEDLE:-}" ] && ! grep -q -F -- "$CASE_NEEDLE" "$tmp/err"; then
-    why="$why message"
+  if [ -n "${CASE_NEEDLE:-}" ]; then
+    local needle
+    while IFS= read -r needle; do
+      if ! grep -q -F -- "$needle" "$tmp/err"; then why="$why message"; break; fi
+    done <<< "$CASE_NEEDLE"
+  fi
+  if [ -n "${CASE_READS:-}" ] && [ "$(cat "$tmp/n" 2>/dev/null || echo 0)" != "$CASE_READS" ]; then
+    why="$why reads"
   fi
   if [ -n "${CASE_OUT:-}" ] && ! grep -q -F -- "$CASE_OUT" "$tmp/out"; then
     why="$why output"
@@ -553,7 +565,7 @@ CASE_NEEDLE="$(printf '  %-28s %s' extra neutral)" \
   "$(runs "$REQ_GA" "$CF" "$(extra_run success extra github-actions)")" \
   "$(runs "$REQ_GA" "$CF" "$(extra_run neutral extra github-actions)")" "g a g a g a" 2
 CASE_NEEDLE="$(printf '  %-28s %s' "Plugin manifests" in_progress)" \
-  run_case "the report gives an unfinished run its status" "$GA_IN_PROGRESS" "" "" 2 --wait --timeout 2
+  run_case "the report gives an unfinished run its status" "$GA_IN_PROGRESS" "" "" 2 --wait --timeout 5
 # A zero-length wait window fails closed rather than overrunning the deadline.
 run_case "zero-timeout wait window fails closed" "$GA_IN_PROGRESS" "" "" 3 --wait --timeout 0
 CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000: the wait window closed before the read" \
@@ -583,7 +595,47 @@ run_case "required name in another letter case does not count -> not green" \
   "$(runs '{"status":"completed","conclusion":"success","name":"plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 2
 run_case "required name with a trailing space does not count -> not green" \
   "$(runs "$PM_OK" '{"status":"completed","conclusion":"success","name":"Skill discovery ","app":{"slug":"github-actions"}}' "$APM_OK" "$CF")" "" "" 2
-run_case "unfinished required check with --wait stays not green at the deadline" "$GA_IN_PROGRESS" "" "" 2 --wait --timeout 2
+run_case "unfinished required check with --wait stays not green at the deadline" "$GA_IN_PROGRESS" "" "" 2 --wait --timeout 5
+# A read that the deadline cuts off after a reading that succeeded and was still
+# unsettled is the wait timing out (exit 2), not an unreadable result (exit 3): a
+# loaded host can start a read with little of the window left (TODO row 103). The
+# plan token s is a gh call that hangs until the tool ends it at the deadline.
+# Each case requires the line naming the cut-off of that hanging call, and
+# requires the fake gh to have served it (CASE_READS), so a case whose window
+# runs out before that call starts fails rather than passing through the
+# top-of-loop guard or the closed-window check before the read; only the earlier
+# readings must arrive within the window. After a failed read, a read cut off at
+# the deadline still reports the read failure (exit 3), and so does one after a
+# good reading and then a failed read.
+CUT_OFF="ci-status: the wait window cut off the last read (gh api did not return within"
+HUNG_READ_FAILED="check read failed for 0000000000000000000000000000000000000000: gh api did not return within"
+CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
+  CASE_ABSENT="check read failed" CASE_READS=2 \
+  run_case "pending reading then a read cut off at the deadline -> not green, timed out" \
+  "$GA_IN_PROGRESS" "" "g s" 2 --wait --timeout 5
+CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
+  CASE_ABSENT="check read failed" CASE_READS=2 \
+  run_case "green reading then a confirmation read cut off at the deadline -> not green, timed out" \
+  "$GA_PRESENT" "" "g s" 2 --wait --timeout 5
+CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
+  run_case "failed read then a read cut off at the deadline -> unreadable" \
+  "$GA_PRESENT" "" "f s" 3 --wait --timeout 5
+CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=3 \
+  run_case "pending reading, a failed read, then a read cut off at the deadline -> unreadable" \
+  "$GA_IN_PROGRESS" "" "g f s" 3 --wait --timeout 5
+# An empty reading (no checks) is a successful reading too, so a read cut off at
+# the deadline after it is the wait timing out (exit 2), as the top-of-loop guard
+# gives for the same reading.
+CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
+  CASE_ABSENT="check read failed" CASE_READS=2 \
+  run_case "empty reading then a read cut off at the deadline -> not green, timed out" \
+  '{"total_count":0,"check_runs":[]}' "" "g s" 2 --wait --timeout 5
+# Without --wait, the confirmation read after a green reading is the only second
+# read, and it is bounded by the same deadline. A cut-off there keeps its old
+# result, the read failure (exit 3), not a timed-out wait.
+CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
+  run_case "green reading then a confirmation read cut off without --wait -> unreadable" \
+  "$GA_PRESENT" "" "g s" 3 --timeout 5
 run_case "failed required check -> red" \
   "$(runs '{"status":"completed","conclusion":"failure","name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 1
 run_case "failing impostor of a required name beside the full set -> red" \
@@ -2214,6 +2266,216 @@ sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > /dev/null 2>&1 || got=$?
 }
 
 run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
+
+# run_final_reap_case NAME MODE WANT NEEDLE: the gate runs in process in wait
+# mode after a pending reading, with os.waitpid replaced so the second check-runs
+# call looks unfinished to every poll and its status is first seen at the reap
+# after the kill at the deadline. That gh ends on its own at once: MODE exit has
+# it exit 1, MODE signal has it end itself with SIGTERM, MODE lost has it exit 1
+# and makes the reap after the kill raise ChildProcessError, and MODE red has it
+# print a red reading and exit 0. None is a read the deadline cut off, so each
+# must exit WANT, never 2 as a timed-out wait: 3 with NEEDLE on standard error,
+# or for MODE red the red verdict, 1 with NEEDLE on standard output. The
+# replaced os.waitpid also requires the status it reaps after the kill to be
+# that end of gh, not the kill, so no case passes without reaching it.
+run_final_reap_case() {
+  local name="$1" mode="$2" want="$3" needle="$4"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_IN_PROGRESS" > "$tmp/def.json"
+  printf "%s" "$GA_RED" > "$tmp/red.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in
+  *check-runs*)
+    if [ -e "$tmp/read" ]; then
+      case "$mode" in
+        signal) kill -TERM \$\$; sleep 60 ;;
+        red) cat "$tmp/red.json"; exit 0 ;;
+        *) exit 1 ;;
+      esac
+    fi
+    : > "$tmp/read"; cat "$tmp/def.json" ;;
+  *"repo view"*) printf "owner/name";; *) printf "";;
+esac
+GH
+  chmod +x "$bin/gh"
+  local got=0
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, signal, sys
+path, mode, own = sys.argv[1], sys.argv[3], sys.argv[4]
+spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+real_waitpid = os.waitpid
+seen = []
+def waitpid(pid, options):
+    if pid not in seen:
+        seen.append(pid)
+    if seen.index(pid) != 1:
+        return real_waitpid(pid, options)
+    if options & os.WNOHANG:
+        return 0, 0
+    result = real_waitpid(pid, options)
+    status = result[1]
+    if mode == "signal":
+        ended = os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGTERM
+    else:
+        code = 0 if mode == "red" else 1
+        ended = os.WIFEXITED(status) and os.WEXITSTATUS(status) == code
+    if ended:
+        open(own, "w").close()  # gh ended on its own, as MODE intends
+    if mode == "lost":
+        raise ChildProcessError(10, "No child processes")
+    return result
+os.waitpid = waitpid
+sys.argv = [path, "--repo", "owner/name", "--wait", "--timeout", "3", "--interval", "1", sys.argv[2]]
+sys.exit(mod.run())' "${here}/ci-status.py" "$C1" "$mode" "$tmp/own" > "$tmp/out" 2> "$tmp/err" || got=$?
+  local stream="$tmp/err" why=""
+  [ "$mode" = red ] && stream="$tmp/out"
+  [ "$got" -eq "$want" ] || why="$why exit"
+  grep -q -F -- "$needle" "$stream" || why="$why message"
+  [ -e "$tmp/own" ] || why="$why reap"
+  if [ -z "$why" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want %s;%s)\n" "$name" "$got" "$want" "$why"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_final_reap_case "gh exiting 1 just before the kill at the deadline exits 3, not 2" exit 3 \
+  "check read failed for ${C1}: gh api failed"
+run_final_reap_case "gh ending itself by a signal just before the kill at the deadline exits 3, not 2" signal 3 \
+  "check read failed for ${C1}: gh api failed"
+run_final_reap_case "gh exit status lost at the reap after the kill at the deadline exits 3, not 2" lost 3 \
+  "check read failed for ${C1}: could not run gh: the exit status of gh was lost"
+run_final_reap_case "gh exiting 0 with a red reading just before the kill at the deadline exits 1, not 2" red 1 \
+  "ci-status: a check did not pass for ${C1}"
+
+# run_final_reap_view_case NAME FLAG: the gate runs in process with no --repo,
+# with FLAG --wait, or - for none, and with os.waitpid replaced so gh repo view,
+# the first gh call, looks unfinished to every poll and its status is first seen
+# at the reap after the kill at the deadline. That gh prints owner/name and exits
+# 0 on its own at once, so it is not a call the deadline cut off: the repository
+# is inferred and printed on standard output, and the read after it, finding the
+# window closed, exits 3 with that on standard error, never the line saying the
+# repository could not be inferred, and never makes a check-runs call. The
+# replaced os.waitpid also requires the status it reaps after the kill to be
+# that exit 0, not the kill, so the case does not pass without reaching it.
+run_final_reap_view_case() {
+  local name="$1" flag="$2"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in
+  *check-runs*) : > "$tmp/read"; exit 1 ;;
+  *"repo view"*) printf "owner/name";; *) printf "";;
+esac
+GH
+  chmod +x "$bin/gh"
+  local got=0
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, sys
+path, flag, own = sys.argv[1], sys.argv[3], sys.argv[4]
+spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+real_waitpid = os.waitpid
+seen = []
+def waitpid(pid, options):
+    if pid not in seen:
+        seen.append(pid)
+    if seen.index(pid) != 0:
+        return real_waitpid(pid, options)
+    if options & os.WNOHANG:
+        return 0, 0
+    result = real_waitpid(pid, options)
+    status = result[1]
+    if os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0:
+        open(own, "w").close()  # gh repo view ended on its own with exit 0
+    return result
+os.waitpid = waitpid
+flags = [] if flag == "-" else [flag]
+sys.argv = [path, *flags, "--timeout", "2", "--interval", "1", sys.argv[2]]
+sys.exit(mod.run())' "${here}/ci-status.py" "$C1" "$flag" "$tmp/own" > "$tmp/out" 2> "$tmp/err" || got=$?
+  local why=""
+  [ "$got" -eq 3 ] || why="$why exit"
+  grep -q -x -F -- "ci-status: repository owner/name" "$tmp/out" || why="$why repository"
+  grep -q -F -- "check read failed for ${C1}: the wait window closed before the read" "$tmp/err" \
+    || why="$why message"
+  grep -q -F -- "could not infer the repository" "$tmp/err"
+  case $? in 1) ;; *) why="$why absent" ;; esac
+  [ -e "$tmp/own" ] || why="$why reap"
+  [ ! -e "$tmp/read" ] || why="$why reads"
+  if [ -z "$why" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want 3;%s)\n" "$name" "$got" "$why"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_final_reap_view_case "gh repo view exiting 0 just before the kill at the deadline is accepted, then exits 3" \
+  --wait
+run_final_reap_view_case "gh repo view exiting 0 just before the kill without --wait is accepted, then exits 3" -
+
+# run_closed_window_case NAME: the gate runs in process in wait mode with the
+# wall clock it reads (time.time) replaced by a fixed one. Its sleeps and the
+# monotonic clock that bounds each gh call stay real, so the case, not the
+# host's speed, fixes when the window closes; only the first gh call must return
+# within its 10-second bound. The first check-runs call serves a pending
+# reading, a successful unsettled one. When main calls read_checks again, after
+# the top-of-loop guard has found time left, the fixed clock is moved to the
+# deadline, so read_checks finds the window closed before the read and raises
+# WindowClosed without running gh. After that reading this is the wait timing
+# out: the case must exit 2; standard output must hold the pending reading's
+# line "ci-status: waiting, 10 seconds left"; standard error must hold the
+# cut-off line, here giving the reason that the window closed before the read,
+# and the still-unsettled line, but no read-failure line; and the fake gh must
+# serve exactly one check-runs call. Each expected line is matched whole by its
+# own grep, so the order of the two standard-error lines is not checked. The
+# zero-timeout cases and the run_final_reap_view_case cases reach the same raise
+# with no successful reading before it, so they exit 3.
+run_closed_window_case() {
+  local name="$1"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_IN_PROGRESS" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in
+  *check-runs*) echo read >> "$tmp/reads"; cat "$tmp/def.json" ;;
+  *"repo view"*) printf "owner/name";; *) printf "";;
+esac
+GH
+  chmod +x "$bin/gh"
+  local got=0
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, sys, time, types
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+now = [1000.0]
+mod.time = types.SimpleNamespace(time=lambda: now[0], sleep=time.sleep, monotonic=time.monotonic)
+real_read_checks = mod.read_checks
+calls = []
+def read_checks(repo, full_sha, deadline):
+    calls.append(deadline)
+    if len(calls) == 2:
+        now[0] = deadline  # after the top-of-loop guard, before the read
+    return real_read_checks(repo, full_sha, deadline)
+mod.read_checks = read_checks
+sys.argv = [path, "--repo", "owner/name", "--wait", "--timeout", "10", "--interval", "1", sys.argv[2]]
+sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || got=$?
+  local why=""
+  [ "$got" -eq 2 ] || why="$why exit"
+  grep -q -x -F -- "ci-status: waiting, 10 seconds left" "$tmp/out" || why="$why pending"
+  grep -q -x -F -- "ci-status: the wait window cut off the last read (the wait window closed before the read)" \
+    "$tmp/err" || why="$why message"
+  grep -q -x -F -- "ci-status: still unsettled after 10 seconds; giving up" "$tmp/err" || why="$why timeout"
+  grep -q -F -- "check read failed" "$tmp/err"
+  case $? in 1) ;; *) why="$why absent" ;; esac
+  [ "$(grep -c "" "$tmp/reads" 2>/dev/null)" = 1 ] || why="$why reads"
+  if [ -z "$why" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want 2;%s)\n" "$name" "$got" "$why"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_closed_window_case "pending reading then the window closing before the next read -> not green, timed out"
 
 # A skipped case is not verified, so any skip makes the suite incomplete and
 # nonzero; the final line then names the count.
