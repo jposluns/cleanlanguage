@@ -193,7 +193,8 @@ then with it deleted too, as before; those 2 are each read again as a
 browser with scripting off shows the page (``scripting_off()``), with the
 content of each ``noscript`` kept, its hiding rules applying, since a
 ``noscript`` paragraph holding ``About``, a hidden span, then ``this
-project`` built with exit 0 at 77823df; the label counts in any reading), a
+project`` built with exit 0 without those readings; the label counts in any
+reading), a
 landing page whose text carries it other than once, from inside the About
 block, in each reading, and any other page whose text carries it; and a
 release version that disagrees with SKILL.md. The page source grammar leaves
@@ -363,9 +364,9 @@ and value rules of ``with_about()``, the class and placement pins, the class
 rule of ``rail_pin()``, and ``rail()``, read its elements, attributes and text
 from 1 parser class, ``PageScan``, with its self-closing and end-tag handling;
 ``rail()``'s entries are the ``h2`` elements with an ``id`` as
-``PageScan`` reads them, their text without that of a ``span.num`` (a regex
-over the markup before DISCOVERY round 7, which dropped ``<h2 id = "try">``
-and ran an ``</h2 >`` heading's entry into the prose). ``validate()`` reads a
+``PageScan`` reads them, their text without that of a ``span.num`` (in place
+of an earlier regex over the markup, which dropped ``<h2 id = "try">`` and
+ran an ``</h2 >`` heading's entry into the prose). ``validate()`` reads a
 page with ``PageScan`` too, and reads "what this is" in its text; it finds the
 end of the value region's end tag where the parser read that tag
 (``end_tag_end()``), as ``with_about()`` does. Other reads of markup are not
@@ -405,8 +406,8 @@ attribute is added only after a review of what it makes a browser do.
 ``open`` stays out (accepted residual, refused, not modelled): the rules read
 a details with ``open`` as opened only, where a reader can close it, so once
 ``open`` was admitted, a label that shows only on closing and a value
-paragraph in its folded content each built with exit 0 (a probe on 77823df),
-and an ordinary ``<details open>`` is refused.
+paragraph in its folded content each built with exit 0 in a probe that
+admitted it, and an ordinary ``<details open>`` is refused.
 
 ``SOURCE_CLASSES`` admits only the class names the committed sources use, as
 ``with_about()`` reads them, and in the landing page's value region only
@@ -425,7 +426,7 @@ the region's children rule: ``region`` only on the region, ``lbl`` only on
 its label and ``value`` only on the ``p.value``. ``.region`` lays out an
 element as a grid of a label column and a content column, so
 ``class="value region"`` on the value paragraph, alone or with its content
-in an ``em``, built with exit 0 at 9134d0b (the grid read from the
+in an ``em``, built with exit 0 before this pin (the grid read from the
 stylesheet, not checked in a browser).
 
 Page source placement
@@ -440,11 +441,11 @@ reads apart as joined. ``.copy`` and ``.btn`` set ``position: absolute``
 ``.start`` place the hero's parts by grid area (at 600 px and below
 ``.hero-text`` sets ``display: contents``, so its children are placed by
 area); and at 1000 px and below ``.entries a`` places its ``.t``, ``.n`` and
-``.d`` children by grid area. Built with exit 0 at c22c9dd: the label split
-by a ``span.btn`` in a ``p.lbl`` on the landing page, or by a ``span.copy``
-on the demo page, and an ``ol.entries`` link whose ``span.d`` came before
-its ``span.t``. After the class pins, ``placement_pin()`` refuses, naming
-where the start tag starts:
+``.d`` children by grid area. Before these pins, each of these built with
+exit 0: the label split by a ``span.btn`` in a ``p.lbl`` on the landing
+page, or by a ``span.copy`` on the demo page, and an ``ol.entries`` link
+whose ``span.d`` came before its ``span.t``. After the class pins,
+``placement_pin()`` refuses, naming where the start tag starts:
 
 - a class of ``PLACED_CLASSES`` on another element, without its companion
   classes or attributes, under another parent, or (``copy``) after text or
@@ -470,10 +471,10 @@ where the start tag starts:
   and whose content is only the text ``Copy``, as the committed sources
   write it (``COPY_BUTTON_PIN``): ``copy.js`` selects every
   ``button[data-copy]``, shows it and, on a copy, replaces its content with
-  plain text, whatever its classes, so at 77823df a hidden, unclassed button
-  with ``data-copy`` holding ``About``, a hidden span, then ``this project``
-  (a second label once the script runs), and the value paragraph wrapped in
-  such a button (its markup lost on a copy), built with exit 0;
+  plain text, whatever its classes, so before this pin a hidden, unclassed
+  button with ``data-copy`` holding ``About``, a hidden span, then ``this
+  project`` (a second label once the script runs), and the value paragraph
+  wrapped in such a button (its markup lost on a copy), built with exit 0;
 - an image in the ``div.hero-art`` whose alt text is not ``site.json``'s
   ``logo_alt``, which ``build()`` passes to ``with_about()`` (without it, any
   such image is refused): at 600 px and below a browser shows the image in

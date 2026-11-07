@@ -2,10 +2,12 @@
 """Tests for tools/build-site.py: each refusal fires on a deliberate fault.
 
 Each build case copies the generator's inputs into a temporary folder (under
-$TMPDIR), applies 1 fault, runs the generator there as a separate process
-and asserts its exit code, and for the passing cases, what the output
-contains. A further case runs a copy of this file, without the install gate,
-as a separate process. The others run in this process: they call the
+$TMPDIR), leaves the copy as it is or changes it (a refused case with a
+fault the generator must refuse, a passing case with a valid change it must
+accept), runs the generator there as a separate process and asserts its
+exit code, and for the passing cases, what the output contains. A further
+case runs a copy of this file, without the install gate, as a separate
+process. The others run in this process: they call the
 generator's functions, loaded as a module (such as ``validate()``,
 ``with_about()`` and ``install_gate()``), on committed pages or snippets, or
 check this file's own readers (such as the stylesheet coverage check and the
@@ -639,12 +641,14 @@ def about_problems(page: str, text: str, base: str) -> list[str]:
     block, in either hero order (labels(): with the block's label taken out, none; in any letter case where
     shown_upper() reads upper case); on
     any other page, no such element, with an INERT ancestor or not, and no LABELS in its text.
-    It does not model a stylesheet beyond the install gate's HIDING_CLASSES, or a hidden attribute that HTML5 copies
-    from a stray body or html start tag onto the page's body or html element. The generator refuses such a start tag
-    in a page source, and any page source outside the page source grammar, on which its parser and a browser read
-    the same tokens (no raw-text or escapable raw-text element, whose content a browser can read as markup inside
-    math or svg, among them); and it refuses a math start tag in a page source or page and any <svg other than the
-    switch in a page."""
+    Of the stylesheets' rules it models only the install gate's HIDING_CLASSES, the rules that set text-transform
+    (shown_upper(), through labels()) and the hero's narrow-width order (labels()); it does not model any other
+    stylesheet rule, such as one that hides or moves an element by a descendant selector, or a hidden attribute
+    that HTML5 copies from a stray body or html start tag onto the page's body or html element. The generator
+    refuses such a start tag in a page source, and any page source outside the page source grammar, on which its
+    parser and a browser read the same tokens (no raw-text or escapable raw-text element, whose content a browser can
+    read as markup inside math or svg, among them); and it refuses a math start tag in a page source or page and any
+    <svg other than the switch in a page."""
     parsed = Placement()
     parsed.feed(text)
     parsed.close()
@@ -2934,7 +2938,8 @@ def check_promotion_build(failures: list[str]) -> int:
 
 
 def check_staged_build(failures: list[str]) -> int:
-    """A staging round on the draft branch still builds: every page noindex, nothing linked outside /draft/."""
+    """A staging round on the draft branch still builds: every page noindex, and every root-relative href and src
+    under /draft/ or /downloads/."""
     with tempfile.TemporaryDirectory() as scratch:
         root = make_root(Path(scratch))
         staged(root)
