@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Behaviour tests for .claude/hooks/ask_mode_guard.py, the repository AskUserQuestion guard.
 
-Each case writes a mode file under a temporary directory, runs the guard as a subprocess with
-python3 -I, passes that file through the test-only --mode-file argument, since CI has no
-/opt/orch-operator, and asserts the exit code and the verdict the guard prints. The files a case
+Each case sets up a mode file, or its absence, under a temporary directory, runs the guard as a
+subprocess with python3 -I, passes that path through the test-only --mode-file argument, since CI
+has no /opt/orch-operator, and asserts the exit code and the verdict the guard prints. The files a case
 creates belong to the uid running the tests, so every case passes that uid through the test-only
 --expect-owner-uid argument, except the cases that test the owner check itself. A missing guard
 fails every behaviour case rather than skipping it, so an absent file cannot read as a green run.
@@ -80,6 +80,9 @@ class AskModeGuard(unittest.TestCase):
         self.assertEqual(specific["permissionDecision"], "deny")
         self.assertIn(cause, specific["permissionDecisionReason"])
         self.assertIn(cause, out["systemMessage"])
+        # Every deny carries the vendored instruction, so an agent meets one instruction whichever
+        # guard denies first.
+        self.assertIn("RECORD the decision as pending", specific["permissionDecisionReason"])
         return specific["permissionDecisionReason"]
 
     # --- what a valid record decides: unattended denies, attended allows, other tools pass -----------
@@ -110,6 +113,19 @@ class AskModeGuard(unittest.TestCase):
         self.assertNotIn("hookSpecificOutput", out)
         self.assertIn("is absent", out["systemMessage"])
         self.assertEqual(len(out["systemMessage"].splitlines()), 1)
+
+    def test_host_directory_that_cannot_be_checked_denies(self):
+        # lstat failing for a reason other than absence, here a parent directory without search
+        # permission, must deny rather than read as an absent directory.
+        if os.geteuid() == 0:
+            self.skipTest("root searches a mode 600 directory, so this case needs a uid other than 0")
+        self.write_mode(ATTENDED_LINE)
+        os.chmod(self._tmp, 0o600)
+        try:
+            result = self.run_guard()
+        finally:
+            os.chmod(self._tmp, 0o700)
+        self.assert_denies(result, "cannot be checked")
 
     def test_missing_file_with_directory_present_denies(self):
         self.assert_denies(self.run_guard(), "is missing")
@@ -207,6 +223,25 @@ class AskModeGuard(unittest.TestCase):
     def test_unknown_argument_denies(self):
         self.write_mode(ATTENDED_LINE)
         self.assert_denies(self.run_guard(extra=["--allow"]), "guard internal error")
+
+    def test_payload_that_is_not_an_object_denies_any_tool(self):
+        # The guard reads the payload before it looks at the tool, so a payload it cannot read as an
+        # object denies even where it names another tool.
+        self.write_mode(ATTENDED_LINE)
+        for name, stdin in (("an array", '["tool_name", "Bash"]'), ("a string", '"Bash"'),
+                            ("a number", "1"), ("null", "null")):
+            with self.subTest(payload=name):
+                self.assert_denies(self.run_guard(stdin=stdin), "guard internal error")
+
+    def test_bad_argument_denies_any_tool(self):
+        # The guard reads its arguments before it looks at the tool, so a bad argument denies a Bash
+        # call too.
+        self.write_mode(ATTENDED_LINE)
+        payload = dict(ASK, tool_name="Bash", tool_input={"command": "true"})
+        for name, extra in (("unknown", ["--allow"]), ("unparseable uid", ["--expect-owner-uid", "x"]),
+                            ("missing value", ["--mode-file"])):
+            with self.subTest(argument=name):
+                self.assert_denies(self.run_guard(payload, extra=extra), "guard internal error")
 
 
 class Registration(unittest.TestCase):

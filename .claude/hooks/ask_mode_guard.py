@@ -4,9 +4,11 @@
 Claude Code runs this script as a PreToolUse hook that .claude/settings.json registers for
 AskUserQuestion. It reads the hook payload from stdin and, for an AskUserQuestion call, reads
 /opt/orch-operator/operating-mode, a JSON object whose "mode" member the orchestrator sets for the
-whole host. Only the exact value "attended" lets the question through. Every other state denies and
-names its cause, because a blocking question in an unattended session stalls the run until someone
-notices, while a wrongly denied question only asks the agent to record the decision and continue.
+whole host. Only the exact value "attended" lets the question through, with one exception: where
+lstat reports /opt/orch-operator itself absent, the host declares no operating-mode, so the guard
+allows the question with a one-line note. Every other state denies and names its cause, because a
+blocking question in an unattended session stalls the run until someone notices, while a wrongly
+denied question only asks the agent to record the decision and continue.
 
 The vendored orch_ask_guard does not enforce this: it reads an "Operating-mode:" text line from a
 mode record that this repository does not declare, so it allows the question and logs a fail-open
@@ -18,9 +20,10 @@ Decisions, in the order the guard makes them:
 - an argument it does not know or cannot parse, or a hook payload that is not a JSON object: deny,
   whatever the tool, because the guard reads both before it looks at the tool;
 - a tool other than AskUserQuestion: allow, silently;
-- /opt/orch-operator itself absent: allow, with a one-line systemMessage, so that contributor
-  machines and hosts without the orchestrator stay usable;
-- /opt/orch-operator present but failing lstat for any other reason: deny;
+- lstat reporting /opt/orch-operator itself absent: allow, with a one-line systemMessage, so that
+  contributor machines and hosts without the orchestrator stay usable;
+- lstat on /opt/orch-operator failing for any other reason, such as a parent directory the guard
+  cannot search: deny;
 - the mode file missing, unreadable, a symlink (opened with O_NOFOLLOW), or not a regular file: deny;
 - the opened file not owned by uid 0, or writable by its group or by others (fstat on the open
   descriptor): deny;
@@ -29,11 +32,12 @@ Decisions, in the order the guard makes them:
   absent or not a string: deny;
 - "mode" exactly "attended": allow, silently; "unattended" or any other value, including a case
   variant: deny;
-- any other internal error of the guard, at any step: deny, since a denied question cannot wedge a
-  session.
+- any other exception the guard raises at any of these steps, before it prints its verdict: deny,
+  since a denied question cannot wedge a session.
 
-The phase, set_by and set_at members do not affect the decision. The guard writes nothing. The deny
-output has the shape the vendored hooks use: permissionDecision deny on exit 0.
+The phase, set_by and set_at members do not affect the decision. The guard writes no file; it only
+prints its verdict. The deny output has the shape the vendored hooks use: permissionDecision deny on
+exit 0.
 
 Test-only arguments: --mode-file PATH reads PATH instead, and the directory that holds PATH takes the
 place of /opt/orch-operator for the absent-directory rule; --expect-owner-uid UID expects that owner
