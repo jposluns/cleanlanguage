@@ -27,10 +27,10 @@
   --row-tint: #fae8e6;
   --row-hover: #ffe3df;
   --heat-0: #ffffff;
-  --heat-1: #fff6f5;
-  --heat-2: #ffedea;
-  --heat-3: #ffe4e0;
-  --heat-4: #fedbd6;
+  --heat-1: #fff4f2;
+  --heat-2: #ffe9e5;
+  --heat-3: #ffddd9;
+  --heat-4: #fed2cc;
   --grp-1: #bc3732;
   --grp-2: #a25100;
   --grp-3: #7c6300;
@@ -93,10 +93,10 @@
   --row-tint: #fae8e6;
   --row-hover: #ffe3df;
   --heat-0: #ffffff;
-  --heat-1: #fff6f5;
-  --heat-2: #ffedea;
-  --heat-3: #ffe4e0;
-  --heat-4: #fedbd6;
+  --heat-1: #fff4f2;
+  --heat-2: #ffe9e5;
+  --heat-3: #ffddd9;
+  --heat-4: #fed2cc;
   --grp-1: #bc3732;
   --grp-2: #a25100;
   --grp-3: #7c6300;
@@ -159,10 +159,10 @@
   --row-tint: #f8eae0;
   --row-hover: #fbe4d5;
   --heat-0: #ffffff;
-  --heat-1: #fff8f3;
-  --heat-2: #fff1e8;
-  --heat-3: #ffe9dc;
-  --heat-4: #ffe2d0;
+  --heat-1: #fff4ed;
+  --heat-2: #ffe9da;
+  --heat-3: #ffdec7;
+  --heat-4: #ffd2b4;
   --grp-1: #ba3630;
   --grp-2: #a25100;
   --grp-3: #7c6300;
@@ -225,10 +225,10 @@
   --row-tint: #f8eae0;
   --row-hover: #fbe4d5;
   --heat-0: #ffffff;
-  --heat-1: #fff8f3;
-  --heat-2: #fff1e8;
-  --heat-3: #ffe9dc;
-  --heat-4: #ffe2d0;
+  --heat-1: #fff4ed;
+  --heat-2: #ffe9da;
+  --heat-3: #ffdec7;
+  --heat-4: #ffd2b4;
   --grp-1: #ba3630;
   --grp-2: #a25100;
   --grp-3: #7c6300;
@@ -291,10 +291,10 @@
   --row-tint: #f1edde;
   --row-hover: #f0e9d1;
   --heat-0: #ffffff;
-  --heat-1: #fffae8;
-  --heat-2: #fff4d1;
-  --heat-3: #ffeeb9;
-  --heat-4: #ffe8a0;
+  --heat-1: #fcf6e3;
+  --heat-2: #f9ecc7;
+  --heat-3: #f5e3aa;
+  --heat-4: #f2d98c;
   --grp-1: #bc3732;
   --grp-2: #a25100;
   --grp-3: #7d6500;
@@ -357,10 +357,10 @@
   --row-tint: #f1edde;
   --row-hover: #f0e9d1;
   --heat-0: #ffffff;
-  --heat-1: #fffae8;
-  --heat-2: #fff4d1;
-  --heat-3: #ffeeb9;
-  --heat-4: #ffe8a0;
+  --heat-1: #fcf6e3;
+  --heat-2: #f9ecc7;
+  --heat-3: #f5e3aa;
+  --heat-4: #f2d98c;
   --grp-1: #bc3732;
   --grp-2: #a25100;
   --grp-3: #7d6500;
@@ -423,10 +423,10 @@
   --row-tint: #e6f0e4;
   --row-hover: #deeeda;
   --heat-0: #ffffff;
-  --heat-1: #eaffe6;
-  --heat-2: #d4ffca;
-  --heat-3: #baffab;
-  --heat-4: #9dff87;
+  --heat-1: #edfaea;
+  --heat-2: #daf4d4;
+  --heat-3: #c8eebf;
+  --heat-4: #b5e8a9;
   --grp-1: #bc3732;
   --grp-2: #a25100;
   --grp-3: #7d6500;
@@ -489,10 +489,10 @@
   --row-tint: #e6f0e4;
   --row-hover: #deeeda;
   --heat-0: #ffffff;
-  --heat-1: #eaffe6;
-  --heat-2: #d4ffca;
-  --heat-3: #baffab;
-  --heat-4: #9dff87;
+  --heat-1: #edfaea;
+  --heat-2: #daf4d4;
+  --heat-3: #c8eebf;
+  --heat-4: #b5e8a9;
   --grp-1: #bc3732;
   --grp-2: #a25100;
   --grp-3: #7d6500;
@@ -555,10 +555,10 @@
   --row-tint: #e4eefa;
   --row-hover: #daebfe;
   --heat-0: #ffffff;
-  --heat-1: #f5faff;
-  --heat-2: #ecf5ff;
-  --heat-3: #e2efff;
-  --heat-4: #d8eaff;
+  --heat-1: #f0f7ff;
+  --heat-2: #e0efff;
+  --heat-3: #d1e6ff;
+  --heat-4: #c1deff;
   --grp-1: #bc3732;
   --grp-2: #a25100;
   --grp-3: #7d6500;
@@ -621,10 +621,10 @@
   --row-tint: #e4eefa;
   --row-hover: #daebfe;
   --heat-0: #ffffff;
-  --heat-1: #f5faff;
-  --heat-2: #ecf5ff;
-  --heat-3: #e2efff;
-  --heat-4: #d8eaff;
+  --heat-1: #f0f7ff;
+  --heat-2: #e0efff;
+  --heat-3: #d1e6ff;
+  --heat-4: #c1deff;
   --grp-1: #bc3732;
   --grp-2: #a25100;
   --grp-3: #7d6500;
@@ -687,10 +687,10 @@
   --row-tint: #f3e9f6;
   --row-hover: #f3e3f8;
   --heat-0: #ffffff;
-  --heat-1: #fdf6ff;
-  --heat-2: #fbedff;
-  --heat-3: #f8e3ff;
-  --heat-4: #f6daff;
+  --heat-1: #fcf3ff;
+  --heat-2: #f9e7ff;
+  --heat-3: #f6dbff;
+  --heat-4: #f3cfff;
   --grp-1: #ba3630;
   --grp-2: #a25100;
   --grp-3: #7c6300;
@@ -753,10 +753,10 @@
   --row-tint: #f3e9f6;
   --row-hover: #f3e3f8;
   --heat-0: #ffffff;
-  --heat-1: #fdf6ff;
-  --heat-2: #fbedff;
-  --heat-3: #f8e3ff;
-  --heat-4: #f6daff;
+  --heat-1: #fcf3ff;
+  --heat-2: #f9e7ff;
+  --heat-3: #f6dbff;
+  --heat-4: #f3cfff;
   --grp-1: #ba3630;
   --grp-2: #a25100;
   --grp-3: #7c6300;
@@ -797,6 +797,138 @@
   --grp-6: #c689d9;
 }
 
+/* vendorreplies: coral, OKLCH hue 34 */
+.site-vendorreplies {
+  --bg: #fef1e7;
+  --surface-raised: #fffbf8;
+  --surface-sunken: #f4e7de;
+  --text: #271d18;
+  --text-muted: #71655f;
+  --rule: #dccec6;
+  --rule-strong: #998880;
+  --accent: #b73f25;
+  --on-accent: #fffbf8;
+  --link: #a73d26;
+  --link-hover: #8f270e;
+  --focus: #e54723;
+  --selection: #ffc9bc;
+  --code-bg: #f6eae2;
+  --callout-bg: #ffe9e3;
+  --glow: #ffd2c7;
+  --brand: #e76346;
+  --row-tint: #fae8e4;
+  --row-hover: #ffe3dd;
+  --heat-0: #ffffff;
+  --heat-1: #fff4f2;
+  --heat-2: #ffe9e4;
+  --heat-3: #ffded7;
+  --heat-4: #ffd3c9;
+  --grp-1: #bc3732;
+  --grp-2: #a25100;
+  --grp-3: #7d6500;
+  --grp-4: #3a732c;
+  --grp-5: #2c6aaa;
+  --grp-6: #8a509c;
+}
+@media (prefers-color-scheme: dark) {
+  .site-vendorreplies:not([data-scheme="light"]) {
+    --bg: #170705;
+    --surface-raised: #22120f;
+    --surface-sunken: #0b0201;
+    --text: #e9e9e9;
+    --text-muted: #989898;
+    --rule: #3b2824;
+    --rule-strong: #795f59;
+    --accent: #ea6e52;
+    --on-accent: #0b0201;
+    --link: #e97f67;
+    --link-hover: #fa9a84;
+    --focus: #fe6847;
+    --selection: #743a2d;
+    --code-bg: #090201;
+    --callout-bg: #2a130e;
+    --glow: #5f2113;
+    --brand: #f87a5e;
+    --row-tint: #1e0f0c;
+    --row-hover: #2d1610;
+    --heat-0: #170e0c;
+    --heat-1: #25110c;
+    --heat-2: #33130b;
+    --heat-3: #43140a;
+    --heat-4: #521406;
+    --grp-1: #fd7468;
+    --grp-2: #ef852e;
+    --grp-3: #c6a000;
+    --grp-4: #7bb76e;
+    --grp-5: #6aa9ed;
+    --grp-6: #c689d9;
+}
+}
+[data-scheme="light"].site-vendorreplies {
+  --bg: #fef1e7;
+  --surface-raised: #fffbf8;
+  --surface-sunken: #f4e7de;
+  --text: #271d18;
+  --text-muted: #71655f;
+  --rule: #dccec6;
+  --rule-strong: #998880;
+  --accent: #b73f25;
+  --on-accent: #fffbf8;
+  --link: #a73d26;
+  --link-hover: #8f270e;
+  --focus: #e54723;
+  --selection: #ffc9bc;
+  --code-bg: #f6eae2;
+  --callout-bg: #ffe9e3;
+  --glow: #ffd2c7;
+  --brand: #e76346;
+  --row-tint: #fae8e4;
+  --row-hover: #ffe3dd;
+  --heat-0: #ffffff;
+  --heat-1: #fff4f2;
+  --heat-2: #ffe9e4;
+  --heat-3: #ffded7;
+  --heat-4: #ffd3c9;
+  --grp-1: #bc3732;
+  --grp-2: #a25100;
+  --grp-3: #7d6500;
+  --grp-4: #3a732c;
+  --grp-5: #2c6aaa;
+  --grp-6: #8a509c;
+}
+[data-scheme="dark"].site-vendorreplies {
+  --bg: #170705;
+  --surface-raised: #22120f;
+  --surface-sunken: #0b0201;
+  --text: #e9e9e9;
+  --text-muted: #989898;
+  --rule: #3b2824;
+  --rule-strong: #795f59;
+  --accent: #ea6e52;
+  --on-accent: #0b0201;
+  --link: #e97f67;
+  --link-hover: #fa9a84;
+  --focus: #fe6847;
+  --selection: #743a2d;
+  --code-bg: #090201;
+  --callout-bg: #2a130e;
+  --glow: #5f2113;
+  --brand: #f87a5e;
+  --row-tint: #1e0f0c;
+  --row-hover: #2d1610;
+  --heat-0: #170e0c;
+  --heat-1: #25110c;
+  --heat-2: #33130b;
+  --heat-3: #43140a;
+  --heat-4: #521406;
+  --grp-1: #fd7468;
+  --grp-2: #ef852e;
+  --grp-3: #c6a000;
+  --grp-4: #7bb76e;
+  --grp-5: #6aa9ed;
+  --grp-6: #c689d9;
+}
+
 /* The cyclic 6-stop warm rainbow for the sliced cards and the family footer.
    --rainbow-N is card N's own hue; --rainbow-join-N is the shared edge colour
    between card N and card N+1 (join-6 is purple to red, closing the ring).
@@ -824,6 +956,9 @@
   --rainbow-ink-5: #fffaf2;
   --rainbow-ink-6: #fffaf2;
   --band-grey: #4a4a4a; /* the neutral grey of the footer band's tail; decorative, no text on it */
+  --band-silver: #8e949b; /* vendorreplies.ai's footer band (from 1.11.0); decorative */
+  --band-sheen: #c9ced4; /* the highlight of the silver band; decorative */
+  --band-silver-deep: #6f757c; /* the shadow of the silver band; decorative */
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-scheme="light"]) {
@@ -846,6 +981,9 @@
     --rainbow-ink-5: #1d1a16;
     --rainbow-ink-6: #1d1a16;
     --band-grey: #5c5c5c; /* the neutral grey of the footer band's tail; decorative, no text on it */
+    --band-silver: #a7adb4; /* vendorreplies.ai's footer band (from 1.11.0); decorative */
+    --band-sheen: #dde1e5; /* the highlight of the silver band; decorative */
+    --band-silver-deep: #848a91; /* the shadow of the silver band; decorative */
   }
 }
 [data-scheme="dark"] {
@@ -868,6 +1006,9 @@
   --rainbow-ink-5: #1d1a16;
   --rainbow-ink-6: #1d1a16;
   --band-grey: #5c5c5c; /* the neutral grey of the footer band's tail; decorative, no text on it */
+  --band-silver: #a7adb4; /* vendorreplies.ai's footer band (from 1.11.0); decorative */
+  --band-sheen: #dde1e5; /* the highlight of the silver band; decorative */
+  --band-silver-deep: #848a91; /* the shadow of the silver band; decorative */
 }
 
 /* Sliced rainbow cards. Markup: <ul class="rainbow"><li class="slice slice-1">...</li> ... </ul>

@@ -1,20 +1,51 @@
-/* baseline.css 1.7.0: the shared stylesheet of the project sites (the Atrium direction).
+/* baseline.css 1.9.1: the shared stylesheet of the project sites (the Atrium direction).
    Newsreader for text and headings, Public Sans for labels and navigation, JetBrains Mono for code,
    Dancing Script for the signature; the fonts are declared in fonts.css.
    Scale: perfect fourth (1.333) on a 1.1875rem base. No rules except the table header hairline.
-   Colour comes only from the tokens in palettes.css and the family tokens below; the site class on <html>
-   is the only per-site switch. Specification: docs/site-template-spec.md in jposluns/posluns_site. */
+   Colour comes only from the tokens in palettes.css, the family tokens and the component tokens below; the site
+   class on <html> is the only per-site switch. From 1.9.1 the family and component tokens are declared inside
+   :where(), with no specificity, so that a site's own site-palette.css (loaded before this file) overrides any
+   of them; tools/check_palette.py checks every override. Specification: docs/site-template-spec.md in jposluns/posluns_site. */
 
 /* Family signature tokens (the link-preview cards): gold and silver, checked at 4.5:1 or better on every site background in each mode;
    the 3 ordering colours for aiqt are the text-safe accents of the green, orange and red sites from palettes.css. */
-:root { --gold-rule: #d4a52a; --gold: #8a6a0a; --silver: #6a6a6a; --ord-progress: #3b752e; --ord-speed: #a25100; --ord-cost: #bc3732; }
+:where(:root) { --gold-rule: #d4a52a; --gold: #8a6a0a; --silver: #6a6a6a; --ord-progress: #3b752e; --ord-speed: #a25100; --ord-cost: #bc3732; }
 /* Print tokens (from 1.7.0): paper and ink for matrix tables on paper, the same in both schemes (the print rules at the end). */
 :root { --print-paper: #ffffff; --print-ink: #000000; }
 /* Layout tokens: the page gutter, the hero logo column, the rail column, the label column of the document and
    region grids, and the footer's band, tile, logo and mark sizes. */
-:root { --pad: clamp(1rem, 3vw, 3.2rem); --art: clamp(11rem, 22vw, 30rem); --railw: clamp(13rem, 13vw, 17rem); --label-col: 9rem; --band: 0.55rem; --tile: 3.4rem; --tile-logo: 2.75rem; --mark: 2rem; }
-@media (prefers-color-scheme: dark) { :root:not([data-scheme="light"]) { --gold: #e6c15a; --silver: #cfcfcf; --ord-progress: #6faa62; --ord-speed: #e1791b; --ord-cost: #ef675c; } }
-:root[data-scheme="dark"] { --gold: #e6c15a; --silver: #cfcfcf; --ord-progress: #6faa62; --ord-speed: #e1791b; --ord-cost: #ef675c; }
+:root { --pad: clamp(1rem, 3vw, 3.2rem); --art: clamp(11rem, 22vw, 30rem); --railw: clamp(13rem, 13vw, 17rem); --label-col: 9rem; --band: 0.4rem; --tile: 2.75rem; --tile-logo: 1.9rem; --mark: 1.5rem; }
+@media (prefers-color-scheme: dark) { :where(:root:not([data-scheme="light"])) { --gold: #e6c15a; --silver: #cfcfcf; --ord-progress: #6faa62; --ord-speed: #e1791b; --ord-cost: #ef675c; } }
+:where(:root[data-scheme="dark"]) { --gold: #e6c15a; --silver: #cfcfcf; --ord-progress: #6faa62; --ord-speed: #e1791b; --ord-cost: #ef675c; }
+/* Component tokens (from 1.9.1): the colours of the controls a site most often wants to restyle, each defaulting
+   to a palette token, so the template's look is unchanged unless a site overrides one in its site-palette.css
+   (light and dark forms, as for palette tokens). check_palette.py resolves them and checks each pair it lists.
+   Chips (facet, preset and toggle chips), from 1.9.1: an available chip reads in --text with a --text-muted border.
+   An unavailable chip is greyed out so the eye skips it: its word is struck through (the count is not), and in
+   light mode it sits on a --rule fill with --text-muted text and no visible border; in dark mode it keeps no
+   fill, --text-muted text and a dashed --rule-strong border. An inactive control is exempt from the 4.5:1 text
+   rule; the gate holds the unavailable text at 3:1 on its fill. */
+:where(:root) {
+  --chip-fg: var(--text); --chip-border: var(--text-muted); --chip-hover-fg: var(--text); --chip-hover-border: var(--text);
+  --chip-pressed-fg: var(--accent); --chip-pressed-border: var(--accent);
+  --chip-unavailable-fg: var(--text-muted); --chip-unavailable-bg: var(--rule); --chip-unavailable-border: var(--rule);
+  --button-fg: var(--text-muted); --button-border: var(--rule-strong); --button-hover-fg: var(--text); --button-hover-border: var(--text);
+  --nav-fg: var(--text-muted); --nav-hover-fg: var(--text); --nav-current-fg: var(--accent);
+  --rail-fg: var(--text-muted); --rail-hover-fg: var(--text); --rail-current-fg: var(--accent);
+  --picker-fg: var(--text-muted); --picker-hover-fg: var(--text); --picker-current-fg: var(--accent); --picker-current-rule: var(--brand);
+  --input-fg: var(--text); --input-bg: var(--surface-raised); --input-border: var(--rule-strong); --input-placeholder: var(--text-muted);
+  --tag-fg: var(--text-muted); --tag-border: var(--rule-strong); --tag-accent-fg: var(--accent); --tag-accent-border: var(--brand);
+  --th-fg: var(--text-muted); --th-rule: var(--rule-strong);
+  --band-tint-bg: var(--surface-sunken);
+  --pair-before-bg: var(--surface-sunken); --pair-before-bg-on-tint: var(--bg); --pair-after-bg: var(--surface-raised); --pair-panel-bg: var(--code-bg);
+  --box-bg: var(--surface-raised); --box-border: var(--rule);
+  --band-dark-bg: var(--text); --band-dark-fg: var(--bg); --band-dark-heading: var(--glow); --band-dark-link: var(--glow); --band-dark-focus: var(--bg);
+}
+@media (prefers-color-scheme: dark) { :where(:root:not([data-scheme="light"])) { --chip-unavailable-bg: var(--bg); --chip-unavailable-border: var(--rule-strong); } }
+/* From 1.11.0, the dark band in dark mode: a well below the page in --surface-sunken, with the page's own text colours. */
+@media (prefers-color-scheme: dark) { :where(:root:not([data-scheme="light"])) { --band-dark-bg: var(--surface-sunken); --band-dark-fg: var(--text); --band-dark-heading: var(--accent); --band-dark-link: var(--link); --band-dark-focus: var(--focus); } }
+:where(:root[data-scheme="dark"]) { --band-dark-bg: var(--surface-sunken); --band-dark-fg: var(--text); --band-dark-heading: var(--accent); --band-dark-link: var(--link); --band-dark-focus: var(--focus); }
+:where(:root[data-scheme="dark"]) { --chip-unavailable-bg: var(--bg); --chip-unavailable-border: var(--rule-strong); }
 *, *::before, *::after { box-sizing: border-box; }
 /* Hidden means hidden, whatever display a component gives the element: `.doc section` and `.doc article` are
    `display: contents`, which overrode the browser's own [hidden] rule and kept every section the install
@@ -82,16 +113,16 @@ a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
 .nav { grid-area: pages; position: relative; display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 0 clamp(1rem, 1.6vw, 2rem); overflow-x: auto; scrollbar-width: thin; min-width: 0; font: 500 clamp(0.66rem, 0.45vw + 0.36rem, 0.74rem)/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.16em; text-transform: uppercase;
   background: linear-gradient(90deg, var(--bg) 40%, transparent) left / 2.4rem 100% no-repeat local, linear-gradient(270deg, var(--bg) 40%, transparent) right / 2.4rem 100% no-repeat local,
     linear-gradient(90deg, color-mix(in srgb, var(--rule-strong) 55%, transparent), transparent) left / 0.9rem 100% no-repeat scroll, linear-gradient(270deg, color-mix(in srgb, var(--rule-strong) 55%, transparent), transparent) right / 0.9rem 100% no-repeat scroll; }
-.nav a { color: var(--text-muted); text-decoration: none; padding: 0.7rem 0; display: inline-block; white-space: nowrap; }
-.nav a:hover { color: var(--text); }
-.nav a[aria-current="page"] { color: var(--accent); }
+.nav a { color: var(--nav-fg); text-decoration: none; padding: 0.7rem 0; display: inline-block; white-space: nowrap; }
+.nav a:hover { color: var(--nav-hover-fg); }
+.nav a[aria-current="page"] { color: var(--nav-current-fg); }
 /* The light and dark switch: a 24 px sun or moon glyph (inline SVG in the markup) in a 44 by 44 px target,
    --text-muted at rest and --text on hover, the standard focus ring. The glyph shows the scheme a press leads to:
    the moon while light shows, the sun while dark shows; aria-pressed carries the state. The negative right margin
    lines the glyph up with the gutter while the target reaches into it; the negative block margins keep the bar at
    its 1.5.1 height. */
-.scheme { grid-area: scheme; position: relative; display: inline-grid; place-items: center; width: 2.75rem; height: 2.75rem; margin: -0.25rem -0.625rem -0.25rem 0.6rem; padding: 0; border: 0; border-radius: 0.3rem; background: transparent; color: var(--text-muted); cursor: pointer; }
-.scheme:hover { color: var(--text); }
+.scheme { grid-area: scheme; position: relative; display: inline-grid; place-items: center; width: 2.75rem; height: 2.75rem; margin: -0.25rem -0.625rem -0.25rem 0.6rem; padding: 0; border: 0; border-radius: 0.3rem; background: transparent; color: var(--nav-fg); cursor: pointer; }
+.scheme:hover { color: var(--nav-hover-fg); }
 .scheme svg { display: block; width: 1.5rem; height: 1.5rem; }
 .scheme .sun { display: none; }
 @media (prefers-color-scheme: dark) {
@@ -126,7 +157,7 @@ a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
 .site-cleanlanguage[data-scheme="dark"] .statement { --sw: 13.724; } .site-aiqt[data-scheme="dark"] .statement { --sw: 21.218; } .site-grclibrary[data-scheme="dark"] .statement { --sw: 13.894; }
 .hero .intro { grid-area: intro; font-size: clamp(1.35rem, 1.35vw, 1.8rem); line-height: 1.5; max-width: 68ch; margin: 0 0 1.4rem; }
 .hero .intro .ordering { font-size: 1.2rem; margin: 0.6rem 0 0; }
-.lead { font-size: 1.333rem; line-height: 1.5; max-width: 52ch; margin: 0 0 2rem; }
+.lead { font-size: 1.333rem; line-height: 1.5; max-width: var(--measure-lead, 52ch); margin: 0 0 2rem; }
 .start { grid-area: start; justify-self: start; display: inline-flex; align-items: baseline; gap: 1rem; font: 500 0.78rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text); text-decoration: none; border-bottom: 2px solid var(--brand); padding: 0.4rem 0 0.55rem; }
 .start:hover { color: var(--text); }
 .start .arrow { font-family: "Newsreader", serif; font-size: 1.2rem; color: var(--accent); transition: transform 150ms ease-out; display: inline-block; }
@@ -154,8 +185,22 @@ a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
 
 /* Document page: label column, text column, contents rail */
 .doc { display: grid; grid-template-columns: var(--label-col) minmax(0, 1fr) var(--railw); gap: 0 clamp(2rem, 3vw, 4rem); padding: 0.6rem 0 2rem; align-items: start; }
-:is(.doc, .doc > section, .doc > article) > :is(p, h1, h2, h3, ul, ol.num, dl.record:not(.cols), blockquote, .callout, .download, details, .pair, .search) { max-width: 72ch; }
-:is(.doc, .doc > section, .doc > article) > .steps { max-width: 84ch; }
+:is(.doc, .doc > section, .doc > article) > :is(p, h1, h2, h3, ul, ol.num, dl.record:not(.cols), blockquote, .callout, .download, details, .pair, .search) { max-width: var(--measure, 72ch); }
+/* Line width (from 1.11.0, owner, 2026-11-06). The reading widths above stay the default. A page, a section or any
+   single text block can choose another by class, which sets --measure (and --measure-lead for .lead): .measure-full
+   (no limit: the text runs to the edge of its column), .measure-wide (96 characters, a lead 72), .measure-narrow (60,
+   a lead 44), and .measure-read (the default widths, to restore them inside a wider page). On <body>, <main> or .doc
+   the class applies to everything inside; on a paragraph, heading or box it applies to that block alone. */
+.measure-full { --measure: none; --measure-lead: none; }
+.measure-wide { --measure: 96ch; --measure-lead: 72ch; }
+.measure-narrow { --measure: 60ch; --measure-lead: 44ch; }
+.measure-read { --measure: 72ch; --measure-lead: 52ch; }
+/* From 1.8.0: a token in a document's text blocks that is longer than the line (a URL as link text or as plain
+   text, a long identifier or hash) may break where nothing else fits, so a document page never scrolls sideways at
+   320 px. A break inside a word happens only when that word alone is wider than the line, so ordinary words still
+   wrap at spaces. Table cells keep their own rules: a wide table scrolls inside its .tablewrap. */
+.doc :is(p, li, dt, dd, h1, h2, h3, h4, blockquote, figcaption, .callout) { overflow-wrap: anywhere; }
+:is(.doc, .doc > section, .doc > article) > .steps { max-width: var(--measure, 84ch); }
 .rail-logo { width: 100%; height: auto; display: block; margin: 0.3rem 0 1.2rem; }
 :is(.doc, .doc > section, .doc > article) > * { grid-column: 2; min-width: 0; }
 :is(.doc, .doc > section, .doc > article) > .lbl { grid-column: 1; padding-top: 0.55rem; margin: 0; }
@@ -197,9 +242,12 @@ details summary { cursor: pointer; font-weight: 600; padding: 0.4rem 0; }
 details p, details ul { margin: 0.4rem 0 0.8rem; }
 details ul ul { margin: 0.2rem 0 0.4rem; }
 .doc p, .doc ul, .doc ol, .doc dl { margin: 0 0 1.1rem; }
-.doc .meta { font: 400 1.05rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: 0 0 1.6rem; max-width: 66ch; }
+.doc .meta { font: 400 1.05rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: 0 0 1.6rem; max-width: var(--measure, 66ch); }
 .doc .lead { margin-bottom: 1.4rem; }
 .doc ul { padding-left: 1.2rem; }
+/* From 1.8.0: a chip list is a row of controls, not a bulleted list, so it starts at the text edge (.doc ul indented
+   it by 1.2rem). */
+.doc ul.chips { padding-left: 0; }
 .doc li { margin-bottom: 0.45rem; }
 .doc ol.num { padding-left: 0; list-style: none; counter-reset: c; }
 .doc ol.num > li { counter-increment: c; position: relative; padding-left: 2.6rem; margin-bottom: 0.9rem; }
@@ -214,12 +262,12 @@ details ul ul { margin: 0.2rem 0 0.4rem; }
 .rail .lbl { margin: 0.6rem 0 0.8rem; }
 .rail ol, .rail ul { list-style: none; margin: 0; padding: 0; counter-reset: r; }
 .rail li { margin: 0; }
-.rail li a { display: grid; grid-template-columns: 1.4rem 1fr; gap: 0.2rem; color: var(--text-muted); text-decoration: none; padding: 0.22rem 0; }
+.rail li a { display: grid; grid-template-columns: 1.4rem 1fr; gap: 0.2rem; color: var(--rail-fg); text-decoration: none; padding: 0.22rem 0; }
 .rail ol li a::before { counter-increment: r; content: counter(r); font: 400 0.8rem/1.6 "Newsreader", serif; color: var(--accent); font-variant-numeric: lining-nums; }
 .rail ul li a { grid-template-columns: 1fr; }
-.rail li a:hover { color: var(--text); }
+.rail li a:hover { color: var(--rail-hover-fg); }
 /* rail.js marks the section on screen with aria-current="location"; the "true" form is kept for pages built on 1.2.1 and earlier. */
-.rail li a[aria-current="location"], .rail li a[aria-current="true"] { color: var(--accent); }
+.rail li a[aria-current="location"], .rail li a[aria-current="true"] { color: var(--rail-current-fg); }
 .rail > .lbl, .rail > ol, .rail > ul { margin-left: calc(100% * var(--logo-inset)); }
 
 /* Left-rail page (from 1.5.0): .doc.left-rail replaces the label column and the right rail with 1 side list on the
@@ -227,6 +275,10 @@ details ul ul { margin: 0.2rem 0 0.4rem; }
    scrolls, at the right rail's offset and in its type; labels sit above their content, as at 1000 px and below.
    rail.js reads only nav.rail, so it leaves the left list alone. */
 .doc.left-rail { grid-template-columns: var(--railw) minmax(0, 1fr); }
+/* .doc.no-rail (from 1.11.0): a document page with no "On this page" rail gives the rail's column to the content. Without
+   the class the column stays reserved, as it was until 1.10.0. */
+.doc.no-rail { grid-template-columns: var(--label-col) minmax(0, 1fr); }
+:is(.doc.no-rail, .doc.no-rail > section, .doc.no-rail > article) > .full { grid-column: 1 / -1; }
 :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > *,
 :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl,
 :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .wide,
@@ -244,9 +296,9 @@ details ul ul { margin: 0.2rem 0 0.4rem; }
 .lrail .lbl { margin: 0.6rem 0 0.8rem; }
 .lrail ul { list-style: none; margin: 0; padding: 0; }
 .lrail li { margin: 0; }
-.lrail li a, .lrail li button { display: block; width: 100%; text-align: left; font: inherit; color: var(--text-muted); text-decoration: none; padding: 0.22rem 0; background: transparent; border: 0; cursor: pointer; }
-.lrail li a:hover, .lrail li button:hover { color: var(--text); }
-.lrail li [aria-current="true"], .lrail li [aria-pressed="true"] { color: var(--accent); font-weight: 600; }
+.lrail li a, .lrail li button { display: block; width: 100%; text-align: left; font: inherit; color: var(--rail-fg); text-decoration: none; padding: 0.22rem 0; background: transparent; border: 0; cursor: pointer; }
+.lrail li a:hover, .lrail li button:hover { color: var(--rail-hover-fg); }
+.lrail li [aria-current="true"], .lrail li [aria-pressed="true"] { color: var(--rail-current-fg); font-weight: 600; }
 
 /* Callouts: no border, label in the label column */
 .callout { background: var(--callout-bg); padding: 1.2rem 1.4rem; margin: 0.4rem 0 1.6rem; border-radius: 0.3rem; font-size: 1.15rem; line-height: 1.55; }
@@ -259,11 +311,11 @@ pre, .code { font: 400 0.95rem/1.55 "JetBrains Mono", ui-monospace, SFMono-Regul
 pre.hascopy { padding-top: 3.2rem; }
 code { font: 400 0.9em/1.4 "JetBrains Mono", ui-monospace, monospace; background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 0.2rem; overflow-wrap: anywhere; }
 pre code { background: none; padding: 0; font-size: inherit; }
-.copy, .btn { position: absolute; top: 0.8rem; right: 0.8rem; font: 500 0.7rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.16em; text-transform: uppercase; background: transparent; color: var(--text-muted); border: 1px solid var(--rule-strong); border-radius: 999px; padding: 0.55rem 0.9rem; cursor: pointer; }
-.copy:hover, .btn:hover { color: var(--text); border-color: var(--text); }
+.copy, .btn { position: absolute; top: 0.8rem; right: 0.8rem; font: 500 0.7rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.16em; text-transform: uppercase; background: transparent; color: var(--button-fg); border: 1px solid var(--button-border); border-radius: 999px; padding: 0.55rem 0.9rem; cursor: pointer; }
+.copy:hover, .btn:hover { color: var(--button-hover-fg); border-color: var(--button-hover-border); }
 .copy[hidden] { display: none; }
 .btn.inline { position: static; display: inline-block; text-decoration: none; margin: 0 0.6rem 0.6rem 0; }
-.btn.inline:hover { color: var(--text); }
+.btn.inline:hover { color: var(--button-hover-fg); }
 .code-note { font: 400 0.95rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: -0.8rem 0 1.6rem; }
 .prompt-block { max-height: 36rem; overflow: auto; }
 /* The flowing variant: the whole text in the page flow, no cap and no inner scroll, for a portable text the reader reads in place. */
@@ -276,7 +328,7 @@ pre code { background: none; padding: 0; font-size: inherit; }
 .tablewrap { position: relative; overflow-x: auto; margin: 0.4rem 0 1.6rem; -webkit-overflow-scrolling: touch; }
 .tablewrap:focus-visible { outline-offset: 4px; }
 table { border-collapse: collapse; width: 100%; font-size: 1.05rem; line-height: 1.45; font-variant-numeric: lining-nums tabular-nums; }
-th { text-align: left; font: 500 0.68rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); padding: 0 1.2rem 0.6rem 0; border-bottom: 1px solid var(--rule-strong); vertical-align: bottom; white-space: nowrap; }
+th { text-align: left; font: 500 0.68rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--th-fg); padding: 0 1.2rem 0.6rem 0; border-bottom: 1px solid var(--th-rule); vertical-align: bottom; white-space: nowrap; }
 td { padding: 0.6rem 1.2rem 0.6rem 0; vertical-align: top; overflow-wrap: break-word; }
 td code { white-space: normal; overflow-wrap: break-word; }
 td.id code { white-space: nowrap; }
@@ -313,8 +365,8 @@ table.matrix td a { margin-left: 0.4rem; }
 td .sub { display: block; font: 400 0.95rem/1.45 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin-top: 0.15rem; }
 td.id, .mono { font: 400 0.8rem/1.6 "JetBrains Mono", ui-monospace, monospace; white-space: nowrap; }
 td.num { text-align: right; font-variant-numeric: lining-nums tabular-nums; }
-.tag { display: inline-block; font: 500 0.66rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); padding: 0.35rem 0.55rem; border: 1px solid var(--rule-strong); border-radius: 999px; white-space: nowrap; }
-.tag.accent { color: var(--accent); border-color: var(--brand); }
+.tag { display: inline-block; font: 500 0.66rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--tag-fg); padding: 0.35rem 0.55rem; border: 1px solid var(--tag-border); border-radius: 999px; white-space: nowrap; }
+.tag.accent { color: var(--tag-accent-fg); border-color: var(--tag-accent-border); }
 .tag.fill { background: var(--surface-sunken); border-color: transparent; }
 
 /* Large matrix tables (from 1.7.0, specification 7.34): opt-in classes and attributes; markup without them renders
@@ -355,6 +407,9 @@ table.matrix tbody tr > td[data-heat="1"], .tag[data-heat="1"] { background: var
 table.matrix tbody tr > td[data-heat="2"], .tag[data-heat="2"] { background: var(--heat-2); }
 table.matrix tbody tr > td[data-heat="3"], .tag[data-heat="3"] { background: var(--heat-3); }
 table.matrix tbody tr > td[data-heat="4"], .tag[data-heat="4"] { background: var(--heat-4); }
+/* From 1.8.0: the focus ring inside a heat cell (on its count link, or on the cell) is drawn in --text, which every
+   heat step holds at 4.5:1, so the ring keeps 3:1 on any step and --focus no longer limits the light ramp. */
+table.matrix td[data-heat] :focus-visible, table.matrix td[data-heat]:focus-visible { outline-color: var(--text); }
 /* The heat legend: <ul class="chips heat-legend"> of .tag swatches, each with its step's words. */
 ul.chips.heat-legend { align-items: center; padding-left: 0; }
 .heat-legend .tag { color: var(--text); border-color: var(--rule-strong); }
@@ -366,6 +421,9 @@ table.matrix th.rot .org, table.matrix th.rot .grp { margin: 0 0 0 0.15rem; }
 /* Column groups: a tag line naming the group (.grp) under the heading and a 3px accent under the header cell
    (th[data-grp="1"] to "6", the family's 6 hues made text-safe on each site). The group is named in text; the
    colour only reinforces it. */
+/* From 1.8.0: while every visible column belongs to 1 group, matrix.js sets data-one-grp on the table and the tags,
+   which would repeat 1 name and only add width, are not shown; the accent under each header stays. */
+table.matrix[data-one-grp] th .grp { display: none; }
 table.matrix th .grp { display: block; font: 600 0.62rem/1.4 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; margin-top: 0.2rem; }
 table.matrix thead th[data-grp="1"] { border-bottom: 3px solid var(--grp-1); } table.matrix thead th[data-grp="1"] .grp { color: var(--grp-1); }
 table.matrix thead th[data-grp="2"] { border-bottom: 3px solid var(--grp-2); } table.matrix thead th[data-grp="2"] .grp { color: var(--grp-2); }
@@ -390,10 +448,25 @@ dl.record.cols div { break-inside: avoid; }
 .pair { display: grid; grid-template-columns: 1fr; gap: 1rem; margin: 0.4rem 0 1.6rem; }
 .pair > div { padding: 1.2rem 1.4rem; border-radius: 0.3rem; font-size: 1.15rem; line-height: 1.5; }
 .pair > div p { margin: 0; }
-.pair .before { background: var(--surface-sunken); }
-.pair .after { background: var(--surface-raised); }
+.pair .before { background: var(--pair-before-bg); }
+.pair .after { background: var(--pair-after-bg); }
+.pair pre { background: var(--pair-panel-bg); }
+/* On a tinted band (from 1.11.0) the before box would match the band, so it takes the page background. */
+.band-tint .pair .before { background: var(--pair-before-bg-on-tint); }
 .pair .lbl { margin-bottom: 0.5rem; }
 .pair .after .lbl { color: var(--accent); }
+/* .pair-stack (from 1.11.0, owner, 2026-11-06): the 2 boxes one above the other at every width, each as tall as its own
+   content, for a short original and a long answer (an inbound message and a reply). A code block in a stacked box
+   takes the box's width with no extra margin. Without the class a pair is side by side from 1001 px, as before. */
+@media (min-width: 1001px) { .pair.pair-stack { grid-template-columns: minmax(0, 1fr); gap: 1rem; } }
+.pair-stack > div > pre { margin: 0.4rem 0 0; }
+/* A message in a box (from 1.11.0): <div class="msg"> holds quoted text on the same inner panel as a code block, in
+   the page's text face, so an original and a code-set answer read as 2 framed messages. In a stacked pair the
+   before box then takes the after box's surface, so the 2 frames match. */
+.pair .msg { margin: 0.4rem 0 0; padding: 1.1rem 1.3rem; background: var(--pair-panel-bg); border-radius: 0.3rem; }
+.pair .msg p { margin: 0 0 0.6rem; }
+.pair .msg p:last-child { margin-bottom: 0; }
+.pair-stack .before:has(> .msg) { background: var(--pair-after-bg); }
 
 /* Download and checksum block */
 .download { margin: 0.4rem 0 1.6rem; }
@@ -405,9 +478,9 @@ dl.record.cols div { break-inside: avoid; }
 
 /* Install selector: 6 tracked labels in a row */
 .picker { display: flex; flex-wrap: wrap; gap: 0.4rem 1.8rem; margin: 0.4rem 0 1.4rem; padding: 0; list-style: none; }
-.picker a { display: inline-block; font: 500 0.74rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text-muted); text-decoration: none; padding: 0.7rem 0; border-bottom: 1px solid transparent; }
-.picker a:hover { color: var(--text); }
-.picker a[aria-current="true"] { color: var(--accent); border-bottom-color: var(--brand); border-bottom-width: 2px; }
+.picker a { display: inline-block; font: 500 0.74rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.18em; text-transform: uppercase; color: var(--picker-fg); text-decoration: none; padding: 0.7rem 0; border-bottom: 1px solid transparent; }
+.picker a:hover { color: var(--picker-hover-fg); }
+.picker a[aria-current="true"] { color: var(--picker-current-fg); border-bottom-color: var(--picker-current-rule); border-bottom-width: 2px; }
 .picker-reset { position: static; margin: 0 0 1.6rem; }
 .picker-reset[hidden] { display: none; }
 .verified { font: 400 0.95rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: -0.4rem 0 1rem; }
@@ -415,25 +488,26 @@ dl.record.cols div { break-inside: avoid; }
 /* Search: progressive enhancement, all content visible without script */
 .search { margin: 0.4rem 0 1.6rem; }
 .search label { display: block; }
-.search input { width: 100%; max-width: 40rem; font: 400 1.1875rem/1.4 "Newsreader", serif; padding: 0.7rem 1rem; border: 1px solid var(--rule-strong); border-radius: 0.3rem; background: var(--surface-raised); color: var(--text); }
-.search input::placeholder { color: var(--text-muted); opacity: 1; }
+.search input { width: 100%; max-width: 40rem; font: 400 1.1875rem/1.4 "Newsreader", serif; padding: 0.7rem 1rem; border: 1px solid var(--input-border); border-radius: 0.3rem; background: var(--input-bg); color: var(--input-fg); }
+.search input::placeholder { color: var(--input-placeholder); opacity: 1; }
 .search .status { font: 400 0.85rem/1.5 "Public Sans", system-ui, sans-serif; color: var(--text-muted); margin: 0.6rem 0 0; min-height: 1.3rem; }
 .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; margin: 0 0 1.6rem; padding: 0; }
-.chips a { display: inline-block; font: 500 0.7rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); text-decoration: none; padding: 0.55rem 0.8rem; border: 1px solid var(--rule-strong); border-radius: 999px; }
-.chips a:hover { color: var(--text); border-color: var(--text); }
+.chips a { display: inline-block; font: 500 0.7rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--chip-fg); text-decoration: none; padding: 0.55rem 0.8rem; border: 1px solid var(--chip-border); border-radius: 999px; }
+.chips a:hover { color: var(--chip-hover-fg); border-color: var(--chip-hover-border); }
 .chips a .n, .chips button .n { font-family: "JetBrains Mono", ui-monospace, monospace; letter-spacing: 0.04em; margin-left: 0.4rem; }
 /* Chips as buttons, and the chosen chip (from 1.5.0): search.js marks an active facet with aria-pressed="true";
    matrix.js marks the chosen preset with aria-pressed="true" on a button or aria-current="true" on a link.
    The chosen chip takes a 2px border in --accent, so the state does not rest on colour alone. */
-.chips button { display: inline-block; font: 500 0.7rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); background: transparent; padding: 0.55rem 0.8rem; border: 1px solid var(--rule-strong); border-radius: 999px; cursor: pointer; }
-.chips button:hover { color: var(--text); border-color: var(--text); }
-.chips [aria-pressed="true"], .chips [aria-current="true"] { color: var(--accent); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.chips button { display: inline-block; font: 500 0.7rem/1 "Public Sans", system-ui, sans-serif; letter-spacing: 0.14em; text-transform: uppercase; color: var(--chip-fg); background: transparent; padding: 0.55rem 0.8rem; border: 1px solid var(--chip-border); border-radius: 999px; cursor: pointer; }
+.chips button:hover { color: var(--chip-hover-fg); border-color: var(--chip-hover-border); }
+.chips [aria-pressed="true"], .chips [aria-current="true"] { color: var(--chip-pressed-fg); border-color: var(--chip-pressed-border); box-shadow: inset 0 0 0 1px var(--chip-pressed-border); }
 .plan li[hidden] { display: none; }
 /* A chip that would show no documents (from 1.7.0, search.js with data-filter-empty="disable"): aria-disabled="true",
    still focusable. A dashed border in place of the solid one and the not-allowed cursor, with no hover change; the
    text and border keep the chip's colours (--text-muted, --rule-strong), with no fading and no transition. */
-.chips a[aria-disabled="true"], .chips button[aria-disabled="true"] { border-style: dashed; cursor: not-allowed; }
-.chips a[aria-disabled="true"]:hover, .chips button[aria-disabled="true"]:hover { color: var(--text-muted); border-color: var(--rule-strong); }
+.chips a[aria-disabled="true"], .chips button[aria-disabled="true"] { color: var(--chip-unavailable-fg); background: var(--chip-unavailable-bg); border-color: var(--chip-unavailable-border); border-style: dashed; cursor: not-allowed; text-decoration: line-through; text-decoration-thickness: 1px; }
+.chips [aria-disabled="true"] .n { display: inline-block; text-decoration: none; }
+.chips a[aria-disabled="true"]:hover, .chips button[aria-disabled="true"]:hover { color: var(--chip-unavailable-fg); background: var(--chip-unavailable-bg); border-color: var(--chip-unavailable-border); }
 
 /* Diagram: 3 rounded nodes, currentColor strokes, brand-coloured arrows */
 .figure { margin: 0.4rem 0 1.6rem; }
@@ -473,11 +547,74 @@ dl.record.cols div { break-inside: avoid; }
    only when nothing else fits (at 320 px the older line was 379 px wide). */
 .region .about { overflow-wrap: anywhere; }
 
+/* Bands (from 1.11.0, owner, 2026-11-06): full-width sections that give a page an alternating rhythm. A band is a
+   direct child of <main> and holds its own .wrap: <section class="band band-tint"><div class="wrap">...</div></section>.
+   .band is plain (the page background), .band-tint sits on --band-tint-bg (by default --surface-sunken), and
+   .band-dark inverts the colours: in light mode --text becomes the ground and --bg the text, in dark mode the band
+   sits below the page on --surface-sunken in the page's own colours. A dark band holds headings, paragraphs, lists and
+   links only; its colours are component tokens the palette gate checks on every site.
+   Colours a site may set in site-palette.css with no template change (from 1.11.0, owner, 2026-11-06), each checked
+   by the palette gate: the bands (--band-tint-bg, --band-dark-*), the banner frame (--banner-from, --banner-to), the
+   before-and-after boxes (--pair-before-bg, --pair-before-bg-on-tint for a before box on a tinted band, --pair-after-bg,
+   --pair-panel-bg for the inner message or code panel) and the card grid (--box-bg, --box-border). */
+/* --band-pad (from 1.11.1, requested by vendorreplies.ai): a site may set the bands' top and bottom spacing in its
+   site.css; unset, the 1.11.0 spacing applies. */
+.band { padding: var(--band-pad, clamp(2.2rem, 5vw, 4rem)) 0; }
+.band + .band { border-top: 0; }
+.band-tint { background: var(--band-tint-bg); }
+.band-dark { background: var(--band-dark-bg); color: var(--band-dark-fg); }
+.band-dark h2, .band-dark h3 { color: var(--band-dark-heading); }
+.band-dark .lbl, .band-dark .meta { color: var(--band-dark-fg); }
+.band-dark a { color: var(--band-dark-link); }
+.band-dark a:focus-visible { outline-color: var(--band-dark-focus); }
+.band > .wrap > :first-child, .band .doc > :first-child { margin-top: 0; }
+
+/* Card grid (from 1.11.0, owner, 2026-11-06): a list of short boxes set side by side, as many as fit at 15rem or wider
+   (3 on a desktop column), stacking on phones. <ul class="boxes">, or <ol class="boxes boxes-numbered"> for numbered
+   steps; each <li> may open with an <h3>. */
+.boxes { list-style: none; margin: 0.4rem 0 1.6rem; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1rem; counter-reset: bx; }
+.doc ul.boxes, .doc ol.boxes { padding-left: 0; }
+.boxes > li { margin: 0; padding: 1.1rem 1.2rem; background: var(--box-bg); border: 1px solid var(--box-border); border-radius: 0.5rem; font-size: 1.05rem; line-height: 1.55; }
+.boxes > li > :first-child { margin-top: 0; }
+.boxes > li > :last-child { margin-bottom: 0; }
+.boxes h3 { margin: 0 0 0.4rem; font: 700 1.1rem/1.3 "Public Sans", system-ui, sans-serif; color: var(--text); }
+.boxes-numbered > li { counter-increment: bx; }
+.boxes-numbered > li::before { content: counter(bx); display: inline-block; min-width: 1.9rem; margin-bottom: 0.5rem; padding: 0.15rem 0.5rem; border: 1px solid var(--rule-strong); border-radius: 999px; font: 700 0.95rem/1.4 "Public Sans", system-ui, sans-serif; color: var(--accent); text-align: center; }
+
+/* Banner (from 1.11.0, owner, 2026-11-06): an optional full-width picture at the top of a page, under the masthead,
+   with the page's title and a tagline set over it. Markup:
+     <header class="banner" data-text="start|centre|end"><picture>...<img src="..." alt="..." width="..." height="..."></picture>
+       <div class="banner-text"><h1>Title</h1><p class="banner-tagline">Tagline</p></div></header>
+   The picture is framed by a band in --banner-from and --banner-to (component tokens, by default the site's --brand
+   and --accent; a site may set its own in site-palette.css). The text sits over the picture in the third that
+   data-text names (start by default), in white with a dark shadow, so it reads on any picture dark enough to carry
+   it: the site checks that with the overflow and contrast review of its banner. Below 52rem of width the text moves
+   under the picture, on a --surface-raised panel inside the frame, in --text. A page with a banner keeps its <h1> in the banner and has no .hero. */
+:where(:root) { --banner-from: var(--brand); --banner-to: var(--accent); }
+.banner { position: relative; margin: 0; padding: clamp(0.6rem, 1.6vw, 1.2rem); background: linear-gradient(135deg, var(--banner-from) 0%, var(--banner-to) 100%); }
+.banner picture, .banner img { display: block; width: 100%; height: auto; border-radius: 0.5rem; }
+.banner img { aspect-ratio: auto; object-fit: cover; max-height: 34rem; }
+.banner-text { position: absolute; inset: clamp(0.6rem, 1.6vw, 1.2rem); display: flex; flex-direction: column; justify-content: center; padding: clamp(1rem, 4vw, 3.5rem); width: 66%; color: #fff; text-shadow: 0 2px 14px rgba(0, 0, 0, 0.75), 0 1px 3px rgba(0, 0, 0, 0.9); pointer-events: none; }
+.banner[data-text="centre"] .banner-text { width: auto; align-items: center; text-align: center; }
+.banner[data-text="end"] .banner-text { left: auto; align-items: flex-end; text-align: end; }
+.banner-text h1 { margin: 0; font: 800 clamp(2.2rem, 6vw, 4.6rem)/1.02 "Public Sans", system-ui, sans-serif; letter-spacing: -0.02em; }
+.banner-tagline { margin: 0.6rem 0 0; font: 600 clamp(1.05rem, 2.1vw, 1.6rem)/1.3 "Public Sans", system-ui, sans-serif; max-width: 32ch; }
+/* .banner-fill on the banner: the title filled with the frame's gradient instead of white, with a dark drop shadow
+   (vendorreplies.ai's look). On the narrow layout's panel the title is in --text, because a light gradient end can
+   fall under 3:1 there. */
+.banner-fill .banner-text h1 { background: linear-gradient(135deg, var(--banner-from) 0%, var(--banner-to) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; text-shadow: none; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.85)); }
+@media (max-width: 52rem) {
+  .banner-text { position: static; width: auto; margin-top: clamp(0.6rem, 1.6vw, 1.2rem); padding: 0.9rem 1rem; border-radius: 0.5rem; background: var(--surface-raised); color: var(--text); text-shadow: none; }
+  .banner[data-text] .banner-text { align-items: flex-start; text-align: start; }
+  .banner-fill .banner-text h1 { background: none; color: var(--text); filter: none; }
+}
+
 /* Family footer: 1 bar at the content width. The 6 project cards, current site first, on the rotated
-   spectrum; then the GitHub, LinkedIn and ORCID tiles under a grey tail of the band; then the signature tile as the
+   spectrum, and from 1.11.0 vendorreplies.ai's card last on silver; then the GitHub, LinkedIn and ORCID tiles under a grey tail of the band; then the signature tile as the
    posluns.ca link. The footer is a size container, so the bar responds to its own width and never wraps:
-   stage A (>= 1400 px of content width) full size; stage B (1040 to 1399) names kept, sizes scaled down;
-   stage C (< 1040) names visually hidden, equal tiles that shrink to fit; the signature shrinks below 750,
+   stage A (>= 1160 px of content width, from 1.11.1; >= 1500 in 1.11.0; >= 1400 until 1.10.0) names shown, the 3 marks
+   grouped beside the signature, the signature without "A" and "Project" below 1240; stage C (< 1160) names visually
+   hidden, equal tiles that shrink to fit; the signature shrinks below 750,
    loses "A" and "Project" below 650, and shrinks again below 450. Below 600 the marks and the signature drop to a
    second line under the grey band (phones). The bar is contiguous: no gaps between tiles. */
 .family { padding: 1.6rem var(--pad) 2.2rem; font: 400 0.9rem/1.4 "Public Sans", system-ui, sans-serif; color: var(--text-muted); container: footer / inline-size; }
@@ -499,29 +636,54 @@ dl.record.cols div { break-inside: avoid; }
 .family .slice-4:first-child { background: linear-gradient(90deg, var(--rainbow-4) 0%, var(--rainbow-4) 80%, var(--rainbow-join-4) 100%); } .family .slice-4:last-child { background: linear-gradient(90deg, var(--rainbow-join-3) 0%, var(--rainbow-4) 20%, var(--rainbow-4) 100%); }
 .family .slice-5:first-child { background: linear-gradient(90deg, var(--rainbow-5) 0%, var(--rainbow-5) 80%, var(--rainbow-join-5) 100%); } .family .slice-5:last-child { background: linear-gradient(90deg, var(--rainbow-join-4) 0%, var(--rainbow-5) 20%, var(--rainbow-5) 100%); }
 .family .slice-6:first-child { background: linear-gradient(90deg, var(--rainbow-6) 0%, var(--rainbow-6) 80%, var(--rainbow-join-6) 100%); } .family .slice-6:last-child { background: linear-gradient(90deg, var(--rainbow-join-5) 0%, var(--rainbow-6) 20%, var(--rainbow-6) 100%); }
+/* The seventh card (from 1.11.0, owner, 2026-11-06): vendorreplies.ai, <li class="slice slice-vr">, is always the last
+   project card, after the 6 rotated rainbow cards, on every site including its own. Its band is CONAN's silver: the
+   last rainbow card fades into it, it carries a highlight, and the grey tail starts from it. The :has() rules need
+   Chromium 105, Safari 15.4 or Firefox 121; an older browser keeps the 1.10.0 colours, with the seventh card's band in
+   plain silver. */
+.family .slice-1:has(+ .slice-vr) { background: linear-gradient(90deg, var(--rainbow-join-6) 0%, var(--rainbow-1) 20%, var(--rainbow-1) 80%, var(--band-silver) 100%); }
+.family .slice-2:has(+ .slice-vr) { background: linear-gradient(90deg, var(--rainbow-join-1) 0%, var(--rainbow-2) 20%, var(--rainbow-2) 80%, var(--band-silver) 100%); }
+.family .slice-3:has(+ .slice-vr) { background: linear-gradient(90deg, var(--rainbow-join-2) 0%, var(--rainbow-3) 20%, var(--rainbow-3) 80%, var(--band-silver) 100%); }
+.family .slice-4:has(+ .slice-vr) { background: linear-gradient(90deg, var(--rainbow-join-3) 0%, var(--rainbow-4) 20%, var(--rainbow-4) 80%, var(--band-silver) 100%); }
+.family .slice-5:has(+ .slice-vr) { background: linear-gradient(90deg, var(--rainbow-join-4) 0%, var(--rainbow-5) 20%, var(--rainbow-5) 80%, var(--band-silver) 100%); }
+.family .slice-6:has(+ .slice-vr) { background: linear-gradient(90deg, var(--rainbow-join-5) 0%, var(--rainbow-6) 20%, var(--rainbow-6) 80%, var(--band-silver) 100%); }
+.family .slice-vr { background: var(--band-silver); background: linear-gradient(90deg, var(--band-silver) 0%, var(--band-sheen) 35%, var(--band-silver) 60%, var(--band-silver-deep) 85%, var(--band-silver) 100%); }
+.family .bar:has(.slice-vr) .tail .tile-1 { background: linear-gradient(90deg, var(--band-silver) 0%, var(--band-grey) 20%); }
 .family .card, .family .sig { display: flex; align-items: center; flex: 1 1 auto; min-width: 0; min-height: var(--tile); background: var(--surface-raised); color: var(--text); text-decoration: none; white-space: nowrap; }
-.family .card { gap: 0.6rem; padding: 0.3rem 0.7rem; font: 600 0.95rem/1.2 "Public Sans", system-ui, sans-serif; letter-spacing: -0.015em; }
+.family .card { gap: 0.4rem; padding: 0.2rem 0.45rem; font: 600 0.85rem/1.2 "Public Sans", system-ui, sans-serif; letter-spacing: -0.015em; }
 .family .card:hover, .family .sig:hover { box-shadow: inset 0 -3px 0 var(--gold-rule); }
 .family .card img { width: var(--tile-logo); height: var(--tile-logo); display: block; flex: none; }
 .family .card .tld { color: var(--gold); }
-.family .card[aria-current="page"] .cname { box-shadow: inset 0 -2px 0 var(--gold-rule); }
+/* The current site's tile carries the gold line under its whole width at every stage (owner, 2026-11-06, from 1.11.1;
+   until 1.11.0 a 2 px line under the name alone while the names showed). */
+.family .card[aria-current="page"] { box-shadow: inset 0 -3px 0 var(--gold-rule); }
 .family .tail .card { width: var(--tile); justify-content: center; padding: 0.3rem; }
 .family .tail .card img { width: var(--mark); height: var(--mark); object-fit: contain; }
 .sig { margin: 0; font: 400 1.5rem/1 "Dancing Script", cursive; color: var(--silver); white-space: nowrap; }
 .sig .pre, .sig .post { font-size: 0.78em; white-space: pre; }
 .sig .gold { color: var(--gold); }
-.family .sig { padding: 0 0.6rem; justify-content: center; }
-/* Stage B: names kept, every size scaled with the footer's own width (1 cqw = 1% of the content width). */
-@container footer (max-width: 1399px) {
-  .family .card { font-size: clamp(0.8rem, 0.8cqw + 4px, 0.95rem); gap: clamp(0.3rem, 1.53cqw - 11.8px, 0.6rem); padding: 0.3rem clamp(0.375rem, 1.73cqw - 13px, 0.7rem); }
-  .family .cards .card img { width: clamp(2rem, 4cqw - 12px, var(--tile-logo)); height: clamp(2rem, 4cqw - 12px, var(--tile-logo)); }
-  .family .tail .card { width: clamp(2.75rem, 4cqw - 2.4px, var(--tile)); padding: 0.2rem; }
-  .family .tail .card img { width: clamp(1.5rem, 2.67cqw - 5.3px, var(--mark)); height: clamp(1.5rem, 2.67cqw - 5.3px, var(--mark)); }
-  .family .sig { font-size: clamp(1.05rem, 2.4cqw - 9.6px, 1.5rem); padding: 0 0.4rem; }
+.family .sig { padding: 0 0.5rem; justify-content: center; font-size: 1.25rem; }
+/* Stage B (1.0.0 to 1.10.0: names kept at scaled sizes from 1040 to 1399 px) is removed in 1.11.0: 7 names clip at
+   every scaled size below 1493 px of content width. From 1.11.1 the bar is compact (2.75rem tiles, so every target stays
+   44 px tall; 1.9rem logos; 0.85rem names) and stage A starts at 1160 px, which a 1280 px window gives even with a
+   scroll bar (owner, 2026-11-06: names on desktop screens from 1280 px). In stage A the 3 marks sit close together
+   beside the signature under 1 band that fades from the last project card's colour to grey, and the signature drops
+   "A" and "Project" until 1240 px; in stage C they share the width equally with the project tiles, as in 1.11.0.
+   Stage A is written as (width > 1159px), the exact complement of stage C's (max-width: 1159px), so that a fractional
+   width such as 1159.02 px (a 1233 px window) falls in exactly 1 stage. */
+@container footer (width > 1159px) {
+  .family .tail { background: linear-gradient(90deg, var(--tail-from) 0%, var(--band-grey) 60%); }
+  .family .bar:has(.slice-vr) .tail { background: linear-gradient(90deg, var(--band-silver) 0%, var(--band-grey) 60%); }
+  .family .tail .tile-1, .family .tail .tile-2, .family .tail .tile-3, .family .bar:has(.slice-vr) .tail .tile-1 { background: transparent; }
+  .family .tail .card { width: auto; padding: 0.2rem 0.15rem; }
+  .family .tail .tile-1 .card { padding-left: 0.4rem; }
+  .family .tail .tile-3 .card { padding-right: 0.3rem; }
+  .family .tail .card img { width: 1.35rem; height: 1.35rem; }
+  .family .sig .pre, .family .sig .post { display: none; }
 }
-/* Stage C: logos only. The 9 tiles share the width left by the signature; each logo fills its tile up to 2.75rem. */
-@container footer (max-width: 1039px) {
-  .family .cards { flex: 6 1 0; }
+@container footer (min-width: 1240px) { .family .sig .pre, .family .sig .post { display: inline; } }
+@container footer (max-width: 1159px) {
+  .family .cards { flex: 7 1 0; }
   .family .tail { flex: 3 1 0; }
   .family .slice, .family .tail .tile { flex: 1 1 0; }
   .family .card { justify-content: center; padding: 0.3rem 0.2rem; gap: 0; }
@@ -543,6 +705,7 @@ dl.record.cols div { break-inside: avoid; }
   .family .tail { flex: none; }
   .family .sigtile { flex: 1 1 auto; }
   .family .tail .tile-1 { background: var(--band-grey); }
+  .family .bar:has(.slice-vr) .tail .tile-1 { background: var(--band-grey); }
   .family .card { padding: 0.3rem 0.2rem; }
   .family .tail .card { width: var(--tile); }
   .family .tail .card img { width: var(--mark); max-width: var(--mark); }
@@ -571,11 +734,11 @@ img.only-dark, .only-dark { display: none; }
 .control dd { margin: 0; color: var(--text); }
 .doc h2.clause { display: grid; grid-template-columns: 2.6rem minmax(0, 1fr); column-gap: 0.4rem; align-items: baseline; }
 h2.clause .num { font: 400 1.1rem/1.5 "JetBrains Mono", ui-monospace, monospace; color: var(--accent); }
-ol.clauses { list-style: none; margin: 0 0 1.4rem; padding: 0; max-width: 72ch; }
+ol.clauses { list-style: none; margin: 0 0 1.4rem; padding: 0; max-width: var(--measure, 72ch); }
 ol.clauses > li { display: grid; grid-template-columns: 2.8rem minmax(0, 1fr); margin-bottom: 0.7rem; }
 ol.clauses .n { font: 400 0.85rem/1.7 "JetBrains Mono", ui-monospace, monospace; color: var(--text-muted); }
 ol.clauses p { margin: 0; }
-.note { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); border: 1px solid var(--rule-strong); border-left: 4px solid var(--brand); background: var(--callout-bg); margin: 0.4rem 0 1.6rem; max-width: 72ch; }
+.note { display: grid; grid-template-columns: 5.2rem minmax(0, 1fr); border: 1px solid var(--rule-strong); border-left: 4px solid var(--brand); background: var(--callout-bg); margin: 0.4rem 0 1.6rem; max-width: var(--measure, 72ch); }
 .note > .label { font: 600 0.68rem/1.45 "Public Sans", system-ui, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); padding: 0.85rem 0.6rem 0.8rem 0.8rem; border-right: 1px solid var(--rule-strong); }
 .note > div { padding: 0.75rem 1rem; font-size: 1.1rem; line-height: 1.55; }
 .note p { margin: 0 0 0.8rem; }
@@ -722,7 +885,7 @@ mark.marker { color: inherit; padding: 0 0.08em; background: linear-gradient(tra
 
 /* Left-rail page at 1000 px and below: 1 column, the left list under the h1 as the right rail sits there, not sticky. */
 @media (max-width: 1000px) {
-  .doc.left-rail { grid-template-columns: minmax(0, 1fr); }
+  .doc.left-rail, .doc.no-rail { grid-template-columns: minmax(0, 1fr); }
   :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > *,
   :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .lbl,
   :is(.doc.left-rail, .doc.left-rail > section, .doc.left-rail > article) > .wide,
@@ -744,16 +907,27 @@ mark.marker { color: inherit; padding: 0 0.08em; background: linear-gradient(tra
   .family .cards { flex: 1 1 100%; flex-wrap: wrap; }
 }
 
-/* Matrix tables on paper (from 1.7.0): the whole matrix prints. The bounded box loses its height cap and its inner
-   scroll, sticky cells stay in place, the header row repeats on each page, the column controls are hidden, and every
-   cell is black text on white, with no tint or heat. table.matrix.matrix doubles the class so that these rules
-   outrank the heat steps and the group tags; the preset selectors name the contexts whose display rules they
-   must outrank. */
+/* Tables on paper. From 1.7.0 a matrix printed its full height; from 1.8.0 every table prints whole, in both
+   directions. Every .tablewrap loses its height cap and its scrolling, sticky cells stay in place, the header row
+   repeats on each page and a row is kept on 1 page where it fits. Each table fits the page width: it takes the
+   page's width; a fixed table drops its 56rem minimum and its rem column widths and is laid out by its content
+   (a matrix keeps its fixed layout; col.w<N> percentages stay); and every cell wraps, a long token breaking
+   anywhere, so no column runs past the paper's edge. A matrix with many columns becomes narrow per column on
+   paper: print a preset view, which keeps only its columns. A rotated header runs its organization and group on
+   after its name, so it stays 1 line wide. For matrix tables the column controls are hidden, and every cell is
+   black text on white, with no tint or heat. table.matrix.matrix doubles the class so that these rules outrank
+   the heat steps and the group tags; the preset selectors name the contexts whose display rules they must
+   outrank. */
 @media print {
-  .tablewrap:has(> table.matrix) { max-height: none; overflow: visible; }
-  table.matrix.sticky thead th, table.matrix.sticky-col :is(th, td):first-child { position: static; }
-  table.matrix thead { display: table-header-group; }
-  table.matrix tr { break-inside: avoid; }
+  .tablewrap, .tablewrap.bounded, .tablewrap:has(> table.sticky) { max-height: none; overflow: visible; }
+  table.sticky thead th, table.sticky-col :is(th, td):first-child { position: static; }
+  table thead { display: table-header-group; }
+  table tr { break-inside: avoid; }
+  table, table.fixed { width: 100%; min-width: 0; table-layout: auto; }
+  table.matrix.fixed { table-layout: fixed; }
+  .fixed col { width: auto; }
+  :is(table, table.matrix.matrix) :is(th, td), :is(table, table.matrix.matrix) :is(th, td) :is(code, .mono, .hash) { white-space: normal; overflow-wrap: anywhere; }
+  table.matrix th.rot .org, table.matrix:not([data-one-grp]) th.rot .grp { display: inline; margin: 0 0 0 0.4em; }
   [data-col-toggles], .lrail li [data-preset], .chips [data-preset], [data-preset] { display: none; }
   table.matrix.matrix :is(thead, tbody) tr > :is(th, td) { background: var(--print-paper); color: var(--print-ink); }
   table.matrix.matrix :is(thead, tbody) tr > :is(th, td) :is(a, code, .org, .grp, .sub, .n) { color: var(--print-ink); background: var(--print-paper); }

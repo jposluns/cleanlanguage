@@ -198,6 +198,12 @@ class LiveTreeTest(unittest.TestCase):
         ok, message = engine.verify(cfg, REPO_ROOT)
         self.assertTrue(ok, message)
 
+    def test_committed_config_includes_family_pages(self):
+        cfg = engine.load_config(REPO_ROOT / "tools" / "sitemap-config.json")
+        urls = {url for url, _ in engine.build_entries(cfg, REPO_ROOT)}
+        for fam in ("claude", "chatgpt", "gemini", "copilot", "other-ai"):
+            self.assertIn(f"{cfg['base_url']}/install/{fam}/", urls)
+
 
 class FixesTest(unittest.TestCase):
     def test_nested_url_keeps_full_path(self):
