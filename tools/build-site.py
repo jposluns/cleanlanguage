@@ -189,7 +189,7 @@ which each choice reads closed or opened, so a hidden element inside the label
 does not split it and a details hides the label in neither state, first with
 an element that only ``aria-hidden="true"`` hides kept, since that attribute
 hides an element from assistive technology alone and a browser shows it,
-then with it deleted too, as before; those 2 are each read again as a
+then with it deleted too; those 2 are each read again as a
 browser with scripting off shows the page (``scripting_off()``), with the
 content of each ``noscript`` kept, its hiding rules applying, since a
 ``noscript`` paragraph holding ``About``, a hidden span, then ``this
@@ -352,11 +352,12 @@ elements, as the parser does (``scripting_off()``); and under these rules
 the first ``</noscript`` after a noscript start tag is that element's own
 end tag, the one the parser reads as closing it on a page ``validate()``
 accepts, since no ``<`` sits in text, a comment or an attribute value and no
-noscript starts inside another. A noscript inside a noscript was allowed
-before: with scripting on, a browser ended the outer one at the inner one's
-end tag, so a later ``</summary>`` closed a summary the parser read as still
-open, and the value paragraph and the About block after it became hidden
-children of a closed details while every rule passed.
+noscript starts inside another. A noscript inside a noscript is refused:
+with scripting on, a browser ends the outer one at the inner one's end tag,
+so a later ``</summary>`` closes a summary that the parser reads as still
+open, and a browser makes the value paragraph and the About block after it
+hidden children of a closed details, where the parser reads them inside
+that summary.
 
 The generator's own readers then read what the parser reads or read the markup
 itself. The rules that read a page source as parsed, such as the tree, label
@@ -364,9 +365,9 @@ and value rules of ``with_about()``, the class and placement pins, the class
 rule of ``rail_pin()``, and ``rail()``, read its elements, attributes and text
 from 1 parser class, ``PageScan``, with its self-closing and end-tag handling;
 ``rail()``'s entries are the ``h2`` elements with an ``id`` as
-``PageScan`` reads them, their text without that of a ``span.num`` (in place
-of an earlier regex over the markup, which dropped ``<h2 id = "try">`` and
-ran an ``</h2 >`` heading's entry into the prose). ``validate()`` reads a
+``PageScan`` reads them, their text without that of a ``span.num``, so
+``<h2 id = "try">`` gives an entry and ``</h2 >`` ends its heading's entry,
+as the parser reads both. ``validate()`` reads a
 page with ``PageScan`` too, and reads "what this is" in its text; it finds the
 end of the value region's end tag where the parser read that tag
 (``end_tag_end()``), as ``with_about()`` does. Other reads of markup are not
@@ -424,10 +425,10 @@ class name is added only after a review of what each stylesheet rule that
 names it does. In the value region each of the 3 also has 1 place, after
 the region's children rule: ``region`` only on the region, ``lbl`` only on
 its label and ``value`` only on the ``p.value``. ``.region`` lays out an
-element as a grid of a label column and a content column, so
-``class="value region"`` on the value paragraph, alone or with its content
-in an ``em``, built with exit 0 before this pin (the grid read from the
-stylesheet, not checked in a browser).
+element as a grid of a label column and a content column, so this pin
+refuses ``class="value region"`` on the value paragraph, alone or with its
+content in an ``em`` (the grid read from the stylesheet, not checked in a
+browser).
 
 Page source placement
 ---------------------
@@ -441,10 +442,10 @@ reads apart as joined. ``.copy`` and ``.btn`` set ``position: absolute``
 ``.start`` place the hero's parts by grid area (at 600 px and below
 ``.hero-text`` sets ``display: contents``, so its children are placed by
 area); and at 1000 px and below ``.entries a`` places its ``.t``, ``.n`` and
-``.d`` children by grid area. Before these pins, each of these built with
-exit 0: the label split by a ``span.btn`` in a ``p.lbl`` on the landing
-page, or by a ``span.copy`` on the demo page, and an ``ol.entries`` link
-whose ``span.d`` came before its ``span.t``. After the class pins,
+``.d`` children by grid area. These pins refuse, among other forms, the
+label split by a ``span.btn`` in a ``p.lbl`` on the landing page, or by a
+``span.copy`` on the demo page, and an ``ol.entries`` link whose ``span.d``
+comes before its ``span.t``. After the class pins,
 ``placement_pin()`` refuses, naming where the start tag starts:
 
 - a class of ``PLACED_CLASSES`` on another element, without its companion
@@ -471,10 +472,10 @@ whose ``span.d`` came before its ``span.t``. After the class pins,
   and whose content is only the text ``Copy``, as the committed sources
   write it (``COPY_BUTTON_PIN``): ``copy.js`` selects every
   ``button[data-copy]``, shows it and, on a copy, replaces its content with
-  plain text, whatever its classes, so before this pin a hidden, unclassed
+  plain text, whatever its classes, so this pin refuses a hidden, unclassed
   button with ``data-copy`` holding ``About``, a hidden span, then ``this
   project`` (a second label once the script runs), and the value paragraph
-  wrapped in such a button (its markup lost on a copy), built with exit 0;
+  wrapped in such a button (its markup lost on a copy);
 - an image in the ``div.hero-art`` whose alt text is not ``site.json``'s
   ``logo_alt``, which ``build()`` passes to ``with_about()`` (without it, any
   such image is refused): at 600 px and below a browser shows the image in

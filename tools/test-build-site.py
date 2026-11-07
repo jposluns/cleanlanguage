@@ -1101,7 +1101,8 @@ SOURCE_REFUSALS = [
     ("a body start tag after a noscript end tag in a title",
         inject("<noscript><title></noscript><body hidden></title></noscript>"), GRAMMAR_RULE),
     ("a page source that ends inside a math start tag", at_end("<math/"), GRAMMAR_RULE),
-    # A noscript end tag as text outside noscript, which the noscript count of fix 2 refused, by the grammar's rule.
+    # A noscript end tag in a comment or an attribute value outside any noscript: the grammar refuses both, since a
+    # comment's text and an attribute value hold no <.
     ("a comment that holds a noscript end tag, outside noscript", inject("<!-- </noscript> -->"), GRAMMAR_RULE),
     ("an attribute value that holds a noscript end tag, outside noscript", inject('<p title="</noscript>">x</p>'),
         GRAMMAR_RULE),
@@ -1401,7 +1402,8 @@ SOURCE_REFUSALS = [
         root, HOME, REGION_LABEL, "<p>What it gives you</p>"), REGION_CHILDREN_RULE),
     ("a paragraph after the value region's div", lambda root: edit(
         root, HOME, VALUE_END, VALUE_END.replace("</div></div>", "</div><p>x</p></div>")), REGION_CHILDREN_RULE),
-    # The vh class on the value region's label, which only the region's class pin refused, with no case before.
+    # The vh class on the value region's label: the region's class pin refuses it first, since VALUE_REGION_CLASSES
+    # leaves out vh, and the region's children pin, whose label slot admits only p.lbl, refuses it too.
     ("the vh class on the value region's label", lambda root: edit(
         root, HOME, REGION_LABEL, '<p class="lbl vh">What it gives you</p>'), REGION_CLASS_RULE),
     # aria-hidden="true" hides an element from assistive technology only, so a browser shows this p.lbl as the label
@@ -2077,9 +2079,9 @@ def check_about_block(failures: list[str]) -> int:
             [(value, "<details open><summary>x</summary>" + value), (block, block + "</details>")], block_rule),
         ("a div around the value region and the block", [(value, "<div>" + value), (block, block + "</div>")],
             block_rule),
-        # The page's text carries the block's label once, inside the block (since row 144; the first case here
-        # passed before it): a copy elsewhere is refused, and so is the label moved out of the block, which only the
-        # condition that it come from inside the block refuses by the label's rule.
+        # The page's text carries the block's label once, inside the block: a copy elsewhere is refused, and so is the
+        # label moved out of the block, which only the condition that it come from inside the block refuses by the
+        # label's rule.
         ("a second label region after the block", [(block, block + f'<div class="region">{label}</div>')], label_rule),
         ("a second label in a paragraph in the hero", [(hero, hero + f"<p>{LABEL}</p>")], label_rule),
         ("a second label in upper case after the block", [(block, block + f"<p>{LABEL.upper()}</p>")], label_rule),
@@ -2413,7 +2415,7 @@ def check_generator_about(failures: list[str]) -> int:
 def check_about_source(failures: list[str]) -> int:
     """The build test's helper gives the About block that the pinned .baseline/SPECIFICATION.md carries, read here
     as text: at base /, it is the backtick span of the 1 line starting with ABOUT_MARKUP. A helper that keeps a copy
-    of the block, changed along with the generator's, passes every case but this one and check_about_reader()."""
+    of the block, changed along with the generator's, fails this case and check_about_reader()."""
     block = about_block("/")
     lines = SPECIFICATION.read_bytes().decode("utf-8").split("\n")
     if sum(line.startswith(f"{ABOUT_MARKUP}{block}`") for line in lines) != 1:
@@ -2424,8 +2426,7 @@ def check_about_source(failures: list[str]) -> int:
 def check_about_reader(failures: list[str]) -> int:
     """The helper's About block comes only from specification_about(): on a copy of the pinned specification whose
     7.24 block is altered, with a SHA256SUMS that lists the copy's digest, the helper gives the altered block at
-    base / and at /draft/. A helper that keeps a literal copy of today's block passes every other case but not this
-    one."""
+    base / and at /draft/. A helper that keeps a literal copy of today's block fails this case."""
     block = about_block("/")
     old = f"{ABOUT_MARKUP}{block}`"
     altered = block.replace(f">{LABEL}</p>", ">About this altered project</p>", 1)
@@ -2490,7 +2491,7 @@ def check_unreadable_reader(failures: list[str]) -> int:
     """A copy of the generator, beside a check-install-page.py that is missing, unreadable (with a cache of its
     bytecode or without), a FIFO (not a regular file, on which a read would wait for a writer), not Python, without
     is_hiding_element() or a ZERO_WIDTH string, whose is_hiding_element() fails when called (as when it takes 1
-    argument, whose TypeError gave exit 1 before), or whose is_hiding_element() returns anything but True or False,
+    argument), or whose is_hiding_element() returns anything but True or False,
     exits 3: the hiding reader is an input. A reader that this
     test cannot make unreadable, as when it runs as root, or a FIFO it cannot make, as where os.mkfifo() is missing,
     fails the case rather than skipping it, and so does a generator that has not exited within 60 seconds."""
