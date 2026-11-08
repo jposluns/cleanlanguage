@@ -15,6 +15,7 @@ name: Link check
 # The second check also holds the verify page to the page tools/build-site.py
 # renders, so the paths below include every input of the generator and the
 # generator itself: site-src/**, .baseline/pin.toml, tools/sitemap-config.json,
+# tools/check-install-page.py (whose hiding reader the generator applies),
 # tools/build-site.py, and the files under site/ and the Markdown it reads.
 
 on:
@@ -27,6 +28,7 @@ on:
       - "cleanlanguage/**/*.md"
       - ".baseline/pin.toml"
       - "tools/build-site.py"
+      - "tools/check-install-page.py"
       - "tools/sitemap-config.json"
       - "tools/check-links.py"
       - "tools/check-release-links.py"
@@ -44,6 +46,7 @@ on:
       - "cleanlanguage/**/*.md"
       - ".baseline/pin.toml"
       - "tools/build-site.py"
+      - "tools/check-install-page.py"
       - "tools/sitemap-config.json"
       - "tools/check-links.py"
       - "tools/check-release-links.py"

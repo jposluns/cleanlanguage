@@ -48,7 +48,7 @@ fresh() {
   mkdir -p "${work}/tools" "${work}/cleanlanguage/skills" "${work}/site/downloads" "${work}/.baseline"
   local t
   for t in check-portable-text-sync.sh build-portable-text.py skill-version.py skill-release-date.py skill-release-date-client.py \
-      portable-text-skill-source.sha256 build-site.py sitemap-config.json; do
+      portable-text-skill-source.sha256 build-site.py check-install-page.py sitemap-config.json; do
     cp -p "${repo_root}/tools/${t}" "${work}/tools/${t}"
   done
   cp -R "${repo_root}/cleanlanguage/skills/cleanlanguage" "${work}/cleanlanguage/skills/cleanlanguage"

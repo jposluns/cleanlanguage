@@ -132,6 +132,7 @@ GENERATOR_INPUTS = (
     "site-src", "cleanlanguage/skills/cleanlanguage/SKILL.md", "cleanlanguage/skills/cleanlanguage/references",
     "site/downloads", "site/assets/baseline", "site/_headers", "site/_redirects", "site/robots.txt", "site/sitemap.xml",
     "site/.well-known", "site/README.md", "site/images", ".baseline/pin.toml", "tools/sitemap-config.json",
+    "tools/check-install-page.py",
 )
 
 
@@ -4284,9 +4285,12 @@ class ModuleLoadTest(unittest.TestCase):
             page.parent.mkdir(parents=True)
             page.write_text(VERIFY.format(version=AHEAD, checksum=OTHER_SUM), encoding="utf-8")
             # The generator and the page source the gate renders the download block from, and site/_redirects. The
-            # copy's verify_page() returns the fixture page, which stands in for the generator's whole render.
+            # copy's verify_page() returns the fixture page, which stands in for the generator's whole render. The
+            # generator loads tools/check-install-page.py from its own folder, so the copy gets it beside it and no
+            # path through the generator fails on a missing reader.
             (tools / "build-site.py").write_text(
                 (MODULE_PATH.parent / "build-site.py").read_text(encoding="utf-8") + STAND_IN_RENDER, encoding="utf-8")
+            shutil.copyfile(MODULE_PATH.parent / "check-install-page.py", tools / "check-install-page.py")
             (root / "fixture-render.html").write_bytes(page.read_bytes())
             source = root / "site-src" / "pages" / "verify.html"
             source.parent.mkdir(parents=True)
