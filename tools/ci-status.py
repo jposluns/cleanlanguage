@@ -298,10 +298,13 @@ def _gh(args, deadline: float):
     GH_REPO, GH_HOST and every GIT_ variable removed from its environment, so an
     ambient value cannot point the repository lookup or the API call elsewhere.
 
-    DEADLINE is an absolute time on time.time, the clock of the wait window, and
-    gh is killed when that clock reaches it. The deadline is fixed before gh is
-    started, so the time spent starting gh counts against it; a bound that
-    started its own clock after the spawn would let that time extend the window.
+    DEADLINE is an absolute time on time.time, the clock of the wait window. The
+    deadline is fixed before Popen, so the time spent starting gh counts against
+    it; a bound that started its own clock after Popen would let that time
+    extend the window. The clock is read only after Popen has returned, once per
+    poll, and gh is killed at the first poll that finds the clock at or past the
+    deadline. So a start that outlasts the time left is not cut short: gh is
+    killed as soon as Popen has returned, after the deadline.
 
     The child is reaped here with os.waitpid rather than through subprocess,
     because CPython subprocess reads a lost exit status (ECHILD from the wait) as
@@ -309,11 +312,12 @@ def _gh(args, deadline: float):
     and an end other than a normal exit gives returncode -1, so neither can read
     as success. Output goes to unnamed temporary files, so gh never blocks on a
     full pipe while it is polled. OSError and TimeoutExpired reach the caller.
-    TimeoutExpired means the reap after the kill at the deadline found gh ended by
-    SIGKILL, which is the kill itself unless something else sent gh a SIGKILL just
-    before it; a gh that ended any other way just before the kill gives its own
-    result, and a status lost at that last reap raises ChildProcessError, as at
-    any other reap."""
+    TimeoutExpired means the reap after the kill found gh ended by SIGKILL, which
+    is the kill itself unless something else sent gh a SIGKILL just before it;
+    its timeout is the deadline minus the clock read just before Popen, the time
+    gh was given. A gh that ended any other way just before the kill gives its
+    own result, and a status lost at that last reap raises ChildProcessError, as
+    at any other reap."""
     env = {
         k: v for k, v in os.environ.items()
         if not (k.startswith("GIT_") or k in GH_REDIRECTS)
@@ -344,9 +348,10 @@ def _gh(args, deadline: float):
                     break
                 proc.returncode = -1
                 raise subprocess.TimeoutExpired(proc.args, deadline - started)
-            # The last poll sleeps only the time left, so the kill lands on the
-            # deadline rather than up to 1 poll after it. The clock is read once
-            # above, so the time left here is positive.
+            # The last poll sleeps only the time left, so it is due at the
+            # deadline rather than up to 1 poll after it; how late the host wakes
+            # from that sleep is not bounded here. The clock is read once above,
+            # so the time left here is positive.
             time.sleep(min(0.02, deadline - now))
         code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
         proc.returncode = code
@@ -434,9 +439,13 @@ def _field(value, allow_empty: bool, field: str):
 
 def read_checks(repo: str, full_sha: str, deadline: float):
     """One read. Returns the list of checks, or raises Unreadable, fail-closed. The gh
-    child is given the deadline itself, so it is killed when the deadline is
-    reached, however long gh took to start, and a hung or slow read cannot outlast
-    the wait window by more than the time the host takes to wake and kill it."""
+    child is given the deadline itself, so the time spent starting gh counts
+    against it. A gh still running when the deadline is reached is killed at the
+    first poll at or past it; a start that outlasts the time left is killed once
+    Popen returns, after the deadline (see _gh). So a hung or slow read outlasts
+    the wait window by the part of its start that runs past the deadline, if
+    any, and the time the host takes to wake from the last sleep, kill gh and
+    reap it."""
     remaining = deadline - time.time()
     if remaining <= 0:
         # Defence in depth: after a good reading in wait mode, main's top-of-loop
@@ -446,12 +455,13 @@ def read_checks(repo: str, full_sha: str, deadline: float):
     try:
         proc = _gh(["api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"], deadline)
     except subprocess.TimeoutExpired as exc:
-        # The bound is named rounded down to 1 decimal place, so the message never
-        # names more time than gh was given (1.96 seconds is named as 1.9). A
-        # bound under 0.1 seconds would round down to 0.0, so it is named as under
-        # 0.1 seconds instead: a read that had time left is never reported as cut
-        # off within 0 seconds.
-        tenths = int(remaining * 10)
+        # The bound is exc.timeout, the deadline minus the clock read just before
+        # Popen, which is the time gh was given. It is named rounded down to 1
+        # decimal place, so the message never names more time than that (1.96
+        # seconds is named as 1.9). A bound under 0.1 seconds would round down to
+        # 0.0, so it is named as under 0.1 seconds instead, and a cut-off read is
+        # never reported as cut off within 0 seconds.
+        tenths = int(exc.timeout * 10)
         if tenths >= 1:
             bound = f"{tenths // 10}.{tenths % 10} seconds"
         else:
