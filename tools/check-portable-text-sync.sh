@@ -57,7 +57,7 @@ opening="This is the Clean Language skill, written out as rules. Apply it to the
 # printing the version on success and nothing on any failure (2>/dev/null || true
 # absorbs the extractor's error message and non-zero exit).
 version_of() {
-  python3 tools/skill-version.py "$1" 2>/dev/null || true
+  python3 -I tools/skill-version.py "$1" 2>/dev/null || true
 }
 
 # released_of FILE: print the Released date of FILE, or nothing when it has no
@@ -194,16 +194,16 @@ if [ "${1:-}" = "--update" ]; then
       fi
     done
   fi
-  python3 tools/build-portable-text.py >/dev/null
+  python3 -I tools/build-portable-text.py >/dev/null
   python3 -I tools/build-site.py >/dev/null
   check_common || { echo "Refusing to record: the portable files failed a common check." >&2; exit 1; }
-  python3 tools/build-portable-text.py --check || { echo "Refusing to record: a generated file is out of date." >&2; exit 1; }
+  python3 -I tools/build-portable-text.py --check || { echo "Refusing to record: a generated file is out of date." >&2; exit 1; }
   printf '%s\n' "${computed}" > "${recorded_file}"
   echo "Recorded skill-source hash ${computed}. Reconcile the condensed files with the skill before committing."
   exit 0
 fi
 
-python3 tools/build-portable-text.py --check
+python3 -I tools/build-portable-text.py --check
 check_common
 
 [ -f "${recorded_file}" ] || { echo "Missing ${recorded_file}. Record with --update." >&2; exit 1; }

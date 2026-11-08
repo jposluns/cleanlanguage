@@ -294,7 +294,7 @@ GH
 run_deep_case() {
   local name="$1" want="$2"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
-  python3 -c "open('$tmp/cr.json','w').write('['*100000 + ']'*100000)"
+  python3 -I -c "open('$tmp/cr.json','w').write('['*100000 + ']'*100000)"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
 case "\$*" in *check-runs*) cat "$tmp/cr.json";; *"repo view"*) printf 'owner/name';; *) printf '';; esac

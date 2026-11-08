@@ -60,7 +60,7 @@ fresh() {
 # release_matches_skill: set site-src/release.json to the fixture skill's version,
 # so tools/build-site.py, which --update runs, accepts the copy.
 release_matches_skill() {
-  python3 - "${work}" <<'PYREL'
+  python3 -I - "${work}" <<'PYREL'
 import json, subprocess, sys
 work = sys.argv[1]
 version = subprocess.run([sys.executable, work + "/tools/skill-version.py", work + "/cleanlanguage/skills/cleanlanguage/SKILL.md"],
@@ -78,7 +78,7 @@ PYREL
 # Version; KEY "Released-after-Author" places it after the Author line instead;
 # KEY "Released-drop" removes it; KEY "GitHub-drop" removes the GitHub line.
 set_meta() {
-  python3 - "${work}/$1" "$2" "$3" "$4" <<'PYSET'
+  python3 -I - "${work}/$1" "$2" "$3" "$4" <<'PYSET'
 import re, sys
 path, key, value, suffix = sys.argv[1:5]
 lines = open(path, encoding="utf-8", newline="").read().split("\n")
@@ -116,7 +116,7 @@ set_version_everywhere() {
 }
 
 regen() {
-  (cd "${work}" && python3 tools/build-portable-text.py >/dev/null)
+  (cd "${work}" && python3 -I tools/build-portable-text.py >/dev/null)
 }
 
 record() {
@@ -205,7 +205,7 @@ expect_fail_line() { # label line: the gate fails and prints line as a whole lin
 # OP in the way MODE names, while every other op still answers and the probe
 # passes, and make its CLI content modes exit 1 (row 89).
 break_extractor() {
-  python3 - "${work}/tools/skill-release-date.py" "$1" "$2" <<"PYBREAK"
+  python3 -I - "${work}/tools/skill-release-date.py" "$1" "$2" <<"PYBREAK"
 import sys
 path, op, mode = sys.argv[1:4]
 bodies = {
@@ -283,7 +283,7 @@ expect_fail "a broken extractor is reported as unavailable" "tools/skill-release
 #     malformed line. The copy is made to crash inside extract, after the
 #     probe has passed.
 undated_fixture 1.0.14
-python3 - "${work}/tools/skill-release-date.py" <<"PYCRASH"
+python3 -I - "${work}/tools/skill-release-date.py" <<"PYCRASH"
 import sys
 path = sys.argv[1]
 text = open(path, encoding="utf-8").read()

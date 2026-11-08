@@ -108,7 +108,7 @@ skill="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md)" \
 # SKILL_VERSION patterns verbatim (check-release-links.py and
 # check-release-checksum-live.py), so the verdict and the extracted value are
 # identical here and there.
-if version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -c '
+if version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I -c '
 import io
 import re
 import sys
@@ -159,9 +159,12 @@ fi
 # the blob.
 # The client writes to one stream only: on exit 0 the value on stdout, and on
 # any other exit its message on stderr with nothing on stdout. Each call
-# below captures both streams, so an unavailable branch can relay the
-# line in which the client names its reason (relay_client) before its own
-# message, and a value is checked for its form before it is used.
+# below captures both streams, so 5 branches relay the line in which the
+# client names its reason (relay_client) before their own message: a failed
+# probe, a check-date exit other than 0 or 11, a Released read exit of 14
+# (unreadable input) or of any exit other than 0, 11, 13 or 14, and a
+# requires-date exit other than 0 or 11. A value is checked for its form
+# before it is used.
 relay_client() {
   [ -z "$1" ] || printf '%s\n' "$1" >&2
 }
@@ -280,20 +283,20 @@ git cat-file -e HEAD:.claude-plugin/marketplace.json 2>/dev/null \
   || fail ".claude-plugin/marketplace.json is missing at HEAD"
 
 plugin_version="$(git show HEAD:cleanlanguage/.claude-plugin/plugin.json \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))')"
+  | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("version",""))')"
 [ "${plugin_version}" = "${version}" ] \
   || fail "plugin.json version (${plugin_version}) does not match SKILL.md (${version})"
 
 plugin_name="$(git show HEAD:cleanlanguage/.claude-plugin/plugin.json \
-  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("name",""))')"
+  | python3 -I -c 'import json,sys; print(json.load(sys.stdin).get("name",""))')"
 marketplace_name="$(git show HEAD:.claude-plugin/marketplace.json \
-  | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("plugins") or [{}]; print(p[0].get("name",""))')"
+  | python3 -I -c 'import json,sys; d=json.load(sys.stdin); p=d.get("plugins") or [{}]; print(p[0].get("name",""))')"
 [ -n "${plugin_name}" ] || fail "plugin.json has no name at HEAD"
 [ "${marketplace_name}" = "${plugin_name}" ] \
   || fail "marketplace.json plugins[0].name (${marketplace_name}) does not match plugin.json name (${plugin_name})"
 
 marketplace_source="$(git show HEAD:.claude-plugin/marketplace.json \
-  | python3 -c 'import json,sys; d=json.load(sys.stdin); p=d.get("plugins") or [{}]; print(p[0].get("source",""))')"
+  | python3 -I -c 'import json,sys; d=json.load(sys.stdin); p=d.get("plugins") or [{}]; print(p[0].get("source",""))')"
 [ "${marketplace_source}" = "./cleanlanguage" ] \
   || fail "marketplace.json plugins[0].source (${marketplace_source}) must be ./cleanlanguage so an install ships only the skill tree"
 
@@ -324,7 +327,7 @@ if git cat-file -e HEAD:cleanlanguage/agents/openai.yaml 2>/dev/null; then
   # depth, reject a value that is missing, empty, or carries a control
   # character, resolve an optional ./, confirm the git blob exists at HEAD, and
   # require at least one icon_ key so the check can never become vacuous.
-  git show HEAD:cleanlanguage/agents/openai.yaml | python3 -c '
+  git show HEAD:cleanlanguage/agents/openai.yaml | python3 -I -c '
 import sys, subprocess
 try:
     import yaml

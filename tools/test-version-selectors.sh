@@ -93,9 +93,9 @@ for site in tools/release-dry-run.sh tools/check-portable-text-sync.sh .github/w
   else
     pass "structural: no hand-rolled first-line sed selector in ${site}"
   fi
-  # Each site must call the shared extractor, the expected number of times. The
-  # workflow launches it isolated (python3 -I); the shell sites do not yet.
-  got="$(grep -Ec 'python3( -I)? tools/skill-version\.py' "${site}" || true)"
+  # Each site must call the shared extractor, the expected number of times,
+  # and every site launches it isolated (python3 -I).
+  got="$(grep -Fc 'python3 -I tools/skill-version.py' "${site}" || true)"
   assert_eq "structural: skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"
 done
 
@@ -105,7 +105,7 @@ done
 # gates' VERSION_LINE and SKILL_VERSION patterns verbatim. Prints the version, or
 # empty for a reject. This is what every site (via skill-version.py) must agree with.
 gate_expect() { # file
-  python3 - "$1" <<'PY'
+  python3 -I - "$1" <<'PY'
 import io, re, sys
 data = open(sys.argv[1], "rb").read()
 try:
@@ -156,7 +156,7 @@ extract_block() { # file start end
 }
 
 DRY_BLOCK="$(extract_block tools/release-dry-run.sh \
-  'if ! version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 tools/skill-version.py)"' 'fi')"
+  'if ! version="$(git show HEAD:cleanlanguage/skills/cleanlanguage/SKILL.md | python3 -I tools/skill-version.py)"' 'fi')"
 WF_LOCAL_BLOCK="$(extract_block .github/workflows/release-skill.yml \
   'if ! version="$(python3 -I tools/skill-version.py cleanlanguage/skills/cleanlanguage/SKILL.md)"' 'fi')"
 WF_MAIN_BLOCK="$(extract_block .github/workflows/release-skill.yml \
@@ -171,7 +171,7 @@ git_id=(-c user.email=t@t -c user.name=t -c commit.gpgsign=false)
 # Every runner prints the selected version to stdout (empty on reject) and exits
 # non-zero on reject, so the caller can assert both value and status. The shared
 # extractor is copied into each throwaway tree so the site's real relative call
-# (python3 tools/skill-version.py) resolves after the cd.
+# (python3 -I tools/skill-version.py) resolves after the cd.
 
 # Site 3: version_of, reading the fixture file directly.
 run_version_of() { version_of "$1"; }
@@ -292,7 +292,7 @@ check_site() { # label site fixture expected want
 tmp="$(mktemp -d)"
 trap 'rm -rf "${tmp}"' EXIT
 
-mapfile -t fixture_names < <(python3 - "${tmp}" <<'PY'
+mapfile -t fixture_names < <(python3 -I - "${tmp}" <<'PY'
 import os, sys
 d = sys.argv[1]
 fx = {
