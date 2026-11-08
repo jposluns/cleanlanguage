@@ -3,7 +3,7 @@
 
 Claude Code runs this script as a PreToolUse hook that .claude/settings.json registers for
 AskUserQuestion. It reads the hook payload from stdin and, for an AskUserQuestion call, reads
-/opt/orch-operator/operating-mode, a JSON object whose "mode" member holds one mode for the whole
+/opt/orch-operator/operating-mode, a JSON object whose "mode" member holds 1 mode for the whole
 host. The only writer of that file is the host's /usr/local/bin/orch-set-mode, which the operator
 runs through orchmod: `orchmod aa` writes "attended-autonomous" and `orchmod ua` writes
 "unattended", and orch-set-mode refuses every other value. This guard takes its 2 values from that
@@ -13,11 +13,7 @@ adopts lab_infra's rule FLEET-05, it reads that value as attended-autonomous wit
 as unattended. Only the exact values "attended-autonomous", silently, and "attended", with that
 warning, let the question through. Every other state denies and names its cause, because a
 blocking question in an unattended session stalls the run until someone notices, while a wrongly
-denied question only asks the agent to record the decision and continue. The denied states include
-/opt/orch-operator itself absent, where the host declares no operating-mode, since removing that
-root-owned directory must not disarm the guard, and /opt/orch-operator present but a symlink, not a
-directory, not owned by uid 0, or writable by its group or by others, since an entry in it that
-someone other than root can change would let that someone choose the record the guard reads.
+denied question only asks the agent to record the decision and continue.
 
 The vendored orch_ask_guard does not enforce this: it reads an "Operating-mode:" text line from a
 mode record that this repository does not declare, so it allows the question. When it can resolve
@@ -78,12 +74,9 @@ families; a session that can edit this script or .claude/settings.json can disar
 shows in review only once it is committed; a settings file that the repository does not track, such
 as .claude/settings.local.json, which .gitignore ignores, or a user settings file outside the
 checkout, never shows in review, and nothing in this repository shows or tests whether such a file
-can disable or override this hook; an absent /opt/orch-operator denies every question, so on
-contributor machines and hosts without the orchestrator every AskUserQuestion call is denied with
-the record-and-continue instruction; the guard trusts root: it checks that
-/opt/orch-operator is a directory and not a symlink, that uid 0 owns it and the mode file in it,
-and that neither is writable by its group or by others, so that only root can change the record or
-the entries in that directory, but it does not check /opt or any directory above it, and it checks
+can disable or override this hook; on a host where /opt/orch-operator is absent, every
+AskUserQuestion call is denied with the record-and-continue instruction; the guard trusts root,
+and it does not check /opt or any directory above /opt/orch-operator: it checks
 /opt/orch-operator by path before it opens the mode file, so whoever can write /opt can replace
 /opt/orch-operator, including between that check and the open, and root controls the decision only
 while only root can write those directories; the file holds 1 mode for the whole host, so a
@@ -101,14 +94,12 @@ record-and-continue instruction, and if the hook process cannot start, such as w
 not on the hook shell's PATH (exit 127), is killed by a signal, or fails while it writes its
 verdict, it ends without a complete verdict and with a status other than 0 or 2, which the
 contract treats as a non-blocking error, so the question would go through; both outcomes are what
-the contract says, not something the tests observe; a legacy
-"attended" record allows every question and warns on each one, because the guard keeps no session
-state, and the record is root-owned and writable by neither its group nor others, so neither the
-guard nor a session without root can rewrite it: the warning repeats on every question while a
-usable record holds the legacy value, and `orchmod aa` is the operator's way to migrate the record
-to attended-autonomous, and the tests check only the warning the guard prints, not whether Claude
-Code shows it to the user or to the model; and until the upstream fix is re-vendored, the vendored
-orch_ask_guard allows every question and, when it can resolve the repository and read a usable
+the contract says, not something the tests observe; the legacy warning repeats on every question
+while a usable record holds "attended", since the guard keeps no state and writes no file, and a
+session without root cannot rewrite the root-owned record; the operator runs `orchmod aa` to
+rewrite it as attended-autonomous; the tests check only the warning the guard prints, not whether
+Claude Code shows it to the user or to the model; and until the upstream fix is re-vendored, the
+vendored orch_ask_guard allows every question and, when it can resolve the repository and read a usable
 registry, tries to append a fail-open audit event, an append that is best effort.
 """
 import errno
@@ -121,8 +112,8 @@ MODE_FILE = "/opt/orch-operator/operating-mode"
 EXPECTED_OWNER_UID = 0
 MAX_BYTES = 4096
 TOOL = "AskUserQuestion"
-# The 2 values orch-set-mode accepts, copied from its allow-list; the guard must not invent others,
-# since no sanctioned path could write them, with 1 exception, LEGACY_ATTENDED below, which the
+# The 2 values orch-set-mode accepts, copied from its allow-list. No sanctioned path writes any
+# other value, so the guard must not invent one, apart from LEGACY_ATTENDED below, which the
 # maintainer's decision of 2026-11-07, adopting lab_infra's rule FLEET-05, adds.
 ATTENDED_AUTONOMOUS = "attended-autonomous"
 UNATTENDED = "unattended"
@@ -177,8 +168,6 @@ def deny_absent_host(host_dir):
 
 
 def allow_legacy_attended(mode_file):
-    """An allow with no permissionDecision and 1 warning that names the record, the legacy value and
-    the value it reads as."""
     return {"systemMessage": "Repository guard: {} holds the legacy mode \"{}\", read as {}; "
                              "AskUserQuestion allowed. The operator runs `orchmod aa` to "
                              "rewrite the record as {}.".format(
@@ -224,8 +213,8 @@ def read_bounded(fd):
 
 
 def check_owner_and_writers(path, info, expect_uid):
-    """Raises Unusable unless expect_uid owns path and neither its group nor others can write it,
-    judged from info, the stat result for path."""
+    """info is the stat result for path: the lstat of the host directory, or the fstat of the open
+    mode file."""
     if info.st_uid != expect_uid:
         raise Unusable("{} is owned by uid {}, not uid {}".format(path, info.st_uid, expect_uid))
     writers = [who for who, bit in (("group", stat.S_IWGRP), ("others", stat.S_IWOTH))
@@ -236,10 +225,8 @@ def check_owner_and_writers(path, info, expect_uid):
 
 
 def check_host_dir(host_dir, info, expect_uid):
-    """Raises Unusable unless host_dir, judged from info, its lstat result, is a directory and not a
-    symlink, owned by expect_uid, and writable by neither its group nor others. It judges only info,
-    the result of 1 lstat before the open, so a writer of the directory above host_dir can still
-    replace host_dir between this check and the open, as the module docstring states."""
+    """Judges host_dir only from info, 1 lstat result taken before the open, so a writer of the
+    directory above host_dir can still replace host_dir between this check and the open."""
     if stat.S_ISLNK(info.st_mode):
         raise Unusable("{} is a symlink".format(host_dir))
     if not stat.S_ISDIR(info.st_mode):

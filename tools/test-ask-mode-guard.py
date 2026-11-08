@@ -3,17 +3,18 @@
 
 Each behaviour case runs the guard in a subprocess with python3 -I, passes it a mode file path
 through the test-only --mode-file argument, since CI has no /opt/orch-operator, and asserts the exit
-code and the verdict the guard prints. Every behaviour case but one puts that path under a temporary
+code and the verdict the guard prints. Every behaviour case but 1 puts that path under a temporary
 directory and sets up what it leads to, or its absence, except that in the 2 owner rename cases it
 can lead to a file outside that directory, as described below; the device case uses a path below
 /dev/null, since only root can create a device node. The directory that holds the mode file is a
 real directory with mode 0755 unless a case sets up another state there. Most cases run the guard
 as a script; 7 cases load it as a module in that subprocess and inject a fault before they call
 its main function: a read that fails after the open, and, for each of the type, owner and write
-checks, a case where the file opened is not the one the mode file's path leads to just before the
-open and a case where it is not the one the path leads to just after it, each set up by renames
-around the open. The owner rename cases rename a symlink above the directory that holds the mode
-file, since the guard requires that directory itself to be a real directory. The files a
+checks, 1 case where the file opened is not the one the mode file's path led to before the guard
+called os.open, and 1 case where it is not the one the path leads to just after the open; renames
+inside the wrapped os.open set up both. The owner rename cases rename a symlink above the
+directory that holds the mode file, since the guard requires that directory itself to be a real
+directory. The files a
 case creates belong to the uid running the tests, so every case passes that uid through the
 test-only --expect-owner-uid argument, except the 2 cases that pass another uid or none to test the
 expected owner. The owner rename cases need a readable file that another uid
@@ -21,11 +22,11 @@ owns: run as root, they create one and give it to uid 65534; otherwise they use 
 file among /etc/passwd, /etc/group, /etc/hosts and the Python interpreter, and skip when none is
 suitable. A missing guard fails every behaviour case rather than skipping it, so an absent file
 cannot read as a green run. Every deny must carry the complete record-and-continue instruction, and
-one case checks that the vendored orch_ask_guard words that instruction the same way. Because the
-behaviour cases bypass the guard's production mode file, one case loads the guard without running it
-and checks the mode file and owner uid it uses when it receives no argument. One case reads only
+1 case checks that the vendored orch_ask_guard words that instruction the same way. Because the
+behaviour cases bypass the guard's production mode file, 1 case loads the guard without running it
+and checks the mode file and owner uid it uses when it receives no argument. Another case reads only
 .claude/settings.json and checks every hook, under every event and matcher, whose definition names
-ask_mode_guard: exactly one must, as the AskUserQuestion entry, with neither test-only argument.
+ask_mode_guard: exactly 1 must, as the AskUserQuestion entry, with neither test-only argument.
 
 Usage: python3 -I tools/test-ask-mode-guard.py
 """
@@ -125,8 +126,7 @@ SWAP_PROBE = LOAD_GUARD + (
 # The shape of the host record: a JSON object whose "mode" decides, with members whose values do not.
 # The host's only writer, orch-set-mode, run through orchmod, writes exactly 2 values:
 # "attended-autonomous" (orchmod aa) and "unattended" (orchmod ua). "attended" is not one of them:
-# it is the legacy value, whose record shows that the guard reads it as attended-autonomous with
-# 1 warning.
+# it is the legacy value, which the guard reads as attended-autonomous with 1 warning.
 UNATTENDED_LINE = ('{"mode": "unattended", "phase": "dispatch", "set_by": "orch-operator", '
                    '"set_at": "2026-11-07T00:00:00Z"}\n')
 ATTENDED_AUTONOMOUS_LINE = UNATTENDED_LINE.replace('"unattended"', '"attended-autonomous"')
@@ -287,8 +287,7 @@ class AskModeGuard(unittest.TestCase):
 
     # --- where the file is, and what it is -----------------------------------------------------------
     def test_absent_host_directory_denies(self):
-        # Removing the root-owned host directory must not disarm the guard, so its absence denies:
-        # the reason and the banner name the cause, and the reason names the operator's remedy.
+        # Removing the root-owned host directory must not disarm the guard, so its absence denies.
         host_dir = self._tmp / "no-such-dir"
         cause = "{} is absent, so this host declares no operating-mode".format(host_dir)
         reason = self.assert_denies(self.run_guard(mode_file=host_dir / "operating-mode"), cause)
@@ -478,7 +477,8 @@ class AskModeGuard(unittest.TestCase):
     # --- who owns the file and who can write it ------------------------------------------------------
     def test_default_expects_root_owner(self):
         # Without the test-only argument the guard expects uid 0, as the production registration
-        # does; run as another uid, the host directory's owner check is the first to name it.
+        # does; run as another uid, it denies, and the host directory's owner check, which runs
+        # first, names the test's uid as the owner.
         self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         result = self.run_guard(owner=False)
         if os.geteuid() == 0:
@@ -551,10 +551,10 @@ class AskModeGuard(unittest.TestCase):
         return link, own_parent, link / foreign.parent.name / foreign.name
 
     def test_owner_check_judges_the_opened_file_not_an_earlier_look(self):
-        # Before the open, the mode file's path leads to the file the expected uid owns; just before
-        # the open, link is repointed at the parent of the foreign file's directory, so the path
-        # leads to the foreign file and the file opened is another uid's. Only an owner check that
-        # does not rely on the earlier look denies on owner.
+        # When the guard checks the host directory, the mode file's path leads to the file the
+        # expected uid owns; just before the open, link is repointed at the parent of the foreign
+        # file's directory, so the path leads to the foreign file and the file opened is another
+        # uid's. Only an owner check that does not rely on the earlier look denies on owner.
         foreign = self.foreign_file()
         link, _own_parent, mode_file = self.owner_rename_layout(foreign)
         to_foreign = self._tmp / "to-foreign"

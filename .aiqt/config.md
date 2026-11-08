@@ -101,7 +101,7 @@ warning on a mutation outside the record surfaces and blocks nothing.
 The host's operating-mode file is JSON, which `orch_ask_guard` cannot read, so this repository
 adds its own guard for AskUserQuestion. `.claude/hooks/ask_mode_guard.py`, registered in
 `.claude/settings.json`, reads `/opt/orch-operator/operating-mode`, a JSON object whose `"mode"`
-member holds one mode for the whole host. The guard takes 2 values from the file's only writer,
+member holds 1 mode for the whole host. The guard takes 2 values from the file's only writer,
 the host's `orch-set-mode`, which the operator runs through `orchmod` and which accepts exactly
 `"attended-autonomous"` (`orchmod aa`) and `"unattended"` (`orchmod ua`); a change to that list is
 a change to this guard. It allows a question when `"mode"` is exactly `"attended-autonomous"`,
@@ -110,7 +110,7 @@ not write, it reads the record as `"attended-autonomous"`, never as `"unattended
 maintainer's decision of 2026-11-07 adopting lab_infra's rule FLEET-05, and allows the question
 with 1 warning that names the file and `"attended-autonomous"`. It denies,
 naming the cause, when the hook payload has no string `tool_name`; when `/opt/orch-operator`
-itself is absent, since the host then declares no operating mode and removing that root-owned
+itself is absent, since the host then declares no operating-mode and removing that root-owned
 directory must not disarm the guard, and that deny names the operator's remedy, which is to create
 the directory, owned by root and writable by neither its group nor others, and run `orchmod aa`;
 when `lstat` on `/opt/orch-operator`, which does not follow a symlink there, fails for any other
@@ -138,15 +138,12 @@ other repositories, or non-Claude worker families; a session that can edit the g
 settings file that the repository does not track, such as `.claude/settings.local.json`, which
 `.gitignore` ignores, or a user settings file outside the checkout, never shows in review, and
 nothing in this repository shows or tests whether such a file can disable or override this hook;
-an absent `/opt/orch-operator` denies every question, so on contributor machines and hosts without
-the orchestrator every AskUserQuestion call is denied with the record-and-continue instruction; the
-guard trusts root: it checks that uid 0 owns `/opt/orch-operator` and the file in it, that neither
-is writable by its group or by others, and that `/opt/orch-operator` is a directory and not a
-symlink, so that only root can change the record or the entries in that directory, but it does not
-check `/opt` or any directory above it, and it checks `/opt/orch-operator` by path before it opens
-the file, so whoever can write `/opt` can replace `/opt/orch-operator`, including between that
-check and the open, and root controls the decision only while only root can write those
-directories; the file holds 1 mode for the
+on a host where `/opt/orch-operator` is absent, every AskUserQuestion call is denied with the
+record-and-continue instruction; the guard trusts root, and it does not check `/opt` or any
+directory above `/opt/orch-operator`: it checks `/opt/orch-operator` by path before it opens the
+file, so whoever can write `/opt` can replace `/opt/orch-operator`, including between that check
+and the open, and root controls the decision only while only root can write those directories;
+the file holds 1 mode for the
 whole host, so a session with the operator present is blocked while the host says unattended; the
 4096-byte bound limits size, not time: the `lstat` of `/opt/orch-operator`, the open of whatever is
 at the file's path, including a device node, which the guard opens before it checks for a regular
@@ -160,15 +157,13 @@ any mode, without the record-and-continue instruction, and if the hook process c
 as when `python3` is not on the hook shell's `PATH` (exit 127), is killed by a signal, or fails
 while it writes its verdict, it ends without a complete verdict and with a status other than 0 or
 2, which the contract treats as a non-blocking error, so the question would go through; both
-outcomes are what the contract says, not something the tests observe; a legacy `"attended"`
-record allows every question and warns on each one, because the guard keeps no session state, and
-the record is root-owned and writable by neither its group nor others, so neither the guard nor a
-session without root can rewrite it: the warning repeats on every question while a usable record
-holds the legacy value, and `orchmod aa` is the operator's way to migrate the record to
-`"attended-autonomous"`, and the tests check only the warning the guard prints, not whether Claude
-Code shows it to the user or to the model; and until the upstream fix is re-vendored,
-`orch_ask_guard` allows every question and, when it can resolve the repository and read a usable
-registry, tries to append a fail-open audit event, an append that is best effort.
+outcomes are what the contract says, not something the tests observe; the legacy warning repeats
+on every question while a usable record holds `"attended"`, since the guard keeps no state and
+writes no file, and a session without root cannot rewrite the root-owned record; the operator runs
+`orchmod aa` to rewrite it as `"attended-autonomous"`; the tests check only the warning the guard
+prints, not whether Claude Code shows it to the user or to the model; and until the upstream fix
+is re-vendored, `orch_ask_guard` allows every question and, when it can resolve the repository
+and read a usable registry, tries to append a fail-open audit event, an append that is best effort.
 
 One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
 empties, so cross-repository writes deny), but the scope-gated guards do not react to it
