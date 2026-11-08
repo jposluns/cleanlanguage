@@ -122,12 +122,12 @@ EXPECTED_OWNER_UID = 0
 MAX_BYTES = 4096
 TOOL = "AskUserQuestion"
 # The 2 values orch-set-mode accepts, copied from its allow-list; the guard must not invent others,
-# since no sanctioned path could write them.
+# since no sanctioned path could write them, with 1 exception, LEGACY_ATTENDED below, which the
+# maintainer's decision of 2026-11-07, adopting lab_infra's rule FLEET-05, adds.
 ATTENDED_AUTONOMOUS = "attended-autonomous"
 UNATTENDED = "unattended"
-# The legacy value, which orch-set-mode does not write. The maintainer's decision of 2026-11-07,
-# adopting lab_infra's rule FLEET-05, reads a record that holds it as attended-autonomous with
-# 1 warning, never as unattended.
+# The legacy value, which orch-set-mode does not write. Under that decision, the guard reads a
+# record that holds it as attended-autonomous with 1 warning, never as unattended.
 LEGACY_ATTENDED = "attended"
 
 # The record-and-continue instruction, worded as the vendored orch_ask_guard words it, so an agent

@@ -101,7 +101,7 @@ warning on a mutation outside the record surfaces and blocks nothing.
 The host's operating-mode file is JSON, which `orch_ask_guard` cannot read, so this repository
 adds its own guard for AskUserQuestion. `.claude/hooks/ask_mode_guard.py`, registered in
 `.claude/settings.json`, reads `/opt/orch-operator/operating-mode`, a JSON object whose `"mode"`
-member holds one mode for the whole host. The guard takes its values from the file's only writer,
+member holds one mode for the whole host. The guard takes 2 values from the file's only writer,
 the host's `orch-set-mode`, which the operator runs through `orchmod` and which accepts exactly
 `"attended-autonomous"` (`orchmod aa`) and `"unattended"` (`orchmod ua`); a change to that list is
 a change to this guard. It allows a question when `"mode"` is exactly `"attended-autonomous"`,
