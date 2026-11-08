@@ -255,7 +255,7 @@ class LaunchTests(unittest.TestCase):
 
     def test_launch_lines_outside_the_steps_fail(self):
         name = ("\n      - name: Check the portable text sync, release dry run and this workflow's triggers, "
-                "and the dry run time limit\n")
+                "and the dry run's limits and conditions\n")
         text = edited(read(ISOLATION), name + STEP + "\n", "")
         text = edited(text, "    steps:\n", "    env:\n      GUARD: |\n" + STEP + "\n    steps:\n")
         self.assertEqual(launches(parse(text)), 0)

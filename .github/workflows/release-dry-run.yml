@@ -21,10 +21,14 @@ name: Release dry run
 # read files across the repository, the whole site included, and a path list
 # cannot be kept complete against those reads (row 127). So it runs on every
 # pull request and every push to main. tools/test-portable-text-sync-workflow.py
-# fails if a filter or any other narrowing comes back under either trigger, or
-# if the job loses its time limit; workflow-isolation.yml runs that test on
-# every pull request, so a filter that a pull request's own files fall outside
-# is still caught.
+# fails unless the triggers are exactly a bare pull_request, a push on main and
+# a bare workflow_dispatch, so a filter or any other narrowing under
+# pull_request or push fails. It also fails unless this workflow has exactly 1
+# job, dry-run, whose timeout-minutes is the integer 30, with no if: or
+# continue-on-error on that job and no if:, continue-on-error or
+# timeout-minutes on any of its steps. workflow-isolation.yml runs that test
+# on every pull request, so a filter that a pull request's own files fall
+# outside is still caught.
 
 on:
   pull_request:

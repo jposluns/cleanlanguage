@@ -47,6 +47,6 @@ jobs:
         shell: bash
         run: python3 -I tools/test-workflow-launch-isolation.py
 
-      - name: Check the portable text sync, release dry run and this workflow's triggers, and the dry run time limit
+      - name: Check the portable text sync, release dry run and this workflow's triggers, and the dry run's limits and conditions
         shell: bash
         run: python3 -I tools/test-portable-text-sync-workflow.py
