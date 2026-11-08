@@ -104,19 +104,21 @@ the host's `orch-set-mode`, which the operator runs through `orchmod` and which 
 `"attended-autonomous"` (`orchmod aa`) and `"unattended"` (`orchmod ua`); a change to that list is
 a change to this guard. It allows a question when `"mode"` is exactly `"attended-autonomous"`,
 and in 1 other case: when `"mode"` is exactly `"attended"`, a legacy value that the writer does
-not write, it reads the record as `"attended-autonomous"`, never as `"unattended"`, and allows the
-question with a one-line warning that names the file and `"attended-autonomous"`. It denies,
+not write, it reads the record as `"attended-autonomous"`, never as `"unattended"`, under the
+maintainer's decision of 2026-11-07 adopting lab_infra's rule FLEET-05, and allows the question
+with 1 warning that names the file and `"attended-autonomous"`. It denies,
 naming the cause, when the hook payload has no string `tool_name`; when `/opt/orch-operator`
 itself is absent, since the host then declares no operating mode and removing that root-owned
 directory must not disarm the guard, and that deny names the operator's remedy, which is to create
-the directory, owned by root, and run `orchmod aa`; when `lstat` on
-`/opt/orch-operator`, which does not follow a symlink there, fails for any other reason, such
-as a path component that is a regular file; when the file is missing while `/opt/orch-operator`
-exists, unreadable, a symlink, on a path that holds a symlink loop or too many symlinks, not a
-regular file, not owned by uid 0, writable by its group or by others, over 4096 bytes, not strict
-UTF-8, not one JSON object, or holding a duplicate key; when `"mode"` is absent, not a string,
-`"unattended"`, or any other value, including a case or spacing variant of `"attended-autonomous"`,
-`"attended"`, or `"unattended"`; and when
+the directory, owned by root and writable by neither its group nor others, and run `orchmod aa`;
+when `lstat` on `/opt/orch-operator`, which does not follow a symlink there, fails for any other
+reason, such as a path component that is a regular file; when `/opt/orch-operator` itself is a
+symlink, is not a directory, is not owned by uid 0, or is writable by its group or by others; when
+the file is missing while `/opt/orch-operator` exists, unreadable, a symlink, on a path that holds
+a symlink loop or too many symlinks, not a regular file, not owned by uid 0, writable by its group
+or by others, over 4096 bytes, not strict UTF-8, not one JSON object, or holding a duplicate key;
+when `"mode"` is absent, not a string, `"unattended"`, or any other value, including a case or
+spacing variant of `"attended-autonomous"`, `"attended"`, or `"unattended"`; and when
 the guard raises an exception before it prints its verdict. The `"unattended"` deny names the
 remedy: the operator runs `orchmod aa`, since the file is root-owned and `orch-set-mode` writes it.
 Every deny reason carries the record-and-continue instruction that `orch_ask_guard` gives, but
@@ -136,8 +138,13 @@ settings file that the repository does not track, such as `.claude/settings.loca
 nothing in this repository shows or tests whether such a file can disable or override this hook;
 an absent `/opt/orch-operator` denies every question, so on contributor machines and hosts without
 the orchestrator every AskUserQuestion call is denied with the record-and-continue instruction; the
-guard trusts root's file, so root controls the
-decision, and it does not check the directory that holds the file; the file holds one mode for the
+guard trusts root: it checks that uid 0 owns `/opt/orch-operator` and the file in it, that neither
+is writable by its group or by others, and that `/opt/orch-operator` is a directory and not a
+symlink, so that only root can change the record or the entries in that directory, but it does not
+check `/opt` or any directory above it, and it checks `/opt/orch-operator` by path before it opens
+the file, so whoever can write `/opt` can replace `/opt/orch-operator`, including between that
+check and the open, and root controls the decision only while only root can write those
+directories; the file holds 1 mode for the
 whole host, so a session with the operator present is blocked while the host says unattended; the
 4096-byte bound limits size, not time: the `lstat` of `/opt/orch-operator`, the open of whatever is
 at the file's path, including a device node, which the guard opens before it checks for a regular
@@ -154,10 +161,12 @@ while it writes its verdict, it ends without a complete verdict and with a statu
 outcomes are what the contract says, not something the tests observe; a legacy `"attended"`
 record allows every question and warns on each one, because the guard keeps no session state, and
 the record is root-owned and writable by neither its group nor others, so neither the guard nor a
-session without root can rewrite it: the warning repeats until the operator runs `orchmod aa`, and
-the tests check only the warning the guard prints, not whether Claude Code shows it to the user or
-to the model; and `orch_ask_guard` continues to log a fail-open audit event on every question until
-the upstream fix is re-vendored.
+session without root can rewrite it: the warning repeats on every question while a usable record
+holds the legacy value, and `orchmod aa` is the operator's way to migrate the record to
+`"attended-autonomous"`, and the tests check only the warning the guard prints, not whether Claude
+Code shows it to the user or to the model; and until the upstream fix is re-vendored,
+`orch_ask_guard` allows every question and, when it can resolve the repository and read a usable
+registry, tries to append a fail-open audit event, an append that is best effort.
 
 One caution: a malformed (`bad`) registry is fail-safe for the write path (`companion_stores`
 empties, so cross-repository writes deny), but the scope-gated guards do not react to it

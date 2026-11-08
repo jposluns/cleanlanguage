@@ -7,19 +7,23 @@ AskUserQuestion. It reads the hook payload from stdin and, for an AskUserQuestio
 host. The only writer of that file is the host's /usr/local/bin/orch-set-mode, which the operator
 runs through orchmod: `orchmod aa` writes "attended-autonomous" and `orchmod ua` writes
 "unattended", and orch-set-mode refuses every other value. This guard takes its 2 values from that
-list, so a change to the writer's list is a change to this guard. It also reads one legacy value
-that the writer does not write, "attended": this repository's rule reads it as attended-autonomous
-with a one-line warning, never as unattended. Only the exact values "attended-autonomous", silently,
-and "attended", with that warning, let the question through. Every other state denies and names its
-cause, because a blocking question in an unattended session stalls the run until someone notices,
-while a wrongly denied question only asks the agent to record the decision and continue. The denied
-states include /opt/orch-operator itself absent, where the host declares no operating-mode, since
-removing that root-owned directory must not disarm the guard.
+list, so a change to the writer's list is a change to this guard. It also reads 1 legacy value
+that the writer does not write, "attended": under the maintainer's decision of 2026-11-07, which
+adopts lab_infra's rule FLEET-05, it reads that value as attended-autonomous with 1 warning, never
+as unattended. Only the exact values "attended-autonomous", silently, and "attended", with that
+warning, let the question through. Every other state denies and names its cause, because a
+blocking question in an unattended session stalls the run until someone notices, while a wrongly
+denied question only asks the agent to record the decision and continue. The denied states include
+/opt/orch-operator itself absent, where the host declares no operating-mode, since removing that
+root-owned directory must not disarm the guard, and /opt/orch-operator present but a symlink, not a
+directory, not owned by uid 0, or writable by its group or by others, since an entry in it that
+someone other than root can change would let that someone choose the record the guard reads.
 
 The vendored orch_ask_guard does not enforce this: it reads an "Operating-mode:" text line from a
-mode record that this repository does not declare, so it allows the question and logs a fail-open
-event. This guard is the repository's own layer, and it stays as a second layer after a re-vendored
-hook reads the JSON file.
+mode record that this repository does not declare, so it allows the question. When it can resolve
+the repository and read a usable registry, it also tries to append a fail-open event, an append
+that is best effort; otherwise it returns without logging. This guard is the repository's own
+layer, and it stays as a second layer after a re-vendored hook reads the JSON file.
 
 Decisions, in the order the guard makes them:
 
@@ -31,23 +35,28 @@ Decisions, in the order the guard makes them:
 - lstat reporting /opt/orch-operator itself absent: deny, since the host then declares no
   operating-mode and removing that root-owned directory must not disarm the guard; the reason and
   the banner name that cause, and the reason names the operator's remedy, which is to create the
-  directory, owned by root, and run `orchmod aa`;
+  directory, owned by root and writable by neither its group nor others, and run `orchmod aa`;
 - lstat on /opt/orch-operator failing for any other reason, such as a parent directory the guard
   cannot search or a path component that is a regular file (ENOTDIR): deny;
-- the mode file missing, unreadable, a symlink (opened with O_NOFOLLOW), or not a regular file: deny.
-  lstat does not follow a symlink at /opt/orch-operator itself, so a dangling symlink there counts
-  as present and leaves the mode file missing; a symlink loop there makes the open fail with
-  ELOOP, as a symlink at the mode file does, so that deny names both causes; a regular file there
-  makes the mode file unreadable (ENOTDIR); and a symlink to a directory is followed, so the file
-  in that directory is judged as the mode file;
+- /opt/orch-operator itself a symlink: deny, whatever the link leads to, since lstat does not
+  follow it, so a dangling symlink, a symlink loop, a symlink to a file and a symlink to a
+  directory there all deny with that cause;
+- /opt/orch-operator itself not a directory, such as a regular file, a FIFO, a socket or a device
+  node: deny;
+- /opt/orch-operator not owned by uid 0, or writable by its group or by others (the same lstat,
+  before the guard opens the mode file): deny, so that only root can add, remove or rename the
+  entries in it;
+- the mode file missing, unreadable, a symlink (opened with O_NOFOLLOW), or not a regular file:
+  deny. The open fails with ELOOP both for a symlink at the mode file and for a symlink loop or too
+  many symlinks on its path, so that deny names both causes;
 - the opened file not owned by uid 0, or writable by its group or by others (fstat on the open
   descriptor): deny;
 - content over 4096 bytes, not strict UTF-8, not one JSON object (NaN, Infinity and -Infinity
   included, since JSON has no such values), holding a duplicate key, or with a "mode" that is
   absent or not a string: deny;
 - "mode" exactly "attended-autonomous": allow, silently; exactly "attended", the legacy value that
-  the writer does not write: allow, read as attended-autonomous and never as unattended, with a
-  one-line systemMessage naming the mode file and attended-autonomous and no permissionDecision;
+  the writer does not write: allow, read as attended-autonomous and never as unattended, with 1
+  warning, a systemMessage naming the mode file and attended-autonomous, and no permissionDecision;
   "unattended": deny, naming `orchmod aa` as the operator's way to let questions through; any other
   value, including a case or spacing variant of these 3: deny, as an unknown mode;
 - any other exception the guard raises at any of these steps, before it prints its verdict: deny,
@@ -59,8 +68,9 @@ writes no file; it only prints its verdict. The deny output has the shape the ve
 permissionDecision deny on exit 0.
 
 Test-only arguments: --mode-file PATH reads PATH instead, and the directory that holds PATH takes the
-place of /opt/orch-operator for the absent-directory rule; --expect-owner-uid UID expects that owner
-instead of uid 0. The registration in .claude/settings.json passes neither.
+place of /opt/orch-operator for every rule on that directory; --expect-owner-uid UID expects that
+owner instead of uid 0, for that directory and for the mode file. The registration in
+.claude/settings.json passes neither.
 
 Residual: this guard covers only AskUserQuestion calls in sessions that load this checkout's
 .claude/settings.json. It does not cover other checkouts, other repositories, or non-Claude worker
@@ -70,30 +80,36 @@ as .claude/settings.local.json, which .gitignore ignores, or a user settings fil
 checkout, never shows in review, and nothing in this repository shows or tests whether such a file
 can disable or override this hook; an absent /opt/orch-operator denies every question, so on
 contributor machines and hosts without the orchestrator every AskUserQuestion call is denied with
-the record-and-continue instruction; the guard trusts root's
-file: it checks that uid 0 owns /opt/orch-operator/operating-mode and that neither its group nor
-others can write it, so root controls the decision, and it does not check the directory that holds
-the file; the file holds one mode for the whole host, so a session with the operator present is
-blocked while the host says unattended; the 4096-byte bound limits size, not time: the lstat of
-/opt/orch-operator, the open of whatever is at the mode file's path, including a device node,
-which the guard opens before it checks for a regular file, and the read of a regular file can each
-block, such as on a stalled network filesystem or in a device driver, and each is bounded only by
-the hook's 10-second timeout, and the tests do not show what Claude Code does with the call when
-that timeout expires; the fail-closed handler in main() covers only the argument parse, the payload
-read and the decision, so before main() runs the outcome depends on how the hook process ends: when
-python3 -I cannot open the script, for example because the file is missing, it exits 2, which
-Claude Code's hook contract treats as blocking for PreToolUse, so every AskUserQuestion call would
-be blocked, in any mode, without the record-and-continue instruction, and if the hook process
-cannot start, such as when python3 is not on the hook shell's PATH (exit 127), is killed by a
-signal, or fails while it writes its verdict, it ends without a complete verdict and with a status
-other than 0 or 2, which the contract treats as a non-blocking error, so the question would go
-through; both outcomes are what the contract says, not something the tests observe; a legacy
+the record-and-continue instruction; the guard trusts root: it checks that
+/opt/orch-operator is a directory and not a symlink, that uid 0 owns it and the mode file in it,
+and that neither is writable by its group or by others, so that only root can change the record or
+the entries in that directory, but it does not check /opt or any directory above it, and it checks
+/opt/orch-operator by path before it opens the mode file, so whoever can write /opt can replace
+/opt/orch-operator, including between that check and the open, and root controls the decision only
+while only root can write those directories; the file holds one mode for the whole host, so a
+session with the operator present is blocked while the host says unattended; the 4096-byte bound
+limits size, not time: the lstat of /opt/orch-operator, the open of whatever is at the mode file's
+path, including a device node, which the guard opens before it checks for a regular file, and the
+read of a regular file can each block, such as on a stalled network filesystem or in a device
+driver, and each is bounded only by the hook's 10-second timeout, and the tests do not show what
+Claude Code does with the call when that timeout expires; the fail-closed handler in main() covers
+only the argument parse, the payload read and the decision, so before main() runs the outcome
+depends on how the hook process ends: when python3 -I cannot open the script, for example
+because the file is missing, it exits 2, which Claude Code's hook contract treats as blocking
+for PreToolUse, so every AskUserQuestion call would be blocked, in any mode, without the
+record-and-continue instruction, and if the hook process cannot start, such as when python3 is
+not on the hook shell's PATH (exit 127), is killed by a signal, or fails while it writes its
+verdict, it ends without a complete verdict and with a status other than 0 or 2, which the
+contract treats as a non-blocking error, so the question would go through; both outcomes are what
+the contract says, not something the tests observe; a legacy
 "attended" record allows every question and warns on each one, because the guard keeps no session
 state, and the record is root-owned and writable by neither its group nor others, so neither the
-guard nor a session without root can rewrite it: the warning repeats until the operator runs
-`orchmod aa`, and the tests check only the warning the guard prints, not whether Claude Code shows
-it to the user or to the model; and the vendored orch_ask_guard continues to log a fail-open audit
-event on every question until the upstream fix is re-vendored.
+guard nor a session without root can rewrite it: the warning repeats on every question while a
+usable record holds the legacy value, and `orchmod aa` is the operator's way to migrate the record
+to attended-autonomous, and the tests check only the warning the guard prints, not whether Claude
+Code shows it to the user or to the model; and until the upstream fix is re-vendored, the vendored
+orch_ask_guard allows every question and, when it can resolve the repository and read a usable
+registry, tries to append a fail-open audit event, an append that is best effort.
 """
 import errno
 import json
@@ -109,8 +125,9 @@ TOOL = "AskUserQuestion"
 # since no sanctioned path could write them.
 ATTENDED_AUTONOMOUS = "attended-autonomous"
 UNATTENDED = "unattended"
-# The legacy value, which orch-set-mode does not write. This repository's rule reads a record that
-# holds it as attended-autonomous with 1 warning, never as unattended.
+# The legacy value, which orch-set-mode does not write. The maintainer's decision of 2026-11-07,
+# adopting lab_infra's rule FLEET-05, reads a record that holds it as attended-autonomous with
+# 1 warning, never as unattended.
 LEGACY_ATTENDED = "attended"
 
 # The record-and-continue instruction, worded as the vendored orch_ask_guard words it, so an agent
@@ -147,11 +164,13 @@ def deny_unattended(mode_file):
 
 def deny_absent_host(host_dir):
     # Removing the root-owned host directory must not disarm the guard, so its absence denies. The
-    # remedy names the directory as well as orchmod, since the mode file cannot exist without it.
+    # remedy names the directory as well as orchmod, since the mode file cannot exist without it,
+    # and the owner and write rules, since the guard denies a directory that breaks them.
     return deny("AskUserQuestion BLOCKED: {} is absent, so this host declares no operating-mode. "
                 "Treat the session as unattended. {} If the operator is in fact present, the "
-                "operator creates {}, owned by root, and runs `orchmod aa`, which sets the host "
-                "operating-mode to attended-autonomous; then re-issue.".format(
+                "operator creates {}, owned by root and writable by neither its group nor others, "
+                "and runs `orchmod aa`, which sets the host operating-mode to attended-autonomous; "
+                "then re-issue.".format(
                     host_dir, RECORD_AND_CONTINUE, host_dir),
                 "Repository guard: denied a blocking question; {} is absent, so this host declares "
                 "no operating-mode.".format(host_dir))
@@ -204,6 +223,28 @@ def read_bounded(fd):
     return b"".join(chunks)
 
 
+def check_owner_and_writers(path, info, expect_uid):
+    """Raises Unusable unless expect_uid owns path and neither its group nor others can write it,
+    judged from info, the stat result for path."""
+    if info.st_uid != expect_uid:
+        raise Unusable("{} is owned by uid {}, not uid {}".format(path, info.st_uid, expect_uid))
+    writers = [who for who, bit in (("group", stat.S_IWGRP), ("others", stat.S_IWOTH))
+               if info.st_mode & bit]
+    if writers:
+        raise Unusable("{} is writable by {} (mode {:04o})".format(
+            path, " and ".join(writers), stat.S_IMODE(info.st_mode)))
+
+
+def check_host_dir(host_dir, info, expect_uid):
+    """Raises Unusable unless host_dir, judged from info, its lstat result, is a real directory that
+    only expect_uid can change, so that no one else can choose the mode file the guard opens."""
+    if stat.S_ISLNK(info.st_mode):
+        raise Unusable("{} is a symlink".format(host_dir))
+    if not stat.S_ISDIR(info.st_mode):
+        raise Unusable("{} is not a directory".format(host_dir))
+    check_owner_and_writers(host_dir, info, expect_uid)
+
+
 def read_mode(mode_file, expect_uid):
     """The "mode" string from mode_file; raises Unusable naming why it cannot be read."""
     # O_NOFOLLOW refuses a symlink; O_NONBLOCK keeps a FIFO with no writer from hanging the open.
@@ -224,14 +265,7 @@ def read_mode(mode_file, expect_uid):
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
             raise Unusable("{} is not a regular file".format(mode_file))
-        if info.st_uid != expect_uid:
-            raise Unusable("{} is owned by uid {}, not uid {}".format(
-                mode_file, info.st_uid, expect_uid))
-        writers = [who for who, bit in (("group", stat.S_IWGRP), ("others", stat.S_IWOTH))
-                   if info.st_mode & bit]
-        if writers:
-            raise Unusable("{} is writable by {} (mode {:04o})".format(
-                mode_file, " and ".join(writers), stat.S_IMODE(info.st_mode)))
+        check_owner_and_writers(mode_file, info, expect_uid)
         try:
             data = read_bounded(fd)
         except OSError as exc:
@@ -269,12 +303,13 @@ def decide(payload, mode_file, expect_uid):
         return None
     host_dir = os.path.dirname(os.path.abspath(mode_file))
     try:
-        os.lstat(host_dir)
+        host_info = os.lstat(host_dir)
     except FileNotFoundError:
         return deny_absent_host(host_dir)
     except OSError as exc:
         return deny_cause("{} cannot be checked: {}".format(host_dir, exc.strerror))
     try:
+        check_host_dir(host_dir, host_info, expect_uid)
         mode = read_mode(mode_file, expect_uid)
     except Unusable as exc:
         return deny_cause(str(exc))

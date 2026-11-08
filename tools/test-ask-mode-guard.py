@@ -6,10 +6,14 @@ through the test-only --mode-file argument, since CI has no /opt/orch-operator, 
 code and the verdict the guard prints. Every behaviour case but one puts that path under a temporary
 directory and sets up what it leads to, or its absence, except that in the 2 owner rename cases it
 can lead to a file outside that directory, as described below; the device case uses a path below
-/dev/null, since only root can create a device node. Most cases run the guard as a script; 7 cases
-load it as a module in that subprocess and inject a fault before they call its main function: a
-read that fails after the open, and, for each of the type, owner and write checks, a rename just
-before the open and one just after it that changes what the mode file's path leads to. The files a
+/dev/null, since only root can create a device node. The directory that holds the mode file is a
+real directory with mode 0755 unless a case sets up another state there. Most cases run the guard
+as a script; 7 cases load it as a module in that subprocess and inject a fault before they call
+its main function: a read that fails after the open, and, for each of the type, owner and write
+checks, a case where the file opened is not the one the mode file's path leads to just before the
+open and a case where it is not the one the path leads to just after it, each set up by renames
+around the open. The owner rename cases rename a symlink above the directory that holds the mode
+file, since the guard requires that directory itself to be a real directory. The files a
 case creates belong to the uid running the tests, so every case passes that uid through the
 test-only --expect-owner-uid argument, except the 2 cases that pass another uid or none to test the
 expected owner. The owner rename cases need a readable file that another uid
@@ -95,22 +99,28 @@ READ_ERROR_PROBE = LOAD_GUARD + (
     "sys.exit(guard.main(sys.argv[2:]))\n")
 
 # Wraps os.open so that the entry at sys.argv[3] is renamed over the path sys.argv[4] just before the
-# open, when sys.argv[2] is "before", or just after it, when it is "after", then runs main on the
-# remaining arguments. The guard opens only the mode file, so the rename happens once. A check that
-# looks at the path instead of the open descriptor, on the side of the open where the rename leaves a
-# file that passes it, then judges a file other than the one the guard reads.
+# open, when sys.argv[2] is "before", or just after it, when it is "after"; when it is "around",
+# sys.argv[3] is renamed over sys.argv[4] just before the open and sys.argv[5] over sys.argv[6] just
+# after it. It then runs main on the remaining arguments. The guard opens only the mode file, so the
+# renames happen once. A check that looks at the path instead of the open descriptor, on the side of
+# the open where the renames leave a file that passes it, then judges a file other than the one the
+# guard reads.
 SWAP_PROBE = LOAD_GUARD + (
-    "when, source, target = sys.argv[2:5]\n"
+    "when = sys.argv[2]\n"
+    "count = 4 if when == 'around' else 2\n"
+    "paths = sys.argv[3:3 + count]\n"
     "real_open = os.open\n"
     "def open_with_swap(path, flags, *rest):\n"
-    "    if when == 'before':\n"
-    "        os.rename(source, target)\n"
+    "    if when in ('before', 'around'):\n"
+    "        os.rename(paths[0], paths[1])\n"
     "    fd = real_open(path, flags, *rest)\n"
     "    if when == 'after':\n"
-    "        os.rename(source, target)\n"
+    "        os.rename(paths[0], paths[1])\n"
+    "    if when == 'around':\n"
+    "        os.rename(paths[2], paths[3])\n"
     "    return fd\n"
     "os.open = open_with_swap\n"
-    "sys.exit(guard.main(sys.argv[5:]))\n")
+    "sys.exit(guard.main(sys.argv[3 + count:]))\n")
 
 # The shape of the host record: a JSON object whose "mode" decides, with members whose values do not.
 # The host's only writer, orch-set-mode, run through orchmod, writes exactly 2 values:
@@ -136,6 +146,9 @@ class AskModeGuard(unittest.TestCase):
         self._tmp = Path(tempfile.mkdtemp(prefix="ask-mode-guard-"))
         self.host_dir = self._tmp / "orch-operator"
         self.host_dir.mkdir()
+        # Set explicitly, whatever the umask, since the guard denies a group- or other-writable
+        # host directory.
+        os.chmod(self.host_dir, 0o755)
         self.mode_file = self.host_dir / "operating-mode"
 
     def tearDown(self):
@@ -167,11 +180,13 @@ class AskModeGuard(unittest.TestCase):
                  "--expect-owner-uid", str(os.geteuid())]
         return subprocess.run(args, input=json.dumps(ASK), capture_output=True, text=True, timeout=30)
 
-    def run_swap(self, when, source, target, mode_file=None):
-        """Run the swap probe, which renames source over target just before or just after the open,
-        and fail unless the rename took place."""
-        result = self.run_probe(SWAP_PROBE, [when, str(source), str(target)], mode_file)
-        self.assertFalse(os.path.lexists(source), "the probe did not rename {}".format(source))
+    def run_swap(self, when, renames, mode_file=None):
+        """Run the swap probe with renames, a sequence of (source, target) pairs: 1 pair for
+        "before" or "after", 2 for "around"; fail unless every rename took place."""
+        args = [when] + [str(path) for pair in renames for path in pair]
+        result = self.run_probe(SWAP_PROBE, args, mode_file)
+        for source, _target in renames:
+            self.assertFalse(os.path.lexists(source), "the probe did not rename {}".format(source))
         return result
 
     def foreign_file(self):
@@ -277,8 +292,8 @@ class AskModeGuard(unittest.TestCase):
         host_dir = self._tmp / "no-such-dir"
         cause = "{} is absent, so this host declares no operating-mode".format(host_dir)
         reason = self.assert_denies(self.run_guard(mode_file=host_dir / "operating-mode"), cause)
-        self.assertIn("the operator creates {}, owned by root, and runs `orchmod aa`".format(
-            host_dir), reason)
+        self.assertIn("the operator creates {}, owned by root and writable by neither its group "
+                      "nor others, and runs `orchmod aa`".format(host_dir), reason)
 
     def test_host_directory_that_cannot_be_checked_denies(self):
         # lstat failing for a reason other than absence, here a parent directory without search
@@ -301,51 +316,70 @@ class AskModeGuard(unittest.TestCase):
         self.assert_denies(result, "cannot be checked: {}".format(os.strerror(errno.ENOTDIR)))
 
     def test_regular_file_at_the_host_directory_denies(self):
-        # lstat finds the file, so the host directory is present, and the open below it fails.
+        # lstat finds the file, so the host directory is present but not a directory.
         self.host_dir.rmdir()
         self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self.host_dir)
-        self.assert_denies(self.run_guard(),
-                           "is unreadable: {}".format(os.strerror(errno.ENOTDIR)))
+        self.assert_denies(self.run_guard(), "{} is not a directory".format(self.host_dir))
 
     def test_dangling_symlink_at_the_host_directory_denies(self):
-        # lstat does not follow the link, so the host directory is present and the mode file is
-        # missing; a check that followed it would read the directory as absent and name that cause.
+        # lstat does not follow the link, so the host directory is present and is a symlink; a
+        # check that followed it would read the directory as absent and name that cause.
         self.host_dir.rmdir()
         self.host_dir.symlink_to(self._tmp / "no-such-dir")
-        self.assert_denies(self.run_guard(), "is missing")
+        self.assert_denies(self.run_guard(), "{} is a symlink".format(self.host_dir))
 
     def test_symlink_loop_at_the_host_directory_denies(self):
-        # lstat does not follow the loop, so the open of the mode file meets it and fails. The mode
-        # file is not itself a symlink, so a deny that said only that would be untrue here.
+        # lstat does not follow the loop, so the host directory is present and is a symlink.
         self.host_dir.rmdir()
         self.host_dir.symlink_to(self.host_dir)
-        self.assert_denies(self.run_guard(), SYMLINK_CAUSE)
+        self.assert_denies(self.run_guard(), "{} is a symlink".format(self.host_dir))
 
-    def test_symlink_to_a_directory_at_the_host_directory_is_followed(self):
-        # The guard does not judge the directory that holds the mode file, so a host directory that
-        # is a symlink to a real directory decides by the file in that directory.
+    def test_symlink_to_a_directory_at_the_host_directory_denies(self):
+        # Whoever controls a symlink at the host directory chooses the record the guard reads, so
+        # the guard denies it even when it leads to a real directory with an attended-autonomous
+        # or legacy record that passes every check on the file.
         real_dir = self._tmp / "real-dir"
         real_dir.mkdir()
+        os.chmod(real_dir, 0o755)
         self.host_dir.rmdir()
         self.host_dir.symlink_to(real_dir)
-        with self.subTest(mode="attended-autonomous"):
-            self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=real_dir / "operating-mode")
-            self.assert_allows_silently(self.run_guard())
-        with self.subTest(mode="unattended"):
-            self.write_mode(UNATTENDED_LINE, path=real_dir / "operating-mode")
-            self.assert_denies(self.run_guard(), "is unattended")
+        for mode, line in (("attended-autonomous", ATTENDED_AUTONOMOUS_LINE),
+                           ("attended", ATTENDED_LINE)):
+            with self.subTest(mode=mode):
+                self.write_mode(line, path=real_dir / "operating-mode")
+                self.assert_denies(self.run_guard(), "{} is a symlink".format(self.host_dir))
+
+    def test_host_directory_owned_by_another_uid_denies(self):
+        # The test cannot give a directory to another uid without root, so it expects another
+        # owner instead. The cause must name the host directory: the mode file, owned by the same
+        # uid, would fail the file's owner check too, so only a cause that names the directory
+        # shows that the directory's owner check ran. The owner rename cases below test the file's
+        # owner check.
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
+        other = os.geteuid() + 1
+        self.assert_denies(self.run_guard(owner=other), "{} is owned by uid {}, not uid {}".format(
+            self.host_dir, os.geteuid(), other))
+
+    def test_group_writable_host_directory_denies(self):
+        # Someone who can write the host directory can replace the mode file in it.
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
+        os.chmod(self.host_dir, 0o775)
+        self.assert_denies(self.run_guard(), "{} is writable by group".format(self.host_dir))
+
+    def test_other_writable_host_directory_denies(self):
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
+        os.chmod(self.host_dir, 0o757)
+        self.assert_denies(self.run_guard(), "{} is writable by others".format(self.host_dir))
 
     def test_fifo_at_the_host_directory_denies(self):
-        # lstat finds the FIFO, so the host directory is present, and the open below it fails with
-        # ENOTDIR; a check that read a host directory that is not a directory as absent would name
-        # the wrong cause.
+        # lstat finds the FIFO, so the host directory is present but not a directory; a check that
+        # read a host directory that is not a directory as absent would name the wrong cause.
         self.host_dir.rmdir()
         os.mkfifo(self.host_dir)
-        self.assert_denies(self.run_guard(),
-                           "is unreadable: {}".format(os.strerror(errno.ENOTDIR)))
+        self.assert_denies(self.run_guard(), "{} is not a directory".format(self.host_dir))
 
     def test_socket_at_the_host_directory_denies(self):
-        # As for the FIFO: lstat finds the socket, and the open below it fails with ENOTDIR. The
+        # As for the FIFO: lstat finds the socket, which is not a directory. The
         # bind fails where the environment refuses Unix sockets, or where the path is longer than a
         # socket address holds, as under a long TMPDIR; the case then cannot set up the state it
         # tests, so it skips, naming the error, and it runs wherever the bind succeeds.
@@ -359,11 +393,11 @@ class AskModeGuard(unittest.TestCase):
             result = self.run_guard()
         finally:
             listener.close()
-        self.assert_denies(result, "is unreadable: {}".format(os.strerror(errno.ENOTDIR)))
+        self.assert_denies(result, "{} is not a directory".format(self.host_dir))
 
     def test_device_at_the_host_directory_denies(self):
         # Only root can create a device node, so the case puts the mode file below /dev/null, a
-        # character device every Linux host has: lstat finds it, and the open fails with ENOTDIR.
+        # character device every Linux host has: lstat finds it, and it is not a directory.
         # Where lstat cannot examine /dev/null, as where the environment does not provide it, the
         # case cannot set up the state it tests, so it skips, naming the error; it also skips where
         # /dev/null is not a character device, and it runs wherever /dev/null is one.
@@ -374,18 +408,16 @@ class AskModeGuard(unittest.TestCase):
             self.skipTest("cannot examine /dev/null: {}".format(error))
         if not stat.S_ISCHR(device_mode):
             self.skipTest("/dev/null is not a character device on this host")
-        mode_file = device / "operating-mode"
-        self.assert_denies(self.run_guard(mode_file=mode_file),
-                           "{} is unreadable: {}".format(mode_file, os.strerror(errno.ENOTDIR)))
+        self.assert_denies(self.run_guard(mode_file=device / "operating-mode"),
+                           "{} is not a directory".format(device))
 
     def test_symlink_to_a_file_at_the_host_directory_denies(self):
-        # lstat does not follow the link, so the host directory is present; the open follows it to
-        # an attended-autonomous file and fails with ENOTDIR, so that file never decides.
+        # lstat does not follow the link, so the host directory is present and is a symlink, and
+        # the attended-autonomous file it leads to never decides.
         target = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self._tmp / "real-file")
         self.host_dir.rmdir()
         self.host_dir.symlink_to(target)
-        self.assert_denies(self.run_guard(),
-                           "is unreadable: {}".format(os.strerror(errno.ENOTDIR)))
+        self.assert_denies(self.run_guard(), "{} is a symlink".format(self.host_dir))
 
     def test_symlink_loop_above_the_host_directory_denies(self):
         # Here lstat itself meets the loop and fails with ELOOP, which is not absence, so it must
@@ -444,13 +476,9 @@ class AskModeGuard(unittest.TestCase):
                            "is unreadable: {}".format(os.strerror(errno.EIO)))
 
     # --- who owns the file and who can write it ------------------------------------------------------
-    def test_owner_other_than_expected_denies(self):
-        self.write_mode(ATTENDED_AUTONOMOUS_LINE)
-        other = os.geteuid() + 1
-        self.assert_denies(self.run_guard(owner=other), "owned by uid {}".format(os.geteuid()))
-
     def test_default_expects_root_owner(self):
-        # Without the test-only argument the guard expects uid 0, as the production registration does.
+        # Without the test-only argument the guard expects uid 0, as the production registration
+        # does; run as another uid, the host directory's owner check is the first to name it.
         self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         result = self.run_guard(owner=False)
         if os.geteuid() == 0:
@@ -472,7 +500,8 @@ class AskModeGuard(unittest.TestCase):
         # after the open; the cases below cover a look before the open and the other checks.
         self.write_mode(ATTENDED_AUTONOMOUS_LINE, mode=0o664)
         replacement = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self.host_dir / "replacement")
-        self.assert_denies(self.run_swap("after", replacement, self.mode_file), "writable by group")
+        self.assert_denies(self.run_swap("after", [(replacement, self.mode_file)]),
+                           "writable by group")
 
     def test_write_check_judges_the_opened_file_not_an_earlier_look(self):
         # The file at the path before the open passes every check; the group-writable file renamed
@@ -481,7 +510,8 @@ class AskModeGuard(unittest.TestCase):
         self.write_mode(ATTENDED_AUTONOMOUS_LINE)
         replacement = self.write_mode(ATTENDED_AUTONOMOUS_LINE, mode=0o664,
                                       path=self.host_dir / "replacement")
-        self.assert_denies(self.run_swap("before", replacement, self.mode_file), "writable by group")
+        self.assert_denies(self.run_swap("before", [(replacement, self.mode_file)]),
+                           "writable by group")
 
     def test_type_check_judges_the_opened_file_not_an_earlier_look(self):
         # A regular attended-autonomous file before the open; a FIFO renamed over it just before the
@@ -491,7 +521,7 @@ class AskModeGuard(unittest.TestCase):
         fifo = self.host_dir / "replacement"
         os.mkfifo(fifo)
         os.chmod(fifo, 0o644)
-        self.assert_denies(self.run_swap("before", fifo, self.mode_file), "not a regular file")
+        self.assert_denies(self.run_swap("before", [(fifo, self.mode_file)]), "not a regular file")
 
     def test_type_check_judges_the_opened_file_not_a_later_look(self):
         # A FIFO is opened; a regular attended-autonomous file renamed over it just after the open
@@ -500,39 +530,49 @@ class AskModeGuard(unittest.TestCase):
         os.mkfifo(self.mode_file)
         os.chmod(self.mode_file, 0o644)
         replacement = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self.host_dir / "replacement")
-        self.assert_denies(self.run_swap("after", replacement, self.mode_file), "not a regular file")
+        self.assert_denies(self.run_swap("after", [(replacement, self.mode_file)]),
+                           "not a regular file")
+
+    def owner_rename_layout(self, foreign):
+        """The paths for the owner rename cases, as (link, own_parent, mode_file). The test cannot
+        give a file it creates to another uid without root, and the guard requires the host
+        directory itself to be a real directory, so the renames move a symlink above it: the mode
+        file is link/D/N, where D and N are the names of the foreign file's directory and of the
+        file. own_parent holds a real directory D, mode 0755, whose attended-autonomous file N the
+        test's uid owns, and link starts as a symlink to own_parent, so the host directory passes
+        its checks."""
+        own_parent = self._tmp / "own-parent"
+        own_dir = own_parent / foreign.parent.name
+        own_dir.mkdir(parents=True)
+        os.chmod(own_dir, 0o755)
+        self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=own_dir / foreign.name)
+        link = self._tmp / "link"
+        link.symlink_to(own_parent)
+        return link, own_parent, link / foreign.parent.name / foreign.name
 
     def test_owner_check_judges_the_opened_file_not_an_earlier_look(self):
-        # The test cannot give a file it creates to another uid without root, so the rename moves the
-        # directory instead: before the open, the host directory is a symlink to a directory whose
-        # attended-autonomous file the expected uid owns; just before the open, it is repointed at a
-        # directory whose file of the same name another uid owns. Only an owner check that does not
-        # rely on the earlier look denies on owner.
+        # Before the open, the mode file's path leads to the file the expected uid owns; just before
+        # the open, link is repointed at the directory above the foreign file, so the file opened is
+        # another uid's. Only an owner check that does not rely on the earlier look denies on owner.
         foreign = self.foreign_file()
-        own_dir = self._tmp / "own-dir"
-        own_dir.mkdir()
-        self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=own_dir / foreign.name)
-        self.host_dir.rmdir()
-        self.host_dir.symlink_to(own_dir)
-        repoint = self._tmp / "repoint"
-        repoint.symlink_to(foreign.parent)
-        result = self.run_swap("before", repoint, self.host_dir, self.host_dir / foreign.name)
+        link, _own_parent, mode_file = self.owner_rename_layout(foreign)
+        to_foreign = self._tmp / "to-foreign"
+        to_foreign.symlink_to(foreign.parent.parent)
+        result = self.run_swap("before", [(to_foreign, link)], mode_file)
         self.assert_denies(result, "owned by uid {}, not uid {}".format(
             foreign.stat().st_uid, os.geteuid()))
 
     def test_owner_check_judges_the_opened_file_not_a_later_look(self):
-        # The reverse: the file opened is another uid's, and just after the open the host directory
-        # is repointed at a directory whose attended-autonomous file the expected uid owns. Only an
+        # The reverse: link is repointed just before the open, so the file opened is another uid's,
+        # and back just after it, so the path leads again to the file the expected uid owns. Only an
         # owner check that does not look at the path after the open denies on owner.
         foreign = self.foreign_file()
-        own_dir = self._tmp / "own-dir"
-        own_dir.mkdir()
-        self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=own_dir / foreign.name)
-        self.host_dir.rmdir()
-        self.host_dir.symlink_to(foreign.parent)
-        repoint = self._tmp / "repoint"
-        repoint.symlink_to(own_dir)
-        result = self.run_swap("after", repoint, self.host_dir, self.host_dir / foreign.name)
+        link, own_parent, mode_file = self.owner_rename_layout(foreign)
+        to_foreign = self._tmp / "to-foreign"
+        to_foreign.symlink_to(foreign.parent.parent)
+        to_own = self._tmp / "to-own"
+        to_own.symlink_to(own_parent)
+        result = self.run_swap("around", [(to_foreign, link), (to_own, link)], mode_file)
         self.assert_denies(result, "owned by uid {}, not uid {}".format(
             foreign.stat().st_uid, os.geteuid()))
 
