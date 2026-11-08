@@ -18,12 +18,14 @@ name: Workflow launch isolation
 # in a job with no if:. It also fails unless the triggers of
 # release-dry-run.yml are exactly a bare pull_request, a push on main and a
 # bare workflow_dispatch, and that workflow has exactly 1 job, dry-run,
-# whose timeout-minutes is the integer 30. See that test for what it does not
-# catch. portable-text-sync.yml also runs it, but a pull request that adds a
-# filter to that workflow which its own changed files fall outside never
-# starts that run, so the test runs here as well. release-dry-run.yml does
-# not run the test, so this run and the one in portable-text-sync.yml catch a
-# filter or a changed time limit there.
+# whose timeout-minutes is the integer 30, with no if: or continue-on-error
+# on that job and no if:, continue-on-error or timeout-minutes on any of its
+# steps. See that test for what it does not catch. portable-text-sync.yml
+# also runs it, but a pull request that adds a filter to that workflow which
+# its own changed files fall outside never starts that run, so the test runs
+# here as well. release-dry-run.yml does not run the test, so this run and
+# the one in portable-text-sync.yml catch a filter, a changed time limit or
+# such a key there.
 
 on:
   pull_request:

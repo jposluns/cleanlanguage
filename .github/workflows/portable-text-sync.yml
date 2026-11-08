@@ -29,9 +29,14 @@ name: Portable text sync
 # promotable to a required check; to promote it, first give the job a unique
 # display name, as manifest-icon.yml does. The second step after checkout runs
 # tools/test-portable-text-sync-workflow.py, which fails if a paths or
-# paths-ignore filter comes back on either trigger. workflow-isolation.yml,
-# which carries no paths filter either, runs it too, so a pull request that
-# adds a filter here which its own changed files fall outside still runs it.
+# paths-ignore filter comes back on either trigger here. It also checks the
+# triggers of workflow-isolation.yml and release-dry-run.yml, the step that
+# runs it in this workflow and in workflow-isolation.yml, and the dry run
+# job's time limit, and fails if that job or any of its steps carries an if:
+# or continue-on-error, or if any of those steps carries timeout-minutes; its
+# docstring says what it does not check. workflow-isolation.yml, which carries
+# no paths filter either, runs it too, so a pull request that adds a filter
+# here which its own changed files fall outside still runs it.
 
 on:
   pull_request:
@@ -53,7 +58,7 @@ jobs:
         shell: bash
         run: python3 -I tools/check-python-version.py
 
-      - name: Check neither trigger carries a path filter
+      - name: Check the portable text sync, workflow isolation and release dry run triggers, and the dry run's limits and conditions
         shell: bash
         run: python3 -I tools/test-portable-text-sync-workflow.py
 

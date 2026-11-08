@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests the triggers of portable-text-sync.yml and release-dry-run.yml, and the dry run's time limit.
+"""Tests the triggers of 3 workflows, the steps that run this test, and the dry run's limits and conditions.
 
 The steps of .github/workflows/portable-text-sync.yml read files across the
 repository, and a path list cannot be kept complete against those reads, so
@@ -21,7 +21,11 @@ tags, tags-ignore or types key under either trigger fails. It also fails
 unless that workflow has exactly 1 job, dry-run, whose timeout-minutes is the
 integer DRY_RUN_TIMEOUT (row 117), so a removed, changed, quoted or moved
 time limit fails, and a change to the limit is made in this test and the
-workflow together. It does not check the steps of the dry run. The dry run
+workflow together. It also fails unless that job carries no if: or
+continue-on-error and its steps are a list of mappings, none of which carries
+an if:, continue-on-error or timeout-minutes, so any condition on the job or
+a step, a failure that does not fail the job, or a time limit on a step
+fails. It checks no other key of that job or its steps. The dry run
 does not run this test: workflow-isolation.yml does, with no filter, so a
 pull request that adds a filter to the dry run which its own changed files
 fall outside still runs it.
@@ -57,14 +61,14 @@ fail it. A merge key among the top-level keys fails the first check. How
 GitHub Actions handles merge keys is not checked.
 
 The test checks no other key of a job that runs it, such as needs: or
-continue-on-error, no condition on any other job or step, and nothing that
-GitHub Actions reads differently from PyYAML. A deliberate edit that defeats
-this test is caught only by review: a pull request can edit both workflows
-and this test, and no check inside them can stop it. Such edits include, for
-example, a filter on both workflows that the pull request's own files fall
-outside, which starts neither run of this test; a needs: on a job that is
-skipped; a step before this one that changes the files this test reads; and
-an edit to this test.
+continue-on-error, no condition on any other job or step of the 2 workflows
+that run it, and nothing that GitHub Actions reads differently from PyYAML.
+A deliberate edit that defeats this test is caught only by review: a pull
+request can edit both workflows and this test, and no check inside them can
+stop it. Such edits include, for example, a filter on both workflows that
+the pull request's own files fall outside, which starts neither run of this
+test; a needs: on a job that is skipped; a step before this one that changes
+the files this test reads; and an edit to this test.
 
 Usage:
   python3 -I tools/test-portable-text-sync-workflow.py
@@ -157,6 +161,20 @@ def timeout_holds(doc: dict) -> bool:
     return list(jobs) == ["dry-run"] and type(limit) is int and limit == DRY_RUN_TIMEOUT
 
 
+def unconditional(doc: dict) -> bool:
+    """Whether the dry-run job carries neither if nor continue-on-error, and none of its steps carries either.
+
+    False also if the steps are not a list of mappings, or if any step carries timeout-minutes.
+    """
+    jobs = doc["jobs"] if isinstance(doc["jobs"], dict) else {}
+    job = jobs.get("dry-run")
+    steps = job.get("steps") if isinstance(job, dict) else None
+    if not isinstance(steps, list) or not all(isinstance(step, dict) for step in steps):
+        return False
+    return not {"if", "continue-on-error"} & set(job) and not any(
+        {"if", "continue-on-error", "timeout-minutes"} & set(step) for step in steps)
+
+
 def edited(text: str, old: str, new: str) -> str:
     if old not in text:
         raise AssertionError(f"{old!r} is not in the workflow")
@@ -247,6 +265,8 @@ class DryRunTests(unittest.TestCase):
     PULL = "  pull_request:\n"
     MAIN = "      - main\n"
     LIMIT = f"    timeout-minutes: {DRY_RUN_TIMEOUT}\n"
+    RUNS_ON = "    runs-on: ubuntu-latest\n"
+    LAST = "      - name: Run the release dry run\n"
 
     def test_both_triggers_carry_no_filter(self):
         self.assertEqual(triggers(parse(read(DRY_RUN))), DRY_RUN_TRIGGERS)
@@ -285,6 +305,19 @@ class DryRunTests(unittest.TestCase):
                          ("jobs:\n", "jobs:\n  other:\n    runs-on: ubuntu-latest\n")):
             with self.subTest(new):
                 self.assertFalse(timeout_holds(parse(edited(text, old, new))))
+
+    def test_the_job_and_its_steps_carry_no_condition(self):
+        self.assertTrue(unconditional(parse(read(DRY_RUN))))
+
+    def test_a_condition_or_a_step_limit_fails(self):
+        text = read(DRY_RUN)
+        for old, new in ((self.RUNS_ON, "    if: github.event_name != 'pull_request'\n" + self.RUNS_ON),
+                         (self.RUNS_ON, "    continue-on-error: true\n" + self.RUNS_ON),
+                         (self.LAST, self.LAST + "        if: false\n"),
+                         (self.LAST, self.LAST + "        continue-on-error: true\n"),
+                         (self.LAST, self.LAST + "        timeout-minutes: 1\n")):
+            with self.subTest(new):
+                self.assertFalse(unconditional(parse(edited(text, old, new))))
 
 
 if __name__ == "__main__":
