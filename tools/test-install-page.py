@@ -10,7 +10,7 @@ pass for a refusal. 1 more check asserts that the gate's docstring names
 exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that this file's own source
 carries no ``?v=`` token starting with a digit apart from those KEPT_TOKENS
 names, since a case writes the current baseline version as BASELINE, read
-from ``.baseline/pin.toml``, and 1 that the source binds BASELINE only
+from ``.baseline/pin.toml``, and 1 that its syntax tree binds BASELINE only
 there. Exit 0 when every case passes; 1 otherwise, naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 may hide or empty what the gate checks; it must exit 0, and the gate's docstring
@@ -196,9 +196,10 @@ try:
 except Exception as error:
     print(f"test-install-page: failures:\n  - the baseline version could not be read from .baseline/pin.toml: {error!r}")
     raise SystemExit(1)
-# The names that hold the version read from the pin. version_binding_problems() refuses any binding of them but the
-# one above, since every case and check built after another binding would carry its value instead of the version, and
-# one that drops the ?v= token, such as the gate's load_path(), would still pass.
+# The names that hold the version read from the pin. version_binding_problems() refuses any binding of them in this
+# file's syntax tree but the one above, and any star import, since every case and check built after another binding
+# would carry its value instead of the version, and one that drops the ?v= token, such as the gate's load_path(), would
+# still pass.
 VERSION_NAMES = ("BASELINE",)
 # The ?v= tokens that start with a digit and that this file keeps as literals on purpose, each with its reason;
 # version_literal_problems() refuses any other, so that no case carries a baseline version that goes stale at a move.
@@ -2381,18 +2382,26 @@ def version_literal_problems() -> list[str]:
 
 def version_binding_problems() -> list[str]:
     """Each binding in this file's own source of a name of VERSION_NAMES other than its first, read from the syntax
-    tree: an assignment, a deletion, a loop, with or except target, an import, a def, a class, an argument, a match
-    capture, or a global or nonlocal statement. A local binding counts too, since a reader takes that name for the
-    version."""
+    tree: an assignment (plain, augmented, annotated, starred or :=), a deletion, a loop, comprehension, with or
+    except target, a type alias, an import, a def, a class, an argument, a type parameter, a match capture, or a
+    global or nonlocal statement; and each star import, which can bind any name. A local binding counts too, since a
+    reader takes that name for the version. The syntax tree does not show a binding made by running code, such as
+    one through globals(), exec or setattr on this module, so this check cannot see one."""
     lines: dict[str, list[int]] = {name: [] for name in VERSION_NAMES}
+    stars: list[int] = []
     for node in ast.walk(ast.parse(Path(__file__).read_text(encoding="utf-8"))):
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names = [node.id]
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler,
-                               ast.MatchAs, ast.MatchStar)):
+                               ast.MatchAs, ast.MatchStar, ast.TypeVar, ast.ParamSpec, ast.TypeVarTuple)):
             names = [node.name]
         elif isinstance(node, ast.MatchMapping):
             names = [node.rest]
+        elif isinstance(node, ast.alias) and node.name == "*":
+            # A star import binds the names that the other module exports, which this file's syntax tree does not
+            # list, so it may bind a name of VERSION_NAMES.
+            stars.append(node.lineno)
+            continue
         elif isinstance(node, ast.alias):
             names = [node.asname or node.name.partition(".")[0]]
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
@@ -2405,6 +2414,8 @@ def version_binding_problems() -> list[str]:
             if name in lines:
                 lines[name].append(node.lineno)
     problems = [f"{name} is never bound" for name, found in lines.items() if not found]
+    problems += [f"line {line} imports *, which can bind {', '.join(VERSION_NAMES)}; import the names it needs"
+                 for line in sorted(stars)]
     return problems + [f"line {line} binds {name} again, after line {min(found)}; give that value its own name"
                        for name, found in lines.items() for line in sorted(found)[1:]]
 
