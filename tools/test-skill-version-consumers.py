@@ -1031,16 +1031,17 @@ def wait_until_ready(ready: Path, seconds: float = 30) -> int:
 
 @unittest.skipUnless(Path("/proc/self/stat").exists(), "needs /proc to tell whether a process is running")
 class BoundedLaunchTest(unittest.TestCase):
-    """Row 117: each case but 1 pins 1 path of ``run_bounded``; the other
-    runs nothing and pins, from the syntax tree of this file, that no call
-    of ``run_bounded`` outside this class passes a timeout. Every background
-    process that a stand-in starts lives until it is killed, so no case races
-    the lifetime of a process against a clock; the clocks left (the readiness
-    wait, the wait for a killed process to end, and the timeouts of
-    ``run_bounded``) bound the test, so a broken launcher fails a case
-    instead of hanging it. These cases do not show that no process outlives
-    a packager run: the real client starts each extractor in a session of
-    its own, which the group kill does not reach."""
+    """Row 117: 9 cases each pin 1 path of ``run_bounded``. The other 2 run
+    nothing and pin, from the syntax tree of this file, that no call of
+    ``run_bounded`` outside this class passes a timeout and that no launch
+    outside ``run_bounded`` runs anything but git, unzip or locale. Every
+    background process that a stand-in starts lives until it is killed, so
+    no case races the lifetime of a process against a clock; the clocks left
+    (the readiness wait, the wait for a killed process to end, and the
+    timeouts of ``run_bounded``) bound the test, so a broken launcher fails
+    a case instead of hanging it. These cases do not show that no process
+    outlives a packager run: the real client starts each extractor in a
+    session of its own, which the group kill does not reach."""
 
     def marker(self) -> Path:
         """A new folder for the files of the case, which every background
@@ -1103,12 +1104,37 @@ class BoundedLaunchTest(unittest.TestCase):
         self.assertEqual(given, [SCRIPT_TIMEOUT])
         self.assertGreater(SCRIPT_TIMEOUT, 0)
 
+    def test_a_read_of_standard_input_gets_end_of_file(self):
+        # A run must not read the standard input of the test. For the length
+        # of the call, that input is a pipe that holds a line and stays open,
+        # so a run that inherited it would read the line; the stand-in
+        # reports end of file only if a read of its own standard input gets
+        # end of file, as a read of /dev/null does. With no standard input to
+        # replace, a run that inherited it would also read nothing, so the
+        # case cannot tell the 2 apart and is skipped.
+        try:
+            saved = os.dup(0)
+        except OSError:
+            self.skipTest("the test process has no standard input to replace")
+        self.addCleanup(os.close, saved)
+        read_end, write_end = os.pipe()
+        self.addCleanup(os.close, write_end)
+        self.addCleanup(os.close, read_end)
+        os.write(write_end, b"a line from the test\n")
+        os.dup2(read_end, 0)
+        try:
+            result = run_bounded(["bash", "-c", "if IFS= read -r line; then printf 'read: %s\\n' \"$line\"; "
+                                                "else printf 'end of file\\n'; fi"], "the stand-in")
+        finally:
+            os.dup2(saved, 0)
+        self.assertEqual(result, (0, "end of file\n", ""))
+
     def test_no_launch_outside_this_class_passes_a_timeout(self):
         # A launch that passed its own timeout (None among them) would not
-        # have the bound that the previous case pins, so no call of
-        # run_bounded outside this class may pass a timeout keyword, a 5th
-        # argument, or a starred argument. Residual: a call through another
-        # name (an alias or a partial) is not seen.
+        # have the bound that test_a_launch_without_a_timeout_passes_the_default
+        # pins, so no call of run_bounded outside this class may pass a
+        # timeout keyword, a 5th argument, or a starred argument. Residual: a
+        # call through another name (an alias or a partial) is not seen.
         tree = ast.parse(Path(__file__).resolve().read_text(encoding="utf-8"))
         inside = set()
         for node in ast.walk(tree):
@@ -1124,6 +1150,40 @@ class BoundedLaunchTest(unittest.TestCase):
                 self.assertFalse(any(isinstance(arg, ast.Starred) for arg in call.args))
                 self.assertEqual([keyword.arg for keyword in call.keywords
                                   if keyword.arg is None or keyword.arg == "timeout"], [])
+
+    def test_no_script_under_test_is_launched_outside_run_bounded(self):
+        # Every run of release-package.sh and of the release-dry-run.sh
+        # excerpts needs the bound and the cleanup of run_bounded, so every
+        # subprocess launch outside run_bounded must name git, unzip or locale
+        # as the first item of a literal argument list, and no os.system,
+        # os.popen, os.exec*, os.spawn* or os.posix_spawn* call may appear.
+        # Residual: a launch through another name (an alias, a function
+        # imported by name, or a partial) or through another module (asyncio
+        # or pty, for example) is not seen.
+        tree = ast.parse(Path(__file__).resolve().read_text(encoding="utf-8"))
+        inside = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "run_bounded":
+                inside.update(id(child) for child in ast.walk(node))
+        launchers = {"run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput"}
+        launches, os_launches = [], []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)):
+                continue
+            module, name = node.func.value.id, node.func.attr
+            if module == "subprocess" and name in launchers and id(node) not in inside:
+                launches.append(node)
+            elif module == "os" and (name in ("system", "popen") or name.startswith(("exec", "spawn", "posix_spawn"))):
+                os_launches.append(node.lineno)
+        self.assertTrue(launches, "no subprocess launch was found outside run_bounded")
+        self.assertEqual(os_launches, [])
+        for call in launches:
+            with self.subTest(line=call.lineno):
+                listed = call.args[0] if call.args and isinstance(call.args[0], ast.List) else None
+                program = listed.elts[0] if listed is not None and listed.elts else None
+                self.assertIsInstance(program, ast.Constant)
+                self.assertIn(program.value, ("git", "unzip", "locale"))
 
     def test_a_background_process_is_killed_after_a_build(self):
         marker = self.marker()
