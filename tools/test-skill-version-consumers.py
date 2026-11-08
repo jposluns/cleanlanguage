@@ -17,8 +17,8 @@ the dry run read is exercised from the block extracted from its real script.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
-import inspect
 import json
 import os
 import shlex
@@ -244,10 +244,13 @@ LONG_BLOB_GIT = (
 # process group of the run and appends its id to the file named. Its streams
 # are redirected, so it holds no pipe of the run open and the run can end
 # while it is still alive; it names the file in its arguments, so that the
-# test can tell it from any other process; and it sleeps far past any run,
-# so it is still alive after the packager ends unless the launcher kills it.
+# test can find it without the file; and it sleeps until it is killed, so
+# whether it is alive after the run does not depend on a clock. The client
+# writes the id and closes the file before it returns, and the packager waits
+# for the client, so the file is complete when the run ends.
 LINGERING_CHILD_HOOK = (
-    "_lingering = subprocess.Popen([sys.executable, '-I', '-c', 'import time; time.sleep(120)', {pids!r}],\n"
+    "_lingering = subprocess.Popen([sys.executable, '-I', '-c', 'import time\\nwhile True: time.sleep(3600)',\n"
+    "                               {pids!r}],\n"
     "                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,\n"
     "                              stderr=subprocess.DEVNULL)\n"
     "with open({pids!r}, 'a', encoding='utf-8') as _pids:\n"
@@ -393,14 +396,20 @@ SCRIPT_TIMEOUT = 60
 # Row 117: seconds to collect the output of a run after its process group has
 # been killed on a timeout. The killed members close their ends of the pipes
 # when they end, so a pipe still open after this long is held by a process
-# that the kill did not reach, such as one that left the group; the output is
-# then reported as not collected.
+# that the kill did not reach, such as one in a session of its own; the output
+# is then reported as not collected.
 DRAIN_TIMEOUT = 5
+
+# Row 117: seconds to wait for the script itself after the last kill of its
+# group. A script that has ended is reaped at once; one that a SIGKILL has not
+# ended within this bound (for example one in an uninterruptible sleep) is left
+# unreaped rather than waited for without a bound.
+REAP_TIMEOUT = 5
 
 
 def kill_group(pgid: int) -> None:
-    """Kill every process still in process group ``pgid``. An empty group is
-    not an error: everything in it has already ended."""
+    """Send SIGKILL to process group ``pgid``. An empty group is not an
+    error: everything in it has already ended."""
     try:
         os.killpg(pgid, signal.SIGKILL)
     except ProcessLookupError:
@@ -414,23 +423,29 @@ def run_bounded(args: list, name: str, env: dict | None = None, cwd: Path | None
     of the release-dry-run.sh excerpts goes through here, so that each run is
     bounded and cleaned up the same way.
 
-    The script runs in a session of its own, so its process group holds only
-    the script and what it started, and with standard input read from
-    /dev/null, so a read of it gets end of file at once instead of waiting on
-    the input of the test. The wait for the run is bounded by ``timeout``
-    seconds; past it the group is killed, the output is collected for at most
-    ``DRAIN_TIMEOUT`` seconds more, and the test fails with a reason that
-    names the timeout. On every way out (any exit status, the timeout, or an
-    exception while waiting) the group is killed once the wait has ended, so
-    no background process the script left in the group outlives the call. A
-    reaped script's group keeps its id while any member is alive, so the kill
-    reaches only that group. The last wait, for the script itself, is not
-    bounded; it follows that kill, and the script, as the leader of its
-    session, cannot leave the group. Residual: a process that leaves the group
-    (by setsid or setpgid) is not killed, and if it holds an output pipe open
-    after a timeout, the output of the run is not collected; once the group is
-    empty its id can be given to a new process in the moment between the wait
-    and the kill."""
+    The script runs in a new session, so it leads a process group that holds
+    the script and what it starts there, and with standard input read from
+    /dev/null, so a read of it gets end of file at once. Every wait here has
+    a bound: the wait for the run is bounded by ``timeout`` seconds; past it
+    the group is killed, the output is collected for at most ``DRAIN_TIMEOUT``
+    seconds more, and the test fails with a reason that names the timeout.
+    On every way out (any exit status, the timeout, or an exception while
+    waiting) the group is sent SIGKILL once the wait has ended, the wait for
+    the script itself is bounded by ``REAP_TIMEOUT`` seconds, and the output
+    pipes are closed.
+
+    What the kill cannot reach: a process in a session or process group of
+    its own. The real client starts each extractor in a session of its own
+    (tools/skill-release-date-client.py, ``start_new_session=True``), so an
+    extractor still running when its client is killed, for example after a
+    timeout, outlives this call; a process outside the group that holds an
+    output pipe open keeps the output of the run from being collected after a
+    timeout. What a reaped group id means: on
+    the normal path the script has been reaped before the last kill, and its
+    id then names its group only while a member of the group is alive; once
+    the group is empty, the id can be given to a new process, and the kill
+    then reaches that process's group if it has made itself the leader of a
+    group under that id."""
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env, cwd=cwd, start_new_session=True)
     try:
@@ -449,13 +464,20 @@ def run_bounded(args: list, name: str, env: dict | None = None, cwd: Path | None
             f"{name} did not end within the {timeout:g}-second timeout, so its process group was killed; "
             f"{detail}") from None
     finally:
-        kill_group(proc.pid)
-        if proc.returncode is None:
-            proc.wait()
-        # A wait that timed out or failed leaves the read ends of the pipes
-        # open; closing a closed one does nothing.
-        proc.stdout.close()
-        proc.stderr.close()
+        try:
+            kill_group(proc.pid)
+            try:
+                proc.wait(timeout=REAP_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                # Reached only after a wait that has already failed (on the
+                # normal path the script has been reaped), so that failure
+                # is the one the test reports.
+                pass
+        finally:
+            # A wait that timed out or failed leaves the read ends of the
+            # pipes open; closing a closed one does nothing.
+            proc.stdout.close()
+            proc.stderr.close()
     return proc.returncode, stdout, stderr
 
 
@@ -468,8 +490,10 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
     ``client`` the client: ``"missing"`` deletes it, any other text is written
     in its place. ``path_prefix`` is put first on the PATH of the packager,
     and ``bash_options`` are passed to the bash that runs it. The packager
-    runs through ``run_bounded``, so the run is bounded by ``SCRIPT_TIMEOUT``
-    and no stand-in it left in its process group outlives it.
+    runs through ``run_bounded`` with its default timeout, so the wait for the
+    run is bounded by ``SCRIPT_TIMEOUT`` and the run's process group is killed
+    when the wait ends; an extractor, which the real client starts in a
+    session of its own, is not in that group.
     Returns (exit_code, stderr)."""
     skill = skill_with(version_block, released_block) + extra_tail
     with tempfile.TemporaryDirectory() as tmp:
@@ -919,175 +943,270 @@ def process_running(pid: int) -> bool:
     return stat.rsplit(")", 1)[1].split()[0] != "Z"
 
 
-def stop_leftovers(pids_file: Path) -> None:
-    """Kill each process whose id is in ``pids_file``, read when this runs,
-    that is still running and names the file in its arguments, so that a
-    failed check or launch leaves none of them behind. The check on the arguments
-    reduces, but does not exclude, the risk of killing an unrelated process
-    that was given a reused id: the arguments are read, the process is
-    checked and the signal is sent in separate steps."""
-    try:
-        text = pids_file.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return
-    marker = str(pids_file).encode("utf-8")
-    for pid in (int(word) for word in text.split() if word.isdigit()):
-        try:
-            cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
-        except (FileNotFoundError, ProcessLookupError):
+def processes_naming(marker: str) -> list:
+    """The ids of the running processes, other than this one, that have
+    ``marker`` in their arguments."""
+    needle = marker.encode("utf-8")
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
             continue
-        if marker in cmdline.split(b"\0") and process_running(pid):
+        try:
+            cmdline = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if needle in cmdline and process_running(int(entry.name)):
+            found.append(int(entry.name))
+    return found
+
+
+def stop_leftovers(marker: str, seconds: float = 10) -> None:
+    """Kill every running process that has ``marker`` in its arguments, and
+    fail if any is still running after ``seconds``. The processes are found
+    from the process list, not from a file, so a process that has not written
+    its id anywhere, or has left the group of the run, is still found.
+    Residual: the arguments are read and the signal is sent in separate
+    steps, so a process given a reused id in between could be hit; the marker
+    is a new temporary folder, so no unrelated process is expected to name
+    it."""
+    deadline = time.monotonic() + seconds
+    while True:
+        pids = processes_naming(marker)
+        if not pids:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"processes {pids} that name {marker} were still running {seconds:g} seconds "
+                                 f"after the first kill")
+        for pid in pids:
             try:
                 os.kill(pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
+        time.sleep(0.1)
 
 
-# Row 117: a background process for the launcher cases. Once it is running
-# (and, when told to, has left the process group of the run), it appends its
-# id to the file named in its arguments, so that the id in the file tells the
-# test that the process exists in the state the case needs; it names the file
-# in its arguments, so that the test can tell it from any other process; and
-# then it sleeps for the seconds given.
+# Row 117: a background process for the launcher cases. Once it is set up
+# (and, when told to, has left the process group of the run), it writes its
+# id to a temporary file, closes it, and renames it to the file named in its
+# arguments, so that the file appears whole and only once the process is in
+# the state the case needs; it names that file in its arguments, so that the
+# test can find it without the file; and it sleeps until it is killed, so
+# that no case depends on how long it lives.
 BACKGROUND_CHILD = (
     "import os, sys, time\n"
     "{leave_group}"
-    "with open(sys.argv[1], 'a', encoding='utf-8') as pids:\n"
-    "    pids.write(f'{{os.getpid()}}\\n')\n"
-    "time.sleep({seconds})\n"
+    "with open(sys.argv[1] + '.tmp', 'w', encoding='utf-8') as ready:\n"
+    "    ready.write(f'{{os.getpid()}}\\n')\n"
+    "os.replace(sys.argv[1] + '.tmp', sys.argv[1])\n"
+    "while True:\n"
+    "    time.sleep(3600)\n"
 )
 
 
-def background_child(pids: Path, seconds: float, leave_group: bool = False) -> str:
-    """A shell command that runs ``BACKGROUND_CHILD`` with ``pids`` as its
+def background_child(ready: Path, leave_group: bool = False) -> str:
+    """A shell command that runs ``BACKGROUND_CHILD`` with ``ready`` as its
     file; with ``leave_group`` it starts a session of its own first."""
-    code = BACKGROUND_CHILD.format(leave_group="os.setsid()\n" if leave_group else "", seconds=seconds)
-    return shlex.join([sys.executable, "-I", "-c", code, str(pids)])
+    code = BACKGROUND_CHILD.format(leave_group="os.setsid()\n" if leave_group else "")
+    return shlex.join([sys.executable, "-I", "-c", code, str(ready)])
 
 
-def wait_for_pids(pids: Path, seconds: float = 30) -> None:
-    """Wait until ``pids`` holds at least 1 whole line, or fail after
-    ``seconds``."""
+def wait_until_ready(ready: Path, seconds: float = 30) -> int:
+    """Wait until the file ``ready`` exists and return the id in it, or fail
+    after ``seconds``."""
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         try:
-            if pids.read_text(encoding="utf-8").endswith("\n"):
-                return
+            return int(ready.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            pass
-        time.sleep(0.05)
-    raise AssertionError(f"the stand-in's background process did not write its id within {seconds:g} seconds")
+            time.sleep(0.05)
+    raise AssertionError(f"the stand-in's background process did not signal that it was ready within "
+                         f"{seconds:g} seconds")
 
 
 @unittest.skipUnless(Path("/proc/self/stat").exists(), "needs /proc to tell whether a process is running")
 class BoundedLaunchTest(unittest.TestCase):
-    """Row 117: a launch of a script under test kills what the script left in
-    its process group on every way out, so no stand-in left in the group
-    outlives the call, and the wait after a timeout is bounded even when a
-    process outside the group holds the output pipes open."""
+    """Row 117: each case pins 1 path of ``run_bounded``. Every background
+    process that a stand-in starts lives until it is killed, so no case races
+    the lifetime of a process against a clock; the clocks left (the readiness
+    wait, the wait for a killed process to end, and the timeouts of
+    ``run_bounded``) bound the test, so a broken launcher fails a case
+    instead of hanging it. These cases do not show that no process outlives
+    a packager run: the real client starts each extractor in a session of
+    its own, which the group kill does not reach."""
 
-    def pids_file(self) -> Path:
-        """A file for the ids of the stand-in's background processes. Before
-        any launch, a cleanup is registered that runs ``stop_leftovers`` on
-        the file when the test ends, so the processes named in it are stopped
-        even when a launch or check fails early; the folder of the file is
-        removed after that cleanup."""
+    def marker(self) -> Path:
+        """A new folder for the files of the case, which every stand-in names
+        in its arguments. Before any launch, a cleanup is registered that runs
+        ``stop_leftovers`` on the folder when the test ends, so a launch or
+        check that fails early leaves no stand-in behind, even one that has
+        not written its id; the folder is removed after that cleanup."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        pids = Path(tmp.name) / "pids"
-        self.addCleanup(stop_leftovers, pids)
-        return pids
+        marker = Path(tmp.name)
+        self.addCleanup(stop_leftovers, str(marker) + os.sep)
+        return marker
 
-    def clock_after_start(self, pids: Path):
+    def ready_before_the_wait(self, ready: Path):
         """A patch of ``Popen.communicate`` that waits until the stand-in's
-        background process has written its id to ``pids`` before the real
-        wait begins, so that a short timeout counts from a point at which that
-        process exists, however slowly the stand-in starts."""
+        background process has signalled through ``ready`` that it is in
+        place before the real wait begins, so that a short timeout cannot
+        fire before that process exists. It fails a wait given no bound,
+        since such a wait would never end while that process lives."""
         real_communicate = subprocess.Popen.communicate
 
-        def communicate(proc, *args, **kwargs):
-            wait_for_pids(pids)
-            return real_communicate(proc, *args, **kwargs)
+        def communicate(proc, input=None, timeout=None):
+            wait_until_ready(ready)
+            if timeout is None:
+                raise AssertionError("a wait for the run was given no bound")
+            return real_communicate(proc, input, timeout)
 
         return mock.patch.object(subprocess.Popen, "communicate", communicate)
 
-    def assert_nothing_left(self, pids_file: Path):
-        pids = [int(line) for line in pids_file.read_text(encoding="utf-8").split()]
+    def recorded(self, pids: Path) -> list:
+        try:
+            return [int(word) for word in pids.read_text(encoding="utf-8").split()]
+        except FileNotFoundError:
+            return []
+
+    def assert_nothing_left(self, marker: Path, pids: list):
         self.assertTrue(pids, "the stand-in started no background process")
         # A SIGKILL takes effect when its target next runs, not when killpg
-        # returns, so the check waits a little before it fails.
+        # returns, so the check waits up to 10 seconds before it fails.
         deadline = time.monotonic() + 10
-        while any(process_running(pid) for pid in pids) and time.monotonic() < deadline:
+        while processes_naming(str(marker) + os.sep) and time.monotonic() < deadline:
             time.sleep(0.1)
-        self.assertEqual([pid for pid in pids if process_running(pid)], [],
+        self.assertEqual(processes_naming(str(marker) + os.sep), [],
                          "a background process started by the stand-in outlived the run")
 
-    def test_a_run_is_bounded_by_default(self):
+    def test_a_launch_without_a_timeout_passes_the_default(self):
         # Every launch outside this class passes no timeout, so each relies
-        # on this default for its bound.
-        default = inspect.signature(run_bounded).parameters["timeout"].default
-        self.assertEqual(default, SCRIPT_TIMEOUT)
+        # on run_bounded handing SCRIPT_TIMEOUT to the wait for the run.
+        given = []
+        real_communicate = subprocess.Popen.communicate
+
+        def communicate(proc, input=None, timeout=None):
+            given.append(timeout)
+            return real_communicate(proc, input, timeout)
+
+        with mock.patch.object(subprocess.Popen, "communicate", communicate):
+            result = run_bounded(["bash", "-c", "printf done"], "the stand-in")
+        self.assertEqual(result, (0, "done", ""))
+        self.assertEqual(given, [SCRIPT_TIMEOUT])
         self.assertGreater(SCRIPT_TIMEOUT, 0)
 
+    def test_no_launch_outside_this_class_passes_a_timeout(self):
+        # A launch that passed its own timeout (None among them) would not
+        # have the bound that the previous case pins, so no call of
+        # run_bounded outside this class may pass a timeout keyword, a 5th
+        # argument, or a starred argument. Residual: a call through another
+        # name (an alias or a partial) is not seen.
+        tree = ast.parse(Path(__file__).resolve().read_text(encoding="utf-8"))
+        inside = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == "BoundedLaunchTest":
+                inside.update(id(child) for child in ast.walk(node))
+        calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                 and node.func.id == "run_bounded" and id(node) not in inside]
+        self.assertTrue(calls, "no call of run_bounded was found outside BoundedLaunchTest")
+        for call in calls:
+            with self.subTest(line=call.lineno):
+                self.assertLessEqual(len(call.args), 4)
+                self.assertFalse(any(isinstance(arg, ast.Starred) for arg in call.args))
+                self.assertEqual([keyword.arg for keyword in call.keywords
+                                  if keyword.arg is None or keyword.arg == "timeout"], [])
+
     def test_a_background_process_is_killed_after_a_build(self):
-        pids = self.pids_file()
+        marker = self.marker()
+        pids = marker / "pids"
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", released_block="Released: 2026-11-15  ",
                                     client=client_with(LINGERING_CHILD_HOOK.format(pids=str(pids))))
         self.assertEqual(code, 0, stderr)
-        self.assert_nothing_left(pids)
+        self.assert_nothing_left(marker, self.recorded(pids))
 
     def test_a_background_process_is_killed_after_a_failure(self):
         # The plugin version check comes after every client call, so the
         # stand-in has started its background processes before the run fails.
-        pids = self.pids_file()
+        marker = self.marker()
+        pids = marker / "pids"
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.4", released_block="Released: 2026-11-15  ",
                                     client=client_with(LINGERING_CHILD_HOOK.format(pids=str(pids))))
         self.assertEqual(code, 1, stderr)
         self.assertIn("plugin.json version (1.2.4) does not match SKILL.md (1.2.3)", stderr)
-        self.assert_nothing_left(pids)
+        self.assert_nothing_left(marker, self.recorded(pids))
 
     def test_a_background_process_is_killed_after_a_timeout(self):
-        # The background process keeps the streams it inherits, so it holds
-        # the output pipes of the run open, and the wait after the timeout
-        # collects the stand-in's line within DRAIN_TIMEOUT only if the group
-        # was killed before that wait.
-        pids = self.pids_file()
-        script = f"echo 'stand-in started' >&2\n{background_child(pids, 120)} &\nwait\n"
-        with self.clock_after_start(pids), self.assertRaisesRegex(
+        # The background process keeps the streams it inherits and lives
+        # until it is killed, so it holds the output pipes of the run open
+        # and the run cannot end by itself; the wait after the timeout
+        # collects the stand-in's line only if the group was killed before
+        # that wait.
+        marker = self.marker()
+        ready = marker / "ready"
+        script = f"echo 'stand-in started' >&2\n{background_child(ready)} &\nwait\n"
+        with self.ready_before_the_wait(ready), self.assertRaisesRegex(
                 AssertionError, r"^the stand-in did not end within the 1-second timeout, so its process group "
                                 r"was killed; stderr: 'stand-in started\\n'$"):
             run_bounded(["bash", "-c", script], "the stand-in", timeout=1)
-        self.assert_nothing_left(pids)
+        self.assert_nothing_left(marker, [wait_until_ready(ready)])
 
     def test_the_wait_after_a_timeout_is_bounded(self):
         # The background process leaves the group, so the kill misses it, and
-        # it holds the output pipes of the run open for longer than the
-        # timeout and DRAIN_TIMEOUT together. The run still ends, with its
-        # output reported as not collected; the cleanup of the test then
-        # kills that process.
-        pids = self.pids_file()
-        script = f"{background_child(pids, 4 * DRAIN_TIMEOUT, leave_group=True)} &\nwait\n"
-        with self.clock_after_start(pids), self.assertRaisesRegex(
+        # it holds the output pipes of the run open until the cleanup of the
+        # test kills it. The run still ends, with its output reported as not
+        # collected.
+        marker = self.marker()
+        ready = marker / "ready"
+        script = f"{background_child(ready, leave_group=True)} &\nwait\n"
+        with self.ready_before_the_wait(ready), self.assertRaisesRegex(
                 AssertionError, r"^the stand-in did not end within the 1-second timeout, so its process group "
                                 r"was killed; stderr was not collected"):
             run_bounded(["bash", "-c", script], "the stand-in", timeout=1)
 
     def test_a_background_process_is_killed_after_an_exception_while_waiting(self):
         # The stand-in ends at once and leaves its background process in the
-        # group, and the wait fails once that process has started, so only
-        # the kill on the way out of the failed wait can end it before the
-        # check.
-        pids = self.pids_file()
-        script = f"{background_child(pids, 120)} </dev/null >/dev/null 2>&1 &\n"
+        # group, and the wait fails once that process is in place, so only
+        # the kill on the way out of the failed wait can end it.
+        marker = self.marker()
+        ready = marker / "ready"
+        script = f"{background_child(ready)} </dev/null >/dev/null 2>&1 &\n"
 
         def failing_communicate(proc, *args, **kwargs):
-            wait_for_pids(pids)
+            wait_until_ready(ready)
             raise RuntimeError("injected failure while waiting")
 
         with mock.patch.object(subprocess.Popen, "communicate", failing_communicate), \
                 self.assertRaisesRegex(RuntimeError, r"^injected failure while waiting$"):
             run_bounded(["bash", "-c", script], "the stand-in")
-        self.assert_nothing_left(pids)
+        self.assert_nothing_left(marker, [wait_until_ready(ready)])
+
+    def test_the_last_wait_is_bounded(self):
+        # The wait for the run fails, and a patched Popen.wait then stands in
+        # for a script that its kill does not end (for example one in an
+        # uninterruptible sleep). The call still ends, with the failure of
+        # the wait and with the output pipes closed, only if the last wait is
+        # given a bound.
+        given = []
+        procs = []
+        real_wait = subprocess.Popen.wait
+        self.addCleanup(lambda: [real_wait(proc, timeout=REAP_TIMEOUT) for proc in procs])
+
+        def failing_communicate(proc, *args, **kwargs):
+            raise RuntimeError("injected failure while waiting")
+
+        def stuck_wait(proc, timeout=None):
+            given.append(timeout)
+            procs.append(proc)
+            if timeout is None:
+                raise AssertionError("the last wait was given no bound")
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+
+        with mock.patch.object(subprocess.Popen, "communicate", failing_communicate), \
+                mock.patch.object(subprocess.Popen, "wait", stuck_wait), \
+                self.assertRaisesRegex(RuntimeError, r"^injected failure while waiting$"):
+            run_bounded(["bash", "-c", "exit 0"], "the stand-in")
+        self.assertEqual(given, [REAP_TIMEOUT])
+        self.assertTrue(procs[0].stdout.closed and procs[0].stderr.closed)
 
 
 def dry_run_probe(extractor: str, bash_options: tuple = ()):
