@@ -393,13 +393,13 @@ def gate_verdict(gate, skill_text: str):
 # fails that run with a reason that names the timeout.
 SCRIPT_TIMEOUT = 60
 
-# Row 117: seconds to collect the output of a run after its process group has
-# been killed on a timeout. The killed members close their ends of the pipes
-# when they end, so a pipe still open after this long is held by a process
-# that has not ended: one that the kill did not reach, such as one in a
-# session of its own, or one that the SIGKILL has not ended within this bound
-# (for example one in an uninterruptible sleep); the output is then reported
-# as not collected.
+# Row 117: seconds that the wait which collects the output of a run may take
+# after its process group has been killed on a timeout. That wait reads both
+# pipes to end of file and then waits for the script to end, so it can pass
+# this bound while a process holds a pipe open (one that the kill did not
+# reach, or one that the SIGKILL has not yet ended, for example in an
+# uninterruptible sleep) or while the script itself has not ended; the output
+# is then reported as not collected within this bound.
 DRAIN_TIMEOUT = 5
 
 # Row 117: seconds to wait for the script itself after the last kill of its
@@ -411,10 +411,15 @@ REAP_TIMEOUT = 5
 
 def kill_group(pgid: int) -> None:
     """Send SIGKILL to process group ``pgid``. An empty group is not an
-    error: everything in it has already ended."""
+    error: everything in it has already ended. Nor is a group that the test
+    process may not signal: killpg refuses only when it may signal no member
+    of the group, so the group is not one that this process started (for
+    example another user's group under a reused id), or every member left in
+    it has changed its user, and in either case the kill could end nothing
+    there."""
     try:
         os.killpg(pgid, signal.SIGKILL)
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         pass
 
 
@@ -425,44 +430,42 @@ def run_bounded(args: list, name: str, env: dict | None = None, cwd: Path | None
     of the release-dry-run.sh excerpts goes through here, so that each run is
     bounded and cleaned up the same way.
 
-    The script runs in a new session, so it leads a process group that holds
-    the script and what it starts there, and with standard input read from
-    /dev/null, so a read of it gets end of file at once. Every wait here has
-    a bound: the wait for the run is bounded by ``timeout`` seconds; past it
-    the group is killed, the output is collected for at most ``DRAIN_TIMEOUT``
-    seconds more, and the test fails with a reason that names the timeout.
-    On every way out (any exit status, the timeout, or an exception while
-    waiting) the group is sent SIGKILL once the wait has ended, the wait for
-    the script itself is bounded by ``REAP_TIMEOUT`` seconds, and the output
-    pipes are closed.
+    The script runs in a new session, so it leads a new process group, and
+    with standard input read from /dev/null, so a read of it gets end of file
+    at once. Every wait here has a bound. The wait for the run is bounded by
+    ``timeout`` seconds. If that bound passes, this call sends SIGKILL to the
+    group, gives the wait that collects the output at most ``DRAIN_TIMEOUT``
+    seconds more, and fails the test with a reason that names the timeout and
+    says whether the output was collected within that bound. However the
+    wait for the run ends (any exit status, the timeout, or an exception),
+    this call then sends SIGKILL to the group, waits for the script itself
+    for at most ``REAP_TIMEOUT`` seconds, and closes the output pipes.
 
-    What the kill cannot reach: a process in a session or process group of
-    its own. The real client starts each extractor in a session of its own
-    (tools/skill-release-date-client.py, ``start_new_session=True``), so an
-    extractor still running when its client is killed, for example after a
-    timeout, outlives this call; a process outside the group that holds an
-    output pipe open keeps the output of the run from being collected after a
-    timeout. What a reaped group id means: on the normal path the script has
-    been reaped before the last kill, and its id then names its group only
-    while the group has a member, including one that has ended but has not
-    been reaped (a zombie); once the group and the session that the script
-    led both have no member left, the id can be given to a new process, and
-    the kill then reaches that process's group if it has made itself the
-    leader of a group under that id."""
+    Residual: it reaches no process outside the process group that it
+    started, such as each extractor that the real client starts with
+    ``start_new_session=True`` (tools/skill-release-date-client.py:408).
+    Its cleanup does not run when the test process itself is ended by a
+    signal that raises no Python exception (SIGKILL, or SIGTERM with no
+    handler), since its ``finally`` does not run then, and a run in a session
+    of its own does not receive a signal sent to the test runner's process
+    group, so a run that has not ended keeps running. If the script has been
+    reaped and its group and session have emptied, its id can be reused, and
+    the last kill then reaches the group of a new process that leads one
+    under that id."""
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env, cwd=cwd, start_new_session=True)
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         # The group is killed before the second wait, since a member that
-        # holds a pipe open would otherwise keep that wait from ending.
+        # holds a pipe open would otherwise keep that wait from finishing
+        # within its bound.
         kill_group(proc.pid)
         try:
             _stdout, stderr = proc.communicate(timeout=DRAIN_TIMEOUT)
             detail = f"stderr: {stderr[-2000:]!r}"
         except subprocess.TimeoutExpired:
-            detail = (f"stderr was not collected: an output pipe was still open {DRAIN_TIMEOUT:g} seconds after "
-                      f"the kill")
+            detail = f"stderr was not collected within {DRAIN_TIMEOUT:g} seconds of the kill"
         raise AssertionError(
             f"{name} did not end within the {timeout:g}-second timeout, so its process group was killed; "
             f"{detail}") from None
@@ -477,7 +480,7 @@ def run_bounded(args: list, name: str, env: dict | None = None, cwd: Path | None
                 # is the one the test reports.
                 pass
         finally:
-            # A wait that timed out or failed leaves the read ends of the
+            # A wait that timed out or failed may leave the read ends of the
             # pipes open; closing a closed one does nothing.
             proc.stdout.close()
             proc.stderr.close()
@@ -1160,13 +1163,15 @@ class BoundedLaunchTest(unittest.TestCase):
         # The background process leaves the group, so the kill misses it, and
         # it holds the output pipes of the run open until the cleanup of the
         # test kills it. The run still ends, with its output reported as not
-        # collected.
+        # collected within the bound; the whole reason is compared, so that
+        # it claims no more than that.
         marker = self.marker()
         ready = marker / "ready"
         script = f"{background_child(ready, leave_group=True)} &\nwait\n"
         with self.ready_before_the_wait(ready), self.assertRaisesRegex(
-                AssertionError, r"^the stand-in did not end within the 1-second timeout, so its process group "
-                                r"was killed; stderr was not collected"):
+                AssertionError, rf"^the stand-in did not end within the 1-second timeout, so its process group "
+                                rf"was killed; stderr was not collected within {DRAIN_TIMEOUT:g} seconds of the "
+                                rf"kill$"):
             run_bounded(["bash", "-c", script], "the stand-in", timeout=1)
 
     def test_a_background_process_is_killed_after_an_exception_while_waiting(self):
@@ -1213,6 +1218,22 @@ class BoundedLaunchTest(unittest.TestCase):
             run_bounded(["bash", "-c", "exit 0"], "the stand-in")
         self.assertEqual(given, [REAP_TIMEOUT])
         self.assertTrue(procs[0].stdout.closed and procs[0].stderr.closed)
+
+    def test_a_kill_that_is_refused_does_not_escape(self):
+        # After the script has been reaped, its id can name another user's
+        # group, which killpg refuses with PermissionError. A patched killpg
+        # refuses every kill, so the call returns the result of the run only
+        # if kill_group ignores that refusal.
+        given = []
+
+        def refused_killpg(pgid, sig):
+            given.append(sig)
+            raise PermissionError("Operation not permitted")
+
+        with mock.patch.object(os, "killpg", refused_killpg):
+            result = run_bounded(["bash", "-c", "printf done"], "the stand-in")
+        self.assertEqual(result, (0, "done", ""))
+        self.assertEqual(given, [signal.SIGKILL])
 
 
 def dry_run_probe(extractor: str, bash_options: tuple = ()):
