@@ -2,13 +2,26 @@
 """Tests for the live checksum gate's conditional 404 pass.
 
 The gate must not pass unconditionally when the release the verify page names
-is not published. It passes on a 404 only in the legitimate pre-tag window:
-the site names the current skill version and the tag does not exist yet,
-and even then the Released line is checked with no further network call, so
+is not published. It passes on a 404 only in the pre-tag window: the site
+names the current skill version and carries the not-yet-published note, and
+the tag does not exist yet; a checksum shown as published there fails. Even
+then the Released line is checked with no further network call, so
 a malformed line exits 3 and a line missing above the baseline fails. A
 mismatched unreleased version fails, a tag with no published release is
 unverifiable, and the published-release comparison and the transient-error
-handling are preserved. Once the release SKILL.md names is published, its
+handling are preserved. The page a version bump builds from the zero
+placeholder, which says that the checksum appears once the version is
+published, passes in the pre-tag window and fails as drift once the release is
+published and the gate can download and read its zip and .sha256, with a
+well-formed manifest that the zip hashes to; a page in neither state
+exits 3, with 1 case for each part of the
+rule that holds the page to the download block tools/build-site.py renders for
+it, including markup that a browser shows the same way, comments and hidden
+elements, and that rule is pinned to the copy that check-release-links.py
+carries. The page must also be the generator's whole render for the version
+and checksum it shows: elsewhere the fixture page stands in for that render,
+and WholePageTest runs the real generator on a copy of its inputs, on each
+page form that its cases list. Once the release SKILL.md names is published, its
 Released line (item 26) must name the UTC day of the release published_at
 record (G4), checked for the release SKILL.md names whatever version the site
 names, and that release must be immutable; an unpublished release SKILL.md
@@ -64,12 +77,91 @@ ZIP_BYTES = b"not a real zip, but hashing does not care"
 ZIP_SUM = hashlib.sha256(ZIP_BYTES).hexdigest()
 OTHER_SUM = "f" * 64
 
-VERIFY = """<!doctype html>
-<html><body>
-<p>The published checksum for version {version} is:</p>
-<code class="sum" id="published-checksum">{checksum}</code>
-</body></html>
-"""
+def verify_page(version: str, checksum: str) -> str:
+    """A verify page laid out as tools/build-site.py writes it: the download block the generator renders for
+    ``version`` and ``checksum`` (the gate's download_block), inside the elements build() writes around it
+    (BLOCK_ANCESTORS)."""
+    return ('<!doctype html>\n<html lang="en" class="site-cleanlanguage">\n<head><title>Verify</title></head>\n<body>\n'
+            '<main id="main-content">\n<div class="wrap"><div class="doc"><h1>Verify your download</h1>\n'
+            + gate.download_block(version, checksum) + '<div class="next"></div></div></div>\n</main>\n</body>\n</html>\n')
+
+
+class Page:
+    """A verify page in 1 state, written with format as the fixtures were: VERIFY.format(version=..., checksum=...)
+    for a published checksum, PENDING.format(version=...) for the zero placeholder."""
+
+    def __init__(self, checksum: str | None = None) -> None:
+        self.checksum = checksum
+
+    def format(self, version: str, checksum: str | None = None) -> str:
+        return verify_page(version, self.checksum or checksum)
+
+
+VERIFY = Page()
+# site/_redirects, with the short path to the checksum file the verify page may not link in the placeholder state.
+REDIRECTS = (
+    f"/download https://github.com/jposluns/cleanlanguage/releases/download/v{AHEAD}/cleanlanguage-{AHEAD}.zip 302\n"
+    f"/download/checksum https://github.com/jposluns/cleanlanguage/releases/download/v{AHEAD}/"
+    f"cleanlanguage-{AHEAD}.zip.sha256 302\n"
+)
+# The verify page while site-src/release.json holds the zero placeholder, as tools/build-site.py writes it.
+PENDING = Page("0" * 64)
+
+
+def outside(page: str, extra: str) -> str:
+    """``page`` with ``extra`` after the download block, inside main."""
+    return page.replace('<div class="next">', extra + '<div class="next">', 1)
+
+
+def fixture_render(version: str, checksum: str) -> bytes:
+    """The fixture page for ``version`` and ``checksum``, which stands in for the generator's whole render
+    (rendered_verify_page) in the tests that do not run the real generator on a copy of its inputs."""
+    return verify_page(version, checksum).encode("utf-8")
+
+
+# Appended to a copy of tools/build-site.py that a gate copy runs as a script (ModuleLoadTest): its verify_page()
+# returns fixture-render.html beside the copy's tools folder, which stands in for the whole render.
+STAND_IN_RENDER = (
+    "\n\ndef verify_page(root, release=None, date=None):\n"
+    "    return (root / \"fixture-render.html\").read_bytes()\n"
+)
+
+
+# The inputs tools/build-site.py renders the site from, as tools/test-build-site.py copies them.
+GENERATOR_INPUTS = (
+    "site-src", "cleanlanguage/skills/cleanlanguage/SKILL.md", "cleanlanguage/skills/cleanlanguage/references",
+    "site/downloads", "site/assets/baseline", "site/_headers", "site/_redirects", "site/robots.txt", "site/sitemap.xml",
+    "site/.well-known", "site/README.md", "site/images", ".baseline/pin.toml", "tools/sitemap-config.json",
+    "tools/check-install-page.py",
+)
+
+
+def copy_generator_inputs(root: Path) -> None:
+    """Copy GENERATOR_INPUTS from this repository into ``root``."""
+    for relative in GENERATOR_INPUTS:
+        source, target = MODULE_PATH.parent.parent / relative, root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copyfile(source, target)
+
+
+def exclude_draft_home(root: Path) -> None:
+    """Exclude the draft's home page from the sitemap under ``root``, as the draft branch does: tools/build-site.py
+    refuses to build a staged draft without that exclusion."""
+    path = root / "tools/sitemap-config.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["exclude"] = [entry for entry in data["exclude"] if entry != "draft/index.html"] + ["draft/index.html"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def render_with(generator: Path, root: Path, version: str, checksum: str) -> bytes:
+    """The whole verify page as the generator at ``generator`` renders it from ``root`` for these release values."""
+    generator_spec = importlib.util.spec_from_file_location("build_site_for_fixture", generator)
+    module = importlib.util.module_from_spec(generator_spec)
+    generator_spec.loader.exec_module(module)
+    return module.verify_page(root, {"version": version, "tag": f"v{version}", "checksum": checksum})
 
 
 # Row 80: the gate runs the extractor as a separate python3 -I child, so a
@@ -226,7 +318,7 @@ class ConditionalPassTest(unittest.TestCase):
         self._saved = (
             gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL,
             gate.release_status, gate.tag_status, gate.gh,
-            gate.release_published_at, gate.release_immutable,
+            gate.release_published_at, gate.release_immutable, gate.REDIRECTS,
         )
         # Row 80: a test may point the gate at a fake extractor, shorten
         # the child timeout or the reap grace, or change the output bounds;
@@ -239,16 +331,22 @@ class ConditionalPassTest(unittest.TestCase):
         gate.REPO_ROOT = root
         gate.VERIFY_PAGE = root / "index.html"
         gate.SKILL = root / "SKILL.md"
+        gate.REDIRECTS = root / "_redirects"
+        gate.REDIRECTS.write_text(REDIRECTS, encoding="utf-8")
         gate.release_status = unexpected_call
         gate.tag_status = unexpected_call
         gate.gh = unexpected_call
         gate.release_published_at = unexpected_call
         gate.release_immutable = unexpected_call
+        # The fixture page stands in for the generator's whole render; WholePageTest runs the real one.
+        self._saved_render = gate.rendered_verify_page
+        gate.rendered_verify_page = fixture_render
 
     def tearDown(self):
         (gate.REPO_ROOT, gate.VERIFY_PAGE, gate.SKILL, gate.release_status,
          gate.tag_status, gate.gh, gate.release_published_at,
-         gate.release_immutable) = self._saved
+         gate.release_immutable, gate.REDIRECTS) = self._saved
+        gate.rendered_verify_page = self._saved_render
         (gate.RELEASE_DATE_TOOL, gate.CHILD_TIMEOUT_SECONDS, gate.REAP_GRACE_SECONDS,
          gate.RESULT_LIMIT, gate.ECHO_BYTES_PER_CHARACTER, gate.STDERR_LIMIT) = self._saved_child
         self._tmp.cleanup()
@@ -854,8 +952,8 @@ class ConditionalPassTest(unittest.TestCase):
             except SystemExit as stop:
                 self.fail(f"loading the gate stopped with exit {stop.code} before main ran: {err.getvalue()}")
         for name in (
-            "REPO_ROOT", "VERIFY_PAGE", "SKILL", "release_status", "tag_status", "gh",
-            "release_published_at", "release_immutable",
+            "REPO_ROOT", "VERIFY_PAGE", "SKILL", "REDIRECTS", "GENERATOR", "release_status", "tag_status", "gh",
+            "release_published_at", "release_immutable", "rendered_verify_page",
         ):
             setattr(fresh, name, getattr(gate, name))
         return fresh
@@ -1140,16 +1238,251 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertEqual(gate.main(), 1)
 
     def test_pre_tag_window_passes(self):
+        # Before the tag, the only page the window passes is the note.
         self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15")
+        gate.VERIFY_PAGE.write_text(PENDING.format(version=AHEAD), encoding="utf-8")
         gate.release_status = lambda tag: 404
         gate.tag_status = lambda tag: 404
         self.assertEqual(gate.main(), 0)
 
+    def test_a_checksum_shown_as_published_before_the_tag_fails(self):
+        # An honest mistake at the bump, a well-formed checksum passed to
+        # tools/set-release-links.py for a version with no release and no tag, fails (exit 1), the Released line still
+        # checked and the more severe code winning; nothing beyond the release and the tag is read over the network. A
+        # mistyped placeholder exits 3 before this, as the generator refuses to render it (WholePageTest).
+        for label, checksum, released, expected in (
+            ("the previous version's digest", ZIP_SUM, "Released: 2026-11-15", 1),
+            ("a locally built digest", OTHER_SUM, "Released: 2026-11-15", 1),
+            ("a locally built digest and a missing Released line", OTHER_SUM, None, 1),
+            ("a locally built digest and a malformed Released line", OTHER_SUM, "Released: soon", 3),
+        ):
+            with self.subTest(label):
+                self.fixtures(AHEAD, checksum, AHEAD, released)
+                self.published(None, statuses={f"v{AHEAD}": 404})
+                gate.gh = unexpected_call
+                code, out, err = self.main_reports()
+                self.assertEqual(code, expected, (out, err))
+                self.assertEqual((self.probed, self.tag_probed), ([f"v{AHEAD}"], [f"v{AHEAD}"]))
+                self.assertIn("Release checksum inconsistency found:\n"
+                              f"  - the verify page shows {checksum} as the published checksum for version {AHEAD}\n"
+                              f"  - release v{AHEAD} is not published yet and its tag does not exist, so no checksum for "
+                              f"{AHEAD} is published\n", out)
+                self.assertIn(f"tools/set-release-links.py for {AHEAD} with the zero placeholder checksum", out)
+                self.assertNotIn("Nothing to reconcile", out)
+                if released is None:
+                    self.assertIn(f"names {AHEAD}, above the undated baseline {CURRENT}, but has no Released: line", out)
+
+    def test_not_yet_published_page_passes_in_the_pre_tag_window(self):
+        # The page a version bump builds from the zero placeholder names its version in the note.
+        self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15")
+        gate.VERIFY_PAGE.write_text(PENDING.format(version=AHEAD), encoding="utf-8")
+        self.published(None, statuses={f"v{AHEAD}": 404})
+        gate.gh = unexpected_call
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual((self.probed, self.tag_probed), ([f"v{AHEAD}"], [f"v{AHEAD}"]))
+
+    def test_not_yet_published_page_beside_a_published_release_fails(self):
+        # The site still holds the placeholder once the release is live: drift, exit 1 here, where no other check
+        # fails with a higher code.
+        self.fixtures(CURRENT, ZIP_SUM, CURRENT)
+        gate.VERIFY_PAGE.write_text(PENDING.format(version=CURRENT), encoding="utf-8")
+        gate.release_status = lambda tag: 200
+        gate.gh = self.fake_download
+        code, out, err = self.main_reports()
+        self.assertEqual(code, 1, (out, err))
+        self.assertIn(f"  - the verify page says the checksum for version {CURRENT} is not yet published\n", out)
+        self.assertIn(f"  - the published cleanlanguage-{CURRENT}.zip is {ZIP_SUM}\n", out)
+
+    def test_a_page_in_neither_state_exits_3(self):
+        # The zero placeholder shown as the published checksum, and a page with the note that breaks the rule
+        # (download_block_problems), are refused before any release is read: 1 case for each part of the rule.
+        note = (f"<p>The checksum for version {CURRENT} appears here once that version is published; compare the "
+                "checksum of your file with it then.</p>\n")
+        mixed = "the verify page carries the not-yet-published note, but "
+        url = f"https://github.com/jposluns/cleanlanguage/releases/download/v{CURRENT}/cleanlanguage-{CURRENT}.zip"
+        pending = PENDING.format(version=CURRENT)
+        element = "carries the checksum element's id outside the download block"
+        sum_class = "carries the class sum outside the download block"
+        noted = "carries the not-yet-published note outside the download block"
+        worded = 'says "published checksum" outside the download block'
+        hexadecimal = "carries a 64 digit hexadecimal value outside the download block"
+        linked = "links a .sha256 checksum file outside the download block"
+        rejects = "has a step that tells the reader not to install the file outside the download block"
+        block = "does not carry the download block that tools/build-site.py writes for this state exactly once, byte for byte"
+        placed = "does not carry the download block where tools/build-site.py writes it"
+        start, end = pending.index('<p class="lbl blk">Step 1</p>'), pending.index('<div class="next">')
+        for label, page, report in (
+            ("the placeholder as the published checksum",
+             VERIFY.format(version=CURRENT, checksum=ZIP_SUM).replace(ZIP_SUM, "0" * 64),
+             "the verify page shows the zero placeholder as the published checksum"),
+            ("the note beside a published checksum", outside(VERIFY.format(version=CURRENT, checksum=ZIP_SUM), note),
+             mixed + block + " (found 0)"),
+            # Outside the block, the page
+            # is read as parsed markup and as written, comments and hidden elements included.
+            ("the note beside the checksum element with its attributes in the other order",
+             outside(pending, f'<code id="published-checksum" class="sum">{ZIP_SUM}</code>\n'),
+             mixed + "; ".join((element, sum_class, hexadecimal))),
+            ("the note beside the checksum element with another attribute",
+             outside(pending, "<code class='x' hidden id=published-checksum></code>\n"), mixed + element),
+            ("the note beside 64 zeros in an element of the class sum without the id",
+             outside(pending, f'<code class="sum">{"0" * 64}</code>\n'), mixed + "; ".join((sum_class, hexadecimal))),
+            ("the note beside a link through the checksum redirect", outside(pending, '<a href="/download/checksum">f</a>\n'),
+             mixed + linked),
+            ("the note beside a link through the checksum redirect with a doubled slash",
+             outside(pending, '<a href="/download//checksum">f</a>\n'), mixed + linked),
+            ("the note beside a relative link through the checksum redirect",
+             outside(pending, '<a href="../download/Checksum/">file</a>\n'), mixed + linked),
+            ("the note beside a link to the checksum file with an encoded dot",
+             outside(pending, f'<a href="{url}%2Esha256">file</a>\n'), mixed + linked),
+            ("the note beside published checksum wording split by markup",
+             outside(pending, "<p>The published <b>checksum</b> is below.</p>\n"), mixed + worded),
+            ("the note beside a step that rejects the download split by markup",
+             outside(pending, "<p>If they differ, do <em>not</em> install the file.</p>\n"), mixed + rejects),
+            ("the note beside the checksum sentence alone",
+             outside(pending, f"<p>The published checksum for version {CURRENT} is:</p>\n"), mixed + worded),
+            ("the note beside a link to the checksum file", outside(pending, f'<a href="{url}.sha256">checksum file</a>\n'),
+             mixed + linked),
+            ("the note beside a step that rejects the download",
+             outside(pending, "<p>Compare the 2 values. If they still differ, do not install the file.</p>\n"),
+             mixed + rejects),
+            ("the note beside 64 hexadecimal digits in a comment", outside(pending, f"<!-- {ZIP_SUM} -->\n"),
+             mixed + hexadecimal),
+            ("2 notes", outside(pending, note), mixed + noted),
+            ("a second note for another version", outside(pending, note.replace(CURRENT, BOGUS)), mixed + noted),
+            ("the note only in a comment", pending.replace(note.strip(), f"<!-- {note.strip()} -->"),
+             mixed + block + " (found 0)"),
+            ("the block hidden", pending[:start] + "<div hidden>" + pending[start:end] + "</div>" + pending[end:],
+             mixed + placed),
+            ("the block in a template", pending[:start] + "<template>" + pending[start:end] + "</template>" + pending[end:],
+             mixed + placed),
+            ("a stray body start tag with a hidden attribute", outside(pending, "<body hidden>"), mixed + placed),
+            ("the block twice", outside(pending, pending[start:end]), mixed + block + " (found 2)"),
+            ("a stray html start tag", outside(pending, "<html hidden>"), mixed + placed),
+            ("the block in a self-closed div, which a browser leaves open",
+             pending[:start] + "<div hidden/>" + pending[start:], mixed + placed),
+            ("the note beside the class sum in a comment", outside(pending, '<!-- <i class="x sum"></i> -->'),
+             mixed + sum_class),
+            ("the note beside the checksum element's id in a script",
+             outside(pending, '<script>f("published-checksum")</script>'), mixed + element),
+            ("the note beside the checksum element's id as a character reference",
+             outside(pending, "<i id=published&#45;checksum></i>"), mixed + element),
+            ("the note beside a link to the checksum file in a script", outside(pending, '<script>f("/x.SHA256")</script>'),
+             mixed + linked),
+            ("the note beside a step that rejects the download in a contraction",
+             outside(pending, "<p>If they differ, don&#8217;t install the file.</p>"), mixed + rejects),
+        ):
+            with self.subTest(label):
+                self.assertNotEqual(page, pending)
+                gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
+                gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+                gate.release_status = unexpected_call
+                self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {report}\n"))
+
+    def test_a_published_page_without_the_rest_of_its_state_exits_3(self):
+        # A page with a real checksum
+        # carries the download block the generator writes for it, unchanged and where the generator writes it,
+        # and nothing outside it that belongs to either state, or it is refused before any release is read.
+        page = VERIFY.format(version=CURRENT, checksum=ZIP_SUM)
+        lead = "<p>Download the skill. The published checksum is shown under the link.</p>"
+        link_start = page.index(f'<a href="https://github.com/jposluns/cleanlanguage/releases/download/v{CURRENT}/'
+                                f'cleanlanguage-{CURRENT}.zip.sha256"')
+        link = page[link_start:page.index("</a>", link_start) + 4]
+        start, end = page.index('<p class="lbl blk">Step 1</p>'), page.index('<div class="next">')
+        step = page[page.index('<p class="lbl blk">Step 3</p>'):end]
+        code = f'<code class="sum" id="published-checksum">{ZIP_SUM}</code>'
+        shown = "the verify page shows a published checksum, but "
+        block = ("does not carry the download block that tools/build-site.py writes for this state exactly once, "
+                 "byte for byte (found 0)")
+        placed = "does not carry the download block where tools/build-site.py writes it"
+        for label, changed, report in (
+            ("no step 1 lead", page.replace(lead, "<p>Download the skill.</p>"), block),
+            ("the step 1 lead in a comment only", page.replace(lead, f"<p>Download the skill.<!-- {lead} --></p>"), block),
+            ("the step 1 lead hidden", page.replace(lead, f"<div hidden>{lead}</div>"), block),
+            ("no link to the checksum file", page.replace(link, "published checksum file"), block),
+            ("the link to the checksum file hidden", page.replace(link, f"<span hidden>{link}</span>"), block),
+            ("a link to the checksum file of another version", page.replace(link, link.replace(CURRENT, BOGUS)), block),
+            ("no step 3", page.replace(step, ""), block),
+            ("step 3 hidden", page.replace(step, f"<div hidden>{step}</div>"), block),
+            ("a step 3 that rejects a matching value", page.replace("still differ after", "match after"), block),
+            ("step 3, the link and the step 1 lead removed",
+             page.replace(lead, "<p>Download the skill.</p>").replace(link, "published checksum file").replace(step, ""),
+             block),
+            ("the checksum element in a comment beside a visible one",
+             page.replace(code, f'<!-- {code} --><code id="published-checksum" class="sum">{OTHER_SUM}</code>'), block),
+            ("a second, wrong checksum element beside the real one",
+             page.replace(code, code + f'<code class="sum" id="published-checksum">{OTHER_SUM}</code>'), block),
+            ("a second, wrong checksum element after the block",
+             outside(page, f'<code class="sum" id="published-checksum">{OTHER_SUM}</code>'),
+             "carries the checksum element's id outside the download block; carries the class sum outside the "
+             "download block; carries a 64 digit hexadecimal value outside the download block"),
+            ("the note split by markup after the block",
+             outside(page, "<p>It appears <b>here</b> once that version is published.</p>"),
+             "carries the not-yet-published note outside the download block"),
+            ("the whole block hidden", page[:start] + "<div hidden>" + page[start:end] + "</div>" + page[end:], placed),
+            ("the whole block in a comment", page[:start] + "<!--" + page[start:end] + "-->" + page[end:], placed),
+            # An end tag does not close an element across a template or a
+            # table, and a second checksum in groups counts.
+            ("a template that ends the doc div around the block",
+             page[:start] + '<template></div><div class="doc">' + page[start:end] + "</div></template>" + page[end:],
+             placed),
+            ("a details element misnested in a table before the block",
+             page[:start] + "<details><table></details>" + page[start:], placed),
+            ("a second checksum in groups of 8 after the block",
+             outside(page, "<p>" + " ".join(OTHER_SUM[i:i + 8] for i in range(0, 64, 8)) + "</p>"),
+             "carries a 64 digit hexadecimal value outside the download block"),
+            ("a second checksum in groups split by hyphens after the block",
+             outside(page, "<p>" + "-".join(ZIP_SUM[i:i + 4] for i in range(0, 64, 4)) + "</p>"),
+             "carries a 64 digit hexadecimal value outside the download block"),
+        ):
+            with self.subTest(label):
+                self.assertNotEqual(changed, page)
+                gate.VERIFY_PAGE.write_text(changed, encoding="utf-8")
+                gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+                gate.release_status = unexpected_call
+                self.assertEqual(self.main_reports(), (3, "", f"check-release-checksum-live: {shown}{report}\n"))
+
+    def test_prose_outside_the_block_is_a_stated_residual(self):
+        # The rule does not read the meaning of prose, so a contradicting step 3
+        # outside the block passes it here; tools/check-release-links.py refuses that page by whole-page equality.
+        page = outside(VERIFY.format(version=CURRENT, checksum=ZIP_SUM),
+                       "<p>Correction to step 3: if the two values match, delete the file.</p>")
+        redirects = gate.REDIRECTS.read_text(encoding="utf-8")
+        self.assertEqual(gate.download_block_problems(page, gate.download_block(CURRENT, ZIP_SUM), redirects), [])
+
+    def test_each_state_reads_site_redirects(self):
+        # The paths to the checksum file come from site/_redirects, a required file in either state.
+        for label, page in (("placeholder", PENDING.format(version=CURRENT)),
+                            ("published", VERIFY.format(version=CURRENT, checksum=ZIP_SUM))):
+            with self.subTest(label):
+                gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
+                gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+                gate.release_status = unexpected_call
+                if gate.REDIRECTS.exists():
+                    gate.REDIRECTS.unlink()
+                self.assertEqual(self.main_reports(), (3, "", "check-release-checksum-live: _redirects does not exist\n"))
+
+    def test_a_generator_that_cannot_render_the_block_exits_3(self):
+        gate.VERIFY_PAGE.write_text(VERIFY.format(version=CURRENT, checksum=ZIP_SUM), encoding="utf-8")
+        gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
+        gate.release_status = unexpected_call
+        saved = gate.GENERATOR
+        gate.GENERATOR = Path(self._tmp.name) / "build-site.py"
+        try:
+            code, out, err = self.main_reports()
+        finally:
+            gate.GENERATOR = saved
+        self.assertEqual((code, out), (3, ""))
+        self.assertIn("check-release-checksum-live: tools/build-site.py could not render the verify page's download "
+                      "block", err)
+
     def pre_tag_reports(self, version, released=None):
         """Run the gate in the pre-tag window for ``version``, asserting the
         release and the tag are each probed once and nothing else is read
-        over the network; returns (exit code, stdout, stderr)."""
+        over the network; returns (exit code, stdout, stderr). The page is the
+        note, the only page the window passes."""
         self.fixtures(version, OTHER_SUM, version, released)
+        gate.VERIFY_PAGE.write_text(PENDING.format(version=version), encoding="utf-8")
         self.published(None, statuses={f"v{version}": 404})
         gate.gh = unexpected_call
         gate.release_published_at = unexpected_call
@@ -1211,6 +1544,7 @@ class ConditionalPassTest(unittest.TestCase):
         # there is nothing to reconcile. Row 80: the probe is the first
         # child, and its failure is reported once.
         self.fixtures(AHEAD, OTHER_SUM, AHEAD, "Released: 2026-11-15  ")
+        gate.VERIFY_PAGE.write_text(PENDING.format(version=AHEAD), encoding="utf-8")
         gate.release_status = lambda tag: 404
         gate.tag_status = lambda tag: 404
         tool = self.fake_extractor(logging_extractor(fail_first=True))
@@ -2287,49 +2621,28 @@ class ConditionalPassTest(unittest.TestCase):
                 ), ""))
                 self.assertEqual(probed, [f"v{version}"])
 
-    def test_the_first_checksum_block_and_version_sentence_are_read(self):
-        # Fix round 14 (VERIFY round 9.3, finding 4): a verify page with two
-        # checksum blocks, or two version sentences, is read by its first.
-        # A release status read for a tag means that the checksum and the
-        # version were accepted, and the tag names the version that was read.
-        sha = "is not a 64 character lower-case SHA-256"
-        block = '<code class="sum" id="published-checksum">{}</code>\n'
-
-        def sentence(version):
-            return f"<p>The published checksum for version {version} is:</p>\n"
-
-        class Probed(Exception):
-            pass
-
-        def probe(tag):
-            raise Probed(tag)
-
-        for label, page, tag in (
-            ("a valid checksum block first", sentence(CURRENT) + block.format(ZIP_SUM) + block.format("abc"),
-             f"v{CURRENT}"),
-            ("the current version first", sentence(CURRENT) + sentence("1234.0.100") + block.format(ZIP_SUM),
-             f"v{CURRENT}"),
-            ("another version first", sentence("1234.0.100") + sentence(CURRENT) + block.format(ZIP_SUM),
-             "v1234.0.100"),
+    def test_a_second_checksum_block_or_version_sentence_exits_3(self):
+        # A page with 2 checksum blocks, or 2 version sentences, is not read by its first: it carries more than the
+        # download block of the checksum and version it is read by, so it is refused before any release is read.
+        page = VERIFY.format(version=CURRENT, checksum=ZIP_SUM)
+        code = f'<code class="sum" id="published-checksum">{ZIP_SUM}</code>'
+        sentence = f"<p>The published checksum for version {CURRENT} is:</p>"
+        shown = "check-release-checksum-live: the verify page shows a published checksum, but "
+        block = ("does not carry the download block that tools/build-site.py writes for this state exactly once, "
+                 "byte for byte (found 0)")
+        for label, changed, report in (
+            ("a second checksum block after the first", page.replace(code, code + code.replace(ZIP_SUM, "abc")), block),
+            ("a second, wrong checksum block before the block, which is read",
+             page.replace("<h1>", code.replace(ZIP_SUM, OTHER_SUM) + "<h1>"), block),
+            ("another version first", page.replace("<h1>", sentence.replace(CURRENT, "1234.0.100") + "<h1>"), block),
+            ("a second sentence after the block", outside(page, sentence),
+             'says "published checksum" outside the download block'),
         ):
             with self.subTest(label):
-                gate.VERIFY_PAGE.write_text(page, encoding="utf-8")
+                gate.VERIFY_PAGE.write_text(changed, encoding="utf-8")
                 gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
-                gate.release_status = probe
-                out, err = io.StringIO(), io.StringIO()
-                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                    with self.assertRaises(Probed) as caught:
-                        gate.main()
-                self.assertEqual((str(caught.exception), out.getvalue(), err.getvalue()), (tag, "", ""))
-        with self.subTest("an invalid checksum block first"):
-            gate.VERIFY_PAGE.write_text(
-                sentence(CURRENT) + block.format("abc") + block.format(ZIP_SUM), encoding="utf-8"
-            )
-            gate.SKILL.write_text(f"Version: {CURRENT}\n", encoding="utf-8")
-            gate.release_status = unexpected_call
-            self.assertEqual(
-                self.main_reports(), (3, "", f"check-release-checksum-live: the displayed checksum 'abc' {sha}\n")
-            )
+                gate.release_status = unexpected_call
+                self.assertEqual(self.main_reports(), (3, "", f"{shown}{report}\n"))
 
     def test_a_manifest_with_or_without_a_final_newline_is_one_line(self):
         # Fix round 14 (VERIFY round 9.3, finding 3): the manifest is read
@@ -3971,6 +4284,18 @@ class ModuleLoadTest(unittest.TestCase):
             page = root / "site" / "verify" / "index.html"
             page.parent.mkdir(parents=True)
             page.write_text(VERIFY.format(version=AHEAD, checksum=OTHER_SUM), encoding="utf-8")
+            # The generator and the page source the gate renders the download block from, and site/_redirects. The
+            # copy's verify_page() returns the fixture page, which stands in for the generator's whole render. The
+            # generator loads tools/check-install-page.py from its own folder, so the copy gets it beside it and no
+            # path through the generator fails on a missing reader.
+            (tools / "build-site.py").write_text(
+                (MODULE_PATH.parent / "build-site.py").read_text(encoding="utf-8") + STAND_IN_RENDER, encoding="utf-8")
+            shutil.copyfile(MODULE_PATH.parent / "check-install-page.py", tools / "check-install-page.py")
+            (root / "fixture-render.html").write_bytes(page.read_bytes())
+            source = root / "site-src" / "pages" / "verify.html"
+            source.parent.mkdir(parents=True)
+            shutil.copy2(MODULE_PATH.parent.parent / "site-src" / "pages" / "verify.html", source)
+            (root / "site" / "_redirects").write_text(REDIRECTS, encoding="utf-8")
             skill = root / "cleanlanguage" / "skills" / "cleanlanguage" / "SKILL.md"
             skill.parent.mkdir(parents=True)
             skill.write_text(f"Version: {AHEAD}\n", encoding="utf-8")
@@ -4563,6 +4888,52 @@ class ContractRoutingTest(unittest.TestCase):
         self.assertEqual(sorted(starts), [("gh", "subprocess", "run"), ("run_release_date_child", "subprocess", "Popen")])
 
 
+class SharedPlaceholderRuleTest(unittest.TestCase):
+    """The rule of the verify page is one rule in 2 copies: this gate and check-release-links.py carry
+    download_block_problems and what it reads verbatim, so the 2 gates cannot accept different pages."""
+
+    def test_the_two_gates_carry_the_same_rule(self):
+        links_path = MODULE_PATH.parent / "check-release-links.py"
+        links_spec = importlib.util.spec_from_file_location("check_release_links_shared", links_path)
+        links = importlib.util.module_from_spec(links_spec)
+        links_spec.loader.exec_module(links)
+
+        def definition(path: Path, name: str) -> str:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            found = [ast.dump(node) for node in tree.body
+                     if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name == name]
+            self.assertEqual(len(found), 1, path.name)
+            return found[0]
+
+        # The rule, its rendering of the download block, the reader of the parsed page and the reading of
+        # site/_redirects.
+        for name in ("download_block_problems", "download_block", "PageReader", "checksum_paths", "targets_checksum"):
+            with self.subTest(name):
+                self.assertEqual(definition(MODULE_PATH, name), definition(links_path, name))
+        for name in ("PENDING_VERSION", "DISPLAYED_SUM", "PENDING_NOTE", "PUBLISHED_WORDING", "REJECTING_STEP", "HEX64",
+                     "HEX_GROUPS"):
+            with self.subTest(name):
+                ours, theirs = getattr(gate, name), getattr(links, name)
+                self.assertEqual((ours.pattern, ours.flags), (theirs.pattern, theirs.flags))
+        for name in ("PLACEHOLDER", "SUM_ID", "VERIFY_URL", "GENERATOR", "BLOCK_ANCESTORS"):
+            with self.subTest(name):
+                self.assertEqual(getattr(gate, name), getattr(links, name))
+
+    def test_the_paths_to_the_checksum_file_follow_each_redirect(self):
+        # A path that redirects to another path to the checksum file serves it too, whatever the order of
+        # the lines; a comment and a path to the zip do not.
+        redirects = (
+            "/sum /download/checksum/ 302\n"
+            "/download/checksum https://example.com/v1/cleanlanguage-1.zip.sha256 302\n"
+            "#/commented https://example.com/cleanlanguage-1.zip.sha256 302\n"
+            "/download https://example.com/v1/cleanlanguage-1.zip 302\n"
+        )
+        self.assertEqual(gate.checksum_paths(redirects), {"/sum", "/download/checksum"})
+
+    def test_a_value_that_is_not_a_url_reaches_nothing(self):
+        self.assertFalse(gate.targets_checksum("http://[cleanlanguage.sha256", {"/download/checksum"}))
+
+
 class DisplayedSumMarkupTest(unittest.TestCase):
     """The verify page's checksum element is read exactly as the generator writes it; any other form fails."""
 
@@ -4580,6 +4951,199 @@ class DisplayedSumMarkupTest(unittest.TestCase):
             f'<code id="published-checksum-old">{ZIP_SUM}</code>',
         ):
             self.assertIsNone(gate.DISPLAYED_SUM.search(page), page)
+
+
+class WholePageTest(unittest.TestCase):
+    """The gate on a copy of the generator's inputs with the real tools/build-site.py: the committed verify page is
+    the render for the version and checksum it shows, a page rendered for another version that has no published
+    release (release status 404) reaches the inconsistency report, and every page form that
+    test_every_listed_page_form_exits_3 lists, made on the page alone, in either state, exits 3 before any
+    release is read. A page for another version that has a published release reaches the checksum step
+    instead, which compares only when the gate can download and read that release's zip and .sha256, with a
+    well-formed manifest that the zip hashes to; these tests do not run it."""
+
+    NAMES = ("REPO_ROOT", "VERIFY_PAGE", "SKILL", "REDIRECTS", "GENERATOR", "release_status", "tag_status", "gh",
+             "release_published_at", "release_immutable")
+    SUM = "0123456789abcdef" * 4
+    OTHER = "fedcba9876543210" * 4
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        copy_generator_inputs(self.root)
+        (self.root / "tools").mkdir(exist_ok=True)
+        shutil.copyfile(MODULE_PATH.parent / "build-site.py", self.root / "tools" / "build-site.py")
+        self.page = self.root / "site/verify/index.html"
+        generator_spec = importlib.util.spec_from_file_location("build_site_for_live", self.root / "tools/build-site.py")
+        self.generator = importlib.util.module_from_spec(generator_spec)
+        generator_spec.loader.exec_module(self.generator)
+        self.version = self.generator.skill_version(self.root)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def gate_run(self) -> tuple[int, str]:
+        """Run the gate on the copy in the pre-tag window, the release and its tag absent."""
+        saved = {name: getattr(gate, name) for name in self.NAMES}
+        gate.REPO_ROOT, gate.VERIFY_PAGE = self.root, self.page
+        gate.SKILL = self.root / "cleanlanguage/skills/cleanlanguage/SKILL.md"
+        gate.REDIRECTS = self.root / "site/_redirects"
+        gate.GENERATOR = self.root / "tools/build-site.py"
+        gate.release_status = gate.tag_status = lambda tag: 404
+        gate.gh = gate.release_published_at = gate.release_immutable = unexpected_call
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                try:
+                    code = gate.main()
+                except SystemExit as stop:
+                    code = stop.code
+        finally:
+            for name, value in saved.items():
+                setattr(gate, name, value)
+        return code, out.getvalue()
+
+    def publish(self, checksum: str) -> str:
+        """Set ``checksum`` in the copy's release.json and regenerate the copy's site, returning the verify page."""
+        release_path = self.root / "site-src/release.json"
+        release = json.loads(release_path.read_text(encoding="utf-8"))
+        release["checksum"] = checksum
+        release_path.write_text(json.dumps(release, indent=2) + "\n", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.generator.main(["--root", str(self.root)]), 0)
+        return self.page.read_text(encoding="utf-8")
+
+    def test_the_committed_verify_page_is_the_render(self):
+        release = json.loads((MODULE_PATH.parent.parent / "site-src/release.json").read_text(encoding="utf-8"))
+        self.assertEqual((MODULE_PATH.parent.parent / "site/verify/index.html").read_bytes(),
+                         gate.rendered_verify_page(release["version"], release["checksum"]))
+
+    def test_a_page_for_another_version_reaches_the_inconsistency_report(self):
+        # The render is for the version and checksum the page shows, not for release.json, so a page that the
+        # generator writes for a version other than the SKILL.md version, one with no published release, is
+        # still an inconsistency: exit 1 here, where no other check fails with a higher code.
+        for checksum in ("0" * 64, self.SUM):
+            with self.subTest(checksum[:8]):
+                self.publish(checksum)
+                release = {"version": BOGUS, "tag": f"v{BOGUS}", "checksum": checksum}
+                self.page.write_bytes(self.generator.verify_page(self.root, release))
+                code, output = self.gate_run()
+                self.assertEqual(code, 1, output)
+                self.assertIn(f"  - the verify page names version {BOGUS}, which has no published release\n", output)
+
+    def test_a_checksum_close_to_the_placeholder_exits_3(self):
+        # The generator refuses a checksum other than the zero placeholder with 56 or more of its 64
+        # digits 0, such as a mistyped placeholder, so a page that shows one is not the render: exit 3 before any
+        # release is read.
+        page = self.publish(self.SUM)
+        for checksum in ("0" * 63 + "1", "0" * 56 + "89abcdef"):
+            with self.subTest(checksum):
+                self.page.write_text(page.replace(self.SUM, checksum), encoding="utf-8")
+                code, output = self.gate_run()
+                self.assertEqual(code, 3, output)
+                # The checksum comes from the page, not release.json, which holds SUM.
+                self.assertIn(f"tools/build-site.py could not render the verify page: the checksum "
+                              f"{checksum} is not the zero placeholder but has {checksum.count('0')} of its 64 digits 0",
+                              output)
+                self.assertNotIn("release.json", output)
+
+    def test_every_listed_page_form_exits_3(self):
+        start_tag = '<p class="lbl blk">Step 1</p>'
+        for checksum, state in (("0" * 64, "placeholder"), (self.SUM, "published")):
+            page = self.publish(checksum)
+            code, output = self.gate_run()
+            # In the pre-tag window the render with a published checksum is an
+            # inconsistency (exit 1 here, where no other check fails with a higher code), the render with the note
+            # passes.
+            self.assertEqual(code, 0 if state == "placeholder" else 1, output)
+            if state == "published":
+                self.assertIn(f"  - the verify page shows {self.SUM} as the published checksum for version {self.version}\n",
+                              output)
+            start, end = page.index(start_tag), page.index('<div class="next">')
+            block = page[start:end]
+            forms = [
+                ("a step that says to install the file anyway, before the next-page link",
+                 outside(page, "<p>If the values differ, install the file anyway.</p>")),
+                ("a step 4 after step 3", outside(page, '<p class="lbl blk">Step 4</p>\n<p>Install the file.</p>\n')),
+                ("the block inside noscript markup",
+                 page[:start] + '<noscript></div><div class="doc">' + block + "</noscript>" + page[end:]),
+                ("the block inside select markup",
+                 page[:start] + '<select></div><div class="doc">' + block + "</select>" + page[end:]),
+                ("a details element misnested in a span before step 1",
+                 page[:start] + "<span><details></span>" + page[start:]),
+                ("an inline script that removes the block",
+                 outside(page, "<script>document.querySelector('.download').remove()</script>")),
+                ("a second checksum joined by U+200B",
+                 outside(page, "<p>" + "\u200b".join(self.OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
+                ("a second checksum joined by dots",
+                 outside(page, "<p>" + ".".join(self.OTHER[i:i + 8] for i in range(0, 64, 8)) + "</p>")),
+            ]
+            rendered = (f"is not the page tools/build-site.py renders for version {self.version} and that checksum "
+                        "from the committed sources (first at line ")
+            # The shared rule refuses a double space in step 1 first, as byte equality does.
+            refused = "does not carry the download block that tools/build-site.py writes for this state exactly once"
+            reports = [(label, changed, rendered) for label, changed in forms] + [
+                ("a double space in step 1", page.replace("<p>Download the skill.", "<p>Download the  skill.", 1),
+                 refused),
+                # Comments nested 400 deep before step 1 exit 3, never a traceback.
+                ("comments nested 400 deep before step 1",
+                 page[:start] + "<!--" * 400 + "-->" + page[start:], "nests comments too deeply to be read")]
+            for label, changed, report in reports:
+                with self.subTest(f"{label}, {state}"):
+                    self.assertNotEqual(changed, page)
+                    self.page.write_text(changed, encoding="utf-8")
+                    code, output = self.gate_run()
+                    self.assertEqual(code, 3, output)
+                    self.assertIn(report, output)
+            self.page.write_text(page, encoding="utf-8")
+
+    def test_a_staged_draft_names_promotion_as_the_remedy(self):
+        # With a draft staged under /draft/ and one nav label changed, tools/build-site.py
+        # writes only site/draft/, so the correct live page is not the render; the gate exits 3, says so and names
+        # promotion, and still refuses a wrong live page. Without a draft, it still says to run tools/build-site.py.
+        rendered = (f"is not the page tools/build-site.py renders for version {self.version} and that checksum from "
+                    "the committed sources (first at line ")
+        staged = ("). site-src/site.json names base /draft/, so a draft is staged: tools/build-site.py writes only the "
+                  "draft, not the live pages")
+        # The advice points to the whole promotion, not only the build, 1 step of it.
+        remedy = ("Promotion after the owner approves it is the remedy: the pull request of step 5 under \"Staging at "
+                  "/draft/ and promotion\" in .baseline/README.md, of which tools/build-site.py --base / --promote is "
+                  "1 step")
+        site_json = self.root / "site-src/site.json"
+        original = site_json.read_text(encoding="utf-8")
+        sitemap_config = self.root / "tools/sitemap-config.json"
+        original_sitemap = sitemap_config.read_text(encoding="utf-8")
+        for checksum, state in (("0" * 64, "placeholder"), (self.SUM, "published")):
+            with self.subTest(state):
+                page = self.publish(checksum)
+                wrong = outside(page, "<p>If the values differ, install the file anyway.</p>")
+                self.page.write_text(wrong, encoding="utf-8")
+                code, output = self.gate_run()
+                self.assertEqual(code, 3, output)
+                self.assertIn(rendered, output)
+                self.assertIn("; run tools/build-site.py", output)
+                self.assertNotIn("a draft is staged", output)
+                self.page.write_text(page, encoding="utf-8")
+                config = json.loads(original)
+                config["base"] = "/draft/"
+                next(entry for entry in config["pages"] if entry["id"] == "install")["nav_label"] = "Install it"
+                site_json.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+                exclude_draft_home(self.root)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(self.generator.main(["--root", str(self.root)]), 0)
+                self.assertEqual(self.page.read_text(encoding="utf-8"), page)
+                self.assertTrue((self.root / "site/draft/verify/index.html").is_file())
+                for label, written in (("the correct live page", page), ("a wrong live page", wrong)):
+                    self.page.write_text(written, encoding="utf-8")
+                    code, output = self.gate_run()
+                    self.assertEqual(code, 3, f"{label}: {output}")
+                    self.assertIn(rendered, output)
+                    self.assertIn(staged, output)
+                    self.assertIn(remedy, output)
+                    self.assertNotIn("run tools/build-site.py", output)
+                site_json.write_text(original, encoding="utf-8")
+                sitemap_config.write_text(original_sitemap, encoding="utf-8")
+                self.page.write_text(page, encoding="utf-8")
 
 
 if __name__ == "__main__":

@@ -5,8 +5,14 @@ The first case runs the gate on this repository and changes nothing. Each case
 in CASES copies the gate and the 2 files it reads into a temporary repository
 (under $TMPDIR), applies the case's change, runs the gate there as a separate
 process and asserts its exit code and the fragments the case lists. The case
-named "the committed tree" changes nothing, and the case named "the skill list
-sorted, and the checklist with it" makes 2 edits; each other case makes 1
+named "the committed tree" changes nothing, and the 2 cases named "the skill
+list sorted, and the checklist with it" and "both bullets with 3 spaces after
+the marker, each continued after a blank line by a line indented by 2 spaces",
+the 4 cases whose names start "an ordered item", the 3 cases whose names
+start "the skill bullet under", and the case named "a link title in the skill
+bullet, with the same link in the dash bullet", each make 2 edits, one in
+each file; the case whose name starts "the skill bullet last in its section"
+makes 3, 2 in SKILL.md and 1 in the checklist; each other case makes 1
 change, which edits, rewrites or removes a file. The cases that expect exit 0,
 apart from the committed tree, make edits that keep the 2 files consistent;
 the cases that expect exit 1 or 3 apply a fault. An exit 1 case also asserts
@@ -64,6 +70,32 @@ TAB = "holds U+0009, whitespace other than a space"
 NBSP = "holds U+00A0, whitespace other than a space"
 RULED = "is a thematic break or a setext heading underline"
 SPLIT = "Code samples may keep one too."
+INDENTED_HEADING = "is a heading or block quote marker indented by 1 or more spaces"
+INDENTED_ITEM = "is a list marker indented by 1 to 3 spaces"
+EMPTY_ITEM = "is a list marker with nothing after it, an empty list item"
+SPACED = "is a bullet marker followed by 2 or more spaces"
+UNREAD_LINE = "is not a line this check reads in "
+HTML = 'starts with "<" after 0 to 3 spaces'
+LEAD_IN = "Do not mechanically delete:\n"
+OTHER_BULLET = "- throat-clearing before the substantive point;\n"
+CHECKLIST_HEADING = "## Mechanics\n"
+# The heading after the carve-out section, which ends the section.
+NEXT_HEADING = "## Match the context\n"
+# A line that only item 5 refuses, for its "&", so it pins where each span starts and ends: refused on the first
+# line of the checklist span, on the first line under the SKILL.md section's own heading line, which item 5 accepts
+# without reading its characters, and on the last line of each span, and read as text just outside each span.
+EDGE = "x & y\n"
+# How the gate names the checklist span, by the 2 edges it read between.
+CHECKLIST_SPAN = "the lines between the heading above the dash bullet and "
+# Lines the gate reads as plain text or as a bullet of plain text in the carve-out section; lines it refuses there
+# by how they start; and lines it refuses there by a character, with the first such character.
+PLAIN_LINES = ["-x", "1.x", "1234567890. x", ".x", "- -x", "AZ az 09", "x (y): 'z'; `w`, v."]
+UNREAD_LINES = ["- - x", "- -", "- 2.", "- 123456789) x"]
+CHARACTER_LINES = [("* x", "*"), ("+ x", "+"), ("### Note", "#"), ("###### x", "#"), ("> x", ">"), ("- #", "#"),
+                   ("- > x", ">"), ("- <b>x</b>", "<"), ("#x", "#"), ("#######", "#"), ("+x", "+"), ("*x", "*"),
+                   ("x <b>y</b>", "<"), ("- #x", "#"), ("x [y]", "["), ("x & y", "&"), ("x/y", "/"),
+                   ("x \N{LATIN SMALL LETTER E WITH ACUTE}", "\N{LATIN SMALL LETTER E WITH ACUTE}"),
+                   ("x\N{ZERO WIDTH SPACE}y", "\N{ZERO WIDTH SPACE}")]
 
 
 def listed(items: list[str]) -> str:
@@ -114,6 +146,30 @@ def prepend(relative: str, new: str):
     return apply
 
 
+def append(relative: str, new: str):
+    def apply(root: Path) -> None:
+        path = root / relative
+        path.write_text(path.read_text(encoding="utf-8") + new, encoding="utf-8")
+    return apply
+
+
+def cut(relative: str, old: str, new: str):
+    """Replace old, and everything after it in the file, with new."""
+    def apply(root: Path) -> None:
+        path = root / relative
+        text = path.read_text(encoding="utf-8")
+        if old not in text:
+            raise AssertionError(f"{old!r} is not in {relative}")
+        path.write_text(text[:text.find(old)] + new, encoding="utf-8")
+    return apply
+
+
+def past_end(relative: str) -> str:
+    """The gate's "<file>, line <n>: " for the first line after the committed file's last line, which ends in LF."""
+    number = (REPO_ROOT / relative).read_text(encoding="utf-8").count("\n") + 1
+    return f"{relative}, line {number}: "
+
+
 def at(relative: str, old: str, below: int = 0) -> str:
     """The gate's "<file>, line <n>: " for the line below lines after the one where old starts in the committed file."""
     text = (REPO_ROOT / relative).read_text(encoding="utf-8")
@@ -145,6 +201,11 @@ def together(*faults):
     return apply
 
 
+def character(char: str) -> str:
+    """How the gate names a character it does not read in a span."""
+    return f'holds U+{ord(char):04X} ("{char}"), a character this check does not read in '
+
+
 def lacks(item: str) -> str:
     return f"lacks {item!r}"
 
@@ -157,16 +218,149 @@ SKILL_LINE = "- " + listed(ITEMS) + ";"
 
 CASES = [
     ("the committed tree", None, 0, []),
-    ("the clause continued on an indented line", checklist_lists(ITEMS, "Keep a dash only in\n  "), 0, []),
+    ("the clause continued on an indented line", checklist_lists(ITEMS, "Keep a dash only in\n  "), 3,
+        [at(CHECKLIST, KEEP, 1) + UNREAD_LINE]),
     ("the clause continued on an unindented line", checklist_lists(ITEMS, "Keep a dash only in\n"), 0, []),
-    ("the skill bullet continued on an indented line", edit(SKILL, "text, or ", "text,\n  or "), 0, []),
+    ("the skill bullet continued on an indented line", edit(SKILL, "text, or ", "text,\n  or "), 3,
+        [at(SKILL, SKILL_LINE, 1) + UNREAD_LINE]),
     ("the skill bullet continued on an unindented line", edit(SKILL, "text, or ", "text,\nor "), 0, []),
     ("the skill list sorted, and the checklist with it",
         together(skill_lists(sorted(ITEMS)), checklist_lists(sorted(ITEMS))), 0, []),
     ("the carve-out heading with closing hashes and trailing spaces",
         edit(SKILL, HEADING, HEADING.rstrip("\n") + " ##  \n"), 0, []),
     ("a mixed-mark line in the checklist", prepend(CHECKLIST, "_*_\n\n"), 0, []),
-    ("a mixed-mark line in SKILL.md", edit(SKILL, HEADING, HEADING + "\n- * _\n"), 0, []),
+    ("a mixed-mark line in SKILL.md, above the carve-out section", edit(SKILL, HEADING, "- * _\n\n" + HEADING), 0, []),
+    ("plain text and bullets of plain text in the carve-out section",
+        edit(SKILL, LEAD_IN, LEAD_IN + "\n".join(PLAIN_LINES) + "\n   \n"), 0, []),
+    *[(f"the line {line!r} under the carve-out heading", edit(SKILL, HEADING, HEADING + line + "\n"), 3,
+       [at(SKILL, HEADING, 1) + UNREAD_LINE]) for line in UNREAD_LINES],
+    *[(f"the line {line!r} under the carve-out heading, refused for {char!r}",
+       edit(SKILL, HEADING, HEADING + line + "\n"), 3, [at(SKILL, HEADING, 1) + character(char)])
+      for line, char in CHARACTER_LINES],
+    ("the line '<b>x</b>' under the carve-out heading", edit(SKILL, HEADING, HEADING + "<b>x</b>\n"), 3,
+        [at(SKILL, HEADING, 1) + HTML]),
+    ("a character outside the list in the dash bullet",
+        change_dash_line(lambda line: line.replace("Keep a dash", "Keep a *dash*", 1)), 3,
+        [at(CHECKLIST, KEEP) + character("*")]),
+    ("a character outside the list in a checklist line under the heading",
+        edit(CHECKLIST, CHECKLIST_HEADING, CHECKLIST_HEADING + "\nSee [the rules].\n"), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING, 2) + character("[")]),
+    # The span edges. The case "the line 'x & y' under the carve-out heading, refused for '&'" puts the line on the
+    # first line of the carve-out section after its heading.
+    ("x & y directly above the carve-out heading", edit(SKILL, HEADING, EDGE + HEADING), 0, []),
+    ("x & y on the last line of the carve-out section", edit(SKILL, NEXT_HEADING, EDGE + NEXT_HEADING), 3,
+        [at(SKILL, NEXT_HEADING) + character("&")]),
+    ("x & y directly under the heading after the carve-out section", edit(SKILL, NEXT_HEADING, NEXT_HEADING + EDGE),
+        0, []),
+    # A level 1 heading ends the section as a level 2 heading does, so these 2 cases pin that edge apart from the
+    # level 2 heading after it.
+    ("x & y directly above a level 1 heading added after the carve-out section",
+        edit(SKILL, NEXT_HEADING, EDGE + "# More\n" + NEXT_HEADING), 3, [at(SKILL, NEXT_HEADING) + character("&")]),
+    ("x & y directly under a level 1 heading added after the carve-out section",
+        edit(SKILL, NEXT_HEADING, "# More\n" + EDGE + NEXT_HEADING), 0, []),
+    # With the carve-out section last in SKILL.md, the section ends at the end of the file, and no line lies past
+    # it: the section with no refused line pins a check that reads past the end, and x & y on its last line pins a
+    # check that stops short of it. Each runs with and without a final LF, because a line count that depends on the
+    # final LF, such as one from str.splitlines(), can be right in one form and wrong in the other.
+    ("the carve-out section last in SKILL.md", cut(SKILL, "\n" + NEXT_HEADING, ""), 0, []),
+    ("the carve-out section last in SKILL.md, with no LF after it", cut(SKILL, "\n\n" + NEXT_HEADING, ""), 0, []),
+    ("x & y as the last line of SKILL.md, with the carve-out section last", cut(SKILL, NEXT_HEADING, EDGE), 3,
+        [at(SKILL, NEXT_HEADING) + character("&")]),
+    ("x & y as the last line of SKILL.md, with the carve-out section last and no LF after it",
+        cut(SKILL, NEXT_HEADING, EDGE.rstrip("\n")), 3, [at(SKILL, NEXT_HEADING) + character("&")]),
+    # The bullet moves from its place to just above the next heading, with the "2." line under it, so the "2." line
+    # takes the number the next heading has in the committed file.
+    ("the skill bullet last in its section, 2. or code samples; under it, the same words in the dash bullet",
+        together(edit(SKILL, SKILL_LINE + "\n", ""),
+                 edit(SKILL, "\n" + NEXT_HEADING, "\n" + SKILL_LINE + "\n2. or code samples;\n" + NEXT_HEADING),
+                 change_dash_line(lambda line: line.rstrip("\n.") + "; 2. or code samples.\n")),
+        3, [at(SKILL, NEXT_HEADING) + UNREAD_LINE]),
+    ("x & y directly under the checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, CHECKLIST_HEADING + EDGE), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING, 1) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    ("x & y directly above the checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, EDGE + CHECKLIST_HEADING), 0, []),
+    # A heading of any level above the dash bullet starts the checklist span, so these 4 cases pin that edge at
+    # levels 1 and 3, apart from the level 2 heading in the 2 cases above them.
+    ("x & y directly under a level 1 checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, CHECKLIST_HEADING[1:] + EDGE), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING, 1) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    ("x & y directly above a level 1 checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, EDGE + CHECKLIST_HEADING[1:]), 0, []),
+    ("x & y directly under a level 3 checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, "#" + CHECKLIST_HEADING + EDGE), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING, 1) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    ("x & y directly above a level 3 checklist heading above the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, EDGE + "#" + CHECKLIST_HEADING), 0, []),
+    ("x & y as the last line of the checklist", append(CHECKLIST, EDGE), 3,
+        [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    ("x & y as the last line of the checklist, with no LF after it", append(CHECKLIST, EDGE.rstrip("\n")), 3,
+        [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the end of the file;"]),
+    # The committed checklist, whose span runs to the end of the file, ends in LF, so the committed tree pins a check
+    # that reads past the end only in that form; this case pins it for a file with no final LF.
+    ("the checklist with no LF after its last line",
+        lambda root: (root / CHECKLIST).write_text((root / CHECKLIST).read_text(encoding="utf-8").rstrip("\n"),
+                                                   encoding="utf-8"), 0, []),
+    ("x & y directly above a heading added after the dash bullet", append(CHECKLIST, EDGE + "## More\n"), 3,
+        [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the next heading;"]),
+    ("x & y directly under a heading added after the dash bullet", append(CHECKLIST, "## More\n" + EDGE), 0, []),
+    # A heading of any level ends the checklist span, so these 4 cases pin that edge at levels 3 and 1, apart from
+    # the level 2 heading in the 2 cases above them.
+    ("x & y directly above a level 3 heading added after the dash bullet", append(CHECKLIST, EDGE + "### More\n"), 3,
+        [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the next heading;"]),
+    ("x & y directly under a level 3 heading added after the dash bullet", append(CHECKLIST, "### More\n" + EDGE), 0,
+        []),
+    ("x & y directly above a level 1 heading added after the dash bullet", append(CHECKLIST, EDGE + "# More\n"), 3,
+        [past_end(CHECKLIST) + character("&") + CHECKLIST_SPAN + "the next heading;"]),
+    ("x & y directly under a level 1 heading added after the dash bullet", append(CHECKLIST, "# More\n" + EDGE), 0,
+        []),
+    ("x & y on line 1 of a checklist with no heading above the dash bullet",
+        lambda root: (root / CHECKLIST).write_text(EDGE + "\n" + dash_line(root), encoding="utf-8"), 3,
+        [f"{CHECKLIST}, line 1: " + character("&")
+         + "the lines between the start of the file and the end of the file;"]),
+    # No line lies before line 1, and a check that starts at line 0 reads the last line first, by Python's negative
+    # indexing, so this case puts the line last, where such a check names line 0.
+    ("x & y as the last line, with no LF after it, of a checklist with no heading above the dash bullet",
+        lambda root: (root / CHECKLIST).write_text(dash_line(root) + "\n" + EDGE.rstrip("\n"), encoding="utf-8"), 3,
+        [f"{CHECKLIST}, line 3: " + character("&")
+         + "the lines between the start of the file and the end of the file;"]),
+    *[(f"the skill bullet under {marks!r}, with the same words in the dash bullet",
+       together(edit(SKILL, SKILL_LINE, marks + "\ncode samples, " + SKILL_LINE[2:]),
+                checklist_lists(ITEMS, KEEP + marks[2:] + " code samples, ")),
+       3, [at(SKILL, SKILL_LINE) + character(marks[2])]) for marks in ("- ***", "- ___", "- _ _ _")],
+    ("a link title in the skill bullet, with the same link in the dash bullet",
+        together(edit(SKILL, SKILL_LINE, SKILL_LINE[:-1] + ' [w](/x "or code samples");'),
+                 checklist_lists(ITEMS[:-1] + [ITEMS[-1] + ' [w](/x "or code samples")'])),
+        3, [at(SKILL, SKILL_LINE) + character("[")]),
+    ("<script> above the carve-out heading", edit(SKILL, HEADING, "<script>\n" + HEADING), 3,
+        [at(SKILL, HEADING) + HTML]),
+    ("<pre> above the checklist heading over the dash bullet",
+        edit(CHECKLIST, CHECKLIST_HEADING, "<pre>\n" + CHECKLIST_HEADING), 3,
+        [at(CHECKLIST, CHECKLIST_HEADING) + HTML]),
+    ("<style> after 3 spaces in the checklist", prepend(CHECKLIST, "   <style>\n\n"), 3,
+        [f"{CHECKLIST}, line 1: " + HTML]),
+    ("< later in a line, and < after 4 spaces, continuing a bullet above the carve-out section",
+        edit(SKILL, OTHER_BULLET, OTHER_BULLET + "before <b>the</b> point;\n    <pre>\n"), 0, []),
+    ("a heading as the checklist's one block that mentions a dash", replace_dash_line("## Keep a dash\n"), 3,
+        [f"{NO_DASH}, a bullet; found 1 (heading)"]),
+    ("a * bullet above the dash bullet", change_dash_line(lambda line: "* Count words.\n" + line), 3,
+        [at(CHECKLIST, KEEP) + character("*")]),
+    ("an ordered item 2. under the skill bullet, with the same words on the dash bullet line",
+        together(edit(SKILL, SKILL_LINE, SKILL_LINE + "\n2. or code samples;"),
+                 change_dash_line(lambda line: line.rstrip("\n.") + "; 2. or code samples.\n")),
+        3, [at(SKILL, SKILL_LINE, 1) + UNREAD_LINE]),
+    ("an ordered item 2. under the dash bullet, with the same words on the skill bullet line",
+        together(edit(SKILL, SKILL_LINE, SKILL_LINE + " 2. or code samples;"),
+                 change_dash_line(lambda line: line.rstrip("\n.") + ";\n2. or code samples.\n")),
+        3, [at(CHECKLIST, KEEP, 1) + UNREAD_LINE]),
+    ("an ordered item 10) under the skill bullet, with the same words on the dash bullet line",
+        together(edit(SKILL, SKILL_LINE, SKILL_LINE + "\n10) or code samples;"),
+                 change_dash_line(lambda line: line.rstrip("\n.") + "; 10) or code samples.\n")),
+        3, [at(SKILL, SKILL_LINE, 1) + UNREAD_LINE]),
+    ("an ordered item 10) under the dash bullet, with the same words on the skill bullet line",
+        together(edit(SKILL, SKILL_LINE, SKILL_LINE + " 10) or code samples;"),
+                 change_dash_line(lambda line: line.rstrip("\n.") + ";\n10) or code samples.\n")),
+        3, [at(CHECKLIST, KEEP, 1) + UNREAD_LINE]),
     ("the checklist list reordered", checklist_lists(list(reversed(ITEMS))), 1, []),
     ("the skill list reordered after its first item", skill_lists(ITEMS[:1] + list(reversed(ITEMS[1:]))), 1, []),
     ("the skill list with quoted language last", skill_lists(ITEMS[1:] + ITEMS[:1]), 1, []),
@@ -178,14 +372,114 @@ CASES = [
     ("the checklist with an item the skill lacks", checklist_lists(ITEMS + ["code samples"]), 1, [adds("code samples")]),
     ("the skill with a new item", skill_lists(ITEMS + ["legal citations"]), 1, [lacks("legal citations")]),
     ("a sentence after the Keep clause", change_dash_line(lambda line: line.rstrip("\n") + " " + EXTRA + "\n"), 1, []),
-    ("an indented sub-bullet under the dash bullet", change_dash_line(lambda line: line + "  - " + EXTRA + "\n"), 1, []),
-    ("an indented paragraph in the dash bullet", change_dash_line(lambda line: line + "\n  " + EXTRA + "\n"), 1, []),
+    ("an indented sub-bullet under the dash bullet", change_dash_line(lambda line: line + "  - " + EXTRA + "\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + INDENTED_ITEM]),
+    ("a sub-bullet indented by 4 spaces under the dash bullet",
+        change_dash_line(lambda line: line + "    - " + EXTRA + "\n"), 3, [at(CHECKLIST, KEEP, 1) + UNREAD_LINE]),
+    ("the carve-out heading indented by 1 space", edit(SKILL, HEADING, " " + HEADING), 3,
+        [at(SKILL, HEADING) + INDENTED_HEADING]),
+    ("the skill bullet indented by 3 spaces", edit(SKILL, SKILL_LINE, "   " + SKILL_LINE), 3,
+        [at(SKILL, SKILL_LINE) + INDENTED_ITEM]),
+    ("an indented heading above the skill bullet", edit(SKILL, SKILL_LINE, " ## Moved\n" + SKILL_LINE), 3,
+        [at(SKILL, SKILL_LINE) + INDENTED_HEADING]),
+    ("the dash bullet indented by 1 space", change_dash_line(lambda line: " " + line), 3,
+        [at(CHECKLIST, KEEP) + INDENTED_ITEM]),
+    ("a block quote marker indented by 2 spaces under the dash bullet",
+        change_dash_line(lambda line: line + "  > " + EXTRA + "\n"), 3, [at(CHECKLIST, KEEP, 1) + INDENTED_HEADING]),
+    ("an indented * sub-bullet under the dash bullet", change_dash_line(lambda line: line + "  * " + EXTRA + "\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + INDENTED_ITEM]),
+    ("an indented + sub-bullet under the skill bullet", edit(SKILL, SKILL_LINE, SKILL_LINE + "\n + or code samples;"),
+        3, [at(SKILL, SKILL_LINE, 1) + INDENTED_ITEM]),
+    ("an indented * at the end of a line under the dash bullet",
+        change_dash_line(lambda line: line + "  *\n" + SPLIT + "\n"), 3, [at(CHECKLIST, KEEP, 1) + INDENTED_ITEM]),
+    ("an indented # at the end of a line above the skill bullet", edit(SKILL, SKILL_LINE, " #\n" + SKILL_LINE), 3,
+        [at(SKILL, SKILL_LINE) + INDENTED_HEADING]),
+    ("an indented level 6 heading above the skill bullet", edit(SKILL, SKILL_LINE, "   ###### Moved\n" + SKILL_LINE),
+        3, [at(SKILL, SKILL_LINE) + INDENTED_HEADING]),
+    ("an indented 1. item under the skill bullet", edit(SKILL, SKILL_LINE, SKILL_LINE + "\n  1. or code samples;"), 3,
+        [at(SKILL, SKILL_LINE, 1) + INDENTED_ITEM]),
+    ("a wrapped line starting 404. under the dash bullet",
+        change_dash_line(lambda line: line + "  404. " + SPLIT + "\n"), 3, [at(CHECKLIST, KEEP, 1) + INDENTED_ITEM]),
+    ("an indented 123456789) at the end of a line under the dash bullet",
+        change_dash_line(lambda line: line + "  123456789)\n" + SPLIT + "\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + INDENTED_ITEM]),
+    ("an empty * item after the skill bullet", edit(SKILL, SKILL_LINE, SKILL_LINE + "\n* \nor code samples;"), 3,
+        [at(SKILL, SKILL_LINE, 1) + EMPTY_ITEM]),
+    ("the skill bullet text under an empty + item, after a line continuing the bullet above",
+        edit(SKILL, SKILL_LINE, "Also:\n+ \n" + SKILL_LINE[2:]), 3, [at(SKILL, SKILL_LINE, 1) + EMPTY_ITEM]),
+    ("an empty - item after a blank line under the skill bullet", edit(SKILL, SKILL_LINE, SKILL_LINE + "\n\n- "), 3,
+        [at(SKILL, SKILL_LINE, 2) + EMPTY_ITEM]),
+    ("an empty 1. item after the dash bullet", change_dash_line(lambda line: line + "1. \n" + SPLIT + "\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + EMPTY_ITEM]),
+    ("a lone * after the dash bullet", change_dash_line(lambda line: line + "*\n" + SPLIT + "\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + EMPTY_ITEM]),
+    ("a lone 2. after the skill bullet", edit(SKILL, SKILL_LINE, SKILL_LINE + "\n2.\nor code samples;"), 3,
+        [at(SKILL, SKILL_LINE, 1) + EMPTY_ITEM]),
+    ("a lone 123456789) after the dash bullet", change_dash_line(lambda line: line + "123456789)\n" + SPLIT + "\n"),
+        3, [at(CHECKLIST, KEEP, 1) + EMPTY_ITEM]),
+    ("a heading indented by 4 spaces above the skill bullet", edit(SKILL, SKILL_LINE, "    ## Moved\n" + SKILL_LINE),
+        3, [at(SKILL, SKILL_LINE) + INDENTED_HEADING]),
+    ("a level 6 heading indented by 4 spaces above the skill bullet",
+        edit(SKILL, SKILL_LINE, "    ###### Moved\n" + SKILL_LINE), 3, [at(SKILL, SKILL_LINE) + INDENTED_HEADING]),
+    ("a block quote marker indented by 5 spaces above the skill bullet",
+        edit(SKILL, SKILL_LINE, "     > Moved\n" + SKILL_LINE), 3, [at(SKILL, SKILL_LINE) + INDENTED_HEADING]),
+    ("a heading indented by 5 spaces under the dash bullet", change_dash_line(lambda line: line + "     ## Moved\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + INDENTED_HEADING]),
+    ("a # at the end of a line indented by 5 spaces under the dash bullet",
+        change_dash_line(lambda line: line + "     #\n" + SPLIT + "\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + INDENTED_HEADING]),
+    ("a block quote marker indented by 4 spaces under the dash bullet",
+        change_dash_line(lambda line: line + "    > " + EXTRA + "\n"), 3, [at(CHECKLIST, KEEP, 1) + INDENTED_HEADING]),
+    ("a heading indented by 6 spaces under the bullet above the skill bullet",
+        edit(SKILL, SKILL_LINE, "      ## Moved\n" + SKILL_LINE), 3, [at(SKILL, SKILL_LINE) + INDENTED_HEADING]),
+    ("a block quote marker indented by 6 spaces under the bullet above the skill bullet",
+        edit(SKILL, SKILL_LINE, "      > Moved\n" + SKILL_LINE), 3, [at(SKILL, SKILL_LINE) + INDENTED_HEADING]),
+    ("a heading indented by 6 spaces under a sub-bullet indented by 4 spaces above the skill bullet",
+        edit(SKILL, SKILL_LINE, "    - Also:\n      ## Moved\n" + SKILL_LINE), 3,
+        [at(SKILL, SKILL_LINE, 1) + INDENTED_HEADING]),
+    ("a block quote marker indented by 6 spaces under a sub-bullet indented by 4 spaces above the skill bullet",
+        edit(SKILL, SKILL_LINE, "    - Also:\n      > Moved\n" + SKILL_LINE), 3,
+        [at(SKILL, SKILL_LINE, 1) + INDENTED_HEADING]),
+    ("a heading indented by 10 spaces under a sub-bullet indented by 8 spaces above the skill bullet",
+        edit(SKILL, SKILL_LINE, "    - Also:\n        - More:\n          ## Moved\n" + SKILL_LINE), 3,
+        [at(SKILL, SKILL_LINE, 2) + INDENTED_HEADING]),
+    ("a heading indented by 6 spaces under an ordered item above the skill bullet",
+        edit(SKILL, SKILL_LINE, "1. Also:\n      ## Moved\n" + SKILL_LINE), 3,
+        [at(SKILL, SKILL_LINE, 1) + INDENTED_HEADING]),
+    ("a heading indented by 16 spaces directly under the carve-out heading, with no list open",
+        edit(SKILL, HEADING, HEADING + "                ## Moved\n"), 3, [at(SKILL, HEADING, 1) + INDENTED_HEADING]),
+    ("text that is not a marker, indented by 1 to 5 spaces, continuing a bullet above the carve-out section",
+        edit(SKILL, OTHER_BULLET, OTHER_BULLET + " #x\n  ####### x\n  -x\n  1.x\n  1234567890. x\n  . x\n    #x\n"
+             "     ####### x\n"), 0, []),
+    ("text that is not a list marker, at the start of a line continuing the bullet above the skill bullet",
+        edit(SKILL, SKILL_LINE, ")\n1234567890.\n" + SKILL_LINE), 0, []),
+    ("an empty * item indented by 4 spaces under the dash bullet", change_dash_line(lambda line: line + "    *\n"), 3,
+        [at(CHECKLIST, KEEP, 1) + UNREAD_LINE]),
+    ("a sub-bullet indented by 4 spaces with 2 spaces after its marker, under the dash bullet",
+        change_dash_line(lambda line: line + "    -  " + EXTRA + "\n"), 3, [at(CHECKLIST, KEEP, 1) + UNREAD_LINE]),
+    ("an empty 2. item followed by 2 spaces after the skill bullet",
+        edit(SKILL, SKILL_LINE, SKILL_LINE + "\n2.  \nor code samples;"), 3, [at(SKILL, SKILL_LINE, 1) + EMPTY_ITEM]),
+    ("a lone 10) after the skill bullet", edit(SKILL, SKILL_LINE, SKILL_LINE + "\n10)\nor code samples;"), 3,
+        [at(SKILL, SKILL_LINE, 1) + EMPTY_ITEM]),
+    ("an indented YAML list item in the SKILL.md front matter",
+        edit(SKILL, "meaning.\n---\n", "meaning.\nallowed-tools:\n  - Read\n---\n"), 3,
+        [at(SKILL, "meaning.\n---\n", 2) + INDENTED_ITEM]),
+    ("both bullets with 3 spaces after the marker, each continued after a blank line by a line indented by 2 spaces",
+        together(edit(SKILL, SKILL_LINE, "-   " + SKILL_LINE[2:] + "\n\n  or code samples;"),
+                 change_dash_line(lambda line: "-   " + line[2:].rstrip("\n.") + ";\n\n  or code samples.\n")),
+        3, [at(SKILL, SKILL_LINE) + SPACED]),
+    ("the dash bullet with 2 spaces after a * marker", change_dash_line(lambda line: "*  " + line[2:]), 3,
+        [at(CHECKLIST, KEEP) + SPACED]),
+    ("the skill bullet with 2 spaces after a + marker", edit(SKILL, SKILL_LINE, "+  " + SKILL_LINE[2:]), 3,
+        [at(SKILL, SKILL_LINE) + SPACED]),
+    ("an indented paragraph in the dash bullet", change_dash_line(lambda line: line + "\n  " + EXTRA + "\n"), 3,
+        [at(CHECKLIST, KEEP, 2) + UNREAD_LINE]),
     ("an unindented line continuing the dash bullet", change_dash_line(lambda line: line + EXTRA + "\n"), 1, []),
     ("a carve-out after a mixed-mark line in the dash bullet",
-        change_dash_line(lambda line: line + "_*_\n" + SPLIT + "\n"), 1, []),
+        change_dash_line(lambda line: line + "_*_\n" + SPLIT + "\n"), 3, [at(CHECKLIST, KEEP, 1) + character("_")]),
     ("a carve-out after a mixed-mark line in the skill bullet",
-        edit(SKILL, SKILL_LINE, SKILL_LINE + "\n_*_\nor code samples;"), 1,
-        [lacks(ITEMS[-1] + "; _*_"), lacks("code samples"), adds(ITEMS[-1])]),
+        edit(SKILL, SKILL_LINE, SKILL_LINE + "\n_*_\nor code samples;"), 3,
+        [at(SKILL, SKILL_LINE, 1) + character("_")]),
     ("a fenced block in the dash bullet", change_dash_line(lambda line: line + "  ```\n  code samples\n  ```\n"), 3,
         [at(CHECKLIST, KEEP, 1) + FENCED]),
     ("a comment appended to the dash bullet",
@@ -199,7 +493,7 @@ CASES = [
     ("a skill item on an unindented line", edit(SKILL, SKILL_LINE, SKILL_LINE.replace(", or", ",").rstrip(";")
         + "\nor code samples;"), 1, [lacks("code samples")]),
     ("a skill item on an indented line", edit(SKILL, SKILL_LINE, SKILL_LINE.replace(", or", ",").rstrip(";")
-        + "\n  or code samples;"), 1, [lacks("code samples")]),
+        + "\n  or code samples;"), 3, [at(SKILL, SKILL_LINE, 1) + UNREAD_LINE]),
     ("no Keep clause", checklist_lists(ITEMS, "Keep a dash where it is "), 1, []),
     ("2 Keep clauses", change_dash_line(lambda line: line.rstrip("\n") + " " + KEEP + listed(ITEMS) + ".\n"), 1, []),
     ("an empty item in the checklist", checklist_lists(ITEMS[:1] + [""] + ITEMS[1:]), 1, [adds("")]),

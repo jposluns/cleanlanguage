@@ -119,11 +119,13 @@ ROOT = Path(__file__).resolve().parent.parent
 # The files the orchestration work owns, repository-relative.
 SCANNED = (
     ".aiqt/config.md",
+    ".claude/hooks/ask_mode_guard.py",
     ".github/workflows/orchestration-registry.yml",
     "tools/check-orchestration-registry.py",
     "tools/migrate-todo-aei.py",
     "tools/orch-enumerate-backlog.py",
     "tools/orch_doctor.py",
+    "tools/test-ask-mode-guard.py",
     "tools/test-orch-enumerate-backlog.py",
     "tools/test-orch-migrate-todo.py",
     "tools/test-orch-stage1-hooks.py",

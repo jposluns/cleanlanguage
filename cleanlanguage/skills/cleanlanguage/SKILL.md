@@ -5,7 +5,8 @@ description: Draft, rewrite, proofread, adapt, edit, review, or quality-assure p
 
 # Clean Language
 
-Version: 1.0.14  
+Version: 1.0.15  
+Released: 2026-11-08  
 Author: Jeff Posluns  
 Website: https://cleanlanguage.ai/  
 GitHub: https://github.com/jposluns/cleanlanguage  
