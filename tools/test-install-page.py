@@ -197,11 +197,8 @@ except Exception as error:
     print(f"test-install-page: failures:\n  - the baseline version could not be read from .baseline/pin.toml: {error!r}")
     raise SystemExit(1)
 # The names that hold the version read from the pin. version_binding_problems() refuses any binding of them in this
-# file's syntax tree but the one above, and any star import, whose names the tree does not show. A rebinding at module
-# level would give its value to every case built after it and to every check that reads the name as it runs, and a
-# case read through a function that drops the ?v= token, such as the gate's load_path(), would still pass. A local
-# binding (in a function, a class body or a comprehension, or as an argument or a type parameter) reaches only its own
-# scope, so it changes no case where that scope does not read the name, but a reader takes the name for the version.
+# file's syntax tree but the one above, and any star import, whose names the tree does not show: any other binding can
+# give a case or check that reads the name a value other than the version, or lead a reader to take it for the version.
 VERSION_NAMES = ("BASELINE",)
 # The ?v= tokens that start with a digit and that this file keeps as literals on purpose, each with its reason;
 # version_literal_problems() refuses any other, so that no case carries a baseline version that goes stale at a move.
