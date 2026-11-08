@@ -16,9 +16,11 @@ the 3 dark states agree, so an override written in only 1 of a scheme's 2 forms 
 From 1.9.1 it also reads the package's baseline.css (by default the one beside palettes.css; --baseline sets it),
 in the order a page loads them: palettes.css, site-palette.css, baseline.css. baseline.css declares the family
 tokens (gold, silver, the 3 ordering colours) and the component tokens (chips, buttons, navigation, rails, the
-install picker, the search input, tags, table headers) inside :where(), so a site may override any of them in
-site-palette.css with no template change; this gate resolves each component token through the palette token it
-names (var(--...)) or the site's override, and checks every pair in COMPONENT_PAIRS and FAMILY_PAIRS below.
+install picker, the search input, tags, table headers, from 1.11.2 the warm inline ink --ink-warm and, from
+1.11.3, the heading ink --heading-fg of plain and tinted bands) inside
+:where(), so a site may override any of them in site-palette.css with no template change; this gate resolves
+each component token through the palette token it names (var(--...)) or the site's override, and checks every
+pair in COMPONENT_PAIRS and FAMILY_PAIRS below.
 
 Usage (from the repository root; Python 3 standard library only, no network):
   python3 .baseline/check_palette.py --site grclibrary \
@@ -42,7 +44,8 @@ TOKENS = ["bg", "surface-raised", "surface-sunken", "text", "text-muted", "rule"
           "on-accent", "link", "link-hover", "focus", "selection", "code-bg", "callout-bg", "glow", "brand",
           # matrix tables (from 1.7.0)
           "row-tint", "row-hover"] + ["heat-%d" % i for i in range(5)] + ["grp-%d" % i for i in range(1, 7)]
-# Family and component tokens (from 1.9.1), declared in baseline.css; a site may override them in site-palette.css.
+# Family and component tokens (from 1.9.1), declared in baseline.css; a site may override them in site-palette.css
+# (bands, banner, pair and boxes from 1.11.0; ink-warm from 1.11.2; heading-fg from 1.11.3).
 FAMILY = ["gold", "gold-rule", "silver", "ord-progress", "ord-speed", "ord-cost"]
 COMPONENT = ["chip-fg", "chip-border", "chip-hover-fg", "chip-hover-border", "chip-pressed-fg", "chip-pressed-border",
              "chip-unavailable-fg", "chip-unavailable-bg", "chip-unavailable-border", "button-fg", "button-border", "button-hover-fg",
@@ -54,7 +57,11 @@ COMPONENT = ["chip-fg", "chip-border", "chip-hover-fg", "chip-hover-border", "ch
              "band-tint-bg", "band-dark-bg", "band-dark-fg", "band-dark-heading", "band-dark-link", "band-dark-focus",
              # from 1.11.0: the banner frame, the before-and-after boxes and the card grid
              "banner-from", "banner-to", "pair-before-bg", "pair-before-bg-on-tint", "pair-after-bg", "pair-panel-bg",
-             "box-bg", "box-border"]
+             "box-bg", "box-border",
+             # from 1.11.2: the warm inline ink (span.warm)
+             "ink-warm",
+             # from 1.11.3: the heading ink of plain and tinted bands (their h2 and h3)
+             "heading-fg"]
 # (foreground, [grounds], threshold): text 4.5:1; the boundary of a control 3:1. Tokens not listed are decorative.
 COMPONENT_PAIRS = (
     [(t, ["bg"], 4.5) for t in ["chip-fg", "chip-hover-fg", "chip-pressed-fg", "nav-fg",
@@ -74,7 +81,13 @@ COMPONENT_PAIRS = (
     + [("text", ["pair-before-bg", "pair-before-bg-on-tint", "pair-after-bg", "pair-panel-bg", "box-bg"], 4.5),
        ("text-muted", ["pair-before-bg", "pair-before-bg-on-tint", "pair-after-bg", "box-bg"], 4.5),
        ("link", ["pair-before-bg", "pair-before-bg-on-tint", "pair-after-bg", "pair-panel-bg", "box-bg"], 4.5),
-       ("accent", ["pair-after-bg", "box-bg"], 4.5)])
+       ("accent", ["pair-after-bg", "box-bg"], 4.5)]
+    # from 1.11.2: the warm inline ink (span.warm) as text on 10 grounds: the 5 surfaces, the 2 row tints,
+    # band-tint-bg, pair-after-bg and box-bg
+    + [("ink-warm", ["bg", "surface-raised", "surface-sunken", "code-bg", "callout-bg",
+                     "row-tint", "row-hover", "band-tint-bg", "pair-after-bg", "box-bg"], 4.5)]
+    # from 1.11.3: the heading ink of plain and tinted bands, as text on the 2 grounds those bands give a heading
+    + [("heading-fg", ["bg", "band-tint-bg"], 4.5)])
 FAMILY_PAIRS = [(t, ["bg"], 4.5) for t in ["gold", "silver", "ord-progress", "ord-speed", "ord-cost"]]
 RAINBOW = (["rainbow-%d" % i for i in range(1, 7)] + ["rainbow-join-%d" % i for i in range(1, 7)]
            + ["rainbow-ink-%d" % i for i in range(1, 7)] + ["band-grey"])
@@ -424,7 +437,15 @@ def check_site(sheets, site, out, site_path=None):
             v = deref(tok, vals)
             if v is None:
                 failures += 1
-                out.append("FAIL %s / %s: --%s is not set (is baseline.css 1.9.1 or later beside palettes.css?)" % (site, scheme, tok))
+                if tok == "heading-fg":
+                    need = "1.11.3"
+                elif tok == "ink-warm":
+                    need = "1.11.2"
+                elif tok.startswith(("band-", "banner-", "pair-", "box-")):
+                    need = "1.11.0"
+                else:
+                    need = "1.9.1"
+                out.append("FAIL %s / %s: --%s is not set (is baseline.css %s or later beside palettes.css?)" % (site, scheme, tok, need))
                 continue
             c = parse_hex(v)
             if c is None:
