@@ -658,7 +658,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
     def test_a_rejected_version_relays_the_extractor_reason(self):
         # Client exit 11 at requires-date can rest on any reason the extractor
         # gives, so the message names the version as malformed and relays the
-        # reason the client printed. A part one digit longer than the default
+        # reason the client printed. A part 1 digit longer than the default
         # integer-string limit of 4300 digits is bare X.Y.Z, so only the
         # relayed reason says why it was rejected.
         version = "1.0." + "1" * 4301

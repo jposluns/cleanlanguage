@@ -261,7 +261,7 @@ done
 
 # 2a2. G1: client exit 11 at requires-date can rest on any reason the
 #      extractor gives, so the gate names the version as malformed and relays
-#      the reason the client printed. A part one digit longer than the default
+#      the reason the client printed. A part 1 digit longer than the default
 #      integer-string limit of 4300 digits is bare X.Y.Z, so only the relayed
 #      reason says why it was rejected.
 long_version="1.0.$(python3 -I -c 'print("1" * 4301)')"
