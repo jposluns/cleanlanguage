@@ -103,12 +103,13 @@ member holds one mode for the whole host. The guard takes its values from the fi
 the host's `orch-set-mode`, which the operator runs through `orchmod` and which accepts exactly
 `"attended-autonomous"` (`orchmod aa`) and `"unattended"` (`orchmod ua`); a change to that list is
 a change to this guard. It allows a question when `"mode"` is exactly `"attended-autonomous"`,
-and in 2 other cases: when `"mode"` is exactly `"attended"`, a legacy value that the writer does
+and in 1 other case: when `"mode"` is exactly `"attended"`, a legacy value that the writer does
 not write, it reads the record as `"attended-autonomous"`, never as `"unattended"`, and allows the
-question with a one-line warning that names the file and `"attended-autonomous"`; and when
-`/opt/orch-operator` itself is absent, it allows the question with a one-line note, so contributor
-machines and hosts without the orchestrator stay usable. It denies,
-naming the cause, when the hook payload has no string `tool_name`; when `lstat` on
+question with a one-line warning that names the file and `"attended-autonomous"`. It denies,
+naming the cause, when the hook payload has no string `tool_name`; when `/opt/orch-operator`
+itself is absent, since the host then declares no operating mode and removing that root-owned
+directory must not disarm the guard, and that deny names the operator's remedy, which is to create
+the directory, owned by root, and run `orchmod aa`; when `lstat` on
 `/opt/orch-operator`, which does not follow a symlink there, fails for any other reason, such
 as a path component that is a regular file; when the file is missing while `/opt/orch-operator`
 exists, unreadable, a symlink, on a path that holds a symlink loop or too many symlinks, not a
@@ -133,7 +134,9 @@ other repositories, or non-Claude worker families; a session that can edit the g
 settings file that the repository does not track, such as `.claude/settings.local.json`, which
 `.gitignore` ignores, or a user settings file outside the checkout, never shows in review, and
 nothing in this repository shows or tests whether such a file can disable or override this hook;
-removing `/opt/orch-operator` disarms it; the guard trusts root's file, so root controls the
+an absent `/opt/orch-operator` denies every question, so on contributor machines and hosts without
+the orchestrator every AskUserQuestion call is denied with the record-and-continue instruction; the
+guard trusts root's file, so root controls the
 decision, and it does not check the directory that holds the file; the file holds one mode for the
 whole host, so a session with the operator present is blocked while the host says unattended; the
 4096-byte bound limits size, not time: the `lstat` of `/opt/orch-operator`, the open of whatever is

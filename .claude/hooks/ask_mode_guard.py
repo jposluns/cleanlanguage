@@ -10,11 +10,11 @@ runs through orchmod: `orchmod aa` writes "attended-autonomous" and `orchmod ua`
 list, so a change to the writer's list is a change to this guard. It also reads one legacy value
 that the writer does not write, "attended": this repository's rule reads it as attended-autonomous
 with a one-line warning, never as unattended. Only the exact values "attended-autonomous", silently,
-and "attended", with that warning, let the question through, with one exception: where lstat reports
-/opt/orch-operator itself absent, the host declares no operating-mode, so the guard allows the
-question with a one-line note. Every other state denies and names its cause, because a
-blocking question in an unattended session stalls the run until someone notices, while a wrongly
-denied question only asks the agent to record the decision and continue.
+and "attended", with that warning, let the question through. Every other state denies and names its
+cause, because a blocking question in an unattended session stalls the run until someone notices,
+while a wrongly denied question only asks the agent to record the decision and continue. The denied
+states include /opt/orch-operator itself absent, where the host declares no operating-mode, since
+removing that root-owned directory must not disarm the guard.
 
 The vendored orch_ask_guard does not enforce this: it reads an "Operating-mode:" text line from a
 mode record that this repository does not declare, so it allows the question and logs a fail-open
@@ -28,8 +28,10 @@ Decisions, in the order the guard makes them:
 - a payload object whose "tool_name" is missing, null, or not a string: deny, as a malformed
   payload, since it names no tool that the guard could let through;
 - a tool other than AskUserQuestion: allow, silently;
-- lstat reporting /opt/orch-operator itself absent: allow, with a one-line systemMessage, so that
-  contributor machines and hosts without the orchestrator stay usable;
+- lstat reporting /opt/orch-operator itself absent: deny, since the host then declares no
+  operating-mode and removing that root-owned directory must not disarm the guard; the reason and
+  the banner name that cause, and the reason names the operator's remedy, which is to create the
+  directory, owned by root, and run `orchmod aa`;
 - lstat on /opt/orch-operator failing for any other reason, such as a parent directory the guard
   cannot search or a path component that is a regular file (ENOTDIR): deny;
 - the mode file missing, unreadable, a symlink (opened with O_NOFOLLOW), or not a regular file: deny.
@@ -66,7 +68,9 @@ families; a session that can edit this script or .claude/settings.json can disar
 shows in review only once it is committed; a settings file that the repository does not track, such
 as .claude/settings.local.json, which .gitignore ignores, or a user settings file outside the
 checkout, never shows in review, and nothing in this repository shows or tests whether such a file
-can disable or override this hook; removing /opt/orch-operator disarms it; the guard trusts root's
+can disable or override this hook; an absent /opt/orch-operator denies every question, so on
+contributor machines and hosts without the orchestrator every AskUserQuestion call is denied with
+the record-and-continue instruction; the guard trusts root's
 file: it checks that uid 0 owns /opt/orch-operator/operating-mode and that neither its group nor
 others can write it, so root controls the decision, and it does not check the directory that holds
 the file; the file holds one mode for the whole host, so a session with the operator present is
@@ -141,9 +145,21 @@ def deny_unattended(mode_file):
                 "Repository guard: denied a blocking question; the host operating-mode is unattended.")
 
 
+def deny_absent_host(host_dir):
+    # Removing the root-owned host directory must not disarm the guard, so its absence denies. The
+    # remedy names the directory as well as orchmod, since the mode file cannot exist without it.
+    return deny("AskUserQuestion BLOCKED: {} is absent, so this host declares no operating-mode. "
+                "Treat the session as unattended. {} If the operator is in fact present, the "
+                "operator creates {}, owned by root, and runs `orchmod aa`, which sets the host "
+                "operating-mode to attended-autonomous; then re-issue.".format(
+                    host_dir, RECORD_AND_CONTINUE, host_dir),
+                "Repository guard: denied a blocking question; {} is absent, so this host declares "
+                "no operating-mode.".format(host_dir))
+
+
 def allow_legacy_attended(mode_file):
-    """An allow with no permissionDecision, as for an absent host directory, and 1 warning that
-    names the record, the legacy value and the value it reads as."""
+    """An allow with no permissionDecision and 1 warning that names the record, the legacy value and
+    the value it reads as."""
     return {"systemMessage": "Repository guard: {} holds the legacy mode \"{}\", read as {}; "
                              "AskUserQuestion allowed. The operator runs `orchmod aa` to "
                              "rewrite the record as {}.".format(
@@ -255,8 +271,7 @@ def decide(payload, mode_file, expect_uid):
     try:
         os.lstat(host_dir)
     except FileNotFoundError:
-        return {"systemMessage": "Repository guard: {} is absent, so this host declares no "
-                                 "operating-mode; AskUserQuestion allowed.".format(host_dir)}
+        return deny_absent_host(host_dir)
     except OSError as exc:
         return deny_cause("{} cannot be checked: {}".format(host_dir, exc.strerror))
     try:

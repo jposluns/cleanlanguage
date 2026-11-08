@@ -230,9 +230,10 @@ class AskModeGuard(unittest.TestCase):
         self.write_mode(UNATTENDED_LINE)
         reason = self.assert_denies(self.run_guard(), "unattended")
         self.assertIn(RECORD_AND_CONTINUE, reason)
-        # Only the unattended reason tells the operator how to take over; the deny for any other
-        # mode also contains "unattended", so the substring above cannot tell the two apart. The
-        # file is root-owned and orch-set-mode is its only writer, so the remedy is orchmod.
+        # Of the denies for a "mode" value, only the unattended reason tells the operator how to
+        # take over; the deny for any other value also contains "unattended", so the substring
+        # above cannot tell the two apart. The file is root-owned and orch-set-mode is its only
+        # writer, so the remedy is orchmod.
         self.assertIn("is unattended", reason)
         self.assertIn("the operator runs `orchmod aa`", reason)
         self.assertNotIn("sets \"mode\"", reason)
@@ -270,18 +271,18 @@ class AskModeGuard(unittest.TestCase):
                 self.assert_allows_with_legacy_warning(self.run_guard())
 
     # --- where the file is, and what it is -----------------------------------------------------------
-    def test_absent_host_directory_allows_with_a_note(self):
-        missing = self._tmp / "no-such-dir" / "operating-mode"
-        result = self.run_guard(mode_file=missing)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        out = json.loads(result.stdout)
-        self.assertNotIn("hookSpecificOutput", out)
-        self.assertIn("is absent", out["systemMessage"])
-        self.assertEqual(len(out["systemMessage"].splitlines()), 1)
+    def test_absent_host_directory_denies(self):
+        # Removing the root-owned host directory must not disarm the guard, so its absence denies:
+        # the reason and the banner name the cause, and the reason names the operator's remedy.
+        host_dir = self._tmp / "no-such-dir"
+        cause = "{} is absent, so this host declares no operating-mode".format(host_dir)
+        reason = self.assert_denies(self.run_guard(mode_file=host_dir / "operating-mode"), cause)
+        self.assertIn("the operator creates {}, owned by root, and runs `orchmod aa`".format(
+            host_dir), reason)
 
     def test_host_directory_that_cannot_be_checked_denies(self):
         # lstat failing for a reason other than absence, here a parent directory without search
-        # permission, must deny rather than read as an absent directory.
+        # permission, must deny naming that failure rather than an absent directory.
         if os.geteuid() == 0:
             self.skipTest("root searches a mode 600 directory, so this case needs a uid other than 0")
         self.write_mode(ATTENDED_AUTONOMOUS_LINE)
@@ -294,7 +295,7 @@ class AskModeGuard(unittest.TestCase):
 
     def test_path_component_that_is_a_file_denies(self):
         # A regular file above the host directory makes lstat fail with ENOTDIR, which is not
-        # absence, so it must deny rather than read as an absent directory.
+        # absence, so it must deny naming that error rather than an absent directory.
         blocker = self.write_mode(ATTENDED_AUTONOMOUS_LINE, path=self._tmp / "blocker")
         result = self.run_guard(mode_file=blocker / "orch-operator" / "operating-mode")
         self.assert_denies(result, "cannot be checked: {}".format(os.strerror(errno.ENOTDIR)))
@@ -308,7 +309,7 @@ class AskModeGuard(unittest.TestCase):
 
     def test_dangling_symlink_at_the_host_directory_denies(self):
         # lstat does not follow the link, so the host directory is present and the mode file is
-        # missing; a check that followed it would read the directory as absent and allow.
+        # missing; a check that followed it would read the directory as absent and name that cause.
         self.host_dir.rmdir()
         self.host_dir.symlink_to(self._tmp / "no-such-dir")
         self.assert_denies(self.run_guard(), "is missing")
@@ -336,7 +337,8 @@ class AskModeGuard(unittest.TestCase):
 
     def test_fifo_at_the_host_directory_denies(self):
         # lstat finds the FIFO, so the host directory is present, and the open below it fails with
-        # ENOTDIR; a check that read a host directory that is not a directory as absent would allow.
+        # ENOTDIR; a check that read a host directory that is not a directory as absent would name
+        # the wrong cause.
         self.host_dir.rmdir()
         os.mkfifo(self.host_dir)
         self.assert_denies(self.run_guard(),
@@ -387,7 +389,7 @@ class AskModeGuard(unittest.TestCase):
 
     def test_symlink_loop_above_the_host_directory_denies(self):
         # Here lstat itself meets the loop and fails with ELOOP, which is not absence, so it must
-        # deny rather than read as an absent directory.
+        # deny naming that error rather than an absent directory.
         loop = self._tmp / "loop"
         loop.symlink_to(loop)
         result = self.run_guard(mode_file=loop / "orch-operator" / "operating-mode")
