@@ -558,8 +558,9 @@ not model a script that opens a popover, a dialog or a ``details``, or a
 browser's find-in-page that reveals ``hidden=until-found`` content.
 Among the descendant wipes, baseline.css declares, each at some widths,
 ``display: none`` for ``.figure .stack``, ``.figure .wide``, and
-``.family .sig .pre`` and ``.family .sig .post``, and a 1-pixel clip like
-that of ``.vh`` for ``.family .cards .cname``; none of those classes is in
+``.family .sig .pre`` and ``.family .sig .post``, and ``clip: rect(0 0 0 0)``
+with ``width: 1px`` and ``height: 1px``, as for ``.vh``, for
+``.family .cards .cname``; none of those classes is in
 ``CLASS_PIN``, so no checked element, ancestor or element it holds may carry
 one. ``tools/test-install-page.py`` pins, verbatim after normalizing only CSS
 whitespace and comments, every rule of fonts.css, palettes.css and
@@ -601,7 +602,7 @@ refuses that change to a stylesheet. Check 8 reads the names of the
 attributes of such a box (``PAGE_ATTRIBUTES``) and its tag (``PAGE_TAGS``),
 but not the values of its attributes or its classes, so another value of an
 attribute that the committed pages give its tag passes, and so does a further
-class (see ``p.meta`` above); a ``marquee`` around ``Scope``'s label now
+class (see ``p.meta`` above); a ``marquee`` around ``Scope``'s label
 fails ``PAGE_TAGS``. Check 5 allows only the 2 ``svg`` elements of the exact
 light and dark switch, so a larger ``width`` on 1 of them fails. The test reads
 comments and strings as CSS does, a backslash in a string escaping the
@@ -642,8 +643,8 @@ ancestor, such as ``main { direction: rtl; }``, fails the rule pin of
 ``tools/test-install-page.py`` unless a reviewer pins it. An end tag closes
 here the open element it names and every element opened inside it, and
 check 8 refuses an end tag that closes an element other than the innermost,
-so these possible browser repairs, which can hide markup that the gate reads as
-visible, now fail: an end tag a browser may ignore because its element is not
+so it refuses these end tags, whose possible browser repairs can hide markup
+that the gate reads as visible: an end tag a browser may ignore because its element is not
 in scope (``</div>`` inside a table cell, which can leave a hiding ``div``
 outside the table open) or, for an element outside the HTML standard's
 special category, because a special element such as ``div`` is open inside
@@ -896,8 +897,8 @@ def inert_elements() -> tuple[str, ...]:
 # ("img.only-dark, .only-dark { display: none; }") and sets display: block again only on an img in the dark scheme,
 # and skip, to which baseline.css gives an offset (".skip { position: absolute; left: 1rem; top: -4rem; ... }") that
 # may put it off-screen until it has focus, depending on its containing block. Classes that the rules of baseline.css
-# give display: none, or a 1-pixel clip, only as a descendant (.figure .stack, .figure .wide, .family .cards .cname,
-# .family .sig .pre and .post) are not listed; the docstring names them.
+# give display: none, or clip: rect(0 0 0 0) with width: 1px and height: 1px, only as a descendant (.figure .stack,
+# .figure .wide, .family .cards .cname, .family .sig .pre and .post) are not listed; the docstring names them.
 # No checked element, ancestor or element it holds may carry any of these: none is in CLASS_PIN (check 8).
 HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
 # The HTML standard's rendering rules may hide these with no stylesheet: display: none on datalist, rp, script and
@@ -905,9 +906,10 @@ HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
 # markup or, for script and title, its text (check 5 allows a structured-data block in a script), so
 # the gate reads each as hiding itself and everything inside it. A browser may render the content of audio, canvas
 # (with scripting on), meter, object (when it loads), progress and video only as fallback, and that of select only in
-# its control, so they hide here too, which can refuse more than a browser may hide. The other elements that the HTML
-# standard's rendering rules may hide cannot hold that markup (the docstring names them); a popover attribute, a
-# dialog without open and a details without open are tested in is_hiding_element and PageParser.
+# its control, so they hide here too, which can refuse more than a browser may hide. Of the other elements that the
+# HTML standard's rendering rules may hide, the void elements and head cannot hold that markup, and check 5 refuses
+# style, template, noembed and noframes (the docstring names them); a popover attribute, a dialog without open and a
+# details without open are tested in is_hiding_element and PageParser.
 HIDING_ELEMENTS = (
     "datalist", "noscript", "rp", "script", "title", "audio", "canvas", "meter", "object", "progress", "select", "video"
 )

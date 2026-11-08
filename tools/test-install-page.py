@@ -630,7 +630,7 @@ CASES = [
     # The committed pages give no h2 a class (PAGE_ATTRIBUTES), so a vh heading fails wherever it sits.
     ("a vh heading in the nav", edit(PAGE, '<nav class="nav" aria-label="Site">',
         '<nav class="nav" aria-label="Site"><h2 class="vh">Site</h2>'), (1, "a h2 carries the attribute 'class', " + NONE_GIVEN)),
-    # The class first only changes the opening label's padding (baseline.css), so a label without it is correct.
+    # baseline.css declares only padding-top for the class first (.lbl.first), so a label without it is correct.
     ("the opening label without the class first", edit(PAGE, '<p class="lbl first">Install</p>', '<p class="lbl">Install</p>'), 0),
     ("the hero's h1 hidden", edit(PAGE, HERO, HERO.replace("<h1>", '<h1 class="vh">')), (1, "the hero's h1 reads as hidden")),
     ("the hero's h1 emptied", edit(PAGE, HERO, "<h1></h1>"), (1, "the hero's h1 reads as hidden or has no text")),
@@ -886,7 +886,7 @@ CASES = [
         wrap(CHATGPT, "<h1>", "</h1>", '<font color="#f6f4e7">', "</font>"),
         (1, "a font around the <h1> carries the attribute 'color', " + GIVEN)),
     # Nor any tag that the committed pages do not give an element there (the gate's TAG_PIN), with or without a class
-    # or an attribute: a marquee scrolls what it holds in and out of view.
+    # or an attribute: a font or a marquee around a family page's h1, and a div or a bdi in a family link.
     ("a family page heading in a font with no attribute", wrap(CHATGPT, "<h1>", "</h1>", "<font>", "</font>"),
         (1, "a font around the <h1> is a font, " + TAG_GIVEN)),
     ("a family page heading in a marquee", wrap(CHATGPT, "<h1>", "</h1>", "<marquee>", "</marquee>"),
@@ -929,8 +929,8 @@ CASES = [
     ("a family page step with a link to the downloads with an id",
         edit(OTHER, '<a href="/instructions/">instructions page', '<a href="/instructions/" id="fresh">instructions page'),
         (1, "an a inside a step carries the attribute 'id', " + GIVEN)),
-    # Until this change these were named residuals: a hidden step, and a dir on a verified line, which a browser can
-    # show in another order, passed; each is now an attribute that the committed pages do not give that element.
+    # A hidden step, and a dir on a verified line, which a browser can show in another order, each fail as an attribute
+    # that the committed pages do not give that element.
     ("a family page with 1 setup step hidden", edit(OTHER, STEPS + "<li>", STEPS + "<li hidden>"),
         (1, "a step carries the attribute 'hidden', " + GIVEN)),
     ("a family page with a dir attribute on its verified line",
@@ -1345,7 +1345,7 @@ CASES = [
     ("a root Pipfile", create("Pipfile", '[packages]\nx = "*"\n'), (1, "Pipfile " + SERVER_ENTRY)),
     ("a root Gemfile", create("Gemfile", 'source "https://rubygems.org"\n'), (1, "Gemfile " + SERVER_ENTRY)),
     # No end tag may close an element other than the innermost: a browser may keep the span open after the first, and
-    # the div after the second, so each can hide the step list after it; each passed the gate, named residuals before.
+    # the div after the second, so each can hide the step list after it.
     ("a family page step list after <span class=\"vh\"><div></span>",
         edit(OTHER, STEPS, '<span class="vh"><div></span>' + STEPS), (1, "</span> closes <span> with <div> " + MISNESTED)),
     ("a family page step list after <p><div class=\"vh\"></p>", edit(OTHER, STEPS, '<p><div class="vh"></p>' + STEPS),
