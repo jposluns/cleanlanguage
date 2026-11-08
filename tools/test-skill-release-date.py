@@ -919,11 +919,13 @@ class JsonModeTest(unittest.TestCase):
                 self.assertIn(b"injected internal error", proc.stderr)
 
     def test_an_internal_error_in_requires_date_matches_json_mode(self):
-        # Row 101: --requires-date catches only Malformed, as the --json op
-        # does, so another Exception inside version_key, a ValueError
-        # included, exits 6 with the internal-error line and gives the same
-        # result as the requires_release_date op. A catch that grew to
-        # ValueError would fail the ValueError case.
+        # Row 101: sys.get_int_max_str_digits, which the extractor calls only
+        # in version_key, is made to raise a ValueError and then a
+        # RuntimeError. --requires-date exits 6 with nothing on stdout and
+        # the internal-error line, which names version_key; the
+        # requires_release_date op under --json gives the same exit, the same
+        # line and no reply. A Malformed catch that grew to ValueError, in
+        # either mode, fails the ValueError case.
         version = "1.0.14"
         for kind in ("ValueError", "RuntimeError"):
             with self.subTest(kind):
@@ -1070,13 +1072,14 @@ class JsonModeTest(unittest.TestCase):
         self.assertEqual((code, json.loads(out)["outcome"]), (0, "value"), err)
 
     def test_an_internal_error_in_an_op_of_the_shell_callers_exits_6(self):
-        # Row 89: as for the other ops, an Exception inside parse_date,
-        # publish_window or confirm_published is never a reply. The
+        # Row 89: as for the other ops, an Exception other than Malformed
+        # or Refused inside parse_date, publish_window or confirm_published
+        # is never a reply. The
         # publish_window cases fail time.strftime, which formats the instant
         # in a refusal, so the Exception rises inside publish_window_problem,
-        # after parse_instant, which reads a ValueError as a bad instant. The
-        # publish_window cases require the runner's message to name
-        # publish_window_problem.
+        # after parse_instant, which reads a ValueError from its strptime call
+        # as a bad instant. The publish_window cases require the runner's
+        # message to name publish_window_problem.
         for label, target, kind, data, where in (
             ("parse_date", "datetime.date", "RuntimeError", request("parse_date", "2026-11-15"), None),
             ("publish_window", "time.strftime", "RuntimeError",
