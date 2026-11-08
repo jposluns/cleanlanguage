@@ -329,9 +329,11 @@ GH
 # it 1 fake clock, a count of whole nanoseconds that starts at 1000.0 seconds.
 # time.time reads it, time.sleep moves it by the time asked for without
 # waiting, and time.monotonic reads it 500 seconds lower. The offset makes the
-# 2 clocks differ, so a gate that compares time.monotonic with a deadline set on
-# time.time misses that deadline by 500 seconds, and the case can tell which
-# clock the gate read. Counting whole nanoseconds makes every sum of sleeps
+# 2 clocks differ, so a gate that compares one clock with a deadline set on the
+# other misses that deadline by 500 seconds. While wall is set, time.time reads
+# that fixed value and time.monotonic moves on, as when the wall clock stands
+# still or steps; kills, returns and the exit are recorded on the moving clock
+# (now). Counting whole nanoseconds makes every sum of sleeps
 # exact, so when gh has started before the deadline, the last poll of a correct
 # gate lands exactly on that deadline, not a rounding error before it. gh is a
 # fake child on the same clock, reached through Popen, os.waitpid and os.kill,
@@ -359,14 +361,17 @@ spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 ticks = [1000 * NS]
-def clock():
+wall = [None]  # while set, time.time reads this value and time.monotonic moves on
+def now():
     return ticks[0] / NS
+def clock():
+    return now() if wall[0] is None else wall[0]
 def sleep(seconds):
     if seconds < 0:
         raise ValueError("sleep length must be non-negative")
     ticks[0] += round(seconds * NS)  # the time asked for, without waiting
 def monotonic():
-    return ticks[0] / NS - 500  # a fixed offset, so the 2 clocks never agree
+    return now() - 500  # a fixed offset, so the 2 clocks never agree
 mod.time = types.SimpleNamespace(time=clock, monotonic=monotonic, sleep=sleep)
 GH_STARTS, GH_ENDS, GH_OUTPUT = 0.0, 60.0, b""
 deadlines, gh_deadlines, kills, returns, procs, polls = [], [], [], [], {}, [0]
@@ -407,7 +412,7 @@ class Os:
         return p.pid, p.status
     def kill(self, pid, sig):
         p = child(pid, ProcessLookupError)
-        kills.append(clock())
+        kills.append(now())
         if p.status is None and sig == signal.SIGKILL:
             p.status = signal.SIGKILL  # the wait status of an end by SIGKILL
 mod.os = Os()
@@ -425,7 +430,8 @@ def gh(args, deadline):
     try:
         return real_gh(args, deadline)
     finally:
-        returns.append(clock())
+        wall[0] = None  # the wall clock catches up once _gh has returned
+        returns.append(now())
 mod._gh = gh
 def run_gate(*flags):
     sys.argv = [path, "--repo", "owner/name", *flags, sha]
@@ -442,7 +448,7 @@ def finish(code, why, facts):
     sys.exit(code)
 '
 
-# run_cut_off_case NAME LEFT BOUND [STARTS [KILLED]]: the gate runs in process
+# run_cut_off_case NAME LEFT BOUND [STARTS [KILLED [FROZEN]]]: the gate runs in process
 # on the fake clock of FAKE_CLOCK_GATE, in wait mode with --timeout 2 and
 # --interval 1, so the deadline is 1002.0. When the read starts, with the clock
 # still at 1000.0, the case moves the clock to 1002.0 minus LEFT, so LEFT
@@ -453,9 +459,11 @@ def finish(code, why, facts):
 # left before its last poll, so when gh has started before 1002.0 that poll
 # lands on 1002.0 exactly, whether or not the time left once gh has started is
 # a whole number of polls; there it kills gh, reaps it and exits 3 without
-# another sleep. When the start outlasts the time left, the first poll comes
-# when Popen returns, at 1002.0 minus LEFT plus STARTS, and the gate kills gh
-# there. KILLED is that moment, 1002.0 when not given. So every expectation is
+# another sleep. When the start outlasts the time left, the first poll after
+# Popen returns comes at 1002.0 minus LEFT plus STARTS, and the gate kills gh
+# there. KILLED is that moment, 1002.0 when not given. With FROZEN 1, time.time
+# stands still from the start of the read until _gh returns, so only a kill
+# decided on time.monotonic comes at KILLED. So every expectation is
 # a constant of this setup, compared as a number to within 1 microsecond:
 # read_checks must be called once, at 1000.0, with the deadline 1002.0; _gh must
 # be given the deadline 1002.0; gh must be killed exactly once, at KILLED; _gh
@@ -467,14 +475,15 @@ def finish(code, why, facts):
 # deadline given to read_checks or _gh, a bound whose clock starts only after
 # gh has started (with STARTS 1 and LEFT 2 it kills at 1003.0), a last poll
 # that sleeps a whole 0.02 seconds with less left (with 0.03 seconds left it
-# kills at 1002.01), a gate that compares the deadline with time.monotonic, and
-# a gate that never kills gh. A delay that the capped last poll absorbs is not
+# kills at 1002.01), a gate that compares one clock with a deadline set on the
+# other, a gate that kills on time.time (with FROZEN 1), and a gate that never
+# kills gh. A delay that the capped last poll absorbs is not
 # caught: a delay in read_checks or _gh before a clock read of the poll loop,
 # ending no later than 1002.0, shortens the sleeps after it, and the kill still
 # lands on 1002.0; the time STARTS charges to the start of gh, when it ends
 # before 1002.0, is such a delay.
 run_cut_off_case() {
-  local name="$1" left="$2" want_bound="$3" starts="${4:-0}" killed="${5:-1002.0}"
+  local name="$1" left="$2" want_bound="$3" starts="${4:-0}" killed="${5:-1002.0}" frozen="${6:-0}"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   # The fake gh is in process; a gh on PATH is reached only if the gate bypasses it.
   printf '#!/usr/bin/env bash\necho "unexpected gh call" >&2; exit 1\n' > "$bin/gh"
@@ -482,11 +491,14 @@ run_cut_off_case() {
   local got=0
   PATH="$bin:$PATH" python3 -I -B -c "$FAKE_CLOCK_GATE"'
 left, GH_STARTS, KILLED = float(sys.argv[4]), float(sys.argv[5]), float(sys.argv[6])
+FROZEN = sys.argv[7] == "1"
 START, DEADLINE = 1000.0, 1002.0  # the start, the start plus --timeout 2
 starts = []
 def before_read():
     starts.append(clock())
     ticks[0] = 1002 * NS - round(left * NS)  # LEFT seconds are left when the read starts
+    if FROZEN:
+        wall[0] = now()  # time.time stands still until _gh returns
 code = run_gate("--wait", "--timeout", "2", "--interval", "1")
 why = [w for w, ok in (
     ("start", near(starts, [START])),
@@ -494,11 +506,11 @@ why = [w for w, ok in (
     ("gh-deadline", near(gh_deadlines, [DEADLINE])),
     ("kill", near(kills, [KILLED])),
     ("returned", near(returns, [KILLED])),
-    ("end", near([clock()], [KILLED])),
+    ("end", near([now()], [KILLED])),
 ) if not ok]
 finish(code, why, "read at %s, deadline %s, gh deadline %s, killed at %s, returned at %s, exit at %.6f"
-       % (show(starts), show(deadlines), show(gh_deadlines), show(kills), show(returns), clock()))' \
-    "${here}/ci-status.py" "$C1" "$tmp" "$left" "$starts" "$killed" > "$tmp/out" 2> "$tmp/err" || got=$?
+       % (show(starts), show(deadlines), show(gh_deadlines), show(kills), show(returns), now()))' \
+    "${here}/ci-status.py" "$C1" "$tmp" "$left" "$starts" "$killed" "$frozen" > "$tmp/out" 2> "$tmp/err" || got=$?
   local why="" facts
   facts="$(cat "$tmp/facts" 2>/dev/null)"
   if [ -f "$tmp/why" ]; then why="$(cat "$tmp/why")"; else why=" clocks"; fi
@@ -899,17 +911,19 @@ run_cut_off_case "a read cut off with under 0.1 seconds left is not named as 0 s
 # poll would kill at 1002.01.
 run_cut_off_case "a read cut off with 0.03 seconds left is killed at the deadline, not a poll after it" \
   0.030 "the time left (under 0.1 seconds)"
-# Starting gh takes time. The deadline is fixed before gh starts, so that time
-# counts against it; a bound whose clock started after gh had started would kill
-# at 1003.0 here, 1 second after the deadline.
+# The clock is read just before Popen, so the 1 second gh takes to start counts
+# against the deadline; a bound whose clock started after Popen would kill at
+# 1003.0 here.
 run_cut_off_case "a read whose gh takes 1 second to start is still killed at the deadline" \
   2.000 "2.0 seconds" 1.000
-# A start that outlasts the time left is not cut short. The clock is read only
-# after Popen has returned, so gh is killed at that first poll, here at 1003.0,
-# 1 second after the deadline, and the message still names the 2 seconds gh was
-# given.
+# A start that outlasts the time left is killed at the first poll after Popen
+# returns, here at 1003.0, and the message names the 2 seconds gh was given.
 run_cut_off_case "a read whose gh start outlasts the time left is killed once Popen returns, after the deadline" \
   2.000 "2.0 seconds" 3.000 1003.0
+# The kill is decided on time.monotonic, so a wall clock that stands still
+# during the read does not delay it.
+run_cut_off_case "a read is killed at its deadline while the wall clock stands still" \
+  2.000 "2.0 seconds" 0 1002.0 1
 run_case "failed required check -> red" \
   "$(runs '{"status":"completed","conclusion":"failure","name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 1
 run_case "failing impostor of a required name beside the full set -> red" \
@@ -2556,9 +2570,9 @@ run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 # The gate runs with --timeout 30, so the first read, which a real fake gh
 # serves, has about 29 seconds to end with time left for the second read to
 # start before the deadline. The gate's time name is replaced by one
-# whose time() is the real time plus a shift, and whose other attributes,
-# sleep included, are the real ones. Once that wait has seen gh end, the
-# replaced os.waitpid sets the shift to the whole 30-second window, so the
+# whose time() and monotonic() are the real clocks plus a shift, and whose other
+# attributes, sleep included, are the real ones. Once that wait has seen gh end,
+# the replaced os.waitpid sets the shift to the whole 30-second window, so the
 # gate's next clock read, the one after that poll, finds the deadline passed and
 # kills and reaps gh at once through the gate's own code, and the case does not
 # wait out the window. No sleep of the gate is skipped, and every clock read
@@ -2606,6 +2620,8 @@ class Clock:
         return getattr(time, name)
     def time(self):
         return time.time() + shift[0]
+    def monotonic(self):
+        return time.monotonic() + shift[0]
 mod.time = Clock()
 real_waitpid = os.waitpid
 seen, waited = [], []
@@ -2664,9 +2680,9 @@ run_final_reap_case "gh exiting 0 with a red reading just before the kill at the
 # however long the host takes to start and run it. The gate runs with --timeout
 # 30, so the steps of the gate before gh repo view starts, including the clock
 # read in infer_repo, have 30 seconds before the deadline. The gate's time name is replaced as in run_final_reap_case: once
-# that wait has seen gh repo view end, time.time reads 30 seconds ahead, so the
-# gate's next clock read finds the deadline passed and kills and reaps gh at
-# once through its own code, and the case does not wait out the window. So it is
+# that wait has seen gh repo view end, time.time and time.monotonic read 30
+# seconds ahead, so the gate's next clock read finds the deadline passed and
+# kills and reaps gh at once through its own code, and the case does not wait out the window. So it is
 # not a call the deadline cut off: the repository is inferred and printed on
 # standard output, and the read after it, finding the window closed, exits 3
 # with that on standard error, never the line saying the repository could not
@@ -2700,6 +2716,8 @@ class Clock:
         return getattr(time, name)
     def time(self):
         return time.time() + shift[0]
+    def monotonic(self):
+        return time.monotonic() + shift[0]
 mod.time = Clock()
 real_waitpid = os.waitpid
 seen, waited = [], []
@@ -2742,11 +2760,11 @@ run_final_reap_view_case "gh repo view exiting 0 just before the kill at the dea
 run_final_reap_view_case "gh repo view exiting 0 just before the kill without --wait is accepted, then exits 3" -
 
 # run_closed_window_case NAME: the gate runs in process in wait mode with the
-# wall clock it reads (time.time) replaced by a fixed one. Its sleeps stay real,
-# so the case, not the host's speed, fixes when the window closes. The fixed
-# clock is also the one each gh call is killed by, and it stays short of the
-# deadline during the first gh call, so that call is never killed; its fake gh
-# returns at once. The first check-runs call serves a pending
+# wall clock it reads (time.time) replaced by a fixed one, and time.monotonic by
+# the same fixed value 500 seconds lower. Its sleeps stay real, so the case, not
+# the host's speed, fixes when the window closes. The fixed time.monotonic is
+# the clock each gh call is killed by, and it stays short of the kill during the
+# first gh call, so that call is never killed; its fake gh returns at once. The first check-runs call serves a pending
 # reading, a successful unsettled one. When main calls read_checks again, after
 # the top-of-loop guard has found time left, the fixed clock is moved to the
 # deadline, so read_checks finds the window closed before the read and raises
@@ -2779,7 +2797,7 @@ spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 now = [1000.0]
-mod.time = types.SimpleNamespace(time=lambda: now[0], sleep=time.sleep, monotonic=time.monotonic)
+mod.time = types.SimpleNamespace(time=lambda: now[0], sleep=time.sleep, monotonic=lambda: now[0] - 500)
 real_read_checks = mod.read_checks
 calls = []
 def read_checks(repo, full_sha, deadline):
@@ -2836,7 +2854,7 @@ spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 now = [1000.0]
-mod.time = types.SimpleNamespace(time=lambda: now[0], sleep=time.sleep, monotonic=time.monotonic)
+mod.time = types.SimpleNamespace(time=lambda: now[0], sleep=time.sleep, monotonic=lambda: now[0] - 500)
 real_read_checks = mod.read_checks
 calls = []
 def read_checks(repo, full_sha, deadline):

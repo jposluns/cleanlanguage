@@ -298,13 +298,13 @@ def _gh(args, deadline: float):
     GH_REPO, GH_HOST and every GIT_ variable removed from its environment, so an
     ambient value cannot point the repository lookup or the API call elsewhere.
 
-    DEADLINE is an absolute time on time.time, the clock of the wait window. The
-    deadline is fixed before Popen, so the time spent starting gh counts against
-    it; a bound that started its own clock after Popen would let that time
-    extend the window. The clock is read only after Popen has returned, once per
-    poll, and gh is killed at the first poll that finds the clock at or past the
-    deadline. So a start that outlasts the time left is not cut short: gh is
-    killed as soon as Popen has returned, after the deadline.
+    DEADLINE is an absolute time on time.time, the clock of the wait window. Just
+    before Popen, time.time and time.monotonic are read once each (started), and
+    the deadline becomes END on time.monotonic, so the time spent starting gh
+    counts against it. time.monotonic is read again at each poll after Popen
+    returns, and gh is killed at the first poll that finds END reached; a step of
+    the wall clock during the read does not move the kill. A start that outlasts
+    the time left is killed at the first poll after Popen returns.
 
     The child is reaped here with os.waitpid rather than through subprocess,
     because CPython subprocess reads a lost exit status (ECHILD from the wait) as
@@ -314,8 +314,8 @@ def _gh(args, deadline: float):
     full pipe while it is polled. OSError and TimeoutExpired reach the caller.
     TimeoutExpired means the reap after the kill found gh ended by SIGKILL, which
     is the kill itself unless something else sent gh a SIGKILL just before it;
-    its timeout is the deadline minus the clock read just before Popen, the time
-    gh was given. A gh that ended any other way just before the kill gives its
+    its timeout is the deadline minus the time.time read just before Popen, the
+    time gh was given. A gh that ended any other way just before the kill gives its
     own result, and a status lost at that last reap raises ChildProcessError, as
     at any other reap."""
     env = {
@@ -324,6 +324,7 @@ def _gh(args, deadline: float):
     }
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         started = time.time()
+        end = time.monotonic() + (deadline - started)
         proc = subprocess.Popen(["gh", *args], cwd=TOOL_DIR, env=env, stdout=out, stderr=err)
         while True:
             try:
@@ -333,8 +334,8 @@ def _gh(args, deadline: float):
                 raise ChildProcessError("the exit status of gh was lost") from exc
             if pid == proc.pid:
                 break
-            now = time.time()
-            if now >= deadline:
+            now = time.monotonic()
+            if now >= end:
                 os.kill(proc.pid, signal.SIGKILL)
                 try:
                     pid, status = os.waitpid(proc.pid, 0)
@@ -348,11 +349,11 @@ def _gh(args, deadline: float):
                     break
                 proc.returncode = -1
                 raise subprocess.TimeoutExpired(proc.args, deadline - started)
-            # The last poll sleeps only the time left, so it is due at the
-            # deadline rather than up to 1 poll after it; how late the host wakes
-            # from that sleep is not bounded here. The clock is read once above,
-            # so the time left here is positive.
-            time.sleep(min(0.02, deadline - now))
+            # The last poll sleeps only the time left, so it is due at END rather
+            # than up to 1 poll after it; how late the host wakes from that sleep
+            # is not bounded here. NOW is the reading the kill check used, so the
+            # time left here is positive.
+            time.sleep(min(0.02, end - now))
         code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
         proc.returncode = code
         out.seek(0)
@@ -441,11 +442,11 @@ def read_checks(repo: str, full_sha: str, deadline: float):
     """One read. Returns the list of checks, or raises Unreadable, fail-closed. The gh
     child is given the deadline itself, so the time spent starting gh counts
     against it. A gh still running when the deadline is reached is killed at the
-    first poll at or past it; a start that outlasts the time left is killed once
-    Popen returns, after the deadline (see _gh). So a hung or slow read outlasts
-    the wait window by the part of its start that runs past the deadline, if
-    any, and the time the host takes to wake from the last sleep, kill gh and
-    reap it."""
+    first poll that finds it reached; a start that outlasts the time left is
+    killed at the first poll after Popen returns (see _gh). So a hung or slow
+    read outlasts the wait window by the part of its start that runs past the
+    deadline, if any, and the time the host takes to wake from the last sleep,
+    kill gh and reap it."""
     remaining = deadline - time.time()
     if remaining <= 0:
         # Defence in depth: after a good reading in wait mode, main's top-of-loop
@@ -455,10 +456,10 @@ def read_checks(repo: str, full_sha: str, deadline: float):
     try:
         proc = _gh(["api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"], deadline)
     except subprocess.TimeoutExpired as exc:
-        # The bound is exc.timeout, the deadline minus the clock read just before
-        # Popen, which is the time gh was given. It is named rounded down to 1
-        # decimal place, so the message never names more time than that (1.96
-        # seconds is named as 1.9). A bound under 0.1 seconds would round down to
+        # The bound is exc.timeout, the deadline minus the time.time read just
+        # before Popen, which is the time gh was given. It is named rounded down
+        # to 1 decimal place, so the message never names more time than that
+        # (1.96 seconds is named as 1.9). A bound under 0.1 seconds would round down to
         # 0.0, so it is named as under 0.1 seconds instead, and a cut-off read is
         # never reported as cut off within 0 seconds.
         tenths = int(exc.timeout * 10)
@@ -650,8 +651,8 @@ def main() -> int:
     full_sha, repo, wait, timeout, interval = parse_args(sys.argv[1:])
     # Create the deadline before the preflight call so every child read, including
     # gh repo view, is given the same deadline. The time spent starting gh counts
-    # against it; a start that outlasts the time left is killed once Popen
-    # returns, after the deadline (see _gh).
+    # against it; a start that outlasts the time left is killed at the first poll
+    # after Popen returns (see _gh).
     deadline = time.time() + timeout
     # The sha is printed before any gh call, so the caller sees which commit is read
     # even when the repository lookup fails.
