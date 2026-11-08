@@ -630,7 +630,8 @@ CASES = [
     # The committed pages give no h2 a class (PAGE_ATTRIBUTES), so a vh heading fails wherever it sits.
     ("a vh heading in the nav", edit(PAGE, '<nav class="nav" aria-label="Site">',
         '<nav class="nav" aria-label="Site"><h2 class="vh">Site</h2>'), (1, "a h2 carries the attribute 'class', " + NONE_GIVEN)),
-    # baseline.css declares only padding-top for the class first (.lbl.first), so a label without it is correct.
+    # baseline.css declares only padding-top for the class first (.lbl.first), 0.9rem at top level and 0 inside its
+    # @media (max-width: 1000px) rules, so a label without it is correct.
     ("the opening label without the class first", edit(PAGE, '<p class="lbl first">Install</p>', '<p class="lbl">Install</p>'), 0),
     ("the hero's h1 hidden", edit(PAGE, HERO, HERO.replace("<h1>", '<h1 class="vh">')), (1, "the hero's h1 reads as hidden")),
     ("the hero's h1 emptied", edit(PAGE, HERO, "<h1></h1>"), (1, "the hero's h1 reads as hidden or has no text")),

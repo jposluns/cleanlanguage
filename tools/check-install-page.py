@@ -506,11 +506,9 @@ link, while a page source in ``site-src/pages`` fills only ``div.wrap`` in
 committed site only through a change to the generator's template or code, a
 reviewed change to a tool; and check 8 refuses a page without the doctype,
 and an ``html`` or ``body`` start tag with an attribute that is not an
-ancestor of every checked element. At this commit the generator
-still builds a page source that holds an ``html`` or ``body`` start tag (a
-closed ``<body data-preset></body>`` in ``div.doc``), which check 8 refuses
-when it carries an attribute; a change in flight (PR 225) is to make the
-generator refuse ``html``, ``head`` and ``body`` start tags in a page source.
+ancestor of every checked element. The generator refuses a page source that
+holds an ``html``, ``head``, ``body`` or ``frameset`` start tag, as written or
+as the parser reads it (``with_about()`` in ``tools/build-site.py``).
 An ancestor in checks 1 and 4 is an
 element that the parser holds open, and the gate assumes a browser's reading in these
 ways where the two can differ: ``/>`` on an element that is not void
@@ -544,10 +542,14 @@ whether a stylesheet rule hides, clips, zeroes the opacity of or moves a
 checked element: check 8 and the rule pin of ``tools/test-install-page.py``
 keep the rules that can reach one to those a reviewer has pinned (see
 below). Of the elements that the HTML standard's rendering rules may hide
-with no stylesheet, it does not list those that cannot hold a checked element
-or its text: the void elements (``area``, ``base``, ``basefont``, ``link``,
-``meta``, ``param``, and ``input`` with ``type=hidden``) and ``head`` (a
-browser may move body content out of it); check 5 refuses ``style``,
+with no stylesheet, it does not list the void elements (``area``, ``base``,
+``basefont``, ``link``, ``meta``, ``param``, and ``input`` with
+``type=hidden``), which the parser never holds open, so none can hold a
+checked element or its text, nor ``head``, which the parser holds open as it
+holds any element that is not void, but inside which check 8's tag pin
+refuses a checked element (``PIN_ANCESTOR_TAGS`` omits ``head``), as check 1
+does on ``/install/`` in ``html > head`` (``HEAD_TAGS``); check 5 refuses
+``style``,
 ``template``, ``noembed`` and ``noframes`` anywhere on the 6 pages. Check 5
 also refuses ``iframe``, ``svg`` (other than the 2 in the exact light and dark
 switch) and ``math``, which hold text a browser might
@@ -907,9 +909,11 @@ HIDING_CLASSES = ("vh", "visually-hidden", "only-dark", "skip")
 # the gate reads each as hiding itself and everything inside it. A browser may render the content of audio, canvas
 # (with scripting on), meter, object (when it loads), progress and video only as fallback, and that of select only in
 # its control, so they hide here too, which can refuse more than a browser may hide. Of the other elements that the
-# HTML standard's rendering rules may hide, the void elements and head cannot hold that markup, and check 5 refuses
-# style, template, noembed and noframes (the docstring names them); a popover attribute, a dialog without open and a
-# details without open are tested in is_hiding_element and PageParser.
+# HTML standard's rendering rules may hide, the void elements cannot hold that markup, as the parser never holds 1
+# open; the parser holds head open as it holds any element that is not void, but check 8's tag pin refuses a checked
+# element inside it (PIN_ANCESTOR_TAGS omits head), as check 1 does on /install/ in html > head (HEAD_TAGS); check 5
+# refuses style, template, noembed and noframes (the docstring names them); a popover attribute, a dialog without open
+# and a details without open are tested in is_hiding_element and PageParser.
 HIDING_ELEMENTS = (
     "datalist", "noscript", "rp", "script", "title", "audio", "canvas", "meter", "object", "progress", "select", "video"
 )
