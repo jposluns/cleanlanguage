@@ -396,8 +396,10 @@ SCRIPT_TIMEOUT = 60
 # Row 117: seconds to collect the output of a run after its process group has
 # been killed on a timeout. The killed members close their ends of the pipes
 # when they end, so a pipe still open after this long is held by a process
-# that the kill did not reach, such as one in a session of its own; the output
-# is then reported as not collected.
+# that has not ended: one that the kill did not reach, such as one in a
+# session of its own, or one that the SIGKILL has not ended within this bound
+# (for example one in an uninterruptible sleep); the output is then reported
+# as not collected.
 DRAIN_TIMEOUT = 5
 
 # Row 117: seconds to wait for the script itself after the last kill of its
@@ -440,12 +442,13 @@ def run_bounded(args: list, name: str, env: dict | None = None, cwd: Path | None
     extractor still running when its client is killed, for example after a
     timeout, outlives this call; a process outside the group that holds an
     output pipe open keeps the output of the run from being collected after a
-    timeout. What a reaped group id means: on
-    the normal path the script has been reaped before the last kill, and its
-    id then names its group only while a member of the group is alive; once
-    the group is empty, the id can be given to a new process, and the kill
-    then reaches that process's group if it has made itself the leader of a
-    group under that id."""
+    timeout. What a reaped group id means: on the normal path the script has
+    been reaped before the last kill, and its id then names its group only
+    while the group has a member, including one that has ended but has not
+    been reaped (a zombie); once the group and the session that the script
+    led both have no member left, the id can be given to a new process, and
+    the kill then reaches that process's group if it has made itself the
+    leader of a group under that id."""
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env, cwd=cwd, start_new_session=True)
     try:
@@ -671,7 +674,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertNotIn("malformed", stderr)
 
     def test_unreadable_input_at_head_is_named_as_unreadable(self):
-        # T4: client exit 14 is unreadable input, never a crash. Row 112: the
+        # Client exit 14 is unreadable input, never a crash. Row 112: the
         # blob read succeeds here (status 0), and the client's own line is
         # still relayed before the message of the packager, as it is beside a
         # SIGPIPE.
@@ -1025,7 +1028,9 @@ def wait_until_ready(ready: Path, seconds: float = 30) -> int:
 
 @unittest.skipUnless(Path("/proc/self/stat").exists(), "needs /proc to tell whether a process is running")
 class BoundedLaunchTest(unittest.TestCase):
-    """Row 117: each case pins 1 path of ``run_bounded``. Every background
+    """Row 117: each case but 1 pins 1 path of ``run_bounded``; the other
+    runs nothing and pins, from the syntax tree of this file, that no call
+    of ``run_bounded`` outside this class passes a timeout. Every background
     process that a stand-in starts lives until it is killed, so no case races
     the lifetime of a process against a clock; the clocks left (the readiness
     wait, the wait for a killed process to end, and the timeouts of
@@ -1035,11 +1040,12 @@ class BoundedLaunchTest(unittest.TestCase):
     its own, which the group kill does not reach."""
 
     def marker(self) -> Path:
-        """A new folder for the files of the case, which every stand-in names
-        in its arguments. Before any launch, a cleanup is registered that runs
-        ``stop_leftovers`` on the folder when the test ends, so a launch or
-        check that fails early leaves no stand-in behind, even one that has
-        not written its id; the folder is removed after that cleanup."""
+        """A new folder for the files of the case, which every background
+        process that a stand-in starts names in its arguments. Before any
+        launch, a cleanup is registered that runs ``stop_leftovers`` on the
+        folder when the test ends, so a launch or check that fails early
+        leaves no such process behind, even one that has not written its id;
+        the folder is removed after that cleanup."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         marker = Path(tmp.name)
