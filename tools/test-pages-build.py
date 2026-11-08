@@ -17,6 +17,15 @@ error that tools/check-palette.py reports). The cases do not test the script's
 Python version check. Adding a gate to the script means adding it here too,
 which a reviewer sees.
 
+The cases pin the gates the script calls, not its other shell commands, so it
+also fails unless the sha256 of the committed script is SCRIPT_SHA256: a
+command added beside the gates, such as 1 that writes under site/ after them
+and so changes what Pages publishes, fails here. To change the script, read
+the whole change, confirm that it changes no file under site/ and still runs
+every gate of EXPECTED, then record the new digest in SCRIPT_SHA256 in the
+same pull request. The Pages build runs the script, not this test, so the
+pin holds only where this test runs (.github/workflows/pages-build.yml).
+
 It also reads .python-version at the repository root, which names the Python
 release for the Pages build (site/README.md), and fails if the file is missing,
 is not one X.Y.Z line as tools/check-python-version.py requires (read as UTF-8
@@ -47,6 +56,7 @@ Exit 0 when every case passes; 1 otherwise, naming each failing case.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import platform
@@ -64,6 +74,8 @@ except ImportError:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "tools" / "pages-build.sh"
+# The sha256 of the committed bytes of SCRIPT; a reviewer records a new digest only after reading the change.
+SCRIPT_SHA256 = "acca797d7e5ab5297a251de9d7ece198a7e91f616c0f5dab5ff3354eb92689de"
 PYTHON_VERSION_FILE = REPO_ROOT / ".python-version"
 INLINE_GATE = REPO_ROOT / "tools" / "check-inline-code.py"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -276,6 +288,19 @@ def version_tool_problems() -> list[str]:
     return problems
 
 
+def script_pin_problem() -> str | None:
+    """The problem with the committed bytes of SCRIPT, or None when their sha256 is SCRIPT_SHA256."""
+    try:
+        digest = hashlib.sha256(SCRIPT.read_bytes()).hexdigest()
+    except OSError as error:
+        return f"tools/pages-build.sh could not be read: {error}"
+    if digest != SCRIPT_SHA256:
+        return (f"tools/pages-build.sh has the sha256 {digest}, not SCRIPT_SHA256 {SCRIPT_SHA256}; "
+                "read the whole change, confirm that it changes no file under site/ and still runs every "
+                "gate, then record the new digest in the same pull request.")
+    return None
+
+
 def main() -> int:
     failures: list[str] = []
     expected_calls = [" ".join(gate) for gate in EXPECTED]
@@ -307,9 +332,9 @@ def main() -> int:
             3,
             expected_calls[:index],
         )
-    problem = python_version_problem()
-    if problem:
-        failures.append(problem)
+    for problem in (script_pin_problem(), python_version_problem()):
+        if problem:
+            failures.append(problem)
     failures += root_pin_case_problems()
     step_problems, gated = version_step_problems(WORKFLOWS)
     failures += step_problems
@@ -322,7 +347,8 @@ def main() -> int:
         return 1
     print(
         f"pages-build.sh runs all {len(EXPECTED)} gates in order, fails when one exits 1, 2 or 3, "
-        f"and fails with exit 3 when one is missing ({1 + 4 * len(EXPECTED)} cases); "
+        f"and fails with exit 3 when one is missing ({1 + 4 * len(EXPECTED)} cases), "
+        "and its bytes match SCRIPT_SHA256; "
         ".python-version is one X.Y.Z line naming a version that tools/check-inline-code.py supports, "
         f"the root-pin rule passes {len(ROOT_PIN_CASES)} cases, "
         f"the {gated} .yml workflows that run the gate check it in their first step after checkout, "
