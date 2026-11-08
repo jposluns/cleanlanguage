@@ -95,7 +95,8 @@ TRIGGERS = {"pull_request": None, "push": {"branches": ["main"]}}
 LAUNCH = {"shell": "bash", "run": "python3 -I tools/test-portable-text-sync-workflow.py"}
 STEP = "        shell: bash\n        run: python3 -I tools/test-portable-text-sync-workflow.py"
 DRY_RUN_TRIGGERS = {"pull_request": None, "push": {"branches": ["main"]}, "workflow_dispatch": None}
-# The time limit of the dry-run job in minutes; release-dry-run.yml gives the reason for the value.
+# The time limit of the dry-run job in minutes. The comment above timeout-minutes in release-dry-run.yml
+# says why the job has a limit and that the value is an estimate.
 DRY_RUN_TIMEOUT = 30
 
 

@@ -40,9 +40,9 @@ jobs:
   dry-run:
     runs-on: ubuntu-latest
     # A hung step ends the job here instead of holding the runner until the
-    # platform's default job limit (row 117). No run of this workflow was
-    # timed, so 30 minutes is an estimate, not a measured run time: revise it
-    # once real run times are known.
+    # platform's default job limit (row 117). No recorded run time of this
+    # workflow was looked at, so 30 minutes is an estimate, not a measured run
+    # time: revise it against the recorded run times.
     timeout-minutes: 30
     steps:
       - name: Check out repository
