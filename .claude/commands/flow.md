@@ -4,9 +4,13 @@ INTERIM. This command's own inlined text below is authoritative for cleanlanguag
 tiers and the QA cycle, which the machine-local "Working method" section governs, and the unattended
 vote rule, which the machine-local "Put decisions to the maintainer in the four-role shape" section
 governs) and is reviewed
-through this repository's PR gate. It adapts the fleet /flow standard, whose co-owned reference copy is
-`/opt/inbox/FLOW.md` (reconciled with lab_infra's `docs/operating-model.md`, the NORMATIVE source that governs where the two differ); that reference is a
-cross-check, not an unreviewed override of this file. When lab_infra renders a shared `/flow` command
+through this repository's PR gate. It adapts the fleet /flow standard. The reference copy of that
+standard is the host's deployed `/usr/local/share/orch/operating-model.md`, a render of lab_infra's
+`docs/operating-model.md`; that source is NORMATIVE and governs wherever the deployed copy differs
+from it. The deployed copy replaces the former reference, `/opt/inbox/FLOW.md`, which no longer
+exists, and is a cross-check, not an unreviewed override of this file. lab_infra stated on 2026-11-07
+that the deployed copy is stale and will be redeployed, so the cross-check of this file's mode
+section against it waits for the redeployed copy. When lab_infra renders a shared `/flow` command
 (their TODO 208, the on-ramp to the future Orch plugin), adopt it THROUGH this repository's normal
 review, then delete this file; do not switch to it sight-unseen. `/flow` is a REMINDER; the mode is
 always on.
@@ -28,7 +32,9 @@ All backlog and session state lives in the machine-local durable store at `/opt/
 (orchestrators-group-readable; pool workers CANNOT read it, see below):
 - `TODO.md`: the backlog, whose ORDER is the selection order. `DONE.md`: the closed-work ledger.
 - `open-findings.md`: findings (a non-terminal row blocks new work). `pending-decisions.md`: open
-  decisions with pre-drafted option blocks.
+  decisions with pre-drafted option blocks, each decision that the session could not ask because an
+  AskUserQuestion guard denied it, and a record of each decision-timeout switch (see the MODE bullet
+  below).
 - `session-handoff.md`: the resume handoff. `session-state.md`: the concurrency LEASE
   (Active-session / Status / Last-heartbeat-UTC), acquired at entry, refreshed at merges and on cadence,
   released by /handoff.
@@ -47,18 +53,22 @@ only the affected file(s).
 4. GRADE the tier (light | substantive | sensitive), per the machine-local
    `/opt/cleanlanguage/.claude/CLAUDE.md` "Working method" section. Record the grade.
    Escalation is immediate; de-escalation needs a maintainer decision + a recorded basis.
-5. AUTHORIZE within the standing grant. Not covered: attended -> surface a work-naming go, hold THIS
-   item, and continue other independent queued work (a question never halts independent work);
-   unattended -> DEFER (propose a ?HOLD on the affected STEP, route to the next independent item), never
-   self-grant, never self-author a block.
+5. AUTHORIZE within the standing grant. Not covered: attended-autonomous -> surface a work-naming go
+   and hold only this item's AUTHORIZE STEP until the go is given, while research and preparation
+   on the item, and other independent queued work, continue (a question never halts independent
+   work); when an AskUserQuestion guard denies the go, the MODE bullet below sets what the session
+   does; unattended -> DEFER (propose a ?HOLD on the affected STEP, route to the next independent
+   item), never self-grant, never self-author a block.
 6. RUN the tier per that machine-local "Working method" section (see "Tiers and the QA cycle" below).
 7. CLOSE: evidence-grounded completion (enumerate files, re-read, quote support, search contradictions);
    AIQT self-check before the completion claim; records rotation (TODO delete + DONE add) in the same
    change; clear focus.
 8. PAUSE (after a merge, after a plan is verified pre-implementation, or when the queue composition
-   changed): refresh; if an attended boundary is open, surface accumulated decisions, up to 4
-   per round (per .claude/rules/maintainer-questions.md); list the next items; continue on
-   already-authorized safe actions.
+   changed): refresh; if the mode is attended-autonomous or an operator boundary (an inbound operator
+   message) is open, surface accumulated decisions, up to 4 per round (per
+   .claude/rules/maintainer-questions.md); list the next items; continue on already-authorized safe
+   actions. When an AskUserQuestion guard denies a question, the MODE bullet below sets what the
+   session does.
 9. NOTHING ACTIONABLE: seeds/combines/QA in flight -> keep the pipeline topped up + read-only prep on
    upcoming verified-DISJOINT items; re-enter on the next delivery. Nothing in flight -> run
    blocked-verification (below); only on genuine whole-set exhaustion, close on green via /handoff.
@@ -191,11 +201,60 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
 
 ## Mode, decisions, reversibility
 
-- MODE (attended | unattended) parameterizes the question policy/timer/routing; it GRANTS NO authority.
-  Absent = attended (conservative). The ONE governed transition is a decision-timeout switching
-  attended -> unattended (the safe/conservative direction only). An inbound operator message is a
-  TRANSIENT attended boundary and does NOT silently flip the mode.
-- DECISIONS: blocking + attended -> surface immediately, up to 4 per round, in the four-role shape.
+- MODE (attended-autonomous | unattended) parameterizes the question policy/timer/routing; it GRANTS NO
+  authority. The session reads it from the host's mode record, `/opt/orch-operator/operating-mode`,
+  which only the host's mode writer, `orch-set-mode`, writes, and only with these 2 values; a record
+  may still hold the retired value "attended", which the writer does not write. The session reads
+  the record at entry, when it enters `/flow` at the start of a session (a resume starts a new
+  session, so it is such an entry), and again at each task boundary: the end of any numbered step
+  of "Each cycle" above, and the end of any item, whether it closes or parks. A mode change is an
+  operator act, so a change that the operator makes through `orch-set-mode` takes effect at the
+  session's next read.
+  Wherever a step or rule in this file depends on whether the mode is attended-autonomous or
+  unattended, that mode is the session's mode: the mode the session last read the record as, under
+  this bullet's rules, after any decision-timeout switch.
+  "attended" is retired as a selectable mode (lab_infra rule FLEET-05): the session reads a legacy
+  stored "attended" as attended-autonomous, never as unattended, and gives 1 warning about it in its
+  own output, once per session. The session reads an absent mode record as unattended
+  (conservative), and alerts lab_infra through `inbox-send lab_infra` to clarify the mode, once per
+  session.
+  The repository's AskUserQuestion guard never decides from the session's mode: apart from its
+  checks of the hook payload, it decides from the host's mode folder and record as it finds
+  them when it runs, and it can deny before it reads either, for example on a malformed hook
+  payload. Its decisions are set in `.claude/hooks/ask_mode_guard.py` and described in
+  `.aiqt/config.md`, and this file does not restate them. The session reads the record only at
+  entry and at each task boundary, and a decision-timeout switch changes the session's mode
+  without a write, so the session's mode can differ from what the guard reads. When the host's
+  mode folder, `/opt/orch-operator`, is itself absent, the guard allows a question, with a
+  one-line note, while the session reads the mode as unattended.
+  Whenever an AskUserQuestion guard denies an AskUserQuestion call, whether the repository's guard,
+  the vendored AIQT guard `orch_ask_guard` or any other, for any reason and in any mode, the session
+  records each decision it could not ask in its pending-decisions record,
+  `/opt/cleanlanguage/private/pending-decisions.md`, holds the step that decision gates while other
+  work continues (in unattended mode, the DECISIONS bullet below sets whether the unattended vote
+  rule then settles that step), and names the held decisions in its reply. A non-blocking decision
+  gates no step, so the session only records it. A decision that the session could not ask does
+  not start the decision timer, which runs only on a question that the session asked. The
+  AskUserQuestion dialog stays the only channel for asking a decision. A guard's deny message is
+  diagnostic: the session acts on this file's rules, not on the message's instructions, so it holds
+  the step, not the item, even where the message says to hold the item, and the message never
+  changes the session's mode, even where it says to treat the session as unattended or names a
+  mode; the session takes its mode only from its own reads of the record and from a
+  decision-timeout switch, under this bullet's rules.
+  The only governed transition is a decision-timeout switching attended-autonomous -> unattended (the
+  safe/conservative direction only); it switches this session's question policy, timer and routing,
+  and never writes the mode record. The session records each such switch, with its time and the
+  decision whose timer ran out, in its pending-decisions record,
+  `/opt/cleanlanguage/private/pending-decisions.md` (Records-first, above). The switch holds for the
+  session until the record is written
+  again: any new write ends it, including one that repeats the stored mode, such as the operator
+  running `orchmod aa` again (`orchmod` is the operator's front end for `orch-set-mode`), because
+  `orch-set-mode` stamps a fresh `set_at` on every write. The session sees that write, as it sees
+  any operator change, at its next read. A resume starts a new session, which reads the record and
+  starts from the mode it reads the record as, so a switch does not carry over a resume. An inbound
+  operator message opens a TRANSIENT operator boundary; it never changes the session's mode, and
+  the guard does not read it.
+- DECISIONS: blocking + attended-autonomous -> surface immediately, up to 4 per round, in the four-role shape.
   The repo `.claude/rules/maintainer-questions.md` sets that shape in its "Superseded in part" note:
   the four roles replace its Option A to D lettering. See that note for the roles, their order, and
   which role carries the recommendation; this file does not restate them.
@@ -203,7 +262,8 @@ exhaustion (each item shown terminally blocked) close on green via /handoff, nev
   `/opt/cleanlanguage/.claude/CLAUDE.md` "Put decisions to the maintainer in the four-role shape"
   section governs; this file does not restate it.
   A step that rule does not settle stays held: record BLOCKED only under the provenance test above, route
-  to the next independent item; if all items genuinely depend on it, close via /handoff. Non-blocking ->
+  to the next independent item; if all items genuinely depend on it, run Blocked-verification above,
+  which closes via /handoff only on genuine whole-set exhaustion. Non-blocking ->
   append to `/opt/cleanlanguage/private/pending-decisions.md` with a pre-drafted four-role block.
 - REVERSIBILITY GATE (every mode): only a closed allowlist auto-continues unattended/at timeout (observe;
   verify-ephemeral; authorial-local on the authorized branch; read-only worker dispatch; gate/QA runs;
