@@ -413,10 +413,10 @@ def kill_group(pgid: int) -> None:
     """Send SIGKILL to process group ``pgid``. An empty group is not an
     error: everything in it has already ended. Nor is a group that the test
     process may not signal: killpg refuses only when it may signal no member
-    of the group, so the group is not one that this process started (for
-    example another user's group under a reused id), or every member left in
-    it has changed its user, and in either case the kill could end nothing
-    there."""
+    of the group, so the kill could end nothing there. Causes include, for
+    example, a group that this process did not start (such as another user's
+    group under a reused id), a group whose every member left in it has
+    changed its user, and a Linux security module that refuses the signal."""
     try:
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
@@ -596,7 +596,7 @@ class PackagerContractTest(unittest.TestCase):
 
 
 class PackagerReleaseDateTest(unittest.TestCase):
-    """T3 (item 26): the packager checks the Released line it ships.
+    """The packager checks the Released line it ships.
 
     Whether or not ``--release-date`` is given, it refuses a malformed line
     and a missing one above the undated baseline; ``--release-date`` adds the
@@ -627,7 +627,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
         self.assertIn("--release-date 2026-11-15 was given, but SKILL.md at HEAD has no Released: line", stderr)
 
     def test_absent_line_above_baseline_without_release_date_fails(self):
-        # F8: presence above the baseline is enforced without the flag too.
+        # Presence above the baseline is enforced without the flag too.
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3")
         self.assertEqual(code, 1, stderr)
         self.assertIn("has no Released: line, but version 1.2.3 sorts above the undated baseline 1.0.14", stderr)
@@ -637,7 +637,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
 
     def test_baseline_rule_is_numeric(self):
-        # F7: the extractor decides the comparison, so the packager agrees with
+        # The extractor decides the comparison, so the packager agrees with
         # every other caller, leading zeros included. Row 60: with
         # --release-date given, an absent line fails at every version.
         for version, builds in (
@@ -654,7 +654,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
                         self.assertIn("has no Released: line", stderr)
 
     def test_trailing_flag_without_a_value_fails_with_a_message(self):
-        # F6: a trailing --release-date (or --tag) names what is missing.
+        # A trailing --release-date (or --tag) names what is missing.
         for flag, fragment in (
             ("--release-date", "--release-date needs a YYYY-MM-DD value"),
             ("--tag", "--tag needs a value"),
@@ -665,8 +665,8 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertIn(fragment, stderr)
 
     def test_unavailable_extractor_is_not_blamed_on_the_content(self):
-        # F5: a missing or broken extractor is unavailable, not a bad date or
-        # a malformed line.
+        # A missing or broken extractor is unavailable, not a bad date or a
+        # malformed line.
         for label, body in (("missing", "missing"), ("broken", "def broken(:\n")):
             with self.subTest(label):
                 code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", release_date="2026-11-15",
@@ -692,8 +692,8 @@ class PackagerReleaseDateTest(unittest.TestCase):
         ])
 
     def test_internal_error_at_head_is_reported_as_a_crash(self):
-        # T4: an extractor internal error is the tool failing (client exit
-        # 16), never unreadable input.
+        # An extractor internal error is the tool failing (client exit 16),
+        # never unreadable input.
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
                                     released_block="Released: 2026-11-15  ",
                                     extractor=extractor_with(CRASH_HOOK))
@@ -1237,19 +1237,24 @@ class BoundedLaunchTest(unittest.TestCase):
     def test_a_background_process_is_killed_after_an_exception_while_waiting(self):
         # The stand-in ends at once and leaves its background process in the
         # group, and the wait fails once that process is in place, so only
-        # the kill on the way out of the failed wait can end it.
-        marker = self.marker()
-        ready = marker / "ready"
-        script = f"{background_child(ready)} </dev/null >/dev/null 2>&1 &\n"
+        # the kill on the way out of the failed wait can end it. The wait
+        # fails with an Exception in 1 subtest and with KeyboardInterrupt,
+        # which is not an Exception, in the other, so a cleanup that runs
+        # only for an Exception leaves the process behind.
+        for error in (RuntimeError, KeyboardInterrupt):
+            with self.subTest(error=error.__name__):
+                marker = self.marker()
+                ready = marker / "ready"
+                script = f"{background_child(ready)} </dev/null >/dev/null 2>&1 &\n"
 
-        def failing_communicate(proc, *args, **kwargs):
-            wait_until_ready(ready)
-            raise RuntimeError("injected failure while waiting")
+                def failing_communicate(proc, *args, **kwargs):
+                    wait_until_ready(ready)
+                    raise error("injected failure while waiting")
 
-        with mock.patch.object(subprocess.Popen, "communicate", failing_communicate), \
-                self.assertRaisesRegex(RuntimeError, r"^injected failure while waiting$"):
-            run_bounded(["bash", "-c", script], "the stand-in")
-        self.assert_nothing_left(marker, [wait_until_ready(ready)])
+                with mock.patch.object(subprocess.Popen, "communicate", failing_communicate), \
+                        self.assertRaisesRegex(error, r"^injected failure while waiting$"):
+                    run_bounded(["bash", "-c", script], "the stand-in")
+                self.assert_nothing_left(marker, [wait_until_ready(ready)])
 
     def test_the_last_wait_is_bounded(self):
         # The wait for the run fails, and a patched Popen.wait then stands in
@@ -1347,7 +1352,7 @@ def dry_run_stamped_read(extractor: str, skill_readable: bool = True, client: st
 
 
 class DryRunReleasedReadTest(unittest.TestCase):
-    """T4: the dry run tells unreadable input (client exit 14) apart from an
+    """The dry run tells unreadable input (client exit 14) apart from an
     extractor that failed inside or broke its contract (client exit 16)."""
 
     def test_stamped_line_is_read(self):
