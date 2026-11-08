@@ -929,9 +929,9 @@ VERIFY_BY_DISPATCH = ("To verify the published release, first check that .github
 # verifying dispatch only for a tag carrying that step, and for any other tag
 # forbid a dispatch at it and name a read-only check. The readback refusals
 # (REMEDY_UNREADABLE) run at the tag commit, which carries this workflow.
-# OLDER_TAG_ADVICE is the one advice for such a tag, declared once in the
-# job env, printed by both sites and repeated in the description. It names
-# the authority, the release step of the workflow at that tag, and no
+# OLDER_TAG_ADVICE is the single advice text for such a tag, declared once
+# in the job env, printed by both sites and repeated in the description. It
+# names the authority, the release step of the workflow at that tag, and no
 # procedure: no command, file or path.
 OLDER_TAG_ADVICE = ("A tag without the step " + PUBLISH + " carries an older workflow that can"
                     " republish a published release, so never dispatch this workflow at such a tag, or repeat"
@@ -1968,10 +1968,10 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # workflow) can republish one. The allowed lines are the ones whose
         # truth the workflow establishes first (the readback lines after the
         # immutable check) and the conditional re-stamping line. Residual:
-        # this is a pattern over known phrasings, widened (in part by row 87)
-        # to the close variants above, and a claim whose subject is
-        # "it", a claim split across sentences, or another wording can still
-        # slip past it.
+        # this is a pattern over known phrasings, including the close
+        # variants above (row 87 added some of them), and a claim whose
+        # subject is "it", a claim split across sentences, or another
+        # wording can still slip past it.
         self.assertEqual(immutability_claims(WORKFLOW_TEXT), [])
         description = WF.data.get("on", WF.data.get(True))["workflow_dispatch"]["inputs"]["force"]["description"]
         for value in list(job_env().values()) + [description]:
@@ -2436,8 +2436,8 @@ def replace_nth(text: str, old: str, k: int, new: str) -> str:
 
 
 class MutationTest(unittest.TestCase):
-    """Each reproduced defect, and other forms of it, applied to the real
-    workflow text, must be named by the structural checks."""
+    """Each defect, and other forms of it, applied to the real workflow
+    text, must be named by the structural checks."""
 
     @staticmethod
     def mutated(old: str, new: str) -> Workflow:
@@ -2451,9 +2451,10 @@ class MutationTest(unittest.TestCase):
             self.assertTrue(any(fragment in problem for problem in problems), (fragment, problems))
 
     def test_blank_line_before_an_env_override_is_caught(self):
-        # Valid YAML with a blank line before an env override: the former
-        # line reader ended the env: block at the blank line and missed the
-        # override, which this test pins.
+        # Valid YAML with a blank line before an env override. A reader
+        # matching line patterns could end the env: block at the blank line
+        # and miss the override; this test pins that the override is read
+        # and that the structural checks name it.
         wf = self.mutated(FORCE_LINE, FORCE_LINE + "\n          RELEASE_DATED: \"0\"\n")
         self.assertEqual(wf.step_env(PUBLISH)["RELEASE_DATED"], "0")
         self.assertNamed(
