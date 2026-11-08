@@ -30,7 +30,8 @@
 # budget. Waits are deadline-capped; numeric arguments are base-10 and
 # range-checked.
 #
-# Each reading case puts a fake gh on PATH serving check-runs from a per-call
+# Each case of run_case, run_err_case and run_log_case puts a fake gh on PATH
+# serving check-runs from a per-call
 # "plan" (tokens g/a/t/f/s: default payload, alternate payload, third payload,
 # a failed call, or a call that hangs until ci-status ends it at the wait
 # deadline), runs ci-status and asserts its exit code. Many cases also
@@ -41,8 +42,9 @@
 # how many check-runs calls the fake gh served (CASE_READS); and some assert
 # that the only gh call made is the paginated check-runs read of the commit
 # (CASE_ONLY_CALLS and run_log_case). The timed case also bounds the elapsed
-# time; the cut-off and deadline-stop cases read 1 fake clock instead
-# (run_cut_off_case and run_deadline_stop_case); and the paginate case serves
+# time; the cut-off and deadline-stop cases (run_cut_off_case and
+# run_deadline_stop_case) serve check-runs from a fake gh in process on 1 fake
+# clock, and their gh on PATH only refuses; and the paginate case serves
 # page 2 only to a --paginate call. The later sections, the workflow shape
 # check, the commit sha and repository contract, the wrapper path resolution,
 # and the output, signal, pipe, import, lost-status, final-reap, closed-window
@@ -328,14 +330,10 @@ GH
 # run_deadline_stop_case run. It loads tools/ci-status.py in process and gives
 # it 1 fake clock, a count of whole nanoseconds that starts at 1000.0 seconds.
 # time.time reads it, time.sleep moves it by the time asked for without
-# waiting, and time.monotonic reads it 500 seconds lower. The offset makes the
-# 2 clocks differ, so a gate that compares one clock with a deadline set on the
-# other misses that deadline by 500 seconds. While wall is set, time.time reads
+# waiting, and time.monotonic reads it 500 seconds lower. While wall is set, time.time reads
 # that fixed value and time.monotonic moves on, as when the wall clock stands
 # still or steps; kills, returns and the exit are recorded on the moving clock
-# (now). Counting whole nanoseconds makes every sum of sleeps
-# exact, so when gh has started before the deadline, the last poll of a correct
-# gate lands exactly on that deadline, not a rounding error before it. gh is a
+# (now). Counting whole nanoseconds makes every sum of sleeps exact. gh is a
 # fake child on the same clock, reached through Popen, os.waitpid and os.kill,
 # not a real process (its pid is above any pid the kernel assigns). Starting it
 # moves the clock by GH_STARTS seconds, as starting a real gh takes time. It
@@ -454,16 +452,9 @@ def finish(code, why, facts):
 # still at 1000.0, the case moves the clock to 1002.0 minus LEFT, so LEFT
 # seconds are left; starting the fake gh then takes STARTS seconds (0 when not
 # given), and gh would end only 60 seconds after it has started, so only the
-# wait deadline can end the read. A correct gate gives _gh the deadline 1002.0
-# itself and polls gh every 0.02 seconds against it, but sleeps only the time
-# left before its last poll, so when gh has started before 1002.0 that poll
-# lands on 1002.0 exactly, whether or not the time left once gh has started is
-# a whole number of polls; there it kills gh, reaps it and exits 3 without
-# another sleep. When the start outlasts the time left, the first poll after
-# Popen returns comes at 1002.0 minus LEFT plus STARTS, and the gate kills gh
-# there. KILLED is that moment, 1002.0 when not given. With FROZEN 1, time.time
-# stands still from the start of the read until _gh returns, so only a kill
-# decided on time.monotonic comes at KILLED. So every expectation is
+# wait deadline can end the read. KILLED is 1002.0 when not given. With FROZEN 1,
+# time.time stands still from the start of the read until _gh returns. Every
+# expectation is
 # a constant of this setup, compared as a number to within 1 microsecond:
 # read_checks must be called once, at 1000.0, with the deadline 1002.0; _gh must
 # be given the deadline 1002.0; gh must be killed exactly once, at KILLED; _gh
@@ -529,10 +520,7 @@ finish(code, why, "read at %s, deadline %s, gh deadline %s, killed at %s, return
 # run_deadline_stop_case NAME: the gate runs in process on the fake clock of
 # FAKE_CLOCK_GATE, in wait mode with --timeout 10 and --interval 30, so the
 # deadline is 1010.0, and the fake gh serves a pending reading and ends 3
-# seconds after it has started, at the 150th poll of 0.02 seconds. A correct
-# gate gives _gh the deadline 1010.0, sees gh end at 1003.0, prints that 7
-# seconds are left, sleeps those 7 seconds rather than a whole 30-second
-# interval, and exits 2 at 1010.0 without another read. So every expectation is
+# seconds after it has started. Every expectation is
 # a constant of this setup, compared as a number to within 1 microsecond:
 # read_checks must be called once, with the deadline 1010.0; _gh must be given
 # the deadline 1010.0; gh must not be killed; _gh must return at 1003.0; the
@@ -730,8 +718,8 @@ run_case "declared total_count truncation is rejected fail-closed" "$TRUNCATED" 
 run_case "non-ASCII digit timeout is rejected as usage" "$GA_PRESENT" "" "" 3 --timeout ²
 # Non-UTF-8 transport output is unreadable, not a failed check.
 run_bytes_case "non-UTF-8 output is rejected fail-closed" 3
-# A gh read that would exceed the wait deadline is killed at that deadline and
-# fails closed.
+# With 2 seconds left and a gh that would end 60 seconds after it starts, this
+# case asserts the kill at the deadline, 1002.0, and exit 3.
 run_cut_off_case "gh read exceeding the wait deadline is not green" 2.000 "2.0 seconds"
 # The required Cloudflare Pages check absent -> not green even with the 3 required
 # github-actions checks green (a partial reading is not confirmed).
@@ -833,8 +821,8 @@ CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000: the
 # satisfies the required Cloudflare check -> green (regression: a pin on a slug or
 # id that the live check-runs do not show would false-red every real commit).
 run_case "real cloudflare-workers-and-pages slug satisfies the required check" "$REAL_CLOUDFLARE" "" "" 0
-# This case asserts that a pending wait sleeps only up to its deadline, not a
-# whole interval past it. The fake clock of run_deadline_stop_case, not the
+# With --timeout 10 and --interval 30, this case asserts that a pending wait
+# exits at 1010.0, not a whole interval past it. The fake clock of run_deadline_stop_case, not the
 # elapsed time, says when it stopped, and no step of that case waits in real
 # time.
 run_deadline_stop_case "wait stops near the deadline, not a whole interval past it"
@@ -899,32 +887,26 @@ CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
   run_case "green reading then a confirmation read cut off without --wait -> unreadable" \
   "$GA_PRESENT" "" "g s" 3 --timeout 5
-# A read cut off with under a second of the window left names the time it was
-# given, rounded down to 1 decimal place so that it never names more time than
-# gh had (1.96 seconds is named as 1.9, not 2.0), and never as 0 seconds; a
-# bound under 0.1 seconds, which rounds down to 0.0, is named as the time left,
-# under 0.1 seconds.
 run_cut_off_case "a read cut off with under a second left names its real bound" 0.500 "0.5 seconds"
 run_cut_off_case "a read cut off with 1.96 seconds left names 1.9 seconds, not a longer bound" \
   1.960 "1.9 seconds"
 run_cut_off_case "a read cut off with under 0.1 seconds left is not named as 0 seconds" \
   0.040 "the time left (under 0.1 seconds)"
-# 0.03 seconds is not a whole number of 0.02-second polls, so the kill lands on
-# the deadline only if the last poll sleeps just the 0.01 seconds left; a whole
-# poll would kill at 1002.01.
+# With 0.03 seconds left, this case asserts the kill at 1002.0; a last poll that
+# sleeps a whole 0.02 seconds kills at 1002.01.
 run_cut_off_case "a read cut off with 0.03 seconds left is killed at the deadline, not a poll after it" \
   0.030 "the time left (under 0.1 seconds)"
-# The clock is read just before Popen, so the 1 second gh takes to start counts
-# against the deadline; a bound whose clock started after Popen would kill at
-# 1003.0 here.
+# With a 1-second start, this case asserts the kill at 1002.0; a bound whose
+# clock starts after Popen kills at 1003.0 here.
 run_cut_off_case "a read whose gh takes 1 second to start is still killed at the deadline" \
   2.000 "2.0 seconds" 1.000
-# A start that outlasts the time left is killed at the first poll after Popen
-# returns, here at 1003.0, and the message names the 2 seconds gh was given.
+# With a 3-second start and 2 seconds left, gh is still running when Popen
+# returns at 1003.0; this case asserts that gh is killed then and that the
+# message names 2.0 seconds.
 run_cut_off_case "a read whose gh start outlasts the time left is killed once Popen returns, after the deadline" \
   2.000 "2.0 seconds" 3.000 1003.0
-# The kill is decided on time.monotonic, so a wall clock that stands still
-# during the read does not delay it.
+# With time.time standing still from the start of the read until _gh returns,
+# this case asserts the kill at 1002.0.
 run_cut_off_case "a read is killed at its deadline while the wall clock stands still" \
   2.000 "2.0 seconds" 0 1002.0 1
 run_case "failed required check -> red" \
@@ -2136,8 +2118,7 @@ run_contract_case "symlinked wrapper in another directory runs the real ci-statu
 run_contract_case "second --repo is refused" 3 nogh owner/name owner/name - dup --repo owner/name --repo other/name "$C1"
 run_contract_case "second --timeout is refused" 3 nogh owner/name owner/name - dup --wait --timeout 5 --timeout 6 "$C1"
 run_contract_case "second --interval is refused" 3 nogh owner/name owner/name - dup --interval 2 "$C1"
-# --timeout and --interval are bounded at 86400 seconds, far inside the length
-# at which a sleep overflows. run_contract_case passes
+# --timeout and --interval are bounded at 86400 seconds. run_contract_case passes
 # --interval 1, so the interval bound is checked through run_timed_case below,
 # inside a 2-second wait window so a tool that accepts the value ends within 5
 # seconds instead of sleeping for a day.
@@ -2761,9 +2742,8 @@ run_final_reap_view_case "gh repo view exiting 0 just before the kill without --
 # run_closed_window_case NAME: the gate runs in process in wait mode with the
 # wall clock it reads (time.time) replaced by a fixed one, and time.monotonic by
 # the same fixed value 500 seconds lower. Its sleeps stay real, so the case, not
-# the host's speed, fixes when the window closes. The fixed time.monotonic is
-# the clock each gh call is killed by, and it stays short of the kill during the
-# first gh call, so that call is never killed; its fake gh returns at once. The first check-runs call serves a pending
+# the host's speed, fixes when the window closes. The first fake gh call returns
+# at once. The first check-runs call serves a pending
 # reading, a successful unsettled one. When main calls read_checks again, after
 # the top-of-loop guard has found time left, the fixed clock is moved to the
 # deadline, so read_checks finds the window closed before the read and raises
@@ -2827,8 +2807,7 @@ run_closed_window_case "pending reading then the window closing before the next 
 # clock, as in run_closed_window_case, and both check-runs calls serve the same
 # green reading. When the second read has returned, before main checks the
 # deadline, the fixed clock is moved to the deadline, so the pass is confirmed
-# only after the window closed. A wait reports what held within its window, so
-# such a pass is not green: the case must exit 2; standard error must hold the
+# only after the window closed. The case must exit 2; standard error must hold the
 # line saying that the checks passed only after the window closed; standard
 # output must hold the first reading's line asking for a confirmation reading
 # but no confirmed-pass line; and the fake gh must serve exactly 2 check-runs
