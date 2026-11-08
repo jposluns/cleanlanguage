@@ -937,8 +937,8 @@ class PackagerReleaseDateTest(unittest.TestCase):
 
 
 def process_running(pid: int) -> bool:
-    """Whether process ``pid`` has not ended. A zombie, which has ended and
-    waits only to be reaped by its new parent, counts as ended."""
+    """Whether process ``pid`` has not ended. A zombie has ended, so it
+    counts as ended."""
     try:
         stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
     except (FileNotFoundError, ProcessLookupError):
