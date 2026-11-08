@@ -22,9 +22,10 @@ absent-record sentence in its second wording, in capital letters, or wrapped acr
 break. A path that does not exist, text
 that is not UTF-8 and 2 arguments each give exit status 1.
 
-The residual cases hold the limits that the check's docstring states: a third value named outside
-the MODE line passes, an indented line that starts "- MODE (" after its indent is not counted and
-passes, a retired default inside straight double quotes passes, a sentence that contradicts the
+The residual cases hold the limits that the check's docstring states: a third mode value, other
+than the writer's 2 and the retired "attended", named outside the MODE line passes, an indented
+line that starts "- MODE (" after its indent is not counted and passes, a retired default inside
+straight double quotes passes, a sentence that contradicts the
 absent rule passes, the matched absent-rule sentence negated passes, the absent-rule sentence
 inside a quotation that rejects it passes, the absent rule in other words fails, an ordinary
 English use of "attended" fails, a quoted "attended" whose quotes wrap across a line break
