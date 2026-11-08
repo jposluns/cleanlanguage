@@ -11,24 +11,29 @@ run python without -I can also edit this scan.
 
 The rules, applied to each line of a covered script except its comment lines,
 with every backslash-newline removed (a finding names the first line of the
-joined line):
+joined line). A comment, on a line of its own or after a command, ends at its
+line even when it ends in a backslash, as in bash, so it joins no line:
 
 1. Every python command name, a lower-case `python` with any digits and dots
-   after it and no letter, digit, underscore or hyphen straight after those,
-   starts `python3 -I ` (single spaces), directly after the start of the
-   line, a space, a tab, a quote, a backquote, or one of ( | & ; !. So
-   `python3 -I tools/<name>.py`, `python3 -I -c`, `python3 -I -` and a grep
-   pattern that names the isolated form pass, and `python3 tools/x.py`,
-   `python3 -c`, `"python3" -I`, `${PYTHON:-python3}`, `$bin/python3`,
-   `ipython3` and `python3 -X utf8` are findings. A `python` inside a longer
-   name, as in tools/check-python-version.py, is not a command name.
+   after it, no letter or dot straight before it and no letter, digit,
+   underscore or hyphen straight after those, starts `python3 -I ` (single
+   spaces), directly after the start of the line, a space, a tab, a quote, a
+   backquote, or one of ( | & ; !. So `python3 -I tools/<name>.py`,
+   `python3 -I -c`, `python3 -I -` and a grep pattern that names the isolated
+   form pass, and `python3 tools/x.py`, `python3 -c`, `"python3" -I`,
+   `${PYTHON:-python3}`, `$bin/python3` and `python3 -X utf8` are findings. A
+   `python` inside a longer name, as in tools/check-python-version.py,
+   docs.python.org or ipython3, is not a command name.
 2. A .py or .pyz path in command position, run by its shebang, is a finding.
-   Command position is the start of the line or what follows ; & | ( ! $(,
-   a ) or { followed by a space or tab (a case pattern, a brace group), one
-   of then, do, else, elif, if, while and until, or one of the launchers
-   exec, time, nice, env and command with any option words after it, each
-   option word optionally followed by 1 argument word (`nice -n 5`,
-   `env -u NAME`), and any NAME=value words before the path.
+   Command position is the start of the line or what follows ; & | ( ! $(
+   or a backquote, a ) or { followed by a space or tab (a case pattern, a
+   brace group), one of then, do, else, elif, if, while and until, or one of
+   the launchers exec, time, nice, env and command with any option words
+   after it, each option word optionally followed by 1 argument word
+   (`nice -n 5`, `env -u NAME`), and any NAME=value words and redirection
+   words (`2>/dev/null`, `> "$log"`) before the path. A NAME=value word with
+   no command word after it is an assignment, so `gate=tools/x.py` is not a
+   finding.
 
 The body of a here-document is read as shell text, line by line, unless its
 opening line launches `python3 -I` with `-` as the program, so that the body
@@ -48,18 +53,26 @@ no line is a finding, so the table cannot keep an entry for a line that is
 gone. EXPECTED_SCRIPTS names the scripts the discovery must find, so a change
 that stops the discovery from reaching one is a finding.
 
-Residuals: the scan reads text, not commands. It does not see a launch held
-in a variable (`$PY tools/x.py`, `"$real_py"`), a launch through a function
-or alias named python3, a `python` spelt in other letter cases, an
-interpreter name with a letter or hyphen after its digits (`python3m`), a
-.py path after a launcher it does not name (such as xargs or timeout) or
-after a launcher option that takes more than 1 argument word, a .py path
-written straight after a case pattern's ) with no space or tab between, a -c
-program that holds a single quote (as `'\''`), a case pattern inside $(...)
-that misleads the quote reading, text built at run time, Python launched
-from Python (such as subprocess with sys.executable), or a script that a
-covered script reaches only through a variable or a path the discovery does
-not match.
+Residuals: the scan reads shell, an open grammar, as text, to catch honest
+drift. It cannot be complete: it can miss or misread forms that these rules
+and the self-tests do not name. The known misses are a launch held in a
+variable (`$PY tools/x.py`, `"$real_py"`), a launch through a function or
+alias named python3, a `python` spelt in other letter cases, an interpreter
+name with a letter or dot before its `python` (`ipython3`) or a letter or
+hyphen after its digits (`python3m`), a .py path after a launcher it does
+not name (such as xargs or timeout) or after a launcher option that takes
+more than 1 argument word, a .py path after a redirection word that holds a
+space (`2> "a b" tools/x.py`), a .py path written straight after a case
+pattern's ) with no space or tab between, a line after one that ends in an
+escaped backslash (`echo \\`), which the scan joins to it, a -c program that
+holds a single quote (as `'\''`), a case pattern inside $(...) that misleads
+the quote reading, text built at run time, Python launched from Python (such
+as subprocess with sys.executable), and a script that a covered script
+reaches only through a variable or a path the discovery does not match. The
+known misreadings, each a false finding, are a `python` word after a slash or
+a hyphen in a path or URL (`github.com/python/cpython`), a .py argument after
+a closing backquote or after `&>` (`true &>f x.py`), and a line inside a
+quoted string that spans lines, which is read as shell.
 
 Usage: python3 -I tools/test-shell-launch-isolation.py
 Exit status: 0 when every check passes, 1 on any finding or failure.
@@ -113,15 +126,19 @@ EXCEPTIONS = (
 )
 
 SCRIPT_NAME = re.compile(r"([\w.-]+)\.sh(?![\w.-])")
-PYTHON_WORD = re.compile(r"python[0-9.]*(?![\w-])")
+# A python after a letter or a dot is part of another word, such as docs.python.org.
+PYTHON_WORD = re.compile(r"(?<![A-Za-z.])python[0-9.]*(?![\w-])")
 ISOLATED = "python3 -I "
 LAUNCH_BEFORE = set(" \t(|&;!`\"'")
 AFTER_LAUNCH_BEFORE = r"(?<![^ \t(|&;!`\"'])"
 COMMAND_START = (
-    r"(?:^|[;&|(!]|\$\(|(?<!\$)[{)](?=[ \t])|(?<![\w-])(?:then|do|else|elif|if|while|until)\s"
+    r"(?:^|[;&|(!`]|\$\(|(?<!\$)[{)](?=[ \t])|(?<![\w-])(?:then|do|else|elif|if|while|until)\s"
     r"|(?<![\w-])(?:exec|time|nice|env|command)\s+(?:-\S*\s+(?:\S+\s+)?)*)"
 )
-SHEBANG_RUN = re.compile(COMMAND_START + r"\s*(?:\w+=\S*\s+)*[\"']?[^\s\"'|;&()]*\.pyz?(?![\w.-])")
+# A redirection word, such as 2>/dev/null, >&2 or < "$f", which may come before the command word.
+REDIRECTION = r"[0-9]*(?:&>>?|<>|>>|>\||[<>]&?)\s*[^\s|;&()<>]+"
+# A word of the form NAME=value is an assignment, not a command, so the path must not start with one.
+SHEBANG_RUN = re.compile(COMMAND_START + r"\s*(?:(?:\w+=\S*|" + REDIRECTION + r")\s+)*(?!\w+=)[\"']?[^\s\"'|;&()]*\.pyz?(?![\w.-])")
 HEREDOC = re.compile(r"(?<!<)<<(?!<)(-?)\s*([\"']?)([A-Za-z_]\w*)\2")
 # A python3 -I launch that reads its program from a here-document on standard input.
 STDIN_PROGRAM = re.compile(AFTER_LAUNCH_BEFORE + r"python3 -I (?:-[A-Za-z]+ )*-(?=\s|$)")
@@ -144,6 +161,17 @@ def line_findings(line: str) -> list[str]:
 
 def open_single_quote(line: str) -> int | None:
     """Return where a single quote that the line leaves open starts, or None."""
+    stack, _ = quote_state(line)
+    return stack[-1][1] if stack and stack[-1][0] == "'" else None
+
+
+def comment_start(line: str) -> int | None:
+    """Return where a comment on the line starts, or None."""
+    return quote_state(line)[1]
+
+
+def quote_state(line: str) -> tuple[list[tuple[str, int]], int | None]:
+    """Return the quotes and parentheses the line leaves open, and where a comment starts, or None."""
     stack: list[tuple[str, int]] = []
     i = 0
     while i < len(line):
@@ -164,7 +192,7 @@ def open_single_quote(line: str) -> int | None:
                 stack.append(("(", i))
                 i += 1
         elif c == "#" and (i == 0 or line[i - 1] in " \t;&|()"):
-            break
+            return stack, i
         elif line.startswith("$'", i):
             stack.append(("$'", i))
             i += 1
@@ -173,7 +201,7 @@ def open_single_quote(line: str) -> int | None:
         elif c == ")" and stack:
             stack.pop()
         i += 1
-    return stack[-1][1] if stack and stack[-1][0] == "'" else None
+    return stack, None
 
 
 def script_lines(text: str):
@@ -200,7 +228,8 @@ def script_lines(text: str):
             in_program = False
             # The leading quote keeps a path just after the program from reading as a command.
             line = "'" + line.split("'", 1)[1]
-        while line.endswith("\\") and i < len(lines):
+        # Bash does not continue a comment, so a backslash that ends one joins no line.
+        while line.endswith("\\") and i < len(lines) and comment_start(line[1:] if resumed else line) is None:
             line = line[:-1] + lines[i]
             i += 1
         if line.lstrip(" \t").startswith("#"):
@@ -292,7 +321,6 @@ LINE_CASES = [
     ('cat > "$bin/python3" <<PY', True),
     ("python3 -X utf8 tools/x.py", True),
     ("python3  -I tools/x.py", True),
-    ("ipython3 -I tools/x.py", True),
     ("python3 --version", True),
     ("tools/x.py --check", True),
     ("  tools/x.py", True),
@@ -309,7 +337,16 @@ LINE_CASES = [
     ("env -i A=b tools/x.py", True),
     ("time -p ./x.py", True),
     ("python3 -I tools/x.py; python3.12 tools/y.py", True),
+    ("2>/dev/null tools/x.py", True),
+    ("> \"$log\" LC_ALL=C tools/x.py", True),
+    ("echo `tools/x.py`", True),
+    ("x=`python3 tools/x.py`", True),
+    ('"gate=tools/x.py"', True),
     ("python3 -I tools/check-python-version.py", False),
+    ('echo "see https://docs.python.org/3/"', False),
+    ("ipython3 -I tools/x.py", False),
+    ("gate=tools/x.py", False),
+    ("gate=tools/x.py next=tools/y.py", False),
     ('test -f .python-version && python3 -I tools/x.py', False),
     ('cp "$(dirname "$0")/x.py" "${dir}/x.py"', False),
     ('case "${tag}" in', False),
@@ -351,6 +388,10 @@ SCRIPT_CASES = [
     ("cat > \"$b/python3\" <<PY\npython3 y.py\nPY\n", [(1, "python"), (2, "python")]),
     ("python3 -I tools/x.py <<EOF\npython3 y.py\nEOF\n", [(2, "python")]),
     ("python3 -I -B - \"$1\" <<\"PY\"\nimport x\nPY\n", []),
+    ("# note \\\npython3 tools/x.py\n", [(2, "python")]),
+    ("# note \\\ntools/x.py\n", [(2, "a .py")]),
+    ("echo x # note \\\ntools/x.py\n", [(2, "a .py")]),
+    ("python3 -I \\\n  x.py # note \\\npython3 y.py\n", [(3, "python")]),
 ]
 
 
@@ -369,7 +410,7 @@ def self_test() -> list[str]:
         (root / "tools").mkdir()
         (root / ".github" / "workflows" / "w.yml").write_text(
             "on: push\njobs:\n  j:\n    steps:\n      - run: bash tools/a.sh\n", encoding="utf-8")
-        (root / "tools" / "a.sh").write_text("#!/usr/bin/env bash\n# tools/c.sh\ntools/b.sh\n", encoding="utf-8")
+        (root / "tools" / "a.sh").write_text("#!/usr/bin/env bash\n# tools/c.sh\n# a comment ends at its line, backslash or not \\\ntools/b.sh\n", encoding="utf-8")
         (root / "tools" / "b.sh").write_text("python3 -I tools/x.py\nprobe=$(python3 --version)\n", encoding="utf-8")
         (root / "tools" / "c.sh").write_text("python3 tools/x.py\n", encoding="utf-8")
         exception = (("tools/b.sh", r"probe=\$\(python3 --version\)", (), "r"),)
