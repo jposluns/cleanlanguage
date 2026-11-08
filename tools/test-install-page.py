@@ -10,11 +10,9 @@ pass for a refusal. 1 more check asserts that the gate's docstring names
 exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that this file's own source
 carries no ``?v=`` token starting with a digit apart from those KEPT_TOKENS
 names, since a case writes the current baseline version as BASELINE, read
-from ``.baseline/pin.toml``, and 1 that its syntax tree holds exactly 1
-pinned assignment ``BASELINE = pinned_baseline()`` outside every def and
-class, no other form that binds, annotates, deletes or declares BASELINE,
-and no star import. Exit 0 when every case passes; 1 otherwise, naming each
-failing case.
+from ``.baseline/pin.toml``, and 1 is version_binding_problems(), whose
+docstring states what it reports and what it passes. Exit 0 when every case
+passes; 1 otherwise, naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 may hide or empty what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code
@@ -199,10 +197,8 @@ try:
 except Exception as error:
     print(f"test-install-page: failures:\n  - the baseline version could not be read from .baseline/pin.toml: {error!r}")
     raise SystemExit(1)
-# The names that hold the version read from the pin. version_binding_problems() requires exactly 1 pinned assignment
-# NAME = pinned_baseline() outside every def and class for each of them, such as the one above, and refuses every
-# other form in this file's syntax tree that binds, annotates, deletes or declares (global or nonlocal) one of them,
-# and every star import.
+# The names that hold the version read from the pin. version_binding_problems() reads this file's syntax tree for
+# them; its docstring states what it reports and what it passes.
 VERSION_NAMES = ("BASELINE",)
 # The ?v= tokens that start with a digit and that this file keeps as literals on purpose, each with its reason;
 # version_literal_problems() refuses any other, so that no case carries a baseline version that goes stale at a move.
@@ -1518,7 +1514,8 @@ RESIDUALS = [
 # Faults to a copy of STYLESHEETS and PIN_FILE for stylesheet_problems(), the comparison of the committed stylesheets
 # with RULE_PIN, and the words that its problems must hold, each in 1 of them; none for none. Each rule is named as
 # that comparison names it: a pinned rule by its file name and preludes, a rule the pin does not hold by its text.
-# BASELINE_SHEET is the stylesheet that the faults change; version_binding_problems() refuses a BASELINE binding here.
+# BASELINE_SHEET is the stylesheet that the faults change. It is not named BASELINE, a name in VERSION_NAMES; see
+# version_binding_problems().
 BASELINE_SHEET = STYLESHEETS[2]
 INLINE_RULE = ".btn.inline { position: static; display: inline-block; text-decoration: none; margin: 0 0.6rem 0.6rem 0; }"
 HOVER_RULE = ".btn.inline:hover { color: var(--button-hover-fg); }"
@@ -2396,14 +2393,22 @@ def version_binding_problems() -> list[str]:
     """The problems with the names of VERSION_NAMES in this file's own source, read from its syntax tree.
 
     The pinned assignment of a name is a statement that no def or class holds, whose only target is the name and
-    whose value is the call pinned_baseline() with no arguments: NAME = pinned_baseline(). Each name must have
-    exactly 1; a name with none is reported, and when a name has more than 1, each of them is reported by its line.
-    Every other form that binds, annotates, deletes or declares the name is reported by its own line, wherever it
-    is: a Name node in a store or delete context (a target of a plain, augmented, annotated, starred or :=
-    assignment, an annotation with no value, a for, comprehension or with target, a type alias, or a del), an
-    import alias, a def, a class, an except name, a parameter, a type parameter, a match capture, or a global or
-    nonlocal statement. Each star import is reported by its line. No other form is reported: a binding that none
-    of these forms names, such as one through globals(), exec, setattr or an attribute of this module, is not."""
+    whose value is a call of the name pinned_baseline with no arguments: NAME = pinned_baseline(). Each name must
+    have exactly 1; a name with none is reported, and when a name has more than 1, each of them is reported by its
+    line. Apart from each pinned assignment, each of these forms that binds, annotates, deletes or declares the name
+    is reported by its own line, wherever it is in this file: a Name node in a store or delete context (a target of
+    a plain, augmented, annotated, starred or := assignment, an annotation with no value, a for, comprehension or
+    with target, a type alias, or a del), an import alias, a def, an async def, a class, an except name, a
+    parameter, a type parameter, a match capture, or a global or nonlocal statement. Each star import is reported
+    by its line.
+
+    Nothing else is reported. The check reads the syntax tree and does not run the file, so a binding of the name that
+    none of these forms makes passes with no report, such as globals()["NAME"] = value,
+    setattr(sys.modules[__name__], "NAME", value), exec("NAME = value") or sys.modules[__name__].NAME = value. It
+    also reads only the name of the function that the pinned assignment calls, not what that name holds when the
+    assignment runs or what the function's body does, so each of these passes with no report and makes the name
+    hold what it returns: a second def pinned_baseline() placed before the pinned assignment, a rebinding such as
+    pinned_baseline = lambda: "x" placed there, and a body of pinned_baseline() that returns a literal."""
     tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
     pinned: dict[str, list[ast.Name]] = {name: [] for name in VERSION_NAMES}
     for statement in unscoped_statements(tree):
