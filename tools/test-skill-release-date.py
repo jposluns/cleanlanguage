@@ -22,8 +22,10 @@ The tests run offline and touch only throwaway directories.
 
 from __future__ import annotations
 
+import datetime
 import importlib.util
 import json
+import random
 import re
 import shutil
 import subprocess
@@ -124,9 +126,11 @@ CRASH_RUNNER = (
 # Row 80: runs the real extractor in --json mode with the function named by
 # its first argument (a dotted module.attribute) made to raise the built-in
 # exception named by its second argument, and the request on stdin, to
-# observe the exit code and the empty stdout of an internal error.
+# observe the exit code and the empty stdout of an internal error. _strptime
+# is imported before the patch because its import calls time.strftime, so a
+# patched time.strftime is reached only where the extractor formats an instant.
 JSON_CRASH_RUNNER = (
-    "import builtins, importlib, runpy, sys\n"
+    "import _strptime, builtins, importlib, runpy, sys\n"
     "kind = getattr(builtins, sys.argv[2])\n"
     "def crash(*args, **kwargs):\n"
     "    raise kind(\"injected internal error\")\n"
@@ -439,6 +443,79 @@ class ExtractorCliTest(unittest.TestCase):
                 self.assertEqual(run(None, "--publish-window", *args)[0], 1)
         self.assertEqual(run(None, "--publish-window", "2026-11-15")[0], 2)
 
+    def test_publish_window_on_the_last_representable_day(self):
+        # Row 99: the margin is counted without building the next date, so
+        # 9999-12-31, the last day a date can name, answers like any other
+        # day instead of failing as an internal error.
+        self.assertEqual(srd.PUBLISH_MARGIN_SECONDS, 600)
+        day = "9999-12-31"
+        self.assertEqual(run(None, "--publish-window", day, "9999-12-31T12:00:00Z"), (0, day + "\n", ""))
+        message = (
+            "refusing to start publishing: only 300 seconds remain in the UTC day 9999-12-31 "
+            "(9999-12-31T23:55:00Z); publishing is refused within 10 minutes of UTC midnight, "
+            "so the release cannot land on a later day than its Released line names"
+        )
+        self.assertEqual(
+            run(None, "--publish-window", day, "9999-12-31T23:55:00Z"), (5, "", f"skill-release-date: {message}\n")
+        )
+        code, out, err = run(None, "--publish-window", day, "9999-12-31T23:59:59Z")
+        self.assertEqual((code, out), (5, ""), err)
+        self.assertIn("only 1 second remains in", err)
+        for now, outcome in (
+            ("9999-12-31T12:00:00Z", {"outcome": "value", "value": day}),
+            ("9999-12-31T23:55:00Z", {"outcome": "refused", "message": message}),
+        ):
+            with self.subTest(json=now):
+                self.assertEqual(
+                    run(request("publish_window", expected=day, now=now), "--json", stdin=True),
+                    (0, reply_bytes({"op": "publish_window", **outcome}), ""),
+                )
+
+    def test_a_version_part_past_the_integer_digit_limit_is_malformed(self):
+        # Row 101: a part with more digits than int() converts is malformed
+        # (exit 1, a malformed reply), never an internal error, and a part at
+        # the limit still compares. The child runs under the default limit,
+        # 4300 digits.
+        over = "9" * 4301
+        for label, version in (("major", f"{over}.0.0"), ("minor", f"1.{over}.0"), ("patch", f"1.0.{over}")):
+            with self.subTest(label):
+                message = f"a part of the version has more than 4300 digits: {version!r}"
+                self.assertEqual(run(None, "--requires-date", version), (1, "", f"skill-release-date: {message}\n"))
+                self.assertEqual(
+                    run(request("requires_release_date", version), "--json", stdin=True),
+                    (0, reply_bytes({"op": "requires_release_date", "outcome": "malformed", "message": message}), ""),
+                )
+        for label, version, answer in (
+            ("4300 nines", "1.0." + "9" * 4300, "required"),
+            ("4300 zeros", "1." + "0" * 4300 + ".14", "optional"),
+        ):
+            with self.subTest(label):
+                self.assertEqual(run(None, "--requires-date", version), (0, answer + "\n", ""))
+                self.assertEqual(
+                    run(request("requires_release_date", version), "--json", stdin=True),
+                    (0, reply_bytes({"op": "requires_release_date", "outcome": "value", "value": answer == "required"}), ""),
+                )
+
+    def test_a_lowered_integer_digit_limit_is_read_at_run_time(self):
+        # Row 101: the limit is read when a version is compared, so a child
+        # started with a lower limit (640 is the lowest Python accepts)
+        # reports a longer part as malformed instead of failing.
+        def run_lowered(*args: str, data: bytes = b""):
+            proc = subprocess.run(
+                [sys.executable, "-I", "-X", "int_max_str_digits=640", str(EXTRACTOR), *args],
+                input=data, capture_output=True,
+            )
+            return proc.returncode, proc.stdout.decode("utf-8", "replace"), proc.stderr.decode("utf-8", "replace")
+
+        version = "1.0." + "9" * 641
+        message = f"a part of the version has more than 640 digits: {version!r}"
+        self.assertEqual(run_lowered("--requires-date", version), (1, "", f"skill-release-date: {message}\n"))
+        self.assertEqual(
+            run_lowered("--json", data=request("requires_release_date", version)),
+            (0, reply_bytes({"op": "requires_release_date", "outcome": "malformed", "message": message}), ""),
+        )
+        self.assertEqual(run_lowered("--requires-date", "1.0." + "9" * 640), (0, "required\n", ""))
+
     def test_confirm_published(self):
         self.assertEqual(
             run(None, "--confirm-published", "2026-11-15", "2026-11-15T23:59:59Z")[:2], (0, "2026-11-15\n")
@@ -514,6 +591,52 @@ class FunctionTest(unittest.TestCase):
             with self.subTest(value):
                 with self.assertRaises(srd.Malformed):
                     srd.requires_release_date(value)
+
+    def test_version_key_reads_the_digit_limit_at_run_time(self):
+        # Row 101: the limit in force when a version is compared decides, and
+        # 0 means no limit, so a part of any length then compares.
+        self.addCleanup(sys.set_int_max_str_digits, sys.get_int_max_str_digits())
+        sys.set_int_max_str_digits(640)
+        version = "1.0." + "9" * 641
+        with self.assertRaises(srd.Malformed) as caught:
+            srd.version_key(version)
+        self.assertEqual(str(caught.exception), f"a part of the version has more than 640 digits: {version!r}")
+        self.assertTrue(srd.requires_release_date("1.0." + "9" * 640))
+        sys.set_int_max_str_digits(0)
+        self.assertTrue(srd.requires_release_date("1.0." + "9" * 5000))
+
+    def test_the_margin_agrees_with_the_next_midnight_on_ordinary_days(self):
+        # Row 99: counting the margin from the time of day gives the verdict
+        # and the count that counting to the next UTC midnight gives, on
+        # sampled instants of days that have a next day. The seed is fixed,
+        # so every run checks the same instants.
+        rng = random.Random(99)
+        first = datetime.date(1, 1, 1).toordinal()
+        last = datetime.date(9999, 12, 30).toordinal()
+        days = [datetime.date(1, 1, 1), datetime.date(2024, 2, 29), datetime.date(2026, 11, 15),
+                datetime.date(9999, 12, 30)]
+        days += [datetime.date.fromordinal(rng.randint(first, last)) for _ in range(200)]
+        edges = (0, 1, 85799, 85800, 85801, 86398, 86399)
+        checked = 0
+        for day in days:
+            for second in (*edges, *(rng.randrange(86400) for _ in range(10))):
+                now_text = f"{day.isoformat()}T{second // 3600:02d}:{second // 60 % 60:02d}:{second % 60:02d}Z"
+                now = srd.parse_instant(now_text, "the current instant")
+                midnight = datetime.datetime.combine(
+                    day + datetime.timedelta(days=1), datetime.time(0), tzinfo=datetime.timezone.utc
+                )
+                old = int((midnight - now).total_seconds())
+                problem = srd.publish_window_problem(day.isoformat(), now)
+                if old >= srd.PUBLISH_MARGIN_SECONDS:
+                    self.assertIsNone(problem, now_text)
+                else:
+                    left = "1 second remains" if old == 1 else f"{old} seconds remain"
+                    self.assertIsNotNone(problem, now_text)
+                    self.assertTrue(
+                        problem.startswith(f"only {left} in the UTC day {day.isoformat()} ({now_text}); "), problem
+                    )
+                checked += 1
+        self.assertEqual(checked, 204 * 17)
 
     def test_extract_matches_the_cli(self):
         self.assertEqual(srd.extract(VALID), "2026-11-15")
@@ -751,16 +874,6 @@ class JsonModeTest(unittest.TestCase):
                 self.assertEqual(proc.stdout, b"")
                 self.assertIn(f"internal error: {kind}(".encode("ascii"), proc.stderr)
                 self.assertIn(b"injected internal error", proc.stderr)
-        # A version whose last part has more digits than int() converts
-        # raises a ValueError that is not a Malformed: exit 6 and an empty
-        # stdout, as --requires-date gives for the same version.
-        version = "1.0." + "9" * 5000
-        with self.subTest("a version past the integer digit limit"):
-            code, out, err = run(request("requires_release_date", version), "--json", stdin=True)
-            self.assertEqual((code, out), (6, ""), err)
-            self.assertTrue(err.startswith("skill-release-date: internal error: ValueError("), err)
-            cli_code, cli_out, cli_err = run(None, "--requires-date", version)
-            self.assertEqual((cli_code, cli_out, cli_err), (code, out, err))
 
     def test_an_op_with_no_branch_is_an_internal_error(self):
         # Fix round 10: each op in JSON_OPS is answered by its own branch, so
@@ -891,13 +1004,16 @@ class JsonModeTest(unittest.TestCase):
 
     def test_an_internal_error_in_an_op_of_the_shell_callers_exits_6(self):
         # Row 89: as for the other ops, an Exception inside parse_date,
-        # publish_window or confirm_published is never a reply.
+        # publish_window or confirm_published is never a reply. The
+        # publish_window cases fail time.strftime, which formats the instant
+        # in a refusal, so the Exception rises inside publish_window_problem,
+        # after parse_instant, which reads a ValueError as a bad instant.
         for label, target, kind, data in (
             ("parse_date", "datetime.date", "RuntimeError", request("parse_date", "2026-11-15")),
-            ("publish_window", "datetime.timedelta", "RuntimeError",
-             request("publish_window", expected="2026-11-15", now="2026-11-15T12:00:00Z")),
-            ("publish_window, a ValueError", "datetime.timedelta", "ValueError",
-             request("publish_window", expected="2026-11-15", now="2026-11-15T12:00:00Z")),
+            ("publish_window", "time.strftime", "RuntimeError",
+             request("publish_window", expected="2026-11-15", now="2026-11-15T23:55:00Z")),
+            ("publish_window, a ValueError", "time.strftime", "ValueError",
+             request("publish_window", expected="2026-11-15", now="2026-11-15T23:55:00Z")),
             ("confirm_published", "datetime.datetime", "RuntimeError",
              request("confirm_published", expected="2026-11-15", published_at="2026-11-15T12:00:00Z")),
         ):

@@ -52,7 +52,9 @@ Input modes:
   ``--requires-date VERSION`` prints ``required`` when ``VERSION`` sorts above
   the baseline (compared numerically, part by part, so ``1.0.100`` is above
   ``1.0.14`` and ``1.00.14`` equals it) and ``optional`` otherwise. Every
-  baseline comparison uses this one rule; no caller re-implements it.
+  baseline comparison uses this one rule; no caller re-implements it. A part
+  with more digits than the interpreter converts to an integer
+  (``sys.get_int_max_str_digits``) is malformed.
   ``--check-date VALUE`` validates a bare ``YYYY-MM-DD`` calendar date and
   prints it.
   ``--published-day VALUE`` prints the UTC day of a release ``published_at``
@@ -219,6 +221,12 @@ def version_key(version: str) -> tuple[int, int, int]:
     match = BARE_VERSION.fullmatch(version)
     if match is None:
         raise Malformed(f"not a bare X.Y.Z version: {version!r}")
+    # int() raises a ValueError for a digit run longer than the interpreter's
+    # limit, which would read as an internal error. The limit is read here at
+    # run time because an interpreter flag can lower it; 0 means no limit.
+    limit = sys.get_int_max_str_digits()
+    if limit and any(len(part) > limit for part in match.groups()):
+        raise Malformed(f"a part of the version has more than {limit} digits: {version!r}")
     return tuple(int(part) for part in match.groups())
 
 
@@ -281,10 +289,9 @@ def publish_window_problem(expected: str, now: datetime.datetime) -> str | None:
             f"the UTC day is now {today} ({now:%Y-%m-%dT%H:%M:%SZ}), not {expected}, "
             f"the day the Released line names"
         )
-    midnight = datetime.datetime.combine(
-        now.date() + datetime.timedelta(days=1), datetime.time(0), tzinfo=datetime.timezone.utc
-    )
-    remaining = int((midnight - now).total_seconds())
+    # Counted from the time of day, never from the next date, which does not
+    # exist after 9999-12-31. Exact because parse_instant yields whole seconds.
+    remaining = 86400 - (now.hour * 3600 + now.minute * 60 + now.second)
     if remaining < PUBLISH_MARGIN_SECONDS:
         left = "1 second remains" if remaining == 1 else f"{remaining} seconds remain"
         return (
