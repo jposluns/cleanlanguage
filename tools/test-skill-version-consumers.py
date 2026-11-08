@@ -17,14 +17,20 @@ the dry run read is exercised from the block extracted from its real script.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import os
+import shlex
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 PACKAGER = REPO / "tools" / "release-package.sh"
@@ -189,6 +195,29 @@ EARLY_END_CLIENT = (
     "raise SystemExit({code})\n"
 )
 
+# Row 110: a stand-in client that answers the probe and the date check as the
+# real one does, and for the read of the Released line prints a valid date
+# and exits 0 at once, without reading its input, so its verdict can rest on
+# none of the blob.
+EARLY_DATE_CLIENT = (
+    "import sys\n"
+    "args = sys.argv[1:]\n"
+    "if args == ['baseline']:\n"
+    "    print('1.0.14')\n"
+    "    raise SystemExit(0)\n"
+    "if args[:1] == ['check-date']:\n"
+    "    print(args[1])\n"
+    "    raise SystemExit(0)\n"
+    "print('2026-11-15')\n"
+    "raise SystemExit(0)\n"
+)
+
+# The whole message of the packager for a failed read of the blob at the
+# Released read, compared as a whole line so that a longer message that
+# begins the same way (the exit-14 one) does not pass for it.
+FAILED_BLOB_READ = ("release-package: could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its "
+                    "Released line")
+
 # Row 89: a git that, at its third read of HEAD:cleanlanguage/skills/
 # cleanlanguage/SKILL.md (the Released read of the packager), writes the
 # blob and then writes on until its reader has gone, so that when the client
@@ -209,6 +238,23 @@ LONG_BLOB_GIT = (
     "  fi\n"
     "fi\n"
     "exec {git} \"$@\"\n"
+)
+
+# Row 117: a hook for the client that starts a background process in the
+# process group of the run and appends its id to the file named. Its streams
+# are redirected, so it holds no pipe of the run open and the run can end
+# while it is still alive; it names the file in its arguments, so that the
+# test can find it without the file; and it sleeps until it is killed, so
+# whether it is alive after the run does not depend on a clock. The client
+# writes the id and closes the file before it returns, and the packager waits
+# for the client, so the file is complete when the run ends.
+LINGERING_CHILD_HOOK = (
+    "_lingering = subprocess.Popen([sys.executable, '-I', '-c', 'import time\\nwhile True: time.sleep(3600)',\n"
+    "                               {pids!r}],\n"
+    "                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,\n"
+    "                              stderr=subprocess.DEVNULL)\n"
+    "with open({pids!r}, 'a', encoding='utf-8') as _pids:\n"
+    "    _pids.write(f'{{_lingering.pid}}\\n')\n"
 )
 
 # Row 89: a copy of the extractor whose --json mode breaks for the op named
@@ -338,6 +384,111 @@ def gate_verdict(gate, skill_text: str):
     return (True, match.group(1)) if match else (False, None)
 
 
+# Row 117: seconds a run of a script under test may take. A packager that
+# reads the whole blob before the client (for example blob="$(git show ...)")
+# never ends under LONG_BLOB_GIT, whose writer stops only when its reader has
+# gone, so without a bound such a change would hang the run until the job
+# limit. 60 seconds is a test budget, not a guarantee: it assumes that a run
+# that ends normally stays well under it. A runner slow enough to exceed it
+# fails that run with a reason that names the timeout.
+SCRIPT_TIMEOUT = 60
+
+# Row 117: seconds that the wait which collects the output of a run may take
+# after its process group has been killed on a timeout. That wait reads both
+# pipes to end of file and then waits for the script to end, so it can pass
+# this bound while a process holds a pipe open (one that the kill did not
+# reach, or one that the SIGKILL has not yet ended, for example in an
+# uninterruptible sleep) or while the script itself has not ended; the output
+# is then reported as not collected within this bound.
+DRAIN_TIMEOUT = 5
+
+# Row 117: seconds to wait for the script itself after the last kill of its
+# group. A script that has ended is reaped at once; one that a SIGKILL has not
+# ended within this bound (for example one in an uninterruptible sleep) is left
+# unreaped rather than waited for without a bound.
+REAP_TIMEOUT = 5
+
+
+def kill_group(pgid: int) -> None:
+    """Send SIGKILL to process group ``pgid``. An empty group is not an
+    error: everything in it has already ended. Nor is a group that the test
+    process may not signal: killpg refuses only when the test process may
+    signal no member of the group, so the kill could end nothing there. For
+    a test process without CAP_KILL, that happens, for example, when the
+    group belongs to another user (such as a group under a reused id) or
+    when every member still in it has changed its real and saved user ids;
+    for any test process, it happens when a Linux security module refuses
+    the signal."""
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def run_bounded(args: list, name: str, env: dict | None = None, cwd: Path | None = None,
+                timeout: float = SCRIPT_TIMEOUT):
+    """Run ``args``, a script under test named ``name`` in a failure, and
+    return (exit_code, stdout, stderr). Every launch of release-package.sh and
+    of the release-dry-run.sh excerpts goes through here, so that each run is
+    bounded and cleaned up the same way.
+
+    The script runs in a new session, so it leads a new process group, and
+    with standard input read from /dev/null, so a read of it gets end of file
+    at once. Every wait here has a bound. The wait for the run is bounded by
+    ``timeout`` seconds. If that bound passes, this call sends SIGKILL to the
+    group, gives the wait that collects the output at most ``DRAIN_TIMEOUT``
+    seconds more, and fails the test with a reason that names the timeout and
+    says whether the output was collected within that bound. However the
+    wait for the run ends (any exit status, the timeout, or an exception),
+    this call then sends SIGKILL to the group, waits for the script itself
+    for at most ``REAP_TIMEOUT`` seconds, and closes the output pipes.
+
+    Residual: it reaches no process outside the process group that it
+    started, such as each extractor that the real client starts with
+    ``start_new_session=True`` (tools/skill-release-date-client.py:408).
+    Its cleanup does not run when the test process itself is ended by a
+    signal that raises no Python exception (SIGKILL, or SIGTERM with no
+    handler), since its ``finally`` does not run then, and a run in a session
+    of its own does not receive a signal sent to the test runner's process
+    group, so a run that has not ended keeps running. If the script has been
+    reaped and its group and session have emptied, its id can be reused, and
+    the last kill can then reach the group of a new process that leads
+    one under that id."""
+    proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, env=env, cwd=cwd, start_new_session=True)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # The group is killed before the second wait, since a member that
+        # holds a pipe open would otherwise keep that wait from finishing
+        # within its bound.
+        kill_group(proc.pid)
+        try:
+            _stdout, stderr = proc.communicate(timeout=DRAIN_TIMEOUT)
+            detail = f"stderr: {stderr[-2000:]!r}"
+        except subprocess.TimeoutExpired:
+            detail = f"stderr was not collected within {DRAIN_TIMEOUT:g} seconds of the kill"
+        raise AssertionError(
+            f"{name} did not end within the {timeout:g}-second timeout, so its process group was killed; "
+            f"{detail}") from None
+    finally:
+        try:
+            kill_group(proc.pid)
+            try:
+                proc.wait(timeout=REAP_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                # Reached only after a wait that has already failed (on the
+                # normal path the script has been reaped), so that failure
+                # is the one the test reports.
+                pass
+        finally:
+            # A wait that timed out or failed may leave the read ends of the
+            # pipes open; closing a closed one does nothing.
+            proc.stdout.close()
+            proc.stderr.close()
+    return proc.returncode, stdout, stderr
+
+
 def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None, bash_options: tuple = ()):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
     CHECKOUT's release-package.sh, tools/skill-release-date.py and
@@ -346,7 +497,11 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
     given and then ``extra_args``. ``extractor`` replaces the extractor and
     ``client`` the client: ``"missing"`` deletes it, any other text is written
     in its place. ``path_prefix`` is put first on the PATH of the packager,
-    and ``bash_options`` are passed to the bash that runs it.
+    and ``bash_options`` are passed to the bash that runs it. The packager
+    runs through ``run_bounded`` with its default timeout, so the wait for the
+    run is bounded by ``SCRIPT_TIMEOUT`` and the run's process group is killed
+    when the wait ends; an extractor, which the real client starts in a
+    session of its own, is not in that group.
     Returns (exit_code, stderr)."""
     skill = skill_with(version_block, released_block) + extra_tail
     with tempfile.TemporaryDirectory() as tmp:
@@ -387,8 +542,8 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             if release_date is not None:
                 args += ["--release-date", release_date]
             args += list(extra_args)
-            result = subprocess.run(args, capture_output=True, text=True, env=env)
-            return result.returncode, result.stderr
+            code, _stdout, stderr = run_bounded(args, "release-package.sh", env=env)
+            return code, stderr
         finally:
             subprocess.run(
                 ["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
@@ -443,7 +598,7 @@ class PackagerContractTest(unittest.TestCase):
 
 
 class PackagerReleaseDateTest(unittest.TestCase):
-    """T3 (item 26): the packager checks the Released line it ships.
+    """The packager checks the Released line it ships.
 
     Whether or not ``--release-date`` is given, it refuses a malformed line
     and a missing one above the undated baseline; ``--release-date`` adds the
@@ -474,7 +629,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
         self.assertIn("--release-date 2026-11-15 was given, but SKILL.md at HEAD has no Released: line", stderr)
 
     def test_absent_line_above_baseline_without_release_date_fails(self):
-        # F8: presence above the baseline is enforced without the flag too.
+        # Presence above the baseline is enforced without the flag too.
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3")
         self.assertEqual(code, 1, stderr)
         self.assertIn("has no Released: line, but version 1.2.3 sorts above the undated baseline 1.0.14", stderr)
@@ -484,7 +639,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
         self.assertEqual(code, 0, stderr)
 
     def test_baseline_rule_is_numeric(self):
-        # F7: the extractor decides the comparison, so the packager agrees with
+        # The extractor decides the comparison, so the packager agrees with
         # every other caller, leading zeros included. Row 60: with
         # --release-date given, an absent line fails at every version.
         for version, builds in (
@@ -501,7 +656,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
                         self.assertIn("has no Released: line", stderr)
 
     def test_trailing_flag_without_a_value_fails_with_a_message(self):
-        # F6: a trailing --release-date (or --tag) names what is missing.
+        # A trailing --release-date (or --tag) names what is missing.
         for flag, fragment in (
             ("--release-date", "--release-date needs a YYYY-MM-DD value"),
             ("--tag", "--tag needs a value"),
@@ -512,8 +667,8 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertIn(fragment, stderr)
 
     def test_unavailable_extractor_is_not_blamed_on_the_content(self):
-        # F5: a missing or broken extractor is unavailable, not a bad date or
-        # a malformed line.
+        # A missing or broken extractor is unavailable, not a bad date or a
+        # malformed line.
         for label, body in (("missing", "missing"), ("broken", "def broken(:\n")):
             with self.subTest(label):
                 code, stderr = run_packager("Version: 1.0.14  ", "1.0.14", release_date="2026-11-15",
@@ -524,17 +679,23 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertNotIn("malformed", stderr)
 
     def test_unreadable_input_at_head_is_named_as_unreadable(self):
-        # T4: client exit 14 is unreadable input, never a crash.
+        # Client exit 14 is unreadable input, never a crash. Row 112: the
+        # blob read succeeds here (status 0), and the client's own line is
+        # still relayed before the message of the packager, as it is beside a
+        # SIGPIPE.
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
                                     released_block="Released: 2026-11-15  ",
                                     client=client_with(UNREADABLE_STDIN_HOOK))
         self.assertEqual(code, 1, stderr)
-        self.assertIn("at HEAD for its Released line: the client could not read its input (exit 14)", stderr)
-        self.assertNotIn("unavailable or crashed", stderr)
+        self.assertEqual(stderr.splitlines(), [
+            "skill-release-date: could not read standard input: [Errno 5] injected read error",
+            "release-package: could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released "
+            "line: the client could not read its input (exit 14)",
+        ])
 
     def test_internal_error_at_head_is_reported_as_a_crash(self):
-        # T4: an extractor internal error is the tool failing (client exit
-        # 16), never unreadable input.
+        # An extractor internal error is the tool failing (client exit 16),
+        # never unreadable input.
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
                                     released_block="Released: 2026-11-15  ",
                                     extractor=extractor_with(CRASH_HOOK))
@@ -618,7 +779,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
         self.assertIn("tools/skill-release-date.py is unavailable or crashed (exit 125) reading the Released line", stderr)
         self.assertNotIn("could not read", stderr)
 
-    def long_blob_run(self, code: int):
+    def long_blob_run(self, code: int | None = None, client: str | None = None):
         git = shutil.which("git")
         self.assertIsNotNone(git)
         with tempfile.TemporaryDirectory() as tmp:
@@ -627,7 +788,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
             fake.chmod(0o755)
             result = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
                                   released_block="Released: 2026-11-15  ", path_prefix=tmp,
-                                  client=EARLY_END_CLIENT.format(code=code))
+                                  client=EARLY_END_CLIENT.format(code=code) if client is None else client)
             reads = int((Path(tmp) / "count").read_text())
         self.assertEqual(reads, 3, result[1])
         return result
@@ -666,6 +827,53 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertIn("release-package: could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for "
                               "its Released line\n", stderr)
                 self.assertNotIn("unavailable or crashed", stderr)
+
+    def test_a_date_beside_a_sigpipe_is_a_failed_blob_read(self):
+        # Row 110: a valid date (exit 0) from a client that ended before it
+        # read the whole blob may rest on part of the blob, so it is never
+        # taken, even when it names the --release-date given: the run fails
+        # as a failed blob read.
+        code, stderr = self.long_blob_run(client=EARLY_DATE_CLIENT)
+        self.assertEqual(code, 1, stderr)
+        self.assertEqual(stderr.splitlines(), [FAILED_BLOB_READ])
+
+    def failing_blob_run(self, client: str):
+        git = shutil.which("git")
+        self.assertIsNotNone(git)
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "git"
+            fake.write_text(FAILING_BLOB_GIT.format(count=str(Path(tmp) / "count"), git=git), encoding="utf-8")
+            fake.chmod(0o755)
+            result = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                  released_block="Released: 2026-11-15  ", path_prefix=tmp, client=client)
+            reads = int((Path(tmp) / "count").read_text())
+        self.assertEqual(reads, 3, result[1])
+        return result
+
+    def test_a_failed_blob_read_beside_a_client_failure_is_named_as_such(self):
+        # Row 111: only a SIGPIPE (141) lets the client's own exit stand for
+        # the read; any other failed blob read is reported as that, beside
+        # every client exit that is not a content verdict. The stand-in
+        # prints a line of its own, so that a packager that relayed the
+        # client's line beside a failed blob read fails the exact comparison.
+        for client_code in (14, 15, 16, 125):
+            with self.subTest(client_code=client_code):
+                code, stderr = self.failing_blob_run(STAND_IN_CLIENT.format(out="stand-in client line\n",
+                                                                            code=client_code))
+                self.assertEqual(code, 1, stderr)
+                self.assertEqual(stderr.splitlines(), ["fatal: injected blob read failure", FAILED_BLOB_READ])
+
+    def test_a_content_verdict_beside_a_failed_blob_read_is_a_failed_blob_read(self):
+        # Row 111: a content verdict beside a failed blob read that is not a
+        # SIGPIPE rests on none or part of the blob, so it is never taken: a
+        # valid date (exit 0, the --release-date given) and a malformed line
+        # (exit 11) are each reported as the failed blob read, and the
+        # client's line is not relayed.
+        for client_code, out in ((0, "2026-11-15\n"), (11, "stand-in client line\n")):
+            with self.subTest(client_code=client_code):
+                code, stderr = self.failing_blob_run(STAND_IN_CLIENT.format(out=out, code=client_code))
+                self.assertEqual(code, 1, stderr)
+                self.assertEqual(stderr.splitlines(), ["fatal: injected blob read failure", FAILED_BLOB_READ])
 
     def test_a_failed_blob_read_is_named_as_such(self):
         # Row 89: a git show that fails at the Released read is reported as
@@ -733,6 +941,369 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertIn("--release-date must be a real YYYY-MM-DD date", stderr)
 
 
+def process_running(pid: int) -> bool:
+    """Whether process ``pid`` has not ended. A zombie has ended, so it
+    counts as ended."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+
+def processes_naming(marker: str) -> list:
+    """The ids of the running processes, other than this one, that have
+    ``marker`` in their arguments."""
+    needle = marker.encode("utf-8")
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            cmdline = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if needle in cmdline and process_running(int(entry.name)):
+            found.append(int(entry.name))
+    return found
+
+
+def stop_leftovers(marker: str, seconds: float = 10) -> None:
+    """Kill every running process that has ``marker`` in its arguments, and
+    fail if any is still running after ``seconds``. The processes are found
+    from the process list, not from a file, so a process that has not written
+    its id anywhere, or has left the group of the run, is still found.
+    Residual: the arguments are read and the signal is sent in separate
+    steps, so a process given a reused id in between could be hit; the marker
+    is a new temporary folder, so no unrelated process is expected to name
+    it."""
+    deadline = time.monotonic() + seconds
+    while True:
+        pids = processes_naming(marker)
+        if not pids:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(f"processes {pids} that name {marker} were still running {seconds:g} seconds "
+                                 f"after the first kill")
+        for pid in pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+        time.sleep(0.1)
+
+
+# Row 117: a background process for the launcher cases. Once it is set up
+# (and, when told to, has left the process group of the run), it writes its
+# id to a temporary file, closes it, and renames it to the file named in its
+# arguments, so that the file appears whole and only once the process is in
+# the state the case needs; it names that file in its arguments, so that the
+# test can find it without the file; and it sleeps until it is killed, so
+# that no case depends on how long it lives.
+BACKGROUND_CHILD = (
+    "import os, sys, time\n"
+    "{leave_group}"
+    "with open(sys.argv[1] + '.tmp', 'w', encoding='utf-8') as ready:\n"
+    "    ready.write(f'{{os.getpid()}}\\n')\n"
+    "os.replace(sys.argv[1] + '.tmp', sys.argv[1])\n"
+    "while True:\n"
+    "    time.sleep(3600)\n"
+)
+
+
+def background_child(ready: Path, leave_group: bool = False) -> str:
+    """A shell command that runs ``BACKGROUND_CHILD`` with ``ready`` as its
+    file; with ``leave_group`` it starts a session of its own first."""
+    code = BACKGROUND_CHILD.format(leave_group="os.setsid()\n" if leave_group else "")
+    return shlex.join([sys.executable, "-I", "-c", code, str(ready)])
+
+
+def wait_until_ready(ready: Path, seconds: float = 30) -> int:
+    """Wait until the file ``ready`` exists and return the id in it, or fail
+    after ``seconds``."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            return int(ready.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            time.sleep(0.05)
+    raise AssertionError(f"the stand-in's background process did not signal that it was ready within "
+                         f"{seconds:g} seconds")
+
+
+@unittest.skipUnless(Path("/proc/self/stat").exists(), "needs /proc to tell whether a process is running")
+class BoundedLaunchTest(unittest.TestCase):
+    """Row 117: 9 cases each pin 1 path of ``run_bounded``. The other 2 run
+    nothing and pin, from the syntax tree of this file, that no call of
+    ``run_bounded`` outside this class passes a timeout and that no launch
+    outside ``run_bounded`` runs anything but git, unzip or locale. Every
+    background process that a stand-in starts lives until it is killed, so
+    no case races the lifetime of a process against a clock; the clocks left
+    (the readiness wait, the wait for a killed process to end, and the
+    timeouts of ``run_bounded``) bound the test, so a broken launcher fails
+    a case instead of hanging it. These cases do not show that no process
+    outlives a packager run: the real client starts each extractor in a
+    session of its own, which the group kill does not reach."""
+
+    def marker(self) -> Path:
+        """A new folder for the files of the case, which every background
+        process that a stand-in starts names in its arguments. Before any
+        launch, a cleanup is registered that runs ``stop_leftovers`` on the
+        folder when the test ends, so a launch or check that fails early
+        leaves no such process behind, even one that has not written its id;
+        the folder is removed after that cleanup."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        marker = Path(tmp.name)
+        self.addCleanup(stop_leftovers, str(marker) + os.sep)
+        return marker
+
+    def ready_before_the_wait(self, ready: Path):
+        """A patch of ``Popen.communicate`` that waits until the stand-in's
+        background process has signalled through ``ready`` that it is in
+        place before the real wait begins, so that a short timeout cannot
+        fire before that process exists. It fails a wait given no bound,
+        since such a wait would never end while that process lives."""
+        real_communicate = subprocess.Popen.communicate
+
+        def communicate(proc, input=None, timeout=None):
+            wait_until_ready(ready)
+            if timeout is None:
+                raise AssertionError("a wait for the run was given no bound")
+            return real_communicate(proc, input, timeout)
+
+        return mock.patch.object(subprocess.Popen, "communicate", communicate)
+
+    def recorded(self, pids: Path) -> list:
+        try:
+            return [int(word) for word in pids.read_text(encoding="utf-8").split()]
+        except FileNotFoundError:
+            return []
+
+    def assert_nothing_left(self, marker: Path, pids: list):
+        self.assertTrue(pids, "the stand-in started no background process")
+        # A SIGKILL takes effect when its target next runs, not when killpg
+        # returns, so the check waits up to 10 seconds before it fails.
+        deadline = time.monotonic() + 10
+        while processes_naming(str(marker) + os.sep) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertEqual(processes_naming(str(marker) + os.sep), [],
+                         "a background process started by the stand-in outlived the run")
+
+    def test_a_launch_without_a_timeout_passes_the_default(self):
+        # Every launch outside this class passes no timeout, so each relies
+        # on run_bounded handing SCRIPT_TIMEOUT to the wait for the run.
+        given = []
+        real_communicate = subprocess.Popen.communicate
+
+        def communicate(proc, input=None, timeout=None):
+            given.append(timeout)
+            return real_communicate(proc, input, timeout)
+
+        with mock.patch.object(subprocess.Popen, "communicate", communicate):
+            result = run_bounded(["bash", "-c", "printf done"], "the stand-in")
+        self.assertEqual(result, (0, "done", ""))
+        self.assertEqual(given, [SCRIPT_TIMEOUT])
+        self.assertGreater(SCRIPT_TIMEOUT, 0)
+
+    def test_a_read_of_standard_input_gets_end_of_file(self):
+        # A run must not read the standard input of the test. For the length
+        # of the call, that input is a pipe that holds a line and stays open,
+        # so a run that inherited it would read the line; the stand-in
+        # reports end of file only if a read of its own standard input gets
+        # end of file, as a read of /dev/null does. With no standard input to
+        # replace, a run that inherited it would also read nothing, so the
+        # case cannot tell the 2 apart and is skipped.
+        try:
+            saved = os.dup(0)
+        except OSError:
+            self.skipTest("the test process has no standard input to replace")
+        self.addCleanup(os.close, saved)
+        read_end, write_end = os.pipe()
+        self.addCleanup(os.close, write_end)
+        self.addCleanup(os.close, read_end)
+        os.write(write_end, b"a line from the test\n")
+        os.dup2(read_end, 0)
+        try:
+            result = run_bounded(["bash", "-c", "if IFS= read -r line; then printf 'read: %s\\n' \"$line\"; "
+                                                "else printf 'end of file\\n'; fi"], "the stand-in")
+        finally:
+            os.dup2(saved, 0)
+        self.assertEqual(result, (0, "end of file\n", ""))
+
+    def test_no_launch_outside_this_class_passes_a_timeout(self):
+        # A launch that passed its own timeout (None among them) would not
+        # have the bound that test_a_launch_without_a_timeout_passes_the_default
+        # pins, so no call of run_bounded outside this class may pass a
+        # timeout keyword, a 5th argument, or a starred argument. Residual: a
+        # call through another name (an alias or a partial) is not seen.
+        tree = ast.parse(Path(__file__).resolve().read_text(encoding="utf-8"))
+        inside = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name == "BoundedLaunchTest":
+                inside.update(id(child) for child in ast.walk(node))
+        calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                 and node.func.id == "run_bounded" and id(node) not in inside]
+        self.assertTrue(calls, "no call of run_bounded was found outside BoundedLaunchTest")
+        for call in calls:
+            with self.subTest(line=call.lineno):
+                self.assertLessEqual(len(call.args), 4)
+                self.assertFalse(any(isinstance(arg, ast.Starred) for arg in call.args))
+                self.assertEqual([keyword.arg for keyword in call.keywords
+                                  if keyword.arg is None or keyword.arg == "timeout"], [])
+
+    def test_no_script_under_test_is_launched_outside_run_bounded(self):
+        # Every run of release-package.sh and of the release-dry-run.sh
+        # excerpts needs the bound and the cleanup of run_bounded, so every
+        # subprocess launch outside run_bounded must name git, unzip or locale
+        # as the first item of a literal argument list, and no os.system,
+        # os.popen, os.exec*, os.spawn* or os.posix_spawn* call may appear.
+        # Residual: a launch through another name (an alias, a function
+        # imported by name, or a partial) or through another module (asyncio
+        # or pty, for example) is not seen.
+        tree = ast.parse(Path(__file__).resolve().read_text(encoding="utf-8"))
+        inside = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "run_bounded":
+                inside.update(id(child) for child in ast.walk(node))
+        launchers = {"run", "Popen", "call", "check_call", "check_output", "getoutput", "getstatusoutput"}
+        launches, os_launches = [], []
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name)):
+                continue
+            module, name = node.func.value.id, node.func.attr
+            if module == "subprocess" and name in launchers and id(node) not in inside:
+                launches.append(node)
+            elif module == "os" and (name in ("system", "popen") or name.startswith(("exec", "spawn", "posix_spawn"))):
+                os_launches.append(node.lineno)
+        self.assertTrue(launches, "no subprocess launch was found outside run_bounded")
+        self.assertEqual(os_launches, [])
+        for call in launches:
+            with self.subTest(line=call.lineno):
+                listed = call.args[0] if call.args and isinstance(call.args[0], ast.List) else None
+                program = listed.elts[0] if listed is not None and listed.elts else None
+                self.assertIsInstance(program, ast.Constant)
+                self.assertIn(program.value, ("git", "unzip", "locale"))
+
+    def test_a_background_process_is_killed_after_a_build(self):
+        marker = self.marker()
+        pids = marker / "pids"
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", released_block="Released: 2026-11-15  ",
+                                    client=client_with(LINGERING_CHILD_HOOK.format(pids=str(pids))))
+        self.assertEqual(code, 0, stderr)
+        self.assert_nothing_left(marker, self.recorded(pids))
+
+    def test_a_background_process_is_killed_after_a_failure(self):
+        # The plugin version check comes after every client call, so the
+        # stand-in has started its background processes before the run fails.
+        marker = self.marker()
+        pids = marker / "pids"
+        code, stderr = run_packager("Version: 1.2.3  ", "1.2.4", released_block="Released: 2026-11-15  ",
+                                    client=client_with(LINGERING_CHILD_HOOK.format(pids=str(pids))))
+        self.assertEqual(code, 1, stderr)
+        self.assertIn("plugin.json version (1.2.4) does not match SKILL.md (1.2.3)", stderr)
+        self.assert_nothing_left(marker, self.recorded(pids))
+
+    def test_a_background_process_is_killed_after_a_timeout(self):
+        # The background process keeps the streams it inherits and lives
+        # until it is killed, so it holds the output pipes of the run open
+        # and the run cannot end by itself; the wait after the timeout
+        # collects the stand-in's line only if the group was killed before
+        # that wait.
+        marker = self.marker()
+        ready = marker / "ready"
+        script = f"echo 'stand-in started' >&2\n{background_child(ready)} &\nwait\n"
+        with self.ready_before_the_wait(ready), self.assertRaisesRegex(
+                AssertionError, r"^the stand-in did not end within the 1-second timeout, so its process group "
+                                r"was killed; stderr: 'stand-in started\\n'$"):
+            run_bounded(["bash", "-c", script], "the stand-in", timeout=1)
+        self.assert_nothing_left(marker, [wait_until_ready(ready)])
+
+    def test_the_wait_after_a_timeout_is_bounded(self):
+        # The background process leaves the group, so the kill misses it, and
+        # it holds the output pipes of the run open until the cleanup of the
+        # test kills it. The run still ends, with its output reported as not
+        # collected within the bound; the whole reason is compared, so that
+        # it claims no more than that.
+        marker = self.marker()
+        ready = marker / "ready"
+        script = f"{background_child(ready, leave_group=True)} &\nwait\n"
+        with self.ready_before_the_wait(ready), self.assertRaisesRegex(
+                AssertionError, rf"^the stand-in did not end within the 1-second timeout, so its process group "
+                                rf"was killed; stderr was not collected within {DRAIN_TIMEOUT:g} seconds of the "
+                                rf"kill$"):
+            run_bounded(["bash", "-c", script], "the stand-in", timeout=1)
+
+    def test_a_background_process_is_killed_after_an_exception_while_waiting(self):
+        # The stand-in ends at once and leaves its background process in the
+        # group, and the wait fails once that process is in place, so only
+        # the kill on the way out of the failed wait can end it. The wait
+        # fails with an Exception in 1 subtest and with KeyboardInterrupt,
+        # which is not an Exception, in the other, so a cleanup that runs
+        # only for an Exception leaves the process behind.
+        for error in (RuntimeError, KeyboardInterrupt):
+            with self.subTest(error=error.__name__):
+                marker = self.marker()
+                ready = marker / "ready"
+                script = f"{background_child(ready)} </dev/null >/dev/null 2>&1 &\n"
+
+                def failing_communicate(proc, *args, **kwargs):
+                    wait_until_ready(ready)
+                    raise error("injected failure while waiting")
+
+                with mock.patch.object(subprocess.Popen, "communicate", failing_communicate), \
+                        self.assertRaisesRegex(error, r"^injected failure while waiting$"):
+                    run_bounded(["bash", "-c", script], "the stand-in")
+                self.assert_nothing_left(marker, [wait_until_ready(ready)])
+
+    def test_the_last_wait_is_bounded(self):
+        # The wait for the run fails, and a patched Popen.wait then stands in
+        # for a script that its kill does not end (for example one in an
+        # uninterruptible sleep). The call still ends, with the failure of
+        # the wait and with the output pipes closed, only if the last wait is
+        # given a bound.
+        given = []
+        procs = []
+        real_wait = subprocess.Popen.wait
+        self.addCleanup(lambda: [real_wait(proc, timeout=REAP_TIMEOUT) for proc in procs])
+
+        def failing_communicate(proc, *args, **kwargs):
+            raise RuntimeError("injected failure while waiting")
+
+        def stuck_wait(proc, timeout=None):
+            given.append(timeout)
+            procs.append(proc)
+            if timeout is None:
+                raise AssertionError("the last wait was given no bound")
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+
+        with mock.patch.object(subprocess.Popen, "communicate", failing_communicate), \
+                mock.patch.object(subprocess.Popen, "wait", stuck_wait), \
+                self.assertRaisesRegex(RuntimeError, r"^injected failure while waiting$"):
+            run_bounded(["bash", "-c", "exit 0"], "the stand-in")
+        self.assertEqual(given, [REAP_TIMEOUT])
+        self.assertTrue(procs[0].stdout.closed and procs[0].stderr.closed)
+
+    def test_a_kill_that_is_refused_does_not_escape(self):
+        # After the script has been reaped, its id can name another user's
+        # group, which killpg refuses with PermissionError for a test process
+        # without CAP_KILL. A patched killpg refuses every kill, so the call
+        # returns the result of the run only if kill_group ignores that
+        # refusal.
+        given = []
+
+        def refused_killpg(pgid, sig):
+            given.append(sig)
+            raise PermissionError("Operation not permitted")
+
+        with mock.patch.object(os, "killpg", refused_killpg):
+            result = run_bounded(["bash", "-c", "printf done"], "the stand-in")
+        self.assertEqual(result, (0, "done", ""))
+        self.assertEqual(given, [signal.SIGKILL])
+
+
 def dry_run_probe(extractor: str, bash_options: tuple = ()):
     """Run the probe of release-dry-run.sh, extracted from the real script
     (from ``probe_rc=0`` to its ``esac``), in a throwaway tree holding
@@ -751,8 +1322,7 @@ def dry_run_probe(extractor: str, bash_options: tuple = ()):
             "fail() { printf 'release-dry-run: %s\\n' \"$1\" >&2; exit 1; }\n"
             + block + "\nprintf %s \"${probe}\"\n"
         )
-        proc = subprocess.run(["bash", *bash_options, "-c", script], cwd=root, capture_output=True, text=True)
-    return proc.returncode, proc.stdout, proc.stderr
+        return run_bounded(["bash", *bash_options, "-c", script], "the release-dry-run.sh probe", cwd=root)
 
 
 def dry_run_stamped_read(extractor: str, skill_readable: bool = True, client: str | None = None,
@@ -781,12 +1351,11 @@ def dry_run_stamped_read(extractor: str, skill_readable: bool = True, client: st
             "fail() { printf 'release-dry-run: %s\\n' \"$1\" >&2; exit 1; }\n"
             + block + "\nprintf %s \"${stamped}\"\n"
         )
-        proc = subprocess.run(["bash", *bash_options, "-c", script], cwd=root, capture_output=True, text=True)
-    return proc.returncode, proc.stdout, proc.stderr
+        return run_bounded(["bash", *bash_options, "-c", script], "the release-dry-run.sh stamped read", cwd=root)
 
 
 class DryRunReleasedReadTest(unittest.TestCase):
-    """T4: the dry run tells unreadable input (client exit 14) apart from an
+    """The dry run tells unreadable input (client exit 14) apart from an
     extractor that failed inside or broke its contract (client exit 16)."""
 
     def test_stamped_line_is_read(self):
@@ -1064,11 +1633,9 @@ class ZipLayoutTest(unittest.TestCase):
                 os.chmod(wt / "tools" / "release-package.sh", 0o755)
                 shutil.copyfile(RELEASE_DATE_TOOL, wt / "tools" / "skill-release-date.py")
                 shutil.copyfile(CLIENT, wt / "tools" / "skill-release-date-client.py")
-                proc = subprocess.run(
-                    ["bash", str(wt / "tools" / "release-package.sh")],
-                    capture_output=True, text=True,
-                )
-                self.assertEqual(proc.returncode, 0, proc.stderr)
+                code, _stdout, stderr = run_bounded(["bash", str(wt / "tools" / "release-package.sh")],
+                                                    "release-package.sh")
+                self.assertEqual(code, 0, stderr)
                 zip_path = wt / "dist" / "cleanlanguage.zip"
                 entries = subprocess.run(
                     ["unzip", "-Z1", str(zip_path)],
