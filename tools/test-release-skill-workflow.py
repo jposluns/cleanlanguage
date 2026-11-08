@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Behavioural tests for the release-date logic in the release workflow.
 
-Item 26 (G3) puts three pieces of shell into
+Item 26 puts 3 pieces of shell into
 ``.github/workflows/release-skill.yml``: the step that determines the expected
 release date, the packaging step that passes it on, and the publication-time
 checks in the publish step (the publication-window check immediately before
@@ -357,7 +357,7 @@ def problems_runner_files(wf: Workflow) -> list[str]:
 
 
 def problems_setting_endpoint(wf: Workflow) -> list[str]:
-    # U1: GitHub documents the immutable-releases setting endpoint as needing
+    # GitHub documents the immutable-releases setting endpoint as needing
     # administration read access, which the workflow token cannot be granted.
     if "immutable-releases" in wf.text:
         return ["the workflow names the immutable-releases setting endpoint, which the workflow token cannot read"]
@@ -1020,7 +1020,7 @@ BAD_READBACKS = (
 
 
 class HarnessTest(WorkflowStepTest):
-    """R7: the harness itself is as strict as the runner."""
+    """The harness itself is as strict as the runner."""
 
     def test_every_extractor_launch_goes_through_the_client(self):
         # Row 89: no step runs the extractor CLI; each of the 7 calls runs
@@ -1061,7 +1061,7 @@ class HarnessTest(WorkflowStepTest):
         self.assertEqual(github_env_writes(PACKAGE), {"VERSION", "RELEASE_DATED", "RELEASE_DATE"})
 
     def test_no_env_key_overlaps_an_earlier_github_env_write(self):
-        # T2: the result must not depend on runner precedence between a step
+        # The result must not depend on runner precedence between a step
         # or job env: key and GITHUB_ENV, which these tests do not model.
         for name in MODELLED:
             with self.subTest(name):
@@ -1069,7 +1069,7 @@ class HarnessTest(WorkflowStepTest):
                 self.assertEqual(set(job_env()).union(step_env(name)).intersection(written), set())
 
     def test_modelled_steps_carry_only_modelled_keys(self):
-        # T2: a step-level if or continue-on-error is not modelled, so it fails.
+        # A step-level if or continue-on-error is not modelled, so it fails.
         self.assertEqual(step_keys(VALIDATE), {"name", "shell", "run"})
         self.assertEqual(step_keys(DETERMINE), {"name", "env", "shell", "run"})
         self.assertEqual(step_keys(PACKAGE), {"name", "shell", "run"})
@@ -1109,7 +1109,7 @@ class HarnessTest(WorkflowStepTest):
 
 
 class PublishStepTest(WorkflowStepTest):
-    """F1, F9, F10, F14, R1: the publication-time checks of the publish step."""
+    """The publication-time checks of the publish step."""
 
     def test_dispatch_checks_the_window_after_the_tag_push_and_reads_back(self):
         code, out, err = self.run_step(PUBLISH)
@@ -1175,7 +1175,7 @@ class PublishStepTest(WorkflowStepTest):
                       "2026-11-16T00:00:02Z), but its Released line names 2026-11-15", err)
 
     def test_readback_mismatch_names_a_corrective_new_version_and_no_republish(self):
-        # R4: an immutable release cannot be republished.
+        # An immutable release cannot be republished.
         self.set_state(published_at="2026-11-16T00:00:02Z")
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
@@ -1193,7 +1193,7 @@ class PublishStepTest(WorkflowStepTest):
         self.assert_superseded_advice(err, 0)
 
     def test_a_release_that_is_not_immutable_fails(self):
-        # U1: with no pre-check, the first-publication readback is the only
+        # With no pre-check, the first-publication readback is the only
         # immutability check, and every value but exactly true refuses.
         for event, remote_tag in (("workflow_dispatch", ""), ("push", COMMIT)):
             for value in ("false", "null", None, "", "True", "TRUE", "1", " true", "true false", "FAIL"):
@@ -1312,7 +1312,7 @@ class PublishStepTest(WorkflowStepTest):
                     self.assertEqual(any(is_create(c) for c in self.calls()), created, self.calls())
 
     def test_broken_extractor_is_reported_by_the_probe_on_first_publication(self):
-        # T3: the probe at the start of the step reports a crashed extractor
+        # The probe at the start of the step reports a crashed extractor
         # as that, never as a malformed clock reading.
         for label, body in BROKEN_EXTRACTORS:
             with self.subTest(label):
@@ -1329,7 +1329,7 @@ class PublishStepTest(WorkflowStepTest):
 
 
 class NoSettingPreCheckTest(WorkflowStepTest):
-    """U1: the workflow never reads the repository immutable-releases setting,
+    """The workflow never reads the repository immutable-releases setting,
     whose endpoint the workflow token cannot read; a dated first publication
     relies on the readback alone."""
 
@@ -1379,7 +1379,7 @@ def assert_readback_ran(test, calls, out):
 
 
 class RerunTest(WorkflowStepTest):
-    """R1: a re-run at the same commit ends green only on the same publication
+    """A re-run at the same commit ends green only on the same publication
     readback as the first creation, on each event that can start one. Item 57:
     there is no force upload path."""
 
@@ -1414,7 +1414,7 @@ class RerunTest(WorkflowStepTest):
                     self.assertNotIn("kept its assets", out)
 
     def test_broken_extractor_is_reported_by_the_probe_on_a_rerun(self):
-        # T3: a re-run reports a crashed extractor as that, never as an
+        # A re-run reports a crashed extractor as that, never as an
         # unusable published_at.
         for event in RERUN_EVENTS:
             for label, body in BROKEN_EXTRACTORS:
@@ -1473,7 +1473,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertFalse([c for c in calls if is_mutation(c)], calls)
 
     def test_force_against_a_published_release_is_refused(self):
-        # T1: the same commit, force set.
+        # The same commit, force set.
         self.published(force="true")
         code, out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
@@ -1533,7 +1533,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         assert_readback_ran(self, calls, out)
 
     def test_force_against_a_published_release_never_moves_its_tag(self):
-        # T2: the damaging case, a tag at another commit and force set.
+        # The damaging case, a tag at another commit and force set.
         self.published(remote_tag=OTHER_COMMIT, force="true")
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
@@ -1552,7 +1552,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assert_no_mutation(self.calls())
 
     def test_rerun_without_force_verifies_and_keeps_the_assets(self):
-        # T3: regression guard for the verification branch, on both events,
+        # Regression guard for the verification branch, on both events,
         # each of which must also run the readback.
         for event in RERUN_EVENTS:
             with self.subTest(event):
@@ -1569,7 +1569,6 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 assert_readback_ran(self, calls, out)
 
     def test_missing_asset_names_a_corrective_new_version_not_the_force_input(self):
-        # T4
         self.published()
         self.set_state(missing="cleanlanguage.zip.sha256")
         code, out, err = self.run_step(PUBLISH)
@@ -1610,7 +1609,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assert_no_mutation(self.calls())
 
     def test_checksum_mismatch_names_a_corrective_new_version_not_the_force_input(self):
-        # T5, for each of the two zips, each checked by its own line.
+        # For each of the 2 zips, each checked by its own line.
         for zip_name in ("cleanlanguage.zip", "cleanlanguage-1.0.15.zip"):
             with self.subTest(zip_name):
                 self.reset_calls()
@@ -1645,7 +1644,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assert_no_mutation(self.calls())
 
     def test_moved_tag_of_a_published_release_offers_no_force_remedy(self):
-        # T6, which also keeps the former check that FORCE reaches the script
+        # The test also keeps the former check that FORCE reaches the script
         # only through the declared input: without it the run is refused.
         self.published(remote_tag=OTHER_COMMIT)
         code, _out, err = self.run_step(PUBLISH)
@@ -1709,7 +1708,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # remedy phrased without either word is neither counted nor checked.
         echoes = [line for line in WORKFLOW_TEXT.splitlines() if "echo " in line]
         remedies = [line for line in echoes if "corrective" in line or "new version" in line]
-        # The two tag-gone lines print TAG_GONE_ADVICE from
+        # The 2 tag-gone lines print TAG_GONE_ADVICE from
         # the job env, so this count excludes them; the job env values are
         # pinned by test_the_older_tag_advice_and_the_tag_gone_text_each_have_one_source.
         self.assertEqual(len(remedies), 9, remedies)
@@ -1732,7 +1731,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertEqual([name for name in names if "corrective_version" in name], [])
 
     def test_force_still_moves_the_tag_of_an_unpublished_release(self):
-        # T7: the useful path survives, and its run reads back.
+        # The useful path survives, and its run reads back.
         self.inputs["force"] = "true"
         self.set_state(status="404", remote_tag=OTHER_COMMIT)
         code, out, err = self.run_step(PUBLISH)
@@ -1748,7 +1747,6 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertIn("First-publication readback", out)
 
     def test_moved_tag_of_an_unpublished_release_needs_the_force_input(self):
-        # T8
         self.set_state(status="404", remote_tag=OTHER_COMMIT)
         code, _out, err = self.run_step(PUBLISH)
         self.assertEqual(code, 1, err)
@@ -1757,7 +1755,6 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assert_no_mutation(self.calls())
 
     def test_tag_push_of_a_new_release_creates_it(self):
-        # T9
         self.runner["GITHUB_EVENT_NAME"] = "push"
         self.set_state(status="404", remote_tag=COMMIT)
         code, out, err = self.run_step(PUBLISH)
@@ -1768,7 +1765,6 @@ class ImmutableReleaseTest(WorkflowStepTest):
         self.assertIn("First-publication readback", out)
 
     def test_unknown_release_status_fails_closed_before_any_mutation(self):
-        # T10
         for force in ("false", "true"):
             with self.subTest(force=force):
                 self.reset_calls()
@@ -1783,7 +1779,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
                 self.assert_no_mutation(self.calls())
 
     def test_no_text_or_path_offers_a_republish(self):
-        """T11, structural: problems_republish holds on the real workflow, the
+        """Structural: problems_republish holds on the real workflow, the
         force input describes only a tag move, and the extractor docstring no
         longer describes a re-upload. Residual: the wording checks are a list
         of known strings; the behavioural cases above are the guard that does
@@ -1802,7 +1798,7 @@ class ImmutableReleaseTest(WorkflowStepTest):
         # verifying dispatch first, and a corrective new version only if that
         # verification fails or the tag is gone.
         self.assertNotIn("the remedy for a published release is a corrective new version", description)
-        # The description ends with the shared advice, then one sentence
+        # The description ends with the shared advice, then 1 sentence
         # naming the 2 remaining cases (so no condition is stated twice),
         # then the superseded-release advice; the endswith assertion below
         # checks all 3, in that order.
@@ -2042,7 +2038,7 @@ class ValidateStepTest(WorkflowStepTest):
 
 
 class DetermineStepTest(WorkflowStepTest):
-    """F5, F9, R6: the step that fixes the expected release date."""
+    """The step that fixes the expected release date."""
 
     def test_undated_release_at_the_baseline_checks_no_date(self):
         self.carried["VERSION"] = "1.0.14"
@@ -2168,7 +2164,7 @@ class DetermineStepTest(WorkflowStepTest):
         self.assertNotIn("malformed", err)
 
     def test_extractor_internal_error_is_a_failure_not_an_unreadable_file(self):
-        # R6: an internal error has its own exit (6), never the unreadable 4.
+        # An internal error has its own exit (6), never the unreadable 4.
         self.crash_extractor()
         code, _out, err = self.run_step(DETERMINE)
         self.assertEqual(code, 1, err)
@@ -2215,7 +2211,7 @@ class DetermineStepTest(WorkflowStepTest):
 
 
 class PackageStepTest(WorkflowStepTest):
-    """F8, F9: the packager gets --release-date only for a dated release."""
+    """The packager gets --release-date only for a dated release."""
 
     def packager_args(self):
         return [c[1] for c in self.calls() if c[0] == "release-package.sh"]
@@ -2357,7 +2353,7 @@ class WholeBaselineTest(WorkflowStepTest):
 
 
 class ChainedRunTest(WorkflowStepTest):
-    """R7: the determine, package and publish steps in sequence, each reading
+    """The determine, package and publish steps in sequence, each reading
     what the earlier ones wrote to GITHUB_ENV, from only the VERSION the
     validate step writes."""
 
@@ -2440,7 +2436,7 @@ def replace_nth(text: str, old: str, k: int, new: str) -> str:
 
 
 class MutationTest(unittest.TestCase):
-    """U2: each reproduced defect, and other forms of it, applied to the real
+    """Each reproduced defect, and other forms of it, applied to the real
     workflow text, must be named by the structural checks."""
 
     @staticmethod
@@ -2455,9 +2451,9 @@ class MutationTest(unittest.TestCase):
             self.assertTrue(any(fragment in problem for problem in problems), (fragment, problems))
 
     def test_blank_line_before_an_env_override_is_caught(self):
-        # Valid YAML with a blank line before an env override: a reader
-        # working line by line stops at the blank line and misses the
-        # override.
+        # Valid YAML with a blank line before an env override: the former
+        # line reader ended the env: block at the blank line and missed the
+        # override, which this test pins.
         wf = self.mutated(FORCE_LINE, FORCE_LINE + "\n          RELEASE_DATED: \"0\"\n")
         self.assertEqual(wf.step_env(PUBLISH)["RELEASE_DATED"], "0")
         self.assertNamed(
@@ -2503,7 +2499,7 @@ class MutationTest(unittest.TestCase):
         self.assertNamed(wf, "carries keys the harness does not model: [" + repr("if") + "]")
 
     def test_the_old_step_name_is_caught(self):
-        # Item 57 (D4): the step no longer promises an update.
+        # Item 57: the step no longer promises an update.
         # The other structural checks look the publish step up by its name
         # and raise when it is missing, so the two that name this defect are
         # called directly.
