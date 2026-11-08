@@ -7,8 +7,12 @@ site/_headers or site/_redirects, runs the gate there as a separate process
 and asserts its exit code and, where a case gives them as (code, words), that
 its output holds those words, so that a crash, which also exits 1, does not
 pass for a refusal. 1 more check asserts that the gate's docstring names
-exactly the scripts in ``ALLOWED_SCRIPTS``. Exit 0 when every case passes; 1
-otherwise, naming each failing case.
+exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that this file's own source
+carries no ``?v=`` token starting with a digit apart from those KEPT_TOKENS
+names, since a case writes the current baseline version as BASELINE, read
+from ``.baseline/pin.toml``, and 1 is version_binding_problems(), whose
+docstring states what it reports and what it passes. Exit 0 when every case
+passes; 1 otherwise, naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 may hide or empty what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code
@@ -175,6 +179,34 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "tools" / "check-install-page.py"
+
+
+def pinned_baseline() -> str:
+    """The baseline version in .baseline/pin.toml, read by the load_pin() of tools/check-baseline-pin.py, the reader
+    the gate uses."""
+    spec = importlib.util.spec_from_file_location("check_baseline_pin", REPO_ROOT / "tools" / "check-baseline-pin.py")
+    reader = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reader)
+    return reader.load_pin(REPO_ROOT)[0]
+
+
+# The version that the pages' ?v= tokens carry. A case that writes the current version writes this one, so a move of
+# the baseline needs no edit here; a pin that cannot be read fails this test with exit 1, rather than with a traceback.
+try:
+    BASELINE = pinned_baseline()
+except Exception as error:
+    print(f"test-install-page: failures:\n  - the baseline version could not be read from .baseline/pin.toml: {error!r}")
+    raise SystemExit(1)
+# The names that hold the version read from the pin. version_binding_problems() reads this file's syntax tree for
+# them; its docstring states what it reports and what it passes.
+VERSION_NAMES = ("BASELINE",)
+# The ?v= tokens that start with a digit and that this file keeps as literals on purpose, each with its reason;
+# version_literal_problems() refuses any other, so that no case carries a baseline version that goes stale at a move.
+KEPT_TOKENS = {
+    "?v=20260101-1": "the retired install script's own token, which its case refuses for the path, not the version",
+    "?v=0123456789ab": "the stand-in content token of site.css, which is not a baseline version",
+}
+VERSION_LITERAL = re.compile(r"\?v=[0-9][^\"'\s<>]*")
 PAGE = "site/install/index.html"
 CLAUDE = "site/install/claude/index.html"
 CHATGPT = "site/install/chatgpt/index.html"
@@ -212,7 +244,7 @@ SITE_CSP = f"  Content-Security-Policy: {SHARED_CSP}" + NEXT_RULE
 DRAFT_RULE = f"\n/draft/*\n  ! Content-Security-Policy\n  Content-Security-Policy: {SHARED_CSP}\n  X-Robots-Tag: noindex\n"
 OTHER_LINK = '<a class="btn inline" id="other-ai" href="/install/other-ai/">Other AI systems</a>'
 CLAUDE_LINK = '<a class="btn inline" id="claude" href="/install/claude/">Claude</a>'
-SELECT = "/assets/baseline/select.js?v=1.3.0"
+SELECT = f"/assets/baseline/select.js?v={BASELINE}"
 ROW = '<p><a class="btn inline" id="claude"'
 ROW_END = OTHER_LINK + "</p>"
 # The hero's heading, the "pick" label and the whole button row that follows it, each a line of the committed
@@ -270,11 +302,11 @@ MODIFIED = '<meta property="article:modified_time" content="'
 REFRESH = '<meta http-equiv="refresh" content="0; url=/">'
 DOCTYPE = "<!doctype html>\n"
 HTML = '<html lang="en" class="site-cleanlanguage">\n'
-# The scheme.js tag of template specification 7.33 (baseline 1.11.1), as the committed pages carry it.
-SCHEME = '<script data-cfasync="false" src="/assets/baseline/scheme.js?v=1.11.1"></script>'
-COPY = '<script src="/assets/baseline/copy.js?v=1.11.1" defer></script>'
-FONTS = '<link rel="stylesheet" href="/assets/baseline/fonts.css?v=1.11.1">'
-LATER = '<link rel="stylesheet" href="/assets/baseline/baseline.css?v=1.11.1">'
+# The scheme.js tag of template specification 7.33, with the pinned baseline version, as the committed pages carry it.
+SCHEME = f'<script data-cfasync="false" src="/assets/baseline/scheme.js?v={BASELINE}"></script>'
+COPY = f'<script src="/assets/baseline/copy.js?v={BASELINE}" defer></script>'
+FONTS = f'<link rel="stylesheet" href="/assets/baseline/fonts.css?v={BASELINE}">'
+LATER = f'<link rel="stylesheet" href="/assets/baseline/baseline.css?v={BASELINE}">'
 STYLESHEETS = ["site/assets/baseline/fonts.css", "site/assets/baseline/palettes.css", "site/assets/baseline/baseline.css"]
 # The rule pin: each rule of STYLESHEETS that rule_pins() keeps, as a digest of its text and its name (pin_lines()),
 # 1 per line, in the order the stylesheets give them. Update it only as the docstring says.
@@ -1159,42 +1191,42 @@ CASES = [
         both(edit(PAGE, COPY + "\n", ""), edit(PAGE, "<body>\n", "<body>\n<noscript>" + COPY + "</noscript>\n")), 1),
     ("copy.js loaded only inside a noscript on a family page",
         both(edit(OTHER, COPY + "\n", ""), edit(OTHER, "</main>", "</main><noscript>" + COPY + "</noscript>")), 1),
-    ("select.js loaded", edit(PAGE, "</head>", '<script src="/assets/baseline/select.js?v=1.3.0" defer></script>\n</head>'), 1),
-    ("select.js loaded on a family page", edit(CLAUDE, "</head>", '<script src="/assets/baseline/select.js?v=1.3.0" defer></script>\n</head>'), 1),
+    ("select.js loaded", edit(PAGE, "</head>", f'<script src="/assets/baseline/select.js?v={BASELINE}" defer></script>\n</head>'), 1),
+    ("select.js loaded on a family page", edit(CLAUDE, "</head>", f'<script src="/assets/baseline/select.js?v={BASELINE}" defer></script>\n</head>'), 1),
     ("a baseline script without its version token", edit(PAGE, "</head>", '<script src="/assets/baseline/rail.js" defer></script>\n</head>'), 1),
-    ("a baseline script without defer", edit(PAGE, "</head>", '<script src="/assets/baseline/rail.js?v=1.3.0"></script>\n</head>'), 1),
-    ("a script from outside the baseline", edit(PAGE, "</head>", '<script src="/assets/other.js?v=1.3.0" defer></script>\n</head>'), 1),
+    ("a baseline script without defer", edit(PAGE, "</head>", f'<script src="/assets/baseline/rail.js?v={BASELINE}"></script>\n</head>'), 1),
+    ("a script from outside the baseline", edit(PAGE, "</head>", f'<script src="/assets/other.js?v={BASELINE}" defer></script>\n</head>'), 1),
     ("the retired install script", edit(PAGE, "</head>", '<script src="/js/install.js?v=20260101-1" defer></script>\n</head>'), 1),
-    ("a baseline script under the old draft path", edit(PAGE, "</head>", '<script src="/draft/assets/baseline/rail.js?v=1.3.0" defer></script>\n</head>'), 1),
+    ("a baseline script under the old draft path", edit(PAGE, "</head>", f'<script src="/draft/assets/baseline/rail.js?v={BASELINE}" defer></script>\n</head>'), 1),
     ("select.js in an upper-case tag", edit(PAGE, "</head>", f'<SCRIPT SRC="{SELECT}" defer></SCRIPT>\n</head>'), 1),
     ("select.js with a space before the =", edit(PAGE, "</head>", f'<script src ="{SELECT}" defer></script>\n</head>'), 1),
     ("select.js after a > in a quoted value", edit(PAGE, "</head>", f'<script title=">" src="{SELECT}" defer></script>\n</head>'), 1),
-    ("rail.js without defer in an upper-case tag", edit(PAGE, "</head>", '<SCRIPT SRC="/assets/baseline/rail.js?v=1.3.0"></SCRIPT>\n</head>'), 1),
-    ("rail.js with its token and defer", edit(PAGE, "</head>", '<script src="/assets/baseline/rail.js?v=1.3.0" defer></script>\n</head>'), 0),
+    ("rail.js without defer in an upper-case tag", edit(PAGE, "</head>", f'<SCRIPT SRC="/assets/baseline/rail.js?v={BASELINE}"></SCRIPT>\n</head>'), 1),
+    ("rail.js with its token and defer", edit(PAGE, "</head>", f'<script src="/assets/baseline/rail.js?v={BASELINE}" defer></script>\n</head>'), 0),
     ("the scheme.js tag missing", edit(PAGE, SCHEME + "\n", ""), 1),
     ("the scheme.js tag with defer", edit(PAGE, SCHEME, SCHEME.replace('"></script>', '" defer></script>')), 1),
     ("the scheme.js tag with async", edit(PAGE, SCHEME, SCHEME.replace('"></script>', '" async></script>')), 1),
     ("the scheme.js tag with src before data-cfasync", edit(PAGE, SCHEME,
-        '<script src="/assets/baseline/scheme.js?v=1.11.1" data-cfasync="false"></script>'), 1),
+        f'<script src="/assets/baseline/scheme.js?v={BASELINE}" data-cfasync="false"></script>'), 1),
     ("the scheme.js tag after the first stylesheet", both(edit(PAGE, SCHEME + "\n", ""),
         edit(PAGE, "</head>", SCHEME + "\n</head>")), 1),
     ("the scheme.js tag twice", edit(PAGE, SCHEME, SCHEME + SCHEME), 1),
     ("a second scheme.js with defer", edit(PAGE, "</head>",
-        '<script src="/assets/baseline/scheme.js?v=1.11.1" defer></script>\n</head>'), 1),
+        f'<script src="/assets/baseline/scheme.js?v={BASELINE}" defer></script>\n</head>'), 1),
     ("a second scheme.js in upper case with a character reference", edit(PAGE, "</head>",
-        '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.11.1" defer></SCRIPT>\n</head>'), 1),
+        f'<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v={BASELINE}" defer></SCRIPT>\n</head>'), 1),
     ("a second scheme.js with spaces around =", edit(PAGE, "</head>",
-        '<script src = "/assets/baseline/scheme.js?v=1.11.1" defer></script>\n</head>'), 1),
+        f'<script src = "/assets/baseline/scheme.js?v={BASELINE}" defer></script>\n</head>'), 1),
     ("an upper-case stylesheet before the scheme.js tag", edit(PAGE, SCHEME,
-        '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.11.1">\n' + SCHEME), 1),
+        f'<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v={BASELINE}">\n' + SCHEME), 1),
     ("a stylesheet before the scheme.js tag as the first of 2 rel attributes", edit(PAGE, SCHEME,
-        '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.11.1">\n' + SCHEME), 1),
+        f'<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v={BASELINE}">\n' + SCHEME), 1),
     ("the scheme.js tag and the stylesheets moved into the body, in order", into_body(SCHEME), 1),
     ("the stylesheets moved into the body, after the scheme.js tag", into_body(FONTS), 1),
     ("the scheme.js tag and the stylesheets in a second head inside the body", into_body(SCHEME, "<head>\n", "</head>\n"), 1),
     ("a later stylesheet moved into the body, after the first", into_body(LATER), 1),
     ("a later stylesheet in upper case at the end of the body", edit(PAGE, "</body>",
-        '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.11.1">\n</body>'), 1),
+        f'<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v={BASELINE}">\n</body>'), 1),
     ("a later stylesheet in a second head after the body", both(edit(PAGE, LATER + "\n", ""),
         edit(PAGE, "</body>\n", "</body>\n<head>\n" + LATER + "\n</head>\n")), 1),
     # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>, and keeps a
@@ -1214,7 +1246,7 @@ CASES = [
         '<h1 class="visually-hidden" class="x">'), 1),
     ("fonts.css loaded only inside a comment", edit(PAGE, FONTS, "<!--" + FONTS + "-->"), 1),
     ("rail.js with another attribute", edit(PAGE, "</head>",
-        '<script src="/assets/baseline/rail.js?v=1.3.0" type="module" defer></script>\n</head>'), 1),
+        f'<script src="/assets/baseline/rail.js?v={BASELINE}" type="module" defer></script>\n</head>'), 1),
     # The load and switch checks hold on the family pages too.
     ("the scheme.js tag missing on a family page", edit(GEMINI, SCHEME + "\n", ""), 1),
     ("the scheme.js tag after the first stylesheet on a family page", both(edit(COPILOT, SCHEME + "\n", ""),
@@ -1228,7 +1260,7 @@ CASES = [
     ("site.css with its content token", edit(PAGE, "</head>", '<link rel="stylesheet" href="/assets/site.css?v=0123456789ab">\n</head>'),
         (1, OTHER_SHEET)),
     ("another baseline stylesheet on a family page", edit(GEMINI, "</head>",
-        '<link rel="stylesheet" href="/assets/baseline/print.css?v=1.11.1">\n</head>'), (1, OTHER_SHEET)),
+        f'<link rel="stylesheet" href="/assets/baseline/print.css?v={BASELINE}">\n</head>'), (1, OTHER_SHEET)),
     ("a baseline stylesheet with a media attribute", edit(PAGE, LATER, LATER.replace('">', '" media="all">')),
         (1, OTHER_SHEET)),
     # As for scripts, the text match also finds a tag that the parser reads as a comment or as text.
@@ -1482,7 +1514,9 @@ RESIDUALS = [
 # Faults to a copy of STYLESHEETS and PIN_FILE for stylesheet_problems(), the comparison of the committed stylesheets
 # with RULE_PIN, and the words that its problems must hold, each in 1 of them; none for none. Each rule is named as
 # that comparison names it: a pinned rule by its file name and preludes, a rule the pin does not hold by its text.
-BASELINE = STYLESHEETS[2]
+# BASELINE_SHEET is the stylesheet that the faults change. It is not named BASELINE, a name in VERSION_NAMES; see
+# version_binding_problems().
+BASELINE_SHEET = STYLESHEETS[2]
 INLINE_RULE = ".btn.inline { position: static; display: inline-block; text-decoration: none; margin: 0 0.6rem 0.6rem 0; }"
 HOVER_RULE = ".btn.inline:hover { color: var(--button-hover-fg); }"
 WIDER_RULE = INLINE_RULE.replace("static", "absolute")
@@ -1495,18 +1529,18 @@ ESCAPE_RULE = '[title="\\\\"] .fresh, h1 { display: none; }'
 ESCAPE_PROPERTY_RULE = '.fresh { content: "\\\\"; --text: red; }'
 PIN_CASES = (
     ("the committed stylesheets and pin", None, ()),
-    ("a pinned rule changed", edit(BASELINE, INLINE_RULE, WIDER_RULE),
-        (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE}: {WIDER_RULE}', {ADDED}")),
-    ("a rule the pin must hold added", append(BASELINE, "\n.btn { writing-mode: vertical-rl; }\n"),
-        (f"the rule '{BASELINE}: .btn {{ writing-mode: vertical-rl; }}', {ADDED}",)),
-    ("a pinned rule removed", edit(BASELINE, HOVER_RULE + "\n", ""), (f"{GONE} 'baseline.css: .btn.inline:hover' there",)),
-    ("a pinned rule moved", edit(BASELINE, INLINE_RULE + "\n" + HOVER_RULE, HOVER_RULE + "\n" + INLINE_RULE),
-        (f"{GONE} 'baseline.css: .btn.inline:hover' there", f"the rule '{BASELINE}: {HOVER_RULE}', {ADDED}")),
-    ("a comment between var and its ( in a pinned rule", edit(BASELINE, WRAP_RULE, WRAP_RULE.replace("var(", "var/**/(")),
-        (f"{GONE} 'baseline.css: .wrap' there", f"the rule '{BASELINE}: {WRAP_RULE.replace('var(', 'var/**/(')}', {ADDED}")),
+    ("a pinned rule changed", edit(BASELINE_SHEET, INLINE_RULE, WIDER_RULE),
+        (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE_SHEET}: {WIDER_RULE}', {ADDED}")),
+    ("a rule the pin must hold added", append(BASELINE_SHEET, "\n.btn { writing-mode: vertical-rl; }\n"),
+        (f"the rule '{BASELINE_SHEET}: .btn {{ writing-mode: vertical-rl; }}', {ADDED}",)),
+    ("a pinned rule removed", edit(BASELINE_SHEET, HOVER_RULE + "\n", ""), (f"{GONE} 'baseline.css: .btn.inline:hover' there",)),
+    ("a pinned rule moved", edit(BASELINE_SHEET, INLINE_RULE + "\n" + HOVER_RULE, HOVER_RULE + "\n" + INLINE_RULE),
+        (f"{GONE} 'baseline.css: .btn.inline:hover' there", f"the rule '{BASELINE_SHEET}: {HOVER_RULE}', {ADDED}")),
+    ("a comment between var and its ( in a pinned rule", edit(BASELINE_SHEET, WRAP_RULE, WRAP_RULE.replace("var(", "var/**/(")),
+        (f"{GONE} 'baseline.css: .wrap' there", f"the rule '{BASELINE_SHEET}: {WRAP_RULE.replace('var(', 'var/**/(')}', {ADDED}")),
     ("a pin entry with another digest", repin("baseline.css: .btn.inline"),
-        (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE}: {INLINE_RULE}', {ADDED}")),
-    *[(name, append(BASELINE, f"\n{rule}\n"), (f"the rule {f'{BASELINE}: {rule}'!r}, {ADDED}",)) for name, rule in (
+        (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE_SHEET}: {INLINE_RULE}', {ADDED}")),
+    *[(name, append(BASELINE_SHEET, f"\n{rule}\n"), (f"the rule {f'{BASELINE_SHEET}: {rule}'!r}, {ADDED}",)) for name, rule in (
         ("a pinned name with a class name and a ] in a string", STRING_RULE),
         ("a pinned name with an escaped quote, a ] and a class name in a string", QUOTE_RULE),
         ("a pinned name after a string that ends in an escaped backslash", ESCAPE_RULE),
@@ -2041,7 +2075,7 @@ def name_reading_problems() -> list[str]:
                      if gate.has_visible_text(text)]
         # load_path() reads a load target as a path from the site's root, refusing a . or .. segment even where the
         # path it names is pinned, so its refusal does not rest on the pin alone.
-        paths = (("/assets/baseline/copy.js?v=1.11.1", "assets/baseline/copy.js"), ("/assets/./baseline/copy.js", None),
+        paths = ((f"/assets/baseline/copy.js?v={BASELINE}", "assets/baseline/copy.js"), ("/assets/./baseline/copy.js", None),
                  ("/assets/baseline/../baseline/copy.js", None), ("assets/baseline/copy.js", None),
                  ("//host/assets/baseline/copy.js", None), ("/assets/%2e%2e/images/a.png", None))
         problems += [f"load_path() reads {target!r} as {gate.load_path(target)!r}, not {path!r}."
@@ -2337,12 +2371,93 @@ def statement_problems() -> list[str]:
     return []
 
 
+def version_literal_problems() -> list[str]:
+    """Each ?v= token in this file's own source that starts with a digit and that KEPT_TOKENS does not name: a case
+    writes the current baseline version as BASELINE, read from the pin."""
+    text = Path(__file__).read_text(encoding="utf-8")
+    return [f"line {text.count(chr(10), 0, match.start()) + 1} carries {match.group(0)!r}; write BASELINE, or name "
+            "the token in KEPT_TOKENS with the reason it is kept"
+            for match in VERSION_LITERAL.finditer(text) if match.group(0) not in KEPT_TOKENS]
+
+
+def unscoped_statements(node: ast.AST):
+    """Each statement under node that no def or class under node holds."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.stmt):
+            yield child
+        if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield from unscoped_statements(child)
+
+
+def version_binding_problems() -> list[str]:
+    """The problems with the names of VERSION_NAMES in this file's own source, read from its syntax tree.
+
+    The pinned assignment of a name is a statement that no def or class holds, whose only target is the name and
+    whose value is a call of the name pinned_baseline with no arguments: NAME = pinned_baseline(). Each name must
+    have exactly 1; a name with none is reported, and when a name has more than 1, each of them is reported by its
+    line. Apart from each pinned assignment, each of these forms that binds, annotates, deletes or declares the name
+    is reported by its own line, wherever it is in this file: a Name node in a store or delete context (a target of
+    a plain, augmented, annotated, starred or := assignment, an annotation with no value, a for, comprehension or
+    with target, a type alias, or a del), an import alias, a def, an async def, a class, an except name, a
+    parameter, a type parameter, a match capture, or a global or nonlocal statement. Each star import is reported
+    by its line.
+
+    Nothing else is reported. The check reads the syntax tree and does not run the file, so a binding of the name that
+    none of these forms makes passes with no report, such as globals()["NAME"] = value,
+    setattr(sys.modules[__name__], "NAME", value), exec("NAME = value") or sys.modules[__name__].NAME = value. It
+    also reads only the name of the function that the pinned assignment calls, not what that name holds when the
+    assignment runs or what the function's body does, so each of these passes with no report and makes the name
+    hold what it returns: a second def pinned_baseline() placed before the pinned assignment, a rebinding such as
+    pinned_baseline = lambda: "x" placed there, and a body of pinned_baseline() that returns a literal."""
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    pinned: dict[str, list[ast.Name]] = {name: [] for name in VERSION_NAMES}
+    for statement in unscoped_statements(tree):
+        if (isinstance(statement, ast.Assign) and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name) and statement.targets[0].id in pinned
+                and isinstance(statement.value, ast.Call) and isinstance(statement.value.func, ast.Name)
+                and statement.value.func.id == "pinned_baseline"
+                and not statement.value.args and not statement.value.keywords):
+            pinned[statement.targets[0].id].append(statement.targets[0])
+    exempt = {id(target) for targets in pinned.values() for target in targets}
+    problems = [f"{name} has no pinned assignment {name} = pinned_baseline() outside every def and class"
+                for name, targets in pinned.items() if not targets]
+    problems += [f"line {target.lineno} is 1 of {len(targets)} pinned assignments {name} = pinned_baseline(); "
+                 "keep exactly 1" for name, targets in pinned.items() if len(targets) > 1 for target in targets]
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names = [node.id]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler,
+                               ast.MatchAs, ast.MatchStar, ast.TypeVar, ast.ParamSpec, ast.TypeVarTuple)):
+            names = [node.name]
+        elif isinstance(node, ast.MatchMapping):
+            names = [node.rest]
+        elif isinstance(node, ast.alias) and node.name == "*":
+            found.append((node.lineno, f"line {node.lineno} imports *; import each name it needs by name"))
+            continue
+        elif isinstance(node, ast.alias):
+            names = [node.asname or node.name.partition(".")[0]]
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names = node.names
+        elif isinstance(node, ast.arg):
+            names = [node.arg]
+        else:
+            continue
+        if id(node) not in exempt:
+            found += [(node.lineno, f"line {node.lineno} binds, annotates, deletes or declares {name}, which only its "
+                       f"pinned assignment {name} = pinned_baseline() may bind; remove it or use another name")
+                      for name in names if name in pinned]
+    return problems + [problem for _, problem in sorted(found)]
+
+
 def main() -> int:
     if sys.argv[1:] == [PRINT_PIN]:
         held, problems = committed_rules()
         print("\n".join(problems or pin_lines(held)), file=sys.stderr if problems else sys.stdout)
         return 1 if problems else 0
     failures: list[str] = statement_problems()
+    failures += [f"the version literals: {problem}" for problem in version_literal_problems()]
+    failures += [f"the version binding: {problem}" for problem in version_binding_problems()]
     failures += [f"the class pin: {problem}" for problem in class_pin_problems()]
     failures += [f"the attribute pin: {problem}" for problem in class_pin_problems("ATTRIBUTE_PIN", "attrs")]
     failures += [f"the head pin: {problem}" for problem in head_pin_problems()]
@@ -2379,7 +2494,9 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
     print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
-          f"ALLOWED_SCRIPTS, the checks of CLASS_PIN, ATTRIBUTE_PIN, HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
+          f"ALLOWED_SCRIPTS, the scan of this file for literal versions, version_binding_problems(), "
+          f"the checks of CLASS_PIN, ATTRIBUTE_PIN, "
+          f"HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
           f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
           f"the end tags, LOADED_SEGMENTS and the pinned loads, the workflow's path "
           f"lists, the Python version checks, the "

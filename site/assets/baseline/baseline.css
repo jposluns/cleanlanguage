@@ -1,4 +1,4 @@
-/* baseline.css 1.9.1: the shared stylesheet of the project sites (the Atrium direction).
+/* baseline.css 1.11.4: the shared stylesheet of the 7 project sites (the Atrium direction).
    Newsreader for text and headings, Public Sans for labels and navigation, JetBrains Mono for code,
    Dancing Script for the signature; the fonts are declared in fonts.css.
    Scale: perfect fourth (1.333) on a 1.1875rem base. No rules except the table header hairline.
@@ -40,6 +40,12 @@
   --pair-before-bg: var(--surface-sunken); --pair-before-bg-on-tint: var(--bg); --pair-after-bg: var(--surface-raised); --pair-panel-bg: var(--code-bg);
   --box-bg: var(--surface-raised); --box-border: var(--rule);
   --band-dark-bg: var(--text); --band-dark-fg: var(--bg); --band-dark-heading: var(--glow); --band-dark-link: var(--glow); --band-dark-focus: var(--bg);
+  /* from 1.11.2: the warm inline ink (span.warm), site-settable; the gate holds it at 4.5:1 as text. */
+  --ink-warm: var(--accent);
+  /* from 1.11.3: the heading ink of plain and tinted bands (their h2 and h3), site-settable; unset it is --text,
+     the colour those headings inherited until 1.11.2, so nothing changes until a site sets it. .band-dark headings
+     keep --band-dark-heading. The gate holds it at 4.5:1 as text on --bg and --band-tint-bg. */
+  --heading-fg: var(--text);
 }
 @media (prefers-color-scheme: dark) { :where(:root:not([data-scheme="light"])) { --chip-unavailable-bg: var(--bg); --chip-unavailable-border: var(--rule-strong); } }
 /* From 1.11.0, the dark band in dark mode: a well below the page in --surface-sunken, with the page's own text colours. */
@@ -567,6 +573,15 @@ dl.record.cols div { break-inside: avoid; }
 .band-dark .lbl, .band-dark .meta { color: var(--band-dark-fg); }
 .band-dark a { color: var(--band-dark-link); }
 .band-dark a:focus-visible { outline-color: var(--band-dark-focus); }
+/* From 1.11.3 (requested by vendorreplies.ai, owner, 2026-11-07): the h2 and h3 headings of a plain or tinted band
+   read --heading-fg, default var(--text), the colour they inherited until 1.11.2, so with the token unset nothing
+   changes. :not(.band-dark) keeps a dark band's headings on --band-dark-heading (a dark band's markup is
+   class="band band-dark", which .band alone would match). The selector also reaches an h3 inside a card-grid box
+   in such a band (until 1.11.2 that h3 took var(--text) from the .boxes h3 rule, so the default changes nothing
+   there either). From 1.11.4 :where(:not(.band-dark *)) keeps the headings of a dark band nested inside a plain or
+   tinted band (markup section 7.37 forbids: a band is a direct child of main) on --band-dark-heading; :where adds no
+   specificity, so on valid markup nothing changes. */
+:is(.band, .band-tint):not(.band-dark) :is(h2, h3):where(:not(.band-dark *)) { color: var(--heading-fg); }
 .band > .wrap > :first-child, .band .doc > :first-child { margin-top: 0; }
 
 /* Card grid (from 1.11.0, owner, 2026-11-06): a list of short boxes set side by side, as many as fit at 15rem or wider
@@ -791,6 +806,12 @@ hr.space { border: 0; margin: 0; height: 2.4rem; }
    4.5:1 or more on every surface, per contrast-report.txt). Emphasis only: the sentence reads the same without it,
    so no meaning depends on colour (WCAG 2.2, 1.4.1). Markup: <span class="accent">28</span>. */
 span.accent { color: var(--accent); font-variant-numeric: lining-nums; }
+
+/* Warm ink (1.11.2, requested by vendorreplies.ai): as span.accent, in the component token --ink-warm
+   (section 6.4), which a site may override in its site-palette.css; tools/check_palette.py holds it at
+   4.5:1 as text on every surface and tint it lists. Emphasis only: the sentence reads the same without
+   it (WCAG 2.2, 1.4.1). Markup: <span class="warm">28</span>. */
+span.warm { color: var(--ink-warm); font-variant-numeric: lining-nums; }
 
 /* Brand marker (1.4.0), <mark class="marker">: emphasis in the site's rainbow colour that leaves the text in --text. A band of --brand
    behind the lower part of the line; --brand stays decorative and never colours text (section 6.1). Underlining

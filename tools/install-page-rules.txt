@@ -42,7 +42,7 @@ cd5bedf1629c046e baseline.css: :root
 2f7b3be6aba62ebf baseline.css: :root
 bf51cdff196e9cbd baseline.css: @media (prefers-color-scheme: dark) { :where(:root:not([data-scheme="light"]))
 c90d49f4c242516c baseline.css: :where(:root[data-scheme="dark"])
-fc897164b3d9c46f baseline.css: :where(:root)
+9185bb1c78daf6c2 baseline.css: :where(:root)
 e94c5e297dc69b11 baseline.css: @media (prefers-color-scheme: dark) { :where(:root:not([data-scheme="light"]))
 257c6a9a401c82fc baseline.css: @media (prefers-color-scheme: dark) { :where(:root:not([data-scheme="light"]))
 f7039a697ae682a9 baseline.css: :where(:root[data-scheme="dark"])
@@ -249,6 +249,7 @@ e9bdcaab8182a6dd baseline.css: .band-dark h2, .band-dark h3
 a169a8e7dde85b1a baseline.css: .band-dark .lbl, .band-dark .meta
 cd58d7b87ef7b32e baseline.css: .band-dark a
 d6161e0732d65b3f baseline.css: .band-dark a:focus-visible
+140850eb2d4be10c baseline.css: :is(.band, .band-tint):not(.band-dark) :is(h2, h3):where(:not(.band-dark *))
 3ccde7d2eea5690c baseline.css: .band > .wrap > :first-child, .band .doc > :first-child
 fbb19953d109b121 baseline.css: .boxes > li
 6cb4464515c581e0 baseline.css: .boxes > li > :first-child
