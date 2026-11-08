@@ -54,7 +54,8 @@ Input modes:
   ``1.0.14`` and ``1.00.14`` equals it) and ``optional`` otherwise. Every
   baseline comparison uses this one rule; no caller re-implements it. A part
   with more digits than the interpreter converts to an integer
-  (``sys.get_int_max_str_digits``) is malformed.
+  (``sys.get_int_max_str_digits``) is malformed; an interpreter without that
+  function has no such limit, so there every part compares.
   ``--check-date VALUE`` validates a bare ``YYYY-MM-DD`` calendar date and
   prints it.
   ``--published-day VALUE`` prints the UTC day of a release ``published_at``
@@ -223,8 +224,12 @@ def version_key(version: str) -> tuple[int, int, int]:
         raise Malformed(f"not a bare X.Y.Z version: {version!r}")
     # int() raises a ValueError for a digit run longer than the interpreter's
     # limit, which would read as an internal error. The limit is read here at
-    # run time because an interpreter flag can lower it; 0 means no limit.
-    limit = sys.get_int_max_str_digits()
+    # run time because an interpreter flag can lower it; 0 means no limit. An
+    # interpreter without sys.get_int_max_str_digits (Python 3.9 before 3.9.14,
+    # 3.10 before 3.10.7) has no limit, and the client, which runs this file
+    # with its own interpreter, supports Python 3.9 and later.
+    get_limit = getattr(sys, "get_int_max_str_digits", None)
+    limit = 0 if get_limit is None else get_limit()
     if limit and any(len(part) > limit for part in match.groups()):
         raise Malformed(f"a part of the version has more than {limit} digits: {version!r}")
     return tuple(int(part) for part in match.groups())

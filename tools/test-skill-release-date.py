@@ -143,6 +143,20 @@ JSON_CRASH_RUNNER = (
     "runpy.run_path(sys.argv[0], run_name=\"__main__\")\n"
 )
 
+# Runs the real extractor the way an interpreter without the integer digit
+# limit runs it (Python 3.9 before 3.9.14, 3.10 before 3.10.7): int()
+# converts a digit run of any length, and sys has neither
+# get_int_max_str_digits nor set_int_max_str_digits. Arguments after the
+# extractor's path are its own.
+NO_LIMIT_RUNNER = (
+    "import runpy, sys\n"
+    "if hasattr(sys, \"set_int_max_str_digits\"):\n"
+    "    sys.set_int_max_str_digits(0)\n"
+    "    del sys.get_int_max_str_digits, sys.set_int_max_str_digits\n"
+    "sys.argv = sys.argv[1:]\n"
+    "runpy.run_path(sys.argv[0], run_name=\"__main__\")\n"
+)
+
 # Row 80: the exact usage line of the extractor, --json included.
 USAGE_LINE = (
     "skill-release-date: usage: skill-release-date [FILE|-] | --baseline | --requires-date VERSION"
@@ -502,8 +516,8 @@ class ExtractorCliTest(unittest.TestCase):
 
     def test_a_lowered_integer_digit_limit_is_read_at_run_time(self):
         # Row 101: the limit is read when a version is compared, so a child
-        # started with a lower limit (640 is the lowest Python accepts)
-        # reports a longer part as malformed instead of failing.
+        # started with a lower limit (640 is the lowest positive limit Python
+        # accepts) reports a longer part as malformed instead of failing.
         def run_lowered(*args: str, data: bytes = b""):
             proc = subprocess.run(
                 [sys.executable, "-I", "-X", "int_max_str_digits=640", str(EXTRACTOR), *args],
@@ -519,6 +533,30 @@ class ExtractorCliTest(unittest.TestCase):
             (0, reply_bytes({"op": "requires_release_date", "outcome": "malformed", "message": message}), ""),
         )
         self.assertEqual(run_lowered("--requires-date", "1.0." + "9" * 640), (0, "required\n", ""))
+
+    def test_an_interpreter_without_the_digit_limit_compares_a_long_part(self):
+        # The client supports Python 3.9 and later and runs the extractor with
+        # its own interpreter, which may predate the limit and so have no
+        # sys.get_int_max_str_digits. There int() converts a part of any
+        # length, so a 5000-digit part compares as a value, never exit 6.
+        def run_unlimited(*args: str, data: bytes = b""):
+            proc = subprocess.run(
+                [sys.executable, "-I", "-c", NO_LIMIT_RUNNER, str(EXTRACTOR), *args],
+                input=data, capture_output=True,
+            )
+            return proc.returncode, proc.stdout.decode("utf-8", "replace"), proc.stderr.decode("utf-8", "replace")
+
+        for label, version, answer in (
+            ("major, 5000 nines", "9" * 5000 + ".0.0", "required"),
+            ("minor, 5000 zeros", "1." + "0" * 5000 + ".14", "optional"),
+            ("patch, 5000 nines", "1.0." + "9" * 5000, "required"),
+        ):
+            with self.subTest(label):
+                self.assertEqual(run_unlimited("--requires-date", version), (0, answer + "\n", ""))
+                self.assertEqual(
+                    run_unlimited("--json", data=request("requires_release_date", version)),
+                    (0, reply_bytes({"op": "requires_release_date", "outcome": "value", "value": answer == "required"}), ""),
+                )
 
     def test_confirm_published(self):
         self.assertEqual(
