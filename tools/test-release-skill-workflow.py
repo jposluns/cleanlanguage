@@ -44,9 +44,9 @@ the one form the harness reads; no step naming ``GITHUB_PATH``; no duplicate
 mapping key anywhere in the file (``safe_load`` would otherwise keep the last
 silently); and no read of the repository immutable-releases setting, which the
 workflow token cannot read, so the publication readback is the only
-immutability check. Mutation tests apply 2 defects (a blank line before an
-``env:`` override, and an unmodelled step writing ``RELEASE_DATED=0``) and
-other forms of the same defects, and require the
+immutability check. Mutation tests apply defects to the real workflow text,
+among them a blank line before an ``env:`` override, an unmodelled step
+writing ``RELEASE_DATED=0``, and other forms of those defects, and require the
 structural checks to name each one. Residual: a write to the runner command
 files that never names ``GITHUB_ENV`` (for example a path built from pieces,
 or a write from inside an action) is not detected; the pinned step list and
