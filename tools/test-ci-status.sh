@@ -472,9 +472,10 @@ def finish(code, why, facts):
 # 1002.0; the time STARTS charges to the start of gh, when it ends before
 # 1002.0, is such a delay. With the wall clock moving and gh started before
 # 1002.0, the kill, return and exit times do not assert a delay in read_checks
-# or _gh before _gh reads started; in the slow case and the 1-second start
-# case, which have LEFT 2, the message check catches one of 0.1 seconds or
-# more, which makes the message name 1.9 seconds or less.
+# or _gh before _gh reads started. Such a delay leaves gh a bound below LEFT,
+# which changes the tenths the message names in the slow case, the 1-second
+# start case and the case with LEFT 0.5, so the message check catches it in
+# those 3 cases.
 run_cut_off_case() {
   local name="$1" left="$2" want_bound="$3" starts="${4:-0}" killed="${5:-1002.0}" frozen="${6:-0}"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
