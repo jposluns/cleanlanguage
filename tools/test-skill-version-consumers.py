@@ -117,7 +117,7 @@ PACKAGER_MENTIONS = (
     '      fail "tools/skill-release-date.py is unavailable or crashed (exit ${check_rc}) checking --release-date ${release_date:-nothing}"',
     '      || fail "tools/skill-release-date.py gave an unexpected answer (${released:-nothing}) for the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"',
     '    fail "tools/skill-release-date.py is unavailable or crashed (exit ${released_rc}) reading the Released line of cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD"',
-    '    11) fail "tools/skill-release-date.py rejected the version ${version} as not a bare X.Y.Z" ;;',
+    '    11) fail "tools/skill-release-date.py rejected the version ${version} as malformed: ${requirement}" ;;',
     '      fail "tools/skill-release-date.py is unavailable or crashed (exit ${req_rc}) deciding whether ${version} needs a Released line"',
     '    *) fail "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for whether ${version} needs a Released line" ;;',
 )
@@ -654,6 +654,20 @@ class PackagerReleaseDateTest(unittest.TestCase):
                     else:
                         self.assertEqual(code, 1, stderr)
                         self.assertIn("has no Released: line", stderr)
+
+    def test_a_rejected_version_relays_the_extractor_reason(self):
+        # Client exit 11 at requires-date can rest on any reason the extractor
+        # gives, so the message names the version as malformed and relays the
+        # reason the client printed. A part one digit longer than the default
+        # integer-string limit of 4300 digits is bare X.Y.Z, so only the
+        # relayed reason says why it was rejected.
+        version = "1.0." + "1" * 4301
+        code, stderr = run_packager(f"Version: {version}  ", version)
+        self.assertEqual(code, 1, stderr)
+        self.assertEqual(stderr.splitlines(), [
+            f"release-package: tools/skill-release-date.py rejected the version {version} as malformed: "
+            f"skill-release-date: a part of the version has more than 4300 digits: {version!r}",
+        ])
 
     def test_trailing_flag_without_a_value_fails_with_a_message(self):
         # A trailing --release-date (or --tag) names what is missing.
