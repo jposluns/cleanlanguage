@@ -195,9 +195,11 @@ except Exception:  # an import failure must never read as a verdict (exit 1)
     raise SystemExit(3)
 
 PASSING_CONCLUSIONS = {"success", "neutral", "skipped"}
-# The largest --timeout or --interval accepted, in seconds (1 day). Each value
-# becomes a subprocess timeout and a sleep; this bound keeps both far inside the
-# limits that raise OverflowError (about 2147483 seconds for a millisecond poll).
+# The largest --timeout or --interval accepted, in seconds (1 day). --timeout is
+# added to the clock to set the deadline, and each value caps a sleep, so this
+# bound keeps every sleep far inside the length at which time.sleep raises
+# OverflowError (about 9.2 billion seconds). The deadline sum and the bound that
+# a TimeoutExpired carries are floats, which no value this size can overflow.
 MAX_SECONDS = 86400
 MAX_DIGITS = len(str(MAX_SECONDS))  # rejects a long digit string before int()
 FULL_SHA = re.compile(r"[0-9A-Fa-f]{40}")
@@ -279,9 +281,9 @@ def _repo_name(value: str, source: str) -> str:
 
 
 def _whole(flag: str, value: str) -> int:
-    # Digit-only and at most MAX_SECONDS, so the value can never overflow a sleep
-    # or a subprocess timeout. The length check runs first, so int() never sees a
-    # long string.
+    # Digit-only and at most MAX_SECONDS, so no sleep that the value caps can
+    # overflow (see MAX_SECONDS). The length check runs first, so int() never sees
+    # a long string.
     if not value or not (value.isascii() and value.isdigit()):
         # str.isdigit() is true for non-ASCII digits (e.g. superscripts) that int()
         # then rejects, so require ASCII digits and never let int() raise.
@@ -291,10 +293,15 @@ def _whole(flag: str, value: str) -> int:
     return int(value)
 
 
-def _gh(args, timeout: float):
+def _gh(args, deadline: float):
     """Run gh in the directory that holds this file, resolved through symlinks, with
     GH_REPO, GH_HOST and every GIT_ variable removed from its environment, so an
     ambient value cannot point the repository lookup or the API call elsewhere.
+
+    DEADLINE is an absolute time on time.time, the clock of the wait window, and
+    gh is killed when that clock reaches it. The deadline is fixed before gh is
+    started, so the time spent starting gh counts against it; a bound that
+    started its own clock after the spawn would let that time extend the window.
 
     The child is reaped here with os.waitpid rather than through subprocess,
     because CPython subprocess reads a lost exit status (ECHILD from the wait) as
@@ -312,8 +319,8 @@ def _gh(args, timeout: float):
         if not (k.startswith("GIT_") or k in GH_REDIRECTS)
     }
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        started = time.time()
         proc = subprocess.Popen(["gh", *args], cwd=TOOL_DIR, env=env, stdout=out, stderr=err)
-        end = time.monotonic() + timeout
         while True:
             try:
                 pid, status = os.waitpid(proc.pid, os.WNOHANG)
@@ -322,8 +329,8 @@ def _gh(args, timeout: float):
                 raise ChildProcessError("the exit status of gh was lost") from exc
             if pid == proc.pid:
                 break
-            now = time.monotonic()
-            if now >= end:
+            now = time.time()
+            if now >= deadline:
                 os.kill(proc.pid, signal.SIGKILL)
                 try:
                     pid, status = os.waitpid(proc.pid, 0)
@@ -336,11 +343,11 @@ def _gh(args, timeout: float):
                 if not (os.WIFSIGNALED(status) and os.WTERMSIG(status) == signal.SIGKILL):
                     break
                 proc.returncode = -1
-                raise subprocess.TimeoutExpired(proc.args, timeout)
+                raise subprocess.TimeoutExpired(proc.args, deadline - started)
             # The last poll sleeps only the time left, so the kill lands on the
             # deadline rather than up to 1 poll after it. The clock is read once
             # above, so the time left here is positive.
-            time.sleep(min(0.02, end - now))
+            time.sleep(min(0.02, deadline - now))
         code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
         proc.returncode = code
         out.seek(0)
@@ -348,11 +355,11 @@ def _gh(args, timeout: float):
         return subprocess.CompletedProcess(proc.args, code, out.read(), err.read())
 
 
-def infer_repo(timeout: float) -> str:
-    if timeout <= 0:
+def infer_repo(deadline: float) -> str:
+    if time.time() >= deadline:
         return die("could not infer the repository; pass --repo owner/name")
     try:
-        proc = _gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], timeout)
+        proc = _gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], deadline)
     except (OSError, subprocess.TimeoutExpired):
         return die("could not infer the repository; pass --repo owner/name")
     if proc.returncode != 0:
@@ -427,8 +434,9 @@ def _field(value, allow_empty: bool, field: str):
 
 def read_checks(repo: str, full_sha: str, deadline: float):
     """One read. Returns the list of checks, or raises Unreadable, fail-closed. The gh
-    child is bounded by the time left to the deadline, so a hung or slow read cannot
-    outlast the wait window."""
+    child is given the deadline itself, so it is killed when the deadline is
+    reached, however long gh took to start, and a hung or slow read cannot outlast
+    the wait window by more than the time the host takes to wake and kill it."""
     remaining = deadline - time.time()
     if remaining <= 0:
         # Defence in depth: after a good reading in wait mode, main's top-of-loop
@@ -436,7 +444,7 @@ def read_checks(repo: str, full_sha: str, deadline: float):
         # passes in the moment between that guard and the clock read above.
         raise WindowClosed("the wait window closed before the read")
     try:
-        proc = _gh(["api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"], remaining)
+        proc = _gh(["api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"], deadline)
     except subprocess.TimeoutExpired as exc:
         # The bound is named rounded down to 1 decimal place, so the message never
         # names more time than gh was given (1.96 seconds is named as 1.9). A
@@ -638,7 +646,7 @@ def main() -> int:
     sys.stdout.write(f"ci-status: reading checks for commit {full_sha}\n")
     sys.stdout.flush()
     if not repo:
-        repo = infer_repo(deadline - time.time())
+        repo = infer_repo(deadline)
     sys.stdout.write(f"ci-status: repository {repo}\n")
     sys.stdout.flush()
 
