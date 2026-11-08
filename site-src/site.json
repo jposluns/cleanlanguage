@@ -58,7 +58,7 @@
      "description": "Set up Clean Language in local models, API-based assistants, and other AI systems that accept custom instructions, system prompts, or uploaded files."},
     {"id": "verify", "path": "verify/", "title": "Verify", "nav_label": "Verify", "source": "verify.html", "scripts": ["copy.js"], "modified": "2026-11-06", "published": "2026-07-27",
      "description": "Optional steps to confirm that the Clean Language download matches its published SHA-256 checksum. If you trust the source, you can skip this."},
-    {"id": "instructions", "path": "instructions/", "title": "Instructions", "nav_label": "Instructions", "source": "instructions.html", "scripts": ["copy.js"], "modified": "2026-11-05", "published": "2026-08-15",
+    {"id": "instructions", "path": "instructions/", "title": "Instructions", "nav_label": "Instructions", "source": "instructions.html", "scripts": ["copy.js"], "modified": "2026-11-08", "published": "2026-08-15",
      "description": "The complete Clean Language instructions as plain text, ready to copy into Claude, ChatGPT, Gemini, Copilot, or any other AI."},
     {"id": "channels", "path": "channels/", "title": "By channel", "nav_label": "By channel", "source": "channels.html", "rail": "list", "scripts": ["copy.js"], "modified": "2026-11-03", "published": "2026-07-28",
      "description": "How Clean Language adapts to each channel: executive, technical, governance, incident, email, chat, and report writing."},
