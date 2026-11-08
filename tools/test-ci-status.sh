@@ -349,7 +349,7 @@ GH
 # read and sleep the gate makes through its time name is fake, so the speed of
 # the host cannot change any time these cases read. A wait the gate makes
 # outside that name, such as __import__("time").sleep or a sleep in another
-# module, does not move the fake clock, so no case here catches it. finish
+# module, does not move the fake clock, so no case here asserts it. finish
 # writes what the case observed to TMP/facts and the names of the failed
 # expectations to TMP/why, and exits with the code of the gate.
 FAKE_CLOCK_GATE='import importlib.util, os, signal, subprocess, sys, types
@@ -477,11 +477,14 @@ def finish(code, why, facts):
 # that sleeps a whole 0.02 seconds with less left (with 0.03 seconds left it
 # kills at 1002.01), a gate that compares one clock with a deadline set on the
 # other, a gate that kills on time.time (with FROZEN 1), and a gate that never
-# kills gh. A delay that the capped last poll absorbs is not
-# caught: a delay in read_checks or _gh before a clock read of the poll loop,
-# ending no later than 1002.0, shortens the sleeps after it, and the kill still
-# lands on 1002.0; the time STARTS charges to the start of gh, when it ends
-# before 1002.0, is such a delay.
+# kills gh. No expectation asserts a delay that comes after _gh has read both
+# clocks and before a clock read of the poll loop, ending no later than 1002.0;
+# the time STARTS charges to the start of gh, when it ends before 1002.0, is
+# such a delay. With the wall clock moving and gh started before 1002.0, the
+# kill, return and exit times do not assert a delay in read_checks or _gh before
+# _gh reads started; in the slow case and the 1-second start case, which have
+# LEFT 2, the message check catches one of 0.1 seconds or more, which makes the
+# message name 1.9 seconds or less.
 run_cut_off_case() {
   local name="$1" left="$2" want_bound="$3" starts="${4:-0}" killed="${5:-1002.0}" frozen="${6:-0}"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
@@ -540,10 +543,9 @@ finish(code, why, "read at %s, deadline %s, gh deadline %s, killed at %s, return
 # return of _gh or the exit off its constant fails the case: a sleep before
 # _gh returns moves the return past 1003.0, and a sleep between readings longer
 # than the time left moves the exit past 1010.0 (one capped by the whole
-# timeout ends at 1013.0, a whole interval at 1033.0). A delay that nap absorbs
-# is not caught: nap reads the clock and sleeps only the time then left, so a
-# delay after the waiting line and before that clock read, ending no later than
-# 1010.0, leaves the exit at 1010.0.
+# timeout ends at 1013.0, a whole interval at 1033.0). No expectation asserts a
+# delay after the waiting line and before nap reads the clock, ending no later
+# than 1010.0.
 run_deadline_stop_case() {
   local name="$1"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -831,9 +833,10 @@ CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000: the
 # satisfies the required Cloudflare check -> green (regression: a pin on a slug or
 # id that the live check-runs do not show would false-red every real commit).
 run_case "real cloudflare-workers-and-pages slug satisfies the required check" "$REAL_CLOUDFLARE" "" "" 0
-# A pending wait sleeps only up to its deadline, never a whole interval past it.
-# The fake clock of run_deadline_stop_case, not the elapsed time, says when it
-# stopped, and no step of that case waits in real time.
+# This case asserts that a pending wait sleeps only up to its deadline, not a
+# whole interval past it. The fake clock of run_deadline_stop_case, not the
+# elapsed time, says when it stopped, and no step of that case waits in real
+# time.
 run_deadline_stop_case "wait stops near the deadline, not a whole interval past it"
 
 # Row 66: the required set is the 3 named GitHub Actions jobs and the Cloudflare
@@ -2564,12 +2567,9 @@ run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 # print a red reading and exit 0. At the first poll of that gh, the replaced
 # os.waitpid waits with os.waitid and WNOWAIT until gh has ended, without
 # reaping it, and then reports it unfinished as at every other poll. So that gh
-# has always ended on its own before the kill, however long the host takes to
-# start and run it; without that wait, a gh still running at the deadline would
-# be ended by the kill itself, and the case would fail on the speed of the host.
-# The gate runs with --timeout 30, so the first read, which a real fake gh
-# serves, has about 29 seconds to end with time left for the second read to
-# start before the deadline. The gate's time name is replaced by one
+# has ended on its own before the kill. The gate runs with --timeout 30, so the
+# first read, which a real fake gh serves, has about 29 seconds to end with
+# time left for the second read to start before the deadline. The gate's time name is replaced by one
 # whose time() and monotonic() are the real clocks plus a shift, and whose other
 # attributes, sleep included, are the real ones. Once that wait has seen gh end,
 # the replaced os.waitpid sets the shift to the whole 30-second window, so the
@@ -2676,10 +2676,9 @@ run_final_reap_case "gh exiting 0 with a red reading just before the kill at the
 # at the reap after the kill at the deadline. That gh prints owner/name and exits
 # 0 on its own. At its first poll, the replaced os.waitpid waits with os.waitid
 # and WNOWAIT until it has ended, without reaping it, and then reports it
-# unfinished as at every other poll, so it has always ended before the kill,
-# however long the host takes to start and run it. The gate runs with --timeout
-# 30, so the steps of the gate before gh repo view starts, including the clock
-# read in infer_repo, have 30 seconds before the deadline. The gate's time name is replaced as in run_final_reap_case: once
+# unfinished as at every other poll, so it has ended before the kill. The gate
+# runs with --timeout 30, so the steps of the gate before gh repo view starts,
+# including the clock read in infer_repo, have 30 seconds before the deadline. The gate's time name is replaced as in run_final_reap_case: once
 # that wait has seen gh repo view end, time.time and time.monotonic read 30
 # seconds ahead, so the gate's next clock read finds the deadline passed and
 # kills and reaps gh at once through its own code, and the case does not wait out the window. So it is
