@@ -2553,12 +2553,16 @@ run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 # has always ended on its own before the kill, however long the host takes to
 # start and run it; without that wait, a gh still running at the deadline would
 # be ended by the kill itself, and the case would fail on the speed of the host.
-# The first read still depends on the host: a real fake gh serves it, and with
-# --timeout 3 and a 1-second interval it must end within about 2 seconds. A
-# slower first read leaves the deadline passed before the second read, so the
-# gate exits 2 without starting it; one slower than the whole 3 seconds is
-# killed, and the gate exits 3 with the read-failure line naming the cut-off.
-# Either way the case fails on the speed of the host. None of the ends of the
+# The gate runs with --timeout 30, so the first read, which a real fake gh
+# serves, has about 29 seconds to end with time left for the second read to
+# start before the deadline. The gate's time name is replaced by one
+# whose time() is the real time plus a shift, and whose other attributes,
+# sleep included, are the real ones. Once that wait has seen gh end, the
+# replaced os.waitpid sets the shift to the whole 30-second window, so the
+# gate's next clock read, the one after that poll, finds the deadline passed and
+# kills and reaps gh at once through the gate's own code, and the case does not
+# wait out the window. No sleep of the gate is skipped, and every clock read
+# before that poll is the real time. None of the ends of the
 # second gh is a read the deadline cut off, so each case must exit WANT, never
 # 2 as a timed-out wait: 3 with NEEDLE on standard error, or for MODE red the red
 # verdict, 1 with NEEDLE on standard output. The replaced os.waitpid also
@@ -2566,8 +2570,8 @@ run_lost_status_case "lost gh exit status (ECHILD from the wait) exits 3, not 0"
 # kill, so no case passes without reaching it. Because gh has always ended
 # before the kill, these cases do not cover a gh still running when it is
 # killed (the hung-gh cases of plan token s cover that) or a gate that reads a
-# kill as gh's own end, and the wait can hold the gate past the deadline, so
-# they assert no time.
+# kill as gh's own end. The shift moves the gate's clock away from the host's,
+# so they assert no time.
 run_final_reap_case() {
   local name="$1" mode="$2" want="$3" needle="$4"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -2591,11 +2595,18 @@ esac
 GH
   chmod +x "$bin/gh"
   local got=0
-  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, signal, sys
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, signal, sys, time
 path, mode, own = sys.argv[1], sys.argv[3], sys.argv[4]
 spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+shift = [0]
+class Clock:
+    def __getattr__(self, name):
+        return getattr(time, name)
+    def time(self):
+        return time.time() + shift[0]
+mod.time = Clock()
 real_waitpid = os.waitpid
 seen, waited = [], []
 def waitpid(pid, options):
@@ -2607,6 +2618,7 @@ def waitpid(pid, options):
         if not waited:
             os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)  # gh has ended, still unreaped
             waited.append(pid)
+            shift[0] = 30  # the whole window: the gate next reads its deadline as passed
         return 0, 0
     result = real_waitpid(pid, options)
     status = result[1]
@@ -2621,7 +2633,7 @@ def waitpid(pid, options):
         raise ChildProcessError(10, "No child processes")
     return result
 os.waitpid = waitpid
-sys.argv = [path, "--repo", "owner/name", "--wait", "--timeout", "3", "--interval", "1", sys.argv[2]]
+sys.argv = [path, "--repo", "owner/name", "--wait", "--timeout", "30", "--interval", "1", sys.argv[2]]
 sys.exit(mod.run())' "${here}/ci-status.py" "$C1" "$mode" "$tmp/own" > "$tmp/out" 2> "$tmp/err" || got=$?
   local stream="$tmp/err" why=""
   [ "$mode" = red ] && stream="$tmp/out"
@@ -2649,16 +2661,21 @@ run_final_reap_case "gh exiting 0 with a red reading just before the kill at the
 # 0 on its own. At its first poll, the replaced os.waitpid waits with os.waitid
 # and WNOWAIT until it has ended, without reaping it, and then reports it
 # unfinished as at every other poll, so it has always ended before the kill,
-# however long the host takes to start and run it. So it is not a call the
-# deadline cut off: the repository is inferred and printed on standard output,
-# and the read after it, finding the window closed, exits 3 with that on
-# standard error, never the line saying the repository could not be inferred,
-# and never makes a check-runs call. The replaced os.waitpid also requires the
-# status it reaps after the kill to be that exit 0, not the kill, so the case
-# does not pass without reaching it. Because gh repo view has always ended
-# before the kill, the case does not cover one still running when it is killed
-# or a gate that reads a kill as gh's own end, and the wait can hold the gate
-# past the deadline, so it asserts no time.
+# however long the host takes to start and run it. The gate runs with --timeout
+# 30, so the steps of the gate before gh repo view starts, including the clock
+# read in infer_repo, have 30 seconds before the deadline. The gate's time name is replaced as in run_final_reap_case: once
+# that wait has seen gh repo view end, time.time reads 30 seconds ahead, so the
+# gate's next clock read finds the deadline passed and kills and reaps gh at
+# once through its own code, and the case does not wait out the window. So it is
+# not a call the deadline cut off: the repository is inferred and printed on
+# standard output, and the read after it, finding the window closed, exits 3
+# with that on standard error, never the line saying the repository could not
+# be inferred, and never makes a check-runs call. The replaced os.waitpid also
+# requires the status it reaps after the kill to be that exit 0, not the kill,
+# so the case does not pass without reaching it. Because gh repo view has always
+# ended before the kill, the case does not cover one still running when it is
+# killed or a gate that reads a kill as gh's own end. The shift moves the gate's
+# clock away from the host's, so it asserts no time.
 run_final_reap_view_case() {
   local name="$1" flag="$2"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -2672,11 +2689,18 @@ esac
 GH
   chmod +x "$bin/gh"
   local got=0
-  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, sys
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, os, sys, time
 path, flag, own = sys.argv[1], sys.argv[3], sys.argv[4]
 spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+shift = [0]
+class Clock:
+    def __getattr__(self, name):
+        return getattr(time, name)
+    def time(self):
+        return time.time() + shift[0]
+mod.time = Clock()
 real_waitpid = os.waitpid
 seen, waited = [], []
 def waitpid(pid, options):
@@ -2688,6 +2712,7 @@ def waitpid(pid, options):
         if not waited:
             os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)  # gh has ended, still unreaped
             waited.append(pid)
+            shift[0] = 30  # the whole window: the gate next reads its deadline as passed
         return 0, 0
     result = real_waitpid(pid, options)
     status = result[1]
@@ -2696,7 +2721,7 @@ def waitpid(pid, options):
     return result
 os.waitpid = waitpid
 flags = [] if flag == "-" else [flag]
-sys.argv = [path, *flags, "--timeout", "2", "--interval", "1", sys.argv[2]]
+sys.argv = [path, *flags, "--timeout", "30", "--interval", "1", sys.argv[2]]
 sys.exit(mod.run())' "${here}/ci-status.py" "$C1" "$flag" "$tmp/own" > "$tmp/out" 2> "$tmp/err" || got=$?
   local why=""
   [ "$got" -eq 3 ] || why="$why exit"
