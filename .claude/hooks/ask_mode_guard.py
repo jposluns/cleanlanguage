@@ -86,7 +86,7 @@ and that neither is writable by its group or by others, so that only root can ch
 the entries in that directory, but it does not check /opt or any directory above it, and it checks
 /opt/orch-operator by path before it opens the mode file, so whoever can write /opt can replace
 /opt/orch-operator, including between that check and the open, and root controls the decision only
-while only root can write those directories; the file holds one mode for the whole host, so a
+while only root can write those directories; the file holds 1 mode for the whole host, so a
 session with the operator present is blocked while the host says unattended; the 4096-byte bound
 limits size, not time: the lstat of /opt/orch-operator, the open of whatever is at the mode file's
 path, including a device node, which the guard opens before it checks for a regular file, and the
@@ -236,8 +236,10 @@ def check_owner_and_writers(path, info, expect_uid):
 
 
 def check_host_dir(host_dir, info, expect_uid):
-    """Raises Unusable unless host_dir, judged from info, its lstat result, is a real directory that
-    only expect_uid can change, so that no one else can choose the mode file the guard opens."""
+    """Raises Unusable unless host_dir, judged from info, its lstat result, is a directory and not a
+    symlink, owned by expect_uid, and writable by neither its group nor others. It judges only info,
+    the result of 1 lstat before the open, so a writer of the directory above host_dir can still
+    replace host_dir between this check and the open, as the module docstring states."""
     if stat.S_ISLNK(info.st_mode):
         raise Unusable("{} is a symlink".format(host_dir))
     if not stat.S_ISDIR(info.st_mode):

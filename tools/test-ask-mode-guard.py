@@ -247,7 +247,7 @@ class AskModeGuard(unittest.TestCase):
         self.assertIn(RECORD_AND_CONTINUE, reason)
         # Of the denies for a "mode" value, only the unattended reason tells the operator how to
         # take over; the deny for any other value also contains "unattended", so the substring
-        # above cannot tell the two apart. The file is root-owned and orch-set-mode is its only
+        # above cannot tell the 2 apart. The file is root-owned and orch-set-mode is its only
         # writer, so the remedy is orchmod.
         self.assertIn("is unattended", reason)
         self.assertIn("the operator runs `orchmod aa`", reason)
@@ -552,8 +552,9 @@ class AskModeGuard(unittest.TestCase):
 
     def test_owner_check_judges_the_opened_file_not_an_earlier_look(self):
         # Before the open, the mode file's path leads to the file the expected uid owns; just before
-        # the open, link is repointed at the directory above the foreign file, so the file opened is
-        # another uid's. Only an owner check that does not rely on the earlier look denies on owner.
+        # the open, link is repointed at the parent of the foreign file's directory, so the path
+        # leads to the foreign file and the file opened is another uid's. Only an owner check that
+        # does not rely on the earlier look denies on owner.
         foreign = self.foreign_file()
         link, _own_parent, mode_file = self.owner_rename_layout(foreign)
         to_foreign = self._tmp / "to-foreign"

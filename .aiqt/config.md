@@ -91,7 +91,9 @@ guard fails open instead: it allows the Stop with a warning, since an unsaved co
 never reach the bound. `orch_yield_tool` is in scope but
 finds no `yield_tools` roster, so it allows every scheduling call as out of roster.
 `orch_ask_guard` denies only in `unattended` mode; no `mode` record is declared, so it allows
-and logs a fail-open audit event. `orch_resume_audit` reads the registry at every
+every question and, when it can resolve the repository and read a usable registry, tries to
+append a fail-open audit event, an append that is best effort; otherwise it returns without
+logging. `orch_resume_audit` reads the registry at every
 SessionStart and writes `resume-barrier.json` under `state_dir`, arming the barrier only when
 it finds divergence; while a barrier is armed, `orch_resume_barrier` surfaces a one-time
 warning on a mutation outside the record surfaces and blocks nothing.
@@ -116,7 +118,7 @@ reason, such as a path component that is a regular file; when `/opt/orch-operato
 symlink, is not a directory, is not owned by uid 0, or is writable by its group or by others; when
 the file is missing while `/opt/orch-operator` exists, unreadable, a symlink, on a path that holds
 a symlink loop or too many symlinks, not a regular file, not owned by uid 0, writable by its group
-or by others, over 4096 bytes, not strict UTF-8, not one JSON object, or holding a duplicate key;
+or by others, over 4096 bytes, not strict UTF-8, not 1 JSON object, or holding a duplicate key;
 when `"mode"` is absent, not a string, `"unattended"`, or any other value, including a case or
 spacing variant of `"attended-autonomous"`, `"attended"`, or `"unattended"`; and when
 the guard raises an exception before it prints its verdict. The `"unattended"` deny names the
