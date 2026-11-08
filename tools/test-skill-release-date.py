@@ -131,7 +131,8 @@ CRASH_RUNNER = (
 # with --json. The message names the Python function that made the failing
 # call, so a test can tell where the exception rose. _strptime is imported
 # before the patch because its import calls time.strftime, so a patched
-# time.strftime is reached only where the extractor formats an instant.
+# time.strftime is not reached by that import; the publish_window cases
+# check that it fails inside publish_window_problem.
 JSON_CRASH_RUNNER = (
     "import _strptime, builtins, importlib, runpy, sys\n"
     "kind = getattr(builtins, sys.argv[2])\n"
@@ -514,10 +515,10 @@ class ExtractorCliTest(unittest.TestCase):
                     (0, reply_bytes({"op": "requires_release_date", "outcome": "value", "value": answer == "required"}), ""),
                 )
 
-    def test_a_lowered_integer_digit_limit_is_read_at_run_time(self):
-        # Row 101: the limit is read when a version is compared, so a child
-        # started with a lower limit (640 is the lowest positive limit Python
-        # accepts) reports a longer part as malformed instead of failing.
+    def test_a_child_started_with_a_lower_digit_limit_reports_a_longer_part_as_malformed(self):
+        # Row 101: a child started with a lower limit, here 640, reports a
+        # part longer than that limit as malformed, under --requires-date and
+        # under --json, and a part of that length still compares.
         def run_lowered(*args: str, data: bytes = b""):
             proc = subprocess.run(
                 [sys.executable, "-I", "-X", "int_max_str_digits=640", str(EXTRACTOR), *args],
@@ -649,9 +650,9 @@ class FunctionTest(unittest.TestCase):
 
     def test_the_margin_agrees_with_the_next_midnight_on_ordinary_days(self):
         # Row 99: counting the margin from the time of day gives the verdict
-        # and the count that counting to the next UTC midnight gives, on
-        # sampled instants of days that have a next day. The seed is fixed,
-        # so every run checks the same instants.
+        # that counting to the next UTC midnight gives, and in each refusal
+        # the same count, on sampled instants of days that have a next day.
+        # The seed is fixed, so every run checks the same instants.
         rng = random.Random(99)
         first = datetime.date(1, 1, 1).toordinal()
         last = datetime.date(9999, 12, 30).toordinal()

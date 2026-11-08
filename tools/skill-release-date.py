@@ -223,8 +223,9 @@ def version_key(version: str) -> tuple[int, int, int]:
     if match is None:
         raise Malformed(f"not a bare X.Y.Z version: {version!r}")
     # int() raises a ValueError for a digit run longer than the interpreter's
-    # limit, which would read as an internal error. The limit is read here at
-    # run time because an interpreter flag can lower it; 0 means no limit. An
+    # limit, which would read as an internal error. The limit is read here on
+    # each call because it can change while the process runs
+    # (sys.set_int_max_str_digits); 0 means no limit. An
     # interpreter without sys.get_int_max_str_digits (Python 3.9 before 3.9.14,
     # 3.10 before 3.10.7) has no limit, and the client, which runs this file
     # with its own interpreter, supports Python 3.9 and later.
