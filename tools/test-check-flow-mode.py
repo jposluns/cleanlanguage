@@ -15,12 +15,14 @@ is renamed so that none is left, when a second MODE line is added, closed or wit
 parenthesis, when the MODE line loses its closing parenthesis, when a line holds an unquoted bare
 "attended" in lower case, with a capital letter or inside typographic quotes, when such a line
 comes after line 250, when a line holds a longer word that starts with "attended-autonomous",
-such as "attended-autonomously", and when the absent-record sentence is removed. It passes with
-the MODE values in the other order, with a quoted "attended", with a longer word that holds
-"attended", with "Attended-Autonomous" in capital letters outside the MODE line, and with the
-absent-record sentence in its second wording, in capital letters, or wrapped across a line
-break. A path that does not exist, text
-that is not UTF-8 and 2 arguments each give exit status 1.
+such as "attended-autonomously", when a bare "attended" follows a closing quote at once, as in
+'un"stored"attended', since the check reads a quotation as a space and so does not join the text
+on its 2 sides, and when the absent-record sentence is removed. It passes with the MODE values in
+the other order, with a quoted "attended", with a quotation just after "attended-autonomous", as
+in 'attended-autonomous"x"ly', with a longer word that holds "attended", with
+"Attended-Autonomous" in capital letters outside the MODE line, and with the absent-record
+sentence in its second wording, in capital letters, or wrapped across a line break. A path that
+does not exist, text that is not UTF-8 and 2 arguments each give exit status 1.
 
 The residual cases hold the limits that the check's docstring states: outside the MODE line only
 the bare "attended" test can fail a line, so a third mode value named there, such as "supervised",
@@ -220,6 +222,16 @@ class Verdicts(unittest.TestCase):
         # Only the whole word "attended-autonomous" is exempt, so a longer word that starts with it
         # still holds a bare "attended".
         self.assert_fails(added("- The session runs attended-autonomously."), BARE)
+
+    def test_a_bare_attended_just_after_a_closing_quote_fails(self):
+        # The quotation reads as a space, so the "un" before it does not join the "attended" after
+        # it, and the line holds a bare "attended" outside the quotes.
+        self.assert_fails(added("- A legacy un\"stored\"attended record."), BARE)
+
+    def test_a_quotation_just_after_attended_autonomous_passes(self):
+        # The quotation reads as a space, so the "ly" after it does not extend
+        # "attended-autonomous" into a longer word, and the line holds no bare "attended".
+        self.assert_passes(added("- The session runs attended-autonomous\"x\"ly."))
 
     def test_attended_autonomous_in_capital_letters_passes(self):
         self.assert_passes(added("- Attended-Autonomous is one of the writer's 2 values."))

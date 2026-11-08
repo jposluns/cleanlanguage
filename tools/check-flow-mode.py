@@ -19,7 +19,11 @@ flow.md, not a reading of what its sentences mean. It fails when any of them is 
   are not bare; that is not followed at once by "-autonomous", in any letter case, with no
   letter, digit or underscore just after that, so "attended-autonomous" and "Attended-Autonomous"
   are not bare while "attended-autonomously" is; and that is not between a pair of straight double
-  quotes (") that the check pairs left to right on the same line;
+  quotes (") that the check pairs left to right on the same line. The test reads each such
+  quotation, its quotes included, as 1 space, so the text on its 2 sides stays apart, as it is
+  in the line, and is never joined into a word that the line does not hold: the line 'A legacy
+  un"stored"attended record.' holds a bare "attended" and fails, and the line 'The session runs
+  attended-autonomous"x"ly.' holds none and passes;
 - the file must hold the sentence that an absent mode record is read as unattended, in the words
   "reads an absent mode record as unattended" or "an absent mode record is read as unattended",
   in any letter case and matched across line breaks.
@@ -99,8 +103,10 @@ def findings(text, name):
         # flow.md names the retired value inside straight double quotes, so this test alone skips
         # text between straight double quotes paired left to right on the line and reports every
         # other bare "attended", whatever the sentence means. The docstring states where that
-        # pairing differs from the author's quotations.
-        if BARE_ATTENDED.search(QUOTED.sub("", line)):
+        # pairing differs from the author's quotations. Each skipped quotation becomes 1 space, not
+        # nothing, so the text on its 2 sides stays apart and the test sees the line's own word
+        # boundaries: deleting it would join that text into words that the line does not hold.
+        if BARE_ATTENDED.search(QUOTED.sub(" ", line)):
             found.append("{}:{}: unquoted bare \"attended\": {}".format(
                 name, number, line.strip()))
     if not ABSENT_RULE.search(" ".join(text.split())):
