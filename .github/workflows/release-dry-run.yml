@@ -44,11 +44,9 @@ jobs:
     # works on the repository's files, in the checkout, in temporary worktrees
     # made from it and in temporary directories, and the tools the steps run
     # make no network call through urllib.request, requests, socket, curl,
-    # wget, gh, or git fetch, clone, pull or ls-remote. The version-consumer
-    # tests bound each packager run they make at 60 seconds, so a normal run
-    # should take a few minutes; 30 minutes leaves wide room for a slow
-    # runner. The value is an estimate, not a measured run time: revise it
-    # once real run times are known.
+    # wget, gh, or git fetch, clone, pull or ls-remote. No run of this
+    # workflow was timed, so 30 minutes is an estimate, not a measured run
+    # time: revise it once real run times are known.
     timeout-minutes: 30
     steps:
       - name: Check out repository
