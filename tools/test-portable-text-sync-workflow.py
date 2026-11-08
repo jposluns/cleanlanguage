@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Tests that .github/workflows/portable-text-sync.yml carries no path filter on either trigger.
+"""Tests the triggers of portable-text-sync.yml and release-dry-run.yml, and the dry run's time limit.
 
-The steps of that workflow read files across the repository, and a path list
-cannot be kept complete against those reads, so the workflow runs on every
-pull request and every push to main (row 119). This test fails if a paths or
-paths-ignore filter comes back under either trigger.
+The steps of .github/workflows/portable-text-sync.yml read files across the
+repository, and a path list cannot be kept complete against those reads, so
+the workflow runs on every pull request and every push to main (row 119).
+This test fails if a paths or paths-ignore filter comes back under either
+trigger.
 
 That workflow runs this test, and so does workflow-isolation.yml, so a pull
 request that adds a filter to that workflow which its own changed files fall
@@ -29,7 +30,8 @@ return (a CRLF line end included) fails. It then parses the text with the
 UniqueKeyLoader of tools/test-workflow-launch-isolation.py, a safe PyYAML
 loader (that file says what the loader refuses), and fails unless the text
 is one YAML document that the loader accepts. From the parsed structure, it
-fails for either workflow unless:
+fails for portable-text-sync.yml or workflow-isolation.yml unless all 3 of
+the following hold, and for release-dry-run.yml unless the first holds:
 
 - its top-level keys are exactly name, on, permissions and jobs, each written
   as a plain key, in that order, so a quoted "on" fails, and so do ON and yes,
@@ -231,7 +233,8 @@ class LaunchTests(unittest.TestCase):
                     self.assertEqual(launches(parse(edited(text, old, new))), 0)
 
     def test_launch_lines_outside_the_steps_fail(self):
-        name = "\n      - name: Check the portable text sync triggers carry no path filter\n"
+        name = ("\n      - name: Check the portable text sync, release dry run and this workflow's triggers, "
+                "and the dry run time limit\n")
         text = edited(read(ISOLATION), name + STEP + "\n", "")
         text = edited(text, "    steps:\n", "    env:\n      GUARD: |\n" + STEP + "\n    steps:\n")
         self.assertEqual(launches(parse(text)), 0)
