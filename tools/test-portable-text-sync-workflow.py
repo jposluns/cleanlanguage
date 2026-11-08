@@ -10,6 +10,19 @@ That workflow runs this test, and so does workflow-isolation.yml, so a pull
 request that adds a filter to that workflow which its own changed files fall
 outside still runs it.
 
+The same holds for .github/workflows/release-dry-run.yml, whose dry run and
+gates read files across the repository, the whole site included (row 127).
+DryRunTests fails unless the value of its on: is exactly a bare pull_request
+trigger, a push trigger on main and a bare workflow_dispatch, so a paths,
+paths-ignore, branches, branches-ignore, tags, tags-ignore or types key under
+either trigger fails. It also fails unless that workflow has exactly one job,
+dry-run, whose timeout-minutes is the integer DRY_RUN_TIMEOUT (row 117), so a
+removed, changed, quoted or moved time limit fails, and a change to the limit
+is made in this test and the workflow together. It does not check the steps
+of the dry run. The dry run does not run this test: workflow-isolation.yml
+does, with no filter, so a pull request that adds a filter to the dry run
+which its own changed files fall outside still runs it.
+
 The test reads each workflow's bytes and fails unless they decode as UTF-8
 and every character is printable ASCII or a line feed, so a tab or a carriage
 return (a CRLF line end included) fails. It then parses the text with the
@@ -64,6 +77,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "portable-text-sync.yml"
 ISOLATION = REPO_ROOT / ".github" / "workflows" / "workflow-isolation.yml"
+DRY_RUN = REPO_ROOT / ".github" / "workflows" / "release-dry-run.yml"
 
 # The loader of the launch isolation scan, loaded by its explicit path; it exits if PyYAML is missing.
 ISOLATION_SCAN = REPO_ROOT / "tools" / "test-workflow-launch-isolation.py"
@@ -76,6 +90,9 @@ TOP_KEYS = ["name", "on", "permissions", "jobs"]
 TRIGGERS = {"pull_request": None, "push": {"branches": ["main"]}}
 LAUNCH = {"shell": "bash", "run": "python3 -I tools/test-portable-text-sync-workflow.py"}
 STEP = "        shell: bash\n        run: python3 -I tools/test-portable-text-sync-workflow.py"
+DRY_RUN_TRIGGERS = {"pull_request": None, "push": {"branches": ["main"]}, "workflow_dispatch": None}
+# The time limit of the dry-run job in minutes; release-dry-run.yml gives the reason for the value.
+DRY_RUN_TIMEOUT = 30
 
 
 def read(path: Path) -> str:
@@ -125,6 +142,14 @@ def launches(doc: dict) -> int:
             count += sum(isinstance(step, dict) and {k: v for k, v in step.items() if k != "name"} == LAUNCH
                          for step in job["steps"])
     return count
+
+
+def timeout_holds(doc: dict) -> bool:
+    """Whether the jobs are exactly dry-run and its timeout-minutes is the integer DRY_RUN_TIMEOUT."""
+    jobs = doc["jobs"] if isinstance(doc["jobs"], dict) else {}
+    job = jobs.get("dry-run")
+    limit = job.get("timeout-minutes") if isinstance(job, dict) else None
+    return list(jobs) == ["dry-run"] and type(limit) is int and limit == DRY_RUN_TIMEOUT
 
 
 def edited(text: str, old: str, new: str) -> str:
@@ -210,6 +235,50 @@ class LaunchTests(unittest.TestCase):
         text = edited(read(ISOLATION), name + STEP + "\n", "")
         text = edited(text, "    steps:\n", "    env:\n      GUARD: |\n" + STEP + "\n    steps:\n")
         self.assertEqual(launches(parse(text)), 0)
+
+
+class DryRunTests(unittest.TestCase):
+    PULL = "  pull_request:\n"
+    MAIN = "      - main\n"
+    LIMIT = f"    timeout-minutes: {DRY_RUN_TIMEOUT}\n"
+
+    def test_both_triggers_carry_no_filter(self):
+        self.assertEqual(triggers(parse(read(DRY_RUN))), DRY_RUN_TRIGGERS)
+
+    def test_a_filter_or_narrowing_under_either_trigger_fails(self):
+        text = read(DRY_RUN)
+        for old, new in ((self.PULL, self.PULL + '    paths:\n      - "site-src/**"\n'),
+                         (self.PULL, self.PULL + "    paths-ignore:\n      - docs/**\n"),
+                         (self.PULL, self.PULL + "    branches: [main]\n"),
+                         (self.PULL, self.PULL + "    branches-ignore: [dev]\n"),
+                         (self.PULL, self.PULL + "    tags: [v*]\n"),
+                         (self.PULL, self.PULL + "    types: [opened]\n"),
+                         (self.PULL, "  pull_request: {paths: [tools/**]}\n"),
+                         (self.MAIN, self.MAIN + '    paths:\n      - "tools/**"\n'),
+                         (self.MAIN, self.MAIN + "    paths-ignore: [docs/**]\n"),
+                         (self.MAIN, self.MAIN + "    branches-ignore: [dev]\n"),
+                         (self.MAIN, self.MAIN + "    tags: [v*]\n"),
+                         (self.MAIN, self.MAIN + "    tags-ignore: [v*]\n"),
+                         (self.MAIN, self.MAIN + '    "paths": ["tools/**"]\n')):
+            with self.subTest(new):
+                self.assertNotEqual(triggers(parse(edited(text, old, new))), DRY_RUN_TRIGGERS)
+
+    def test_the_job_carries_its_time_limit(self):
+        self.assertTrue(timeout_holds(parse(read(DRY_RUN))))
+
+    def test_a_removed_changed_or_moved_time_limit_fails(self):
+        text = read(DRY_RUN)
+        for old, new in ((self.LIMIT, ""), (self.LIMIT, "    timeout-minutes: 360\n"),
+                         (self.LIMIT, f'    timeout-minutes: "{DRY_RUN_TIMEOUT}"\n'),
+                         (self.LIMIT, f"    timeout-minutes: {DRY_RUN_TIMEOUT}.0\n"),
+                         (self.LIMIT, "    timeout-minutes: true\n"),
+                         (self.LIMIT, f"    # timeout-minutes: {DRY_RUN_TIMEOUT}\n"),
+                         (self.LIMIT, "    timeout-minutes: ${{ inputs.limit }}\n"),
+                         (self.LIMIT + "    steps:\n", f"    steps:\n      - timeout-minutes: {DRY_RUN_TIMEOUT}\n"
+                                                        "        shell: bash\n        run: echo ok\n"),
+                         ("jobs:\n", "jobs:\n  other:\n    runs-on: ubuntu-latest\n")):
+            with self.subTest(new):
+                self.assertFalse(timeout_holds(parse(edited(text, old, new))))
 
 
 if __name__ == "__main__":
