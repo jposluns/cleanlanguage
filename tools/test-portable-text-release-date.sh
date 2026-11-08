@@ -189,6 +189,18 @@ expect_fail_without() { # label fragment absent-fragment
   fi
 }
 
+expect_fail_line() { # label line: the gate fails and prints line as a whole line
+  local code=0
+  run_gate || code=$?
+  if [ "${code}" -eq 0 ]; then
+    fail "$1 (expected a failure, the gate passed)"
+  elif ! grep -Fxq -- "$2" "${gate_out}"; then
+    fail "$1 (failed, but no line is exactly [$2]: $(cat "${gate_out}"))"
+  else
+    pass "$1"
+  fi
+}
+
 # break_extractor OP MODE: make the copy of the extractor answer the --json op
 # OP in the way MODE names, while every other op still answers and the probe
 # passes, and make its CLI content modes exit 1 (row 89).
@@ -246,6 +258,16 @@ for v in 1.0.100 1.1.0; do
   undated_fixture "${v}"
   expect_fail "undated ${v} (above the baseline) fails" "is version ${v}, above the undated baseline 1.0.14"
 done
+
+# 2a2. G1: client exit 11 at requires-date can rest on any reason the
+#      extractor gives, so the gate names the version as malformed and relays
+#      the reason the client printed. A part 1 digit longer than the default
+#      integer-string limit of 4300 digits is bare X.Y.Z, so only the relayed
+#      reason says why it was rejected.
+long_version="1.0.$(python3 -I -c 'print("1" * 4301)')"
+undated_fixture "${long_version}"
+expect_fail_line "an undated version with a 4301-digit part relays the extractor reason" \
+  "tools/skill-release-date.py rejected the version ${long_version} as malformed: skill-release-date: a part of the version has more than 4300 digits: '${long_version}'"
 
 # 2b. A missing or broken extractor is reported as unavailable, never as a
 #     malformed line.
@@ -353,7 +375,7 @@ cat > "${allowed_mentions}" <<'ALLOWED'
         echo "tools/skill-release-date.py gave an unexpected answer (${out:-nothing}) for the Released line of $1." >&2
       echo "tools/skill-release-date.py is unavailable or crashed (exit ${rc}) reading $1, so its Released line could not be checked." >&2
     echo "tools/skill-release-date.py is unavailable or broken (probe exit ${prc}), so the Released lines could not be checked." >&2
-      11) echo "tools/skill-release-date.py rejected the version ${sv} as not a bare X.Y.Z." >&2; return 1 ;;
+      11) echo "tools/skill-release-date.py rejected the version ${sv} as malformed: ${requirement}" >&2; return 1 ;;
         echo "tools/skill-release-date.py is unavailable or crashed (exit ${prc}) deciding whether ${sv} needs a Released line." >&2
       echo "tools/skill-release-date.py gave an unexpected answer (${requirement:-nothing}) for whether ${sv} needs a Released line." >&2
 ALLOWED

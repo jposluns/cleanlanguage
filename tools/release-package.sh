@@ -235,7 +235,7 @@ if [ -z "${released}" ]; then
   requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${version}" 2>&1)" || req_rc=$?
   case "${req_rc}" in
     0) ;;
-    11) fail "tools/skill-release-date.py rejected the version ${version} as not a bare X.Y.Z" ;;
+    11) fail "tools/skill-release-date.py rejected the version ${version} as malformed: ${requirement}" ;;
     *)
       relay_client "${requirement}"
       fail "tools/skill-release-date.py is unavailable or crashed (exit ${req_rc}) deciding whether ${version} needs a Released line"

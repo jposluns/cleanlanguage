@@ -227,6 +227,31 @@ class ParityTest(unittest.TestCase):
             with self.subTest(word=word, values=values):
                 self.assertParity((word, *values), (flag, *values))
 
+    def test_the_last_representable_day_is_a_verdict(self):
+        # Row 99: on 9999-12-31 the publish window gives a value or a
+        # refusal (exit 15), never the unavailable exit 16.
+        day = "9999-12-31"
+        self.assertEqual(run_client("publish-window", day, "9999-12-31T12:00:00Z"), (0, day + "\n", ""))
+        code, out, err = run_client("publish-window", day, "9999-12-31T23:55:00Z")
+        self.assertEqual((code, out), (15, ""), err)
+        self.assertIn("only 300 seconds remain in the UTC day 9999-12-31", err)
+        for now in ("9999-12-31T12:00:00Z", "9999-12-31T23:55:00Z"):
+            with self.subTest(now):
+                self.assertParity(("publish-window", day, now), ("--publish-window", day, now))
+
+    def test_a_version_part_past_the_integer_digit_limit_is_malformed(self):
+        # Row 101: a 4301-digit part is malformed (exit 11), never the
+        # unavailable exit 16, and a 4300-digit part still compares.
+        version = "1.0." + "9" * 4301
+        self.assertEqual(
+            run_client("requires-date", version),
+            (11, "", f"skill-release-date: a part of the version has more than 4300 digits: {version!r}\n"),
+        )
+        self.assertEqual(run_client("requires-date", "1.0." + "9" * 4300), (0, "required\n", ""))
+        for version in ("1.0." + "9" * 4301, "1.0." + "9" * 4300):
+            with self.subTest(digits=len(version) - 4):
+                self.assertParity(("requires-date", version), ("--requires-date", version))
+
 
 class BrokenExtractorTest(unittest.TestCase):
     """T2, T3: every reply that breaks the contract, and every broken,

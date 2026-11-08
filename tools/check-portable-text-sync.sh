@@ -146,7 +146,7 @@ check_common() {
     requirement="$(python3 -I tools/skill-release-date-client.py requires-date "${sv}" 2>&1)" || prc=$?
     case "${prc}" in
       0) ;;
-      11) echo "tools/skill-release-date.py rejected the version ${sv} as not a bare X.Y.Z." >&2; return 1 ;;
+      11) echo "tools/skill-release-date.py rejected the version ${sv} as malformed: ${requirement}" >&2; return 1 ;;
       *)
         relay_client "${requirement}"
         echo "tools/skill-release-date.py is unavailable or crashed (exit ${prc}) deciding whether ${sv} needs a Released line." >&2
