@@ -22,9 +22,10 @@ absent-record sentence in its second wording, in capital letters, or wrapped acr
 break. A path that does not exist, text
 that is not UTF-8 and 2 arguments each give exit status 1.
 
-The residual cases hold the limits that the check's docstring states: a third mode value, other
-than the writer's 2 and the retired "attended", named outside the MODE line passes, an indented
-line that starts "- MODE (" after its indent is not counted and passes, a retired default inside
+The residual cases hold the limits that the check's docstring states: outside the MODE line only
+the bare "attended" test can fail a line, so a third mode value named there, such as "supervised",
+passes, and one that holds a bare "attended", such as "attended-only", fails; an indented line
+that starts "- MODE (" after its indent is not counted and passes, a retired default inside
 straight double quotes passes, a sentence that contradicts the
 absent rule passes, the matched absent-rule sentence negated passes, the absent-rule sentence
 inside a quotation that rejects it passes, the absent rule in other words fails, an ordinary
@@ -251,6 +252,13 @@ class Residual(unittest.TestCase):
     def test_a_third_value_outside_the_mode_line_passes(self):
         status, output = verdict(added("- A third mode, supervised, is also read."))
         self.assertEqual(status, 0, output)
+
+    def test_a_third_value_with_a_bare_attended_outside_the_mode_line_fails(self):
+        # Outside the MODE line only the bare-word test can fail a line, so a third value named
+        # there fails exactly when it holds a bare "attended", whatever value it is.
+        status, output = verdict(added("- A third mode, attended-only, is also read."))
+        self.assertEqual(status, 1, output)
+        self.assertIn(BARE, output)
 
     def test_a_quoted_retired_default_passes(self):
         status, output = verdict(added("- Absent = \"attended\" (conservative)."))

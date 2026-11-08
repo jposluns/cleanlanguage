@@ -21,8 +21,9 @@ name: Orchestration registry
 # that the host's mode writer writes, each once and in lower case, when any line holds a bare
 # "attended" outside the text between straight double quotes that the check pairs left to right
 # on that line, or when the sentence that an absent mode record is read as unattended is missing.
-# It reads words, not meaning: a third mode value, any value other than the writer's 2 and the
-# retired "attended", is checked only on the MODE line; only the bare "attended" test skips
+# It reads words, not meaning: outside the MODE line, the bare "attended" test is the only test
+# that can fail a line, so a third mode value named there, such as "supervised", passes, and one
+# that holds a bare "attended", such as "attended-only", fails; only the bare "attended" test skips
 # quoted text; a line that closes a quotation wrapped from the line above
 # pairs that closing quote with the next opening quote, so a bare "attended" between them passes;
 # a sentence that contradicts the absent rule passes, so does that sentence negated or inside a

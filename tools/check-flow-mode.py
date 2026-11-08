@@ -30,10 +30,12 @@ so a copy from another commit can be checked through git show.
 Exit status: 0 when every check passes, 1 on any finding, when the text cannot be read or is not
 UTF-8, and when more than 1 argument is given.
 
-Residual: the check reads text literally. A third mode value, any value other than the writer's 2
-and the retired "attended", is checked only on the MODE line, so such a value named on any other
-line passes, and a line that holds "- MODE (" after any other character, such as an indented one,
-is not a MODE line, so the MODE line tests do not read it. Only
+Residual: the check reads text literally. Outside the MODE line, the bare "attended" test is the
+only test that can fail a line for what it holds, so a line there fails exactly when it holds a
+bare "attended" outside the text that this test skips as quoted, and passes otherwise, whatever
+mode value it names: a third value such as "supervised" named there passes, and one that holds a
+bare "attended", such as "attended-only", fails. A line that holds "- MODE (" after any other
+character, such as an indented one, is not a MODE line, so the MODE line tests do not read it. Only
 the bare "attended" test skips quoted text, and only text between straight double quotes that it
 pairs left to right on one line, so a retired default written inside such quotes passes, while
 "attended" inside typographic quotes (U+201C and U+201D) fails. Straight double quotes do not show
