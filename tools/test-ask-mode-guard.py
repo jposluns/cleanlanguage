@@ -291,8 +291,11 @@ class AskModeGuard(unittest.TestCase):
         host_dir = self._tmp / "no-such-dir"
         cause = "{} is absent, so this host declares no operating-mode".format(host_dir)
         reason = self.assert_denies(self.run_guard(mode_file=host_dir / "operating-mode"), cause)
-        self.assertIn("the operator creates {}, owned by root and writable by neither its group "
-                      "nor others, and runs `orchmod aa`".format(host_dir), reason)
+        self.assertIn("the operator creates {}, owned by root, writable by neither its group nor "
+                      "others, and searchable by the session's user, for example with mode 0755, "
+                      "runs `orchmod aa`, which sets the host operating-mode to attended-autonomous, "
+                      "and lets the session's user read the mode file in it; then "
+                      "re-issue.".format(host_dir), reason)
 
     def test_host_directory_that_cannot_be_checked_denies(self):
         # lstat failing for a reason other than absence, here a parent directory without search

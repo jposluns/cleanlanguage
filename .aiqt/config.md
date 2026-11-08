@@ -112,7 +112,9 @@ with 1 warning that names the file and `"attended-autonomous"`. It denies,
 naming the cause, when the hook payload has no string `tool_name`; when `/opt/orch-operator`
 itself is absent, since the host then declares no operating-mode and removing that root-owned
 directory must not disarm the guard, and that deny names the operator's remedy, which is to create
-the directory, owned by root and writable by neither its group nor others, and run `orchmod aa`;
+the directory, owned by root, writable by neither its group nor others, and searchable by the
+session's user, for example with mode 0755, to run `orchmod aa`, and to let the session's user
+read the mode file in it;
 when `lstat` on `/opt/orch-operator`, which does not follow a symlink there, fails for any other
 reason, such as a path component that is a regular file; when `/opt/orch-operator` itself is a
 symlink, is not a directory, is not owned by uid 0, or is writable by its group or by others; when

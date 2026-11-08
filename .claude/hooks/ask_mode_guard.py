@@ -31,7 +31,9 @@ Decisions, in the order the guard makes them:
 - lstat reporting /opt/orch-operator itself absent: deny, since the host then declares no
   operating-mode and removing that root-owned directory must not disarm the guard; the reason and
   the banner name that cause, and the reason names the operator's remedy, which is to create the
-  directory, owned by root and writable by neither its group nor others, and run `orchmod aa`;
+  directory, owned by root, writable by neither its group nor others, and searchable by the
+  session's user, for example with mode 0755, to run `orchmod aa`, and to let the session's user
+  read the mode file in it;
 - lstat on /opt/orch-operator failing for any other reason, such as a parent directory the guard
   cannot search or a path component that is a regular file (ENOTDIR): deny;
 - /opt/orch-operator itself a symlink: deny, whatever the link leads to, since lstat does not
@@ -40,8 +42,8 @@ Decisions, in the order the guard makes them:
 - /opt/orch-operator itself not a directory, such as a regular file, a FIFO, a socket or a device
   node: deny;
 - /opt/orch-operator not owned by uid 0, or writable by its group or by others (the same lstat,
-  before the guard opens the mode file): deny, so that only root can add, remove or rename the
-  entries in it;
+  before the guard opens the mode file): deny, so that the guard reads a record only from a
+  directory in which only root can add, remove or rename entries;
 - the mode file missing, unreadable, a symlink (opened with O_NOFOLLOW), or not a regular file:
   deny. The open fails with ELOOP both for a symlink at the mode file and for a symlink loop or too
   many symlinks on its path, so that deny names both causes;
@@ -155,13 +157,16 @@ def deny_unattended(mode_file):
 
 def deny_absent_host(host_dir):
     # Removing the root-owned host directory must not disarm the guard, so its absence denies. The
-    # remedy names the directory as well as orchmod, since the mode file cannot exist without it,
-    # and the owner and write rules, since the guard denies a directory that breaks them.
+    # remedy names the directory as well as orchmod, since the mode file cannot exist without it;
+    # the owner and write rules, since the guard denies a directory that breaks them; and search
+    # of the directory and read of the mode file by the session's user, since the open fails
+    # without them.
     return deny("AskUserQuestion BLOCKED: {} is absent, so this host declares no operating-mode. "
                 "Treat the session as unattended. {} If the operator is in fact present, the "
-                "operator creates {}, owned by root and writable by neither its group nor others, "
-                "and runs `orchmod aa`, which sets the host operating-mode to attended-autonomous; "
-                "then re-issue.".format(
+                "operator creates {}, owned by root, writable by neither its group nor others, "
+                "and searchable by the session's user, for example with mode 0755, runs "
+                "`orchmod aa`, which sets the host operating-mode to attended-autonomous, and "
+                "lets the session's user read the mode file in it; then re-issue.".format(
                     host_dir, RECORD_AND_CONTINUE, host_dir),
                 "Repository guard: denied a blocking question; {} is absent, so this host declares "
                 "no operating-mode.".format(host_dir))
