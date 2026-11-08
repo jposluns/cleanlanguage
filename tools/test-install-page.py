@@ -10,8 +10,8 @@ pass for a refusal. 1 more check asserts that the gate's docstring names
 exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that this file's own source
 carries no ``?v=`` token starting with a digit apart from those KEPT_TOKENS
 names, since a case writes the current baseline version as BASELINE, read
-from ``.baseline/pin.toml``. Exit 0 when every case passes; 1 otherwise,
-naming each failing case.
+from ``.baseline/pin.toml``, and 1 that the source binds BASELINE only
+there. Exit 0 when every case passes; 1 otherwise, naming each failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 may hide or empty what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code
@@ -196,6 +196,10 @@ try:
 except Exception as error:
     print(f"test-install-page: failures:\n  - the baseline version could not be read from .baseline/pin.toml: {error!r}")
     raise SystemExit(1)
+# The names that hold the version read from the pin. version_binding_problems() refuses any binding of them but the
+# one above, since every case and check built after another binding would carry its value instead of the version, and
+# one that drops the ?v= token, such as the gate's load_path(), would still pass.
+VERSION_NAMES = ("BASELINE",)
 # The ?v= tokens that start with a digit and that this file keeps as literals on purpose, each with its reason;
 # version_literal_problems() refuses any other, so that no case carries a baseline version that goes stale at a move.
 KEPT_TOKENS = {
@@ -1510,7 +1514,8 @@ RESIDUALS = [
 # Faults to a copy of STYLESHEETS and PIN_FILE for stylesheet_problems(), the comparison of the committed stylesheets
 # with RULE_PIN, and the words that its problems must hold, each in 1 of them; none for none. Each rule is named as
 # that comparison names it: a pinned rule by its file name and preludes, a rule the pin does not hold by its text.
-BASELINE = STYLESHEETS[2]
+# BASELINE_SHEET is the stylesheet that the faults change; BASELINE keeps the version (version_binding_problems()).
+BASELINE_SHEET = STYLESHEETS[2]
 INLINE_RULE = ".btn.inline { position: static; display: inline-block; text-decoration: none; margin: 0 0.6rem 0.6rem 0; }"
 HOVER_RULE = ".btn.inline:hover { color: var(--button-hover-fg); }"
 WIDER_RULE = INLINE_RULE.replace("static", "absolute")
@@ -1523,18 +1528,18 @@ ESCAPE_RULE = '[title="\\\\"] .fresh, h1 { display: none; }'
 ESCAPE_PROPERTY_RULE = '.fresh { content: "\\\\"; --text: red; }'
 PIN_CASES = (
     ("the committed stylesheets and pin", None, ()),
-    ("a pinned rule changed", edit(BASELINE, INLINE_RULE, WIDER_RULE),
-        (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE}: {WIDER_RULE}', {ADDED}")),
-    ("a rule the pin must hold added", append(BASELINE, "\n.btn { writing-mode: vertical-rl; }\n"),
-        (f"the rule '{BASELINE}: .btn {{ writing-mode: vertical-rl; }}', {ADDED}",)),
-    ("a pinned rule removed", edit(BASELINE, HOVER_RULE + "\n", ""), (f"{GONE} 'baseline.css: .btn.inline:hover' there",)),
-    ("a pinned rule moved", edit(BASELINE, INLINE_RULE + "\n" + HOVER_RULE, HOVER_RULE + "\n" + INLINE_RULE),
-        (f"{GONE} 'baseline.css: .btn.inline:hover' there", f"the rule '{BASELINE}: {HOVER_RULE}', {ADDED}")),
-    ("a comment between var and its ( in a pinned rule", edit(BASELINE, WRAP_RULE, WRAP_RULE.replace("var(", "var/**/(")),
-        (f"{GONE} 'baseline.css: .wrap' there", f"the rule '{BASELINE}: {WRAP_RULE.replace('var(', 'var/**/(')}', {ADDED}")),
+    ("a pinned rule changed", edit(BASELINE_SHEET, INLINE_RULE, WIDER_RULE),
+        (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE_SHEET}: {WIDER_RULE}', {ADDED}")),
+    ("a rule the pin must hold added", append(BASELINE_SHEET, "\n.btn { writing-mode: vertical-rl; }\n"),
+        (f"the rule '{BASELINE_SHEET}: .btn {{ writing-mode: vertical-rl; }}', {ADDED}",)),
+    ("a pinned rule removed", edit(BASELINE_SHEET, HOVER_RULE + "\n", ""), (f"{GONE} 'baseline.css: .btn.inline:hover' there",)),
+    ("a pinned rule moved", edit(BASELINE_SHEET, INLINE_RULE + "\n" + HOVER_RULE, HOVER_RULE + "\n" + INLINE_RULE),
+        (f"{GONE} 'baseline.css: .btn.inline:hover' there", f"the rule '{BASELINE_SHEET}: {HOVER_RULE}', {ADDED}")),
+    ("a comment between var and its ( in a pinned rule", edit(BASELINE_SHEET, WRAP_RULE, WRAP_RULE.replace("var(", "var/**/(")),
+        (f"{GONE} 'baseline.css: .wrap' there", f"the rule '{BASELINE_SHEET}: {WRAP_RULE.replace('var(', 'var/**/(')}', {ADDED}")),
     ("a pin entry with another digest", repin("baseline.css: .btn.inline"),
-        (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE}: {INLINE_RULE}', {ADDED}")),
-    *[(name, append(BASELINE, f"\n{rule}\n"), (f"the rule {f'{BASELINE}: {rule}'!r}, {ADDED}",)) for name, rule in (
+        (f"{GONE} 'baseline.css: .btn.inline' there", f"the rule '{BASELINE_SHEET}: {INLINE_RULE}', {ADDED}")),
+    *[(name, append(BASELINE_SHEET, f"\n{rule}\n"), (f"the rule {f'{BASELINE_SHEET}: {rule}'!r}, {ADDED}",)) for name, rule in (
         ("a pinned name with a class name and a ] in a string", STRING_RULE),
         ("a pinned name with an escaped quote, a ] and a class name in a string", QUOTE_RULE),
         ("a pinned name after a string that ends in an escaped backslash", ESCAPE_RULE),
@@ -2374,6 +2379,36 @@ def version_literal_problems() -> list[str]:
             for match in VERSION_LITERAL.finditer(text) if match.group(0) not in KEPT_TOKENS]
 
 
+def version_binding_problems() -> list[str]:
+    """Each binding in this file's own source of a name of VERSION_NAMES other than its first, read from the syntax
+    tree: an assignment, a deletion, a loop, with or except target, an import, a def, a class, an argument, a match
+    capture, or a global or nonlocal statement. A local binding counts too, since a reader takes that name for the
+    version."""
+    lines: dict[str, list[int]] = {name: [] for name in VERSION_NAMES}
+    for node in ast.walk(ast.parse(Path(__file__).read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names = [node.id]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler,
+                               ast.MatchAs, ast.MatchStar)):
+            names = [node.name]
+        elif isinstance(node, ast.MatchMapping):
+            names = [node.rest]
+        elif isinstance(node, ast.alias):
+            names = [node.asname or node.name.partition(".")[0]]
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names = node.names
+        elif isinstance(node, ast.arg):
+            names = [node.arg]
+        else:
+            continue
+        for name in names:
+            if name in lines:
+                lines[name].append(node.lineno)
+    problems = [f"{name} is never bound" for name, found in lines.items() if not found]
+    return problems + [f"line {line} binds {name} again, after line {min(found)}; give that value its own name"
+                       for name, found in lines.items() for line in sorted(found)[1:]]
+
+
 def main() -> int:
     if sys.argv[1:] == [PRINT_PIN]:
         held, problems = committed_rules()
@@ -2381,6 +2416,7 @@ def main() -> int:
         return 1 if problems else 0
     failures: list[str] = statement_problems()
     failures += [f"the version literals: {problem}" for problem in version_literal_problems()]
+    failures += [f"the version binding: {problem}" for problem in version_binding_problems()]
     failures += [f"the class pin: {problem}" for problem in class_pin_problems()]
     failures += [f"the attribute pin: {problem}" for problem in class_pin_problems("ATTRIBUTE_PIN", "attrs")]
     failures += [f"the head pin: {problem}" for problem in head_pin_problems()]
@@ -2417,7 +2453,8 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
     print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
-          f"ALLOWED_SCRIPTS, the scan of this file for literal versions, the checks of CLASS_PIN, ATTRIBUTE_PIN, "
+          f"ALLOWED_SCRIPTS, the scans of this file for literal versions and for a second binding of BASELINE, "
+          f"the checks of CLASS_PIN, ATTRIBUTE_PIN, "
           f"HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
           f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
           f"the end tags, LOADED_SEGMENTS and the pinned loads, the workflow's path "
