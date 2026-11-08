@@ -11,25 +11,27 @@ That workflow runs this test, and so does workflow-isolation.yml, so a pull
 request that adds a filter to that workflow which its own changed files fall
 outside still runs it.
 
-The same holds for .github/workflows/release-dry-run.yml, whose dry run and
-gates read files across the repository, the whole site included (row 127).
-DryRunTests fails unless the value of its on: is exactly a bare pull_request
-trigger, a push trigger on main and a bare workflow_dispatch, so a paths,
-paths-ignore, branches, branches-ignore, tags, tags-ignore or types key under
-either trigger fails. It also fails unless that workflow has exactly one job,
-dry-run, whose timeout-minutes is the integer DRY_RUN_TIMEOUT (row 117), so a
-removed, changed, quoted or moved time limit fails, and a change to the limit
-is made in this test and the workflow together. It does not check the steps
-of the dry run. The dry run does not run this test: workflow-isolation.yml
-does, with no filter, so a pull request that adds a filter to the dry run
-which its own changed files fall outside still runs it.
+The release dry run workflow, .github/workflows/release-dry-run.yml, carries
+no paths filter for the same reason: its dry run and gates read files across
+the repository, the whole site included, and a path list cannot be kept
+complete against those reads (row 127). DryRunTests fails unless the value of
+its on: is exactly a bare pull_request trigger, a push trigger on main and a
+bare workflow_dispatch, so a paths, paths-ignore, branches, branches-ignore,
+tags, tags-ignore or types key under either trigger fails. It also fails
+unless that workflow has exactly 1 job, dry-run, whose timeout-minutes is the
+integer DRY_RUN_TIMEOUT (row 117), so a removed, changed, quoted or moved
+time limit fails, and a change to the limit is made in this test and the
+workflow together. It does not check the steps of the dry run. The dry run
+does not run this test: workflow-isolation.yml does, with no filter, so a
+pull request that adds a filter to the dry run which its own changed files
+fall outside still runs it.
 
 The test reads each workflow's bytes and fails unless they decode as UTF-8
 and every character is printable ASCII or a line feed, so a tab or a carriage
 return (a CRLF line end included) fails. It then parses the text with the
 UniqueKeyLoader of tools/test-workflow-launch-isolation.py, a safe PyYAML
 loader (that file says what the loader refuses), and fails unless the text
-is one YAML document that the loader accepts. From the parsed structure, it
+is 1 YAML document that the loader accepts. From the parsed structure, it
 fails for portable-text-sync.yml or workflow-isolation.yml unless all 3 of
 the following hold, and for release-dry-run.yml unless the first holds:
 
@@ -39,12 +41,12 @@ the following hold, and for release-dry-run.yml unless the first holds:
 - the value of on: is exactly a bare pull_request trigger and a push trigger
   on main. So a filter in any form fails, and so does any other change to the
   triggers, which is then made in this test and the workflow together;
-- exactly one step under the steps: of a job with no if: holds, apart from
+- exactly 1 step under the steps: of a job with no if: holds, apart from
   its name, exactly shell: bash and a run of the Usage line below. So a
   condition on that step or its job, continue-on-error or any other key on
   that step, and launch lines outside steps: each fail.
 
-The last two checks read the structure after PyYAML applies any merge key,
+The last 2 checks read the structure after PyYAML applies any merge key,
 so a merge key is not itself a key they see: they compare a merge by its
 effect on the parsed structure, and a merge fails them only if it changes
 what they compare. A merge that adds a filter, or an if: to the guard step
@@ -112,7 +114,7 @@ def parse(text: str) -> dict:
     """The workflow, parsed with UniqueKeyLoader.
 
     Raises ValueError for a character other than a line feed outside printable
-    ASCII, text that is not one YAML document or that the loader refuses, or
+    ASCII, text that is not 1 YAML document or that the loader refuses, or
     top-level keys other than the plain keys name, on, permissions and jobs
     in that order.
     """

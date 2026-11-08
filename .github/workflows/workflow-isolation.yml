@@ -14,10 +14,10 @@ name: Workflow launch isolation
 # if the triggers of portable-text-sync.yml or of this workflow are anything
 # but a bare pull_request and a push on main, so a paths or paths-ignore
 # filter on either fails, and fails unless each of those 2 workflows holds
-# exactly one step that runs the test, with no key but name, shell and run,
+# exactly 1 step that runs the test, with no key but name, shell and run,
 # in a job with no if:. It also fails unless the triggers of
 # release-dry-run.yml are exactly a bare pull_request, a push on main and a
-# bare workflow_dispatch, and that workflow has exactly one job, dry-run,
+# bare workflow_dispatch, and that workflow has exactly 1 job, dry-run,
 # whose timeout-minutes is the integer 30. See that test for what it does not
 # catch. portable-text-sync.yml also runs it, but a pull request that adds a
 # filter to that workflow which its own changed files fall outside never
