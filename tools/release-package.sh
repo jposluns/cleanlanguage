@@ -158,13 +158,15 @@ fi
 # is never taken beside a non-zero blob status, since it may rest on part of
 # the blob.
 # The client writes to one stream only: on exit 0 the value on stdout, and on
-# any other exit its message on stderr with nothing on stdout. Each call
-# below captures both streams, so 5 branches relay the line in which the
-# client names its reason (relay_client) before their own message: a failed
-# probe, a check-date exit other than 0 or 11, a Released read exit of 14
-# (unreadable input) or of any exit other than 0, 11, 13 or 14, and a
-# requires-date exit other than 0 or 11. A value is checked for its form
-# before it is used.
+# any other exit its message on stderr with nothing on stdout. The probe, the
+# check-date call, the first Released read and the requires-date call below
+# capture both streams, so 5 branches relay the line in which the client
+# names its reason (relay_client) before their own message: a failed probe, a
+# check-date exit other than 0 or 11, a Released read exit of 14 (unreadable
+# input) or of any exit other than 0, 11, 13 or 14, and a requires-date exit
+# other than 0 or 11. The second Released read, for a malformed line (exit
+# 11), captures stderr only, where the client writes its reason, and
+# discards stdout. A value is checked for its form before it is used.
 relay_client() {
   [ -z "$1" ] || printf '%s\n' "$1" >&2
 }

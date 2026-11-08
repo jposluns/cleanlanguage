@@ -93,10 +93,13 @@ for site in tools/release-dry-run.sh tools/check-portable-text-sync.sh .github/w
   else
     pass "structural: no hand-rolled first-line sed selector in ${site}"
   fi
-  # Each site must call the shared extractor, the expected number of times,
-  # and every site launches it isolated (python3 -I).
-  got="$(grep -Fc 'python3 -I tools/skill-version.py' "${site}" || true)"
+  # Each site must call the shared extractor the expected number of times,
+  # counting calls with and without -I, and every one of those calls must
+  # launch it isolated (python3 -I).
+  got="$(grep -Ec 'python3( -I)? tools/skill-version\.py' "${site}" || true)"
   assert_eq "structural: skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"
+  got="$(grep -Fc 'python3 -I tools/skill-version.py' "${site}" || true)"
+  assert_eq "structural: isolated skill-version.py call count in ${site}" "${skillver_count[$site]}" "${got}"
 done
 
 # --- The gates' own rule, as a Python oracle ---------------------------------

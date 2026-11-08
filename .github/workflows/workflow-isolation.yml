@@ -5,8 +5,10 @@ name: Workflow launch isolation
 # import and no PYTHON* environment variable steers the run, and that a file
 # planted beside a script that imports a sibling cannot run. See
 # tools/test-workflow-launch-isolation.py for scope and residuals. The fourth
-# step runs tools/test-shell-launch-isolation.py, which checks the same for
-# the shell scripts the workflows run.
+# step runs tools/test-shell-launch-isolation.py, which checks that each
+# Python launch it reads in the shell scripts the workflows run starts
+# python3 -I; it does not check for a planted sibling. See that scan for its
+# scope and residuals.
 #
 # This workflow carries no paths filter on purpose, as sitemap.yml explains: a
 # path-filtered required check never reports on a pull request outside its
