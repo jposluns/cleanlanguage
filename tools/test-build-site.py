@@ -19,7 +19,10 @@ the committed release (check_committed_render) load the generator, or a
 changed copy of it, and take that page from verify_page(), which runs the
 whole build() and writes nothing, so a fault that makes the generator refuse
 any page fails these cases too; the pin's comment names how to update it.
-The first case runs ``--check`` on this repository. The configured base is
+The first case runs ``--check`` on this repository. Another reads this
+file's own source and fails on any ``?v=`` token that starts with a digit
+apart from those KEPT_TOKENS names, since a case writes the current baseline
+version as BASELINE, read by the generator's load_pin(). The configured base is
 ``/``; the staged cases first set the base to ``/draft/`` and exclude the
 draft's home page from the sitemap, as a staging round on the ``draft``
 branch would (template 1.11.0: the live site carries no ``/draft/``). Exit 0
@@ -616,6 +619,19 @@ except (OSError, UnicodeError) as error:
     raise SystemExit(1)
 UPPERCASE = [selector for selector, value in RULES if value == "uppercase"]
 RESET = [selector for selector, value in RULES if value == "none"]
+# The baseline version that the pages' ?v= tokens carry, read from .baseline/pin.toml by the generator's own
+# load_pin(). A case that writes the current version writes this one, so a move of the baseline needs no edit here; a
+# pin the generator cannot read fails this test with exit 1, rather than with a traceback.
+try:
+    BASELINE = LOADED.load_pin(REPO_ROOT)[0]
+except LOADED.Unreadable as error:
+    print(f"test-build-site: failures:\n  - the baseline version, read by the generator's load_pin(): {error}")
+    raise SystemExit(1)
+# The ?v= tokens that start with a digit and that this file keeps as literals on purpose, with the reason for each;
+# none at present. check_version_literals() refuses any other, so that no case carries a baseline version that goes
+# stale at a move.
+KEPT_TOKENS: dict[str, str] = {}
+VERSION_LITERAL = re.compile(r"\?v=[0-9][^\"'\s<>]*")
 
 
 def closed_details(parsed: Placement, path: list[tuple[int, int]]) -> bool:
@@ -769,14 +785,14 @@ REFUSALS = [
     ("a second light and dark switch", inject(SWITCH)),
     ("a second element with data-scheme-toggle, a button in the content", inject(TOGGLE)),
     ("a second element with data-scheme-toggle in upper case", inject('<div DATA-SCHEME-TOGGLE hidden></div>')),
-    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=1.11.1">')),
-    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=1.11.1">')),
+    ("a later stylesheet in the body", inject('<link rel="stylesheet" href="{{base}}assets/baseline/baseline.css?v=' + BASELINE + '">')),
+    ("a stylesheet in upper case in the body", inject('<LINK REL="stylesheet" HREF="{{base}}assets/baseline/baseline.css?v=' + BASELINE + '">')),
     ("a bare svg outside the switch", inject("<svg></svg>")),
     ("an upper-case SVG outside the switch", inject("<SVG></SVG>")),
     ("a second scheme.js load in another spelling",
-        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.11.1" defer></SCRIPT>')),
+        inject('<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=' + BASELINE + '" defer></SCRIPT>')),
     ("a second scheme.js load as the first of 2 src attributes", inject(
-        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=1.11.1" src="{{base}}assets/baseline/copy.js?v=1.11.1" defer></SCRIPT>')),
+        '<SCRIPT SRC="{{base}}assets/baseline/sch&#101;me.js?v=' + BASELINE + '" src="{{base}}assets/baseline/copy.js?v=' + BASELINE + '" defer></SCRIPT>')),
     ("an attribute repeated on any other tag", inject('<p class="lead" class="x">x</p>')),
     ("a link to the pinned build tool, which is never served",
         inject('<p><a href="/.baseline/check_palette.py">palette gate</a></p>')),
@@ -1809,15 +1825,15 @@ def check_scheme_validation(failures: list[str]) -> int:
         ("the scheme.js line after the first stylesheet", text.replace(tag, "", 1).replace("</head>", tag + "</head>", 1), False),
         ("a second scheme.js line", text[:sheet] + tag + text[sheet:], False),
         ("a second scheme.js in upper case with a character reference", text.replace(
-            "</head>", '<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v=1.11.1" defer></SCRIPT></head>', 1), False),
+            "</head>", f'<SCRIPT SRC="/assets/baseline/sch&#101;me.js?v={BASELINE}" defer></SCRIPT></head>', 1), False),
         ("the scheme.js line inside a comment, loaded in another spelling", text.replace(tag, "<!--" + tag.rstrip("\n")
-            + '--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v=1.11.1"></script>\n', 1), False),
+            + f'--><script data-cfasync="false" src="/assets/baseline/sch&#101;me.js?v={BASELINE}"></script>\n', 1), False),
         ("an upper-case stylesheet before the scheme.js line", text.replace(
-            tag, '<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v=1.11.1">\n' + tag, 1), False),
+            tag, f'<LINK REL="stylesheet" HREF="/assets/baseline/fonts.css?v={BASELINE}">\n' + tag, 1), False),
         ("a second scheme.js load as the first of 2 src attributes", text.replace("</head>", '<SCRIPT SRC='
-            '"/assets/baseline/sch&#101;me.js?v=1.11.1" src="/assets/baseline/copy.js?v=1.11.1" defer></SCRIPT></head>', 1), False),
+            f'"/assets/baseline/sch&#101;me.js?v={BASELINE}" src="/assets/baseline/copy.js?v={BASELINE}" defer></SCRIPT></head>', 1), False),
         ("a stylesheet before the scheme.js line as the first of 2 rel attributes", text.replace(
-            tag, '<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v=1.11.1">\n' + tag, 1), False),
+            tag, f'<LINK REL="stylesheet" REL="icon" HREF="/assets/baseline/fonts.css?v={BASELINE}">\n' + tag, 1), False),
         # The parsed reading allows it, but the header block must be byte for byte what mast() is meant to write.
         ("a newline between nav.nav and the switch", text.replace("</nav>" + SWITCH, "</nav>\n" + SWITCH, 1), False),
         ("a second element with data-scheme-toggle after header.mast", text.replace(
@@ -1826,7 +1842,7 @@ def check_scheme_validation(failures: list[str]) -> int:
             SWITCH + "</header>", SWITCH + '</header><div DATA-SCHEME-TOGGLE hidden></div>', 1), False),
         ("a later stylesheet moved into the body", text.replace(later, "", 1).replace("<body>\n", "<body>\n" + later, 1), False),
         ("a later stylesheet in upper case at the end of the body", text.replace(
-            "</body>", '<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v=1.11.1">\n</body>', 1), False),
+            "</body>", f'<LINK REL="stylesheet" HREF="/assets/baseline/baseline.css?v={BASELINE}">\n</body>', 1), False),
         ("a later stylesheet in a second head after the body", text.replace(later, "", 1).replace(
             "</body>\n", "</body>\n<head>\n" + later + "</head>\n", 1), False),
         # HTML5 ends the head at text other than whitespace, a start tag a head may not hold, or </br>; the loads
@@ -2937,8 +2953,8 @@ PIN_VERSION = "9.8.7"
 PIN_CHECKSUM = "0123456789abcdef" * 4
 PIN_DATE = "2000-01-02"
 VERIFY_PAGE_PIN = {
-    "placeholder": "9ab23193615b67be82e54b361d809683b5d29dea04c2670cb9647c066e6096b7",
-    "published": "eb2d75a29ca16edde89e89eb5b682c9f64ad57fc17b5d3171fa028bf7d36c7a5",
+    "placeholder": "5b26485f5d2e1c8a1bfd46ea52db8cfb0de1bb582debbc24cbf427764465b5dc",
+    "published": "53603672aea6647e4fddfb93567daba7d341629be6d14557ab65bda4c1a204ce",
 }
 SITE_CSS_PIN = None
 PIN_PROCEDURE = ("if the change is intended, follow the update procedure at VERIFY_PAGE_PIN in tools/test-build-site.py: "
@@ -3297,6 +3313,16 @@ def check_staged_build(failures: list[str]) -> int:
     return 1
 
 
+def check_version_literals(failures: list[str]) -> int:
+    """This file's own source carries no ?v= token that starts with a digit and that KEPT_TOKENS does not name: a case
+    writes the current baseline version as BASELINE, read from the pin."""
+    text = Path(__file__).read_text(encoding="utf-8")
+    failures += [f"version literals: line {text.count(chr(10), 0, match.start()) + 1} carries {match.group(0)!r}; write "
+                 "BASELINE, or name the token in KEPT_TOKENS with the reason it is kept"
+                 for match in VERSION_LITERAL.finditer(text) if match.group(0) not in KEPT_TOKENS]
+    return 1
+
+
 def main() -> int:
     failures: list[str] = []
     ran = 0
@@ -3315,6 +3341,7 @@ def main() -> int:
     if not load_module(GENERATOR).INERT_TAGS == INERT == inline >= hiding:
         failures.append("INERT_TAGS, check-inline-code.py's INERT_ELEMENTS and INERT here differ, or leave out an element "
                         "of check-install-page.py's HIDING_ELEMENTS")
+    ran += check_version_literals(failures)
     ran += check_refusals(failures)
     ran += check_source_refusals(failures)
     ran += check_source_passes(failures)
