@@ -40,12 +40,14 @@
 # that a fixed string is absent from standard error (CASE_ABSENT); some assert
 # how many check-runs calls the fake gh served (CASE_READS); and some assert
 # that the only gh call made is the paginated check-runs read of the commit
-# (CASE_ONLY_CALLS and run_log_case). The timed cases also bound
-# the elapsed time, and the paginate case serves page 2 only to a --paginate
-# call. The later sections, the workflow shape check, the commit sha and
+# (CASE_ONLY_CALLS and run_log_case). The timed case also bounds the elapsed
+# time, the slow and deadline-stop cases read a fixed wall clock instead
+# (run_slow_case and run_deadline_stop_case), and the paginate case serves page
+# 2 only to a --paginate call. The later sections, the workflow shape check, the
+# commit sha and
 # repository contract, the wrapper path resolution, and the output, signal,
-# pipe, import, lost-status, final-reap and closed-window cases, each say what
-# they assert.
+# pipe, import, lost-status, final-reap, closed-window and late-pass cases, each
+# say what they assert.
 set -uo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -230,7 +232,28 @@ run_err_case() { local CASE_NEEDLE="$4"; run_case "$1" "$2" "" "" "$3"; }
 # required check.
 run_log_case() { local CASE_ONLY_CALLS=1; run_case "$1" "$2" "" "" "$3"; }
 
+# now_us: the wall clock in whole microseconds, read from EPOCHREALTIME (bash 5.0
+# or later) with its decimal separator, which follows the locale, removed. An
+# older bash prints nothing, so the timed case that called it fails.
+now_us() { local t="${EPOCHREALTIME:-}"; printf '%s' "${t//[!0-9]/}"; }
+# elapsed_ms FROM_US TO_US: the milliseconds from one now_us reading to a later
+# one, or nothing when either is not a whole number or the clock went back.
+elapsed_ms() {
+  [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[0-9]+$ ]] || return 0
+  [ "$2" -ge "$1" ] || return 0
+  printf '%s' "$(( ($2 - $1) / 1000 ))"
+}
+# seconds_of MS: MS as seconds with 2 decimal places for a case line, or ? when
+# there is no measurement.
+seconds_of() {
+  if [ -n "$1" ]; then printf '%d.%02d' "$(( $1 / 1000 ))" "$(( $1 % 1000 / 10 ))"; else printf '?'; fi
+}
 # run_timed_case NAME PAYLOAD MAX_SECONDS WANT EXTRA...
+# The time is measured from the fake gh's first check-runs call, or from the
+# launch when the tool makes no gh call, to the tool's exit. The start-up of bash
+# and the interpreter comes before the first call and is not counted: a loaded
+# host can stretch it by more than a second, and the bound pins only how long the
+# tool runs once it reads.
 run_timed_case() {
   local name="$1" payload="$2" maxs="$3" want="$4"; shift 4
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -239,20 +262,25 @@ run_timed_case() {
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
 case "\$*" in
-  *check-runs*) cat "$tmp/def.json" ;;
+  *check-runs*)
+    # The time of the first check-runs call, read as now_us does.
+    [ -e "$tmp/first-read" ] || { t="\${EPOCHREALTIME:-}"; printf '%s' "\${t//[!0-9]/}" > "$tmp/first-read"; }
+    cat "$tmp/def.json" ;;
   *"repo view"*) printf 'owner/name' ;;
   *) printf '' ;;
 esac
 GH
   chmod +x "$bin/gh"
-  local start end elapsed got
-  start="$(date +%s)"
+  local start end ms got
+  start="$(now_us)"
   PATH="$bin:$PATH" bash "$ci" 0000000000000000000000000000000000000000 --repo owner/name "$@" >/dev/null 2>&1
-  got=$?; end="$(date +%s)"; elapsed=$(( end - start ))
-  if [ "$got" -eq "$want" ] && [ "$elapsed" -le "$maxs" ]; then
-    printf 'ok   %s (exit %s, %ss <= %ss)\n' "$name" "$got" "$elapsed" "$maxs"
+  got=$?; end="$(now_us)"
+  [ -s "$tmp/first-read" ] && start="$(cat "$tmp/first-read")"
+  ms="$(elapsed_ms "$start" "$end")"
+  if [ "$got" -eq "$want" ] && [ -n "$ms" ] && [ "$ms" -le $(( maxs * 1000 )) ]; then
+    printf 'ok   %s (exit %s, %ss <= %ss)\n' "$name" "$got" "$(seconds_of "$ms")" "$maxs"
   else
-    printf 'FAIL %s (got exit %s in %ss; want exit %s within %ss)\n' "$name" "$got" "$elapsed" "$want" "$maxs"; fails=$((fails + 1))
+    printf 'FAIL %s (got exit %s in %ss; want exit %s within %ss)\n' "$name" "$got" "$(seconds_of "$ms")" "$want" "$maxs"; fails=$((fails + 1))
   fi
   rm -rf "$tmp"
 }
@@ -323,24 +351,127 @@ GH
   rm -rf "$tmp"
 }
 
-# run_slow_case NAME WANT: fake gh sleeps past the wait deadline; the read must be
-# bounded so it does not overshoot -> fail closed within the window.
+# run_slow_case NAME WANT: the gate runs in process in wait mode with --timeout 2
+# and --interval 1, and the fake gh hangs at its first check-runs call (exec
+# sleep 60, so the gh process is the sleep itself), so only the wait deadline can
+# end that read. The wall clock it reads (time.time) is a fixed one, as in
+# run_closed_window_case, so the time left when the read starts is exactly 2
+# seconds; each gh call records the bound it is given, and when that call ends
+# the fixed clock is moved to the deadline, as if the read had used the window.
+# The real kill of _gh, on the monotonic clock, still ends the hung gh. The case
+# must exit WANT; every gh call must be bounded by exactly 2.000 seconds, the
+# time left (a read bounded by more, such as remaining + 2, fails); standard
+# error must hold the line saying that gh api did not return within 2.0
+# seconds, which only the kill at that bound prints (a read not bounded at all
+# ends after 60 seconds without it); and the fake gh must serve exactly 1
+# check-runs call. No elapsed time is measured, so load on the host cannot fail
+# this case.
 run_slow_case() {
   local name="$1" want="$2"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
   cat > "$bin/gh" <<GH
 #!/usr/bin/env bash
 case "\$*" in
-  *check-runs*) sleep 5; printf '{"total_count":1,"check_runs":[{"status":"in_progress","conclusion":null,"name":"c","app":{"slug":"github-actions"}}]}';;
+  *check-runs*) echo read >> "$tmp/reads"; exec sleep 60 ;;
   *"repo view"*) printf 'owner/name';; *) printf '';;
 esac
 GH
   chmod +x "$bin/gh"
-  local start end elapsed; start="$(date +%s)"
-  PATH="$bin:$PATH" bash "$ci" 0000000000000000000000000000000000000000 --repo owner/name --wait --timeout 2 --interval 1 >/dev/null 2>&1
-  local got=$?; end="$(date +%s)"; elapsed=$(( end - start ))
-  if [ "$got" -eq "$want" ] && [ "$elapsed" -le 4 ]; then printf 'ok   %s (exit %s, %ss)\n' "$name" "$got" "$elapsed";
-  else printf 'FAIL %s (got exit %s in %ss, want %s within 4s)\n' "$name" "$got" "$elapsed" "$want"; fails=$((fails + 1)); fi
+  local got=0
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, sys, time, types
+path, sha, bounds = sys.argv[1:4]
+spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+now = [1000.0]
+mod.time = types.SimpleNamespace(time=lambda: now[0], sleep=time.sleep, monotonic=time.monotonic)
+real_gh = mod._gh
+def gh(args, timeout):
+    with open(bounds, "a") as f:
+        f.write("%.3f\n" % timeout)
+    try:
+        return real_gh(args, timeout)
+    finally:
+        now[0] = 1002.0  # the deadline: the read used the window
+mod._gh = gh
+sys.argv = [path, "--repo", "owner/name", "--wait", "--timeout", "2", "--interval", "1", sha]
+sys.exit(mod.run())' "${here}/ci-status.py" "$C1" "$tmp/bounds" > "$tmp/out" 2> "$tmp/err" || got=$?
+  local why="" bound
+  bound="$(tr '\n' ' ' < "$tmp/bounds" 2>/dev/null)"
+  [ "$got" -eq "$want" ] || why="$why exit"
+  [ "$bound" = "2.000 " ] || why="$why bound"
+  grep -q -F -- "gh api did not return within 2.0 seconds" "$tmp/err" || why="$why message"
+  [ "$(grep -c "" "$tmp/reads" 2>/dev/null)" = 1 ] || why="$why reads"
+  if [ -z "$why" ]; then printf "ok   %s (exit %s, gh bounded by %ss of a 2s window)\n" "$name" "$got" "${bound% }";
+  else printf "FAIL %s (got exit %s, gh bounded by %ss; want exit %s, 2.000s;%s)\n" "$name" "$got" "${bound:-? }" "$want" "$why"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+# run_deadline_stop_case NAME: the gate runs in process in wait mode with
+# --timeout 10 and --interval 30, and every check-runs call serves a pending
+# reading. The wall clock it reads (time.time) is a fixed one, as in
+# run_closed_window_case, and a sleep between readings moves that clock forward
+# by the time asked for at once, without waiting; a sleep inside a gh call (the
+# poll in _gh) and the monotonic clock that bounds the call stay real. So the
+# clock, not the host's speed, says when the wait stopped: a wait that sleeps
+# only up to the deadline stops exactly 10 seconds after the start, and one that
+# sleeps a whole interval stops 30 or more. The case must exit 2; the clock at
+# the exit must be exactly 10.000 seconds past the start (not before the
+# deadline, and not past it); standard output must hold the line "ci-status:
+# waiting, 10 seconds left"; standard error must hold the still-unsettled line
+# but no read-failure line; and the fake gh must serve exactly 1 check-runs
+# call. Only that call must return within its real 10-second bound.
+run_deadline_stop_case() {
+  local name="$1"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_IN_PROGRESS" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in
+  *check-runs*) echo read >> "$tmp/reads"; cat "$tmp/def.json" ;;
+  *"repo view"*) printf "owner/name";; *) printf "";;
+esac
+GH
+  chmod +x "$bin/gh"
+  local got=0
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, sys, time, types
+path, sha, clock = sys.argv[1:4]
+spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+now = [1000.0]
+in_gh = [False]
+def sleep(seconds):
+    if in_gh[0]:
+        time.sleep(seconds)  # the poll inside a gh call stays real
+    else:
+        now[0] += seconds  # a sleep between readings moves the fixed clock
+mod.time = types.SimpleNamespace(time=lambda: now[0], sleep=sleep, monotonic=time.monotonic)
+real_gh = mod._gh
+def gh(args, timeout):
+    in_gh[0] = True
+    try:
+        return real_gh(args, timeout)
+    finally:
+        in_gh[0] = False
+mod._gh = gh
+sys.argv = [path, "--repo", "owner/name", "--wait", "--timeout", "10", "--interval", "30", sha]
+code = mod.run()
+with open(clock, "w") as f:
+    f.write("%.3f" % (now[0] - 1000.0))
+sys.exit(code)' "${here}/ci-status.py" "$C1" "$tmp/clock" > "$tmp/out" 2> "$tmp/err" || got=$?
+  local why="" stop
+  stop="$(cat "$tmp/clock" 2>/dev/null)"
+  [ "$got" -eq 2 ] || why="$why exit"
+  [ "$stop" = "10.000" ] || why="$why clock"
+  grep -q -x -F -- "ci-status: waiting, 10 seconds left" "$tmp/out" || why="$why pending"
+  grep -q -x -F -- "ci-status: still unsettled after 10 seconds; giving up" "$tmp/err" || why="$why timeout"
+  grep -q -F -- "check read failed" "$tmp/err"
+  case $? in 1) ;; *) why="$why absent" ;; esac
+  [ "$(grep -c "" "$tmp/reads" 2>/dev/null)" = 1 ] || why="$why reads"
+  if [ -z "$why" ]; then printf "ok   %s (exit %s, stopped %ss into a 10s window)\n" "$name" "$got" "$stop";
+  else printf "FAIL %s (got exit %s, stopped %ss into a 10s window; want exit 2 at 10.000s;%s)\n" "$name" "$got" "${stop:-?}" "$why"; fails=$((fails + 1)); fi
   rm -rf "$tmp"
 }
 
@@ -500,6 +631,23 @@ run_case "duplicate check-run id is rejected fail-closed" "$DUP_ID" "" "" 3
 run_case "null total_count is rejected fail-closed" "$TOTAL_NULL" "" "" 3
 # total_count present on only one page is inconsistent.
 run_case "inconsistent total_count presence is rejected fail-closed" "$INCONSISTENT_TOTAL" "" "" 3
+# A total_count of true is not a whole number, though Python treats a bool as the
+# integer 1: read as 1, it would match the single run received.
+run_err_case "boolean total_count is rejected fail-closed" \
+  "{\"total_count\":true,\"check_runs\":[${PM_OK}]}" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: check-runs total_count is not a whole number"
+# Pages that declare different totals cannot both be right. The first page's
+# total matches the 4 runs received, so a reader that kept only the first total
+# would confirm this reading green.
+run_err_case "pages declaring different total_count values are rejected fail-closed" \
+  "{\"total_count\":4,\"check_runs\":[${PM_OK},${SD_OK}]}"$'\n'"{\"total_count\":5,\"check_runs\":[${APM_OK},${CF}]}" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: check-runs pages disagree on total_count"
+# A declared total below the runs received means the payload holds a run the API
+# did not count, so it is as inconsistent as a truncated one. A reader that
+# checked only for truncation would confirm this reading green.
+run_err_case "declared total_count below the runs received is rejected fail-closed" \
+  "{\"total_count\":3,\"check_runs\":[${REQ_GA},${CF}]}" 3 \
+  "check read failed for 0000000000000000000000000000000000000000: check-runs declared 3 runs but the reading received 4"
 # A non-object app must not coerce to a null slug.
 run_case "non-object app is rejected fail-closed" "$NONOBJ_APP" "" "" 3
 # A lone surrogate in a name fails closed, it does not crash the report.
@@ -574,7 +722,10 @@ CASE_NEEDLE="check read failed for 0000000000000000000000000000000000000000: the
 # satisfies the required Cloudflare check -> green (regression: a pin on a slug or
 # id that the live check-runs do not show would false-red every real commit).
 run_case "real cloudflare-workers-and-pages slug satisfies the required check" "$REAL_CLOUDFLARE" "" "" 0
-run_timed_case "wait stops near the deadline, not a whole interval past it" "$GA_IN_PROGRESS" 4 2 --wait --timeout 2 --interval 5
+# A pending wait sleeps only up to its deadline, never a whole interval past it.
+# The fixed clock of run_deadline_stop_case, not the elapsed time, says when it
+# stopped, so load on the host cannot fail this case.
+run_deadline_stop_case "wait stops near the deadline, not a whole interval past it"
 
 # Row 66: the required set is the 3 named GitHub Actions jobs and the Cloudflare
 # build. An Actions job counts only when a run carries its exact display name and
@@ -636,6 +787,11 @@ CASE_NEEDLE="${CUT_OFF}"$'\n'"still unsettled after 5 seconds; giving up" \
 CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="still unsettled" CASE_READS=2 \
   run_case "green reading then a confirmation read cut off without --wait -> unreadable" \
   "$GA_PRESENT" "" "g s" 3 --timeout 5
+# A read cut off with under a second of the window left names the time it was
+# given, not that time rounded down to 0 seconds.
+CASE_NEEDLE="$HUNG_READ_FAILED" CASE_ABSENT="within 0 seconds" CASE_READS=1 \
+  run_case "a read cut off with under a second left names its real bound" \
+  "$GA_PRESENT" "" "s" 3 --wait --timeout 1
 run_case "failed required check -> red" \
   "$(runs '{"status":"completed","conclusion":"failure","name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 1
 run_case "failing impostor of a required name beside the full set -> red" \
@@ -2476,6 +2632,64 @@ sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || 
 }
 
 run_closed_window_case "pending reading then the window closing before the next read -> not green, timed out"
+
+# run_late_pass_case NAME: the gate runs in process in wait mode with a fixed wall
+# clock, as in run_closed_window_case, and both check-runs calls serve the same
+# green reading. When the second read has returned, before main checks the
+# deadline, the fixed clock is moved to the deadline, so the pass is confirmed
+# only after the window closed. A wait reports what held within its window, so
+# such a pass is not green: the case must exit 2; standard error must hold the
+# line saying that the checks passed only after the window closed; standard
+# output must hold the first reading's line asking for a confirmation reading
+# but no confirmed-pass line; and the fake gh must serve exactly 2 check-runs
+# calls.
+run_late_pass_case() {
+  local name="$1"
+  local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
+  local bin="$tmp/bin"; mkdir -p "$bin"
+  printf "%s" "$GA_PRESENT" > "$tmp/def.json"
+  cat > "$bin/gh" <<GH
+#!/usr/bin/env bash
+case "\$*" in
+  *check-runs*) echo read >> "$tmp/reads"; cat "$tmp/def.json" ;;
+  *"repo view"*) printf "owner/name";; *) printf "";;
+esac
+GH
+  chmod +x "$bin/gh"
+  local got=0
+  PATH="$bin:$PATH" python3 -I -B -c 'import importlib.util, sys, time, types
+path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("ci_status_under_test", path)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+now = [1000.0]
+mod.time = types.SimpleNamespace(time=lambda: now[0], sleep=time.sleep, monotonic=time.monotonic)
+real_read_checks = mod.read_checks
+calls = []
+def read_checks(repo, full_sha, deadline):
+    calls.append(deadline)
+    checks = real_read_checks(repo, full_sha, deadline)
+    if len(calls) == 2:
+        now[0] = deadline  # after the confirmation read, before main checks the deadline
+    return checks
+mod.read_checks = read_checks
+sys.argv = [path, "--repo", "owner/name", "--wait", "--timeout", "10", "--interval", "1", sys.argv[2]]
+sys.exit(mod.run())' "${here}/ci-status.py" "$C1" > "$tmp/out" 2> "$tmp/err" || got=$?
+  local why=""
+  [ "$got" -eq 2 ] || why="$why exit"
+  grep -q -x -F -- "ci-status: checks passed but only after the 10 second wait window closed" \
+    "$tmp/err" || why="$why message"
+  grep -q -x -F -- "ci-status: all checks pass; re-reading to confirm none is still registering" \
+    "$tmp/out" || why="$why first"
+  grep -q -F -- "every check passed" "$tmp/out"
+  case $? in 1) ;; *) why="$why absent" ;; esac
+  [ "$(grep -c "" "$tmp/reads" 2>/dev/null)" = 2 ] || why="$why reads"
+  if [ -z "$why" ]; then printf "ok   %s (exit %s)\n" "$name" "$got";
+  else printf "FAIL %s (got %s, want 2;%s)\n" "$name" "$got" "$why"; fails=$((fails + 1)); fi
+  rm -rf "$tmp"
+}
+
+run_late_pass_case "green readings confirmed only after the window closed -> not green, timed out"
 
 # A skipped case is not verified, so any skip makes the suite incomplete and
 # nonzero; the final line then names the count.

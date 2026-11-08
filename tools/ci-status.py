@@ -434,7 +434,8 @@ def read_checks(repo: str, full_sha: str, deadline: float):
     try:
         proc = _gh(["api", f"repos/{repo}/commits/{full_sha}/check-runs", "--paginate"], remaining)
     except subprocess.TimeoutExpired as exc:
-        raise WindowClosed(f"gh api did not return within {int(remaining)} seconds") from exc
+        # One decimal place, so a bound under a second is not reported as 0 seconds.
+        raise WindowClosed(f"gh api did not return within {remaining:.1f} seconds") from exc
     except OSError as exc:
         raise Unreadable(f"could not run gh: {exc}") from exc
     if proc.returncode != 0:
