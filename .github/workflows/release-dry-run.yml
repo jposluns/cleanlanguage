@@ -2,14 +2,17 @@ name: Release dry run
 
 # Proves the local, side-effect-free part of the release path without publishing: packaging, the site
 # rewrite, the date stamps, and the gates the post-release site pull request
-# must pass. Everything runs inside a throwaway git worktree via
-# tools/release-dry-run.sh. This workflow holds read-only permissions, keeps
-# no credentials after checkout, uses no secrets, and pushes, tags, releases,
-# and merges nothing.
+# must pass. The steps before the last run in the checkout: the Python
+# version check and 5 test suites, of which the version-consumer tests also
+# build in temporary worktrees made from the checkout. The last step,
+# tools/release-dry-run.sh, does the packaging, the rewrite, the stamping, and
+# the gate checks in a throwaway git worktree made from HEAD. This workflow
+# holds read-only permissions, keeps no credentials after checkout, uses no
+# secrets, and pushes, tags, releases, and merges nothing.
 #
 # It runs on the runner's python3. The first step after the checkout runs
 # tools/check-python-version.py, which, on Python 3.7 or later, exits 3 unless
-# that python3 is the release that .python-version names. The two page checks
+# that python3 is the release that .python-version names. The 2 page checks
 # that the dry run runs load tools/check-inline-code.py and exit 3 on a Python
 # version that the gate does not support: from 3.7 on for the instructions page
 # check, and from 3.9 on for the install page check.
