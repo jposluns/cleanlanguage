@@ -438,19 +438,24 @@ def finish(code, why, facts):
 # case moves the clock to 1002.0 minus LEFT, so LEFT seconds are left; the fake
 # gh would end only 60 seconds after its start, so only the wait deadline can
 # end the read. A correct gate gives gh a bound of LEFT seconds and polls it
-# every 0.02 seconds; LEFT is a whole number of polls, so its last poll lands
-# on 1002.0 exactly, where it kills gh, reaps it and exits 3 without another
-# sleep. So every expectation is a constant of this setup, compared as a
-# number to within 1 microsecond: read_checks must be called once, at 1000.0,
-# with the deadline 1002.0; _gh must be given a bound of LEFT seconds; gh must
-# be killed exactly once, at 1002.0; _gh must return at 1002.0; the gate must
+# every 0.02 seconds, but sleeps only the time left before its last poll, so
+# that poll lands on 1002.0 exactly whether or not LEFT is a whole number of
+# polls; there it kills gh, reaps it and exits 3 without another sleep. So
+# every expectation is a constant of this setup, compared as a number to
+# within 1 microsecond: read_checks must be called once, at 1000.0, with the
+# deadline 1002.0; _gh must be given a bound of LEFT seconds; gh must be
+# killed exactly once, at 1002.0; _gh must return at 1002.0; the gate must
 # exit with the clock at 1002.0; standard error must hold the read-failure
 # line saying that gh api did not return within BOUND; and the fake gh must
-# serve exactly 1 check-runs call. Any sleep of more than 1 microsecond that
-# the gate adds before the read, before the kill, between the kill and the
-# return of _gh, or after the read fails the case; so do a bound longer than
-# the time left, which kills at a later poll, at least 0.02 seconds late, any
-# other deadline, and a gate that never kills gh.
+# serve exactly 1 check-runs call. A delay of more than 1 microsecond that
+# moves the start of the read, the bound, the kill, the return of _gh or the
+# exit off its constant fails the case; so do a bound longer than the time
+# left, which kills that much late, a last poll that sleeps a whole 0.02
+# seconds with less left (with 0.03 seconds left it kills at 1002.01), any
+# other deadline, and a gate that never kills gh. A delay that the capped
+# last poll absorbs is not caught: a delay in the poll loop of _gh before a
+# clock read, ending no later than 1002.0, shortens the sleeps after it, and
+# the kill still lands on 1002.0.
 run_cut_off_case() {
   local name="$1" left="$2" want_bound="$3"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }; local bin="$tmp/bin"; mkdir -p "$bin"
@@ -502,11 +507,14 @@ finish(code, why, "read at %s, deadline %s, gh bounded by %ss, killed at %s, ret
 # with the clock at 1010.0; standard output must hold the line "ci-status:
 # waiting, 7 seconds left"; standard error must hold the still-unsettled line
 # but no read-failure line; and the fake gh must serve exactly 1 check-runs
-# call. Any sleep of more than 1 microsecond that the gate adds, inside or
-# outside _gh, moves the clock and fails the case: a sleep before _gh returns
-# moves the return past 1003.0, and a sleep between readings longer than the
-# time left moves the exit past 1010.0 (one capped by the whole timeout ends at
-# 1013.0, a whole interval at 1033.0).
+# call. A delay of more than 1 microsecond that moves the return of _gh or the
+# exit off its constant fails the case: a sleep before _gh returns moves the
+# return past 1003.0, and a sleep between readings longer than the time left
+# moves the exit past 1010.0 (one capped by the whole timeout ends at 1013.0, a
+# whole interval at 1033.0). A delay that nap absorbs is not caught: nap reads
+# the clock and sleeps only the time then left, so a delay after the waiting
+# line and before that clock read, ending no later than 1010.0, leaves the
+# exit at 1010.0.
 run_deadline_stop_case() {
   local name="$1"
   local tmp; tmp="$(mktemp -d)" && [ -d "$tmp" ] || { setup_failed "$name"; return; }
@@ -869,6 +877,11 @@ run_cut_off_case "a read cut off with 1.96 seconds left names 1.9 seconds, not a
   1.960 "1.9 seconds"
 run_cut_off_case "a read cut off with under 0.1 seconds left is not named as 0 seconds" \
   0.040 "the time left (under 0.1 seconds)"
+# 0.03 seconds is not a whole number of 0.02-second polls, so the kill lands on
+# the deadline only if the last poll sleeps just the 0.01 seconds left; a whole
+# poll would kill at 1002.01.
+run_cut_off_case "a read cut off with 0.03 seconds left is killed at the deadline, not a poll after it" \
+  0.030 "the time left (under 0.1 seconds)"
 run_case "failed required check -> red" \
   "$(runs '{"status":"completed","conclusion":"failure","name":"Plugin manifests","app":{"slug":"github-actions"}}' "$SD_OK" "$APM_OK" "$CF")" "" "" 1
 run_case "failing impostor of a required name beside the full set -> red" \

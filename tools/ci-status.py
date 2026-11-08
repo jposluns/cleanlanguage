@@ -322,7 +322,8 @@ def _gh(args, timeout: float):
                 raise ChildProcessError("the exit status of gh was lost") from exc
             if pid == proc.pid:
                 break
-            if time.monotonic() >= end:
+            now = time.monotonic()
+            if now >= end:
                 os.kill(proc.pid, signal.SIGKILL)
                 try:
                     pid, status = os.waitpid(proc.pid, 0)
@@ -336,7 +337,10 @@ def _gh(args, timeout: float):
                     break
                 proc.returncode = -1
                 raise subprocess.TimeoutExpired(proc.args, timeout)
-            time.sleep(0.02)
+            # The last poll sleeps only the time left, so the kill lands on the
+            # deadline rather than up to 1 poll after it. The clock is read once
+            # above, so the time left here is positive.
+            time.sleep(min(0.02, end - now))
         code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
         proc.returncode = code
         out.seek(0)
