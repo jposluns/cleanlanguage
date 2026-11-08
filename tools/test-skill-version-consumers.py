@@ -413,11 +413,12 @@ def kill_group(pgid: int) -> None:
     """Send SIGKILL to process group ``pgid``. An empty group is not an
     error: everything in it has already ended. Nor is a group that the test
     process may not signal: killpg refuses only when the test process may
-    signal no member of the group, so the kill could end nothing there. That
-    happens, for example, when the group belongs to another user (such as a
-    group under a reused id), when every member still in it has changed its
-    real and saved user ids, or when a Linux security module refuses the
-    signal."""
+    signal no member of the group, so the kill could end nothing there. For
+    a test process without CAP_KILL, that happens, for example, when the
+    group belongs to another user (such as a group under a reused id) or
+    when every member still in it has changed its real and saved user ids;
+    for any test process, it happens when a Linux security module refuses
+    the signal."""
     try:
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
@@ -451,8 +452,8 @@ def run_bounded(args: list, name: str, env: dict | None = None, cwd: Path | None
     of its own does not receive a signal sent to the test runner's process
     group, so a run that has not ended keeps running. If the script has been
     reaped and its group and session have emptied, its id can be reused, and
-    the last kill then reaches the group of a new process that leads one
-    under that id."""
+    the last kill can then reach the group of a new process that leads
+    one under that id."""
     proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, env=env, cwd=cwd, start_new_session=True)
     try:
@@ -1287,9 +1288,10 @@ class BoundedLaunchTest(unittest.TestCase):
 
     def test_a_kill_that_is_refused_does_not_escape(self):
         # After the script has been reaped, its id can name another user's
-        # group, which killpg refuses with PermissionError. A patched killpg
-        # refuses every kill, so the call returns the result of the run only
-        # if kill_group ignores that refusal.
+        # group, which killpg refuses with PermissionError for a test process
+        # without CAP_KILL. A patched killpg refuses every kill, so the call
+        # returns the result of the run only if kill_group ignores that
+        # refusal.
         given = []
 
         def refused_killpg(pgid, sig):
