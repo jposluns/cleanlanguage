@@ -412,11 +412,12 @@ REAP_TIMEOUT = 5
 def kill_group(pgid: int) -> None:
     """Send SIGKILL to process group ``pgid``. An empty group is not an
     error: everything in it has already ended. Nor is a group that the test
-    process may not signal: killpg refuses only when it may signal no member
-    of the group, so the kill could end nothing there. Causes include, for
-    example, a group that this process did not start (such as another user's
-    group under a reused id), a group whose every member left in it has
-    changed its user, and a Linux security module that refuses the signal."""
+    process may not signal: killpg refuses only when the test process may
+    signal no member of the group, so the kill could end nothing there. That
+    happens, for example, when the group belongs to another user (such as a
+    group under a reused id), when every member still in it has changed its
+    real and saved user ids, or when a Linux security module refuses the
+    signal."""
     try:
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
