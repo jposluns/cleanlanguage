@@ -3019,8 +3019,9 @@ PIN_FORMS = [
 def check_verify_page_pin(failures: list[str]) -> int:
     """The verify page pin: the whole page renders to the pinned digest in each state, the site-owned stylesheet is
     the pinned one, site-src/pages/verify.html carries no stand-in value, each stand-in value written there is
-    refused, and each change it makes (PIN_FORMS, a generator whose step 3 says to install the file anyway,
-    and a site-owned stylesheet that hides the document) is refused by the generator or stand_in_problems(), or
+    refused, an unchanged copy of the generator beside the install gate renders the pinned digest, a copy whose
+    step 3 says to install the file anyway renders a different one, and each other change it makes (PIN_FORMS and
+    a site-owned stylesheet that hides the document) is refused by the generator or stand_in_problems(), or
     changes the digest."""
     module = load_module(GENERATOR)
     states = (("placeholder", module.PLACEHOLDER_CHECKSUM), ("published", PIN_CHECKSUM))
@@ -3047,12 +3048,31 @@ def check_verify_page_pin(failures: list[str]) -> int:
             edit(root, "site-src/pages/verify.html", f"<p>{value}</p>" + NEXT, NEXT)
         tools = Path(scratch) / "tools"
         tools.mkdir()
-        changed = GENERATOR.read_text(encoding="utf-8").replace("do not install the file and ", "install the file anyway and ")
-        if changed == GENERATOR.read_text(encoding="utf-8"):
+        # The generator loads tools/check-install-page.py from its own folder (install_gate()), so each copy gets it
+        # beside it; without it, a copy fails on the missing reader instead of on the change it carries.
+        shutil.copyfile(REPO_ROOT / "tools" / "check-install-page.py", tools / "check-install-page.py")
+        unchanged = GENERATOR.read_text(encoding="utf-8")
+        changed = unchanged.replace("do not install the file and ", "install the file anyway and ")
+        if changed == unchanged:
             failures.append("verify page pin: the generator's step 3 no longer says not to install the file")
+        (tools / "build-site-unchanged.py").write_text(unchanged, encoding="utf-8")
         (tools / "build-site.py").write_text(changed, encoding="utf-8")
-        cases = [("a generator whose step 3 says to install the file anyway", load_module(tools / "build-site.py"),
-                  REPO_ROOT)]
+        # The unchanged copy must render the pinned digest, so a copy that cannot render, or renders differently for
+        # a reason other than its change, fails here rather than passing as a refusal.
+        for label, path, kept in (("an unchanged copy of the generator", tools / "build-site-unchanged.py", True),
+                                  ("a generator whose step 3 says to install the file anyway", tools / "build-site.py",
+                                   False)):
+            ran += 1
+            generator = load_module(path)
+            try:
+                rendered = verify_render(generator, REPO_ROOT, PIN_CHECKSUM)
+            except (generator.BuildError, generator.Unreadable) as error:
+                # The changed step 3 is a fault the pin must catch, so a refusal before the render does not count.
+                failures.append(f"verify page pin: {label} does not render the verify page: {error}")
+                continue
+            if (hashlib.sha256(rendered.encode("utf-8")).hexdigest() == VERIFY_PAGE_PIN["published"]) != kept:
+                failures.append(f"verify page pin: {label} {'changes' if kept else 'keeps'} the pinned digest")
+        cases = []
         for label, edits in PIN_FORMS:
             root = make_root(Path(scratch) / label.replace(" ", "-"))
             try:
@@ -3126,9 +3146,10 @@ def committed_render_problems(module, root: Path) -> list[str]:
 
 
 def check_committed_render(failures: list[str]) -> int:
-    """committed_render_problems() passes the committed state and a flip to a well-formed checksum on a later date,
-    and refuses a generator that adds text only for the committed major version, and one that adds it for every
-    version."""
+    """committed_render_problems() passes the committed state, a flip to a well-formed checksum on a later date and
+    an unchanged copy of the generator beside the install gate, and refuses a generator that adds text only for the
+    committed major version, as a committed render that differs, and one that adds it for every version, as a
+    stand-in rendering that is not the pinned one."""
     module = load_module(GENERATOR)
     major = json.loads((REPO_ROOT / "site-src" / "release.json").read_text(encoding="utf-8"))["version"].split(".")[0]
     added = "<p>If the values differ, install the file anyway.</p>"
@@ -3138,7 +3159,11 @@ def check_committed_render(failures: list[str]) -> int:
         set_page(flipped, "verify", modified="2099-12-31")
         tools = Path(scratch) / "tools"
         tools.mkdir()
-        generators = {}
+        # The generator loads tools/check-install-page.py from its own folder (install_gate()), so each copy gets it
+        # beside it; without it, a copy fails on the missing reader instead of on the change it carries.
+        shutil.copyfile(REPO_ROOT / "tools" / "check-install-page.py", tools / "check-install-page.py")
+        (tools / "build-site-unchanged.py").write_text(GENERATOR.read_text(encoding="utf-8"), encoding="utf-8")
+        generators = {"unchanged": load_module(tools / "build-site-unchanged.py")}
         for name, condition in (("major", f"version.startswith({major + '.'!r})"), ("every", "True")):
             (tools / f"build-site-{name}.py").write_text(
                 GENERATOR.read_text(encoding="utf-8") + "\n\ndef _add_text(original):\n"
@@ -3148,19 +3173,24 @@ def check_committed_render(failures: list[str]) -> int:
                 "        return tokens\n    return sum_tokens\n\n\nsum_tokens = _add_text(sum_tokens)\n",
                 encoding="utf-8")
             generators[name] = load_module(tools / f"build-site-{name}.py")
+        # Each refused case names the problem its change makes, so a copy refused for another reason, such as a
+        # missing input, fails the case.
+        differs = "is not the pinned stand-in rendering with the stand-in values replaced"
+        stand_in = "the stand-in rendering is not the pinned one"
         cases = (
-            ("the committed state", module, REPO_ROOT, False),
-            ("a flip to a well-formed checksum on a later date", module, flipped, False),
+            ("the committed state", module, REPO_ROOT, None),
+            ("a flip to a well-formed checksum on a later date", module, flipped, None),
+            ("an unchanged copy of the generator", generators["unchanged"], REPO_ROOT, None),
             (f"a generator that adds text only for versions starting with {major}.", generators["major"], REPO_ROOT,
-             True),
-            ("a generator that adds text for every version", generators["every"], REPO_ROOT, True),
+             differs),
+            ("a generator that adds text for every version", generators["every"], REPO_ROOT, stand_in),
         )
-        for label, generator, root, refused in cases:
+        for label, generator, root, expected in cases:
             problems = committed_render_problems(generator, root)
-            if refused and not problems:
-                failures.append(f"verify page render: {label} is not refused")
-            elif not refused and problems:
+            if expected is None and problems:
                 failures.append(f"verify page render: {label} is refused: {problems}")
+            elif expected is not None and not (len(problems) == 1 and expected in problems[0]):
+                failures.append(f"verify page render: {label} is not refused as {expected!r}: {problems}")
     return len(cases)
 
 

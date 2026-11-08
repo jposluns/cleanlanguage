@@ -485,7 +485,9 @@ comes before its ``span.t``. After the class pins,
   plain text, whatever its classes, so this pin refuses a hidden, unclassed
   button with ``data-copy`` holding ``About``, a hidden span, then ``this
   project`` (a second label once the script runs), and the value paragraph
-  wrapped in such a button (its markup lost on a copy);
+  wrapped in an unclassed button with ``data-copy`` and without ``hidden``
+  (its markup lost on a copy; the value paragraph rule refuses the value
+  paragraph in a hidden button first);
 - an image in the ``div.hero-art`` whose alt text is not ``site.json``'s
   ``logo_alt``, which ``build()`` passes to ``with_about()`` (without it, any
   such image is refused): at 600 px and below a browser shows the image in
