@@ -21,6 +21,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
 import unittest
@@ -189,6 +190,29 @@ EARLY_END_CLIENT = (
     "raise SystemExit({code})\n"
 )
 
+# Row 110: a stand-in client that answers the probe and the date check as the
+# real one does, and for the read of the Released line prints a valid date
+# and exits 0 at once, without reading its input, so its verdict can rest on
+# none of the blob.
+EARLY_DATE_CLIENT = (
+    "import sys\n"
+    "args = sys.argv[1:]\n"
+    "if args == ['baseline']:\n"
+    "    print('1.0.14')\n"
+    "    raise SystemExit(0)\n"
+    "if args[:1] == ['check-date']:\n"
+    "    print(args[1])\n"
+    "    raise SystemExit(0)\n"
+    "print('2026-11-15')\n"
+    "raise SystemExit(0)\n"
+)
+
+# The whole message of the packager for a failed read of the blob at the
+# Released read, compared as a whole line so that a longer message that
+# begins the same way (the exit-14 one) does not pass for it.
+FAILED_BLOB_READ = ("release-package: could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its "
+                    "Released line")
+
 # Row 89: a git that, at its third read of HEAD:cleanlanguage/skills/
 # cleanlanguage/SKILL.md (the Released read of the packager), writes the
 # blob and then writes on until its reader has gone, so that when the client
@@ -338,6 +362,15 @@ def gate_verdict(gate, skill_text: str):
     return (True, match.group(1)) if match else (False, None)
 
 
+# Row 117: seconds a packager run may take. A packager that reads the whole
+# blob before the client (for example blob="$(git show ...)") never ends
+# under LONG_BLOB_GIT, whose writer stops only when its reader has gone, so
+# without a bound such a change would hang the run until the job limit. A
+# normal run takes a few seconds, so the bound is generous enough not to fail
+# on a slow runner.
+PACKAGER_TIMEOUT = 60
+
+
 def run_packager(version_block: str | None, plugin_version: str, locale: str | None = None, extra_tail: str = "", raw_skill: bytes | None = None, release_date: str | None = None, released_block: str | None = None, extra_args: tuple = (), extractor: str | None = None, client: str | None = None, path_prefix: str | None = None, bash_options: tuple = ()):
     """Build in a throwaway worktree whose HEAD carries the fixture; run the
     CHECKOUT's release-package.sh, tools/skill-release-date.py and
@@ -346,7 +379,10 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
     given and then ``extra_args``. ``extractor`` replaces the extractor and
     ``client`` the client: ``"missing"`` deletes it, any other text is written
     in its place. ``path_prefix`` is put first on the PATH of the packager,
-    and ``bash_options`` are passed to the bash that runs it.
+    and ``bash_options`` are passed to the bash that runs it. The packager
+    runs in a session of its own; past ``PACKAGER_TIMEOUT`` its whole process
+    group is killed, so no stand-in it started outlives the test, and the run
+    fails with a reason that names the timeout.
     Returns (exit_code, stderr)."""
     skill = skill_with(version_block, released_block) + extra_tail
     with tempfile.TemporaryDirectory() as tmp:
@@ -387,8 +423,22 @@ def run_packager(version_block: str | None, plugin_version: str, locale: str | N
             if release_date is not None:
                 args += ["--release-date", release_date]
             args += list(extra_args)
-            result = subprocess.run(args, capture_output=True, text=True, env=env)
-            return result.returncode, result.stderr
+            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                                    start_new_session=True)
+            try:
+                _stdout, stderr = proc.communicate(timeout=PACKAGER_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                # The packager is not reaped yet, so its process group still
+                # exists and holds only the packager and what it started.
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                _stdout, stderr = proc.communicate()
+                raise AssertionError(
+                    f"release-package.sh did not end within the {PACKAGER_TIMEOUT}-second timeout, so its process "
+                    f"group was killed; stderr: {stderr[-2000:]!r}") from None
+            return proc.returncode, stderr
         finally:
             subprocess.run(
                 ["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
@@ -524,13 +574,19 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertNotIn("malformed", stderr)
 
     def test_unreadable_input_at_head_is_named_as_unreadable(self):
-        # T4: client exit 14 is unreadable input, never a crash.
+        # T4: client exit 14 is unreadable input, never a crash. Row 112: the
+        # blob read succeeds here (status 0), and the client's own line is
+        # still relayed before the message of the packager, as it is beside a
+        # SIGPIPE.
         code, stderr = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
                                     released_block="Released: 2026-11-15  ",
                                     client=client_with(UNREADABLE_STDIN_HOOK))
         self.assertEqual(code, 1, stderr)
-        self.assertIn("at HEAD for its Released line: the client could not read its input (exit 14)", stderr)
-        self.assertNotIn("unavailable or crashed", stderr)
+        self.assertEqual(stderr.splitlines(), [
+            "skill-release-date: could not read standard input: [Errno 5] injected read error",
+            "release-package: could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for its Released "
+            "line: the client could not read its input (exit 14)",
+        ])
 
     def test_internal_error_at_head_is_reported_as_a_crash(self):
         # T4: an extractor internal error is the tool failing (client exit
@@ -618,7 +674,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
         self.assertIn("tools/skill-release-date.py is unavailable or crashed (exit 125) reading the Released line", stderr)
         self.assertNotIn("could not read", stderr)
 
-    def long_blob_run(self, code: int):
+    def long_blob_run(self, code: int | None = None, client: str | None = None):
         git = shutil.which("git")
         self.assertIsNotNone(git)
         with tempfile.TemporaryDirectory() as tmp:
@@ -627,7 +683,7 @@ class PackagerReleaseDateTest(unittest.TestCase):
             fake.chmod(0o755)
             result = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
                                   released_block="Released: 2026-11-15  ", path_prefix=tmp,
-                                  client=EARLY_END_CLIENT.format(code=code))
+                                  client=EARLY_END_CLIENT.format(code=code) if client is None else client)
             reads = int((Path(tmp) / "count").read_text())
         self.assertEqual(reads, 3, result[1])
         return result
@@ -666,6 +722,38 @@ class PackagerReleaseDateTest(unittest.TestCase):
                 self.assertIn("release-package: could not read cleanlanguage/skills/cleanlanguage/SKILL.md at HEAD for "
                               "its Released line\n", stderr)
                 self.assertNotIn("unavailable or crashed", stderr)
+
+    def test_a_date_beside_a_sigpipe_is_a_failed_blob_read(self):
+        # Row 110: a valid date (exit 0) from a client that ended before it
+        # read the whole blob may rest on part of the blob, so it is never
+        # taken, even when it names the --release-date given: the run fails
+        # as a failed blob read.
+        code, stderr = self.long_blob_run(client=EARLY_DATE_CLIENT)
+        self.assertEqual(code, 1, stderr)
+        self.assertEqual(stderr.splitlines(), [FAILED_BLOB_READ])
+
+    def failing_blob_run(self, client: str):
+        git = shutil.which("git")
+        self.assertIsNotNone(git)
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "git"
+            fake.write_text(FAILING_BLOB_GIT.format(count=str(Path(tmp) / "count"), git=git), encoding="utf-8")
+            fake.chmod(0o755)
+            result = run_packager("Version: 1.2.3  ", "1.2.3", release_date="2026-11-15",
+                                  released_block="Released: 2026-11-15  ", path_prefix=tmp, client=client)
+            reads = int((Path(tmp) / "count").read_text())
+        self.assertEqual(reads, 3, result[1])
+        return result
+
+    def test_a_failed_blob_read_beside_a_client_failure_is_named_as_such(self):
+        # Row 111: only a SIGPIPE (141) lets the client's own exit stand for
+        # the read; any other failed blob read is reported as that, beside
+        # every client exit that is not a content verdict.
+        for client_code in (14, 15, 16, 125):
+            with self.subTest(client_code=client_code):
+                code, stderr = self.failing_blob_run(STAND_IN_CLIENT.format(out="", code=client_code))
+                self.assertEqual(code, 1, stderr)
+                self.assertEqual(stderr.splitlines(), ["fatal: injected blob read failure", FAILED_BLOB_READ])
 
     def test_a_failed_blob_read_is_named_as_such(self):
         # Row 89: a git show that fails at the Released read is reported as
