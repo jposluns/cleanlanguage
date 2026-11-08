@@ -10,8 +10,11 @@ pass for a refusal. 1 more check asserts that the gate's docstring names
 exactly the scripts in ``ALLOWED_SCRIPTS``, and 1 that this file's own source
 carries no ``?v=`` token starting with a digit apart from those KEPT_TOKENS
 names, since a case writes the current baseline version as BASELINE, read
-from ``.baseline/pin.toml``, and 1 that its syntax tree binds BASELINE only
-there. Exit 0 when every case passes; 1 otherwise, naming each failing case.
+from ``.baseline/pin.toml``, and 1 that its syntax tree holds exactly 1
+pinned assignment ``BASELINE = pinned_baseline()`` outside every def and
+class, no other form that binds, annotates, deletes or declares BASELINE,
+and no star import. Exit 0 when every case passes; 1 otherwise, naming each
+failing case.
 Each of RESIDUALS is a fault the gate passes, such as markup in which a browser
 may hide or empty what the gate checks; it must exit 0, and the gate's docstring
 must name it, so that what the gate says it checks cannot outgrow its code
@@ -196,9 +199,10 @@ try:
 except Exception as error:
     print(f"test-install-page: failures:\n  - the baseline version could not be read from .baseline/pin.toml: {error!r}")
     raise SystemExit(1)
-# The names that hold the version read from the pin. version_binding_problems() refuses any binding of them in this
-# file's syntax tree but the one above, and any star import, whose names the tree does not show: any other binding can
-# give a case or check that reads the name a value other than the version, or lead a reader to take it for the version.
+# The names that hold the version read from the pin. version_binding_problems() requires exactly 1 pinned assignment
+# NAME = pinned_baseline() outside every def and class for each of them, such as the one above, and refuses every
+# other form in this file's syntax tree that binds, annotates, deletes or declares (global or nonlocal) one of them,
+# and every star import.
 VERSION_NAMES = ("BASELINE",)
 # The ?v= tokens that start with a digit and that this file keeps as literals on purpose, each with its reason;
 # version_literal_problems() refuses any other, so that no case carries a baseline version that goes stale at a move.
@@ -1514,7 +1518,7 @@ RESIDUALS = [
 # Faults to a copy of STYLESHEETS and PIN_FILE for stylesheet_problems(), the comparison of the committed stylesheets
 # with RULE_PIN, and the words that its problems must hold, each in 1 of them; none for none. Each rule is named as
 # that comparison names it: a pinned rule by its file name and preludes, a rule the pin does not hold by its text.
-# BASELINE_SHEET is the stylesheet that the faults change; BASELINE keeps the version (version_binding_problems()).
+# BASELINE_SHEET is the stylesheet that the faults change; version_binding_problems() refuses a BASELINE binding here.
 BASELINE_SHEET = STYLESHEETS[2]
 INLINE_RULE = ".btn.inline { position: static; display: inline-block; text-decoration: none; margin: 0 0.6rem 0.6rem 0; }"
 HOVER_RULE = ".btn.inline:hover { color: var(--button-hover-fg); }"
@@ -2379,16 +2383,43 @@ def version_literal_problems() -> list[str]:
             for match in VERSION_LITERAL.finditer(text) if match.group(0) not in KEPT_TOKENS]
 
 
+def unscoped_statements(node: ast.AST):
+    """Each statement under node that no def or class under node holds."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.stmt):
+            yield child
+        if not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            yield from unscoped_statements(child)
+
+
 def version_binding_problems() -> list[str]:
-    """Each binding in this file's own source of a name of VERSION_NAMES other than its first, read from the syntax
-    tree: an assignment (plain, augmented, annotated, starred or :=), a deletion, a loop, comprehension, with or
-    except target, a type alias, an import, a def, a class, an argument, a type parameter, a match capture, or a
-    global or nonlocal statement; and each star import, which can bind any name. A local binding counts too, since a
-    reader takes that name for the version. The syntax tree does not show a binding made by running code, such as
-    one through globals(), exec or setattr on this module, so this check cannot see one."""
-    lines: dict[str, list[int]] = {name: [] for name in VERSION_NAMES}
-    stars: list[int] = []
-    for node in ast.walk(ast.parse(Path(__file__).read_text(encoding="utf-8"))):
+    """The problems with the names of VERSION_NAMES in this file's own source, read from its syntax tree.
+
+    The pinned assignment of a name is a statement that no def or class holds, whose only target is the name and
+    whose value is the call pinned_baseline() with no arguments: NAME = pinned_baseline(). Each name must have
+    exactly 1; a name with none is reported, and when a name has more than 1, each of them is reported by its line.
+    Every other form that binds, annotates, deletes or declares the name is reported by its own line, wherever it
+    is: a Name node in a store or delete context (a target of a plain, augmented, annotated, starred or :=
+    assignment, an annotation with no value, a for, comprehension or with target, a type alias, or a del), an
+    import alias, a def, a class, an except name, a parameter, a type parameter, a match capture, or a global or
+    nonlocal statement. Each star import is reported by its line. No other form is reported: a binding that none
+    of these forms names, such as one through globals(), exec, setattr or an attribute of this module, is not."""
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    pinned: dict[str, list[ast.Name]] = {name: [] for name in VERSION_NAMES}
+    for statement in unscoped_statements(tree):
+        if (isinstance(statement, ast.Assign) and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name) and statement.targets[0].id in pinned
+                and isinstance(statement.value, ast.Call) and isinstance(statement.value.func, ast.Name)
+                and statement.value.func.id == "pinned_baseline"
+                and not statement.value.args and not statement.value.keywords):
+            pinned[statement.targets[0].id].append(statement.targets[0])
+    exempt = {id(target) for targets in pinned.values() for target in targets}
+    problems = [f"{name} has no pinned assignment {name} = pinned_baseline() outside every def and class"
+                for name, targets in pinned.items() if not targets]
+    problems += [f"line {target.lineno} is 1 of {len(targets)} pinned assignments {name} = pinned_baseline(); "
+                 "keep exactly 1" for name, targets in pinned.items() if len(targets) > 1 for target in targets]
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             names = [node.id]
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.ExceptHandler,
@@ -2397,9 +2428,7 @@ def version_binding_problems() -> list[str]:
         elif isinstance(node, ast.MatchMapping):
             names = [node.rest]
         elif isinstance(node, ast.alias) and node.name == "*":
-            # A star import binds the names that the other module exports, which this file's syntax tree does not
-            # list, so it may bind a name of VERSION_NAMES.
-            stars.append(node.lineno)
+            found.append((node.lineno, f"line {node.lineno} imports *; import each name it needs by name"))
             continue
         elif isinstance(node, ast.alias):
             names = [node.asname or node.name.partition(".")[0]]
@@ -2409,14 +2438,11 @@ def version_binding_problems() -> list[str]:
             names = [node.arg]
         else:
             continue
-        for name in names:
-            if name in lines:
-                lines[name].append(node.lineno)
-    problems = [f"{name} is never bound" for name, found in lines.items() if not found]
-    problems += [f"line {line} imports *, which can bind {', '.join(VERSION_NAMES)}; import the names it needs"
-                 for line in sorted(stars)]
-    return problems + [f"line {line} binds {name} again, after line {min(found)}; give that value its own name"
-                       for name, found in lines.items() for line in sorted(found)[1:]]
+        if id(node) not in exempt:
+            found += [(node.lineno, f"line {node.lineno} binds, annotates, deletes or declares {name}, which only its "
+                       f"pinned assignment {name} = pinned_baseline() may bind; remove it or use another name")
+                      for name in names if name in pinned]
+    return problems + [problem for _, problem in sorted(found)]
 
 
 def main() -> int:
@@ -2463,7 +2489,7 @@ def main() -> int:
             print(f"  - {failure}")
         return 1
     print(f"test-install-page: all {len(CASES)} cases, the {len(RESIDUALS)} named residuals, the docstring check of "
-          f"ALLOWED_SCRIPTS, the scans of this file for literal versions and for a second binding of BASELINE, "
+          f"ALLOWED_SCRIPTS, the scan of this file for literal versions, version_binding_problems(), "
           f"the checks of CLASS_PIN, ATTRIBUTE_PIN, "
           f"HEAD_PIN, RULE_ATTRIBUTES, INSTALL_HEADERS, TAG_PIN, "
           f"PAGE_ATTRIBUTES, PAGE_TAGS, the inventories with a further link back in a step, the name reading, "
