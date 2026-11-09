@@ -981,8 +981,8 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertIn("Release checksum drift found", out.getvalue())
 
     def test_extractor_load_failure_still_exits_3_in_the_pre_tag_window(self):
-        # The load failure contributes exit 3 on every path, as it did when
-        # the load ran at import, including one that needs no date check.
+        # The load failure contributes exit 3 on every path, including one that
+        # needs no date check.
         with tempfile.TemporaryDirectory() as tmp:
             self.fixtures(AHEAD, OTHER_SUM, AHEAD)
             gate.release_status = lambda tag: 404
@@ -998,9 +998,10 @@ class ConditionalPassTest(unittest.TestCase):
             self.assertNotIn("Nothing to reconcile", out.getvalue())
 
     def test_unreleased_other_version_does_not_hide_the_date_check(self):
-        # Sibling (a): the site names an unreleased version that is not the
-        # current one; the release SKILL.md names is still checked on its own
-        # terms and the more severe code wins.
+        # The site names an unreleased version that is not the current one, so
+        # the checksum comparison reports an inconsistency; that does not hide
+        # the date check of the release SKILL.md names, which is still checked
+        # on its own terms, and the more severe code wins.
         for label, published, immutable, expected, reason in (
             ("date mismatch", "2026-11-16T00:00:01Z", "true", 1, "Release date inconsistency found"),
             ("record not immutable", "2026-11-15T09:30:00Z", "false", 2,
@@ -1016,9 +1017,9 @@ class ConditionalPassTest(unittest.TestCase):
                 self.assertEqual(self.probed, [f"v{BOGUS}", f"v{AHEAD}"])
 
     def test_unusable_download_does_not_hide_the_date_check(self):
-        # Sibling (b): a failed download or a malformed manifest stops only
-        # the checksum comparison (exit 2); the date check still runs and
-        # reports, and the more severe code wins.
+        # A failed download or a malformed manifest stops only the checksum
+        # comparison (exit 2), so an unusable download does not hide the date
+        # check: it still runs and reports, and the more severe code wins.
         def failed(*args, check=True):
             raise subprocess.CalledProcessError(1, ["gh", *args], "", "HTTP 502")
 
@@ -1073,8 +1074,7 @@ class ConditionalPassTest(unittest.TestCase):
         # unavailable (exit 3), never a pass (0) or a drift (1). That holds for
         # 2 and 3 too, the codes release_date_code and main absorb as could not
         # verify. Row 80: the child ends with that code and an empty stdout, so
-        # 0 and None print no result and the others exit nonzero; no lookup on
-        # a module exists any more.
+        # 0 and None print no result and the others exit nonzero.
         for stop_code, reason in (
             (0, "did not print a JSON result"), (1, "exited 1"), (2, "exited 2"), (3, "exited 3"),
             (None, "did not print a JSON result"),
@@ -1766,8 +1766,8 @@ class ConditionalPassTest(unittest.TestCase):
             gate.main()
         self.assertEqual(caught.exception.code, 3)
 
-    # --- No early exit hides the Released line, and every required read
-    # fails closed -----------------------------------------------------------
+    # --- No early exit hides the Released line, and every required read fails
+    # closed ------------------------------------------------------------------
 
     def offline_reports(self, version, released, tag_state):
         """Run the gate with the site and SKILL.md naming ``version``, its
@@ -2070,8 +2070,8 @@ class ConditionalPassTest(unittest.TestCase):
         self.assertNotIn("Release checksum drift found", out)
 
 
-    # --- No early return hides a more severe result, and a required file
-    # is reported by its real stat error --------------------------------------
+    # --- No early return hides a more severe result, and a required file is
+    # reported by its real stat error -----------------------------------------
 
     def test_missing_released_line_does_not_hide_an_immutable_failure(self):
         # On the published path a Released line missing above the baseline
@@ -2929,10 +2929,9 @@ class ConditionalPassTest(unittest.TestCase):
 
     def test_a_malformed_subclass_from_the_published_day_is_a_content_verdict(self):
         # Row 80, verdict change 3, accepted by the maintainer on 2026-11-01:
-        # the child classifies with the same except Malformed the CLI uses,
-        # so a subclass of Malformed raised by a modified
-        # release_day_from_published_at is a content verdict (2), where the
-        # in-process gate exited 3.
+        # the child classifies with the same except Malformed the CLI uses, so
+        # a subclass of Malformed raised by a modified
+        # release_day_from_published_at is a content verdict (2).
         self.fake_extractor(extractor_with(
             "class _Subclass(Malformed):\n    pass\n"
             "def release_day_from_published_at(value):\n    raise _Subclass(\"bad stamp\")\n"
@@ -3282,8 +3281,7 @@ class ConditionalPassTest(unittest.TestCase):
     def test_an_echoed_request_of_any_size_keeps_its_verdict(self):
         # The stdout bound grows with the request, so the malformed messages
         # tested here, which echo a long argument enlarged by repr and by ASCII
-        # JSON escaping, keep the verdict and the message the extractor gives,
-        # as the in-process gate did.
+        # JSON escaping, keep the verdict and the message the extractor gives.
         published = "\u00e9" * 12000
         line = "Released: " + "\u00e9" * 12000
         try:
@@ -3523,8 +3521,7 @@ class ConditionalPassTest(unittest.TestCase):
         # given by a fake extractor that answers differently from the real one
         # (a baseline of 1.0.20, not 1.0.14), so a gate that put today's real
         # answer in place of any of these calls fails this test as well as one
-        # that dropped a handler. Run as a mutation sweep, each of those
-        # mutants fails here.
+        # that dropped a handler.
         def site_matches(version):
             return (f"The verify page checksum {ZIP_SUM} matches the published cleanlanguage-{version}.zip "
                     f"for release v{version}.")
@@ -4580,8 +4577,7 @@ class ModuleLoadTest(unittest.TestCase):
                 self.assertIn(f"skill-release-date.py {reason} in extract, so the extractor is unavailable", err)
                 self.assertIn("the gh CLI is not available", err)
 
-    # --- SIGCHLD: an ignored disposition inherited by the gate keeps the
-    # verdict ----------------------------------------------------------------
+    # --- SIGCHLD is reset before any child starts, or the gate exits 3 -------
 
     def test_an_ignored_sigchld_inherited_by_the_gate_keeps_the_verdict(self):
         # A caller that ignores SIGCHLD passes that disposition across exec,
